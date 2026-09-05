@@ -144,13 +144,6 @@ npm run version    # 版本号同步
 
 ---
 
-## 支持作者
-
-如果 ReelLudic 对你有帮助，欢迎在 GitHub 上给个☆，或通过爱发电支持一下~
-[fhb263 - 爱发电](https://ifdian.net/a/fhb263)
-
----
-
 ## 许可证、免责声明、参考致谢
 
 **关于开源许可**
@@ -171,3 +164,9 @@ npm run version    # 版本号同步
 - [obsidian-douban](https://github.com/Wanxp/obsidian-douban) — 元数据抓取参考
 - [obsidian-media-db](https://github.com/czottmann/obsidian-media-db) — 元数据抓取参考
 
+---
+
+## 支持作者
+
+如果 ReelLudic 对你有帮助，欢迎在 GitHub 上给个☆，或通过爱发电支持一下~
+[fhb263 - 爱发电](https://ifdian.net/a/fhb263)
