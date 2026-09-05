@@ -1,0 +1,12 @@
+{
+	"id": "obsidian-reelludic",
+	"name": "ReelLudic",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "媒体信息管理与播放阅读于一体的插件。通过元数据自动获取媒体信息，支持关联网页链接和本地文件，内置简易播放器与阅读器，让你轻松管理多媒体笔记。",
+	"license": "GPL-3.0",
+	"author": "fhb263",
+	"authorUrl": "",
+	"fundingUrl": "",
+	"isDesktopOnly": false
+}
