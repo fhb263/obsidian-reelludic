@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { containerRootfile, resolveEpubPath, parseOpf, parseTocNav, xhtmlToText } from 'pure/epubParse';
+import { containerRootfile, resolveEpubPath, parseOpf, parseTocNav, xhtmlToText, extractChapterLabel } from 'pure/epubParse';
 
 describe('EPUB 解析', () => {
     describe('containerRootfile', () => {
@@ -110,6 +110,31 @@ describe('EPUB 解析', () => {
         });
         it('script/style 剔除', () => {
             expect(xhtmlToText('<p>正文</p><script>alert(1)</script><style>.x{color:red}</style><p>结尾</p>')).toBe('正文结尾');
+        });
+    });
+
+    describe('extractChapterLabel', () => {
+        // 优先级：<h1> > <title>(≠书名) > undefined。无 h1/title 信息时返回 undefined，调用方回退文件名。
+        it('有 <h1> 时返回 h1 去标签文本', () => {
+            expect(extractChapterLabel('<html><body><h1>第一章</h1></body></html>', '书名')).toBe('第一章');
+        });
+        it('<h1> 内含 inline 标签 → 剥标签折叠空白', () => {
+            expect(extractChapterLabel('<h1>第<b>一</b>章  <span>开场</span></h1>', '书名')).toBe('第一章 开场');
+        });
+        it('无 h1 但有 <title> ≠书名 → 返回 title', () => {
+            expect(extractChapterLabel('<html><head><title>序言</title></head></html>', '书名')).toBe('序言');
+        });
+        it('<title> 等于书名（常为扉页）→ undefined（让调用方用文件名兜底，不污染目录）', () => {
+            expect(extractChapterLabel('<html><head><title>活着</title></head></html>', '活着')).toBeUndefined();
+        });
+        it('两者皆有 → 优先 h1', () => {
+            expect(extractChapterLabel('<html><head><title>书名</title></head><body><h1>第一章</h1></body></html>', '书名')).toBe('第一章');
+        });
+        it('无 h1 无 title → undefined', () => {
+            expect(extractChapterLabel('<html><body><p>无标题</p></body></html>', '书名')).toBeUndefined();
+        });
+        it('空字符串 → undefined', () => {
+            expect(extractChapterLabel('', '书名')).toBeUndefined();
         });
     });
 });

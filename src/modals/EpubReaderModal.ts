@@ -51,8 +51,6 @@ export interface EpubReaderOptions {
     onHighlight?: (quote: string, loc: { chapter: number; pct: number }) => Promise<string | null>;
     /** 删除高亮（标注列表右键 → main 层确认 → 移除 <mark> + 从笔记删块；返回是否成功） */
     onDeleteHighlight?: (blockId: string) => Promise<boolean>;
-    /** 隐藏插件内滚动条（外观设置）：开启时阅读器滚动条一并隐藏（滚轮/触控板仍可滚） */
-    hideScrollbars?: boolean;
 }
 
 /** 会话级字号（px，跨面板共享；null=未初始化，首次打开取设置默认） */
@@ -1278,8 +1276,7 @@ export class EpubReaderPanel {
 body{font-family:${fontFamily};font-size:${readerFontSize ?? 16}px;line-height:${readerLineHeight ?? this.lineHeight};margin:0 auto;padding:26px 32px ${padB};${layout}}
 h1,h2,h3,h4,h5,h6{line-height:1.5;margin:0.8em 0 0.5em;}
 p{margin:0 0 1em;text-align:justify;}
-.rl-excerpt-hl{background:rgba(255,200,60,.35);border-radius:2px;}
-${this.options.hideScrollbars ? '::-webkit-scrollbar{display:none}html,body{scrollbar-width:none}' : ''}`;
+.rl-excerpt-hl{background:rgba(255,200,60,.35);border-radius:2px;}`;
         return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style></head><body>${bodyHtml}</body></html>`;
     }
 

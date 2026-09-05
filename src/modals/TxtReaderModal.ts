@@ -47,8 +47,6 @@ export interface TxtReaderOptions {
     onHighlight?: (quote: string, loc: { chapter: number; pct: number }) => Promise<string | null>;
     /** 删除高亮（标注列表右键 → main 层确认 → 移除 <mark> + 从笔记删块；返回是否成功） */
     onDeleteHighlight?: (blockId: string) => Promise<boolean>;
-    /** 隐藏插件内滚动条（外观设置）：开启时阅读器滚动条一并隐藏（滚轮/触控板仍可滚） */
-    hideScrollbars?: boolean;
 }
 
 /** 本次会话字号（会话内生效，跨面板共享；null=未初始化，打开时取设置默认） */

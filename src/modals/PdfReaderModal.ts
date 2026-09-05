@@ -337,7 +337,8 @@ export class PdfReaderPanel {
                 return 0;
             }
             ctx.setTransform(outScale, 0, 0, outScale, 0, 0);
-            const renderTask = page.render({ canvas, viewport });
+            // pdfjs v4 render 参数为 canvasContext（v5 才改为 canvas）；HiDPI 由上方 ctx 预变换承载
+            const renderTask = page.render({ canvasContext: ctx, viewport });
             pv.renderTask = renderTask;
             const done = renderTask.promise.then(() => {
                 pv.renderTask = null;

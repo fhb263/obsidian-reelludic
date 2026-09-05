@@ -28,8 +28,7 @@ export class TxtReaderModal extends Modal {
         contentEl.style.cssText = 'height:100%;display:flex;flex-direction:column;overflow:hidden';
         // 软件式沉浸：去原生 modal 边框/标题栏，阅读器自绘顶栏直铺（批 1.5 P1）
         this.modalEl.addClass('rl-reader-immersive');
-        // 隐藏插件内滚动条（外观设置）：隐藏阅读器外壳层滚动条（TXT 主滚动/EPUB 侧栏）
-        if (this.options.hideScrollbars) this.modalEl.addClass('rl-hide-scroll');
+        // 阅读器滚动条始终保留（用户决定：「隐藏插件内滚动条」只作用于主界面/编辑弹窗，不作用于阅读器）
         this.panel = new TxtReaderPanel(contentEl, new Scope(this.app.scope), this.options, () => this.close());
         this.panel.mount();
     }
@@ -62,8 +61,7 @@ export class EpubReaderModal extends Modal {
         contentEl.style.cssText = 'height:100%;display:flex;flex-direction:column;overflow:hidden';
         // 软件式沉浸：去原生 modal 边框/标题栏，阅读器自绘顶栏直铺（批 1.5 P1）
         this.modalEl.addClass('rl-reader-immersive');
-        // 隐藏插件内滚动条（外观设置）：隐藏阅读器外壳层滚动条（TXT 主滚动/EPUB 侧栏）
-        if (this.options.hideScrollbars) this.modalEl.addClass('rl-hide-scroll');
+        // 阅读器滚动条始终保留（用户决定：「隐藏插件内滚动条」只作用于主界面/编辑弹窗，不作用于阅读器）
         this.panel = new EpubReaderPanel(contentEl, new Scope(this.app.scope), this.options, () => this.close());
         this.panel.mount();
     }

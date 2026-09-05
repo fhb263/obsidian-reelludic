@@ -470,7 +470,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('隐藏插件内滚动条')
-            .setDesc('隐藏视图内滚动条，滚轮/触控板仍可滚动。')
+            .setDesc('隐藏主界面与编辑弹窗内滚动条，滚轮/触控板仍可滚动。阅读器（TXT/EPUB/PDF）不受影响，滚动条始终显示。')
             .addToggle((t) =>
                 t.setValue(this.plugin.settings.hideScrollbars).onChange(async (value) => {
                     this.plugin.settings.hideScrollbars = value;
@@ -595,9 +595,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         aboutText.createDiv({ cls: 'rl-about-title', text: '支持作者' });
         aboutText.createDiv({ cls: 'rl-about-desc', text: '如果 ReelLudic 对你有帮助，欢迎在 GitHub 上给个 ⭐，或通过爱发电支持一下～' });
         const aboutBtns = about.createDiv({ cls: 'rl-about-buttons' });
-        // GitHub 按钮：链接先留空（发布后回填仓库地址）
         const githubBtn = aboutBtns.createEl('button', { cls: 'rl-about-btn', text: 'Github' });
-        githubBtn.addEventListener('click', () => window.open('https://github.com/', '_blank'));
+        githubBtn.addEventListener('click', () => window.open('https://github.com/fhb263/obsidian-reelludic', '_blank'));
         const afdianBtn = aboutBtns.createEl('button', { cls: 'rl-about-btn rl-about-btn-accent', text: '爱发电' });
         afdianBtn.addEventListener('click', () => window.open('https://ifdian.net/a/fhb263', '_blank'));
     }

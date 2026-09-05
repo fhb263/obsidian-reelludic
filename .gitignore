@@ -1,10 +1,13 @@
-# dependencies
+# ReelLudic
 node_modules/
-
-# build output
+build/
 main.js
-styles.css
-
-# logs & misc
 *.log
 .DS_Store
+.workbuddy/
+
+# git backup dir (对象库损坏后本地保留副本，不入库)
+.git-backup-corrupt/
+
+# brainstorm visual companion session artifacts
+.superpowers/

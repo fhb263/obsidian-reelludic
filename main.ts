@@ -41,7 +41,7 @@ import { pageFromPercent, reconcileBookProgress, type BookFileInfo, type BookPro
 import { bookmarksFilePath, parseBookmarks, serializeBookmarks, type ReaderBookmark } from 'pure/bookmark';
 import { buildTranslateBody, buildTranslatePingBody, parseTranslateResponse, translateChatUrl, normalizeProvider, type TranslateProvider } from 'pure/translate';
 import { parseTxtBook } from 'pure/txtParse';
-import { containerRootfile, parseOpf, parseTocNav } from 'pure/epubParse';
+import { containerRootfile, parseOpf, parseTocNav, extractChapterLabel } from 'pure/epubParse';
 import { sanitizePosterTitle, orphanCoverFiles } from 'pure/posterFile';
 import { toFileUrl } from 'pure/mediaFileUrl';
 import { isEmbeddableVideoPath, VIDEO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
@@ -1898,17 +1898,33 @@ export default class ReelLudicPlugin extends Plugin {
         const opfDir = opfPath.split('/').slice(0, -1).join('/');
         const parsed = parseOpf(opfXml, opfDir, fileMap);
         if (parsed.chapters.length === 0) throw new Error('EPUB 没有可渲染的章节（spine 为空或全部缺失）');
-        // 目录：优先 nav.xhtml（EPUB3），其次 toc.ncx（EPUB2）；均无 → 回退章节文件名
-        let toc: { label: string; href: string }[] = parsed.chapters.map((c) => ({ label: c.split('/').pop() ?? c, href: c }));
+        // 目录：优先 nav.xhtml（EPUB3）→ toc.ncx（EPUB2）→ 扫 manifest 的 NCX 类型条目（应对变名如 fb.ncx）；
+        // 都没有 → 从各章节 XHTML 抽 <h1>/<title> 命名（排除等于书名的 title 防扉页污染目录），抽不出仍回退文件名
+        let toc: { label: string; href: string }[] | null = null;
         for (const name of ['nav.xhtml', 'toc.ncx']) {
             const key = Object.keys(fileMap).find((p) => p.toLowerCase().endsWith('/' + name)) ?? name;
             const navXml = fileMap[key];
             if (navXml === undefined) continue;
             const navToc = parseTocNav(navXml, key.split('/').slice(0, -1).join('/'), fileMap);
-            if (navToc.length > 0) {
-                toc = navToc;
-                break;
+            if (navToc.length > 0) { toc = navToc; break; }
+        }
+        if (toc === null) {
+            // 兜底扫 manifest 里任何 NCX 类型条目
+            for (const [abs, media] of Object.entries(parsed.manifest)) {
+                if (!/x-dtbncx/i.test(media)) continue;
+                const navXml = fileMap[abs];
+                if (!navXml) continue;
+                const navToc = parseTocNav(navXml, abs.split('/').slice(0, -1).join('/'), fileMap);
+                if (navToc.length > 0) { toc = navToc; break; }
             }
+        }
+        if (toc === null) {
+            // 最终兜底：抽章节 XHTML 的 <h1>/<title>
+            toc = parsed.chapters.map((href) => {
+                const html = fileMap[href] ?? '';
+                const label = extractChapterLabel(html, parsed.title) ?? href.split('/').pop() ?? href;
+                return { label, href };
+            });
         }
         return { fileMap, book: { ...parsed, toc } };
     }
@@ -2060,7 +2076,6 @@ export default class ReelLudicPlugin extends Plugin {
                 title: entry.title,
                 text,
                 progress,
-                hideScrollbars: !!this.settings.hideScrollbars,
                 settings,
                 scrollMode,
                 onScrollModeChange,
@@ -2095,7 +2110,6 @@ export default class ReelLudicPlugin extends Plugin {
                 fileMap: epub.fileMap,
                 book: epub.book,
                 progress,
-                hideScrollbars: !!this.settings.hideScrollbars,
                 settings,
                 scrollMode,
                 onScrollModeChange,

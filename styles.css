@@ -1,0 +1,1293 @@
+/* ReelLudic 插件样式 */
+
+/* ── 色彩系统变量（A3）：状态徽标四色（灰/橙/绿/蓝，色相区分），亮/暗主题自适应；组件内 var() 引用 ── */
+:root {
+    --rl-badge-want: #8a8a86;
+    --rl-badge-watching: #d99a2b;
+    --rl-badge-watched: #4d9b52;
+    --rl-badge-archived: #4a7dd0; /* 存档：蓝（与想看灰 #8a8a86 区分，四色相不同） */
+}
+.theme-dark {
+    --rl-badge-want: #75756f;
+    --rl-badge-watching: #c68d1f;
+    --rl-badge-watched: #41884a;
+    --rl-badge-archived: #3f6db8; /* 存档：暗蓝（暗底可见） */
+}
+
+/* ── 设置页：服务集成两折叠项（#165 T11：① API 管理 + ② 数据源启用；旧 B1 rl-src-* / rl-chain-* 折叠样式已清理） ── */
+.rl-fold {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    margin: 6px 0;
+    overflow: hidden;
+    background: var(--background-primary);
+}
+.rl-fold-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+}
+.rl-fold-head:hover { background: var(--background-modifier-hover); }
+.rl-fold-title { font-weight: 600; }
+.rl-fold-caret {
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+}
+.rl-fold-open .rl-fold-caret { transform: rotate(90deg); }
+.rl-fold-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 12px 10px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+.rl-fold-body.rl-fold-body-closed { display: none; }
+.rl-hint-note {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    line-height: 1.5;
+    padding: 2px 0 6px;
+}
+/* API 管理：单源配置行（头点击内联展开） */
+.rl-key-row {
+    border: 1px solid transparent;
+    border-radius: 6px;
+    margin: 2px 0;
+}
+.rl-key-row.rl-key-open {
+    background: var(--background-secondary);
+    border-color: var(--background-modifier-border);
+}
+.rl-key-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+}
+.rl-key-head:hover { background: var(--background-modifier-hover); }
+.rl-key-name { font-weight: 500; }
+.rl-key-badge {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    background: var(--background-secondary-alt);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 999px;
+    padding: 0 8px;
+    line-height: 18px;
+}
+.rl-key-badge-on { color: var(--color-green); border-color: var(--color-green); }
+/* 免 Key 源徽标：中性蓝绿，与「已配置」区分，表达「无需配置」 */
+.rl-key-badge-free { color: var(--interactive-accent); border-color: var(--interactive-accent); }
+/* ① API 管理内部分组标题（需 Key / 免 Key 之间的细分隔） */
+.rl-key-group-sep {
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 10px 8px 2px;
+    user-select: none;
+    letter-spacing: .3px;
+}
+.rl-key-caret { color: var(--text-faint); margin-left: auto; }
+.rl-key-open .rl-key-caret { transform: rotate(90deg); }
+.rl-key-body {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    padding: 0 10px 10px;
+}
+.rl-key-open .rl-key-body { display: flex; }
+.rl-key-body .rl-hint-note { padding-bottom: 0; }
+.rl-key-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 2px;
+}
+.rl-key-result {
+    font-size: var(--font-ui-smaller);
+    max-width: 60%;
+    overflow-wrap: anywhere;
+}
+.rl-key-result-ok { color: var(--color-green); }
+.rl-key-result-slow { color: var(--color-orange); }
+.rl-key-result-bad { color: var(--color-red); }
+/* 密文输入（显示/隐藏切换，复用 createSecretField） */
+.rl-secret {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.rl-secret-input {
+    flex: 1;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    padding: 5px 8px;
+}
+.rl-secret-input:focus { outline: none; border-color: var(--interactive-accent); }
+.rl-secret-eye {
+    flex-shrink: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.rl-secret-eye:hover { color: var(--text-normal); border-color: var(--interactive-accent); }
+/* 数据源启用：五分类行（每组一行内并排 checkbox，链序沿用注册表） */
+.rl-srcchk-group {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin: 2px 0;
+}
+.rl-srcchk-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.rl-srcchk-gname { font-weight: 600; min-width: 36px; }
+.rl-srcchk-list { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px 14px; }
+.rl-srcchk-line { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.rl-srcchk-line input[type='checkbox'] { margin: 0; }
+.rl-srcchk-name { font-size: var(--font-ui-small); }
+
+/* ── 设置页：封面迁移进度条（rl-mig-*，v0.4 持续优化） ── */
+.rl-mig-prog {
+    display: none;
+    margin: 6px 0 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-secondary);
+}
+.rl-mig-prog.show { display: block; }
+.rl-mig-bar {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--background-modifier-border);
+    overflow: hidden;
+}
+.rl-mig-fill {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: var(--interactive-accent);
+    transition: width .25s ease;
+}
+.rl-mig-text {
+    margin-top: 4px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+/* ── 封面迁移结果弹窗（rl-mig-* 复用，PosterMigrateModal DOM 渲染） ── */
+.rl-mig-head { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.rl-mig-summary { font-size: var(--font-ui-medium); color: var(--text-normal); margin-bottom: 6px; }
+.rl-mig-hint { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-bottom: 4px; }
+.rl-mig-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 40vh;
+    overflow-y: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-bottom: 10px;
+}
+.rl-mig-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: var(--font-ui-small);
+}
+.rl-mig-title { font-weight: 600; color: var(--text-normal); min-width: 0; overflow-wrap: anywhere; }
+.rl-mig-reason { color: var(--color-red); flex-shrink: 0; }
+.rl-mig-foot { display: flex; justify-content: flex-end; }
+
+/* ── 月历详情弹窗（CalendarDayModal，DOM 渲染） ── */
+.rl-day-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+.rl-day-head h2 { margin: 0; font-size: 16px; }
+.rl-day-cnt { font-size: var(--font-ui-small); color: var(--text-muted); }
+.rl-day-empty {
+    padding: 24px 0;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: var(--font-ui-medium);
+}
+.rl-day-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow: auto; }
+.rl-day-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: var(--background-primary);
+}
+.rl-day-cv {
+    width: 38px;
+    height: 54px;
+    flex: none;
+    border-radius: 4px;
+    background-color: var(--background-secondary);
+    background-size: cover;
+    background-position: center;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-start;
+    padding: 3px;
+    font-size: var(--font-ui-smaller);
+    color: #fff;
+    overflow: hidden;
+}
+.rl-day-cv img { width: 100%; height: 100%; object-fit: cover; border-radius: 3px; display: block; }
+.rl-day-inf { flex: 1; min-width: 0; }
+.rl-day-t {
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rl-day-meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.rl-day-type { color: var(--text-faint); }
+.rl-day-prog { font-weight: 600; color: var(--interactive-accent); }
+.rl-day-ops { display: flex; gap: 6px; flex: none; }
+/* 月历按钮基础样式并入统一 rl-btn 体系（见文件下部统一按钮区块）；hover 高亮保留 */
+.rl-day-btn:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
+
+/* ── 状态徽标（全局唯一实现：CalendarDayModal 等 DOM 渲染 + MediaList/HomeView Svelte 共用；四色变量，亮/暗自适应） ── */
+.rl-badge { font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 999px; color: #fff; cursor: pointer; }
+.rl-badge-want { background: var(--rl-badge-want, #8a8a86); }
+.rl-badge-watching { background: var(--rl-badge-watching, #d99a2b); }
+.rl-badge-watched { background: var(--rl-badge-watched, #4d9b52); }
+.rl-badge-archived { background: var(--rl-badge-archived, #4a7dd0); }
+
+/* ── 音乐页签分组歌单（MediaList lockType=music 专用：组头 + 窄行，朴素功能向） ── */
+.rl-music-group { margin-bottom: 8px; }
+.rl-music-group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 7px 8px 4px;
+    font-size: var(--font-ui-small);
+    font-weight: 600;
+    color: var(--text-normal);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.rl-music-cnt { font-size: var(--font-ui-smaller); font-weight: 400; color: var(--text-muted); }
+.rl-music-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.rl-music-row:hover { background: var(--background-modifier-hover); }
+.rl-music-cov { width: 36px; height: 36px; border-radius: 4px; object-fit: cover; flex: none; }
+.rl-music-cov-ph {
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--background-modifier-border);
+    color: var(--text-muted);
+}
+.rl-music-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rl-music-title {
+    font-size: var(--font-ui-medium);
+    color: var(--text-normal);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-music-sub {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-music-meta { display: flex; align-items: center; gap: 8px; flex: none; }
+.rl-music-ops { display: flex; align-items: center; gap: 4px; flex: none; }
+.rl-music-play {
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease, background .15s ease, transform .12s ease;
+}
+.rl-music-play:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); transform: scale(1.12); }
+.rl-music-edit {
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    padding: 3px 5px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color .15s ease, background .15s ease, transform .12s ease;
+}
+/* 编辑钮 hover 与播放钮同语言（全项目「hover → accent + 放大」约定） */
+.rl-music-edit:hover { color: var(--interactive-accent); transform: scale(1.12); }
+
+/* ── 隐藏插件内滚动条（外观设置，v0.4）：挂 rl-home 容器，隐藏内部所有滚动条，滚轮仍可滚 ── */
+.rl-hide-scroll::-webkit-scrollbar,
+.rl-hide-scroll *::-webkit-scrollbar { display: none; }
+.rl-hide-scroll { scrollbar-width: none; }
+.rl-hide-scroll * { scrollbar-width: none; }
+
+
+/* ── 摘抄录入弹窗（rl-ex-*）── */
+.rl-ex-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.rl-ex-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.rl-ex-hint { font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.rl-ex-field { margin-bottom: 10px; }
+.rl-ex-label { display: block; font-size: var(--font-ui-smaller); color: var(--text-muted); margin-bottom: 4px; font-weight: 600; }
+.rl-ex-textarea { font-family: inherit; font-size: var(--font-ui-medium); line-height: 1.55; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: 6px; padding: 7px 10px; width: 100%; resize: vertical; }
+.rl-ex-input { font-family: inherit; font-size: var(--font-ui-medium); border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: 6px; padding: 6px 10px; width: 100%; }
+.rl-ex-input:focus, .rl-ex-textarea:focus { outline: none; border-color: var(--interactive-accent); }
+.rl-ex-row { display: flex; gap: 10px; }
+.rl-ex-grow { flex: 1; }
+.rl-ex-book-list { border: 1px solid var(--background-modifier-border); border-radius: 6px; overflow: hidden; margin-top: 4px; max-height: 180px; overflow-y: auto; }
+.rl-ex-book-item { display: flex; align-items: baseline; gap: 8px; padding: 7px 11px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer; font-size: var(--font-ui-medium); color: var(--text-normal); position: relative; }
+.rl-ex-book-item:last-child { border-bottom: none; }
+.rl-ex-book-item:hover { background: var(--background-modifier-hover); }
+.rl-ex-book-item.sel { background: var(--interactive-accent); color: var(--text-on-accent); }
+.rl-ex-book-ttl { font-weight: 600; }
+.rl-ex-book-au { font-size: var(--font-ui-smaller); color: inherit; opacity: .8; }
+.rl-ex-book-check { margin-left: auto; font-weight: 700; }
+.rl-ex-empty { padding: 10px 12px; font-size: var(--font-ui-small); color: var(--text-faint); }
+.rl-ex-preview { border: 1px dashed var(--background-modifier-border); border-radius: 6px; padding: 8px 12px; font-size: var(--font-ui-small); color: var(--text-muted); margin-bottom: 10px; }
+.rl-ex-preview-muted { color: var(--text-faint); }
+.rl-ex-preview-lbl { font-weight: 600; color: var(--text-normal); margin-bottom: 4px; }
+.rl-ex-preview-fname { font-weight: 400; color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.rl-ex-preview-md { font-family: var(--font-monospace); font-size: var(--font-ui-smaller); white-space: pre-wrap; background: var(--background-secondary); border-radius: 6px; padding: 6px 9px; margin: 0; }
+.rl-ex-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.rl-ex-fixed-book { font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 6px 10px; }
+/* 阅读器回写弹窗：引用只读灰色块 */
+.rl-ex-quote { font-size: var(--font-ui-medium); line-height: 1.55; color: var(--text-muted); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 7px 10px; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow-y: auto; }
+.rl-ex-quote:empty { color: var(--text-faint); }
+
+/* ── G 双写冲突确认弹窗（NoteConflictModal） ── */
+.rl-nc-icon { font-size: 28px; text-align: center; margin-bottom: 8px; }
+.rl-nc-desc { font-size: var(--font-ui-medium); color: var(--text-muted); margin: 8px 0 16px; line-height: 1.6; }
+.rl-nc-ops { display: flex; justify-content: flex-end; gap: 8px; }
+/* .rl-nc-danger 危险按钮并入统一 danger 体系（见统一按钮区块） */
+
+/* ── 从 Bangumi 导入弹窗（ImportBangumiModal） ── */
+.rl-import-modal h2 { font-size: 15px; margin: 0 0 8px; }
+.rl-import-hint { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; }
+.rl-import-label { display: block; font-size: var(--font-ui-smaller); color: var(--text-faint); margin: 10px 0 4px; }
+.rl-import-uid { width: 100%; }
+.rl-import-check { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: var(--font-ui-small); }
+.rl-import-check input { margin: 0; }
+.rl-import-status { min-height: 18px; font-size: var(--font-ui-smaller); color: var(--interactive-accent); margin: 10px 0 4px; }
+.rl-import-ops { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+/* ── 统一按钮体系（rl-btn 唯一基准，紧凑 Obsidian 尺寸）：rl-ex-btn/rl-day-btn 等历史别名并入；danger 危险操作统一红边红字 → hover 红底白字 ── */
+.rl-btn, .rl-ex-btn, .rl-day-btn {
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    border-radius: 6px;
+    padding: 4px 12px;
+    cursor: pointer;
+}
+.rl-btn-primary, .rl-ex-btn-primary { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
+.rl-btn:disabled, .rl-ex-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* 危险操作统一（nc-danger / day-btn-danger / EntryForm rl-btn-danger 同交互） */
+.rl-btn-danger, .rl-nc-danger, .rl-day-btn-danger {
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    border-radius: 6px;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-error);
+    border-color: var(--text-error);
+    background: transparent;
+}
+.rl-btn-danger:hover, .rl-nc-danger:hover, .rl-day-btn-danger:hover {
+    background: var(--text-error);
+    color: #fff;
+    border-color: var(--text-error);
+}
+
+/* ── 适配 Obsidian 正文字体：插件内容区（编辑表单根）跟随 --font-text ── */
+.rl-form-root { font-family: var(--font-text); }
+
+/* ── 观看来源选择弹窗（LinkPickerModal） ── */
+.rl-linkpick-title { font-weight: 600; color: var(--text-normal); }
+.rl-linkpick-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; margin-bottom: 14px; }
+.rl-linkpick-row { display: flex; align-items: center; gap: 12px; padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--background-modifier-border); transition: background .12s ease; }
+.rl-linkpick-row:last-child { border-bottom: none; }
+.rl-linkpick-row:hover, .rl-linkpick-row:focus-visible { background: var(--background-modifier-hover); outline: none; }
+.rl-linkpick-label { flex: none; min-width: 88px; font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); }
+.rl-linkpick-url { flex: 1 1 auto; font-size: var(--font-ui-small); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+
+/* ── 本地剧集集数选择弹窗（EpisodePickerModal） ── */
+.rl-eps-title { font-weight: 600; color: var(--text-normal); }
+.rl-eps-grid { display: flex; flex-wrap: wrap; gap: 8px; max-height: 320px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 12px; margin-bottom: 14px; }
+.rl-eps-btn {
+    width: auto; min-width: 44px; padding: 0 10px; height: 34px; font-family: inherit; font-size: var(--font-ui-small);
+    border: 1px solid var(--background-modifier-border); background: var(--background-primary);
+    color: var(--text-muted); border-radius: 6px; cursor: pointer;
+    transition: background .12s ease;
+}
+.rl-eps-btn.linked { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
+.rl-eps-btn.linked:hover { filter: brightness(1.08); }
+.rl-eps-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── H 孤儿封面清理弹窗（PosterCleanupModal） ── */
+.rl-pc-desc { font-size: var(--font-ui-medium); color: var(--text-muted); margin: 8px 0 12px; line-height: 1.6; }
+.rl-pc-empty { font-size: var(--font-ui-medium); color: var(--text-faint); padding: 20px 0; text-align: center; }
+.rl-pc-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; margin-bottom: 14px; }
+.rl-pc-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--background-modifier-border); }
+.rl-pc-row:last-child { border-bottom: none; }
+.rl-pc-name { font-size: var(--font-ui-small); font-family: var(--font-monospace); color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl-pc-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── 支持作者（样式参考 LyricFlux about 区） ── */
+.rl-about {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: var(--background-secondary);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin: 8px 0 4px;
+}
+.rl-about-text { min-width: 0; }
+.rl-about-title { font-weight: 400; }
+.rl-about-desc { color: var(--text-muted); font-size: var(--font-ui-small); margin-top: 2px; }
+.rl-about-buttons { display: flex; gap: 8px; flex-shrink: 0; }
+.rl-about-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--background-modifier-border) !important;
+    background: var(--background-primary) !important;
+    color: var(--text-normal) !important;
+    cursor: pointer;
+    font-size: var(--font-ui-small);
+    white-space: nowrap;
+}
+.rl-about-btn:hover { background: var(--background-modifier-hover) !important; }
+/* 爱发电按钮：始终主题高亮实底（同 LyricFlux about 区），不被 Obsidian 默认按钮样式覆盖 */
+.rl-about-btn-accent {
+    background: var(--text-accent) !important;
+    border-color: var(--text-accent) !important;
+    color: var(--text-on-accent) !important;
+}
+.rl-about-btn-accent:hover {
+    background: var(--text-accent-hover) !important;
+    color: var(--text-on-accent) !important;
+}
+
+/* ── 书籍阅读器（rl-read-*，TXT 阅读器弹窗） ── */
+.rl-reader {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    font-family: var(--font-text);
+    /* Obsidian .modal 默认 user-select:none，覆盖允许正文选中（批注/摘录依赖） */
+    user-select: text;
+    /* 定位上下文：让 .rl-reader-head 以本容器为包含块做 absolute 悬浮 */
+    position: relative;
+}
+/* 批1.5 软件式沉浸：rl-reader-immersive 加在 Modal 的 modalEl 上，覆盖 Obsidian 原生 modal 骨架
+   （去标题栏/圆角/阴影，拉满近屏）。用 display:none 覆盖而非删除 DOM——结构为 Obsidian 未公开，
+   若某版本失效则外观降级为普通弹窗，功能不受影响。仅限本类作用域，不影响插件其他弹窗。 */
+.modal.rl-reader-immersive {
+    width: 97vw;
+    max-width: none;
+    height: 95vh;
+    max-height: none;
+    border-radius: 0;
+    box-shadow: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+.modal.rl-reader-immersive .modal-title { display: none; }
+.modal.rl-reader-immersive .modal-close { display: none; }
+.modal.rl-reader-immersive .modal-content,
+.modal.rl-reader-immersive .modal-body {
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+}
+/* 去弹窗半透明遮罩背景（保留 .modal-bg 父容器布局，避免连带隐藏子 .modal 阅读器） */
+body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
+/* 阅读器改为 Obsidian 视图后：contentEl 即 .view-content，去默认滚动/内边距，由内部布局接管 */
+.view-content.rl-reader {
+    padding: 0;
+    overflow: hidden;
+}
+/* 顶栏：半透明渐变悬浮浮层（跟随系统明暗）。absolute 于 .rl-reader 顶部，不占文档流，正文可下穿。
+   常驻显示（批1 G6 已撤销自动隐藏）。 */
+.rl-reader-head {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    /* 半透明渐变浮层：顶部实色保可读，向下渐隐到透明 */
+    background: linear-gradient(to bottom,
+        var(--background-primary) 0%,
+        color-mix(in srgb, var(--background-primary) 60%, transparent) 55%,
+        transparent 100%);
+    flex-shrink: 0;
+}
+/* 自动隐藏头部：translateY 上移出视野（仍占位，布局不塌陷），仅状态切换时生效 */
+.rl-reader-head.hidden {
+    transform: translateY(-105%);
+    opacity: 0;
+    pointer-events: none;
+}
+.rl-reader-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.rl-reader-title-icon { display: flex; color: var(--text-muted); }
+.rl-reader-title {
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
+    color: var(--text-normal);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 阅读进度百分比（头部「已读 X% · 剩余 Y%」） */
+.rl-reader-prog {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.rl-reader-ops {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    flex-shrink: 0;
+    /* 设置下拉（.rl-reader-menu）的定位上下文：右对齐本组底边弹出 */
+    position: relative;
+}
+.rl-reader-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 4px 10px;
+}
+.rl-reader-close svg { width: 14px; height: 14px; }
+/* 侧栏折叠开关（头部最左，图标按钮，无文字） */
+.rl-reader-sidebar-toggle svg { width: 16px; height: 16px; }
+/* 顶栏左快捷入口（书签/批注/翻译/高亮，图标按钮） */
+.rl-reader-quick { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.rl-reader-quick .rl-reader-btn { padding: 4px 8px; }
+.rl-reader-quick svg { width: 16px; height: 16px; }
+.rl-reader-quick .rl-reader-btn:disabled,
+.rl-reader-quick .rl-reader-btn.rl-reader-btn-disabled { opacity: 0.4; cursor: default; }
+/* 顶栏快捷按钮「标注模式锁」激活态：强调底反白，保持变色提示进入标注模式 */
+.rl-reader-quick .rl-reader-btn.rl-quick-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+.rl-reader-quick .rl-reader-btn.rl-quick-active svg { color: var(--text-on-accent); }
+/* 头部左侧 pane 切换键组（目录/书签/摘抄，图标按钮；激活态复用 .rl-reader-btn.active） */
+.rl-reader-toc-toggles { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.rl-reader-toc-toggles .rl-reader-btn { padding: 4px 8px; }
+.rl-reader-toc-toggles svg { width: 14px; height: 14px; }
+/* 批注开关：开启态主题色高亮（选中文本可回写摘抄） */
+.rl-reader-annotate.on {
+    background: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+}
+.rl-reader-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    /* 为悬浮顶栏留白（C-1a：正文首行与侧栏 tab 不被顶栏压住）；值以 head 实际高度微调 */
+    padding-top: 54px;
+    box-sizing: border-box;
+}
+/* 左侧目录列：220px，可折叠 */
+.rl-reader-toc {
+    width: 220px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    min-height: 0;
+    transition: width 0.15s;
+}
+.rl-reader-toc.collapsed { width: 0; border-right: none; overflow: hidden; }
+.rl-reader-toc-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2px 6px 10px;
+}
+.rl-reader-toc-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: none;
+    padding: 5px 8px;
+    margin: 1px 0;
+    border-radius: 4px;
+    font-size: var(--font-ui-small);
+    line-height: 1.4;
+    color: var(--text-muted);
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: inherit;
+}
+.rl-reader-toc-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.rl-reader-toc-item.active { background: var(--interactive-accent); color: var(--text-on-accent); }
+/* 目录/书签双 tab */
+.rl-reader-toc-tabs {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.rl-reader-toc-tab {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 7px 0;
+    font-size: var(--font-ui-small);
+    font-weight: 500;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+}
+.rl-reader-toc-tab:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.rl-reader-toc-tab.active {
+    color: var(--interactive-accent);
+    font-weight: 600;
+    box-shadow: inset 0 -2px 0 var(--interactive-accent);
+}
+.rl-reader-toc-pane { flex: 1; overflow-y: auto; padding: 2px 6px 10px; display: flex; flex-direction: column; }
+.rl-reader-toc-pane.hidden { display: none; }
+.rl-reader-ex-list { overflow-y: auto; padding: 2px 0 10px; }
+.rl-reader-ex-empty {
+    padding: 8px 8px;
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+}
+.rl-reader-ex-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    margin: 1px 0;
+    border-radius: 4px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.rl-reader-ex-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.rl-reader-ex-quote {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-reader-ex-loc {
+    flex-shrink: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--interactive-accent);
+    white-space: nowrap;
+}
+.rl-reader-ex-loc.none { color: var(--text-faint); }
+/* 摘抄 pane 顶部「高亮」标注区：计数 + 「清除全部」头 + 列表（黄标前缀，区别于摘抄） */
+.rl-reader-hl-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding-right: 8px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.rl-reader-ex-hlcount {
+    flex: 1;
+    padding: 8px 8px 2px;
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-semibold);
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+.rl-reader-hl-head .rl-hl-clearall {
+    padding: 2px 8px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    margin-bottom: 4px;
+}
+.rl-reader-hl-head .rl-hl-clearall:hover { color: var(--text-error); border-color: var(--text-error); }
+.rl-hl-clearall-busy { opacity: 0.5; pointer-events: none; }
+.rl-reader-hl-list { padding: 0 0 6px; }
+.rl-reader-hl-empty {
+    padding: 4px 8px;
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+}
+.rl-reader-hl-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px 5px 16px;
+    margin: 1px 0;
+    border-radius: 4px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.rl-reader-hl-item::before {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 5px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--text-highlight-bg, #f2cc60);
+}
+.rl-reader-hl-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.rl-reader-hl-quote {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-reader-hl-loc {
+    flex-shrink: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--interactive-accent);
+    white-space: nowrap;
+}
+.rl-reader-hl-loc.none { color: var(--text-faint); }
+/* 摘抄书签跳转高亮（正文段落短暂高亮；Obsidian 内置高亮变量，亮/暗主题自适应） */
+.rl-excerpt-hl {
+    background: var(--text-highlight-bg);
+    border-radius: 2px;
+}
+/* 页内持久高亮 mark（一键即黄即记；随系统明暗的半透明黄，覆盖正文而非文本） */
+.rl-hl-persist {
+    background: color-mix(in srgb, var(--text-highlight-bg, #f2cc60) 55%, transparent);
+    border-radius: 2px;
+    padding: 0 1px;
+}
+/* 右侧正文滚动区 */
+.rl-reader-scroll {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 20px 24px 40vh;
+    background: var(--background-primary);
+}
+.rl-reader-chapter-title {
+    font-size: 1.35em;
+    font-weight: 700;
+    line-height: 1.5;
+    margin: 0 auto 1em;
+    color: var(--text-normal);
+    text-align: center;
+}
+/* 正文：max-width 680px 居中，行距 1.8，段距 1em，跟随 --font-text */
+.rl-reader-text {
+    max-width: 680px;
+    margin: 0 auto;
+    font-family: var(--font-text);
+    line-height: 1.8;
+    font-size: 16px;
+}
+.rl-reader-text p { margin: 0 0 1em; color: var(--text-normal); }
+.rl-reader-text p:last-child { margin-bottom: 0; }
+/* 翻页模式（D4b，方案 v3）：scrollEl 自身作为 CSS 多列容器 + JS scrollLeft 程序化翻页。
+   依据 Readium/zotero/epub.js/foliate-js：整章内容(title+段落)作为一列流，column-width=可视内容宽、
+   column-fill:auto 让 CSS 自然按视口高分列，列向右侧排开 → 翻页=JS scrollLeft 跳到对应页。
+   **不暴露横向滚动条**：overflow:hidden 禁用原生拖拽翻页（用户在滑动条上左右拖动不算真翻页），
+   仅靠按钮/手势/键盘走 goToPage 平滑动画（scroll-snap 风格）。 */
+.rl-reader-scroll.rl-paged {
+    overflow: hidden;
+    /* 连续模式的 40vh 大底距会让列高被过度拉高（列=一屏会被撑破）→ 翻页改小底距 */
+    padding-bottom: 20px;
+    /* 列 gap：视觉页间缝（epub.js/readium 用 column-gap 兼作列间距） */
+    column-gap: 2px;
+    column-fill: auto;
+    /* 禁用横向触摸滚动（不暴露滚动条+屏蔽手势以避免用户拖动变回滑动条行为） */
+    touch-action: pan-y;
+}
+.rl-reader-scroll.rl-paged .rl-reader-text {
+    overflow: visible;
+    /* max-width 由 JS 设为 none，textEl 不再被 680px 限制 → 内容参与 scrollEl 的多列流 */
+    max-width: none;
+    /* 取消连续模式的花哨居中，避免干扰列布局（列排布由 scrollEl column-width 决定） */
+    margin: 0;
+}
+/* EPUB 阅读器：右侧 iframe 渲染区（目录列复用 rl-reader-toc） */
+.rl-reader-frame {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    background: var(--background-primary);
+}
+.rl-reader-frame iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--background-primary);
+}
+/* 双页/单页切换按钮激活态提示 */
+.rl-reader-btn.active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+/* ── 阅读器基础外壳（batch1：书签面板 / 底部工具条 / 选择浮动条；主题随 Obsidian） ── */
+/* 书签面板：镜像摘抄面板类（新命名空间），目录/书签双 tab 第二页 */
+.rl-reader-bm-pane {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2px 6px 10px;
+    display: flex;
+    flex-direction: column;
+}
+.rl-reader-bm-pane.hidden { display: none; }
+.rl-reader-bm-empty {
+    padding: 8px 8px;
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+    text-align: center;
+}
+.rl-reader-bm-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    margin: 1px 0;
+    border-radius: 4px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.rl-reader-bm-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.rl-reader-bm-quote {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-reader-bm-loc {
+    flex-shrink: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--interactive-accent);
+    white-space: nowrap;
+}
+.rl-reader-bm-loc.none { color: var(--text-faint); }
+
+/* 底部工具条：半透明底栏，章节标签 + 阅读进度 + 百分比 + 翻页按钮 */
+.rl-reader-footer {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 14px;
+    border-top: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    flex-shrink: 0;
+}
+.rl-reader-fch {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+.rl-reader-fprog {
+    flex: 1;
+    height: 6px;
+    border-radius: 2px;
+    background: var(--background-modifier-border);
+    overflow: hidden;
+}
+.rl-reader-fprog-fill {
+    width: 0;
+    min-width: 0;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--interactive-accent);
+}
+.rl-reader-fpct {
+    flex-shrink: 0;
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+    white-space: nowrap;
+}
+.rl-reader-fnav { display: flex; gap: 4px; flex-shrink: 0; }
+.rl-reader-fnav .rl-reader-btn { padding: 2px 8px; font-size: var(--font-ui-smaller); }
+.rl-reader-fnav svg { width: 14px; height: 14px; }
+
+/* 设置下拉菜单（≡ 按钮下方，T6）：绝对定位于 .rl-reader-ops 右下，Obsidian 卡片外观 */
+.rl-reader-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 100;
+    min-width: 212px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px var(--background-modifier-box-shadow);
+}
+.rl-reader-menu.hidden { display: none; }
+.rl-reader-menu-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 5px;
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+}
+.rl-reader-menu-label { color: var(--text-muted); flex-shrink: 0; }
+.rl-reader-menu-val {
+    min-width: 34px;
+    text-align: center;
+    color: var(--text-normal);
+    font-variant-numeric: tabular-nums;
+}
+/* 字号/行距 −/+ 小按钮（rl-btn 收窄） */
+.rl-reader-menu-btn { padding: 1px 8px; line-height: 1.6; }
+/* 滚动模式：原生复选框 label 行（连续滚动=当前可用 / 翻页式=后续版本占位移灰） */
+.rl-reader-menu-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 4px;
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    cursor: default;
+}
+.rl-reader-menu-check input[type="checkbox"] {
+    margin: 0;
+}
+/* 全屏行：整行按钮，与上部菜单分隔 */
+.rl-reader-menu-row.rl-reader-menu-fs {
+    justify-content: center;
+    width: 100%;
+    margin-top: 2px;
+    padding: 6px 8px;
+    border: none;
+    border-top: 1px solid var(--background-modifier-border);
+    border-radius: 0;
+    background: transparent;
+    font-family: inherit;
+    cursor: pointer;
+}
+.rl-reader-menu-row.rl-reader-menu-fs:hover:not(:disabled) { background: var(--background-modifier-hover); }
+.rl-reader-menu-row.rl-reader-menu-fs:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 选中文本浮动操作条（正文选区上方绝对定位） */
+.rl-selbar {
+    position: absolute;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: 0 2px 8px var(--background-modifier-box-shadow);
+}
+.rl-selbar.hidden { display: none; }
+.rl-selbar button {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-normal);
+    cursor: pointer;
+    font-family: inherit;
+}
+.rl-selbar button:hover { background: var(--background-modifier-hover); }
+.rl-selbar button.rl-selbar-disabled { color: var(--text-faint); cursor: default; opacity: 0.7; }
+.rl-selbar button.rl-selbar-disabled:hover { background: transparent; }
+
+/* 译文就地浮层卡片（划词翻译结果；挂 .rl-reader-body，absolute，z-index 低于动作条） */
+.rl-translate-card {
+    position: absolute;
+    z-index: 45;
+    width: 320px;
+    max-width: 80%;
+    border-radius: 8px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: 0 2px 12px var(--background-modifier-box-shadow);
+    font-size: var(--font-ui-small);
+}
+.rl-translate-card.hidden { display: none; }
+.rl-translate-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.rl-translate-card-title {
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+}
+.rl-translate-card-close {
+    padding: 0 4px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.rl-translate-card-close:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.rl-translate-card-body {
+    padding: 8px 10px 10px;
+    line-height: 1.7;
+    color: var(--text-normal);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 40vh;
+    overflow-y: auto;
+}
+.rl-translate-card-body.rl-translate-loading { color: var(--text-faint); }
+.rl-translate-card-body.rl-translate-error { color: var(--text-error); }
+
+
+/* ── 文件来源二选一弹窗（PickFileSourceModal，替代 Menu 定位问题） ── */
+.rl-pick-src { padding: 4px 0; }
+.rl-pick-src-grid { display: flex; flex-direction: column; gap: 8px; }
+.rl-pick-src-btn {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 12px 14px; text-align: left; font-family: inherit;
+    border: 1px solid var(--background-modifier-border); background: var(--background-primary);
+    border-radius: 6px; cursor: pointer; transition: background .12s ease, border-color .12s ease;
+}
+.rl-pick-src-btn:hover { background: var(--background-modifier-hover); border-color: var(--interactive-accent); }
+.rl-pick-src-icon { display: flex; color: var(--interactive-accent); margin-bottom: 4px; }
+.rl-pick-src-icon svg { width: 18px; height: 18px; }
+.rl-pick-src-name { font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); }
+
+/* ── PDF 阅读器（PdfReaderPanel：连续滚动 canvas + textLayer 摘抄） ── */
+/* 滚动容器：连续滚动 + 允许文本选中（textLayer 摘抄，防 Obsidian 全局拦截） */
+.rl-pdf-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    user-select: text;
+    background: var(--background-primary);
+    padding: 0;
+}
+.rl-pdf-pages {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 0 60vh;
+    gap: 14px;
+}
+/* 单页容器：相对定位（textLayer absolute 覆盖 canvas）；canvas 阴影区分页边界 */
+.rl-pdf-page {
+    position: relative;
+    flex-shrink: 0;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    background: #fff;
+}
+.rl-pdf-canvas {
+    display: block;
+    margin: 0 auto;
+}
+.rl-pdf-loading {
+    padding: 60px 0;
+    color: var(--text-muted);
+    text-align: center;
+}
+/* textLayer：pdf.js 官方样式适配（透明文本层覆盖 canvas，选中可见、可摘抄） */
+.rl-pdf-page .textLayer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    opacity: 1;
+    line-height: 1;
+    text-align: initial;
+    user-select: text;
+    transform-origin: 0 0;
+}
+.rl-pdf-page .textLayer span,
+.rl-pdf-page .textLayer br {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0% 0%;
+}
+.rl-pdf-page .textLayer ::selection {
+    background: rgba(0, 0, 255, 0.25);
+}
+.rl-pdf-page .textLayer span.rl-pdf-hl {
+    background: rgba(255, 200, 60, 0.4);
+    color: transparent;
+}
+/* 目录嵌套行（复用 rl-reader-toc-item 样式，嵌套缩进由行内 padding 控制） */
+.rl-reader-toc-row { display: flex; flex-direction: column; }
+
+/* ── 「添加条目」搜索结果区（全局兜底：与 EntryForm.svelte 的 Svelte scoped 样式重复，确保 Obsidian 重启/CSP 下也生效）── */
+.rl-res-head { display: flex; align-items: baseline; gap: 10px; margin: 8px 0 10px; }
+.rl-res-head-cnt { font-size: 12px; font-weight: 700; color: var(--text-normal); }
+.rl-res-head-cnt::before { content: ''; display: inline-block; width: 3px; height: 12px; border-radius: 2px; background: var(--interactive-accent); margin-right: 7px; vertical-align: -2px; }
+.rl-res-head-hint { font-size: 10px; color: var(--text-faint); }
+.rl-res { margin-top: 4px; flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 4px 0; max-height: 52vh; }
+.rl-res-item { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; font-family: inherit; font-size: 12px; border: 1px solid transparent; background: var(--background-primary); border-radius: 8px; padding: 6px 10px; cursor: pointer; color: var(--text-normal); line-height: 1.4; transition: background-color .12s, border-color .12s; }
+.rl-res-item:hover { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover, var(--background-modifier-border)); }
+.rl-res-item:focus-visible { outline: none; border-color: var(--interactive-accent); }
+.rl-res-cv { width: 48px; height: 72px; border-radius: 4px; flex: none; display: block; object-fit: contain; background-color: var(--background-secondary); overflow: hidden; }
+.rl-res-ph { display: flex; align-items: center; justify-content: center; background: var(--background-secondary); }
+.rl-res-ico { font-size: 20px; opacity: .7; }
+.rl-res-inf { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: center; padding-right: 4px; }
+.rl-res-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+.rl-res-row1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rl-res-t { font-weight: 600; font-size: 14px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.rl-res-row2 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--text-normal); min-width: 0; }
+.rl-res-yr { color: var(--text-muted); flex: none; }
+.rl-res-score { color: #d99a2b; font-weight: 700; flex: none; }
+.rl-res-o { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.rl-res-dot { color: var(--text-faint); flex: none; }
+.rl-res-source { font-size: 10px; color: var(--text-faint); flex: none; cursor: pointer; white-space: nowrap; font-weight: 500; user-select: none; padding: 2px 6px; border: 1px solid var(--background-modifier-border); border-radius: 4px; line-height: 1.5; }
+.rl-res-source:hover, .rl-res-source:focus-visible { color: var(--interactive-accent); outline: none; }
+
+/* ── 影视本地视频内嵌播放器（VideoPlayerModal）──
+   .rl-vp 加在 Modal modalEl 上：近全屏，黑底沉浸，video 等比居中，顶部控制条悬浮 */
+.modal.rl-vp {
+    border-radius: 10px;
+    padding: 0;
+}
+.modal.rl-vp .modal-title,
+.modal.rl-vp .modal-close { display: none; }
+.modal.rl-vp .modal-content,
+.modal.rl-vp .modal-body { padding: 0; height: 100%; overflow: hidden; }
+.rl-vp-root {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: #000;
+    position: relative;
+}
+/* 顶部控制条：绝对悬浮于视频上方（视频上缘/下缘 hover 不变，常驻半透明黑底） */
+.rl-vp-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 14px;
+    background: linear-gradient(to bottom, rgba(0,0,0,.78), rgba(0,0,0,0));
+}
+.rl-vp-title-wrap { min-width: 0; overflow: hidden; }
+.rl-vp-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-vp-ops { display: flex; align-items: center; gap: 6px; flex: none; }
+.rl-vp-btn {
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.25);
+    color: #fff;
+}
+.rl-vp-btn:hover { background: rgba(255,255,255,.24); color: #fff; }
+.rl-vp-btn:disabled { opacity: .35; cursor: not-allowed; }
+/* 视频区：撑满，黑底，flex 让 video 等比缩放居中 */
+.rl-vp-stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+}
+.rl-vp-stage video {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    background: #000;
+    outline: none;
+}

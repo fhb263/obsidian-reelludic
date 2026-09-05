@@ -138,3 +138,32 @@ export function xhtmlToText(html: string): string {
         .replace(/\s+/g, ' ')
         .trim();
 }
+
+/**
+ * 章节 fallback 标题提取（nav.xhtml/ncx 都缺时使用）：按 <h1> > <title> 优先级，
+ *  去 XML/HTML 注释 + 剥 inline 标签 + 折叠空白。**排除**等于书名的 title（常见扉页
+ *  chapter1.html 的 `<title>` 写的就是书名「活着」之类，无信息会污染目录，让调用方回退文件名）。
+ *  返回 undefined 表示未能从中提取出可识别标题，调用方应使用文件名兜底。
+ */
+export function extractChapterLabel(html: string, bookTitle: string): string | undefined {
+    if (!html) return undefined;
+    const strip = (raw: string): string =>
+        raw
+            .replace(/<!--[\s\S]*?-->/g, '')
+            .replace(/<[^>]+>/g, '') // 行内标签直接拼接，不插空格（与 xhtmlToText 一致，h1 拆解「第一章」正确）
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+            .replace(/\s+/g, ' ')
+            .trim();
+    const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+    if (h1) {
+        const t = strip(h1[1]);
+        if (t) return t;
+    }
+    const title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+    if (title) {
+        const t = strip(title[1]);
+        if (t && t !== bookTitle) return t;
+    }
+    return undefined;
+}
