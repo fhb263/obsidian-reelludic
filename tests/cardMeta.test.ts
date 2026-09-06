@@ -2,7 +2,7 @@
 // 卡片网格同列依赖 subtitle/creator 两行高度一致，数据缺失返回「—」占位
 // 保持行占位，避免同列卡片错位。
 import { describe, it, expect } from 'vitest';
-import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator } from 'pure/cardMeta';
+import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres } from 'pure/cardMeta';
 import type { MediaEntry } from 'data/types';
 
 /** 最小化构造器：测试只关心参与分支的字段，其余走 default 填充 */
@@ -111,5 +111,29 @@ describe('hasCardCreator 创作者行是否为真实内容', () => {
 
     it('全无 → false', () => {
         expect(hasCardCreator(entry({ type: 'movie' }))).toBe(false);
+    });
+});
+
+describe('cardGenres 卡片题材行（genres 前 2 个）', () => {
+    it('有题材：前 2 个以「 · 」连接', () => {
+        expect(cardGenres(entry({ type: 'anime', genres: ['战斗', '奇幻'] }))).toBe('战斗 · 奇幻');
+    });
+
+    it('超过 2 个题材：只取前 2 个', () => {
+        expect(cardGenres(entry({ genres: ['剧情', '喜剧', '犯罪'] }))).toBe('剧情 · 喜剧');
+    });
+
+    it('题材为空：返回占位符「—」（与作者/年份占位同款，保持行占位）', () => {
+        expect(cardGenres(entry({ type: 'anime' }))).toBe('—');
+    });
+});
+
+describe('hasCardGenres 题材行是否为真实内容', () => {
+    it('有题材 → true', () => {
+        expect(hasCardGenres(entry({ genres: ['冒险'] }))).toBe(true);
+    });
+
+    it('题材为空 → false', () => {
+        expect(hasCardGenres(entry({ type: 'anime' }))).toBe(false);
     });
 });

@@ -10,7 +10,13 @@
     let el: HTMLSpanElement | null = null;
 
     onMount(() => {
-        if (el) setIcon(el, icon);
+        if (el) {
+            try {
+                setIcon(el, icon);
+            } catch {
+                // 图标名在当前 Obsidian lucide 集不存在：保持空 span，不抛错破坏宿主布局
+            }
+        }
     });
 </script>
 

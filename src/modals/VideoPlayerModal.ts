@@ -73,10 +73,10 @@ export class VideoPlayerModal extends Modal {
         this.nextBtn = ops.createEl('button', { cls: 'rl-btn rl-vp-btn', text: '下一集 ›' });
         this.nextBtn.addEventListener('click', () => this.goto(this.cur + 1));
         const extBtn = ops.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-ext', text: '外部打开' });
-        extBtn.title = '改用系统播放器打开（mkv/HEVC 等内嵌解码不支持的格式用此兜底）';
+        extBtn.setAttribute('data-tip', '改用系统播放器打开（mkv/HEVC 等内嵌解码不支持的格式用此兜底）');
         extBtn.addEventListener('click', () => this.openExternal());
         const closeBtn = ops.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-close', text: '✕' });
-        closeBtn.title = '关闭播放器';
+        closeBtn.setAttribute('data-tip', '关闭播放器');
         closeBtn.addEventListener('click', () => this.close());
 
         // 视频区：黑底 flex 居中，等比缩放

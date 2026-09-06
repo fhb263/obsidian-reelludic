@@ -50,7 +50,7 @@ export class CalendarDayModal extends Modal {
             }
 
             const inf = row.createDiv({ cls: 'rl-day-inf' });
-            inf.createDiv({ cls: 'rl-day-t', text: e.title, attr: { title: e.title } });
+            inf.createDiv({ cls: 'rl-day-t', text: e.title, attr: { 'data-tip': e.title } });
             const meta = inf.createDiv({ cls: 'rl-day-meta' });
             meta.createSpan({ cls: 'rl-day-type', text: ENTRY_TYPE_LABELS[e.type] });
             if (e.year) meta.createSpan({ cls: 'rl-day-year', text: String(e.year) });
@@ -79,7 +79,7 @@ export class CalendarDayModal extends Modal {
             // 清除排期：删除此条目排期，计划观看日期置空（条目回到待排区）；
             // 弹窗保持打开并重绘——可连续清除当天多条排期，不必反复打开
             const clearBtn = ops.createEl('button', { cls: 'rl-day-btn rl-day-btn-danger', text: '清除排期' });
-            clearBtn.title = '删除此条目排期，日期置空';
+            clearBtn.setAttribute('data-tip', '删除此条目排期，日期置空');
             clearBtn.onclick = async () => {
                 await this.plugin.planEntry(e.id, '');
                 this.dayEntries = this.dayEntries.filter((x) => x.id !== e.id);

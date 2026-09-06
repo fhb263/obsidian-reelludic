@@ -213,7 +213,7 @@
             {:else}
                 <ul class="rl-timeline">
                     {#each activity as a}
-                        <li class="rl-tl-item" role="link" tabindex="0" title="打开笔记"
+                        <li class="rl-tl-item" role="link" tabindex="0" data-tip="打开笔记"
                             on:click={() => onOpenEntry(a.id)}
                             on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(a.id); }}>
                             <span class="rl-tl-dot" style={`background:${TYPE_COLORS[a.type]}`}></span>
@@ -248,7 +248,7 @@
                         <div class="rl-part-top-empty">本年暂无读完的书</div>
                     {:else}
                         {#each bookTop as e}
-                            <div class="rl-part-top-item" role="link" tabindex="0" title="打开笔记" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>★{e.rating} 《{e.title}》</div>
+                            <div class="rl-part-top-item" role="link" tabindex="0" data-tip="打开笔记" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>★{e.rating} 《{e.title}》</div>
                         {/each}
                     {/if}
                 </div>
@@ -269,7 +269,7 @@
                         <div class="rl-part-top-empty">本年暂无看完的影视</div>
                     {:else}
                         {#each mediaTop as e}
-                            <div class="rl-part-top-item" role="link" tabindex="0" title="打开笔记" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>★{e.rating} 《{e.title}》</div>
+                            <div class="rl-part-top-item" role="link" tabindex="0" data-tip="打开笔记" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>★{e.rating} 《{e.title}》</div>
                         {/each}
                     {/if}
                 </div>
@@ -289,7 +289,7 @@
                         <div class="rl-part-top-empty">本年暂无通关的游戏</div>
                     {:else}
                         {#each gameTop as e}
-                            <div class="rl-part-top-item" role="link" tabindex="0" title="打开笔记" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>★{e.rating} 《{e.title}》</div>
+                            <div class="rl-part-top-item" role="link" tabindex="0" data-tip="打开笔记" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>★{e.rating} 《{e.title}》</div>
                         {/each}
                     {/if}
                 </div>
@@ -309,7 +309,7 @@
                         <div class="rl-part-top-empty">本年暂无已听的歌</div>
                     {:else}
                         {#each musicTop as e}
-                            <div class="rl-part-top-item" role="link" tabindex="0" title="打开笔记" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>★{e.rating} 《{e.title}》</div>
+                            <div class="rl-part-top-item" role="link" tabindex="0" data-tip="打开笔记" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>★{e.rating} 《{e.title}》</div>
                         {/each}
                     {/if}
                 </div>
@@ -340,7 +340,7 @@
                     {#each wantList as e}
                         <li>
                             <span class="rl-want-type">{ENTRY_TYPE_LABELS[e.type]}</span>
-                            <span class="rl-want-title" role="link" tabindex="0" title="打开笔记" on:click={() => { wantOpen = false; onOpenEntry(e.id); }} on:keydown={(ev) => { if (ev.key === 'Enter') { wantOpen = false; onOpenEntry(e.id); } }}>{e.title}</span>
+                            <span class="rl-want-title" role="link" tabindex="0" data-tip="打开笔记" on:click={() => { wantOpen = false; onOpenEntry(e.id); }} on:keydown={(ev) => { if (ev.key === 'Enter') { wantOpen = false; onOpenEntry(e.id); } }}>{e.title}</span>
                             <span class="rl-want-meta">{e.year ?? ''}{e.plannedDate ? ` · 计划 ${fmtDate(e.plannedDate)}` : ''}</span>
                         </li>
                     {/each}

@@ -3,11 +3,12 @@
     import { MEDIA_STATUSES, canTransition } from 'pure/status';
     import type { SortBy } from 'pure/search';
     import { statusLabel } from 'pure/labels';
-    import { actionAriaLabel, actionIcon, actionMenuTitle, actionUnavailableHint, hasActionEntry } from 'pure/actionLabel';
+    import { actionAriaLabel, actionIcon, actionMenuTitle, actionReadyHint, actionUnavailableHint, hasActionEntry } from 'pure/actionLabel';
     import { starString, starClass } from 'pure/rating';
     import { filterAndSort } from 'pure/search';
     import { groupMusicByArtist } from 'pure/musicGroup';
-    import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator } from 'pure/cardMeta';
+    import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres } from 'pure/cardMeta';
+    import { resolveAddType } from 'pure/focusType';
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS, TYPE_COLORS, type ColorTheme, type EntryType } from 'data/types';
     import type { MediaEntry, MediaStatus } from 'data/types';
     import Icon from './Icon.svelte';
@@ -21,6 +22,8 @@
     export let onOpenLink: (url: string) => void = () => {};
     /** 主操作按钮（影视观看/书籍阅读/游戏启动/音乐播放）：plugin 层按类型分流执行 */
     export let onWatch: (e: MediaEntry) => void = () => {};
+    /** 右键「动词 · 去关联」直达：无入口时点主操作 → 快捷关联弹窗（不再整表单跳转） */
+    export let onQuickAssociate: (e: MediaEntry) => void = () => {};
     export let onSetStatus: (id: string, s: MediaStatus) => Promise<void> = async () => {};
     export let onMarkUpdated: (id: string) => Promise<void> = async () => {};
     export let onDeleteEntry: (id: string) => Promise<void> = async () => {};
@@ -145,13 +148,18 @@
     const statusChips: (MediaStatus | 'all')[] = ['all', 'want', 'watching', 'watched', 'archived'];
     /** 类型筛选 chips：受 typePool 限制（聚合页签仅影视三类）；null 时显示全部类型 */
     $: typeChips = (['all'] as ('all' | EntryType)[]).concat(typePool ?? ENTRY_TYPES);
-    /** 排序下拉选项（阶段6 极简：一项带默认方向，替代 5 chips 双状态翻转） */
+    /** 排序下拉选项：每项排序成对提供正/反向（标题 A-Z/Z-A；其余 ↓=新/高在前，↑=旧/低在前）——底层 filterAndSort 12 向已实现，仅下拉曾砍剩默认方向 */
     const SORT_OPTIONS: { value: SortBy; label: string }[] = [
         { value: 'recent', label: '最近更新 ↓' },
+        { value: 'recent-asc', label: '最近更新 ↑' },
         { value: 'release-desc', label: '发布日期 ↓' },
+        { value: 'release-asc', label: '发布日期 ↑' },
         { value: 'title-asc', label: '标题 A-Z' },
+        { value: 'title-desc', label: '标题 Z-A' },
         { value: 'score-desc', label: '大众评分 ↓' },
+        { value: 'score-asc', label: '大众评分 ↑' },
         { value: 'myrating-desc', label: '个人评分 ↓' },
+        { value: 'myrating-asc', label: '个人评分 ↑' },
     ];
 
     /** 概览量词（阶段6）：当前过滤类型确定时用类型量词，总库用「项媒体」 */
@@ -177,11 +185,6 @@
     /** 大众评分来源标签（阶段6：★ 8.3 豆瓣） */
     function sourceLabel(s: string | undefined): string {
         return s === 'douban' ? '豆瓣' : s === 'tmdb' ? 'TMDB' : s === 'bangumi' ? 'Bangumi' : s === 'google' ? 'Google' : s === 'openlibrary' ? 'Open Library' : '';
-    }
-
-    /** 卡片标签行：genres 前 2 个（阶段6 知识库感，防信息过载） */
-    function tagText(e: MediaEntry): string {
-        return e.genres.slice(0, 2).join(' · ');
     }
 
     // C2 搜索防抖：输入 300ms 后才过滤，百级条目不卡
@@ -317,26 +320,15 @@
     function closeCtx() {
         ctxFor = null;
     }
-    /** 直达观看：影视类右键主操作——有条目链接直接打开第一个；无链接打开编辑表单让用户补充观看链接 */
-    function ctxWatch(e: MediaEntry) {
-        closeCtx();
-        if (e.links.length > 0) onOpenLink(e.links[0].url);
-        else onEditEntry(e.id);
-    }
-    /** 类型化主操作（书籍阅读 / 游戏启动 / 音乐播放）：入口可用直接执行；不可用跳编辑表单去关联 */
+    /** 类型化主操作（阅读/观看/播放/启动）：入口可用直接执行；不可用 → 快捷关联弹窗直达（不再先开编辑表单） */
     function ctxPrimary(e: MediaEntry) {
         closeCtx();
         if (hasActionEntry(e)) onWatch(e);
-        else onEditEntry(e.id);
+        else onQuickAssociate(e);
     }
-    /** 右键主操作 title：可用=操作描述；不可用=去关联提示 */
+    /** 右键主操作 title：可用=实际动作描述；不可用=去关联提示（点击直达快捷关联弹窗） */
     function ctxPrimaryHint(e: MediaEntry): string {
-        if (hasActionEntry(e)) {
-            if (e.type === 'book') return '打开书籍文件（外部/内置阅读器）';
-            if (e.type === 'game') return '通过 .lnk 快捷方式启动游戏';
-            return '播放本地音频';
-        }
-        return actionUnavailableHint(e.type);
+        return hasActionEntry(e) ? actionReadyHint(e.type) : actionUnavailableHint(e.type);
     }
     async function ctxDelete(e: MediaEntry) {
         closeCtx();
@@ -423,7 +415,8 @@
         aria-label="搜索条目"
         on:keydown={(ev) => { if (ev.key === 'Escape') searchText = ''; }}
     />
-    <button class="rl-add mod-cta" on:click={() => onAdd(lockType ?? undefined)}><Icon icon="plus" size={14} /> 添加</button>
+    <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/电视剧/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType -->
+    <button class="rl-add mod-cta" on:click={() => onAdd(resolveAddType(lockType, typeFilter))}><Icon icon="plus" size={14} /> 添加</button>
     <span class="rl-libstats" aria-label="库概览">
         <span class="rl-libstats-total">{statusCounts.all} {overviewUnit}</span>
     </span>
@@ -486,7 +479,7 @@
             <option value={-1}>清除评分</option>
         </select>
         <input class="rl-batch-tags" placeholder="批量标签（逗号分隔）" bind:value={bulkTagsText} aria-label="批量标签" />
-        <button class="rl-batch-btn" disabled={!bulkStatus && !bulkRating && !bulkTagsText.trim()} on:click={applyBulkAll} title="应用到选中条目">应用</button>
+        <button class="rl-batch-btn" disabled={!bulkStatus && !bulkRating && !bulkTagsText.trim()} on:click={applyBulkAll} data-tip="应用到选中条目">应用</button>
         <button class="rl-batch-btn rl-batch-danger" on:click={bulkDelete}>删除</button>
         <button class="rl-batch-btn" on:click={clearSelection}>取消选择</button>
     </div>
@@ -505,15 +498,15 @@
                         <div class="rl-music-cov rl-music-cov-ph" aria-hidden="true"><Icon icon="music" size={15} /></div>
                     {/if}
                     <div class="rl-music-info">
-                        <div class="rl-music-title" title={e.title}>{e.title}</div>
-                        <div class="rl-music-sub" title={hasCardSubtitle(e) ? cardSubtitle(e) : ''}>{cardSubtitle(e)}</div>
+                        <div class="rl-music-title" data-tip={e.title}>{e.title}</div>
+                        <div class="rl-music-sub" data-tip={hasCardSubtitle(e) ? cardSubtitle(e) : ''}>{cardSubtitle(e)}</div>
                     </div>
                     <div class="rl-music-meta">
                         <span class="rl-badge rl-badge-{e.status}" on:click={(ev) => { ev.stopPropagation(); toggleMenu(e.id); }}>
                             {statusIcon(e.status)} {statusLabel(e.type, e.status)}
                         </span>
                         {#if e.rating > 0}
-                            <span class="rl-my-inline" title="我的评分">{starString(e.rating)}</span>
+                            <span class="rl-my-inline" data-tip="我的评分">{starString(e.rating)}</span>
                         {/if}
                     </div>
                     <div class="rl-music-ops">
@@ -566,31 +559,33 @@
                     {/if}
                 </div>
                 <div class="rl-card-meta">
-                    <div class="rl-ttl" title={e.title}>{e.title}</div>
+                    <div class="rl-ttl" data-tip={e.title}>{e.title}</div>
                     <!-- 海报墙防错位：subtitle/creator 两行始终渲染，缺失字段显示「—」占位
                          保证同列卡片元信息行数恒定（卡片 #1 vs #2 vs #3 高度齐平） -->
-                    <div class="rl-sub" title={hasCardSubtitle(e) ? cardSubtitle(e) : ''}>{cardSubtitle(e)}</div>
-                    <div class="rl-creator" title={hasCardCreator(e) ? cardCreator(e) : ''}>{cardCreator(e)}</div>
-                    {#if tagText(e)}
-                        <div class="rl-tags" title={e.genres.join(' · ')}>{tagText(e)}</div>
-                    {/if}
+                    <div class="rl-sub" data-tip={hasCardSubtitle(e) ? cardSubtitle(e) : ''}>{cardSubtitle(e)}</div>
+                    <div class="rl-creator" data-tip={hasCardCreator(e) ? cardCreator(e) : ''}>{cardCreator(e)}</div>
+                    <!-- 题材行恒渲染（缺题材显示「—」同款占位）：空题材卡片不再整行消失，行数恒定防同排错位 -->
+                    <div class="rl-tags" data-tip={hasCardGenres(e) ? e.genres.join(' · ') : ''}>{cardGenres(e)}</div>
                     {#if progressText(e) && e.type !== 'book'}
                         <div class="rl-prog">{progressText(e)}</div>
+                    {:else if e.type === 'game'}
+                        <!-- 游戏未填游玩时长：进度行恒渲染，「-」灰字空值占位（与已填「已玩 Xh」行高等高，防卡片错位） -->
+                        <div class="rl-prog rl-prog-na">-</div>
                     {/if}
                     <div class="rl-row1">
                         <span class="rl-badge rl-badge-{e.status}" on:click={(ev) => { ev.stopPropagation(); toggleMenu(e.id); }}>
                             {statusIcon(e.status)} {statusLabel(e.type, e.status)}
                         </span>
                         {#if e.rating > 0}
-                            <span class="rl-my-inline" title="我的评分">{starString(e.rating)}</span>
+                            <span class="rl-my-inline" data-tip="我的评分">{starString(e.rating)}</span>
                         {/if}
                         {#if scoreText(e)}
-                            <span class="rl-score" title={`大众评分（数据源：${sourceLabel(e.source) || '—'}）`}>★ {scoreText(e)}{sourceLabel(e.source) ? ` ${sourceLabel(e.source)}` : ''}</span>
+                            <span class="rl-score" data-tip={`大众评分（数据源：${sourceLabel(e.source) || '—'}）`}>★ {scoreText(e)}{sourceLabel(e.source) ? ` ${sourceLabel(e.source)}` : ''}</span>
                         {/if}
                     </div>
                     <div class="rl-row2">
                         {#if e.type === 'book' && (excerptCounts[e.id] ?? 0) > 0}
-                            <span class="rl-ex-cnt" title={`《${e.title}》摘抄 ${excerptCounts[e.id]} 条`}>摘抄 {excerptCounts[e.id]}</span>
+                            <span class="rl-ex-cnt" data-tip={`《${e.title}》摘抄 ${excerptCounts[e.id]} 条`}>摘抄 {excerptCounts[e.id]}</span>
                         {/if}
                     </div>
                     {#if readPct(e) !== undefined}
@@ -654,11 +649,11 @@
     <table class="rl-table">
         <tr>
             <th class="rl-col-cb"><input type="checkbox" bind:this={headCb} checked={allChecked} on:click={toggleSelectAll} aria-label="全选当前结果" /></th>
-            <th class="rl-th-sort" on:click={() => toggleSort('title')} title="按标题排序">标题{sortArrow('title')}</th>
-            <th class="rl-th-sort" on:click={() => toggleSort('year')} title="按年份排序">年份{sortArrow('year')}</th>
-            <th class="rl-th-sort" on:click={() => toggleSort('status')} title="按状态排序">状态{sortArrow('status')}</th>
-            <th class="rl-th-sort" on:click={() => toggleSort('score')} title="按大众评分排序">大众评分{sortArrow('score')}</th>
-            <th class="rl-th-sort" on:click={() => toggleSort('myrating')} title="按个人评分排序">个人评分{sortArrow('myrating')}</th>
+            <th class="rl-th-sort" on:click={() => toggleSort('title')} data-tip="按标题排序">标题{sortArrow('title')}</th>
+            <th class="rl-th-sort" on:click={() => toggleSort('year')} data-tip="按年份排序">年份{sortArrow('year')}</th>
+            <th class="rl-th-sort" on:click={() => toggleSort('status')} data-tip="按状态排序">状态{sortArrow('status')}</th>
+            <th class="rl-th-sort" on:click={() => toggleSort('score')} data-tip="按大众评分排序">大众评分{sortArrow('score')}</th>
+            <th class="rl-th-sort" on:click={() => toggleSort('myrating')} data-tip="按个人评分排序">个人评分{sortArrow('myrating')}</th>
             <th>进度</th>
             <th>操作</th>
         </tr>
@@ -716,20 +711,14 @@
                 on:click={(ev) => ev.stopPropagation()}
                 on:mousedown={(ev) => ev.stopPropagation()}
                 on:contextmenu={(ev) => ev.preventDefault()}>
-                {#if ctxEntry.type === 'book' || ctxEntry.type === 'game' || ctxEntry.type === 'music'}
-                    <button on:click={() => ctxPrimary(ctxEntry)} title={ctxPrimaryHint(ctxEntry)}>{actionMenuTitle(ctxEntry)}</button>
-                {/if}
+                <!-- 主操作（四类统一）：入口可用=动词直接执行；不可用=「动词 · 去关联」→ 快捷关联弹窗 -->
+                <button on:click={() => ctxPrimary(ctxEntry)} data-tip={ctxPrimaryHint(ctxEntry)}>{actionMenuTitle(ctxEntry)}</button>
                 <button on:click={() => { closeCtx(); onEditEntry(ctxEntry.id); }}>编辑条目</button>
                 {#if ctxEntry.type === 'book'}
-                    <button on:click={() => { closeCtx(); onAddExcerpt(ctxEntry); }} title="从外部阅读器复制文本，生成摘抄块">添加摘抄</button>
+                    <button on:click={() => { closeCtx(); onAddExcerpt(ctxEntry); }} data-tip="从外部阅读器复制文本，生成摘抄块">添加摘抄</button>
                 {/if}
                 {#if ctxEntry.type === 'game'}
-                    <button on:click={() => { closeCtx(); onOpenGameSessionModal(ctxEntry); }} title="日期 + 时长 + 心得，保存到游戏笔记">记录游玩</button>
-                {/if}
-                {#if ctxEntry.type !== 'book' && ctxEntry.type !== 'game' && ctxEntry.type !== 'music'}
-                    <button on:click={() => ctxWatch(ctxEntry)} title={ctxEntry.links.length > 0 ? '打开观看链接' : '无观看链接，打开编辑表单添加'}>
-                        直达观看{ctxEntry.links.length > 0 ? '' : ' · 去编辑'}
-                    </button>
+                    <button on:click={() => { closeCtx(); onOpenGameSessionModal(ctxEntry); }} data-tip="日期 + 时长 + 心得，保存到游戏笔记">记录游玩</button>
                 {/if}
                 <button class="rl-ctx-danger" on:click={() => ctxDelete(ctxEntry)}>删除条目</button>
             </div>
@@ -934,6 +923,8 @@
     .rl-stars-mid { color: #8a8a86; }
     .rl-stars-none { color: #b4b2a9; }
     .rl-prog { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    /* 游戏时长空值占位：灰字「-」（与已填「已玩 Xh」同字重区，弱化不抢眼） */
+    .rl-prog-na { color: var(--text-faint); }
     .rl-ex-cnt { font-size: 10px; font-weight: 600; color: var(--interactive-accent); background: var(--background-modifier-hover); border-radius: 999px; padding: 1px 7px; margin-left: auto; }
     /* 阅读进度行（阶段7+）：左百分比 + 进度条，垂直居中对齐；百分比 muted 小字随风格 */
     .rl-readrow { display: flex; align-items: center; gap: 6px; margin-top: 4px; }

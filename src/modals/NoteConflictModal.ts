@@ -28,10 +28,10 @@ export class NoteConflictModal extends Modal {
         });
         const ops = contentEl.createDiv({ cls: 'rl-nc-ops' });
         const keep = ops.createEl('button', { cls: 'mod-cta', text: '保留笔记改动' });
-        keep.title = '不重写笔记，保留你的手动编辑（库数据已保存）';
+        keep.setAttribute('data-tip', '不重写笔记，保留你的手动编辑（库数据已保存）');
         keep.onclick = () => this.finish('keep');
         const overwrite = ops.createEl('button', { cls: 'rl-nc-danger', text: '覆盖为库数据' });
-        overwrite.title = '用库数据重写笔记，你的手动编辑将被覆盖';
+        overwrite.setAttribute('data-tip', '用库数据重写笔记，你的手动编辑将被覆盖');
         overwrite.onclick = () => this.finish('overwrite');
     }
 

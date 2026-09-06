@@ -138,14 +138,20 @@ export function parseBangumiSubject(text: string): { rating?: number; ratingCoun
     };
 }
 
-/** 解析 /v0/subjects/{id}/persons 响应：导演/主演/制作公司（type=1 个人按职业拆分） */
+/** 解析 /v0/subjects/{id}/persons 响应：导演/主演/制作公司（type=1 个人按职业拆分）。
+ *  ⚠️ 真实响应为**裸数组** RelatedPerson[]（官方 OpenAPI 200 schema），历史实现误按
+ *  `{"data":[...]}` 包装解析导致恒返回空（导演永远取不到）——现两种形态都兼容。 */
 export function parseBangumiPersons(text: string): { director?: string; cast?: string[]; studio?: string } {
-    const obj = asRecord(JSON.parse(text));
-    if (!Array.isArray(obj.data)) return {};
+    const parsed: unknown = JSON.parse(text);
+    const wrap = asRecord(parsed);
+    const list: unknown[] = Array.isArray(parsed)
+        ? parsed
+        : (Array.isArray(wrap.data) ? wrap.data : []);
+    if (list.length === 0) return {};
     let director: string | undefined;
     let studio: string | undefined;
     const cast: string[] = [];
-    for (const item of obj.data) {
+    for (const item of list) {
         const p = asRecord(item);
         // type 兼容数字 1 或字符串 '1'（Bangumi API 不同版本可能返回字符串）
         const isPerson = p.type === 1 || p.type === '1';

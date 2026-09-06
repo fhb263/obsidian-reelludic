@@ -28,6 +28,7 @@ import { ConfirmModal } from 'modals/ConfirmModal';
 import { PickFileSourceModal } from 'modals/PickFileSourceModal';
 import { LinkPickerModal } from 'modals/LinkPickerModal';
 import { EpisodePickerModal } from 'modals/EpisodePickerModal';
+import { QuickAssociateModal, type QuickAssociateResult, type QuickAssocPickKind } from 'modals/QuickAssociateModal';
 import { ExcerptModal } from 'modals/ExcerptModal';
 import { ReaderExcerptModal } from 'modals/ReaderExcerptModal';
 import { GameSessionModal } from 'modals/GameSessionModal';
@@ -45,6 +46,8 @@ import { containerRootfile, parseOpf, parseTocNav, extractChapterLabel } from 'p
 import { sanitizePosterTitle, orphanCoverFiles } from 'pure/posterFile';
 import { toFileUrl } from 'pure/mediaFileUrl';
 import { isEmbeddableVideoPath, VIDEO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
+import { scanEpisodeNumbers } from 'pure/episodeScan';
+import { initGlobalTooltip } from 'services/globalTooltip';
 import { VideoPlayerModal, type EmbedVideoItem } from 'modals/VideoPlayerModal';
 import { mergeBySource, sortByRelevance } from 'pure/searchMerge';
 import { PROVIDER_META, resolveSourceChain, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
@@ -120,6 +123,8 @@ export default class ReelLudicPlugin extends Plugin {
     private readonly searchCache = createSearchCache<unknown>({ ttlMs: 30 * 60 * 1000, maxSize: 200 });
     /** sourceChains 上次持久化基线（JSON 串）：链配置变更时清搜索/更新检测缓存（见 saveSettings）。onload 时以磁盘加载值初始化 */
     private sourceChainBaselineJson = '';
+    /** 系统文件/目录选择器上次选中目录（会话级记忆）：逐集「浏览…」/批量检索接续上次位置（defaultPath） */
+    private lastSystemDir = '';
     /**
      * 辅助源 runner 注册表（T3）：新源接入 = 在 rebuildClients 里注册一行 runner，不再改搜索函数。
      * 链中含但未注册 runner 的源在搜索时静默跳过（aux=absent），保证「注册表/默认链先行、客户端分批落地」的中间态不回归。
@@ -162,6 +167,8 @@ export default class ReelLudicPlugin extends Plugin {
         this.rebuildClients();
 
         this.registerView(HOME_VIEW_TYPE, (leaf) => new HomeView(leaf, this));
+        // 全局统一 hover 提示（data-tip 自绘气泡，UI-GUIDE 规范；卸载自动清理）
+        this.register(initGlobalTooltip().destroy);
         // 书籍阅读器视图（新 Tab 打开，可拖出独立窗口）
 
         // 数据文件变更自动刷新（防抖兜底）：catalog.json / 条目笔记的创建、修改、删除
@@ -1276,6 +1283,71 @@ export default class ReelLudicPlugin extends Plugin {
         if (url) this.openExternalUrl(url);
     }
 
+    /** 海报墙/列表右键「动词 · 去关联」：无关联入口 → 打开快捷关联弹窗（书/游戏/音乐=本地路径；
+     *  影视=选集网络/本地源），保存由 saveQuickAssociate 落库 + 同步笔记 + 刷新视图 */
+    quickAssociateEntry(entry: MediaEntry): void {
+        new QuickAssociateModal(this.app, entry, {
+            pickFile: (kind) => this.pickForAssociate(kind),
+            probeBook: (path) => this.probeBookPages(path),
+            pickVideoDir: () => this.pickVideoDirPath(),
+            scanEpisodeDir: (dir) => this.scanEpisodeDir(dir),
+            save: (r) => this.saveQuickAssociate(entry, r),
+        }).open();
+    }
+
+    /** 系统文件选择器按类别分发（书=电子书 / 游戏=.lnk / 音乐=音频 / 影视=可关联视频容器） */
+    private pickForAssociate(kind: QuickAssocPickKind): Promise<string | undefined> {
+        switch (kind) {
+            case 'book': return this.pickBookFilePath();
+            case 'game': return this.pickGameLaunchPath();
+            case 'music': return this.pickLocalAudioPath();
+            case 'video': return this.pickLocalVideoPath();
+        }
+    }
+
+    /** 快捷关联保存：组装 patch →（书籍探本地基准 reconcile 进度）→ service.update → 同步笔记 → 刷新。
+     *  笔记外部修改冲突不弹确认（快捷关联改动面小；writeNote 内置摘抄区合并防覆写） */
+    private async saveQuickAssociate(entry: MediaEntry, r: QuickAssociateResult): Promise<void> {
+        const patch: Partial<MediaEntry> = {};
+        if (entry.type === 'book') {
+            patch.bookFile = r.bookFile?.trim() || undefined;
+            if (r.bookFile) {
+                const probe = await this.probeBookPages(r.bookFile);
+                if (probe) {
+                    const rec = reconcileBookProgress(entry.readingProgress ?? {}, probe as BookFileInfo);
+                    if (rec.readingProgress) patch.readingProgress = rec.readingProgress;
+                    if (rec.pageCount !== undefined) patch.pageCount = rec.pageCount;
+                }
+            }
+        } else if (entry.type === 'game') {
+            patch.gameLaunchPath = r.gameLaunchPath?.trim() || undefined;
+        } else if (entry.type === 'music') {
+            patch.audioPath = r.audioPath?.trim() || undefined;
+        } else {
+            patch.episodeFiles = r.episodeFiles;
+            patch.episodeUrls = r.episodeUrls;
+            patch.episodeTitles = r.episodeTitles;
+            if (entry.type !== 'movie' && r.totalEpisodes !== undefined) {
+                // 仅调整 totalEpisodes，保留既有剧集进度（season/episode/日期/历史）
+                const p = entry.progress;
+                patch.progress = {
+                    season: p?.season ?? 1,
+                    episode: p?.episode ?? 0,
+                    history: p?.history ?? [],
+                    ...(p?.lastWatchedDate !== undefined ? { lastWatchedDate: p.lastWatchedDate } : {}),
+                    totalEpisodes: r.totalEpisodes,
+                };
+            }
+        }
+        const merged = await this.service.update(entry.id, patch);
+        try {
+            await this.service.writeNote(merged.id);
+        } catch (e) {
+            new Notice('笔记同步失败：' + (e instanceof Error ? e.message : String(e)), 5000);
+        }
+        await this.refreshViews();
+    }
+
     /** 打开某剧集本地视频（海报墙/列表「观看」选集后）：受设置「内置播放器打开视频文件」控制——
      *  关闭（默认）→ 系统播放器打开文件；开启时按整剧 episodeFiles 收集可内嵌集建播放列表打开内置播放器
      *  （支持上一集/下一集）；所选集为 Chromium 不可内嵌格式（mkv/h265 等）→ 自动转系统播放器 */
@@ -1470,7 +1542,8 @@ export default class ReelLudicPlugin extends Plugin {
         });
     }
 
-    /** 系统文件选择器统一实现（Electron remote.dialog 返回绝对路径；toRel=true 转 vault 相对路径，库外保留绝对路径；input file 的 File.path 在 Obsidian 环境不可用） */
+    /** 系统文件选择器统一实现（Electron remote.dialog 返回绝对路径；toRel=true 转 vault 相对路径，库外保留绝对路径；input file 的 File.path 在 Obsidian 环境不可用）。
+     *  会话内记忆上次选中目录（defaultPath 续接：第 1 集选了文件夹，第 2 集浏览仍从该目录弹起）。 */
     private pickSystemFile(exts: string[], name: string, toRel: boolean): Promise<string | undefined> {
         const fromSystem = (): Promise<string | undefined> => {
             if (!Platform.isDesktopApp) return Promise.resolve(undefined);
@@ -1485,9 +1558,11 @@ export default class ReelLudicPlugin extends Plugin {
                             .showOpenDialog({
                                 filters: [{ name, extensions: exts }],
                                 properties: ['openFile'],
+                                defaultPath: this.lastSystemDir || undefined,
                             })
                             .then((res) => {
                                 const p = !res.canceled && res.filePaths[0] ? res.filePaths[0] : undefined;
+                                if (p) this.lastSystemDir = dirnameOf(p);
                                 resolve(p ? (toRel ? this.toVaultRelPath(p) : p) : undefined);
                             });
                     } else resolve(undefined);
@@ -1497,6 +1572,60 @@ export default class ReelLudicPlugin extends Plugin {
             });
         };
         return this.pickFileDual(exts, name, fromSystem);
+    }
+
+    /** 选视频文件夹（「从文件夹检索剧集」目录选择器）：系统 openDirectory；同样接续上次浏览目录 */
+    pickVideoDirPath(): Promise<string | undefined> {
+        if (!Platform.isDesktopApp) return Promise.resolve(undefined);
+        return new Promise((resolve) => {
+            try {
+                const electron = require('electron') as {
+                    remote?: { dialog?: { showOpenDialog(opts: unknown): Promise<{ canceled: boolean; filePaths: string[] }> } };
+                };
+                const dialog = electron.remote?.dialog;
+                if (!dialog) {
+                    resolve(undefined);
+                    return;
+                }
+                void dialog
+                    .showOpenDialog({
+                        properties: ['openDirectory'],
+                        defaultPath: this.lastSystemDir || undefined,
+                    })
+                    .then((res) => {
+                        const d = !res.canceled && res.filePaths[0] ? res.filePaths[0] : undefined;
+                        if (d) this.lastSystemDir = d;
+                        resolve(d);
+                    });
+            } catch {
+                resolve(undefined);
+            }
+        });
+    }
+
+    /** 读视频文件夹内可识别集号的视频文件（快捷关联弹窗/编辑表单批量检索用）：过滤可关联容器扩展名 →
+     *  pure 集号解析 → 按集号升序返回 {ep, path, name}（path 与所在目录同分隔风格，供 episodeFiles 保位填充）。
+     *  目录不可读/非桌面 → []（调用方提示）。 */
+    async scanEpisodeDir(dir: string): Promise<{ ep: number; path: string; name: string }[]> {
+        if (!dir || !Platform.isDesktopApp) return [];
+        try {
+            const fsMod = require('fs') as { readdirSync(p: string): string[] };
+            const names = fsMod.readdirSync(dir);
+            const extOk = (n: string): string | undefined => {
+                const dot = n.lastIndexOf('.');
+                return dot > 0 ? n.slice(dot + 1).toLowerCase() : undefined;
+            };
+            const vids = names.filter((n) => {
+                const ext = extOk(n);
+                return !!ext && (VIDEO_ASSOCIABLE_EXTENSIONS as readonly string[]).includes(ext);
+            });
+            const hits = scanEpisodeNumbers(vids).sort((a, b) => a.ep - b.ep);
+            const sep = dir.includes('/') ? '/' : '\\';
+            const base = dir.replace(/[\\/]+$/, '');
+            return hits.map((h) => ({ ep: h.ep, name: h.name, path: `${base}${sep}${h.name}` }));
+        } catch {
+            return [];
+        }
     }
 
     /** 选本地视频：系统播放器需绝对路径，不转相对（可关联格式统一见 pure/mediaExtensions.VIDEO_ASSOCIABLE_EXTENSIONS） */
@@ -2500,4 +2629,10 @@ export default class ReelLudicPlugin extends Plugin {
         }
         await this.refreshViews();
     }
+}
+
+/** 取路径所在目录（分隔符不限 / \；无目录部分 → 原样返回）。系统文件对话框记忆目录用 */
+function dirnameOf(p: string): string {
+    const m = /^(.*)[\\/][^\\/]+$/.exec(p);
+    return m ? m[1] : p;
 }

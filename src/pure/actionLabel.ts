@@ -33,13 +33,23 @@ export function hasActionEntry(e: { type: EntryType; links?: WatchLink[]; episod
     }
 }
 
-/** 入口不可用时「去关联」提示（右键菜单 · 后缀 / title） */
+/** 入口不可用时「去关联」提示（右键菜单 · 后缀 / title；点击直达快捷关联弹窗） */
 export function actionUnavailableHint(type: EntryType): string {
     switch (type) {
-        case 'book': return '未关联书籍文件 — 编辑条目选择 TXT/EPUB/PDF';
-        case 'game': return '未关联启动快捷方式 — 编辑条目选择 .lnk 文件';
-        case 'music': return '未关联本地音频 — 编辑条目选择文件';
-        default: return '无观看链接 — 编辑条目补录观看链接';
+        case 'book': return '未关联书籍文件 — 点「阅读 · 去关联」选择 TXT/EPUB/PDF';
+        case 'game': return '未关联启动快捷方式 — 点「启动 · 去关联」选择 .lnk 文件';
+        case 'music': return '未关联本地音频 — 点「播放 · 去关联」选择音频文件';
+        default: return '无观看链接/本地视频 — 点「观看 · 去关联」补录网络地址或本地视频';
+    }
+}
+
+/** 入口可用时主操作提示（右键菜单 title）：按类型给实际动作描述 */
+export function actionReadyHint(type: EntryType): string {
+    switch (type) {
+        case 'book': return '打开书籍文件（内置/外部阅读器）';
+        case 'game': return '通过 .lnk 快捷方式启动游戏';
+        case 'music': return '播放本地音频';
+        default: return '打开观看源（本地视频优先播放 / 网络浏览器打开）';
     }
 }
 

@@ -467,7 +467,65 @@
 .rl-eps-btn.linked:hover { filter: brightness(1.08); }
 .rl-eps-btn:disabled { opacity: .45; cursor: not-allowed; }
 
+/* ── 快捷关联入口弹窗（QuickAssociateModal）：右键「动词 · 去关联」直达最小关联编辑器 ── */
+.rl-qa { font-family: var(--font-text); }
+.rl-qa-title { font-weight: 600; color: var(--text-normal); }
+.rl-qa-lbl { display: block; font-size: var(--font-ui-smaller); color: var(--text-muted); margin: 10px 0 4px; }
+.rl-qa-lbl-inline { font-size: var(--font-ui-small); color: var(--text-muted); margin-right: 8px; }
+.rl-qa-hint { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-top: 6px; word-break: break-all; }
+.rl-qa-input {
+    flex: 1; min-width: 0; width: 100%; box-sizing: border-box;
+    font-family: inherit; font-size: var(--font-ui-small);
+    border: 1px solid var(--background-modifier-border); border-radius: 6px;
+    background: var(--background-primary); color: var(--text-normal); padding: 5px 8px;
+}
+.rl-qa-input:focus { outline: none; border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
+.rl-qa-input::placeholder { color: var(--text-faint); }
+.rl-qa-row { display: flex; gap: 6px; align-items: center; }
+.rl-qa-total { display: flex; align-items: center; margin: 2px 0 10px; }
+.rl-qa-total-input { width: 76px; flex: none; }
+/* 「总集数」行右侧批量检索小图标（动画/电视剧）：hover 提示出说明 */
+.rl-qa-batch-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 18px; padding: 0; margin-left: 4px;
+    border: none; background: transparent; color: var(--text-muted);
+    border-radius: 4px; cursor: pointer;
+    transition: color .12s ease, background .12s ease;
+}
+.rl-qa-batch-btn:hover { color: var(--interactive-accent); background: var(--background-modifier-hover); }
+.rl-qa-batch-btn :global(svg) { width: 13px; height: 13px; }
+.rl-qa-grid { max-height: 160px; margin-bottom: 12px; }
+.rl-eps-btn.cur { outline: 2px solid var(--interactive-accent); outline-offset: -1px; }
+.rl-eps-btn.linked.cur { outline-color: var(--text-on-accent); }
+.rl-qa-cur { border-top: 1px solid var(--background-modifier-border); padding-top: 6px; }
+.rl-qa-cur-t { font-size: var(--font-ui-small); font-weight: 600; color: var(--text-normal); margin: 4px 0 2px; }
+.rl-qa-ops { margin-top: 14px; }
+
+
+/* ── 全局统一 hover 提示（data-tip 自绘气泡，UI-GUIDE 规范：禁用 title 原生黄条）：
+     深色 tooltip 风小气泡，pointer-events:none 不拦截鼠标（防移入气泡触发 mouseout 闪烁） */
+.rl-tip {
+    position: fixed;
+    z-index: 2147483000;
+    pointer-events: none;
+    display: none;
+    max-width: 340px;
+    padding: 5px 9px;
+    font-size: var(--font-ui-smaller, 12px);
+    line-height: 1.5;
+    color: #f2f2f2;
+    background: rgba(28, 28, 30, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);
+    white-space: pre-line;
+    word-break: break-word;
+    font-family: var(--font-text);
+}
+body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
+
 /* ── H 孤儿封面清理弹窗（PosterCleanupModal） ── */
+
 .rl-pc-desc { font-size: var(--font-ui-medium); color: var(--text-muted); margin: 8px 0 12px; line-height: 1.6; }
 .rl-pc-empty { font-size: var(--font-ui-medium); color: var(--text-faint); padding: 20px 0; text-align: center; }
 .rl-pc-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; margin-bottom: 14px; }

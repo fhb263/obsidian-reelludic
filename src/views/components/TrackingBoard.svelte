@@ -198,7 +198,7 @@
         <button class="rl-tr-refresh" disabled={checking} on:click={() => runChecks(true)}>
             {checking ? '检测中…' : '重新检测'}
         </button>
-        <button class="rl-tr-import" on:click={onImportBangumi} title="从 Bangumi 收藏列表批量导入动画条目">从 Bangumi 导入</button>
+        <button class="rl-tr-import" on:click={onImportBangumi} data-tip="从 Bangumi 收藏列表批量导入动画条目">从 Bangumi 导入</button>
     </div>
 
     {#if watching.length === 0}
@@ -221,7 +221,7 @@
                     {@const u = updateMap[e.id]}
                     <tr class:rl-tr-stale={activityOf(e) === 'stale'}>
                         <td>
-                            <span class="rl-tr-title-cell" role="link" tabindex="0" title="打开笔记：{e.title}" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>
+                            <span class="rl-tr-title-cell" role="link" tabindex="0" data-tip="打开笔记：{e.title}" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>
                                 {e.title}
                             </span>
                         </td>
@@ -231,22 +231,22 @@
                             {#if u === 'checking'}
                                 <span class="rl-tr-upd rl-tr-upd-check">检测中…</span>
                             {:else if !u}
-                                <span class="rl-tr-upd rl-tr-upd-na" title="该条目没有观看链接 — 编辑条目添加后即可检测更新">— 未设置</span>
+                                <span class="rl-tr-upd rl-tr-upd-na" data-tip="该条目没有观看链接 — 编辑条目添加后即可检测更新">— 未设置</span>
                             {:else if u.status === 'updated'}
                                 {@const isNew = decideUpdateDisplay(u.latestEpisode, e.latestKnownEpisode ?? 0, e.progress?.episode ?? 0) === 'new'}
                                 {#if isNew}
-                                    <span class="rl-tr-upd rl-tr-upd-new" title="最新 {u.latestEpisode} 集 · 已看 {u.watchedEpisodes} 集"><Icon icon="bell" size={11} /> 更新{u.updateCount}集</span>
+                                    <span class="rl-tr-upd rl-tr-upd-new" data-tip="最新 {u.latestEpisode} 集 · 已看 {u.watchedEpisodes} 集"><Icon icon="bell" size={11} /> 更新{u.updateCount}集</span>
                                 {:else}
-                                    <span class="rl-tr-upd rl-tr-upd-ok" title="最新 {u.latestEpisode} 集 · 已看 {u.watchedEpisodes} 集">✅ 已同步</span>
+                                    <span class="rl-tr-upd rl-tr-upd-ok" data-tip="最新 {u.latestEpisode} 集 · 已看 {u.watchedEpisodes} 集">✅ 已同步</span>
                                 {/if}
                             {:else if u.status === 'synced'}
-                                <span class="rl-tr-upd rl-tr-upd-ok" title="最新 {u.latestEpisode} 集 · 已看 {u.watchedEpisodes} 集">✅ 已同步</span>
+                                <span class="rl-tr-upd rl-tr-upd-ok" data-tip="最新 {u.latestEpisode} 集 · 已看 {u.watchedEpisodes} 集">✅ 已同步</span>
                             {:else if u.status === 'no-info'}
-                                <span class="rl-tr-upd rl-tr-upd-na" title="页面未找到集数信息（第X集/第X话/Episode X）">— 无集数</span>
+                                <span class="rl-tr-upd rl-tr-upd-na" data-tip="页面未找到集数信息（第X集/第X话/Episode X）">— 无集数</span>
                             {:else if u.status === 'blocked'}
-                                <span class="rl-tr-upd rl-tr-upd-blocked" title="该站有 CDN 人机验证，请在浏览器打开确认可访问，或更换观看链接">🔒 站点拦截</span>
+                                <span class="rl-tr-upd rl-tr-upd-blocked" data-tip="该站有 CDN 人机验证，请在浏览器打开确认可访问，或更换观看链接">🔒 站点拦截</span>
                             {:else}
-                                <span class="rl-tr-upd rl-tr-upd-fail" title="检测失败：{u.error}">❌ 失败</span>
+                                <span class="rl-tr-upd rl-tr-upd-fail" data-tip="检测失败：{u.error}">❌ 失败</span>
                             {/if}
                         </td>
                         <td><span class="rl-tr-last">{activityText(e)}</span></td>
@@ -264,9 +264,9 @@
                         <td>
                             <span class="rl-tr-ops">
                                 {#if e.links.length > 0}
-                                    <button class="rl-tr-btn" title="打开观看链接" on:click={() => onOpenLink(e.links[0].url)}><Icon icon="play" size={12} /> 观看</button>
+                                    <button class="rl-tr-btn" data-tip="打开观看链接" on:click={() => onOpenLink(e.links[0].url)}><Icon icon="play" size={12} /> 观看</button>
                                 {/if}
-                                <button class="rl-tr-btn" title="编辑条目" on:click={() => onEditEntry(e.id)}><Icon icon="pencil" size={12} /> 编辑</button>
+                                <button class="rl-tr-btn" data-tip="编辑条目" on:click={() => onEditEntry(e.id)}><Icon icon="pencil" size={12} /> 编辑</button>
                             </span>
                         </td>
                     </tr>

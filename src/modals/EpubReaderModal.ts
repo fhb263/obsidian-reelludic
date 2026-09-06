@@ -316,7 +316,7 @@ export class EpubReaderPanel {
         this.headEl = head;
 
         // 侧栏折叠/展开开关（最左；点击 toggleToc；图标与标题随折叠态变化）
-        const sidebarToggle = head.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-sidebar-toggle', attr: { title: '收起目录' } });
+        const sidebarToggle = head.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-sidebar-toggle', attr: { 'data-tip': '收起目录' } });
         safeSetIcon(sidebarToggle, 'panel-left-close');
         sidebarToggle.addEventListener('mousedown', (ev) => ev.stopPropagation());
         sidebarToggle.addEventListener('click', () => this.toggleToc());
@@ -345,10 +345,10 @@ export class EpubReaderPanel {
 
         const ops = head.createDiv({ cls: 'rl-reader-ops' });
         // 单页/双页切换（EPUB 专属，保留）
-        this.layoutBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { title: '单页/双页切换' }, text: '⇆ 双页' });
+        this.layoutBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '单页/双页切换' }, text: '⇆ 双页' });
         this.layoutBtn.addEventListener('click', () => this.toggleLayout());
         // 阅读设置（≡）：T6 下拉菜单（字号/行距/滚动模式状态/全屏）；行距±按钮已并入菜单
-        this.settingsBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-settings', attr: { title: '设置' }, text: '≡' });
+        this.settingsBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-settings', attr: { 'data-tip': '设置' }, text: '≡' });
         // 阻止 mousedown 冒泡到 document（onDocMouseDown 会先收起菜单，导致 click toggle 逻辑反相）
         this.settingsBtn.addEventListener('mousedown', (ev) => ev.stopPropagation());
         this.settingsBtn.addEventListener('click', () => this.toggleSettings());
@@ -369,22 +369,22 @@ export class EpubReaderPanel {
         const fontRow = menu.createDiv({ cls: 'rl-reader-menu-row' });
         fontRow.createSpan({ cls: 'rl-reader-menu-label', text: '字号' });
         const fontMinus = fontRow.createEl('button', { cls: 'rl-btn rl-reader-menu-btn', text: '−' });
-        fontMinus.title = '减小字号';
+        fontMinus.setAttribute('data-tip', '减小字号');
         fontMinus.addEventListener('click', () => this.adjustFont(-1));
         this.menuFontVal = fontRow.createSpan({ cls: 'rl-reader-menu-val' });
         const fontPlus = fontRow.createEl('button', { cls: 'rl-btn rl-reader-menu-btn', text: '+' });
-        fontPlus.title = '增大字号';
+        fontPlus.setAttribute('data-tip', '增大字号');
         fontPlus.addEventListener('click', () => this.adjustFont(1));
 
         // 行距行：− / {n} / +（步进 LINE_STEP=0.1，范围 LINE_MIN-MAX）
         const lineRow = menu.createDiv({ cls: 'rl-reader-menu-row' });
         lineRow.createSpan({ cls: 'rl-reader-menu-label', text: '行距' });
         const lineMinus = lineRow.createEl('button', { cls: 'rl-btn rl-reader-menu-btn', text: '−' });
-        lineMinus.title = '减小行距';
+        lineMinus.setAttribute('data-tip', '减小行距');
         lineMinus.addEventListener('click', () => this.adjustLineHeight(-LINE_STEP));
         this.menuLineVal = lineRow.createSpan({ cls: 'rl-reader-menu-val' });
         const linePlus = lineRow.createEl('button', { cls: 'rl-btn rl-reader-menu-btn', text: '+' });
-        linePlus.title = '增大行距';
+        linePlus.setAttribute('data-tip', '增大行距');
         linePlus.addEventListener('click', () => this.adjustLineHeight(LINE_STEP));
 
         // 滚动模式（D4b）：连续/翻页两标签可点切换，当前项 checked 高亮；点击写回设置 + 重建章节视图
@@ -395,7 +395,7 @@ export class EpubReaderPanel {
             const cb = lab.createEl('input', { attr: { type: 'checkbox' } });
             lab.createSpan({ text });
             cb.checked = this.mode === m;
-            cb.title = m === 'paged' ? '按屏翻页（每页一屏宽）' : '连续滚动';
+            cb.setAttribute('data-tip', m === 'paged' ? '按屏翻页（每页一屏宽）' : '连续滚动');
             lab.addEventListener('mousedown', (ev) => ev.stopPropagation());
             lab.addEventListener('click', () => this.setMode(m));
             return cb;
@@ -409,7 +409,7 @@ export class EpubReaderPanel {
         this.fsLabelEl = fsBtn.createSpan({ text: '全屏显示' });
         if (!document.fullscreenEnabled) {
             fsBtn.disabled = true;
-            fsBtn.title = '当前环境不支持全屏';
+            fsBtn.setAttribute('data-tip', '当前环境不支持全屏');
         }
     }
 
@@ -648,10 +648,10 @@ export class EpubReaderPanel {
         this.footerFpctEl = footer.createSpan({ cls: 'rl-reader-fpct' });
         const nav = footer.createDiv({ cls: 'rl-reader-fnav' });
         const prev = nav.createEl('button', { cls: 'rl-btn rl-reader-btn', text: '‹' });
-        prev.title = '上一章/上一页';
+        prev.setAttribute('data-tip', '上一章/上一页');
         prev.addEventListener('click', () => this.goPrevPage());
         const next = nav.createEl('button', { cls: 'rl-btn rl-reader-btn', text: '›' });
-        next.title = '下一章/下一页';
+        next.setAttribute('data-tip', '下一章/下一页');
         next.addEventListener('click', () => this.goNextPage());
     }
 
@@ -692,11 +692,11 @@ export class EpubReaderPanel {
         // 左侧目录列（复用 TXT 阅读器 rl-reader-toc 样式）：「目录 | 书签 | 摘抄」三 tab 切换
         this.tocEl = body.createDiv({ cls: 'rl-reader-toc' });
         const tabs = this.tocEl.createDiv({ cls: 'rl-reader-toc-tabs' });
-        const tocTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab active', attr: { title: '章节目录' } });
+        const tocTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab active', attr: { 'data-tip': '章节目录' } });
         safeSetIcon(tocTab, 'list-tree');
-        const bmTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab', attr: { title: '书签' } });
+        const bmTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab', attr: { 'data-tip': '书签' } });
         safeSetIcon(bmTab, 'bookmark');
-        const exTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab', attr: { title: '摘抄' } });
+        const exTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab', attr: { 'data-tip': '摘抄' } });
         safeSetIcon(exTab, 'quote');
         const tocPane = this.tocEl.createDiv({ cls: 'rl-reader-toc-pane' });
         this.tocListEl = tocPane.createDiv({ cls: 'rl-reader-toc-list' });
@@ -705,7 +705,7 @@ export class EpubReaderPanel {
         const byPath = new Map<string, number>();
         this.options.book.chapters.forEach((c, i) => byPath.set(c, i));
         this.tocEntries.forEach((t) => {
-            const item = this.tocListEl.createEl('button', { cls: 'rl-reader-toc-item', attr: { title: t.label }, text: t.label });
+            const item = this.tocListEl.createEl('button', { cls: 'rl-reader-toc-item', attr: { 'data-tip': t.label }, text: t.label });
             item.addEventListener('click', () => {
                 const idx = byPath.get(t.href.split('#')[0]);
                 if (idx !== undefined) this.switchChapter(idx);
@@ -720,7 +720,7 @@ export class EpubReaderPanel {
         const hlHead = exPane.createDiv({ cls: 'rl-reader-hl-head' });
         this.hlCountEl = hlHead.createDiv({ cls: 'rl-reader-ex-hlcount', text: '高亮（0）' });
         const clearAllBtn = hlHead.createEl('button', { cls: 'rl-btn rl-reader-btn rl-hl-clearall hidden', text: '清除全部' });
-        clearAllBtn.title = '删除全部高亮（含笔记「## 高亮」区对应块）';
+        clearAllBtn.setAttribute('data-tip', '删除全部高亮（含笔记「## 高亮」区对应块）');
         clearAllBtn.addEventListener('click', () => void this.clearAllHighlights(clearAllBtn));
         this.hlClearAllBtn = clearAllBtn;
         this.hlListEl = exPane.createDiv({ cls: 'rl-reader-hl-list' });
@@ -762,11 +762,11 @@ export class EpubReaderPanel {
         exBtn.addEventListener('click', () => this.addSelExcerpt());
         // 高亮：一键即黄即记（写笔记「## 高亮」区 + 页内持久 mark，iframe 内标黄）
         const hlBtn = mkBtn('高亮', false);
-        hlBtn.title = '划词高亮';
+        hlBtn.setAttribute('data-tip', '划词高亮');
         hlBtn.addEventListener('click', () => void this.addSelHighlight());
         // 翻译：AI 划词翻译（本批真功能）；点击消费当前选区 → 就地译文浮层
         const trBtn = mkBtn('译翻译', false);
-        trBtn.title = '划词翻译';
+        trBtn.setAttribute('data-tip', '划词翻译');
         trBtn.addEventListener('click', () => this.addSelTranslate());
 
         bar.append(bmBtn, exBtn, hlBtn, trBtn);
@@ -1102,7 +1102,7 @@ export class EpubReaderPanel {
         const card = this.selbarParent.createDiv({ cls: 'rl-translate-card hidden' });
         const head = card.createDiv({ cls: 'rl-translate-card-head' });
         head.createSpan({ cls: 'rl-translate-card-title', text: '译文' });
-        const close = head.createEl('button', { cls: 'rl-btn rl-reader-btn rl-translate-card-close', attr: { title: '关闭' }, text: '✕' });
+        const close = head.createEl('button', { cls: 'rl-btn rl-reader-btn rl-translate-card-close', attr: { 'data-tip': '关闭' }, text: '✕' });
         close.addEventListener('mousedown', (ev) => ev.stopPropagation());
         close.addEventListener('click', () => this.hideTranslateCard());
         this.translateCardBody = card.createDiv({ cls: 'rl-translate-card-body' });
@@ -1201,12 +1201,17 @@ export class EpubReaderPanel {
         doc.addEventListener('mouseup', (ev) => this.onTextMouseUp(ev));
         const scroller = doc.scrollingElement || doc.documentElement;
         if (!scroller) return;
-        scroller.addEventListener('scroll', this.onFrameScroll);
-        // iframe 内滚动即收起选中动作条与译文浮层（选区/译文已不对应当前屏幕）
-        scroller.addEventListener('scroll', () => {
+        // iframe 内滚动监听：标准模式视口滚动（scrollingElement=html）的 scroll 事件 target 是 document，
+        // 挂在 documentElement 上的普通监听收不到 → 进度/自动翻章全失灵（TXT 宿主 div 滚动 target=div 无此问题）。
+        // 修复：scroller 元素监听 + document 捕获监听（capture 沿 document→target 必经）双保险；
+        // 同一滚动最多触发两次，onFrameScroll 的 rAF 守卫合并同帧、hide 幂等无害。
+        const onAnyScroll = (): void => {
+            this.onFrameScroll();
             this.hideSelbar();
             this.hideTranslateCard();
-        });
+        };
+        scroller.addEventListener('scroll', onAnyScroll);
+        doc.addEventListener('scroll', onAnyScroll, true);
         // 翻页模式：把 body 切成单列「一屏一页」columns 并测总页（连续模式维持纵向滚动）
         if (this.isPaged()) {
             this.setupPagedLayout(doc);
@@ -1708,10 +1713,10 @@ p{margin:0 0 1em;text-align:justify;}
         if (!this.sidebarToggleEl) return;
         if (this.tocCollapsed) {
             safeSetIcon(this.sidebarToggleEl, 'panel-left-open');
-            this.sidebarToggleEl.setAttribute('title', '展开目录');
+            this.sidebarToggleEl.setAttribute('data-tip', '展开目录');
         } else {
             safeSetIcon(this.sidebarToggleEl, 'panel-left-close');
-            this.sidebarToggleEl.setAttribute('title', '收起目录');
+            this.sidebarToggleEl.setAttribute('data-tip', '收起目录');
         }
     }
 

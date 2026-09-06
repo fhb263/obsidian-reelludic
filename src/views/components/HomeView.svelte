@@ -33,6 +33,8 @@
     export let onOpenLink: (url: string) => void = () => {};
     /** 主操作按钮（海报墙/列表）：plugin 层按类型分流——影视观看（单/多源）、书籍阅读、游戏启动、音乐播放 */
     export let onWatch: (e: MediaEntry) => void = () => {};
+    /** 右键「动词 · 去关联」直达快捷关联弹窗（无入口时主操作不再跳整编辑表单） */
+    export let onQuickAssociate: (e: MediaEntry) => void = () => {};
     export let onSetStatus: (id: string, s: MediaStatus) => Promise<void> = async () => {};
     export let onMarkUpdated: (id: string) => Promise<void> = async () => {};
     export let onDeleteEntry: (id: string) => Promise<void> = async () => {};
@@ -169,6 +171,7 @@
                 {onOpenEntry}
                 {onOpenLink}
                 {onWatch}
+                {onQuickAssociate}
                 {onSetStatus}
                 {onMarkUpdated}
                 {onDeleteEntry}

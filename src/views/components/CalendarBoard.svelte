@@ -217,7 +217,7 @@
             <span class="rl-cal-banner-txt"><Icon icon="calendar" size={12} /> {due.length} 项排期待开始：</span>
             {#each due as e}
                 <span class="rl-cal-banner-item">
-                    <span class="rl-cal-banner-title" role="link" tabindex="0" title="打开笔记：{e.title}" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>
+                    <span class="rl-cal-banner-title" role="link" tabindex="0" data-tip="打开笔记：{e.title}" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>
                         {e.title}
                     </span>
                     <button class="rl-cal-banner-btn" on:click={() => startWatching(e)}>开始观看</button>
@@ -243,7 +243,7 @@
                         draggable="true"
                         on:dragstart={(ev) => dragStart(ev, e.id)}
                         on:click={() => onEditEntry(e.id)}
-                        title="拖拽到日期格排期，或点击编辑">
+                        data-tip="拖拽到日期格排期，或点击编辑">
                         {#if posterUrl(e)}
                             <img class="rl-cal-card-cov" src={posterUrl(e)} alt="" loading="lazy" />
                         {:else}
@@ -278,7 +278,7 @@
                             on:drop={(ev) => { if (!cell.isPast) dropTo(ev, cell.key); }}>
                             <span class="rl-cal-d">{cell.dayNum}</span>
                             {#each cell.items.slice(0, 3) as e}
-                                <span class="rl-cal-it" title={e.title} style={`--tc:${TYPE_COLORS[e.type]}`}>
+                                <span class="rl-cal-it" data-tip={e.title} style={`--tc:${TYPE_COLORS[e.type]}`}>
                                     <span class="rl-cal-it-txt">{e.title}</span>
                                 </span>
                             {/each}
@@ -307,7 +307,7 @@
                         </div>
                         <div class="rl-cal-witems">
                             {#each day.items as e}
-                                <div class="rl-cal-wcard" style={`--tc:${TYPE_COLORS[e.type]}`} title="打开笔记：{e.title}" role="link" tabindex="0"
+                                <div class="rl-cal-wcard" style={`--tc:${TYPE_COLORS[e.type]}`} data-tip="打开笔记：{e.title}" role="link" tabindex="0"
                                     on:click|stopPropagation={() => onOpenEntry(e.id)}
                                     on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>
                                     {#if posterUrl(e)}

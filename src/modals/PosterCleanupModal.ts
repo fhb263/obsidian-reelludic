@@ -34,7 +34,7 @@ export class PosterCleanupModal extends Modal {
             const cb = row.createEl('input', { type: 'checkbox' }) as HTMLInputElement;
             cb.checked = true;
             checks.push(cb);
-            const name = row.createEl('span', { cls: 'rl-pc-name', text: p, attr: { title: p } });
+            const name = row.createEl('span', { cls: 'rl-pc-name', text: p, attr: { 'data-tip': p } });
             void name;
         }
 

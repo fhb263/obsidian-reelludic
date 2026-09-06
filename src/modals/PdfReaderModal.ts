@@ -6,7 +6,7 @@
 import { Modal, Notice, Scope, setIcon, type App } from 'obsidian';
 import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs';
-import { estimatePdfPercent, normalizePdfOutline, type PdfOutlineItem } from 'pure/pdfProgress';
+import { estimatePdfPercent, normalizePdfOutline, resolveFlushPos, flattenPdfOutline, chooseActivePdfIndex, type PdfOutlineItem, type ReaderPos, type FlatPdfOutlineItem } from 'pure/pdfProgress';
 import type { ParsedExcerpt } from 'pure/excerpt';
 
 /** worker 只初始化一次（Blob URL 由 esbuild worker 内联 plugin 注入；重复赋值无副作用但保持惰性） */
@@ -85,14 +85,30 @@ export class PdfReaderPanel {
     private pages: PageView[] = [];
     /** 目录条目（规整后；pageIndex 点击时才解析 dest 补写） */
     private tocEntries: PdfOutlineItem[] = [];
+    /** 目录扁平条目（DFS 顺序对齐侧栏 DOM 行；当前章高亮计算用，dest 页码异步补全后重建） */
+    private tocFlat: FlatPdfOutlineItem[] = [];
+    /** 目录行按钮（与 tocFlat 一一对应；当前章 .active 切换用） */
+    private tocRowEls: HTMLElement[] = [];
     /** 目录列折叠状态 */
     private tocCollapsed = false;
-    /** 批注开关：开才捕获选中文本回写摘抄（默认关，防误触，对齐 EPUB） */
-    private annotateOn = false;
-    /** 批注开关按钮 */
-    private annotateBtn: HTMLButtonElement | null = null;
-    /** 进度百分比文本（头部「已读 X% · 剩余 Y%」） */
-    private progressEl: HTMLSpanElement | null = null;
+    /** 目录折叠按钮（点击 toggleToc 收/展侧栏） */
+    private sidebarToggleEl!: HTMLButtonElement;
+    /** 底部工具条：左「第 N 页 / 共 M 页」文本（updateProgress 刷新） */
+    private footerPageEl!: HTMLSpanElement;
+    /** 底部工具条：全书进度条填充（宽度 = 已读百分比，与落库 percent 同口径） */
+    private footerFillEl!: HTMLDivElement;
+    /** 底部工具条：右「已读 X%」文本 */
+    private footerPctEl!: HTMLSpanElement;
+    /** 设置下拉（≡）开关按钮 / 菜单根 / 展开态 */
+    private settingsBtn!: HTMLButtonElement;
+    private menuEl: HTMLElement | null = null;
+    private settingsOpen = false;
+    /** 菜单「字号」当前缩放值文本（缩放调整后刷新） */
+    private menuScaleVal: HTMLSpanElement | null = null;
+    /** 菜单「全屏显示」标签（全屏态切换为「退出全屏」） */
+    private fsLabelEl: HTMLSpanElement | null = null;
+    /** fullscreenchange 已注册标记（destroy 对称注销） */
+    private fsListenerRegistered = false;
     /** 保存节流定时器 */
     private saveTimer: number | null = null;
     /** 滚动 rAF 节流 id */
@@ -101,6 +117,8 @@ export class PdfReaderPanel {
     private restoring = false;
     /** 待恢复的滚动位置（页索引 + 页内比例；加载完成后消费一次） */
     private pendingScroll: { pageIndex: number; ratio: number } | null = null;
+    /** 最后已知阅读位置（滚动时维护；关闭落盘 DOM 归零时兜底用，见 pure/pdfProgress resolveFlushPos） */
+    private lastPos: ReaderPos = { chapterIndex: 0, scrollRatio: 0 };
     /** 视口虚拟化观察器 */
     private observer: IntersectionObserver | null = null;
     /** 渲染中页的引用计数（清理时避免重复 cancel） */
@@ -133,7 +151,17 @@ export class PdfReaderPanel {
 
         this.buildHeader();
         this.buildBody();
+        // 底部工具条：页码 + 全书进度条 + 已读百分比（对齐 TXT/EPUB 底栏；body 之后，.rl-reader 纵向排列）
+        this.buildFooter();
         void this.load();
+
+        // 面板外 mousedown 收起设置下拉（菜单/按钮自身已 stopPropagation）
+        document.addEventListener('mousedown', this.onDocMouseDown);
+        // 全屏态变化同步菜单「全屏显示/退出全屏」文案（桌面 Electron 支持；非桌面跳过）
+        if (document.fullscreenEnabled) {
+            document.addEventListener('fullscreenchange', this.onFsChange);
+            this.fsListenerRegistered = true;
+        }
 
         // 键盘：PageDown/PageUp 滚动一页高；← 上一页 / → 下一页（scope 由调用方注入）
         this.scope.register([], 'PageDown', () => {
@@ -171,9 +199,24 @@ export class PdfReaderPanel {
         });
     }
 
+    /** 面板外 mousedown：收起设置下拉（≡ mousedown 已 stopPropagation，不会立即收起） */
+    private onDocMouseDown = (): void => {
+        this.hideSettings();
+    };
+
+    /** 全屏态变化：同步菜单全屏标签文案 */
+    private onFsChange = (): void => {
+        this.syncFullscreenLabel();
+    };
+
     /** 销毁清理：落盘进度 + 取消渲染任务 + 释放 pdf.js 文档 + 清空容器 */
     destroy(): void {
         this.flushSave();
+        document.removeEventListener('mousedown', this.onDocMouseDown);
+        if (this.fsListenerRegistered) {
+            document.removeEventListener('fullscreenchange', this.onFsChange);
+            this.fsListenerRegistered = false;
+        }
         if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
         this.saveTimer = null;
         if (this.scrollRaf !== null) {
@@ -193,56 +236,130 @@ export class PdfReaderPanel {
 
     // ── 构建 ──
 
+    /** 构建底部工具条：左「第 N 页 / 共 M 页」+ 全书进度条（fill=已读%）+ 右「已读 X%」。
+     *  无 ‹ › 按钮（PDF 无章无分页单位，翻页走键盘/滚动）；复用 rl-reader-* 样式与 TXT/EPUB 底栏同观感。 */
+    private buildFooter(): void {
+        const footer = this.container.createDiv({ cls: 'rl-reader-footer' });
+        this.footerPageEl = footer.createSpan({ cls: 'rl-reader-fch' });
+        const prog = footer.createDiv({ cls: 'rl-reader-fprog' });
+        this.footerFillEl = prog.createDiv({ cls: 'rl-reader-fprog-fill' });
+        this.footerPctEl = footer.createSpan({ cls: 'rl-reader-fpct' });
+    }
+
+    /** 顶栏（对齐 TXT/EPUB 沉浸观感）：左目录折叠 icon + 标题 + 右 ≡设置菜单 / ✕关闭。
+     *  按用户要求功能精简为：目录 + 字号(缩放)设置；批注摘抄入口已移除。 */
     private buildHeader(): void {
         const head = this.container.createDiv({ cls: 'rl-reader-head' });
+
+        // 目录折叠开关（最左；点击 toggleToc；与 EPUB 侧栏开关一致）
+        const sidebarToggle = head.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-sidebar-toggle', attr: { 'data-tip': '收起目录' } });
+        safeSetIcon(sidebarToggle, 'panel-left-close');
+        sidebarToggle.addEventListener('mousedown', (ev) => ev.stopPropagation());
+        sidebarToggle.addEventListener('click', () => this.toggleToc());
+        this.sidebarToggleEl = sidebarToggle;
+
         const titleWrap = head.createDiv({ cls: 'rl-reader-title-wrap' });
         const icon = titleWrap.createSpan({ cls: 'rl-reader-title-icon' });
         safeSetIcon(icon, 'file-text');
         titleWrap.createSpan({ cls: 'rl-reader-title', text: `${this.options.title} · PDF` });
 
-        this.progressEl = head.createSpan({ cls: 'rl-reader-prog' });
-
         const ops = head.createDiv({ cls: 'rl-reader-ops' });
-        // 缩放 − / +（0.25 步进，0.5-3.0；重渲染可视页并锚定当前位置）
-        const zoomOut = ops.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { title: '缩小' }, text: '−' });
-        zoomOut.addEventListener('click', () => this.adjustScale(-SCALE_STEP));
-        const zoomIn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { title: '放大' }, text: '+' });
-        zoomIn.addEventListener('click', () => this.adjustScale(SCALE_STEP));
-        // 目录折叠
-        const tocBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { title: '显示/隐藏目录' }, text: '目录' });
-        tocBtn.addEventListener('click', () => this.toggleToc());
-        // 批注开关（开启后 textLayer 选中文本 → 弹摘录确认 → 回写笔记「## 摘抄」区）
-        this.annotateBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-annotate', attr: { title: '开启后选中文本可添加摘抄' } });
-        this.annotateBtn.createSpan({ text: '批注' });
-        this.annotateBtn.addEventListener('click', () => {
-            this.annotateOn = !this.annotateOn;
-            this.annotateBtn?.toggleClass('on', this.annotateOn);
-        });
+        // 设置（≡）：字号 = 缩放 −/+、全屏显示（下拉菜单，对齐 EPUB 观感）
+        this.settingsBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-settings', attr: { 'data-tip': '设置' }, text: '≡' });
+        this.settingsBtn.addEventListener('mousedown', (ev) => ev.stopPropagation());
+        this.settingsBtn.addEventListener('click', () => this.toggleSettings());
+        this.buildSettingsMenu(ops);
         // 关闭
-        const closeBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-close', attr: { title: '关闭' } });
+        const closeBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-close', attr: { 'data-tip': '关闭' } });
         safeSetIcon(closeBtn, 'x');
         closeBtn.addEventListener('click', () => this.closeView());
+    }
+
+    /** 设置下拉菜单（追加到 ops 下，CSS 绝对定位右对齐）：字号 −/+（映射缩放 ±，显示当前 %）+ 全屏显示。
+     *  批注摘抄已按用户要求移除（PDF 无书签/翻译/高亮，故菜单仅这两项）。 */
+    private buildSettingsMenu(ops: HTMLElement): void {
+        const menu = ops.createDiv({ cls: 'rl-reader-menu hidden' });
+        this.menuEl = menu;
+        menu.addEventListener('mousedown', (ev) => ev.stopPropagation());
+
+        // 字号行（PDF 缩放）：− / {scale%} / +
+        const fontRow = menu.createDiv({ cls: 'rl-reader-menu-row' });
+        fontRow.createSpan({ cls: 'rl-reader-menu-label', text: '字号' });
+        const fontMinus = fontRow.createEl('button', { cls: 'rl-btn rl-reader-menu-btn', text: '−' });
+        fontMinus.setAttribute('data-tip', '缩小（减小显示字号）');
+        fontMinus.addEventListener('click', () => this.adjustScale(-SCALE_STEP));
+        this.menuScaleVal = fontRow.createSpan({ cls: 'rl-reader-menu-val' });
+        const fontPlus = fontRow.createEl('button', { cls: 'rl-btn rl-reader-menu-btn', text: '+' });
+        fontPlus.setAttribute('data-tip', '放大（增大显示字号）');
+        fontPlus.addEventListener('click', () => this.adjustScale(SCALE_STEP));
+
+        // 全屏显示（桌面 Electron 支持；失败/不支持静默）
+        const fsBtn = menu.createEl('button', { cls: 'rl-reader-menu-row rl-reader-menu-fs' });
+        fsBtn.addEventListener('click', () => this.toggleFullscreen());
+        this.fsLabelEl = fsBtn.createSpan({ text: '全屏显示' });
+        if (!document.fullscreenEnabled) {
+            fsBtn.disabled = true;
+            fsBtn.setAttribute('data-tip', '当前环境不支持全屏');
+        }
+    }
+
+    /** 设置下拉开合切换：加/去 hidden + 按钮 active 态；打开时同步缩放/全屏文案 */
+    private toggleSettings(): void {
+        if (!this.menuEl) return;
+        this.settingsOpen = !this.settingsOpen;
+        this.menuEl.toggleClass('hidden', !this.settingsOpen);
+        this.settingsBtn?.toggleClass('active', this.settingsOpen);
+        if (this.settingsOpen) {
+            this.syncSettingsLabels();
+            this.syncFullscreenLabel();
+        }
+    }
+
+    /** 收起设置下拉（外部 mousedown / 滚动收起）；未开则跳过 */
+    private hideSettings(): void {
+        if (!this.settingsOpen) return;
+        this.settingsOpen = false;
+        this.menuEl?.addClass('hidden');
+        this.settingsBtn?.removeClass('active');
+    }
+
+    /** 刷新菜单缩放/全屏文案（打开、缩放调整后调用） */
+    private syncSettingsLabels(): void {
+        if (this.menuScaleVal) this.menuScaleVal.setText(`${Math.round(this.scale * 100)}%`);
+    }
+
+    /** 全屏切换：已全屏 → 退出；否则对最近 .modal 请求全屏；异常/不支持静默 */
+    private toggleFullscreen(): void {
+        try {
+            if (document.fullscreenElement) {
+                void document.exitFullscreen?.().catch(() => {});
+            } else {
+                const target = (this.container.closest('.modal') ?? this.container) as HTMLElement | null;
+                void target?.requestFullscreen?.().catch(() => {});
+            }
+        } catch {
+            // 全屏不可用：静默
+        }
+    }
+
+    /** 全屏标签文案同步（fullscreenchange 与下拉打开时调用） */
+    private syncFullscreenLabel(): void {
+        if (!this.fsLabelEl) return;
+        this.fsLabelEl.setText(document.fullscreenElement ? '退出全屏' : '全屏显示');
     }
 
     private buildBody(): void {
         const body = this.container.createDiv({ cls: 'rl-reader-body' });
 
-        // 左侧目录列（复用 rl-reader-toc 样式）：「目录 | 书签」双 tab
+        // 左侧目录列（复用 rl-reader-toc 样式）：仅目录（摘抄 tab 已按用户要求移除，只保留目录）
         this.tocEl = body.createDiv({ cls: 'rl-reader-toc' });
-        const tabs = this.tocEl.createDiv({ cls: 'rl-reader-toc-tabs' });
-        const tocTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab active', attr: { title: '章节目录' }, text: '目录' });
-        const exTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab', attr: { title: '摘抄书签' }, text: '书签' });
-        const tocPane = this.tocEl.createDiv({ cls: 'rl-reader-toc-pane' });
-        this.tocListEl = tocPane.createDiv({ cls: 'rl-reader-toc-list' });
-        const exPane = this.tocEl.createDiv({ cls: 'rl-reader-toc-pane rl-reader-ex-pane hidden' });
-        this.exListEl = exPane.createDiv({ cls: 'rl-reader-ex-list' });
-        this.buildExcerptToc();
-        tocTab.addEventListener('click', () => this.switchTocPane('toc', tocTab, exTab, tocPane, exPane));
-        exTab.addEventListener('click', () => this.switchTocPane('ex', tocTab, exTab, tocPane, exPane));
+        this.tocListEl = this.tocEl.createDiv({ cls: 'rl-reader-toc-list' });
 
         // 右侧滚动容器（连续滚动；textLayer 选中需要 user-select，防 Obsidian 全局拦截）
         const frameWrap = body.createDiv({ cls: 'rl-reader-frame' });
         this.scrollEl = frameWrap.createDiv({ cls: 'rl-pdf-scroll' });
+        // 滚动实时刷新底栏进度/页码（此前 onScroll 未绑定，进度只在跨页/恢复等时机更新）
+        this.scrollEl.addEventListener('scroll', this.onScroll);
         this.pagesEl = this.scrollEl.createDiv({ cls: 'rl-pdf-pages' });
         // 加载中占位
         this.pagesEl.createDiv({ cls: 'rl-pdf-loading', text: '正在加载 PDF…' });
@@ -286,6 +403,8 @@ export class PdfReaderPanel {
             const outline = await this.pdf.getOutline();
             this.tocEntries = normalizePdfOutline(outline as unknown);
             this.buildToc();
+            // 异步预解析 outline dest → 页码（pdf.js 原始条目无 pageIndex；补全后当前章高亮才有匹配）
+            void this.resolveTocPageIndexes();
 
             // 视口虚拟化：只渲染可视 ± 缓冲页，离屏销毁
             this.observer = new IntersectionObserver(
@@ -305,6 +424,8 @@ export class PdfReaderPanel {
             const p = this.options.progress;
             if (p && Number.isInteger(p.chapterIndex) && p.chapterIndex >= 0 && p.chapterIndex < this.numPages) {
                 this.pendingScroll = { pageIndex: p.chapterIndex, ratio: Math.max(0, Math.min(1, p.scrollRatio || 0)) };
+                this.lastPos = { chapterIndex: p.chapterIndex, scrollRatio: Math.max(0, Math.min(1, p.scrollRatio || 0)) };
+            } else {
             }
             this.restoreScroll();
             this.updateProgress();
@@ -353,7 +474,6 @@ export class PdfReaderPanel {
                         viewport,
                     });
                     void textLayer.render().then(() => {
-                        this.bindTextSelection(i, tl);
                         // textLayer span 异步填充：restoreScroll 时可能未就绪，此处就绪后重试书签高亮
                         if (this.pendingHighlightPage === i) {
                             this.pendingHighlightPage = null;
@@ -413,10 +533,13 @@ export class PdfReaderPanel {
 
     // ── 目录 / 书签 ──
 
-    /** 目录渲染（嵌套展开；pageIndex 点击时才解析 dest 延迟补写，滚动到目标页） */
+    /** 目录渲染（嵌套展开；pageIndex 点击时才解析 dest 延迟补写，滚动到目标页）。
+     *  渲染后收集行按钮（DOM 顺序 = 渲染 DFS 顺序 = flattenPdfOutline(tocEntries)，高亮按扁平索引切换）。 */
     private buildToc(): void {
         const list = this.tocListEl;
         list.empty();
+        this.tocFlat = flattenPdfOutline(this.tocEntries);
+        this.tocRowEls = [];
         if (this.tocEntries.length === 0) {
             list.createDiv({ cls: 'rl-reader-ex-empty', text: '本书没有目录（PDF 无 outline）' });
             return;
@@ -424,11 +547,13 @@ export class PdfReaderPanel {
         for (const item of this.tocEntries) {
             this.buildTocItem(list, item, 0);
         }
+        this.tocRowEls = Array.from(list.querySelectorAll<HTMLElement>('.rl-reader-toc-item'));
+        this.syncTocHighlight();
     }
 
     private buildTocItem(parent: HTMLElement, item: PdfOutlineItem, depth: number): void {
         const row = parent.createDiv({ cls: 'rl-reader-toc-row', attr: { style: `padding-left:${12 + depth * 14}px` } });
-        const btn = row.createEl('button', { cls: 'rl-reader-toc-item', attr: { title: item.label }, text: item.label });
+        const btn = row.createEl('button', { cls: 'rl-reader-toc-item', attr: { 'data-tip': item.label }, text: item.label });
         btn.addEventListener('click', () => void this.jumpToc(item));
         for (const child of item.children) {
             this.buildTocItem(parent, child, depth + 1);
@@ -441,29 +566,76 @@ export class PdfReaderPanel {
         const pdf = this.pdf;
         if (!pdf) return;
         try {
-            let pageIndex = -1;
-            const dest = item.dest;
-            // pdf.js 内部 Ref（{num, gen}）未在顶层导出，用结构类型
-            if (typeof dest === 'string') {
-                const d = await pdf.getDestination(dest);
-                if (d && d[0]) pageIndex = await pdf.getPageIndex(d[0] as { num: number; gen: number });
-            } else if (Array.isArray(dest)) {
-                const ref = dest[0] as { num: number; gen: number };
-                if (ref) pageIndex = await pdf.getPageIndex(ref);
+            let pageIndex = item.pageIndex;
+            if (pageIndex < 0 && item.dest !== undefined) {
+                pageIndex = await this.resolveDestPage(item.dest);
+                // 跳转解析成功即补写缓存（后续当前章高亮可直接用，免重复解析）
+                if (pageIndex >= 0) {
+                    item.pageIndex = pageIndex;
+                    this.tocFlat = flattenPdfOutline(this.tocEntries);
+                }
             }
             if (pageIndex >= 0) {
                 // 先渲染目标页（虚拟化下可能未渲染）→ 真实高度校正后定位，避免占位高度滚动偏差
-                void this.ensureRendered(pageIndex).then(() => this.scrollToPage(pageIndex));
-                return;
-            }
-            if (item.pageIndex >= 0) {
-                void this.ensureRendered(item.pageIndex).then(() => this.scrollToPage(item.pageIndex));
+                void this.ensureRendered(pageIndex).then(() => {
+                    this.scrollToPage(pageIndex);
+                    this.syncTocHighlight();
+                });
                 return;
             }
             new Notice('该目录项无页码信息，无法跳转', 3000);
         } catch (err) {
             new Notice(`目录跳转失败：${err instanceof Error ? err.message : String(err)}`, 4000);
         }
+    }
+
+    /** 解析 outline dest → 页索引 0 基（-1 = 不可解析）。兼容 named destination（string）与直接引用数组。 */
+    private async resolveDestPage(dest: unknown): Promise<number> {
+        const pdf = this.pdf;
+        if (!pdf) return -1;
+        try {
+            // pdf.js 内部 Ref（{num, gen}）未在顶层导出，用结构类型
+            if (typeof dest === 'string') {
+                const d = await pdf.getDestination(dest);
+                if (d && d[0]) return pdf.getPageIndex(d[0] as { num: number; gen: number });
+                return -1;
+            }
+            if (Array.isArray(dest)) {
+                const ref = dest[0] as { num: number; gen: number };
+                if (ref) return pdf.getPageIndex(ref);
+            }
+            return -1;
+        } catch {
+            return -1;
+        }
+    }
+
+    /** 异步预解析全部目录条目 dest → pageIndex（pdf.js 原始 outline 无页码；后台并行补全后重建扁平列表并刷新高亮）。
+     *  单条失败静默保留 -1（仍可展示、点击时按需再解析）；全部完成后追加一次 syncTocHighlight 兜底。 */
+    private async resolveTocPageIndexes(): Promise<void> {
+        const todo: PdfOutlineItem[] = [];
+        const collect = (items: PdfOutlineItem[]): void => {
+            for (const it of items) {
+                if (it.pageIndex < 0 && it.dest !== undefined) todo.push(it);
+                if (it.children.length > 0) collect(it.children);
+            }
+        };
+        collect(this.tocEntries);
+        if (todo.length === 0) return;
+        await Promise.all(todo.map((it) => this.resolveDestPage(it.dest).then((p) => {
+            if (p >= 0) it.pageIndex = p;
+        })));
+        this.tocFlat = flattenPdfOutline(this.tocEntries);
+        this.syncTocHighlight();
+    }
+
+    /** 目录当前章高亮：当前页对应条目（chooseActivePdfIndex）加 .active 并滚入可视（对齐 TXT/EPUB 目录联动）；
+     *  无匹配（目录前扉页 / 页码未解析）清空全部高亮。 */
+    private syncTocHighlight(pageIndex?: number): void {
+        if (this.tocRowEls.length === 0) return;
+        const idx = chooseActivePdfIndex(this.tocFlat, pageIndex ?? this.currentPageIndex());
+        this.tocRowEls.forEach((el, i) => el.toggleClass('active', i === idx));
+        if (idx >= 0) this.tocRowEls[idx]?.scrollIntoView({ block: 'nearest' });
     }
 
     /** 摘抄书签列表（书签 tab 内容）：点击跳原书定位并高亮；无定位提示 */
@@ -522,22 +694,6 @@ export class PdfReaderPanel {
         void this.ensureRendered(pageIndex).then(() => this.restoreScroll());
     }
 
-    // ── 文本层摘抄 ──
-
-    /** 页文本层绑定 mouseup 选中捕获（批注开关开启且选中非空才回调） */
-    private bindTextSelection(i: number, tl: HTMLElement): void {
-        tl.addEventListener('mouseup', () => {
-            if (!this.annotateOn) return;
-            const sel = window.getSelection();
-            const text = sel?.toString().trim();
-            if (text && this.options.onExcerpt) {
-                const ratio = this.currentPageRatio(i);
-                this.options.onExcerpt(text, i + 1, { chapter: i + 1, pct: Math.round(ratio * 100) });
-                sel?.removeAllRanges();
-            }
-        });
-    }
-
     // ── 缩放 / 目录折叠 ──
 
     /** 缩放 ±：重渲染可视页并锚定当前位置（记录当前页 + 页内比例，重渲染后恢复滚动） */
@@ -564,18 +720,15 @@ export class PdfReaderPanel {
         for (let i = Math.max(0, firstVisible - 1); i <= Math.min(this.numPages - 1, firstVisible + 1); i++) {
             void this.ensureRendered(i);
         }
+        // 同步设置菜单「字号」当前值（键盘/按钮缩放均走此）
+        this.syncSettingsLabels();
     }
 
     private toggleToc(): void {
         this.tocCollapsed = !this.tocCollapsed;
         this.tocEl.toggleClass('collapsed', this.tocCollapsed);
-    }
-
-    private switchTocPane(pane: 'toc' | 'ex', tocTab: HTMLButtonElement, exTab: HTMLButtonElement, tocPane: HTMLDivElement, exPane: HTMLDivElement): void {
-        tocTab.toggleClass('active', pane === 'toc');
-        exTab.toggleClass('active', pane === 'ex');
-        tocPane.toggleClass('hidden', pane !== 'toc');
-        exPane.toggleClass('hidden', pane !== 'ex');
+        // 目录折叠后菜单文案不需变；icon 标题随折叠态提示展开/收起
+        this.sidebarToggleEl?.setAttribute('data-tip', this.tocCollapsed ? '展开目录' : '收起目录');
     }
 
     // ── 滚动与进度 ──
@@ -634,23 +787,22 @@ export class PdfReaderPanel {
             if (this.restoring) return;
             const idx = this.currentPageIndex();
             const ratio = this.currentPageRatio(idx);
+            this.lastPos = { chapterIndex: idx, scrollRatio: ratio };
             this.updateProgress();
             this.scheduleSave(idx, ratio);
         });
     };
 
-    /** 更新头部「已读 X% · 剩余 Y%」 */
+    /** 更新底部工具条：左「第 N 页 / 共 M 页」+ 全书进度条填充 + 右「已读 X%」（旧头部文本 T 迁底部，与 TXT/EPUB 对齐）；
+     *  顺带联动目录当前章高亮（滚动/恢复/翻页均经此同步） */
     private updateProgress(): void {
-        if (!this.progressEl || this.numPages === 0) return;
+        if (this.numPages === 0) return;
         const idx = this.currentPageIndex();
         const pct = estimatePdfPercent(this.numPages, idx, this.currentPageRatio(idx));
-        this.progressEl.setText(`已读 ${pct}% · 剩余 ${100 - pct}%`);
-    }
-
-    /** 当前整体百分比（关闭时写回 catalog 用） */
-    private currentPercent(): number {
-        if (this.numPages === 0) return 0;
-        return estimatePdfPercent(this.numPages, this.currentPageIndex(), this.currentPageRatio(this.currentPageIndex()));
+        this.footerPageEl?.setText(`第 ${idx + 1} 页 / 共 ${this.numPages} 页`);
+        this.footerFillEl?.style.setProperty('width', `${pct}%`);
+        this.footerPctEl?.setText(`已读 ${pct}%`);
+        this.syncTocHighlight(idx);
     }
 
     /** 滚动保存节流（300ms trailing） */
@@ -669,8 +821,11 @@ export class PdfReaderPanel {
             this.saveTimer = null;
         }
         if (this.numPages === 0) return;
-        this.options.onSaveProgress({ chapterIndex: this.currentPageIndex(), scrollRatio: this.currentPageRatio(this.currentPageIndex()) });
-        this.options.onProgressPersist?.(this.currentPercent());
+        // Modal 关闭时内容拆解 scrollTop 归零，实时读得 0/0 —— 会话内有阅读则用最后已知位置兜底（纯函数已单测）
+        const live: ReaderPos = { chapterIndex: this.currentPageIndex(), scrollRatio: this.currentPageRatio(this.currentPageIndex()) };
+        const pos = resolveFlushPos(live, this.lastPos);
+        this.options.onSaveProgress(pos);
+        this.options.onProgressPersist?.(estimatePdfPercent(this.numPages, pos.chapterIndex, pos.scrollRatio));
     }
 
     /** 书签跳转后：textLayer 内查找引用文本前 24 字符所在 span，滚动到该行并高亮 2.5s。
@@ -721,6 +876,8 @@ export class PdfReaderModal extends Modal {
         this.modalEl.style.maxWidth = '1200px';
         this.modalEl.style.height = '90%';
         contentEl.style.cssText = 'height:100%;display:flex;flex-direction:column;overflow:hidden';
+        // 软件式沉浸：去原生 modal 边框/标题栏，阅读器自绘顶栏直铺（对齐 TXT/EPUB）
+        this.modalEl.addClass('rl-reader-immersive');
         this.panel = new PdfReaderPanel(contentEl, new Scope(this.app.scope), this.options, () => this.close());
         this.panel.mount();
     }

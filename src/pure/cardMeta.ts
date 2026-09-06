@@ -40,3 +40,14 @@ export function cardCreator(e: MediaEntry): string {
 export function hasCardCreator(e: MediaEntry): boolean {
     return !!(e.director || e.author || e.developer);
 }
+
+/** 卡片题材行（genres 前 2 个，「 · 」连接）：
+ *  - 空 → 「—」占位（与 subtitle/creator 同款占位，行占位恒定防错位） */
+export function cardGenres(e: MediaEntry): string {
+    return e.genres.length > 0 ? e.genres.slice(0, 2).join(' · ') : PLACEHOLDER;
+}
+
+/** 题材行是否为真实内容（用于决定 title tooltip 是否设置，避免显示「—」提示） */
+export function hasCardGenres(e: MediaEntry): boolean {
+    return e.genres.length > 0;
+}

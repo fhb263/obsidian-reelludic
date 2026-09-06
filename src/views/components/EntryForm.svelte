@@ -67,6 +67,10 @@
     export let onPickBookFile: (ev?: MouseEvent) => Promise<string | undefined> = async () => undefined;
     /** 书籍「进度页数」自动关联：探针本地书籍文件基准（PDF → numPages；TXT → 按章节解析 totalChapters；EPUB/失败 → undefined） */
     export let onProbeBookPages: (path: string) => Promise<BookProbeResult | undefined> = async () => undefined;
+    /** 选视频文件夹（动画/电视剧「从文件夹检索剧集」目录选择器；非桌面/取消 → undefined） */
+    export let onPickVideoDir: () => Promise<string | undefined> = async () => undefined;
+    /** 读文件夹内视频并识别集号（按集号升序 {ep,path,name}；不可读/无命中 → []） */
+    export let onScanEpisodeDir: (dir: string) => Promise<{ ep: number; path: string; name: string }[]> = async () => [];
     /** 游戏编辑表单「▶ 启动」：弹窗侧启动游戏（编辑模式挂载当前条目；表单新选未保存时以已存条目为准） */
     export let onLaunchGame: () => void = () => {};
     /** 音乐编辑表单「▶ 播放」：弹窗侧播放音频（同上） */
@@ -223,7 +227,7 @@
     function clampWatch(n: number, min: number, dft: number): number {
         return Number.isFinite(n) && n >= min ? Math.round(n) : dft;
     }
-    // 影视条目默认总集数：电影默认 1（总集数框可编辑；观看链接第 1 集可关联路径 → 显示观看按钮）
+    // 影视条目默认总集数：电影固定语义为单集（默认 1，编辑表单不显示总集数框；观看链接渲染单集 ▶ 播放钮，关联第 1 集）；剧集/动画由输入框决定
     let totalEpisodes = entry?.progress?.totalEpisodes ? String(entry.progress.totalEpisodes) : type === 'movie' ? '1' : '';
     /** 观看链接双路径（index 0 = 第 1 集）：本地路径 episodeFiles + 网络地址 episodeUrls + 集标题 episodeTitles，随条目保存 */
     let episodeFiles: (string | undefined)[] = [];
@@ -656,6 +660,20 @@
                         // 补全失败静默，保留搜索级字段
                     }
                 }
+                // 豆瓣动画兜底：豆瓣搜索级不含题材/导演/主演（parseDoubanItem 只出标题/年份/封面/简介），
+                // 点选豆瓣动画结果时按需拉详情回填（JSON-LD + #info 有 导演/编剧/主演/类型/国家/集数 等）。
+                // ⚠️ 此前动画分支没有此段，豆瓣结果只停留在搜索级 → 题材/导演/主演恒空（电影/剧集分支一直有）。
+                if (r.source === 'douban' && !r.director && !r.cast?.length && !r.author && !r.developer) {
+                    try {
+                        const d = await onFetchDoubanDetail(String(r.id), type);
+                        if (d) {
+                            applyDoubanDetail(d);
+                            new Notice('已自动补全豆瓣详情字段', 2000);
+                        }
+                    } catch {
+                        // 详情拉取失败静默，保留已有搜索级字段（可手动填写，不阻塞保存）
+                    }
+                }
             } else {
                 // 影视/剧集：TMDB/OMDb（IMDb）搜索后按源拉详情回填；豆瓣兜底结果直接可用（封面为完整 URL）
                 originalTitle = r.originalTitle;
@@ -758,6 +776,41 @@
             return;
         }
         new Notice(`第 ${i + 1} 集未关联 — 右键该按钮编辑本地/网络链接`);
+    }
+    /** 批量检索本地剧集文件：选文件夹 → main 读目录识别文件名集号 → 未关联集保位填入本地路径；
+     *  总集数不足时自动扩到最大命中集号；已填本地路径的集跳过（不覆盖）。 */
+    async function batchScanLocalEps() {
+        const dir = await onPickVideoDir();
+        if (!dir) {
+            new Notice('未选择文件夹或系统对话框不可用');
+            return;
+        }
+        const hits = await onScanEpisodeDir(dir);
+        if (hits.length === 0) {
+            new Notice('该文件夹没有可识别集号的视频文件', 5000);
+            return;
+        }
+        const maxEp = hits[hits.length - 1].ep;
+        // 只扩不缩：总集数取当前值与最大命中集号的大者，随后按新总集数扩展数组（保位）
+        const curTotal = totalEpisodes ? Number(totalEpisodes) : 0;
+        if (maxEp > curTotal) {
+            totalEpisodes = String(maxEp);
+        }
+        resizeEpisodeFiles();
+        let filled = 0;
+        let skipped = 0;
+        for (const h of hits) {
+            const i = h.ep - 1;
+            if (episodeFiles[i]) {
+                skipped++;
+                continue;
+            }
+            episodeFiles[i] = h.path;
+            filled++;
+        }
+        // 数组元素写入后重设引用触发响应式（集按钮 linked 角标/悬停提示即时更新）
+        episodeFiles = [...episodeFiles];
+        new Notice(`已填入 ${filled} 集本地路径${skipped ? `，跳过已关联 ${skipped} 集` : ''}`, 4000);
     }
     /** 右键编辑：打开第 N 集编辑弹窗（填集标题 / 本地路径 / 网络地址） */
     function openEpEditor(i: number) {
@@ -1244,7 +1297,7 @@
                     </div>
                     {#each col.items as r (resultKey(r))}
                         {@const d = describeSearchResult(r)}
-                        <button class="rl-res-item" on:click|stopPropagation={() => pick(r)} title="点击回填该条目">
+                        <button class="rl-res-item" on:click|stopPropagation={() => pick(r)} data-tip="点击回填该条目">
                             {#if d.cover}
                                 <img class="rl-res-cv" src={d.cover} alt="" loading="lazy" referrerpolicy={isDoubanImage(d.cover) ? 'unsafe-url' : undefined} />
                             {:else}
@@ -1266,7 +1319,7 @@
                                         class="rl-res-source"
                                         role="link"
                                         tabindex="0"
-                                        title="打开 {d.source} 页面"
+                                        data-tip="打开 {d.source} 页面"
                                         on:click|stopPropagation={() => openSource(d.sourceUrl)}
                                         on:keydown={(ev) => openSourceOnEnter(ev, d.sourceUrl)}>
                                         {d.source} ↗
@@ -1276,7 +1329,7 @@
                         </button>
                     {/each}
                     {#if col.empty}
-                        <div class="rl-res-col-empty" on:click|stopPropagation title="该来源本次搜索未返回可展示结果">
+                        <div class="rl-res-col-empty" on:click|stopPropagation data-tip="该来源本次搜索未返回可展示结果">
                             该源暂无匹配结果
                         </div>
                     {/if}
@@ -1298,7 +1351,7 @@
                         on:contextmenu|preventDefault={openPosterCtx}
                         on:dragover|preventDefault
                         on:drop={onDropPoster}
-                        title="右键更换封面 / 拖入本地图片">
+                        data-tip="右键更换封面 / 拖入本地图片">
                         {#if previewUrl}
                             <img class="rl-poster-preview" src={previewUrl} alt="封面" referrerpolicy={isDoubanImage(previewUrl) ? 'unsafe-url' : undefined} />
                         {:else}
@@ -1334,10 +1387,10 @@
                         <div class="rl-title-row">
                             <input class="rl-input" bind:value={title} bind:this={titleInput} />
                             {#if communityScore || ratingCount}
-                                <span class="rl-title-score" title="大众评分（数据源回填，只读）">★ {communityScore || '—'}{ratingCount ? ` · ${ratingCount}人评价` : ''}</span>
+                                <span class="rl-title-score" data-tip="大众评分（数据源回填，只读）">★ {communityScore || '—'}{ratingCount ? ` · ${ratingCount}人评价` : ''}</span>
                             {/if}
                             {#if sourceUrl}
-                                <button class="rl-btn rl-btn-src" title="打开数据源页面" on:click={() => openSource(sourceUrl)}>{sourceLabelText()} ↗</button>
+                                <button class="rl-btn rl-btn-src" data-tip="打开数据源页面" on:click={() => openSource(sourceUrl)}>{sourceLabelText()} ↗</button>
                             {/if}
                         </div>
                     {:else}
@@ -1345,10 +1398,10 @@
                         <div class="rl-title-row">
                             <input class="rl-input" bind:value={title} bind:this={titleInput} />
                             {#if communityScore || ratingCount}
-                                <span class="rl-title-score" title="大众评分（数据源回填，只读）">★ {communityScore || '—'}{ratingCount ? ` · ${ratingCount}人评价` : ''}</span>
+                                <span class="rl-title-score" data-tip="大众评分（数据源回填，只读）">★ {communityScore || '—'}{ratingCount ? ` · ${ratingCount}人评价` : ''}</span>
                             {/if}
                             {#if sourceUrl}
-                                <button class="rl-btn rl-btn-src" title="打开数据源页面" on:click={() => openSource(sourceUrl)}>{sourceLabelText()} ↗</button>
+                                <button class="rl-btn rl-btn-src" data-tip="打开数据源页面" on:click={() => openSource(sourceUrl)}>{sourceLabelText()} ↗</button>
                             {/if}
                         </div>
                     {/if}
@@ -1388,7 +1441,7 @@
                             <label class="rl-lbl">{type === 'anime' ? '主演（声优）' : '主演'}</label>
                             <input class="rl-input" bind:value={cast} placeholder="多个主演用 / 分隔" />
                         </div>
-                    {:else if type === 'movie' || type === 'tv' || type === 'anime'}
+                    {:else if type === 'tv' || type === 'anime'}
                         <div>
                             <label class="rl-lbl">总集数</label>
                             <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="可留空" />
@@ -1403,19 +1456,22 @@
                 </div>
             {/if}
 
-            {#if (type === 'movie' || type === 'tv' || type === 'anime') && formMode !== 'bangumi'}
-                <div><label class="rl-lbl">总集数</label><input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="可留空" /></div>
-            {/if}
             {#if (type === 'tv' || type === 'anime') && formMode !== 'bangumi'}
-                <!-- 当前进度手填（S/E 与列表/月历/追番表展示同源；进度可手动维护而非只能被观看动作推进） -->
-                <div>
-                    <label class="rl-lbl">当前进度</label>
-                    <div class="rl-watch-prog">
-                        <span class="rl-watch-prefix">S</span>
-                        <input class="rl-input rl-watch-num" type="number" min="1" value={season} on:input={(ev) => (season = clampWatch(Number(ev.currentTarget.value), 1, entry?.progress?.season ?? 1))} />
-                        <span class="rl-watch-prefix">E</span>
-                        <input class="rl-input rl-watch-num" type="number" min="0" value={episode} on:input={(ev) => (episode = clampWatch(Number(ev.currentTarget.value), 0, entry?.progress?.episode ?? 1))} />
-                        <span class="rl-watch-hint">列表/月历按此显示进度</span>
+                <!-- 总集数 + 当前进度并排（动画/电视剧；电影无总集数概念，观看链接区渲染单集播放钮）：
+                     两字段同一行两列，行高与同列条目一致、信息密度更高 -->
+                <div class="rl-2col">
+                    <div>
+                        <label class="rl-lbl">总集数</label>
+                        <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="可留空" />
+                    </div>
+                    <div>
+                        <label class="rl-lbl" data-tip="列表/月历按此显示进度">当前进度</label>
+                        <div class="rl-watch-prog">
+                            <span class="rl-watch-prefix">S</span>
+                            <input class="rl-input rl-watch-num" type="number" min="1" value={season} on:input={(ev) => (season = clampWatch(Number(ev.currentTarget.value), 1, entry?.progress?.season ?? 1))} />
+                            <span class="rl-watch-prefix">E</span>
+                            <input class="rl-input rl-watch-num" type="number" min="0" value={episode} on:input={(ev) => (episode = clampWatch(Number(ev.currentTarget.value), 0, entry?.progress?.episode ?? 1))} />
+                        </div>
                     </div>
                 </div>
             {/if}
@@ -1443,7 +1499,7 @@
                                 class="rl-ep-btn rl-ep-btn-book"
                                 on:click={launchGameFromForm}
                                 on:contextmenu={(ev) => { ev.preventDefault(); openGameEditor(); }}
-                                title={gameLaunchPath.trim() ? `启动：${gameLaunchPath}\n右键编辑/浏览更换` : '未关联启动快捷方式 — 右键编辑选择 .lnk'}>
+                                data-tip={gameLaunchPath.trim() ? `启动：${gameLaunchPath}\n右键编辑/浏览更换` : '未关联启动快捷方式 — 右键编辑选择 .lnk'}>
                                 <Icon icon="play" size={11} /> 启动
                             </button>
                         </span>
@@ -1455,11 +1511,11 @@
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
                                     <input class="rl-input rl-ep-edit-input" value={gameLaunchVal} on:input={(ev) => (gameLaunchVal = inputVal(ev))} placeholder="vault 相对路径或系统绝对路径（.lnk）" />
-                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseGameLaunch(ev)} title="选择游戏启动快捷方式（库内/系统二选一）">浏览…</button>
+                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseGameLaunch(ev)} data-tip="选择游戏启动快捷方式（库内/系统二选一）">浏览…</button>
                                 </div>
                                 <div class="rl-ep-edit-ops">
-                                    <button class="rl-btn" on:click={saveGameEditor} title="保存启动快捷方式关联">保存</button>
-                                    <button class="rl-btn" disabled={!gameLaunchPath} on:click={clearGameEditor} title="清除启动快捷方式关联">清除</button>
+                                    <button class="rl-btn" on:click={saveGameEditor} data-tip="保存启动快捷方式关联">保存</button>
+                                    <button class="rl-btn" disabled={!gameLaunchPath} on:click={clearGameEditor} data-tip="清除启动快捷方式关联">清除</button>
                                     <button class="rl-btn" on:click={() => (gameEditOpen = false)}>取消</button>
                                 </div>
                             </div>
@@ -1501,7 +1557,7 @@
                                 class="rl-ep-btn rl-ep-btn-book"
                                 on:click={playMusicFromForm}
                                 on:contextmenu={(ev) => { ev.preventDefault(); openAudioEditor(); }}
-                                title={audioPath.trim() ? `播放：${audioPath}\n右键编辑/浏览更换` : '未关联本地音频 — 右键编辑选择音频文件'}>
+                                data-tip={audioPath.trim() ? `播放：${audioPath}\n右键编辑/浏览更换` : '未关联本地音频 — 右键编辑选择音频文件'}>
                                 <Icon icon="play" size={11} /> 播放
                             </button>
                         </span>
@@ -1513,11 +1569,11 @@
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
                                     <input class="rl-input rl-ep-edit-input" value={audioPathVal} on:input={(ev) => (audioPathVal = inputVal(ev))} placeholder="vault 相对路径或系统绝对路径" />
-                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseAudio(ev)} title="选择音频（库内/系统二选一）">浏览…</button>
+                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseAudio(ev)} data-tip="选择音频（库内/系统二选一）">浏览…</button>
                                 </div>
                                 <div class="rl-ep-edit-ops">
-                                    <button class="rl-btn" on:click={saveAudioEditor} title="保存本地音频关联">保存</button>
-                                    <button class="rl-btn" disabled={!audioPath} on:click={clearAudioEditor} title="清除本地音频关联">清除</button>
+                                    <button class="rl-btn" on:click={saveAudioEditor} data-tip="保存本地音频关联">保存</button>
+                                    <button class="rl-btn" disabled={!audioPath} on:click={clearAudioEditor} data-tip="清除本地音频关联">清除</button>
                                     <button class="rl-btn" on:click={() => (audioEditOpen = false)}>取消</button>
                                 </div>
                             </div>
@@ -1535,7 +1591,7 @@
                                 class="rl-ep-btn rl-ep-btn-book"
                                 on:click={watchBook}
                                 on:contextmenu={(ev) => { ev.preventDefault(); openBookEditor(); }}
-                                title={bookFileVal.trim() ? `打开阅读器：${bookFileVal}\n右键编辑/浏览更换` : '未关联书籍文件 — 右键编辑选择 TXT/EPUB/PDF'}>
+                                data-tip={bookFileVal.trim() ? `打开阅读器：${bookFileVal}\n右键编辑/浏览更换` : '未关联书籍文件 — 右键编辑选择 TXT/EPUB/PDF'}>
                                 <Icon icon="book-open" size={11} /> 阅读
                             </button>
                         </span>
@@ -1547,11 +1603,11 @@
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
                                     <input class="rl-input rl-ep-edit-input" value={bookFileVal} on:input={(ev) => (bookFileVal = inputVal(ev))} placeholder="vault 相对路径，如 书籍/三体.txt" />
-                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseBookFile(ev)} title="选择书籍文件（库内/系统二选一）">浏览…</button>
+                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseBookFile(ev)} data-tip="选择书籍文件（库内/系统二选一）">浏览…</button>
                                 </div>
                                 <div class="rl-ep-edit-ops">
-                                    <button class="rl-btn" on:click={saveBookEditor} title="保存书籍文件关联">保存</button>
-                                    <button class="rl-btn" on:click={clearBookEditor} title="清除书籍文件关联">清除</button>
+                                    <button class="rl-btn" on:click={saveBookEditor} data-tip="保存书籍文件关联">保存</button>
+                                    <button class="rl-btn" on:click={clearBookEditor} data-tip="清除书籍文件关联">清除</button>
                                     <button class="rl-btn" on:click={() => (bookEditOpen = false)}>取消</button>
                                 </div>
                             </div>
@@ -1560,21 +1616,47 @@
                 </div>
             {/if}
 
-            <!-- 观看链接（网络 + 本地合一，所有影视条目且填了总集数；置于简介下方）：1..N 小按钮，左键播放/打开、右键编辑填写本地或网络 -->
-            {#if (type === 'movie' || type === 'tv' || type === 'anime') && Number(totalEpisodes) > 0}
+            <!-- 观看链接（网络 + 本地合一）：电影 = 单集 ▶ 观看按钮（左键播放/打开第 1 集，右键编辑关联）；
+                 剧集/动画 = 1..N 集小按钮（左键播放/打开、右键编辑本地或网络），支持「从文件夹检索剧集…」批量按文件名集号填入 -->
+            {#if type === 'movie' || type === 'tv' || type === 'anime'}
                 <div>
-                    <label class="rl-lbl">观看链接</label>
-                    <div class="rl-ep-grid">
-                        {#each Array.from({ length: Number(totalEpisodes) }, (_, i) => i) as i}
-                            <span class="rl-ep-wrap" class:linked={!!episodeFiles[i] || !!episodeUrls[i]}>
-                                <button
-                                    class="rl-ep-btn"
-                                    on:click={() => playOrOpenEpisode(i)}
-                                    on:contextmenu={(ev) => { ev.preventDefault(); openEpEditor(i); }}
-                                    title={epLinkHint(i)}>{i + 1}</button>
-                            </span>
-                        {/each}
+                    <div class="rl-lbl-row">
+                        <label class="rl-lbl">观看链接</label>
+                        {#if type !== 'movie'}
+                            <!-- 批量检索（动画/电视剧）图标：选文件夹 → 识别文件名集号自动填入未关联集本地路径（已填跳过） -->
+                            <button
+                                class="rl-ep-batch-btn"
+                                aria-label="从文件夹检索剧集"
+                                data-tip="从文件夹检索剧集：选含剧集文件的文件夹，识别文件名集号（第N集 / S01E0N / 01…）自动填入本地路径，已填集跳过"
+                                on:click={() => void batchScanLocalEps()}><Icon icon="folder-search" size={13} /></button>
+                        {/if}
                     </div>
+                    {#if type === 'movie' || Number(totalEpisodes) > 0}
+                        <div class="rl-ep-grid">
+                            {#if type === 'movie'}
+                                <span class="rl-ep-wrap" class:linked={!!episodeFiles[0] || !!episodeUrls[0]}>
+                                    <button
+                                        class="rl-ep-btn rl-ep-btn-book"
+                                        aria-label="观看（第 1 集）"
+                                        on:click={() => playOrOpenEpisode(0)}
+                                        on:contextmenu={(ev) => { ev.preventDefault(); openEpEditor(0); }}
+                                        data-tip={epLinkHint(0)}><Icon icon="play" size={12} /> 观看</button>
+                                </span>
+                            {:else}
+                                {#each Array.from({ length: Number(totalEpisodes) }, (_, i) => i) as i}
+                                    <span class="rl-ep-wrap" class:linked={!!episodeFiles[i] || !!episodeUrls[i]}>
+                                        <button
+                                            class="rl-ep-btn"
+                                            on:click={() => playOrOpenEpisode(i)}
+                                            on:contextmenu={(ev) => { ev.preventDefault(); openEpEditor(i); }}
+                                            data-tip={epLinkHint(i)}>{i + 1}</button>
+                                    </span>
+                                {/each}
+                            {/if}
+                        </div>
+                    {:else}
+                        <div class="rl-hint">填总集数后可逐集关联；或点标题旁「检索文件夹」图标按文件名集号自动填入</div>
+                    {/if}
                 </div>
                 {#if editEp !== null}
                     <!-- 第 N 集编辑弹窗（EntryForm 内自绘浮层，不需 Obsidian App）：填写集标题 / 本地路径 / 网络地址 -->
@@ -1586,13 +1668,13 @@
                         <label class="rl-lbl-inline">本地路径</label>
                         <div class="rl-ep-edit-row">
                             <input class="rl-input rl-ep-edit-input" value={editLocal} on:input={(ev) => (editLocal = inputVal(ev))} placeholder="本地视频路径" />
-                            <button class="rl-btn rl-link-act" on:click={(ev) => browseLocalVideo(ev)} title="选择本地视频（库内/系统二选一）">浏览…</button>
+                            <button class="rl-btn rl-link-act" on:click={(ev) => browseLocalVideo(ev)} data-tip="选择本地视频（库内/系统二选一）">浏览…</button>
                         </div>
                         <label class="rl-lbl-inline">网络地址</label>
                         <input class="rl-input rl-ep-edit-input" value={editUrl} on:input={(ev) => (editUrl = inputVal(ev))} placeholder="https://…" />
                         <div class="rl-ep-edit-ops">
-                            <button class="rl-btn" on:click={saveEpEditor} title="保存本集标题/本地/网络关联">保存</button>
-                            <button class="rl-btn" on:click={clearEpEditor} title="清除本集标题与本地/网络关联">清除</button>
+                            <button class="rl-btn" on:click={saveEpEditor} data-tip="保存本集标题/本地/网络关联">保存</button>
+                            <button class="rl-btn" on:click={clearEpEditor} data-tip="清除本集标题与本地/网络关联">清除</button>
                             <button class="rl-btn" on:click={() => (editEp = null)}>取消</button>
                         </div>
                     </div>
@@ -1617,7 +1699,7 @@
                 {:else if status === 'watching'}
                     <span class="rl-status-date">
                         <span class="rl-lbl-inline">最近{statusVerb(type)}日期</span>
-                        <input class="rl-input" type="date" bind:value={lastWatchedDate} title="追番表活跃度按此日期计算：≤3 天活跃、≤7 天待看、>7 天滞后" />
+                        <input class="rl-input" type="date" bind:value={lastWatchedDate} data-tip="追番表活跃度按此日期计算：≤3 天活跃、≤7 天待看、>7 天滞后" />
                     </span>
                 {:else if status === 'watched'}
                     <span class="rl-status-date">
@@ -1645,11 +1727,11 @@
         <div>
             {#if entry}
                 <button class="rl-btn rl-btn-danger" on:click={onDelete}>删除条目</button>
-                <button class="rl-btn" on:click={startRefetch} title="按当前标题重搜数据源，回填客观字段（不覆盖主观内容与关联）">重新拉取</button>
+                <button class="rl-btn" on:click={startRefetch} data-tip="按当前标题重搜数据源，回填客观字段（不覆盖主观内容与关联）">重新拉取</button>
                 {#if entry.type === 'book'}
-                    <button class="rl-btn rl-btn-excerpt" on:click={onAddExcerpt} title="从外部阅读器复制文本，生成摘抄块">添加摘抄</button>
+                    <button class="rl-btn rl-btn-excerpt" on:click={onAddExcerpt} data-tip="从外部阅读器复制文本，生成摘抄块">添加摘抄</button>
                 {:else if entry.type === 'game'}
-                    <button class="rl-btn rl-btn-excerpt" on:click={onRecordPlaySession} title="日期 + 时长 + 心得，保存到游戏笔记">记录游玩</button>
+                    <button class="rl-btn rl-btn-excerpt" on:click={onRecordPlaySession} data-tip="日期 + 时长 + 心得，保存到游戏笔记">记录游玩</button>
                 {/if}
             {/if}
         </div>
@@ -1861,6 +1943,17 @@
     .rl-link-act:disabled { opacity: .4; cursor: not-allowed; }
     /* 观看链接区块：1..N 集按钮网格，左键播放/打开、右键编辑；本地绿点 / 网络蓝点双角标 */
     .rl-ep-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    /* 「观看链接」标题行：label + 批量检索小图标（动画/电视剧）并排；行内覆盖 label 底边距防图标下沉 */
+    .rl-lbl-row { display: flex; align-items: center; gap: 2px; }
+    .rl-lbl-row .rl-lbl { margin-bottom: 0; }
+    .rl-ep-batch-btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 20px; height: 18px; padding: 0;
+        border: none; background: transparent; color: var(--text-muted);
+        border-radius: 4px; cursor: pointer;
+        transition: color .12s ease, background .12s ease;
+    }
+    .rl-ep-batch-btn:hover { color: var(--interactive-accent); background: var(--background-modifier-hover); }
     /* 关联按钮单行（书籍文件/游戏启动/本地音频）：小按钮 + 右键编辑浮层 */
     .rl-ep-row { display: flex; gap: 6px; align-items: center; }
     .rl-ep-wrap { position: relative; }
@@ -1870,7 +1963,7 @@
         color: var(--text-muted); border-radius: 6px; cursor: pointer;
         transition: background .12s ease, color .12s ease;
     }
-    /* 书籍「▶ 观看」按钮：宽度自适应容纳图标+文字（rl-ep-btn 为集数固定宽，此覆盖） */
+    /* 电影单集「▶ 观看」按钮：与书籍「▶ 阅读」同款 auto 宽（图标+文字），沿用 rl-ep-btn-book */
     .rl-ep-btn-book {
         width: auto; min-width: 56px; padding: 0 12px;
         display: inline-flex; align-items: center; gap: 4px;

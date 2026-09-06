@@ -130,7 +130,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             attr: { placeholder: opts.placeholder, type: 'password', spellcheck: 'false' },
         });
         input.value = opts.value;
-        const toggle = wrap.createEl('button', { cls: 'rl-secret-eye', attr: { type: 'button', title: '切换明文/密文显示' }, text: '显示' });
+        const toggle = wrap.createEl('button', { cls: 'rl-secret-eye', attr: { type: 'button', 'data-tip': '切换明文/密文显示' }, text: '显示' });
         const apply = (show: boolean) => {
             input.type = show ? 'text' : 'password';
             toggle.setText(show ? '隐藏' : '显示');
@@ -447,7 +447,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 const line = list.createEl('label', { cls: 'rl-srcchk-line' });
                 const cb = line.createEl('input', {
                     cls: 'checkbox',
-                    attr: { type: 'checkbox', title: `是否启用「${c.label}」参与「${GROUP_LABELS[group]}」搜索` },
+                    attr: { type: 'checkbox', 'data-tip': `是否启用「${c.label}」参与「${GROUP_LABELS[group]}」搜索` },
                 });
                 cb.checked = checked;
                 cb.addEventListener('change', () => {

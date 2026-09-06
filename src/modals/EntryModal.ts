@@ -182,6 +182,8 @@ export class EntryModal extends Modal {
                 onPickGameLaunch: () => this.plugin.pickGameLaunchPath(),
                 /** 编辑表单书籍「浏览…」：系统文件选择器选 TXT/EPUB，返回 vault 相对路径 */
                 onPickBookFile: () => this.plugin.pickBookFilePath(),
+                onPickVideoDir: () => this.plugin.pickVideoDirPath(),
+                onScanEpisodeDir: (dir: string) => this.plugin.scanEpisodeDir(dir),
                 /** 书籍「进度页数」自动关联：探针本地书籍文件基准（PDF → numPages；TXT → 按章节解析 totalChapters；EPUB/失败 → undefined） */
                 onProbeBookPages: (path: string) => this.plugin.probeBookPages(path),
                 /** 编辑表单「阅读」：打开书籍阅读器（TXT 立即读入；EPUB 后置），关闭后返回最新阅读进度供表单同步 */

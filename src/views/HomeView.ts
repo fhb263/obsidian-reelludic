@@ -87,6 +87,8 @@ export class HomeView extends ItemView {
                     else if (e.type === 'music') void this.plugin.playAudioEntry(e);
                     else void this.plugin.openWatchLinkPicker(e);
                 },
+                /** 右键「动词 · 去关联」直达：无入口 → 快捷关联弹窗（书/游戏/音乐路径；影视选集网络/本地源） */
+                onQuickAssociate: (e: MediaEntry) => this.plugin.quickAssociateEntry(e),
                 onDeleteEntry: (id: string) => this.plugin.deleteEntry(id),
                 /** 批量删除（多选）：一次 Modal 确认后逐条删（plugin.deleteEntries） */
                 onBulkDelete: (ids: string[]) => this.plugin.deleteEntries(ids),

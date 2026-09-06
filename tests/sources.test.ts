@@ -171,4 +171,20 @@ describe('Bangumi persons 详情解析（parseBangumiPersons）', () => {
     it('无 persons 数据返回空对象', () => {
         expect(parseBangumiPersons('{"data":[]}')).toEqual({});
     });
+
+    it('真实响应形态：裸数组（官方 OpenAPI 200 = RelatedPerson[]，无 data 包装）也能解析导演/主演/公司', () => {
+        const text = JSON.stringify([
+            { id: 1, name: '渡边信一郎', type: 1, career: ['导演'], relation: '导演', eps: '全话' },
+            { id: 2, name: '林原惠', type: 1, career: ['声优'], relation: '出演', eps: '' },
+            { id: 3, name: 'SUNRISE', type: 2, career: ['动画制作'], relation: '动画制作', eps: '' },
+        ]);
+        const r = parseBangumiPersons(text);
+        expect(r.director).toBe('渡边信一郎');
+        expect(r.cast).toEqual(['林原惠']);
+        expect(r.studio).toBe('SUNRISE');
+    });
+
+    it('裸数组空响应返回空对象（不因 shape 变化抛错）', () => {
+        expect(parseBangumiPersons('[]')).toEqual({});
+    });
 });

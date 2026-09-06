@@ -1,6 +1,6 @@
 {
   "name": "obsidian-reelludic",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "影视/书籍/游戏/音乐收藏管理：书架视图、追更排期、统计看板、多源元数据抓取与双链笔记",
   "main": "main.js",
   "scripts": {
