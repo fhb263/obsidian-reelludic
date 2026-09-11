@@ -3,8 +3,12 @@
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS, type EntryType } from 'data/types';
     import { statusLabel, statusVerb, reviewLabel } from 'pure/labels';
     import { reconcileBookProgress, pageFromPercent, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
+    import { placeMenu } from 'pure/menuPlacement';
+    import { AI_HIGHLIGHT_SUGGEST, aiFieldsToText, textToAiFields } from 'pure/aiSummary';
+    import type { AiSummaryInput, AiSummaryResult } from 'pure/aiSummary';
     import { Notice } from 'obsidian';
     import { posterUrl } from 'services/tmdb';
+import { shouldAdoptCover } from 'pure/posterPolicy';
     import type { TmdbDetail, TmdbSearchResult } from 'services/tmdb';
     import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
     import type { BangumiSearchResult } from 'services/bangumi';
@@ -48,6 +52,8 @@
     export let onPlayEpisode: (path: string) => void = () => {};
     /** 「浏览」系统文件选择器选本地视频（Electron remote.dialog 返回绝对路径；input file 的 File.path 在 Obsidian 不可用） */
     export let onPickLocalVideo: (ev?: MouseEvent) => Promise<string | undefined> = async () => undefined;
+    /** 「总结摘要」小标题右侧 ✨：AI 生成一句话总结 + 核心看点（复用阅读器翻译的服务商与 Key；失败返回 null） */
+    export let onAiSummarize: (input: AiSummaryInput) => Promise<AiSummaryResult | null> = async () => null;
     /** 「本地音频」系统文件选择器选音乐文件（返回 vault 相对路径，库外绝对路径） */
     export let onPickLocalAudio: (ev?: MouseEvent) => Promise<string | undefined> = async () => undefined;
     /** 「启动快捷方式」系统文件选择器选游戏 .lnk（返回 vault 相对路径，库外绝对路径） */
@@ -165,6 +171,37 @@
     let aliases = (entry?.aliases ?? []).join(' / ');
     /** 简介/剧情简介（搜索回填自动记录；落库 summary 字段，笔记「## 简介」章节） */
     let summary = entry?.summary ?? '';
+    /** AI 摘要（单框合并：第 1 行 = 一句话总结，其余每行 = 一条看点；可手填 / 可点「总结摘要」右侧 ✨ 生成）
+     *  落库仍拆两个字段 aiSummary / aiHighlights，互转见 pure/aiSummary.aiFieldsToText / textToAiFields */
+    let aiText = aiFieldsToText(entry?.aiSummary, entry?.aiHighlights);
+    let aiBusy = false;
+    /** 生成 AI 摘要：元数据（类型/标题/年份/题材/主创/主演/简介/目录）喂给模型，结果回填可继续手改 */
+    async function generateAiSummary() {
+        if (aiBusy) return;
+        if (!title.trim()) {
+            new Notice('先填写标题，再生成 AI 摘要', 3000);
+            return;
+        }
+        aiBusy = true;
+        try {
+            const creator = type === 'book' ? author : type === 'game' ? developer : type === 'music' ? author : directorWriters;
+            const r = await onAiSummarize({
+                type,
+                title: title.trim(),
+                year: year ? Number(year) || undefined : undefined,
+                genres: genres.split(/[\/、,，]/).map((x) => x.trim()).filter(Boolean),
+                creator: creator.trim() || undefined,
+                cast: cast.split(/[\/、,，]/).map((x) => x.trim()).filter(Boolean),
+                summary: summary.trim() || undefined,
+                toc: type === 'book' ? toc.trim() || undefined : undefined,
+            });
+            if (!r) return; // 失败：服务层已 Notice
+            aiText = aiFieldsToText(r.summary, r.highlights);
+            new Notice('已生成 AI 摘要 — 可直接修改后再保存', 3000);
+        } finally {
+            aiBusy = false;
+        }
+    }
     /** 简介类 textarea 引用（auto-grow：高度随文字多少自动伸缩） */
     let summaryEl: HTMLTextAreaElement | null = null;
     let authorIntroEl: HTMLTextAreaElement | null = null;
@@ -274,8 +311,8 @@
                 : readPct < 100
                   ? 'rl-readbar-high'
                   : 'rl-readbar-done';
-    /** 进度单位：关联 TXT 按章节解析 → 章；否则（PDF/手填）→ 页 */
-    $: bookUnit = bookFileVal.trim().toLowerCase().endsWith('.txt') ? '章' : '页';
+    /** 进度单位：关联 TXT/EPUB 按章节解析 → 章；否则（PDF/手填）→ 页（EPUB 无固定页码，spine 章节数为基准） */
+    $: bookUnit = ['.txt', '.epub'].some((ext) => bookFileVal.trim().toLowerCase().endsWith(ext)) ? '章' : '页';
     $: bookUnitLabel = bookUnit === '章' ? '进度章节' : '进度页数';
     /** 游戏游玩时长（小时录入，落库转分钟；有游玩记录明细时以明细累计为准） */
     let playtimeHours = entry?.playtimeMinutes ? String(Math.round(entry.playtimeMinutes / 60)) : '';
@@ -293,19 +330,51 @@
     let ctxOpen = false;
     let ctxX = 0;
     let ctxY = 0;
+    /** 菜单超出视口可用区域时的封顶尺寸（视口过矮/过窄 → 菜单内部滚动） */
+    let ctxMaxH: number | undefined = undefined;
+    let ctxMaxW: number | undefined = undefined;
+    /** 触发菜单的鼠标视口坐标（菜单内容切换后重新定位要用同一锚点，不能丢） */
+    let ctxMouseX = 0;
+    let ctxMouseY = 0;
+    let ctxMenuEl: HTMLDivElement | null = null;
     let ctxUrlMode = false;
     let fileInput: HTMLInputElement | null = null;
 
     function openPosterCtx(ev: MouseEvent) {
         ev.preventDefault();
-        ctxX = ev.clientX;
-        ctxY = ev.clientY;
+        ctxMouseX = ev.clientX;
+        ctxMouseY = ev.clientY;
         ctxUrlMode = false;
         ctxOpen = true;
+        void placePosterCtx();
+    }
+    /** 视口系定位（菜单 position:fixed）：贴鼠标 → 越界翻转 → 仍越界钳制 → 超高/超宽封顶。
+     *  切换「更换网络图片」会改变菜单高度，切换后同样走这里重算，避免半截探出屏幕。 */
+    async function placePosterCtx() {
+        ctxMaxH = undefined;
+        ctxMaxW = undefined;
+        await tick();
+        const menu = ctxMenuEl;
+        if (!menu) return;
+        const m = menu.getBoundingClientRect();
+        const p = placeMenu({
+            x: ctxMouseX,
+            y: ctxMouseY,
+            menuW: m.width,
+            menuH: m.height,
+            vw: window.innerWidth,
+            vh: window.innerHeight,
+        });
+        ctxX = p.left;
+        ctxY = p.top;
+        ctxMaxH = p.maxHeight;
+        ctxMaxW = p.maxWidth;
     }
     function closeCtx() {
         ctxOpen = false;
         ctxUrlMode = false;
+        ctxMaxH = undefined;
+        ctxMaxW = undefined;
     }
     function pickFile() {
         closeCtx();
@@ -565,7 +634,9 @@
                 summary = r.description ?? '';
                 authorIntro = r.authorIntro ?? '';
                 toc = r.toc ?? '';
-                if (r.thumbnail) poster = r.thumbnail;
+                // 重新拉取封面策略：本地封面（封面/xxx.jpg）不被远程结果覆盖——豆瓣封面基本不变，
+                // 每次重新拉取都覆盖会再次触发下载，封面/{标题}-2/-3.jpg 重复文件堆积；换封面走 URL 输入/拖图
+                if (shouldAdoptCover(poster, r.thumbnail)) poster = r.thumbnail;
                 // 豆瓣书籍兜底：搜索级缺 ISBN/装帧/定价 等，点击时按需拉详情补全
                 if (r.source === 'douban' && !r.publisher) {
                     try {
@@ -598,7 +669,7 @@
                 developer = r.developer ?? '';
                 genres = r.genres?.length ? r.genres.join(' / ') : '';
                 summary = r.summary ?? '';
-                if (r.cover) poster = r.cover;
+                if (shouldAdoptCover(poster, r.cover)) poster = r.cover;
                 // 豆瓣游戏兜底：搜索级缺平台/开发商时，点击时按需拉详情补全
                 // ⚠️ 游戏 id 是 number（toGameResult id: Number(s.id)），不能用 replace 剥 douban: 前缀（书/音乐才是字符串 id）——String() 通用安全
                 if (r.source === 'douban' && !r.platform && !r.developer) {
@@ -619,9 +690,9 @@
                 author = r.artist ?? '';
                 album = r.album ?? '';
                 summary = r.summary ?? '';
-                if (r.cover) poster = r.cover;
-                // 豆瓣音乐兜底：搜索级缺歌手/专辑时，点击时按需拉详情补全
-                if (r.source === 'douban' && (!r.artist || !r.album)) {
+                if (shouldAdoptCover(poster, r.cover)) poster = r.cover;
+                // 豆瓣音乐兜底：搜索级缺歌手/专辑/年份时，点击时按需拉详情补全（#info 发行时间 → 发行年）
+                if (r.source === 'douban' && (!r.artist || !r.album || !r.year)) {
                     try {
                         const d = await onFetchDoubanDetail(r.id.replace('douban:', ''), type);
                         if (d) {
@@ -638,7 +709,7 @@
                 if (r.year) year = String(r.year);
                 genres = (r.genres ?? []).join(' / ');
                 summary = r.summary ?? '';
-                if (r.cover) poster = r.cover;
+                if (shouldAdoptCover(poster, r.cover)) poster = r.cover;
                 // 详情补全后字段回填（搜索级无，persons/subject 详情 API 写入；主演字段仅 douban/tmdb 源显示，bangumi 隐藏但数据保留）
                 if (r.director) directorWriters = r.director;
                 if (r.cast?.length) cast = r.cast.join(' / ');
@@ -681,7 +752,7 @@
                 if (r.source === 'omdb') {
                     const om = r as OmdbSearchResult;
                     // IMDb 海报搜索级直填（服务端 Poster=N/A 已滤除 → 无封面走占位图）
-                    if (om.poster) poster = om.poster;
+                    if (shouldAdoptCover(poster, om.poster)) poster = om.poster;
                     // i= 详情补 Plot/导演/演员(截5)/类型(截3)/imdbRating/imdbVotes(去逗号)；失败 null 静默
                     try {
                         const d = await onFetchOmdbDetail(om.imdbID);
@@ -693,7 +764,7 @@
                         // 详情补全失败静默：保留搜索级字段，不阻塞保存
                     }
                 } else if (r.source === 'douban') {
-                    if (r.posterPath) poster = r.posterPath;
+                    if (shouldAdoptCover(poster, r.posterPath)) poster = r.posterPath;
                     if (r.overview) summary = r.overview;
                     // 详情字段：优先用 r 自带（仅前 3 条搜索时已补）；其余点击时按需拉详情补全
                     applyDoubanDetail(r as unknown as Record<string, unknown>);
@@ -710,7 +781,7 @@
                     }
                 } else {
                     const d = await onFetchDetail(r);
-                    if (d.posterPath) poster = posterUrl(d.posterPath) ?? '';
+                    if (shouldAdoptCover(poster, posterUrl(d.posterPath))) poster = posterUrl(d.posterPath) ?? '';
                     if (d.genres?.length) genres = d.genres.join(' / ');
                     if (d.director) director = d.director;
                     if (d.cast?.length) cast = d.cast.join(' / ');
@@ -726,7 +797,10 @@
                 try {
                     poster = await onDownloadPoster(poster, title);
                 } catch {
-                    // 下载失败：保留远程 URL（预览可能空白，但不丢数据）
+                    // 下载失败：保留远程 URL（预览可能空白，但不丢数据）。
+                    // 批B：失败不再静默——明确告知用户，并指出「手动补封面」的既有入口
+                    // （封面区拖入图片 / 右键「更换本地图片」），不新增任何常驻 UI
+                    new Notice('封面下载失败，已保留网络地址（预览可能空白）。可将本地图片拖入封面区，或右键封面选「更换本地图片」手动设置', 8000);
                 }
             }
             syncPosterUrlInput(); // 回填后 http 封面 URL 同步到输入框
@@ -919,8 +993,8 @@
             new Notice('无法打开文件选择器，请手动输入路径');
         }
     }
-    /** 进度页数自动关联本地文件：PDF 解析本地页数、TXT 按章节解析 → totalPage 收紧本地基准、当前进度按既有 percent 重算/钳制
-     *  （复用 reconcileBookProgress）；EPUB 无轻量探针不解析；无变化/失败静默（保持手填） */
+    /** 进度页数自动关联本地文件：PDF 解析本地页数、TXT/EPUB 按章节解析 → totalPage 收紧本地基准、当前进度按既有 percent 重算/钳制
+     *  （复用 reconcileBookProgress）；无变化/失败静默（保持手填） */
     /** 进度页数自动关联解析。notify=true 时（刷新按钮测试获取）无变化/失败也明确反馈；浏览/保存场景保持静默不打扰 */
     async function autoLinkBookProgress(path: string, notify = false) {
         if (!path) {
@@ -929,11 +1003,12 @@
         }
         const info = await onProbeBookPages(path);
         if (!info) {
-            if (notify) new Notice('解析失败：请确认文件存在且为 PDF/TXT', 4000);
+            if (notify) new Notice('解析失败：请确认文件存在且为 PDF/TXT/EPUB', 4000);
             return;
         }
-        const total = info.format === 'txt' ? info.totalChapters : info.numPages;
-        const unit = info.format === 'txt' ? '章' : '页';
+        // 进度基准单位：PDF=页；TXT/EPUB=章（章节制，EPUB 无固定页码）
+        const total = info.format === 'pdf' ? info.numPages : info.totalChapters;
+        const unit = info.format === 'pdf' ? '页' : '章';
         const r = reconcileBookProgress(
             {
                 page: readingPage ? Number(readingPage) || undefined : undefined,
@@ -1145,6 +1220,10 @@
         input.communityScore = communityScore ? Number(communityScore) || undefined : undefined;
         input.ratingCount = ratingCount ? Number(ratingCount.replace(/,/g, '')) || undefined : undefined;
         input.summary = summary.trim() || undefined;
+        // AI 摘要（单框拆回两字段）：空值 → undefined（清空即移除对应章节）
+        const ai = textToAiFields(aiText);
+        input.aiSummary = ai.aiSummary;
+        input.aiHighlights = ai.aiHighlights;
         // 计划观看日期：仅想看状态携带；其他状态显式清空，避免旧排期残留
         // 过去日期校验：计划观看应面向未来，弹提示并阻止保存
         if (status === 'want' && plannedDate) {
@@ -1363,10 +1442,10 @@
                     <div class="rl-poster-hint">右键更换封面</div>
                     <!-- 右键菜单：本地 / 网络 / 移除 -->
                     {#if ctxOpen}
-                        <div class="rl-ctx" style={`left:${ctxX}px;top:${ctxY}px`} role="menu" on:click|stopPropagation>
+                        <div class="rl-ctx" bind:this={ctxMenuEl} style={`left:${ctxX}px;top:${ctxY}px${ctxMaxH !== undefined ? `;max-height:${ctxMaxH}px` : ''}${ctxMaxW !== undefined ? `;max-width:${ctxMaxW}px` : ''}`} role="menu" on:click|stopPropagation>
                             {#if !ctxUrlMode}
                                 <button on:click={pickFile}>更换本地图片…</button>
-                                <button on:click={() => (ctxUrlMode = true)}>更换网络图片…</button>
+                                <button on:click={() => { ctxUrlMode = true; void placePosterCtx(); }}>更换网络图片…</button>
                                 {#if previewUrl}
                                     <button class="rl-ctx-danger" on:click={removePoster}>移除封面</button>
                                 {/if}
@@ -1422,12 +1501,19 @@
                     <div><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} /></div>
                     <div><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} /></div>
                 </div>
-                <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} /></div>
+                <div class="rl-2col">
+                    <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} /></div>
+                    <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
+                </div>
             {/if}
             {#if type === 'music'}
                 <div class="rl-2col">
                     <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder="歌手 / 艺术家" /></div>
                     <div><label class="rl-lbl">专辑</label><input class="rl-input" bind:value={album} placeholder="所属专辑（手动填写）" /></div>
+                </div>
+                <div class="rl-2col">
+                    <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
+                    <div><label class="rl-lbl">发行年</label><input class="rl-input" bind:value={year} /></div>
                 </div>
             {/if}
             {#if type === 'movie' || type === 'tv' || type === 'anime'}
@@ -1487,6 +1573,25 @@
 
             <label class="rl-lbl">{type === 'book' ? '内容简介' : '简介'}</label>
             <textarea class="rl-input rl-summary" rows="6" bind:this={summaryEl} placeholder={type === 'book' ? '图书内容简介（豆瓣详情回填，可手动修改）' : '作品剧情简介（搜索自动回填，可手动修改）'} bind:value={summary}></textarea>
+            {#if type !== 'book'}
+            <!-- AI 摘要（单框合并：第 1 行一句话总结，其余每行一条看点）：可手填 / 可点「总结摘要」右侧 ✨ 生成 -->
+            <div class="rl-lbl-row">
+                <label class="rl-lbl">总结摘要</label>
+                <button
+                    class="rl-ai-btn"
+                    disabled={aiBusy}
+                    on:click={() => void generateAiSummary()}
+                    data-tip={`AI 生成一句话总结与核心看点（${AI_HIGHLIGHT_SUGGEST} 条）\n复用「阅读器翻译」的 AI 服务商与 API Key；生成后可手动修改`}>
+                    <span class="rl-sr">AI 生成摘要</span>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+                        <path d="M5 3v4" /><path d="M19 17v4" /><path d="M3 5h4" /><path d="M17 19h4" />
+                    </svg>
+                </button>
+            </div>
+            <textarea class="rl-input rl-ai-hl" rows="4" bind:value={aiText}
+                placeholder={'一句话总结：\n1. 要点1\n2. 要点2\n3. 要点3'}></textarea>
+            {/if}
             {#if type === 'game'}
                 <div class="rl-2col">
                     <div><label class="rl-lbl">游玩时长（小时）</label><input class="rl-input" type="number" min="0" step="0.1" bind:value={playtimeHours} placeholder="如 12（有游玩记录时以明细为准）" /></div>
@@ -1506,12 +1611,12 @@
                         {#if gameEditOpen}
                             <!-- 启动快捷方式编辑浮层（参照书籍文件浮层）：浏览选择/手动输入路径 -->
                             <div class="rl-ep-edit-mask" on:click={() => (gameEditOpen = false)}></div>
-                            <div class="rl-ep-edit" role="dialog" aria-label="编辑启动快捷方式">
-                                <div class="rl-ep-edit-title">启动快捷方式（.lnk）</div>
+                            <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-game">
+                                <div class="rl-ep-edit-title" id="rl-ep-title-game">启动快捷方式（.lnk）</div>
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
                                     <input class="rl-input rl-ep-edit-input" value={gameLaunchVal} on:input={(ev) => (gameLaunchVal = inputVal(ev))} placeholder="vault 相对路径或系统绝对路径（.lnk）" />
-                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseGameLaunch(ev)} data-tip="选择游戏启动快捷方式（库内/系统二选一）">浏览…</button>
+                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseGameLaunch(ev)} data-tip="选择游戏启动快捷方式（系统文件管理器）">浏览…</button>
                                 </div>
                                 <div class="rl-ep-edit-ops">
                                     <button class="rl-btn" on:click={saveGameEditor} data-tip="保存启动快捷方式关联">保存</button>
@@ -1528,6 +1633,25 @@
                 <textarea class="rl-input rl-summary" rows="3" bind:this={authorIntroEl} placeholder="作者介绍（豆瓣详情页回填，可手动修改）" bind:value={authorIntro}></textarea>
                 <label class="rl-lbl">目录</label>
                 <textarea class="rl-input rl-summary" rows="4" bind:this={tocEl} placeholder="图书目录（豆瓣详情页回填，可手动修改）" bind:value={toc}></textarea>
+                {#if type === 'book'}
+            <!-- AI 摘要（单框合并：第 1 行一句话总结，其余每行一条看点）：可手填 / 可点「总结摘要」右侧 ✨ 生成 -->
+            <div class="rl-lbl-row">
+                <label class="rl-lbl">总结摘要</label>
+                <button
+                    class="rl-ai-btn"
+                    disabled={aiBusy}
+                    on:click={() => void generateAiSummary()}
+                    data-tip={`AI 生成一句话总结与核心看点（${AI_HIGHLIGHT_SUGGEST} 条）\n复用「阅读器翻译」的 AI 服务商与 API Key；生成后可手动修改`}>
+                    <span class="rl-sr">AI 生成摘要</span>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+                        <path d="M5 3v4" /><path d="M19 17v4" /><path d="M3 5h4" /><path d="M17 19h4" />
+                    </svg>
+                </button>
+            </div>
+            <textarea class="rl-input rl-ai-hl" rows="4" bind:value={aiText}
+                placeholder={'一句话总结：\n1. 要点1\n2. 要点2\n3. 要点3'}></textarea>
+                {/if}
                 <label class="rl-lbl">{bookUnitLabel}</label>
                 <div class="rl-prog-range">
                     <input class="rl-input rl-prog-input" type="number" min="0" bind:value={readingPage} placeholder="当前" />
@@ -1535,9 +1659,8 @@
                     <input class="rl-input rl-prog-input" type="number" min="0" bind:value={readingTotalPage} placeholder={bookUnit === '章' ? '总章节（自动解析）' : '总页数（自动解析）'} />
                     <button
                         class="rl-prog-refresh"
-                        on:click={() => void autoLinkBookProgress(bookFileVal.trim(), true)}
-                        aria-label="重新解析本地文件（测试获取）">
-                        <Icon icon="refresh-cw" size={11} />
+                        on:click={() => void autoLinkBookProgress(bookFileVal.trim(), true)}>
+                        <Icon icon="refresh-cw" size={11} /><span class="rl-sr">重新解析本地文件（测试获取）</span>
                     </button>
                 </div>
                 {#if readingPage && readingTotalPage}
@@ -1564,12 +1687,12 @@
                         {#if audioEditOpen}
                             <!-- 本地音频编辑浮层（参照书籍文件浮层）：浏览选择/手动输入路径 -->
                             <div class="rl-ep-edit-mask" on:click={() => (audioEditOpen = false)}></div>
-                            <div class="rl-ep-edit" role="dialog" aria-label="编辑本地音频">
-                                <div class="rl-ep-edit-title">本地音频</div>
+                            <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-audio">
+                                <div class="rl-ep-edit-title" id="rl-ep-title-audio">本地音频</div>
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
                                     <input class="rl-input rl-ep-edit-input" value={audioPathVal} on:input={(ev) => (audioPathVal = inputVal(ev))} placeholder="vault 相对路径或系统绝对路径" />
-                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseAudio(ev)} data-tip="选择音频（库内/系统二选一）">浏览…</button>
+                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseAudio(ev)} data-tip="选择音频（系统文件管理器）">浏览…</button>
                                 </div>
                                 <div class="rl-ep-edit-ops">
                                     <button class="rl-btn" on:click={saveAudioEditor} data-tip="保存本地音频关联">保存</button>
@@ -1598,12 +1721,12 @@
                         {#if bookEditOpen}
                             <!-- 书籍文件编辑浮层（参照集按钮浮层）：浏览选择/手动输入路径 -->
                             <div class="rl-ep-edit-mask" on:click={() => (bookEditOpen = false)}></div>
-                            <div class="rl-ep-edit" role="dialog" aria-label="编辑书籍文件">
-                                <div class="rl-ep-edit-title">书籍文件（TXT/EPUB/PDF）</div>
+                            <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-book">
+                                <div class="rl-ep-edit-title" id="rl-ep-title-book">书籍文件（TXT/EPUB/PDF）</div>
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
                                     <input class="rl-input rl-ep-edit-input" value={bookFileVal} on:input={(ev) => (bookFileVal = inputVal(ev))} placeholder="vault 相对路径，如 书籍/三体.txt" />
-                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseBookFile(ev)} data-tip="选择书籍文件（库内/系统二选一）">浏览…</button>
+                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseBookFile(ev)} data-tip="选择书籍文件（系统文件管理器）">浏览…</button>
                                 </div>
                                 <div class="rl-ep-edit-ops">
                                     <button class="rl-btn" on:click={saveBookEditor} data-tip="保存书籍文件关联">保存</button>
@@ -1626,9 +1749,7 @@
                             <!-- 批量检索（动画/电视剧）图标：选文件夹 → 识别文件名集号自动填入未关联集本地路径（已填跳过） -->
                             <button
                                 class="rl-ep-batch-btn"
-                                aria-label="从文件夹检索剧集"
-                                data-tip="从文件夹检索剧集：选含剧集文件的文件夹，识别文件名集号（第N集 / S01E0N / 01…）自动填入本地路径，已填集跳过"
-                                on:click={() => void batchScanLocalEps()}><Icon icon="folder-search" size={13} /></button>
+                                on:click={() => void batchScanLocalEps()}><Icon icon="folder-search" size={13} /><span class="rl-sr">从文件夹检索剧集</span></button>
                         {/if}
                     </div>
                     {#if type === 'movie' || Number(totalEpisodes) > 0}
@@ -1637,7 +1758,6 @@
                                 <span class="rl-ep-wrap" class:linked={!!episodeFiles[0] || !!episodeUrls[0]}>
                                     <button
                                         class="rl-ep-btn rl-ep-btn-book"
-                                        aria-label="观看（第 1 集）"
                                         on:click={() => playOrOpenEpisode(0)}
                                         on:contextmenu={(ev) => { ev.preventDefault(); openEpEditor(0); }}
                                         data-tip={epLinkHint(0)}><Icon icon="play" size={12} /> 观看</button>
@@ -1661,14 +1781,14 @@
                 {#if editEp !== null}
                     <!-- 第 N 集编辑弹窗（EntryForm 内自绘浮层，不需 Obsidian App）：填写集标题 / 本地路径 / 网络地址 -->
                     <div class="rl-ep-edit-mask" on:click={() => (editEp = null)}></div>
-                    <div class="rl-ep-edit" role="dialog" aria-label={`编辑第 ${editEp + 1} 集`}>
-                        <div class="rl-ep-edit-title">编辑第 {editEp + 1} 集</div>
+                    <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-ep">
+                        <div class="rl-ep-edit-title" id="rl-ep-title-ep">编辑第 {editEp + 1} 集</div>
                         <label class="rl-lbl-inline">集标题（悬停显示「第 N 集 + 标题」）</label>
                         <input class="rl-input rl-ep-edit-input" value={editTitle} on:input={(ev) => (editTitle = inputVal(ev))} placeholder="如：开始" />
                         <label class="rl-lbl-inline">本地路径</label>
                         <div class="rl-ep-edit-row">
                             <input class="rl-input rl-ep-edit-input" value={editLocal} on:input={(ev) => (editLocal = inputVal(ev))} placeholder="本地视频路径" />
-                            <button class="rl-btn rl-link-act" on:click={(ev) => browseLocalVideo(ev)} data-tip="选择本地视频（库内/系统二选一）">浏览…</button>
+                            <button class="rl-btn rl-link-act" on:click={(ev) => browseLocalVideo(ev)} data-tip="选择本地视频（系统文件管理器）">浏览…</button>
                         </div>
                         <label class="rl-lbl-inline">网络地址</label>
                         <input class="rl-input rl-ep-edit-input" value={editUrl} on:input={(ev) => (editUrl = inputVal(ev))} placeholder="https://…" />
@@ -1813,7 +1933,7 @@
     .rl-res-t { font-weight: 600; font-size: 14px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
     .rl-res-row2 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--text-normal); min-width: 0; }
     .rl-res-yr { color: var(--text-muted); flex: none; }
-    .rl-res-score { color: #d99a2b; font-weight: 700; flex: none; }
+    .rl-res-score { color: var(--rl-score); font-weight: 700; flex: none; }
     .rl-res-o { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
     .rl-res-dot { color: var(--text-faint); flex: none; }
     .rl-res-source { font-size: 10px; color: var(--text-faint); flex: none; cursor: pointer; white-space: nowrap; font-weight: 500; user-select: none; padding: 2px 6px; border: 1px solid var(--background-modifier-border); border-radius: 4px; line-height: 1.5; }
@@ -1831,13 +1951,13 @@
     .rl-watch-hint { font-size: 10.5px; color: var(--text-faint); margin-left: 4px; }
     .rl-3col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 10px; }
     .rl-readbar { height: 5px; background: var(--background-modifier-border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
-    .rl-readbar-fill { height: 100%; background: var(--rl-badge-watched, #4d9b52); border-radius: 3px; transition: background-color .2s; }
-    /* 进度条分阶段色阶：起步 / 进行中 / 接近完成 / 读完 */
-    .rl-readbar-low .rl-readbar-fill { background: #e85a4f; }   /* <30% 警告红 */
-    .rl-readbar-mid .rl-readbar-fill { background: #d99a2b; }   /* 30-69% 进行中 琥珀 */
-    .rl-readbar-high .rl-readbar-fill { background: #5a9e7d; }  /* 70-99% 接近完成 绿 */
-    .rl-readbar-done .rl-readbar-fill { background: #4d9b52; }  /* 100% 读完 深绿 */
-    .rl-hint-warn { color: #c0493f; font-weight: 600; }
+    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: 3px; transition: background-color .2s; }
+    /* 进度条分阶段色阶：起步 / 进行中 / 接近完成 / 读完（四档均走主题变量） */
+    .rl-readbar-low .rl-readbar-fill { background: var(--rl-danger-soft); }      /* <30% 警告红 */
+    .rl-readbar-mid .rl-readbar-fill { background: var(--rl-score); }      /* 30-69% 进行中 琥珀 */
+    .rl-readbar-high .rl-readbar-fill { background: var(--rl-good-soft); } /* 70-99% 接近完成 绿 */
+    .rl-readbar-done .rl-readbar-fill { background: var(--rl-good-bar); }      /* 100% 读完 深绿 */
+    .rl-hint-warn { color: var(--rl-danger); font-weight: 600; }
     /* 分区标题 */
     .rl-section {
         font-size: 12px; font-weight: 700; color: var(--text-normal);
@@ -1871,12 +1991,13 @@
         position: absolute; right: 6px; left: auto; margin: 0; cursor: pointer; opacity: .65;
     }
     input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
-    /* 右键菜单（与 MediaList 卡片右键风格一致） */
+    /* 右键菜单（与 MediaList 卡片右键风格一致）；视口过矮/过窄时内联 max-height/max-width 生效 → 内部滚动 */
     .rl-ctx {
         position: fixed; z-index: 1000; min-width: 140px;
         background: var(--background-primary); border: 1px solid var(--background-modifier-border);
         border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); padding: 4px;
         display: flex; flex-direction: column;
+        overflow: auto; overscroll-behavior: contain;
     }
     .rl-ctx button {
         font-family: inherit; font-size: 12px; text-align: left;
@@ -1884,7 +2005,7 @@
         padding: 5px 10px; border-radius: 5px; cursor: pointer;
     }
     .rl-ctx button:hover { background: var(--background-modifier-hover); }
-    .rl-ctx-danger { color: #e03131; }
+    .rl-ctx-danger { color: var(--rl-danger-strong); }
     .rl-ctx-danger:hover { background: rgba(192, 73, 63, .14); }
     .rl-ctx-url { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
     .rl-ctx-url .rl-input { font-size: 11px; padding: 3px 6px; }
@@ -1900,6 +2021,21 @@
     /* 标题行 + 来源徽标（书名/标题右侧并排，点击跳数据源页） */
     .rl-title-row { display: flex; gap: 6px; align-items: center; }
     .rl-title-row .rl-input { flex: 1; min-width: 0; }
+
+    /* 总结摘要：小标题右侧 ✨ 小图标（尺寸对齐「从文件夹检索剧集」：20×18 命中区 / 13px 图标） */
+    .rl-ai-btn {
+        flex: none; display: inline-flex; align-items: center; justify-content: center;
+        width: 20px; height: 18px; padding: 0; margin-left: 4px; border: none; background: transparent;
+        color: var(--text-muted); border-radius: 4px; cursor: pointer;
+        transition: color .12s ease, background .12s ease;
+    }
+    .rl-ai-btn:hover { color: var(--interactive-accent); background: var(--background-modifier-hover); }
+    .rl-ai-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .rl-ai-btn:disabled:hover { color: var(--text-muted); background: transparent; }
+    /* 纯图标按钮的读屏名（隐藏文本，避免 aria-label 与 data-tip 双气泡） */
+    .rl-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+    /* AI 摘要（单框合并：第 1 行总结 + 其余行看点） */
+    .rl-ai-hl { resize: vertical; min-height: 4.6em; line-height: 1.5; }
     /* 进度页数：两个 input 中间 - 分隔（紧凑） */
     .rl-prog-range { display: flex; align-items: center; gap: 6px; }
     .rl-prog-input { flex: 1; min-width: 0; text-align: center; }
@@ -1913,7 +2049,7 @@
     }
     .rl-prog-refresh:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
     /* 大众评分与标题并排（只读，搜索/详情回填后显示） */
-    .rl-title-score { font-size: 12px; font-weight: 600; color: #d99a2b; white-space: nowrap; flex: none; }
+    .rl-title-score { font-size: 12px; font-weight: 600; color: var(--rl-score); white-space: nowrap; flex: none; }
     .rl-src-link {
         flex: none; font-size: 11px; color: var(--text-faint); background: transparent;
         border: 1px solid var(--background-modifier-border); border-radius: 5px;
@@ -1928,12 +2064,12 @@
     .rl-tagbox:focus-within { border-color: var(--interactive-accent); }
     .rl-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; background: var(--background-modifier-hover); border-radius: 999px; padding: 2px 8px; color: var(--text-normal); }
     .rl-tag-x { border: none; background: transparent; color: var(--text-faint); cursor: pointer; font-size: 10px; padding: 0 2px; line-height: 1; }
-    .rl-tag-x:hover { color: #c0493f; }
+    .rl-tag-x:hover { color: var(--rl-danger); }
     .rl-tag-input { flex: 1; min-width: 90px; border: none; background: transparent; color: var(--text-normal); font-size: 12px; font-family: inherit; padding: 2px 4px; }
     .rl-tag-input:focus { outline: none; }
     .rl-tag-input::placeholder { color: var(--text-faint); }
-    .rl-stars-input { font-size: 20px; color: #d9cba0; cursor: pointer; letter-spacing: 2px; }
-    .rl-stars-input span.on { color: #d99a2b; }
+    .rl-stars-input { font-size: 20px; color: var(--rl-score-input); cursor: pointer; letter-spacing: 2px; }
+    .rl-stars-input span.on { color: var(--rl-score); }
     .rl-stars-val { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
     .rl-link-row { display: flex; gap: 6px; margin-top: 5px; }
     .rl-link-label { width: 110px; flex: none; }

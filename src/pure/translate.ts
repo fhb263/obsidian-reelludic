@@ -48,25 +48,24 @@ export interface TranslateRequestBody {
     stream?: false;
 }
 
+/** 翻译默认 system 提示词（中英自动互译，只输出译文）；设置页「服务提示词」以它为默认值、可被覆盖 */
+export const DEFAULT_TRANSLATE_PROMPT =
+    'Academic standard Chinese-English translation. ' +
+    'If the user text is Chinese, translate it into English; ' +
+    'if it is English, translate it into Chinese. ' +
+    'Output ONLY the translation: no original text, no back-translation, no note that this is a translation.';
+
 /**
  * 构造翻译 chat/completions 请求体。空/纯空白文本 → null（不该发请求）。
- * system 提示：中英自动互译（中文→英文、英文→中文，同用户 cform 语义），只输出译文，
- * 不加引号/原文/语言名/解释——便于直接取 message.content 展示。
+ * prompt 传空/纯空白 → 用 DEFAULT_TRANSLATE_PROMPT（设置页提示词框留空即默认）。
  */
-export function buildTranslateBody(text: string, provider?: TranslateProvider): TranslateRequestBody | null {
+export function buildTranslateBody(text: string, provider?: TranslateProvider, prompt?: string): TranslateRequestBody | null {
     const trimmed = text?.trim();
     if (!trimmed) return null;
     return {
         model: modelFor(normalizeProvider(provider)),
         messages: [
-            {
-                role: 'system',
-                content:
-                    'Academic standard Chinese-English translation. ' +
-                    'If the user text is Chinese, translate it into English; ' +
-                    'if it is English, translate it into Chinese. ' +
-                    'Output ONLY the translation: no original text, no back-translation, no note that this is a translation.',
-            },
+            { role: 'system', content: prompt?.trim() || DEFAULT_TRANSLATE_PROMPT },
             { role: 'user', content: trimmed },
         ],
         stream: false,

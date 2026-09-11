@@ -9,7 +9,6 @@ import {
     monthlyFinished,
     monthlyActive,
     topRatedInYear,
-    recentActivity,
 } from 'pure/stats';
 import type { MediaEntry } from 'data/types';
 
@@ -127,41 +126,5 @@ describe('pure/stats topRatedInYear 高分榜', () => {
         ];
         const top = topRatedInYear(list, year, 2);
         expect(top.map((x) => x.title)).toEqual(['高分', '低分']);
-    });
-});
-
-describe('pure/stats recentActivity 最近动态（限年内）', () => {
-    it('观看/追更进度/计划三类动态入列，往年时间戳不计', () => {
-        const list = [
-            e({ id: 'a', type: 'movie', title: '新片', watchedDate: '2026-03-10' }),
-            e({ id: 'b', type: 'movie', title: '旧片', watchedDate: '2025-12-31' }),
-            e({ id: 'c', type: 'tv', title: '追剧', progress: { season: 1, episode: 2, history: [{ date: '2026-04-01', season: 1, episode: 2 }] } }),
-            e({ id: 'd', type: 'book', title: '书单', plannedDate: '2026-05-20' }),
-            e({ id: 'x', type: 'book', title: '去年计划', plannedDate: '2025-11-01' }),
-        ];
-        const acts = recentActivity(list, year);
-        const texts = acts.map((a) => a.text);
-        expect(texts).toContain('观看了《新片》');
-        expect(texts).not.toContain('观看了《旧片》');
-        expect(texts).toContain('更新了《追剧》进度 S1E2');
-        expect(texts).toContain('计划观看《书单》');
-        expect(texts).not.toContain('去年计划');
-        // 今年 3 条，去年全部剔除
-        expect(acts).toHaveLength(3);
-    });
-
-    it('按日期倒序取前 limit 条', () => {
-        const list = [1, 2, 3, 4, 5].map((i) =>
-            e({ id: `m${i}`, type: 'movie', title: `片${i}`, watchedDate: `2026-01-0${i}` }),
-        );
-        const acts = recentActivity(list, year, 3);
-        expect(acts.map((a) => a.date)).toEqual(['2026-01-05', '2026-01-04', '2026-01-03']);
-        expect(acts.map((a) => a.text)).toEqual(['观看了《片5》', '观看了《片4》', '观看了《片3》']);
-    });
-
-    it('同条目多渠道动态各计一条（观看 + 计划）', () => {
-        const one = e({ id: 'a', type: 'game', title: '游戏', watchedDate: '2026-02-01', plannedDate: '2026-02-02' });
-        const acts = recentActivity([one], year, 8);
-        expect(acts.map((a) => a.text)).toEqual(['计划观看《游戏》', '观看了《游戏》']);
     });
 });

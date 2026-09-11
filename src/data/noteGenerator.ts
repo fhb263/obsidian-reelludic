@@ -1,8 +1,9 @@
 // 详情笔记生成（纯逻辑，可单测）
 import type { MediaEntry } from 'data/types';
-import { ENTRY_TYPE_LABELS } from 'data/types';
+import { ENTRY_TYPE_DIRS, ENTRY_TYPE_LABELS } from 'data/types';
 import { starString } from 'pure/rating';
 import { formatPlaytime } from 'pure/playtime';
+import { localDateOf } from 'pure/dailyLog';
 
 /** 剔除文件名字非法字符，空则回退「未命名」 */
 export function safeFilename(title: string): string {
@@ -21,7 +22,9 @@ export function hashNoteContent(content: string): string {
     return (h >>> 0).toString(16);
 }
 
-/** 生成 frontmatter（YAML：字符串字段加引号防特殊字符破坏） */
+/** 生成 frontmatter（YAML：字符串字段加引号防特殊字符破坏）
+ *  Dataview 对齐：tags / created / updated / progress_percent —— 在 Obsidian 里可直接
+ *  `TABLE rating, status FROM #movie WHERE rating >= 4 SORT created DESC` 检索。 */
 export function entryFrontmatter(e: MediaEntry, libraryDir: string = 'ReelLudic'): string {
     const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
     const lines: string[] = [
@@ -32,6 +35,14 @@ export function entryFrontmatter(e: MediaEntry, libraryDir: string = 'ReelLudic'
         `status: ${e.status}`,
         `rating: ${e.rating}`,
     ];
+    // tags：类型键在前（#movie/#book… 便于按类型检索）+ 用户自定义标签去重保序
+    const tags = [e.type, ...((e.tags ?? []).filter((t) => t !== e.type))];
+    lines.push(`tags: [${tags.map(q).join(', ')}]`);
+    // created / updated：本地日期（与「今日记录」同口径，UTC 切片会把凌晨算到前一天）
+    const created = localDateOf(e.createdAt);
+    const updated = localDateOf(e.updatedAt);
+    if (created) lines.push(`created: ${created}`);
+    if (updated) lines.push(`updated: ${updated}`);
     // 封面 banner：URL 直用；本地路径拼库目录（兼容 obsidian-banners 等插件）
     if (e.poster) lines.push(`banner: ${q(/^https?:\/\//.test(e.poster) ? e.poster : `${libraryDir}/${e.poster}`)}`);
     if (e.year) lines.push(`year: ${e.year}`);
@@ -67,8 +78,27 @@ export function entryFrontmatter(e: MediaEntry, libraryDir: string = 'ReelLudic'
     }
     if (e.type === 'book' && e.pageCount) lines.push(`page_count: ${e.pageCount}`); // 元数据页数（豆瓣实体书，仅展示/统计）
     if (e.type === 'game' && e.playtimeMinutes) lines.push(`playtime_minutes: ${e.playtimeMinutes}`);
+    // progress_percent：进度百分比（Dataview 排序/筛选用）——书籍优先 percent，回退 page/totalPage（与书架进度条同口径）；
+    // 剧集/动画按已看集数比；游戏/音乐无统一百分比，不输出
+    const pct = progressPercentOf(e);
+    if (pct !== undefined) lines.push(`progress_percent: ${pct}`);
     lines.push('---');
     return lines.join('\n');
+}
+
+/** 条目进度百分比（0-100 取整）；无法确定 → undefined */
+function progressPercentOf(e: MediaEntry): number | undefined {
+    const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
+    if (e.type === 'book') {
+        const rp = e.readingProgress;
+        if (typeof rp?.percent === 'number') return clamp(rp.percent);
+        if (rp?.totalPage) return clamp(((rp.page ?? 0) / rp.totalPage) * 100);
+        return undefined;
+    }
+    if ((e.type === 'tv' || e.type === 'anime') && e.progress?.totalEpisodes) {
+        return clamp((e.progress.episode / e.progress.totalEpisodes) * 100);
+    }
+    return undefined;
 }
 
 /** 封面嵌入文本：URL 用 markdown 图片；本地路径用 vault wikilink（从库目录根解析）。
@@ -208,6 +238,22 @@ export function generateNoteMarkdown(e: MediaEntry, libraryDir: string = 'ReelLu
         s.push('');
     }
 
+    // AI 摘要（一句话总结 / 核心看点）：位置与编辑表单同序——简介（书籍再经作者简介/目录）之后、个人评语之前
+    const aiSummary = e.aiSummary?.trim();
+    const aiHighlights = (e.aiHighlights ?? []).map((h) => h.trim()).filter(Boolean);
+    if (aiSummary) {
+        s.push('## 一句话总结');
+        s.push('');
+        s.push(aiSummary);
+        s.push('');
+    }
+    if (aiHighlights.length) {
+        s.push('## 核心看点');
+        s.push('');
+        for (const h of aiHighlights) s.push(`- ${h}`);
+        s.push('');
+    }
+
     s.push(e.type === 'music' ? '# 个人评语' : '## 个人评语');
     s.push('');
     // 表单提交的评语（e.notes）写入笔记正文；为空时保留占位符提示
@@ -248,7 +294,7 @@ export function generateNoteMarkdown(e: MediaEntry, libraryDir: string = 'ReelLu
     return s.join('\n');
 }
 
-/** 条目笔记在 vault 内的路径：按类型分子目录（笔记/电影/、笔记/电视剧/…，v0.4 中文化），各类型互不混杂 */
+/** 条目笔记在 vault 内的路径：按类型分子目录（笔记/movie/、笔记/teleplay/…，英文目录名），各类型互不混杂 */
 export function entryNotePath(e: MediaEntry, baseDir: string = 'ReelLudic/笔记'): string {
-    return `${baseDir}/${ENTRY_TYPE_LABELS[e.type]}/${safeFilename(e.title)}.md`;
+    return `${baseDir}/${ENTRY_TYPE_DIRS[e.type]}/${safeFilename(e.title)}.md`;
 }

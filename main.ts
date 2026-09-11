@@ -1,11 +1,13 @@
 // ReelLudic 插件入口：命令/视图/设置注册 + 服务编排
-import { Plugin, WorkspaceLeaf, requestUrl, TFile, TFolder, normalizePath, Notice, Platform, type FileSystemAdapter } from 'obsidian';
+import { Plugin, WorkspaceLeaf, requestUrl, TFile, TFolder, normalizePath, Notice, Platform, moment, type FileSystemAdapter } from 'obsidian';
 import { DEFAULT_SETTINGS, ReelLudicSettingTab } from 'Settings';
 import type { ReelLudicSettings, SourceTestResult } from 'Settings';
 import { measure, withTimeout, TimedError, TIMEOUT_MS, retry } from 'pure/timing';
 import { createSearchCache } from 'pure/searchCache';
 import { checkAnimeUpdate, isBlockedPage, type UpdateCheckResult } from 'pure/updateCheck';
 import { EntryService } from 'services/EntryService';
+import { AiSummaryService } from 'services/aiSummary';
+import type { AiSummaryInput, AiSummaryResult } from 'pure/aiSummary';
 import { createVaultIO } from 'services/vaultIO';
 import { TmdbClient, type TmdbDetail, type TmdbSearchResult } from 'services/tmdb';
 import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
@@ -20,12 +22,16 @@ import { OmdbClient, buildDetailUrl, type OmdbDetailFields } from 'services/omdb
 import { AnilistClient } from 'services/anilist';
 import { IgdbClient } from 'services/igdb';
 import { createSearchProgress, type SearchProgressCb, type SearchProgressReporter } from 'pure/searchProgress';
+import { collectDayActivity, renderJournalBlock, todayLocal, upsertJournalSection } from 'pure/dailyLog';
+import {
+    FEED_RANGE_WORDS, collectFeed, feedSectionLabel, feedSpan, groupFeed, renderPeriodBlock, type FeedRange,
+} from 'pure/activityFeed';
+import type { ActivityEvent } from 'data/types';
 import { nodeHttpGet, nodeHttpPost, nodeHttpGetBuffer } from 'services/nodeHttp';
 import { HomeView, HOME_VIEW_TYPE } from 'views/HomeView';
 import type { HomeTab } from 'views/tab';
 import { EntryModal } from 'modals/EntryModal';
 import { ConfirmModal } from 'modals/ConfirmModal';
-import { PickFileSourceModal } from 'modals/PickFileSourceModal';
 import { LinkPickerModal } from 'modals/LinkPickerModal';
 import { EpisodePickerModal } from 'modals/EpisodePickerModal';
 import { QuickAssociateModal, type QuickAssociateResult, type QuickAssocPickKind } from 'modals/QuickAssociateModal';
@@ -37,13 +43,14 @@ import { TxtReaderModal, EpubReaderModal } from 'modals/ReaderModal';
 import { PdfReaderModal, probePdfNumPages } from 'modals/PdfReaderModal';
 import { countExcerpts, parseExcerptBlocks, type ParsedExcerpt } from 'pure/excerpt';
 import { parseHighlightBlocks, type ReaderHighlight } from 'pure/highlight';
-import { normalizeProgress } from 'pure/readingProgress';
+import { normalizeProgress, readingProgressFilePath, matchLegacyProgressFile, progressFileName, bookmarksFileName } from 'pure/readingProgress';
 import { pageFromPercent, reconcileBookProgress, type BookFileInfo, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
 import { bookmarksFilePath, parseBookmarks, serializeBookmarks, type ReaderBookmark } from 'pure/bookmark';
 import { buildTranslateBody, buildTranslatePingBody, parseTranslateResponse, translateChatUrl, normalizeProvider, type TranslateProvider } from 'pure/translate';
 import { parseTxtBook } from 'pure/txtParse';
 import { containerRootfile, parseOpf, parseTocNav, extractChapterLabel } from 'pure/epubParse';
 import { sanitizePosterTitle, orphanCoverFiles } from 'pure/posterFile';
+import { imageSizeFromBytes } from 'pure/imageSize';
 import { toFileUrl } from 'pure/mediaFileUrl';
 import { isEmbeddableVideoPath, VIDEO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
 import { scanEpisodeNumbers } from 'pure/episodeScan';
@@ -51,7 +58,7 @@ import { initGlobalTooltip } from 'services/globalTooltip';
 import { VideoPlayerModal, type EmbedVideoItem } from 'modals/VideoPlayerModal';
 import { mergeBySource, sortByRelevance } from 'pure/searchMerge';
 import { PROVIDER_META, resolveSourceChain, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
-import { DIR_NOTES, DIR_COVERS, DIR_BACKUPS, DIR_REPORTS, typeDir } from 'pure/dirs';
+import { DIR_NOTES, DIR_COVERS, DIR_BACKUPS, DIR_REPORTS, typeDir, LEGACY_TYPE_DIR_ZH, relocateLegacyNotePath } from 'pure/dirs';
 import { generateYearReport, yearReportPath } from 'pure/report';
 import { listReportYears } from 'pure/reportIndex';
 import { ENTRY_TYPES, type MediaEntry, type EntryType } from 'data/types';
@@ -161,9 +168,11 @@ export default class ReelLudicPlugin extends Plugin {
         this.settings.colorTheme = 'mono';
         // sourceChains 基线以磁盘加载值初始化：此后 saveSettings 只要链配置与上次持久化基线不同即清缓存
         this.sourceChainBaselineJson = JSON.stringify(this.settings.sourceChains ?? {});
-        // v0.4 目录中文化迁移（幂等）：须在 rebuildService 之前执行，service 用新路径构造
+        // 目录命名演进迁移（顶层中文化 + 类型子目录英文化，幂等）：须在 rebuildService 之前执行，service 用新路径构造
         await this.migrateDirectories();
         this.rebuildService();
+        // 阅读进度/书签文件名可读化迁移（旧 e_xxx 名 → {书名}-阅读进度|书签-{id}，幂等；须在 service 就绪后）
+        await this.migrateProgressFileNames();
         this.rebuildClients();
 
         this.registerView(HOME_VIEW_TYPE, (leaf) => new HomeView(leaf, this));
@@ -211,11 +220,14 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
-    /** v0.4 目录中文化一次性迁移：旧 entries/covers/backups/reports（含类型子目录）→ 中文名；幂等（已迁移则跳过） */
+    /** 目录命名演进迁移（幂等，旧版任意起点一步到位；须在 rebuildService 之前执行，service 用新路径构造）：
+     *  v0.4：顶层通俗化 entries/covers/backups/reports → 笔记/封面/备份/报告，类型子目录用中文标签；
+     *  本版：类型子目录中文标签 → 英文（笔记/电影 → 笔记/movie、电视剧 → teleplay、动画 → animation、书籍 → book、游戏 → game、音乐 → music）。 */
     private async migrateDirectories(): Promise<void> {
         const dir = this.libDir;
         const vault = this.app.vault;
-        // 1) 笔记目录 + 类型子目录中文化（先搬子目录再搬顶层，避免嵌套 rename 冲突）
+        // 1) v0.4 前旧库（entries/{类型键} 平铺）：先搬类型子目录再搬顶层，避免嵌套 rename 冲突；
+        //    typeDir() 现返回英文目录名 → 一步落到 笔记/{英文}
         const oldNotes = vault.getAbstractFileByPath(`${dir}/entries`);
         if (oldNotes instanceof TFolder && !(vault.getAbstractFileByPath(`${dir}/${DIR_NOTES}`) instanceof TFolder)) {
             for (const t of ENTRY_TYPES) {
@@ -226,7 +238,15 @@ export default class ReelLudicPlugin extends Plugin {
             }
             await vault.rename(oldNotes, `${dir}/${DIR_NOTES}`);
         }
-        // 2) 封面/备份/报告目录
+        // 1b) 类型子目录英文化（v0.4–v1.0.1 中文标签库：笔记/电影 → 笔记/movie，幂等：目标已存在则跳过）
+        for (const t of ENTRY_TYPES) {
+            const oldSub = vault.getAbstractFileByPath(`${dir}/${DIR_NOTES}/${LEGACY_TYPE_DIR_ZH[t]}`);
+            const target = `${dir}/${DIR_NOTES}/${typeDir(t)}`;
+            if (oldSub instanceof TFolder && !(vault.getAbstractFileByPath(target) instanceof TFolder)) {
+                await vault.rename(oldSub, target);
+            }
+        }
+        // 2) 封面/备份/报告目录（v0.4，幂等）
         const simple: [string, string][] = [
             ['covers', DIR_COVERS],
             ['backups', DIR_BACKUPS],
@@ -238,7 +258,7 @@ export default class ReelLudicPlugin extends Plugin {
                 await vault.rename(f, `${dir}/${neu}`);
             }
         }
-        // 3) catalog.json 引用更新：notePath 前缀 entries/{type}/ → 笔记/{中文}/，poster 前缀 covers/ → 封面/
+        // 3) catalog.json 引用更新：notePath 类型段 → 英文目录名，poster 前缀 covers/ → 封面/
         const catFile = vault.getAbstractFileByPath(`${dir}/catalog.json`);
         if (catFile instanceof TFile) {
             const text = await vault.read(catFile);
@@ -246,6 +266,7 @@ export default class ReelLudicPlugin extends Plugin {
                 const raw = JSON.parse(text) as { entries?: { notePath?: string; poster?: string }[] };
                 let changed = false;
                 for (const e of raw.entries ?? []) {
+                    // v0.4 前旧引用：entries/{类型键}/ → 笔记/{英文}（一步到位）；本版 relocate 对已是 笔记/{中文} 的接力转英文
                     if (e.notePath?.startsWith(`${dir}/entries/`)) {
                         for (const t of ENTRY_TYPES) {
                             const oldP = `${dir}/entries/${t}/`;
@@ -254,6 +275,13 @@ export default class ReelLudicPlugin extends Plugin {
                                 changed = true;
                                 break;
                             }
+                        }
+                    }
+                    if (e.notePath) {
+                        const relocated = relocateLegacyNotePath(e.notePath);
+                        if (relocated !== e.notePath) {
+                            e.notePath = relocated;
+                            changed = true;
                         }
                     }
                     if (e.poster?.startsWith('covers/')) {
@@ -1295,6 +1323,100 @@ export default class ReelLudicPlugin extends Plugin {
         }).open();
     }
 
+    // ──────────── 今日记录 / 日记打卡 ────────────
+    /** 活动日志（状态翻转）：统计页「今日」与日记打卡共用的数据源 */
+    async listActivity(): Promise<ActivityEvent[]> {
+        try {
+            return await this.service.activityLog();
+        } catch {
+            return [];
+        }
+    }
+
+    /** 核心「日记」插件的目录/格式配置（未启用或内部接口变化 → null，不抛错） */
+    private dailyNotesOptions(): { folder?: string; format?: string } | null {
+        try {
+            const ip = (this.app as unknown as {
+                internalPlugins?: {
+                    getPluginById?(id: string): {
+                        enabled?: boolean;
+                        instance?: { options?: { folder?: string; format?: string } };
+                    } | null;
+                };
+            }).internalPlugins;
+            const p = ip?.getPluginById?.('daily-notes');
+            if (!p || p.enabled === false) return null;
+            return p.instance?.options ?? null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** 打卡日记落点：设置页手填优先 → 核心「日记」插件 → 回退「日记 / YYYY-MM-DD」 */
+    private journalTarget(): { dir: string; format: string } {
+        const core = this.dailyNotesOptions();
+        const dir = (this.settings.journalDir?.trim() || core?.folder?.trim() || '日记').replace(/^\/+|\/+$/g, '');
+        const format = this.settings.journalFormat?.trim() || core?.format?.trim() || 'YYYY-MM-DD';
+        return { dir, format };
+    }
+
+    /** 目录不存在则逐级创建（vault.createFolder 只建一级） */
+    private async ensureFolder(dir: string): Promise<void> {
+        if (!dir) return;
+        let cur = '';
+        for (const seg of dir.split('/').filter(Boolean)) {
+            cur = cur ? `${cur}/${seg}` : seg;
+            if (!this.app.vault.getAbstractFileByPath(cur)) {
+                try {
+                    await this.app.vault.createFolder(cur);
+                } catch { /* 已存在/并发：忽略 */ }
+            }
+        }
+    }
+
+    /**
+     * 一键把观影/阅读动态写成打卡区块，追加进**当天日记**（幂等：已有同范围区块则整体更新，不重复追加）。
+     * 范围跟随统计页「动态」面板的 日/周/月/年 切换：日 = 逐条（HH:mm），周/月/年 = 该周期的分块汇总。
+     * 区块标题按范围区分（`2026-09-10` / `第 37 周（…）` / `2026-09` / `2026`），因此不同范围的区块互不覆盖。
+     * 唯一入口 = 统计页「动态」面板的按钮（09-10 起不再挂设置页行与命令面板）。
+     */
+    async recordTodayJournal(range: FeedRange = 'day'): Promise<void> {
+        const span = feedSpan(range);
+        const [entries, log] = await Promise.all([this.service.list(), this.listActivity()]);
+        const block = range === 'day'
+            ? renderJournalBlock(span.start, collectDayActivity(entries, log, span.start))
+            : renderPeriodBlock(range, span, groupFeed(collectFeed(entries, log, span), range));
+        if (!block) {
+            new Notice(`${FEED_RANGE_WORDS[range]}还没有观影/阅读动态 — 标记「在看/已看」或添加条目后再记录`, 4000);
+            return;
+        }
+        const dateStr = span.start; // 日记文件名仍按「今天」（写入当天日记）
+        const sectionLabel = range === 'day' ? span.start : feedSectionLabel(range, span);
+        const { dir, format } = this.journalTarget();
+        let name: string;
+        try {
+            name = moment(new Date()).format(format);
+        } catch {
+            name = dateStr;
+        }
+        const path = normalizePath(`${dir ? `${dir}/` : ''}${name}.md`);
+        try {
+            const existing = this.app.vault.getAbstractFileByPath(path);
+            if (existing instanceof TFile) {
+                const cur = await this.app.vault.read(existing);
+                const next = upsertJournalSection(cur, sectionLabel, block);
+                if (next !== cur) await this.app.vault.modify(existing, next);
+            } else {
+                await this.ensureFolder(dir);
+                await this.app.vault.create(path, upsertJournalSection('', sectionLabel, block));
+            }
+            new Notice(`已记录${FEED_RANGE_WORDS[range]}动态 → ${path}`, 4000);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            new Notice(`写入打卡日记失败：${msg}`, 5000);
+        }
+    }
+
     /** 系统文件选择器按类别分发（书=电子书 / 游戏=.lnk / 音乐=音频 / 影视=可关联视频容器） */
     private pickForAssociate(kind: QuickAssocPickKind): Promise<string | undefined> {
         switch (kind) {
@@ -1517,61 +1639,34 @@ export default class ReelLudicPlugin extends Plugin {
         return false;
     }
 
-    /** 通用「库内选择 / 系统浏览」二选一：弹窗（替代 Menu——弹窗内 Menu 定位不可靠）→ vault 文件选择器或系统对话框 */
-    private pickFileDual(
-        exts: string[],
-        filterName: string,
-        pickFromSystem: () => Promise<string | undefined>,
-    ): Promise<string | undefined> {
-        return new Promise((resolve) => {
-            new PickFileSourceModal(
-                this.app,
-                [
-                    { title: '从库中选择', icon: 'vault' },
-                    { title: '从系统浏览', icon: 'external-link' },
-                ],
-                (idx) => {
-                    if (idx === 0) {
-                        const files = this.app.vault.getFiles().filter((f) => exts.includes(f.extension.toLowerCase()));
-                        new VaultFileSuggest(this.app, files, (f) => resolve(f.path), `选择${filterName}（vault 内）…`).open();
-                    } else {
-                        void pickFromSystem().then(resolve);
-                    }
-                },
-            ).open();
-        });
-    }
-
     /** 系统文件选择器统一实现（Electron remote.dialog 返回绝对路径；toRel=true 转 vault 相对路径，库外保留绝对路径；input file 的 File.path 在 Obsidian 环境不可用）。
-     *  会话内记忆上次选中目录（defaultPath 续接：第 1 集选了文件夹，第 2 集浏览仍从该目录弹起）。 */
+     *  会话内记忆上次选中目录（defaultPath 续接：第 1 集选了文件夹，第 2 集浏览仍从该目录弹起）。
+     *  注：不再弹「从库中选择 / 从系统浏览」二选一——点「浏览…」直接唤起系统文件管理器，少一步点击。 */
     private pickSystemFile(exts: string[], name: string, toRel: boolean): Promise<string | undefined> {
-        const fromSystem = (): Promise<string | undefined> => {
-            if (!Platform.isDesktopApp) return Promise.resolve(undefined);
-            return new Promise((resolve) => {
-                try {
-                    const electron = require('electron') as {
-                        remote?: { dialog?: { showOpenDialog(opts: unknown): Promise<{ canceled: boolean; filePaths: string[] }> } };
-                    };
-                    const dialog = electron.remote?.dialog;
-                    if (dialog) {
-                        void dialog
-                            .showOpenDialog({
-                                filters: [{ name, extensions: exts }],
-                                properties: ['openFile'],
-                                defaultPath: this.lastSystemDir || undefined,
-                            })
-                            .then((res) => {
-                                const p = !res.canceled && res.filePaths[0] ? res.filePaths[0] : undefined;
-                                if (p) this.lastSystemDir = dirnameOf(p);
-                                resolve(p ? (toRel ? this.toVaultRelPath(p) : p) : undefined);
-                            });
-                    } else resolve(undefined);
-                } catch {
-                    resolve(undefined);
-                }
-            });
-        };
-        return this.pickFileDual(exts, name, fromSystem);
+        if (!Platform.isDesktopApp) return Promise.resolve(undefined);
+        return new Promise((resolve) => {
+            try {
+                const electron = require('electron') as {
+                    remote?: { dialog?: { showOpenDialog(opts: unknown): Promise<{ canceled: boolean; filePaths: string[] }> } };
+                };
+                const dialog = electron.remote?.dialog;
+                if (dialog) {
+                    void dialog
+                        .showOpenDialog({
+                            filters: [{ name, extensions: exts }],
+                            properties: ['openFile'],
+                            defaultPath: this.lastSystemDir || undefined,
+                        })
+                        .then((res) => {
+                            const p = !res.canceled && res.filePaths[0] ? res.filePaths[0] : undefined;
+                            if (p) this.lastSystemDir = dirnameOf(p);
+                            resolve(p ? (toRel ? this.toVaultRelPath(p) : p) : undefined);
+                        });
+                } else resolve(undefined);
+            } catch {
+                resolve(undefined);
+            }
+        });
     }
 
     /** 选视频文件夹（「从文件夹检索剧集」目录选择器）：系统 openDirectory；同样接续上次浏览目录 */
@@ -1793,7 +1888,7 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /** 探针本地书籍文件进度基准（表单「进度页数」自动关联用）：PDF 返回 numPages（页基准）；TXT 按章节解析返回 totalChapters；
-     *   EPUB 无轻量探针 / 失败返回 undefined。PDF 复用 pdfjs 单例 worker（Blob 内联），只解析不渲染，轻量 */
+     *   EPUB 解包取 spine 章节数做基准（章节制，与 TXT 同构）；失败返回 undefined。PDF 复用 pdfjs 单例 worker（Blob 内联），只解析不渲染，轻量 */
     async probeBookPages(path: string): Promise<BookProbeResult | undefined> {
         const lower = path.toLowerCase();
         if (lower.endsWith('.pdf')) {
@@ -1807,7 +1902,17 @@ export default class ReelLudicPlugin extends Plugin {
             if (text === null) return undefined;
             return { format: 'txt', totalChapters: parseTxtBook(text).chapters.length };
         }
-        return undefined; // EPUB 无轻量探针（解包成本高），不解析
+        if (lower.endsWith('.epub')) {
+            // EPUB 无固定页码（流式重排），spine 章节数 = 进度基准（阅读器 chapterIndex 制同口径）
+            try {
+                const epub = await this.unpackEpub(path);
+                if (!epub) return undefined;
+                return { format: 'epub', totalChapters: epub.book.chapters.length };
+            } catch {
+                return undefined;
+            }
+        }
+        return undefined;
     }
 
     /** 读 PDF 二进制（内置 PDF 阅读器用）：vault 内 adapter.readBinary（ArrayBuffer）；库外 fs.readFile → ArrayBuffer */
@@ -1833,8 +1938,8 @@ export default class ReelLudicPlugin extends Plugin {
         return null;
     }
 
-    /** 阅读进度读取（{libraryDir}/阅读进度/{id}.json）：目录缺失先创建；无进度返回 undefined */
-    private async readReaderProgress(entryId: string): Promise<{ chapterIndex: number; scrollRatio: number } | undefined> {
+    /** 阅读进度读取（{libraryDir}/阅读进度/{书名}-阅读进度-{id}.json）：目录缺失先创建；无进度返回 undefined */
+    private async readReaderProgress(entryId: string, title: string): Promise<{ chapterIndex: number; scrollRatio: number } | undefined> {
         try {
             const progDir = normalizePath(`${this.settings.libraryDir}/阅读进度`);
             if (!(this.app.vault.getAbstractFileByPath(progDir) instanceof TFolder)) {
@@ -1842,15 +1947,23 @@ export default class ReelLudicPlugin extends Plugin {
                     await this.app.vault.createFolder(progDir);
                 } catch { /* 已存在/创建失败：写入时再兜底 */ }
             }
-            const progPath = normalizePath(`${progDir}/${entryId}.json`);
-            const n = normalizeProgress(JSON.parse(await this.app.vault.adapter.read(progPath)));
+            const progPath = normalizePath(readingProgressFilePath(entryId, title, this.settings.libraryDir));
+            let text: string | null = null;
+            try {
+                text = await this.app.vault.adapter.read(progPath);
+            } catch {
+                // 旧格式文件名兜底（迁移前 e_xxx.json；正常升级已被自动改名，仅极端遗留触发）
+                try { text = await this.app.vault.adapter.read(normalizePath(`${progDir}/${entryId}.json`)); } catch { text = null; }
+            }
+            if (text === null) return undefined;
+            const n = normalizeProgress(JSON.parse(text));
             return { chapterIndex: n.chapterIndex, scrollRatio: n.scrollRatio };
         } catch { /* 无进度 */ }
         return undefined;
     }
 
-    /** 阅读进度落盘（ReaderView 注入的保存回调）：写入 {libraryDir}/阅读进度/{id}.json；失败静默不打断阅读 */
-    async saveReadingProgress(entryId: string, p: { chapterIndex: number; scrollRatio: number }): Promise<void> {
+    /** 阅读进度落盘（ReaderView 注入的保存回调）：写入 {libraryDir}/阅读进度/{书名}-阅读进度-{id}.json；失败静默不打断阅读 */
+    async saveReadingProgress(entryId: string, title: string, p: { chapterIndex: number; scrollRatio: number }): Promise<void> {
         try {
             const progDir = normalizePath(`${this.settings.libraryDir}/阅读进度`);
             if (!(this.app.vault.getAbstractFileByPath(progDir) instanceof TFolder)) {
@@ -1858,28 +1971,31 @@ export default class ReelLudicPlugin extends Plugin {
                     await this.app.vault.createFolder(progDir);
                 } catch { /* 已存在/创建失败：写入时再兜底 */ }
             }
-            const progPath = normalizePath(`${progDir}/${entryId}.json`);
+            const progPath = normalizePath(readingProgressFilePath(entryId, title, this.settings.libraryDir));
             await this.app.vault.adapter.write(progPath, JSON.stringify({ ...p, updatedAt: new Date().toISOString() }));
         } catch { /* 落盘失败静默（不影响阅读） */ }
     }
 
-    /** 阅读器书签读取（{libraryDir}/阅读进度/{id}.bookmarks.json）；无文件/损坏 → [] */
-    async readBookmarks(entryId: string): Promise<ReaderBookmark[]> {
+    /** 阅读器书签读取（{libraryDir}/阅读进度/{书名}-书签-{id}.json）；无文件/损坏 → [] */
+    async readBookmarks(entryId: string, title: string): Promise<ReaderBookmark[]> {
         try {
-            const path = bookmarksFilePath(entryId, this.settings.libraryDir);
+            const path = bookmarksFilePath(entryId, title, this.settings.libraryDir);
             const dir = path.slice(0, path.lastIndexOf('/'));
             const dirObj = this.app.vault.getAbstractFileByPath(dir);
             if (!(dirObj instanceof TFolder)) return [];
             const f = this.app.vault.getAbstractFileByPath(path);
-            if (!(f instanceof TFile)) return [];
-            return parseBookmarks(await this.app.vault.read(f));
+            if (f instanceof TFile) return parseBookmarks(await this.app.vault.read(f));
+            // 旧格式兜底（迁移前 e_xxx.bookmarks.json；正常升级已自动改名，仅极端遗留触发）
+            const legacyFile = this.app.vault.getAbstractFileByPath(`${dir}/${entryId}.bookmarks.json`);
+            if (legacyFile instanceof TFile) return parseBookmarks(await this.app.vault.read(legacyFile));
+            return [];
         } catch { return []; }
     }
 
-    /** 阅读器书签落盘（{libraryDir}/阅读进度/{id}.bookmarks.json）；目录缺失先创建；失败静默 */
-    async saveBookmarks(entryId: string, list: ReaderBookmark[]): Promise<void> {
+    /** 阅读器书签落盘（{libraryDir}/阅读进度/{书名}-书签-{id}.json）；目录缺失先创建；失败静默 */
+    async saveBookmarks(entryId: string, title: string, list: ReaderBookmark[]): Promise<void> {
         try {
-            const path = bookmarksFilePath(entryId, this.settings.libraryDir);
+            const path = bookmarksFilePath(entryId, title, this.settings.libraryDir);
             const dir = path.slice(0, path.lastIndexOf('/'));
             if (!(this.app.vault.getAbstractFileByPath(dir) instanceof TFolder)) {
                 await this.app.vault.createFolder(dir);
@@ -1889,6 +2005,31 @@ export default class ReelLudicPlugin extends Plugin {
             if (f instanceof TFile) await this.app.vault.modify(f, text);
             else await this.app.vault.create(path, text);
         } catch { /* 失败静默不打断阅读 */ }
+    }
+
+    /** 阅读进度/书签文件名可读化迁移（幂等，启动时执行）：旧 e_xxx.json / e_xxx.bookmarks.json
+     *  → {书名}-阅读进度|书签-{id}.json；孤儿文件（对应条目已删）保留原名；失败静默（下次启动重试）。 */
+    private async migrateProgressFileNames(): Promise<void> {
+        try {
+            const dir = (this.settings.libraryDir || 'ReelLudic').replace(/\/+$/, '') || 'ReelLudic';
+            const progDirObj = this.app.vault.getAbstractFileByPath(normalizePath(`${dir}/阅读进度`));
+            if (!(progDirObj instanceof TFolder)) return;
+            const entries = await this.service.list();
+            const byId = new Map(entries.map((e) => [e.id, e]));
+            for (const f of progDirObj.children) {
+                if (!(f instanceof TFile)) continue;
+                const m = matchLegacyProgressFile(f.name);
+                if (!m) continue; // 已是新可读名或无关文件
+                const entry = byId.get(m.entryId);
+                if (!entry) continue; // 孤儿：条目已删，保留原名
+                const newName = m.kind === 'bookmarks'
+                    ? bookmarksFileName(m.entryId, entry.title)
+                    : progressFileName(m.entryId, entry.title);
+                const target = normalizePath(`${dir}/阅读进度/${newName}`);
+                if (newName === f.name || this.app.vault.getAbstractFileByPath(target) instanceof TFile) continue;
+                await this.app.vault.rename(f, target);
+            }
+        } catch { /* 迁移失败静默（新写入走新名，下次启动重试） */ }
     }
 
     /**
@@ -1902,10 +2043,10 @@ export default class ReelLudicPlugin extends Plugin {
         const key = ((this.settings as unknown as Record<string, unknown>)[keyField] as string | undefined ?? '').trim();
         const url = translateChatUrl(provider);
         if (!key) {
-            new Notice(`未配置 ${provider === 'zhipu' ? '智谱' : 'DeepSeek'} API Key，请先到 设置 → 服务集成 → 阅读器翻译管理 填写`, 4000);
+            new Notice(`未配置 ${provider === 'zhipu' ? '智谱' : 'DeepSeek'} API Key，请先到 设置 → 服务集成 → AI 翻译与总结 填写`, 4000);
             return null;
         }
-        const body = buildTranslateBody(text, provider);
+        const body = buildTranslateBody(text, provider, this.settings.readerTranslatePrompt); // 提示词可在设置页改
         if (!body) return null; // 空文本不发请求
         try {
             // 15s 超时（远程推理需给足时间）
@@ -1949,6 +2090,33 @@ export default class ReelLudicPlugin extends Plugin {
             new Notice(`翻译失败：${msg || `无法连接 ${provider === 'zhipu' ? '智谱' : 'DeepSeek'}`}\n请检查网络或 API Key（${url}）`, 5000);
             return null;
         }
+    }
+
+    // ──────────── AI 摘要（编辑表单「总结摘要」小标题右侧小图标）────────────
+    private aiSummaryService: AiSummaryService | null = null;
+
+    /** AI 摘要服务（惰性构造）：复用阅读器翻译的服务商与 Key，不为摘要单开一套凭据 */
+    private getAiSummaryService(): AiSummaryService {
+        if (!this.aiSummaryService) {
+            this.aiSummaryService = new AiSummaryService({
+                getConfig: () => {
+                    // 总结服务商独立于翻译服务商（设置页「AI 翻译与总结」内两项各自可调），但共用同一组 Key
+                    const provider = normalizeProvider(this.settings.readerSummaryProvider);
+                    const keyField = provider === 'zhipu' ? 'readerZhipuKey' : 'readerDeepseekKey';
+                    const key = (((this.settings as unknown as Record<string, unknown>)[keyField] as string | undefined) ?? '').trim();
+                    return { provider, key, prompt: this.settings.readerSummaryPrompt };
+                },
+                notify: (msg, ms) => new Notice(msg, ms ?? 4000),
+                http: (opts) => requestUrl(opts), // RequestUrlResponse 结构上即 { status, text }
+                withTimeout,
+            });
+        }
+        return this.aiSummaryService;
+    }
+
+    /** AI 生成条目摘要（一句话总结 + 核心看点）：失败返回 null（服务内部已 Notice） */
+    aiSummarizeEntry(input: AiSummaryInput): Promise<AiSummaryResult | null> {
+        return this.getAiSummaryService().generate(input);
     }
 
     /** 测试 AI 翻译连接（设置页按钮）：按服务商向端点发最小 ping；401=Key 无效、200=有效、429=限流等细分 */
@@ -2132,11 +2300,11 @@ export default class ReelLudicPlugin extends Plugin {
     private async openBookInternal(entry: MediaEntry, path: string): Promise<BookProgressFields | undefined> {
         const ext = path.split('.').pop()?.toLowerCase();
         // 回归弹窗（视图/新 Tab 方式在部分 Obsidian 版本渲染不可靠）：读文件 → Modal 渲染
-        const progress = await this.readReaderProgress(entry.id);
-        const bookmarks = await this.readBookmarks(entry.id);
+        const progress = await this.readReaderProgress(entry.id, entry.title);
+        const bookmarks = await this.readBookmarks(entry.id, entry.title);
         const settings = { fontSize: this.settings.readerFontSize, lineHeight: this.settings.readerLineHeight };
         const onSaveProgress = (p: { chapterIndex: number; scrollRatio: number }) => {
-            void this.saveReadingProgress(entry.id, p);
+            void this.saveReadingProgress(entry.id, entry.title, p);
         };
         // 进度百分比低频写回 catalog（翻章/关闭时；保留手填 page/totalPage，不覆盖）
         // lastPersist 跟踪最近一次落库 Promise：关闭回读前先等落库完成，避免竞态读到旧 readingProgress
@@ -2179,7 +2347,7 @@ export default class ReelLudicPlugin extends Plugin {
             this.addBookHighlight(entry.id, quote, loc);
         const onDeleteHighlight = (blockId: string) => this.deleteBookHighlight(entry.id, blockId);
         const onBookmarksChange = (list: ReaderBookmark[]) => {
-            void this.saveBookmarks(entry.id, list);
+            void this.saveBookmarks(entry.id, entry.title, list);
         };
         const onSettingsChange = (s: { fontSize: number; lineHeight: number }) => {
             this.settings.readerFontSize = s.fontSize;
@@ -2234,6 +2402,8 @@ export default class ReelLudicPlugin extends Plugin {
                 new Notice(`书籍文件不存在：${entry.bookFile}`, 5000);
                 return undefined;
             }
+            // EPUB 打开时同样校正进度基准（spine 章节数：totalPage=章节数，percent 恒定重算当前章；与 TXT/PDF 对称）
+            void this.reconcileBookProgressOnOpen(entry.id, { format: 'epub', totalChapters: epub.book.chapters.length });
             modal = new EpubReaderModal(this.app, {
                 title: entry.title,
                 fileMap: epub.fileMap,
@@ -2446,6 +2616,70 @@ export default class ReelLudicPlugin extends Plugin {
             return { success: ok, fail: failures.length, failures, skipped: false, total };
         } finally {
             this.isMigratingPosters = false;
+        }
+    }
+
+    /** 存量封面高清化进行中标志（防重复点击并发迁移；与 isMigratingPosters 独立） */
+    isUpgradingPosters = false;
+
+    /** 存量豆瓣本地封面高清化（2026-09-09 用户反馈：游戏封面糊——搜索级 spic/s_ratio_poster 缩略档落库 70~100px）：
+     *  遍历豆瓣源且 poster 已本地化的条目，读本地文件测宽 < 200px 判为模糊 → 回源豆瓣详情（fetchDetail，
+     *  详情封面 URL 经 upscaleDoubanCover 高清化 + og:image 兜底）取高清封面 → 下载覆盖同名文件。
+     *  失败（反爬/详情无封面/条目源 URL 缺失）跳过并记录原因；限速 300ms/张；onProgress 实时回调。
+     *  返回 { scanned, upgraded, fail, failures }（skipped=true 表示已有迁移在跑）。 */
+    async upgradeBlurredPosters(onProgress?: (done: number, total: number) => void): Promise<{ scanned: number; upgraded: number; fail: number; failures: { title: string; reason: string }[]; skipped: boolean }> {
+        if (this.isUpgradingPosters) return { scanned: 0, upgraded: 0, fail: 0, failures: [], skipped: true };
+        this.isUpgradingPosters = true;
+        try {
+            const entries = await this.service.list();
+            const coverDir = normalizePath(`${this.settings.libraryDir}/${DIR_COVERS}`);
+            // 扫描阶段收敛窄化：仅保留「豆瓣源 + poster 本地化 + 文件实测宽 <200px + 详情页链接」的候选，
+            // 携带回源所需的全部字段，避免第二轮循环丢失 poster/sourceUrl 的窄化信息
+            const candidates: { id: string; title: string; type: EntryType; sourceUrl: string; full: string }[] = [];
+            for (const e of entries) {
+                // 仅豆瓣源 + poster 本地化（封面/x.jpg）+ 有豆瓣详情页链接（回源依据）
+                if (e.source !== 'douban' || !e.poster || /^https?:/.test(e.poster) || !e.sourceUrl) continue;
+                const posterFile = e.poster.split('/').pop();
+                if (!posterFile) continue;
+                const full = normalizePath(`${coverDir}/${posterFile}`);
+                const f = this.app.vault.getAbstractFileByPath(full);
+                if (!(f instanceof TFile)) continue;
+                try {
+                    const bytes = await this.app.vault.readBinary(f);
+                    const size = imageSizeFromBytes(bytes);
+                    if (!size || size.width >= 200) continue; // 已高清/非图片跳过
+                } catch { continue; }
+                candidates.push({ id: e.id, title: e.title, type: e.type, sourceUrl: e.sourceUrl, full });
+            }
+            const total = candidates.length;
+            let done = 0;
+            let ok = 0;
+            const failures: { title: string; reason: string }[] = [];
+            for (const c of candidates) {
+                const { title, type, sourceUrl, full } = c;
+                try {
+                    // sourceUrl 例：https://www.douban.com/game/26840375/、https://movie.douban.com/subject/1292052/
+                    const idM = /(?:subject|game)\/(\d+)\/?$/.exec(sourceUrl);
+                    if (!idM) throw new Error('详情页链接缺条目 ID');
+                    const fields = await this.fetchDoubanDetailForEntry(idM[1], type);
+                    const hd = fields?.cover as string | undefined;
+                    if (!hd || !/^https?:\/\//.test(hd)) throw new Error('详情无网络封面（可能被反爬）');
+                    const buf = await this.fetchImageBuffer(hd);
+                    const f = this.app.vault.getAbstractFileByPath(full);
+                    if (!(f instanceof TFile)) throw new Error('本地封面文件不存在');
+                    await this.app.vault.modifyBinary(f, buf); // 覆盖写同名文件（poster 字段不变）
+                    ok++;
+                } catch (err) {
+                    failures.push({ title, reason: err instanceof Error ? err.message : String(err) });
+                }
+                done++;
+                onProgress?.(done, total);
+                await new Promise((resolve) => setTimeout(resolve, 300));
+            }
+            await this.refreshViews();
+            return { scanned: total, upgraded: ok, fail: failures.length, failures, skipped: false };
+        } finally {
+            this.isUpgradingPosters = false;
         }
     }
 

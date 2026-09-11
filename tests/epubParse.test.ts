@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { containerRootfile, resolveEpubPath, parseOpf, parseTocNav, xhtmlToText, extractChapterLabel } from 'pure/epubParse';
+import { containerRootfile, resolveEpubPath, parseOpf, parseTocNav, xhtmlToText, extractChapterLabel, chapterTextLength } from 'pure/epubParse';
 
 describe('EPUB 解析', () => {
     describe('containerRootfile', () => {
@@ -84,6 +84,43 @@ describe('EPUB 解析', () => {
             ]);
         });
 
+        it('nav.xhtml 含 landmarks/page-list 多 nav 块：只取 epub:type=toc 块（防目录混入封面/目录/书页链接）', () => {
+            const nav = `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<body>
+<nav epub:type="toc"><ol>
+  <li><a href="Text/ch1.xhtml">第一章</a></li>
+  <li><a href="Text/ch2.xhtml">第二章</a></li>
+</ol></nav>
+<nav epub:type="landmarks"><ol>
+  <li><a epub:type="cover" href="Text/cover.xhtml">封面</a></li>
+  <li><a epub:type="toc" href="Text/toc.xhtml">目录</a></li>
+  <li><a epub:type="bodymatter" href="Text/ch1.xhtml">正文开始</a></li>
+</ol></nav>
+<nav epub:type="page-list"><ol>
+  <li><a href="Text/ch1.xhtml#page1">1</a></li>
+  <li><a href="Text/ch1.xhtml#page2">2</a></li>
+</ol></nav>
+</body></html>`;
+            const fileMap = { 'OEBPS/Text/ch1.xhtml': '', 'OEBPS/Text/ch2.xhtml': '' };
+            expect(parseTocNav(nav, 'OEBPS', fileMap)).toEqual([
+                { label: '第一章', href: 'OEBPS/Text/ch1.xhtml' },
+                { label: '第二章', href: 'OEBPS/Text/ch2.xhtml' },
+            ]);
+        });
+
+        it('无 epub:type 的裸 nav 块仍整文档兜底解析（老式/手写 nav）', () => {
+            const nav = `<html xmlns="http://www.w3.org/1999/xhtml">
+<body><nav><ol>
+  <li><a href="Text/a.xhtml">甲</a></li>
+  <li><a href="Text/b.xhtml">乙</a></li>
+</ol></nav></body></html>`;
+            const fileMap = { 'OEBPS/Text/a.xhtml': '', 'OEBPS/Text/b.xhtml': '' };
+            expect(parseTocNav(nav, 'OEBPS', fileMap)).toEqual([
+                { label: '甲', href: 'OEBPS/Text/a.xhtml' },
+                { label: '乙', href: 'OEBPS/Text/b.xhtml' },
+            ]);
+        });
+
         it('NCX（EPUB2）→ toc', () => {
             const ncx = `<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
@@ -110,6 +147,20 @@ describe('EPUB 解析', () => {
         });
         it('script/style 剔除', () => {
             expect(xhtmlToText('<p>正文</p><script>alert(1)</script><style>.x{color:red}</style><p>结尾</p>')).toBe('正文结尾');
+        });
+    });
+
+    describe('chapterTextLength 章节纯文本字数（进度加权口径）', () => {
+        it('返回剥离标签后的可见文本长度（HTML 标签不占权重）', () => {
+            // 三体样章：HTML 壳远大于正文
+            const html = `<html><head><title>三体</title><style>.x{color:red}</style></head><body><h1>第一章</h1><p>科学边界</p></body></html>`;
+            const text = xhtmlToText(html);
+            expect(chapterTextLength(html)).toBe(text.length);
+            expect(chapterTextLength(html)).toBeLessThan(html.length);
+        });
+        it('空/纯标签 → 0', () => {
+            expect(chapterTextLength('')).toBe(0);
+            expect(chapterTextLength('<html><body></body></html>')).toBe(0);
         });
     });
 

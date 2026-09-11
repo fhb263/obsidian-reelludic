@@ -101,6 +101,13 @@ export interface DoubanSubject {
     genres: string[];
 }
 
+/** 提取 og:image 内容（fetchDetail 封面兜底：JSON-LD 无 image、且 og meta 缺 title/id 门槛时也能拿到详情页大图） */
+function ogImageOf(html: string): string | undefined {
+    const a = /<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']*)["']/.exec(html);
+    const b = /<meta[^>]*content=["']([^"']*)["'][^>]*property=["']og:image["']/.exec(html);
+    return a?.[1] ?? b?.[1];
+}
+
 /** 过滤对象中值为 undefined 的字段（详情合并用：JSON-LD/og 的缺字段不覆盖搜索级已有值） */
 function definedFields<T extends Record<string, unknown>>(o: T): Partial<T> {
     const out: Record<string, unknown> = {};
@@ -108,6 +115,26 @@ function definedFields<T extends Record<string, unknown>>(o: T): Partial<T> {
         if (v !== undefined) out[k] = v;
     }
     return out as Partial<T>;
+}
+
+/**
+ * 豆瓣图床封面 URL 高清化（2026-09-09 用户反馈：游戏封面模糊——搜索列表 <img src> 给的是
+ * doubanio 缩略档（spic ≈ 70×94 / s_ratio_poster ≈ 100×140），原样下载落库即糊）。
+ * 豆瓣图片同 ID 可按档位取图：spic/mpic → lpic（老式图床）、s_ratio_poster/m → l / l_ratio_poster（view/photo 图床）。
+ * 规则：仅对 doubanio.com 图床 URL 做档位提升（缩略段 → 高清段），幂等（已是高清段/非豆瓣图床原样返回）。
+ */
+export function upscaleDoubanCover(u: string | undefined): string | undefined {
+    if (!u || !/doubanio\.com/.test(u)) return u;
+    return u
+        // 老式图床：/spic/ 或 /mpic/ → /lpic/
+        .replace(/\/spic\//, '/lpic/')
+        .replace(/\/mpic\//, '/lpic/')
+        // view/photo 图床：s_ratio_poster → l_ratio_poster（竖版海报大图）
+        .replace(/\/s_ratio_poster\//, '/l_ratio_poster/')
+        // view/photo 图床：/m/ → /l/（同目录下大图）
+        .replace(/\/view\/photo\/m\//, '/view/photo/l/')
+        // view/photo 图床：/s/ → /l/（同目录下大图）
+        .replace(/\/view\/photo\/s\//, '/view/photo/l/');
 }
 
 /** 豆瓣评分提取（多结构兜底）：v:average 元素（<strong property="v:average">7.9</strong>）、
@@ -256,7 +283,7 @@ export function parseDoubanItem(html: string): DoubanSubject | null {
         year: yearM?.[0] ? Number(yearM[0]) : undefined,
         rating: ratingM?.[1] ? Number(ratingM[1]) : undefined,
         ratingCount: ratingPeopleM?.[1] ? Number(ratingPeopleM[1].replace(/,/g, '')) : undefined,
-        cover: normalizeDoubanCover(imgM?.[1]),
+        cover: upscaleDoubanCover(normalizeDoubanCover(imgM?.[1])),
         summary: descM?.[1]?.replace(/<[^>]+>/g, '').trim(),
         cast: [],
         genres: [],
@@ -396,7 +423,7 @@ export function parseDoubanOgMeta(html: string): Partial<DoubanSubject> | null {
     return {
         id: id ?? '',
         title: title ?? '',
-        cover: image,
+        cover: upscaleDoubanCover(image),
         summary: desc,
         rating: scoreM,
     };
@@ -486,7 +513,7 @@ export function parseDoubanGameDetail(html: string): Partial<DoubanSubject> | nu
         genres: info['类型'] ? splitList(info['类型']) : [],
         aliases: info['别名'] ? splitList(info['别名']) : [],
         year: pubYear ? Number(pubYear) : undefined,
-        cover: coverM?.[1],
+        cover: upscaleDoubanCover(coverM?.[1]),
         summary: descM?.[1]?.replace(/<[^>]+>/g, '').trim(),
         rating: scoreM,
     };
@@ -526,6 +553,15 @@ export function applyDoubanInfo(s: DoubanSubject, type: EntryType, info: Record<
         // 音乐：#info 表演者 → author（JSON-LD 缺失时兜底）
         if (pick('表演者')) out.author = pick('表演者');
         if (pick('专辑')) out.album = pick('专辑');
+        // 发行时间（如 1993-05-14 / 1993-05 / 1993）→ year；JSON-LD datePublished 已给时不覆盖
+        const rel = pick('发行时间');
+        if (rel && !s.year) {
+            const y = /\d{4}/.exec(rel);
+            if (y) out.year = Number(y[0]);
+        }
+        // 流派 → genres（表单题材手动填写兜底 + 海报墙题材行）
+        const genres = pickList('流派');
+        if (genres?.length) out.genres = genres;
     } else {
         // 影视/动画
         if (pick('导演')) out.director = pick('导演');
@@ -774,8 +810,11 @@ export class DoubanClient {
                     };
                 }
             } else {
-                // JSON-LD 为主，失败回退 og meta（反爬页/JSON-LD 缺失时仍有标题/封面/简介/评分）
-                const detail = parseDoubanJsonLd(html, type) ?? parseDoubanOgMeta(html);
+                // JSON-LD 为主，失败回退 og meta（反爬页/JSON-LD 缺失时仍有标题/封面/简介/评分）；
+                // JSON-LD 成功但缺封面时单取 og:image 兜底（og:image 多为原图级高清，详情无 image 字段——旧条目回源高清化依赖它）
+                const ld = parseDoubanJsonLd(html, type);
+                const og = parseDoubanOgMeta(html);
+                const detail = ld ? { ...ld, cover: upscaleDoubanCover(ld.cover ?? ogImageOf(html)) } : og;
                 if (detail) {
                     // 详情合并：仅覆盖「有值」字段（definedFields）——JSON-LD 缺评分/评价人数时，
                     // undefined 不覆盖搜索级已有值（否则详情页无 aggregateRating 的书籍会丢评分与评价人数）

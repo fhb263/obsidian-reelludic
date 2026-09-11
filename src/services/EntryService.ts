@@ -1,6 +1,6 @@
 // 条目服务层：增删改查 + 状态流转 + 追更标记 + 笔记生成编排
 // 纯逻辑：文件 IO 通过注入的 VaultIO 完成（obsidian 适配器在插件侧提供）
-import type { Catalog, MediaEntry } from 'data/types';
+import type { ActivityEvent, Catalog, MediaEntry } from 'data/types';
 import { CatalogStore, normalizeEntry, type VaultIO } from 'data/catalog';
 import { canTransition, type MediaStatus } from 'pure/status';
 import { entryFrontmatter, entryNotePath, generateNoteMarkdown, hashNoteContent } from 'data/noteGenerator';
@@ -15,6 +15,7 @@ import {
     type ParsedExcerpt,
 } from 'pure/excerpt';
 import { HIGHLIGHT_SECTION } from 'pure/highlight';
+import { DIR_NOTES } from 'pure/dirs';
 
 function notFound(id: string): Error {
     return new Error('entry not found: ' + id);
@@ -43,8 +44,20 @@ export class EntryService {
         return new Date().toISOString();
     }
 
+    /** 追加一条状态翻转记录（今日记录/日记打卡数据源）。
+     *  只记「状态真的变了」的调用——表单保存时 patch 恒带 status，未变即跳过，防日志被无效保存刷满。
+     *  上限由 serializeCatalog 侧截断最旧（ACTIVITY_LOG_LIMIT）。 */
+    private pushActivity(c: Catalog, id: string, status: MediaStatus): void {
+        c.activityLog = [...(c.activityLog ?? []), { at: this.now(), id, status }];
+    }
+
     async list(): Promise<MediaEntry[]> {
         return (await this.load()).entries;
+    }
+
+    /** 活动日志（状态翻转记录）：「今日记录」/ 日记打卡的数据源，按时间升序 */
+    async activityLog(): Promise<ActivityEvent[]> {
+        return (await this.load()).activityLog ?? [];
     }
 
     async get(id: string): Promise<MediaEntry | undefined> {
@@ -63,8 +76,10 @@ export class EntryService {
         const c = await this.load();
         const idx = c.entries.findIndex((e) => e.id === id);
         if (idx < 0) throw notFound(id);
-        const merged = normalizeEntry({ ...c.entries[idx], ...patch, updatedAt: this.now() });
+        const prev = c.entries[idx];
+        const merged = normalizeEntry({ ...prev, ...patch, updatedAt: this.now() });
         c.entries[idx] = merged;
+        if (merged.status !== prev.status) this.pushActivity(c, id, merged.status); // 编辑表单改状态也要进日志
         await this.save(c);
         return merged;
     }
@@ -97,8 +112,15 @@ export class EntryService {
         if (!canTransition(cur.status, to)) {
             throw new Error(`illegal status transition: ${cur.status} -> ${to}`);
         }
-        const merged = normalizeEntry({ ...cur, status: to, updatedAt: this.now() });
+        // 书籍标记「已读」（watched）= 读完语义：readingProgress.percent 强制 100（保留 page/totalPage 展示口径），
+        // 防海报墙出现「✓已读 + 98%」矛盾（percent 是书架进度条唯一真源，阅读器落库同口径）
+        let readingProgress = cur.readingProgress;
+        if (to === 'watched' && cur.type === 'book' && readingProgress) {
+            readingProgress = { ...readingProgress, percent: 100 };
+        }
+        const merged = normalizeEntry({ ...cur, status: to, readingProgress, updatedAt: this.now() });
         c.entries[idx] = merged;
+        this.pushActivity(c, id, to);
         await this.save(c);
         return merged;
     }
@@ -160,8 +182,8 @@ export class EntryService {
         const e = await this.get(id);
         if (!e) throw notFound(id);
         const path = entryNotePath(e, this.entriesDir);
-        // 库目录（去掉 /笔记 后缀）：供 banner 拼接本地封面路径
-        const libraryDir = this.entriesDir.replace(/\/+$/, '').replace(/\/笔记$/, '') || 'ReelLudic';
+        // 库目录（去掉末尾笔记目录名）：供 banner 拼接本地封面路径
+        const libraryDir = this.entriesDir.replace(/\/+$/, '').replace(new RegExp(`/${DIR_NOTES}$`), '') || 'ReelLudic';
         const md = entryFrontmatter(e, libraryDir) + '\n\n' + generateNoteMarkdown(e, libraryDir);
         let final = md;
         if (e.notePath) {

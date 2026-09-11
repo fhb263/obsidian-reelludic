@@ -1,0 +1,120 @@
+name: Bug 报告
+description: 报告一个可复现的问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。提交前请先确认两件事：
+
+        1. 已阅读 README 的[常见问题](https://github.com/fhb263/obsidian-reelludic#faq)与[已知问题与限制](https://github.com/fhb263/obsidian-reelludic#known-issues)
+        2. 已搜索现有 Issue，确认这不是重复反馈
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      description: 设置 → 第三方插件 → ReelLudic 的版本号
+      placeholder: 例如 1.0.2
+    validations:
+      required: true
+
+  - type: input
+    id: obsidian-version
+    attributes:
+      label: Obsidian 版本
+      description: 设置 → 关于
+      placeholder: 例如 1.8.7
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 运行环境
+      description: 插件运行在哪个平台
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Android
+        - iOS
+    validations:
+      required: true
+
+  - type: dropdown
+    id: entry-type
+    attributes:
+      label: 涉及的类型
+      description: 可多选
+      multiple: true
+      options:
+        - 电影 / 电视剧
+        - 动画
+        - 书籍
+        - 游戏
+        - 音乐
+        - 与类型无关（界面 / 设置 / 数据）
+        - 阅读器 / 播放器
+    validations:
+      required: true
+
+  - type: input
+    id: data-source
+    attributes:
+      label: 涉及的数据源
+      description: 若与元数据抓取相关，请填写（例如 豆瓣 / TMDB / Bangumi）
+      placeholder: 例如 豆瓣
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请给出最小、确定可复现的步骤
+      placeholder: |
+        1. 打开「…」
+        2. 点击「…」
+        3. 出现「…」
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+      description: 正常情况下你认为应该发生什么
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 若有报错提示，请把提示原文一并贴上
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: 控制台日志
+      description: 按 Ctrl/Cmd + Shift + I 打开开发者工具，切到 Console 页签，复制相关报错（可选）
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      description: 提交前请逐项确认
+      options:
+        - label: 我已搜索现有 Issue，确认这不是重复反馈
+          required: true
+        - label: 我已关闭其他插件后在「安全模式」下复现，问题依然存在
+          required: false
+        - label: 我已确认这不是 README 中「已知问题与限制」里记录的情况
+          required: true

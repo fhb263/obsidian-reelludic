@@ -1,6 +1,6 @@
 // catalog.json 读写（纯逻辑：文件 IO 通过注入的 VaultIO 完成，可单测）
-import type { Catalog, MediaEntry, PlaySession, WatchLink } from 'data/types';
-import { createEntryId, ENTRY_TYPES } from 'data/types';
+import type { ActivityEvent, Catalog, MediaEntry, PlaySession, WatchLink } from 'data/types';
+import { ACTIVITY_LOG_LIMIT, createEntryId, ENTRY_TYPES } from 'data/types';
 import { isMediaStatus } from 'pure/status';
 import { normalizeRating } from 'pure/rating';
 
@@ -101,6 +101,12 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
         sourceUrl: isString(raw.sourceUrl) ? raw.sourceUrl : undefined,
         communityScore: typeof raw.communityScore === 'number' ? raw.communityScore : undefined,
         summary: isString(raw.summary) ? raw.summary : undefined, // 简介（曾缺失导致笔记无简介，回归锁定）
+        // AI 摘要（一句话总结 / 核心看点）：append-only 可选字段，空串/空数组不落库
+        aiSummary: isString(raw.aiSummary) && raw.aiSummary.trim() ? raw.aiSummary : undefined,
+        aiHighlights: (() => {
+            const v = Array.isArray(raw.aiHighlights) ? raw.aiHighlights.filter(isString).map((s) => s.trim()).filter(Boolean) : [];
+            return v.length ? v : undefined;
+        })(),
         ratingCount: typeof raw.ratingCount === 'number' ? raw.ratingCount : undefined,
         authorIntro: isString(raw.authorIntro) ? raw.authorIntro : undefined,
         toc: isString(raw.toc) ? raw.toc : undefined,
@@ -138,11 +144,32 @@ export function parseCatalog(text: string): Catalog {
         ? obj.entries.filter(isEntryLike).map((e) => normalizeEntry(e as Partial<MediaEntry>))
         : [];
     const version = typeof obj.version === 'number' ? obj.version : CATALOG_VERSION;
-    return { version, entries };
+    const out: Catalog = { version, entries };
+    // 活动日志（今日记录）：逐条校验，脏数据丢弃；字段缺失保持 undefined（不凭空造空数组）
+    if (Array.isArray(obj.activityLog)) out.activityLog = normalizeActivityLog(obj.activityLog);
+    return out;
+}
+
+/** 活动日志逐条校验：at 可解析 + id 非空 + status 合法；超出上限截断最旧 */
+function normalizeActivityLog(raw: unknown[]): ActivityEvent[] {
+    const valid = raw.filter((v): v is ActivityEvent => {
+        if (typeof v !== 'object' || v === null) return false;
+        const o = v as Record<string, unknown>;
+        return (
+            typeof o.at === 'string' &&
+            !Number.isNaN(new Date(o.at).getTime()) &&
+            typeof o.id === 'string' &&
+            o.id.length > 0 &&
+            isMediaStatus(o.status)
+        );
+    });
+    return valid.length > ACTIVITY_LOG_LIMIT ? valid.slice(valid.length - ACTIVITY_LOG_LIMIT) : valid;
 }
 
 export function serializeCatalog(c: Catalog): string {
     const clean: Catalog = { version: CATALOG_VERSION, entries: c.entries.map(normalizeEntry) };
+    const log = normalizeActivityLog(c.activityLog ?? []);
+    if (log.length) clean.activityLog = log;
     return JSON.stringify(clean, null, 2);
 }
 
@@ -157,7 +184,9 @@ export class CatalogStore {
             return cloneDefault();
         }
         const parsed = parseCatalog(text);
-        return { version: CATALOG_VERSION, entries: parsed.entries.map(normalizeEntry) };
+        const out: Catalog = { version: CATALOG_VERSION, entries: parsed.entries.map(normalizeEntry) };
+        if (parsed.activityLog) out.activityLog = normalizeActivityLog(parsed.activityLog);
+        return out;
     }
 
     async save(catalog: Catalog): Promise<void> {

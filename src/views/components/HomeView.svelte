@@ -5,7 +5,8 @@
     import TrackingBoard from './TrackingBoard.svelte';
     import StatsBoard from './StatsBoard.svelte';
     import { ENTRY_TYPE_LABELS, type ColorTheme, type EntryType } from 'data/types';
-    import type { MediaEntry, MediaStatus } from 'data/types';
+    import type { ActivityEvent, MediaEntry, MediaStatus } from 'data/types';
+    import type { FeedRange } from 'pure/activityFeed';
     import { MEDIA_TYPES, type HomeTab } from '../tab';
     import Icon from './Icon.svelte';
 
@@ -48,6 +49,8 @@
     export let onBulkRating: (ids: string[], rating: number) => Promise<void> = async () => {};
     /** 批量追加标签 */
     export let onBulkTags: (ids: string[], tags: string[]) => Promise<void> = async () => {};
+    /** 批量应用前置确认（HomeView.ts 层创建 ConfirmModal，返回 false = 用户取消） */
+    export let onConfirmBulk: (message: string) => Promise<boolean> = async () => true;
     /** 网站更新检测（追更表）：抓观看网址 HTML 提取最新集数；force=true 跳过缓存（「重新检测」用） */
     export let onCheckUpdate: (url: string, watched: number, force?: boolean) => Promise<import('pure/updateCheck').UpdateCheckResult | null> = async () => null;
     /** A2 落库：追更检测到新最新集时写回条目（去重基线） */
@@ -60,6 +63,10 @@
     export let onGenerateReport: () => Promise<void> = async () => {};
     /** 已生成的往年年度报告（年份降序），统计页「往年报告」入口数据源 */
     export let yearReports: { year: number; path: string }[] = [];
+    /** 活动日志（状态翻转）：统计页「今日」面板数据源 */
+    export let activityLog: ActivityEvent[] = [];
+    /** 一键把动态写进当天日记（范围跟随面板的 日/周/月/年 切换） */
+    export let onRecordJournal: (range: FeedRange) => Promise<void> = async () => {};
     /** 打开某份年度报告（统计页「往年报告」入口） */
     export let onOpenReport: (path: string) => void = () => {};
     /** 点击月历某天：HomeView 层打开当天详情弹窗 */
@@ -158,7 +165,7 @@
                     {onImportBangumi} />
             {/if}
         {:else if activeTab === 'stats'}
-            <StatsBoard {entries} {excerptCounts} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} />
+            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} />
         {:else}
             <MediaList
                 entries={activeTab === 'media' ? entries.filter((e) => MEDIA_TYPES.includes(e.type)) : entries}
@@ -180,6 +187,7 @@
                 {onOpenGameSessionModal}
                 {onBulkRating}
                 {onBulkTags}
+                {onConfirmBulk}
                 lockType={activeTab === 'media' ? null : activeTab}
                 typePool={activeTab === 'media' ? MEDIA_TYPES : null} />
         {/if}
@@ -189,8 +197,7 @@
     <button
         class="rl-to-top"
         class:show={showTop}
-        aria-label="回到顶部"
-        on:click={scrollToTop}>↑</button>
+        on:click={scrollToTop}>↑<span class="rl-sr">回到顶部</span></button>
 </div>
 
 <style>

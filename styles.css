@@ -1,18 +1,62 @@
 /* ReelLudic 插件样式 */
 
-/* ── 色彩系统变量（A3）：状态徽标四色（灰/橙/绿/蓝，色相区分），亮/暗主题自适应；组件内 var() 引用 ── */
+/* ── 语义色板 `--rl-*`（组件内一律 var() 引用；UI-GUIDE §2 禁硬编码色值）─────────────
+   设计原则：**:root 放「原色」，各主题只覆盖自己这侧不达标的项**。
+   原因是这套原色本来就是照**深色主题**调出来的 —— 实测暗底基本达标，浅底普遍不足
+   （评分/星级最低只有 2.44:1，AA 正文要 4.5:1；另有 #c0493f 在暗底 3.39:1 的反向情况）。
+   所以深色主题几乎原封不动（这正是「观感不变」），浅色主题才做补正。
+   ⚠️ 覆盖值一律取「保持原色相、只移动亮度」的**最小必要幅度**，别顺手换成另一套色。
+   括号内为实算对比度（浅底对 #ffffff、暗底对 #1e1e1e）；门槛：正文文字 4.5 / 缺失态与图形 3。
+   改色值必须重算并同步注释。 */
 :root {
-    --rl-badge-want: #8a8a86;
-    --rl-badge-watching: #d99a2b;
-    --rl-badge-watched: #4d9b52;
-    --rl-badge-archived: #4a7dd0; /* 存档：蓝（与想看灰 #8a8a86 区分，四色相不同） */
+    /* 评分与星级（**浅色/深色共用同一色值** —— 2026-09-11 用户指定）。
+       ⚠️ 共用意味着放弃主题适配：单色在数学上不可能两主题同时达 AA ——
+          白底需相对亮度 ≤0.183、暗底需 ≥0.230，两区间不相交；单色最优也只有两主题各 4.11:1。
+       故这四色沿用原色（原观感），浅色主题下对比度不足是既知代价，见 README「已知问题与限制」。 */
+    --rl-score: #d99a2b;          /* 评分 / 点亮星（浅 2.44 · 暗 6.83） */
+    --rl-score-mid: #8a8a86;      /* 星级 1-3 灰（3.47 · 4.81） */
+    --rl-score-none: #b4b2a9;     /* 未评分（2.13 · 7.84） */
+    --rl-score-input: #d9cba0;    /* 评分输入框未点亮星（1.62 · 10.32） */
+    /* 语义文字（原色） */
+    --rl-danger: #c0493f;         /* 危险 / 警告文字（4.92 ✓ · 3.39 ✗） */
+    --rl-danger-strong: #e03131;  /* 右键菜单危险项（4.51 ✓ · 3.69 ✗） */
+    --rl-good: #2f9e44;           /* 正向状态文字（3.45 ✗ · 4.84 ✓） */
+    --rl-warn: #d97706;           /* 次级提醒文字（3.19 ✗ · 5.23 ✓） */
+    /* 进度条填充（图形，门槛 3:1；两主题均达标 → 无需覆盖） */
+    --rl-good-bar: #4d9b52;       /* 读完 / 通用填充（3.43 ✓ · 4.86 ✓） */
+    --rl-good-soft: #5a9e7d;      /* 70-99% 接近完成（3.17 ✓ · 5.26 ✓） */
+    --rl-danger-soft: #e85a4f;    /* <30% 起步（3.50 ✓ · 4.77 ✓） */
+    /* 状态徽标四色（灰/橙/绿/蓝，色相区分状态；9px 粗体白字，按正文 4.5 计） */
+    --rl-badge-want: #8a8a86;     /* 白字 3.47 ✗ · 4.64 ✓ */
+    --rl-badge-watching: #d99a2b; /* 白字 2.44 ✗ · 2.90 ✗ */
+    --rl-badge-watched: #4d9b52;  /* 白字 3.43 ✗ · 4.33 ✗ */
+    --rl-badge-archived: #4a7dd0; /* 白字 4.09 ✗ · 5.13 ✓ */
+}
+.theme-light {
+    /* 只列「白底不达标」的项 —— 原色相不变，仅压到刚好达标所需的最小亮度。
+       ⚠️ 评分与星级**刻意不在此列**：用户要求两主题共用同一色，见 :root 注释。 */
+    --rl-good: #28873a;           /* 4.55 */
+    --rl-warn: #b36205;           /* 4.50 */
+    --rl-badge-want: #767672;     /* 白字 4.56 */
+    --rl-badge-watching: #9c6e1c; /* 白字 4.51 */
+    --rl-badge-watched: #418446;  /* 白字 4.55 */
+    --rl-badge-archived: #3f75cd; /* 白字 4.53 */
 }
 .theme-dark {
-    --rl-badge-want: #75756f;
-    --rl-badge-watching: #c68d1f;
-    --rl-badge-watched: #41884a;
-    --rl-badge-archived: #3f6db8; /* 存档：暗蓝（暗底可见） */
+    /* 只列「暗底不达标」的项；其余一律沿用 :root 原色 —— 深色主题观感与既有一致 */
+    --rl-danger: #cb685f;         /* 4.51 */
+    --rl-danger-strong: #e55353;  /* 4.52 */
+    --rl-badge-want: #75756f;     /* 白字 4.64（原暗色，本就达标） */
+    --rl-badge-watching: #9b6e18; /* 白字 4.53 */
+    --rl-badge-watched: #408548;  /* 白字 4.50（仅比原色深 0.8% 亮度，肉眼基本无差） */
+    --rl-badge-archived: #3f6db8; /* 白字 5.13（原暗色，本就达标） */
 }
+
+/* ── 纯图标按钮的读屏名（视觉隐藏、读屏可读）────────────────────────────
+   为何不用 aria-label：Obsidian 会对「带 aria-label 的悬停目标（含祖先就近匹配）」自绘
+   官方气泡，会与插件自己的 data-tip 气泡叠成两层；且 UI-GUIDE §3 规定纯图标按钮的读屏名
+   走隐藏文本或 aria-labelledby。EntryForm 另有同名 scoped 规则，声明一致、重复无害。 */
+.rl-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* ── 设置页：服务集成两折叠项（#165 T11：① API 管理 + ② 数据源启用；旧 B1 rl-src-* / rl-chain-* 折叠样式已清理） ── */
 .rl-fold {
@@ -103,6 +147,7 @@
 }
 .rl-key-open .rl-key-body { display: flex; }
 .rl-key-body .rl-hint-note { padding-bottom: 0; }
+
 .rl-key-actions {
     display: flex;
     align-items: center;
@@ -272,12 +317,12 @@
 /* 月历按钮基础样式并入统一 rl-btn 体系（见文件下部统一按钮区块）；hover 高亮保留 */
 .rl-day-btn:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
 
-/* ── 状态徽标（全局唯一实现：CalendarDayModal 等 DOM 渲染 + MediaList/HomeView Svelte 共用；四色变量，亮/暗自适应） ── */
+/* ── 状态徽标（全局唯一实现：CalendarDayModal 等 DOM 渲染 + MediaList/HomeView Svelte 共用；色值见文件头色板，白字按主题各自达标） ── */
 .rl-badge { font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 999px; color: #fff; cursor: pointer; }
-.rl-badge-want { background: var(--rl-badge-want, #8a8a86); }
-.rl-badge-watching { background: var(--rl-badge-watching, #d99a2b); }
-.rl-badge-watched { background: var(--rl-badge-watched, #4d9b52); }
-.rl-badge-archived { background: var(--rl-badge-archived, #4a7dd0); }
+.rl-badge-want { background: var(--rl-badge-want); }
+.rl-badge-watching { background: var(--rl-badge-watching); }
+.rl-badge-watched { background: var(--rl-badge-watched); }
+.rl-badge-archived { background: var(--rl-badge-archived); }
 
 /* ── 音乐页签分组歌单（MediaList lockType=music 专用：组头 + 窄行，朴素功能向） ── */
 .rl-music-group { margin-bottom: 8px; }
@@ -364,6 +409,12 @@
 .rl-hide-scroll { scrollbar-width: none; }
 .rl-hide-scroll * { scrollbar-width: none; }
 
+/* 例外：统计页「今日」动态列表要求始终有滑动条（用户指示）——覆盖上面的全局隐藏（特异性 0,2,1 > 0,1,1） */
+.rl-hide-scroll .rl-today-list::-webkit-scrollbar,
+.rl-hide-scroll .rl-feed-groups::-webkit-scrollbar { display: block; }
+.rl-hide-scroll .rl-today-list,
+.rl-hide-scroll .rl-feed-groups { scrollbar-width: thin; }
+
 
 /* ── 摘抄录入弹窗（rl-ex-*）── */
 .rl-ex-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
@@ -396,11 +447,53 @@
 .rl-ex-quote { font-size: var(--font-ui-medium); line-height: 1.55; color: var(--text-muted); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 7px 10px; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow-y: auto; }
 .rl-ex-quote:empty { color: var(--text-faint); }
 
-/* ── G 双写冲突确认弹窗（NoteConflictModal） ── */
-.rl-nc-icon { font-size: 28px; text-align: center; margin-bottom: 8px; }
-.rl-nc-desc { font-size: var(--font-ui-medium); color: var(--text-muted); margin: 8px 0 16px; line-height: 1.6; }
+/* ── G 双写冲突 / 删除确认弹窗（NoteConflictModal / ConfirmModal / PosterCleanupModal） ──
+   icon = ⚠️ emoji 直出无圆底（2026-09-09 用户拍板：去掉红底实心圆块、保留图标；
+   Obsidian 各版本 lucide 矢量图标不可见 → 维持 emoji 保证显示）；
+   按钮：取消灰底次级靠左、危险主按钮实心红底白字靠右 */
+.rl-nc-icon {
+    margin: 2px auto 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-error);
+    font-size: 22px;
+    line-height: 1;
+}
+.rl-nc-title { font-size: 15px; font-weight: 600; color: var(--text-normal); text-align: center; margin: 0 0 6px; }
+.rl-nc-desc { font-size: var(--font-ui-medium); color: var(--text-muted); margin: 8px 0 16px; line-height: 1.6; text-align: center; }
 .rl-nc-ops { display: flex; justify-content: flex-end; gap: 8px; }
-/* .rl-nc-danger 危险按钮并入统一 danger 体系（见统一按钮区块） */
+/* 弹窗危险主按钮：实心红底白字（区别于主界面 rl-btn-danger 的描边保守态），hover 加深
+   selector 拼 .modal-content button. 提升 specificity 击败 Obsidian 主题 .modal button 重置
+   （不写 !important 即可稳定覆盖，避免污染其他按钮） */
+.modal-content button.rl-nc-danger,
+.modal button.rl-nc-danger {
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    border-radius: 6px;
+    padding: 4px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    border: 1px solid var(--text-error);
+    background: var(--text-error);
+    color: #fff;
+}
+.modal-content button.rl-nc-danger:hover,
+.modal button.rl-nc-danger:hover {
+    background: var(--text-error);
+    filter: brightness(0.82);
+    border-color: var(--text-error);
+    color: #fff;
+}
+/* 次级按钮（取消）：在弹窗内同样压制主题 button 重置，确保中性灰底描边 */
+.modal-content button.rl-btn,
+.modal button.rl-btn {
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    border-radius: 6px;
+    padding: 4px 14px;
+    cursor: pointer;
+}
 
 /* ── 从 Bangumi 导入弹窗（ImportBangumiModal） ── */
 .rl-import-modal h2 { font-size: 15px; margin: 0 0 8px; }
@@ -424,8 +517,9 @@
 }
 .rl-btn-primary, .rl-ex-btn-primary { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
 .rl-btn:disabled, .rl-ex-btn:disabled { opacity: .5; cursor: not-allowed; }
-/* 危险操作统一（nc-danger / day-btn-danger / EntryForm rl-btn-danger 同交互） */
-.rl-btn-danger, .rl-nc-danger, .rl-day-btn-danger {
+/* 主界面危险按钮（EntryForm 删除条目 / CalendarDay 清除排期）：红描边红字保守态，hover 红底白字
+   （弹窗危险主按钮 rl-nc-danger 已独立为实心红，见冲突弹窗区块；二者分场景，勿合并） */
+.rl-btn-danger, .rl-day-btn-danger {
     font-family: inherit;
     font-size: var(--font-ui-small);
     border-radius: 6px;
@@ -436,7 +530,7 @@
     border-color: var(--text-error);
     background: transparent;
 }
-.rl-btn-danger:hover, .rl-nc-danger:hover, .rl-day-btn-danger:hover {
+.rl-btn-danger:hover, .rl-day-btn-danger:hover {
     background: var(--text-error);
     color: #fff;
     border-color: var(--text-error);
@@ -950,7 +1044,7 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     border: none;
     background: var(--background-primary);
 }
-/* 双页/单页切换按钮激活态提示 */
+/* 阅读器顶栏按钮激活态（如 ≡ 设置打开态） */
 .rl-reader-btn.active {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
@@ -1185,19 +1279,17 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 .rl-translate-card-body.rl-translate-error { color: var(--text-error); }
 
 
-/* ── 文件来源二选一弹窗（PickFileSourceModal，替代 Menu 定位问题） ── */
-.rl-pick-src { padding: 4px 0; }
-.rl-pick-src-grid { display: flex; flex-direction: column; gap: 8px; }
-.rl-pick-src-btn {
-    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-    padding: 12px 14px; text-align: left; font-family: inherit;
-    border: 1px solid var(--background-modifier-border); background: var(--background-primary);
-    border-radius: 6px; cursor: pointer; transition: background .12s ease, border-color .12s ease;
+/* ── AI 翻译与总结：提示词（默认提示词作 placeholder 灰字，不可编辑；点进框为空框，写入即覆盖，清空恢复默认） ── */
+.rl-prompt-row { margin: 2px 0 12px; }
+.rl-prompt-label { font-size: 11px; color: var(--text-faint); margin-bottom: 3px; }
+.rl-prompt-input {
+    width: 100%; box-sizing: border-box; font-family: inherit;
+    font-size: 11px; line-height: 1.5; color: var(--text-normal);
+    background: var(--background-primary); border: 1px solid var(--background-modifier-border);
+    border-radius: 6px; padding: 4px 8px; resize: vertical;
 }
-.rl-pick-src-btn:hover { background: var(--background-modifier-hover); border-color: var(--interactive-accent); }
-.rl-pick-src-icon { display: flex; color: var(--interactive-accent); margin-bottom: 4px; }
-.rl-pick-src-icon svg { width: 18px; height: 18px; }
-.rl-pick-src-name { font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); }
+.rl-prompt-input::placeholder { color: var(--text-faint); opacity: 1; }
+.rl-prompt-input:focus { border-color: var(--interactive-accent); outline: none; }
 
 /* ── PDF 阅读器（PdfReaderPanel：连续滚动 canvas + textLayer 摘抄） ── */
 /* 滚动容器：连续滚动 + 允许文本选中（textLayer 摘抄，防 Obsidian 全局拦截） */
@@ -1280,7 +1372,7 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 .rl-res-t { font-weight: 600; font-size: 14px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .rl-res-row2 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--text-normal); min-width: 0; }
 .rl-res-yr { color: var(--text-muted); flex: none; }
-.rl-res-score { color: #d99a2b; font-weight: 700; flex: none; }
+.rl-res-score { color: var(--rl-score); font-weight: 700; flex: none; }
 .rl-res-o { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .rl-res-dot { color: var(--text-faint); flex: none; }
 .rl-res-source { font-size: 10px; color: var(--text-faint); flex: none; cursor: pointer; white-space: nowrap; font-weight: 500; user-select: none; padding: 2px 6px; border: 1px solid var(--background-modifier-border); border-radius: 4px; line-height: 1.5; }

@@ -167,12 +167,13 @@ export function resolveSourceChain(
     return norm.length > 0 ? norm : [...DEFAULT_CHAINS[group]];
 }
 
-// ── 全链失败错误文案（与现状逐字对齐；设置区仍叫「服务集成」故文案不变）──
+// ── 全链失败错误文案（设置区仍叫「服务集成」故路径文案不变）──
+// 批B：每条文案除「哪里出问题」外必须给出「怎么办」，且路径具体到设置项名，避免用户去设置页里自己翻找
 const ERR_COOKIE_INVALID = '豆瓣 Cookie 已失效或过期 — 请到 设置 → 服务集成 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试';
-const ERR_DOUBAN_UNREACHABLE = 'Douban 兜底不可用（请在 设置 → 服务集成 · Douban 配置 Cookie 过反爬）';
-const ERR_ANIME_NO_TOKEN = '未配置 Bangumi Access Token，且 Douban 也未找到匹配结果';
+const ERR_DOUBAN_UNREACHABLE = 'Douban 兜底不可用 — 到 设置 → 服务集成 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源';
+const ERR_ANIME_NO_TOKEN = '未配置 Bangumi Access Token，且 Douban 也未找到匹配结果 — 到 设置 → 服务集成 · 数据源管理 填 Bangumi Token 可扩大动画结果覆盖';
 const ERR_ANIME_COOKIE = ERR_COOKIE_INVALID + '，或填写 Bangumi Token';
-const ERR_ANIME_UNREACHABLE = '未配置 Bangumi Access Token，且 Douban 兜底不可用（请在 设置 → 服务集成 · Douban 配置 Cookie 过反爬，或填写 Bangumi Token）';
+const ERR_ANIME_UNREACHABLE = '未配置 Bangumi Access Token，且 Douban 兜底不可用 — 到 设置 → 服务集成 · Douban 填登录态 Cookie，或填写 Bangumi Token';
 
 /** 链内非 douban 源在本次搜索中的结果状态（调用方只在「整体无结果」时调用 derive，故无需 'ok'） */
 export type AuxState = 'absent' | 'unconfigured' | 'failed' | 'empty';
@@ -207,13 +208,23 @@ export function deriveGroupSearchError(s: GroupErrorState): string | null {
         return null;
     }
     // douban 不在链：仅当存在未配置/失败源才提示（全 empty = 正常空结果）
+    // 按「原因」归组而非逐源罗列：同类多源合并成一项，避免括号里重复同一句话；
+    // 处方也只按类别给一次（未配置 → 去哪里填；失败 → 重试或换源）
     const listed = s.chain.filter((id): id is Exclude<ProviderId, 'douban'> => id !== 'douban');
-    const bits: string[] = [];
-    for (const id of listed) {
-        const st = s.aux[id];
-        if (st === 'unconfigured') bits.push(`${PROVIDER_META[id].label} 未配置凭据`);
-        else if (st === 'failed') bits.push(`${PROVIDER_META[id].label} 请求失败`);
+    const unconfigured = listed.filter((id) => s.aux[id] === 'unconfigured');
+    const failed = listed.filter((id) => s.aux[id] === 'failed');
+    if (unconfigured.length === 0 && failed.length === 0) return null;
+
+    const labelOf = (ids: readonly ProviderId[]): string => ids.map((id) => PROVIDER_META[id].label).join('、');
+    const causes: string[] = [];
+    const fixes: string[] = [];
+    if (unconfigured.length > 0) {
+        causes.push(`${labelOf(unconfigured)} 未配置凭据`);
+        fixes.push('到 设置 → 服务集成 · 数据源管理 填入对应凭据后点「测试连接」');
     }
-    if (bits.length === 0) return null;
-    return `所选数据源不可用（${bits.join('；')}），请到 设置 → 服务集成 检查后重试`;
+    if (failed.length > 0) {
+        causes.push(`${labelOf(failed)} 请求失败`);
+        fixes.push('请求失败多为网络不通或对方限流，可稍后重试或改用其他源');
+    }
+    return `所选数据源不可用（${causes.join('；')}）—— ${fixes.join('；')}`;
 }

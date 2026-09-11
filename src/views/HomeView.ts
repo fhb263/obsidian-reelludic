@@ -2,11 +2,13 @@
 import { ItemView, WorkspaceLeaf, Notice } from 'obsidian';
 import HomeViewSvelte from 'views/components/HomeView.svelte';
 import { CalendarDayModal } from 'modals/CalendarDayModal';
+import { ConfirmModal } from 'modals/ConfirmModal';
 import { ImportBangumiModal } from 'modals/ImportBangumiModal';
 import type ReelLudicPlugin from '../../main';
 import type { MediaStatus } from 'pure/status';
-import type { EntryType, MediaEntry } from 'data/types';
+import type { ActivityEvent, EntryType, MediaEntry } from 'data/types';
 import type { HomeTab } from './tab';
+import type { FeedRange } from 'pure/activityFeed';
 
 export const HOME_VIEW_TYPE = 'reelludic-home';
 
@@ -46,17 +48,18 @@ export class HomeView extends ItemView {
     }
 
     private async render(): Promise<void> {
-        const [entries, excerptCounts, yearReports] = await Promise.all([
+        const [entries, excerptCounts, yearReports, activityLog] = await Promise.all([
             this.plugin.service.list(),
             this.plugin.excerptCounts(),
             this.plugin.listYearReports(),
+            this.plugin.listActivity(),
         ]);
         this.entries = entries;
         // 隐藏插件内滚动条（外观设置）：类挂容器，CSS 隐藏内部滚动条
         this.contentEl.toggleClass('rl-hide-scroll', this.plugin.settings.hideScrollbars);
         if (this.component) {
             // 增量更新：保留组件实例与本地状态（当前 Tab/视图模式/筛选），仅刷新数据，立即生效
-            this.component.$set({ entries, colorTheme: this.plugin.settings.colorTheme, defaultViewMode: this.plugin.settings.defaultViewMode, excerptCounts, yearReports });
+            this.component.$set({ entries, colorTheme: this.plugin.settings.colorTheme, defaultViewMode: this.plugin.settings.defaultViewMode, excerptCounts, yearReports, activityLog });
             return;
         }
         this.contentEl.empty();
@@ -66,6 +69,7 @@ export class HomeView extends ItemView {
                 entries,
                 excerptCounts,
                 yearReports,
+                activityLog,
                 initialTab: this.plugin.homeTab,
                 colorTheme: this.plugin.settings.colorTheme,
                 defaultViewMode: this.plugin.settings.defaultViewMode,
@@ -99,6 +103,8 @@ export class HomeView extends ItemView {
                 /** 批量评分 / 批量追加标签 */
                 onBulkRating: (ids: string[], rating: number) => this.plugin.bulkSetRating(ids, rating),
                 onBulkTags: (ids: string[], tags: string[]) => this.plugin.bulkAddTags(ids, tags),
+                /** 批量应用前置确认（批B）：文案由 pure/bulkConfirm 生成，这里只负责弹窗取用户意图 */
+                onConfirmBulk: (message: string) => new ConfirmModal(this.app, message, '继续').open(),
                 onSetStatus: async (id: string, s: MediaStatus) => {
                     // 乐观更新：先本地 $set（一帧内 ~10ms 反映新状态），再后台落盘；
                     // 成功后用落盘结果（含最新 updatedAt）对齐本地 entries——排序/计数即刻精确，
@@ -144,6 +150,8 @@ export class HomeView extends ItemView {
                 },
                 /** 生成年度总结（统计页快捷入口） */
                 onGenerateReport: () => this.plugin.generateReport(),
+                /** 一键把动态写进当天日记：范围跟随统计页「动态」面板的 日/周/月/年 切换 */
+                onRecordJournal: (range: FeedRange) => this.plugin.recordTodayJournal(range),
                 /** 打开某份年度报告（统计页「往年报告」入口） */
                 onOpenReport: (path: string) => void this.plugin.openReport(path),
             },

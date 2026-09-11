@@ -17,11 +17,12 @@ export class PosterCleanupModal extends Modal {
     onOpen(): void {
         const { contentEl } = this;
         contentEl.empty();
-        contentEl.createEl('h2', { text: '清理孤儿封面' });
         if (this.orphanPaths.length === 0) {
-            contentEl.createDiv({ cls: 'rl-pc-empty', text: '封面目录没有未被引用的文件 — 无需清理 🎉' });
+            // 无 emoji：干净空态提示
+            contentEl.createDiv({ cls: 'rl-pc-empty', text: '封面目录没有未被引用的文件，无需清理' });
             return;
         }
+        contentEl.createEl('h2', { text: '清理孤儿封面' });
         contentEl.createDiv({
             cls: 'rl-pc-desc',
             text: `发现 ${this.orphanPaths.length} 个未被任何条目引用的封面文件（可能来自取消的添加弹窗或旧版本残留）：`,
@@ -39,6 +40,10 @@ export class PosterCleanupModal extends Modal {
         }
 
         const foot = contentEl.createDiv({ cls: 'rl-pc-foot' });
+        // 取消：中性次按钮靠左
+        const cancel = foot.createEl('button', { cls: 'rl-btn', text: '取消' });
+        cancel.onclick = () => this.close();
+        // 删除：危险主按钮实心红靠右
         const delBtn = foot.createEl('button', { cls: 'rl-nc-danger', text: `删除选中（${checks.length}）` });
         delBtn.onclick = async () => {
             const selected = this.orphanPaths.filter((_, i) => checks[i]?.checked);
@@ -63,8 +68,6 @@ export class PosterCleanupModal extends Modal {
             new Notice(`已删除 ${ok}/${selected.length} 个孤儿封面`);
             this.close();
         };
-        const cancel = foot.createEl('button', { cls: 'mod-cta', text: '取消' });
-        cancel.onclick = () => this.close();
     }
 
     onClose(): void {

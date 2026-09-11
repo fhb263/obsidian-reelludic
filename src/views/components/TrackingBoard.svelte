@@ -281,7 +281,7 @@
     .rl-tr-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
     .rl-tr-title { font-size: 14px; font-weight: 700; }
     .rl-tr-cnt { font-size: 11px; color: var(--text-muted); background: var(--background-modifier-hover); border-radius: 999px; padding: 1px 9px; }
-    .rl-tr-cnt-new { color: #e03131; background: rgba(255, 107, 107, .14); font-weight: 700; }
+    .rl-tr-cnt-new { color: var(--rl-danger); background: rgba(255, 107, 107, .14); font-weight: 700; }
     .rl-tr-hint { font-size: 11px; color: var(--text-faint); }
     .rl-tr-refresh { font-family: inherit; font-size: 11px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: 6px; padding: 1px 10px; cursor: pointer; margin-left: auto; transition: background .1s, transform .05s; }
     .rl-tr-refresh:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
@@ -295,23 +295,23 @@
     .rl-tr-table th, .rl-tr-table td { padding: 7px 10px; border-bottom: 1px solid var(--background-modifier-border); text-align: left; vertical-align: middle; }
     .rl-tr-table th { font-size: 11px; color: var(--text-faint); font-weight: 600; white-space: nowrap; }
     .rl-tr-table tbody tr:hover { background: var(--background-modifier-hover); }
-    .rl-tr-table tr.rl-tr-stale { border-left: 3px solid #ff6b6b; }
+    .rl-tr-table tr.rl-tr-stale { border-left: 3px solid var(--rl-danger); }
     .rl-tr-title-cell { cursor: pointer; font-weight: 600; color: var(--text-normal); }
     .rl-tr-title-cell:hover { color: var(--interactive-accent); text-decoration: underline; }
     .rl-tr-season { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
     .rl-tr-prog { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--text-normal); white-space: nowrap; }
     .rl-tr-last { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
     .rl-tr-act { font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: 999px; white-space: nowrap; }
-    .rl-tr-act-active { background: rgba(81, 207, 102, .14); color: #2f9e44; }
+    .rl-tr-act-active { background: rgba(81, 207, 102, .14); color: var(--rl-good); }
     .rl-tr-act-idle { background: rgba(255, 193, 7, .14); color: #b08800; }
-    .rl-tr-act-stale { background: rgba(255, 107, 107, .14); color: #e03131; }
+    .rl-tr-act-stale { background: rgba(255, 107, 107, .14); color: var(--rl-danger); }
     .rl-tr-act-none { background: var(--background-modifier-hover); color: var(--text-faint); }
     .rl-tr-upd { font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: 999px; white-space: nowrap; }
-    .rl-tr-upd-new { background: rgba(255, 107, 107, .14); color: #e03131; }
-    .rl-tr-upd-ok { background: rgba(81, 207, 102, .14); color: #2f9e44; }
+    .rl-tr-upd-new { background: rgba(255, 107, 107, .14); color: var(--rl-danger); }
+    .rl-tr-upd-ok { background: rgba(81, 207, 102, .14); color: var(--rl-good); }
     .rl-tr-upd-na { background: var(--background-modifier-hover); color: var(--text-faint); }
     .rl-tr-upd-fail { background: rgba(134, 142, 150, .14); color: #868e96; }
-    .rl-tr-upd-blocked { background: rgba(240, 146, 51, .14); color: #d97706; }
+    .rl-tr-upd-blocked { background: rgba(240, 146, 51, .14); color: var(--rl-warn); }
     .rl-tr-upd-check { background: var(--background-modifier-hover); color: var(--text-muted); }
     .rl-tr-ops { display: flex; gap: 6px; }
     .rl-tr-btn { font-family: inherit; font-size: 11px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: 6px; padding: 2px 10px; cursor: pointer; transition: color .15s ease, border-color .15s ease, background .15s ease, transform .12s ease; }

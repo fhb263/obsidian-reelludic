@@ -77,6 +77,37 @@ describe('entryFrontmatter', () => {
         expect(fm).toContain('"沙丘2: Part Two"');
     });
 
+    // ── Dataview 对齐：tags / created / updated / progress_percent ──
+    it('tags：类型键在前 + 自定义标签（去重保序）；无自定义标签时仍带类型键', () => {
+        expect(entryFrontmatter(baseEntry({ tags: ['神作', '动画'] }))).toContain('tags: ["tv", "神作", "动画"]');
+        expect(entryFrontmatter(baseEntry({ tags: ['tv', '神作'] }))).toContain('tags: ["tv", "神作"]'); // 与类型键重复去重
+        expect(entryFrontmatter(baseEntry())).toContain('tags: ["tv"]'); // 类型键始终在，便于 FROM #tv
+    });
+
+    it('created / updated：ISO → 本地日期 YYYY-MM-DD', () => {
+        const iso = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12, 0).toISOString();
+        const fm = entryFrontmatter(baseEntry({ createdAt: iso(2026, 9, 10), updatedAt: iso(2026, 9, 11) }));
+        expect(fm).toContain('created: 2026-09-10');
+        expect(fm).toContain('updated: 2026-09-11');
+    });
+
+    it('created / updated 非法或缺失 → 不输出该行', () => {
+        const fm = entryFrontmatter(baseEntry({ createdAt: '', updatedAt: 'not-a-date' }));
+        expect(fm).not.toContain('created:');
+        expect(fm).not.toContain('updated:');
+    });
+
+    it('progress_percent：书籍取 percent（回退 page/totalPage）、剧集按集数比；游戏/音乐不输出', () => {
+        const book = entryFrontmatter(baseEntry({ type: 'book', readingProgress: { percent: 42.6 } }));
+        expect(book).toContain('progress_percent: 43');
+        const bookFallback = entryFrontmatter(baseEntry({ type: 'book', readingProgress: { page: 50, totalPage: 200 } }));
+        expect(bookFallback).toContain('progress_percent: 25');
+        const tv = entryFrontmatter(baseEntry({ progress: { season: 1, episode: 6, totalEpisodes: 24, history: [] } }));
+        expect(tv).toContain('progress_percent: 25');
+        expect(entryFrontmatter(baseEntry())).not.toContain('progress_percent'); // 无 totalEpisodes
+        expect(entryFrontmatter(baseEntry({ type: 'game', playtimeMinutes: 60 }))).not.toContain('progress_percent');
+    });
+
     it('音乐 frontmatter 输出 album；无值不输出', () => {
         const fm = entryFrontmatter({ id: 'e_1', type: 'music', title: '不再犹豫', status: 'want', rating: 0, album: '犹豫', genres: [], cast: [], links: [], notes: '', tags: [], createdAt: '', updatedAt: '' });
         expect(fm).toContain('album: "犹豫"');
@@ -373,10 +404,10 @@ describe('hashNoteContent 内容指纹', () => {
 });
 
 describe('entryNotePath', () => {
-    it('按类型中文子目录生成 .md 路径（v0.4 中文化）', () => {
-        expect(entryNotePath(baseEntry())).toBe('ReelLudic/笔记/电视剧/进击的巨人 最终季.md');
-        expect(entryNotePath(baseEntry({ type: 'movie' }))).toBe('ReelLudic/笔记/电影/进击的巨人 最终季.md');
-        expect(entryNotePath(baseEntry({ type: 'book' }))).toBe('ReelLudic/笔记/书籍/进击的巨人 最终季.md');
+    it('按类型英文子目录生成 .md 路径（movie/teleplay/animation/book）', () => {
+        expect(entryNotePath(baseEntry())).toBe('ReelLudic/笔记/teleplay/进击的巨人 最终季.md');
+        expect(entryNotePath(baseEntry({ type: 'movie' }))).toBe('ReelLudic/笔记/movie/进击的巨人 最终季.md');
+        expect(entryNotePath(baseEntry({ type: 'book' }))).toBe('ReelLudic/笔记/book/进击的巨人 最终季.md');
     });
 });
 
@@ -413,5 +444,47 @@ describe('generateNoteMarkdown 游戏游玩记录', () => {
     it('非游戏类型即使有 playSessions 也不生成', () => {
         const movie = baseEntry({ type: 'movie', playSessions: [{ date: '2026-08-01', minutes: 30 }] });
         expect(generateNoteMarkdown(movie)).not.toContain('## 游玩记录');
+    });
+});
+
+describe('generateNoteMarkdown · AI 摘要章节', () => {
+    it('非书籍：一句话总结 + 核心看点 插在简介之后、个人评语之前', () => {
+        const md = generateNoteMarkdown(baseEntry({ summary: '剧情简介内容', aiSummary: '一句话总结内容', aiHighlights: ['看点甲', '看点乙'] }));
+        const iSummary = md.indexOf('## 简介');
+        const iAi = md.indexOf('## 一句话总结');
+        const iHl = md.indexOf('## 核心看点');
+        const iNotes = md.indexOf('## 个人评语');
+        expect(iSummary).toBeGreaterThanOrEqual(0);
+        expect(iAi).toBeGreaterThan(iSummary);
+        expect(iHl).toBeGreaterThan(iAi);
+        expect(iNotes).toBeGreaterThan(iHl);
+        expect(md).toContain('一句话总结内容');
+        expect(md).toContain('- 看点甲');
+        expect(md).toContain('- 看点乙');
+    });
+
+    it('书籍：插在「目录」之后（与表单同序）', () => {
+        const md = generateNoteMarkdown(baseEntry({ type: 'book', summary: '内容简介', authorIntro: '作者介绍', toc: '第一章', aiSummary: '总结', aiHighlights: ['甲'] }));
+        const iToc = md.indexOf('## 目录');
+        const iAi = md.indexOf('## 一句话总结');
+        expect(iToc).toBeGreaterThanOrEqual(0);
+        expect(iAi).toBeGreaterThan(iToc);
+    });
+
+    it('无值不产生章节；只看点无总结也照常渲染', () => {
+        const none = generateNoteMarkdown(baseEntry());
+        expect(none).not.toContain('## 一句话总结');
+        expect(none).not.toContain('## 核心看点');
+        const only = generateNoteMarkdown(baseEntry({ aiHighlights: ['只有看点'] }));
+        expect(only).not.toContain('## 一句话总结');
+        expect(only).toContain('## 核心看点');
+        const onlySummary = generateNoteMarkdown(baseEntry({ aiSummary: '只有总结' }));
+        expect(onlySummary).toContain('## 一句话总结');
+        expect(onlySummary).not.toContain('## 核心看点');
+    });
+
+    it('空数组/全空白看点不渲染该章节', () => {
+        const md = generateNoteMarkdown(baseEntry({ aiHighlights: ['  ', ''] }));
+        expect(md).not.toContain('## 核心看点');
     });
 });

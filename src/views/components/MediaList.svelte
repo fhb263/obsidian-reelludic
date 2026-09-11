@@ -2,13 +2,15 @@
     import { tick } from 'svelte';
     import { MEDIA_STATUSES, canTransition } from 'pure/status';
     import type { SortBy } from 'pure/search';
-    import { statusLabel } from 'pure/labels';
+    import { statusLabel, overviewUnitLabel } from 'pure/labels';
     import { actionAriaLabel, actionIcon, actionMenuTitle, actionReadyHint, actionUnavailableHint, hasActionEntry } from 'pure/actionLabel';
     import { starString, starClass } from 'pure/rating';
+    import { describeBulkApply } from 'pure/bulkConfirm';
     import { filterAndSort } from 'pure/search';
     import { groupMusicByArtist } from 'pure/musicGroup';
     import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres } from 'pure/cardMeta';
     import { resolveAddType } from 'pure/focusType';
+    import { placeMenu } from 'pure/menuPlacement';
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS, TYPE_COLORS, type ColorTheme, type EntryType } from 'data/types';
     import type { MediaEntry, MediaStatus } from 'data/types';
     import Icon from './Icon.svelte';
@@ -37,6 +39,8 @@
     export let onBulkRating: (ids: string[], rating: number) => Promise<void> = async () => {};
     /** 批量追加标签（合并去重） */
     export let onBulkTags: (ids: string[], tags: string[]) => Promise<void> = async () => {};
+    /** 批量应用前置确认（批B）：返回 false = 用户取消。无撤销栈，把关口前移到动手之前 */
+    export let onConfirmBulk: (message: string) => Promise<boolean> = async () => true;
     export let posterUrl: (e: MediaEntry) => string | undefined = () => undefined;
     /** 色彩主题：彩色显示类型色条；单色关闭（设置页配置，v0.4 起固定单色） */
     export let colorTheme: ColorTheme = 'colorful';
@@ -136,8 +140,14 @@
     let ctxFor: string | null = null;
     let ctxX = 0;
     let ctxY = 0;
+    /** 菜单超出视口可用区域时的封顶尺寸（视口过矮/过窄时给菜单内部滚动用） */
+    let ctxMaxH: number | undefined = undefined;
+    let ctxMaxW: number | undefined = undefined;
     let ctxAnchorEl: HTMLDivElement | null = null;
     let ctxMenuEl: HTMLDivElement | null = null;
+    /** 菜单外点击 / Esc 关闭的 window 监听（每次打开重新绑定，关闭时摘除，避免累积） */
+    let ctxOnDown: ((ev: MouseEvent) => void) | null = null;
+    let ctxOnKey: ((ev: KeyboardEvent) => void) | null = null;
     /** 批量选择（列表视图 checkbox） */
     let selectedIds: Set<string> = new Set();
     let bulkStatus: MediaStatus | '' = '';
@@ -162,16 +172,8 @@
         { value: 'myrating-asc', label: '个人评分 ↑' },
     ];
 
-    /** 概览量词（阶段6）：当前过滤类型确定时用类型量词，总库用「项媒体」 */
-    $: overviewUnit = (() => {
-        const t = lockType ?? (typeFilter !== 'all' ? typeFilter : null);
-        if (t === 'book') return '本书';
-        if (t === 'game') return '款游戏';
-        if (t === 'movie') return '部电影';
-        if (t === 'tv') return '部电视剧';
-        if (t === 'anime') return '部动画';
-        return '项媒体';
-    })();
+    // 概览量词（「N X」里的 X）：映射下沉到 pure/labels.overviewUnitLabel，避免此处逐类型 if 链漏项
+    $: overviewUnit = overviewUnitLabel(lockType ?? (typeFilter !== 'all' ? typeFilter : null));
 
     /** 搜索占位符随当前类型动态（书籍=书名/作者、游戏=标题/开发商、音乐=标题/作者，均已真实参与 matchesSearch；影视仅标题可搜，原名不宣传） */
     $: searchPlaceholder = (() => {
@@ -286,38 +288,48 @@
     }
 
     // ── B3 右键菜单 ──
-    /** 打开右键菜单：锚点容器内绝对定位（避开 Obsidian transform 祖先导致 fixed 偏移的问题），
-     *  菜单渲染后测量尺寸做边界检测：右/下溢出时翻转到鼠标另一侧，仍溢出则钳制在视口内。 */
+    /** 打开右键菜单：锚点容器内绝对定位（避开 Obsidian transform 祖先导致 fixed 偏移的问题）。
+     *  边界自适应走 pure/menuPlacement：**视口系**算好落点（贴鼠标 → 越界翻转 → 仍越界钳制 → 超高封顶），
+     *  最后减去锚点视口偏移换算回锚点相对坐标——旧实现直接用锚点相对量与视口宽高比较，锚点越靠内容末尾越失准。 */
     async function openCtx(e: MediaEntry, ev: MouseEvent) {
         ev.preventDefault();
+        unbindCtxWindow();
         ctxFor = e.id;
         ctxX = 0;
         ctxY = 0;
+        ctxMaxH = undefined;
+        ctxMaxW = undefined;
         await tick(); // 等 anchor 与菜单渲染
         const anchor = ctxAnchorEl;
         if (!anchor) return;
         const a = anchor.getBoundingClientRect();
-        const x = ev.clientX - a.left;
-        const y = ev.clientY - a.top;
-        ctxX = x;
-        ctxY = y;
-        await tick();
         const menu = ctxMenuEl;
-        if (menu) {
-            const m = menu.getBoundingClientRect();
-            const vw = window.innerWidth;
-            const vh = window.innerHeight;
-            // 右/下溢出 → 翻转到鼠标另一侧（留 6px 边距）；翻转后仍溢出 → 钳制在视口内
-            if (m.right > vw - 6) ctxX = Math.max(4, x - m.width - 8);
-            if (m.bottom > vh - 6) ctxY = Math.max(4, y - m.height - 8);
-            if (ctxX + m.width > vw - 6) ctxX = Math.max(4, vw - m.width - 6);
-            if (ctxY + m.height > vh - 6) ctxY = Math.max(4, vh - m.height - 6);
-        }
-        // 点击菜单外 / Esc 关闭（once 自动移除）
-        window.addEventListener('mousedown', () => closeCtx(), { once: true });
-        window.addEventListener('keydown', (ev2: KeyboardEvent) => { if (ev2.key === 'Escape') closeCtx(); }, { once: true });
+        const m = menu?.getBoundingClientRect();
+        const p = placeMenu({
+            x: ev.clientX,
+            y: ev.clientY,
+            menuW: m?.width ?? 0,
+            menuH: m?.height ?? 0,
+            vw: window.innerWidth,
+            vh: window.innerHeight,
+        });
+        ctxMaxW = p.maxWidth;
+        ctxMaxH = p.maxHeight;
+        // 视口坐标 → 锚点相对坐标（菜单 absolute 挂在 .rl-ctx-anchor 上）
+        ctxX = p.left - a.left;
+        ctxY = p.top - a.top;
+        // 点击菜单外 / Esc 关闭（本次会话内唯一一对监听，关闭时摘除）
+        ctxOnDown = () => closeCtx();
+        ctxOnKey = (ev2: KeyboardEvent) => { if (ev2.key === 'Escape') closeCtx(); };
+        window.addEventListener('mousedown', ctxOnDown);
+        window.addEventListener('keydown', ctxOnKey);
+    }
+    function unbindCtxWindow() {
+        if (ctxOnDown) { window.removeEventListener('mousedown', ctxOnDown); ctxOnDown = null; }
+        if (ctxOnKey) { window.removeEventListener('keydown', ctxOnKey); ctxOnKey = null; }
     }
     function closeCtx() {
+        unbindCtxWindow();
         ctxFor = null;
     }
     /** 类型化主操作（阅读/观看/播放/启动）：入口可用直接执行；不可用 → 快捷关联弹窗直达（不再先开编辑表单） */
@@ -362,7 +374,17 @@
         const status = bulkStatus;
         const rating = bulkRating;
         const tags = bulkTagsText.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
-        if (!status && !rating && tags.length === 0) return;
+        // 批B 前置确认：本插件不为批量操作提供撤销（回滚要重建笔记与目录项，冲突风险高），
+        // 因此把关口前移到动手之前——先把「多少项、改什么」说清楚再执行。
+        // 无可应用项时 describeBulkApply 返回 null（不弹空确认框），等价于原来的「三项全空直接返回」。
+        const confirmText = describeBulkApply({
+            count: ids.length,
+            statusLabel: status ? statusLabel(lockType ?? 'movie', status) : undefined,
+            rating: rating === 0 ? undefined : rating === -1 ? null : rating,
+            tags,
+        });
+        if (!confirmText) return;
+        if (!(await onConfirmBulk(confirmText))) return; // 取消 → 保留当前勾选与表单值，不改动任何数据
         clearSelection();
         bulkStatus = '';
         bulkRating = 0;
@@ -417,7 +439,7 @@
     />
     <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/电视剧/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType -->
     <button class="rl-add mod-cta" on:click={() => onAdd(resolveAddType(lockType, typeFilter))}><Icon icon="plus" size={14} /> 添加</button>
-    <span class="rl-libstats" aria-label="库概览">
+    <span class="rl-libstats" role="group" aria-label="库概览">
         <span class="rl-libstats-total">{statusCounts.all} {overviewUnit}</span>
     </span>
 </div>
@@ -453,11 +475,11 @@
         </span>
     {/if}
     <span class="rl-vb-view" role="group" aria-label="视图切换">
-        <button class:on={viewMode === 'grid'} on:click={() => (viewMode = 'grid')} aria-label="海报墙视图">▦</button>
-        <button class:on={viewMode === 'list'} on:click={() => (viewMode = 'list')} aria-label="列表视图">☷</button>
-        <button class:on={viewMode === 'masonry'} on:click={() => (viewMode = 'masonry')} aria-label="瀑布流视图">▥</button>
+        <button class:on={viewMode === 'grid'} on:click={() => (viewMode = 'grid')}>▦<span class="rl-sr">海报墙视图</span></button>
+        <button class:on={viewMode === 'list'} on:click={() => (viewMode = 'list')}>☷<span class="rl-sr">列表视图</span></button>
+        <button class:on={viewMode === 'masonry'} on:click={() => (viewMode = 'masonry')}>▥<span class="rl-sr">瀑布流视图</span></button>
         {#if lockType === 'music'}
-            <button class:on={viewMode === 'grouped'} on:click={() => (viewMode = 'grouped')} aria-label="分组歌单视图">☰</button>
+            <button class:on={viewMode === 'grouped'} on:click={() => (viewMode = 'grouped')}>☰<span class="rl-sr">分组歌单视图</span></button>
         {/if}
     </span>
 </div>
@@ -511,9 +533,9 @@
                     </div>
                     <div class="rl-music-ops">
                         {#if e.audioPath}
-                            <button class="rl-music-play" aria-label="播放音乐" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon="play" size={13} /></button>
+                            <button class="rl-music-play" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon="play" size={13} /><span class="rl-sr">播放音乐</span></button>
                         {/if}
-                        <button class="rl-music-edit" aria-label="编辑条目" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onEditEntry(e.id); }}>✎</button>
+                        <button class="rl-music-edit" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onEditEntry(e.id); }}>✎<span class="rl-sr">编辑条目</span></button>
                     </div>
                 </div>
             {/each}
@@ -528,7 +550,10 @@
             <div
                 class="rl-card"
                 class:rl-sel-card={selectedIds.has(e.id)}
+                role="link"
+                tabindex="0"
                 on:click={() => onOpenEntry(e.id)}
+                on:keydown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); onOpenEntry(e.id); } }}
                 on:contextmenu={(ev) => openCtx(e, ev)}>
                 {#if colorTheme === 'colorful'}
                     <div class="rl-type-bar" style={`background:${TYPE_COLORS[e.type]}`}></div>
@@ -543,19 +568,16 @@
                     <div class="rl-cov-hover">
                         <button
                             class="rl-hover-more"
-                            aria-label="更多操作"
-                            on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); openCtx(e, ev); }}>⋯</button>
+                            on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); openCtx(e, ev); }}>⋯<span class="rl-sr">更多操作</span></button>
                         <button
                             class="rl-hover-open"
-                            aria-label="打开笔记"
                             on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onOpenEntry(e.id); }}>打开笔记 ↗</button>
                     </div>
                     <!-- 主操作按钮：影视（有观看入口）、书籍（有文件）、游戏（有快捷方式）、音乐（有音频）→ 封面右下角圆形，hover 浮现 -->
                     {#if hasActionEntry(e)}
                         <button
                             class="rl-watch-btn"
-                            aria-label={actionAriaLabel(e.type)}
-                            on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon={actionIcon(e.type)} size={14} /></button>
+                            on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon={actionIcon(e.type)} size={14} /><span class="rl-sr">{actionAriaLabel(e.type)}</span></button>
                     {/if}
                 </div>
                 <div class="rl-card-meta">
@@ -667,7 +689,11 @@
                         on:click={(ev) => { ev.stopPropagation(); toggleSelect(e.id); }} />
                 </td>
                 <td>
-                    {#if posterUrl(e)}<img class="rl-thumb" src={posterUrl(e)} alt="" loading="lazy" decoding="async" referrerpolicy={isDoubanImage(posterUrl(e)) ? 'unsafe-url' : undefined} />{/if}{e.title}
+                    {#if posterUrl(e)}<img class="rl-thumb" src={posterUrl(e)} alt="" loading="lazy" decoding="async" referrerpolicy={isDoubanImage(posterUrl(e)) ? 'unsafe-url' : undefined} />{/if}<span
+                        class="rl-row-link"
+                        role="link"
+                        tabindex="0"
+                        on:keydown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); onOpenEntry(e.id); } }}>{e.title}</span>
                 </td>
                 <td>{e.year ?? '—'}</td>
                 <td><span class="rl-badge rl-badge-{e.status}">{statusLabel(e.type, e.status)}</span></td>
@@ -686,13 +712,11 @@
                 <td>
                     <button
                         class="rl-edit-row"
-                        aria-label="编辑条目"
-                        on:click={(ev) => { ev.stopPropagation(); onEditEntry(e.id); }}>✎</button>
+                        on:click={(ev) => { ev.stopPropagation(); onEditEntry(e.id); }}>✎<span class="rl-sr">编辑条目</span></button>
                     {#if hasActionEntry(e)}
                         <button
                             class="rl-edit-row rl-edit-watch"
-                            aria-label={actionAriaLabel(e.type)}
-                            on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon={actionIcon(e.type)} size={14} /></button>
+                            on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon={actionIcon(e.type)} size={14} /><span class="rl-sr">{actionAriaLabel(e.type)}</span></button>
                     {/if}
                 </td>
             </tr>
@@ -707,7 +731,7 @@
             <div
                 class="rl-ctx"
                 bind:this={ctxMenuEl}
-                style={`left:${ctxX}px;top:${ctxY}px`}
+                style={`left:${ctxX}px;top:${ctxY}px${ctxMaxH !== undefined ? `;max-height:${ctxMaxH}px` : ''}${ctxMaxW !== undefined ? `;max-width:${ctxMaxW}px` : ''}`}
                 on:click={(ev) => ev.stopPropagation()}
                 on:mousedown={(ev) => ev.stopPropagation()}
                 on:contextmenu={(ev) => ev.preventDefault()}>
@@ -764,7 +788,7 @@
     }
     .rl-batchbar button:hover { color: var(--text-normal); border-color: var(--interactive-accent); }
     .rl-batchbar button:disabled { opacity: .4; cursor: not-allowed; }
-    .rl-batch-danger { color: #c0493f !important; border-color: #c0493f !important; }
+    .rl-batch-danger { color: var(--rl-danger) !important; border-color: var(--rl-danger) !important; }
     .rl-batch-tags {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
         background: var(--background-primary); color: var(--text-normal); border-radius: 6px;
@@ -784,6 +808,9 @@
     }
     .rl-vb-group button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
     .rl-vb-group button:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -1px; }
+    /* 键盘可达（批C）：卡片与列表标题聚焦时必须有可见指示，否则键盘用户不知道焦点在哪 */
+    .rl-card:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -1px; }
+    .rl-row-link:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; border-radius: 3px; }
     .rl-vb-group button.on { background: var(--background-modifier-hover); color: var(--interactive-accent); font-weight: 600; }
     .rl-vb-group .rl-cnt { font-size: 10px; opacity: .6; margin-left: 2px; }
     .rl-vb-group button.on .rl-cnt { opacity: .85; }
@@ -908,20 +935,20 @@
     .rl-row1 .rl-score { margin-left: auto; }
     .rl-row2 { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 3px; }
     /* 我的评分（观看状态后内联星，无文字标签） */
-    .rl-my-inline { font-size: 10px; color: #d99a2b; white-space: nowrap; line-height: 1; }
+    .rl-my-inline { font-size: 10px; color: var(--rl-score); white-space: nowrap; line-height: 1; }
     /* 书籍进度：百分比 + 绿色进度条 + 页数（页数在条右侧） */
     .rl-read-pages { font-size: 9px; color: var(--text-faint); flex: none; white-space: nowrap; }
-    /* 状态徽标样式并入全局 styles.css .rl-badge（唯一实现，四色变量亮/暗自适应） */
+    /* 状态徽标样式并入全局 styles.css .rl-badge（唯一实现，四色变量见 styles 文件头） */
     /* 大众评分（阶段7：中性色让位给状态徽标主题色，极小 ★ 图标） */
-    .rl-score { font-size: 11px; font-weight: 700; color: #d99a2b; }
+    .rl-score { font-size: 11px; font-weight: 700; color: var(--rl-score); }
     /* 我的评分（阶段6：有评分才显示，前缀「我的评分」区分大众分；未评分不占位） */
     .rl-mystars { font-size: 9px; letter-spacing: .3px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; }
     .rl-my-label { font-size: 9px; color: var(--text-faint); }
     /* 星级热度分档：≥4 金 / 1~3 灰 / 未评分淡灰 */
     .rl-stars { font-size: 9px; letter-spacing: .5px; }
-    .rl-stars-hot { color: #d99a2b; }
-    .rl-stars-mid { color: #8a8a86; }
-    .rl-stars-none { color: #b4b2a9; }
+    .rl-stars-hot { color: var(--rl-score); }
+    .rl-stars-mid { color: var(--rl-score-mid); }
+    .rl-stars-none { color: var(--rl-score-none); }
     .rl-prog { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
     /* 游戏时长空值占位：灰字「-」（与已填「已玩 Xh」同字重区，弱化不抢眼） */
     .rl-prog-na { color: var(--text-faint); }
@@ -931,23 +958,27 @@
     .rl-read-pct { font-size: 9px; line-height: 1; color: var(--text-faint); flex: none; }
     /* 阅读进度条：仅已开始的书渲染（未开始无灰线，避免像未加载占位符）；填充色更有存在感 */
     .rl-readbar { height: 4px; flex: 1 1 auto; background: var(--background-modifier-border); border-radius: 999px; overflow: hidden; }
-    .rl-readbar-fill { height: 100%; background: var(--rl-badge-watched, #4d9b52); border-radius: 999px; transition: width .3s ease; }
+    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: 999px; transition: width .3s ease; }
     .rl-menu { position: absolute; top: 100%; left: 6px; margin-top: 4px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .15); padding: 4px; z-index: 30; min-width: 110px; }
     .rl-menu button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 5px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: 6px; cursor: pointer; font-family: inherit; }
     .rl-menu button:hover { background: var(--background-modifier-hover); }
     .rl-menu button.rl-sel { font-weight: 600; color: var(--interactive-accent); }
     .rl-menu button.rl-illegal { opacity: .35; cursor: not-allowed; }
-    /* 右键菜单：anchor 容器相对定位，菜单 absolute 贴鼠标（避开 Obsidian transform 祖先使 fixed 偏移的问题） */
-    .rl-ctx-anchor { position: relative; }
+    /* 右键菜单：anchor 容器相对定位，菜单 absolute 贴鼠标（避开 Obsidian transform 祖先使 fixed 偏移的问题）
+       z-index + isolation：grid 卡片 overflow:hidden+relative+背景组合被 Chromium 视为独立 stacking context，
+       曾盖住菜单（2026-09-09 修复）——anchor 提 z-index 并强制独立层，菜单整体跳出卡片层级 */
+    .rl-ctx-anchor { position: relative; z-index: 50; isolation: isolate; }
     .rl-ctx {
         position: absolute; z-index: 100; min-width: 140px;
         background: var(--background-primary); border: 1px solid var(--background-modifier-border);
         border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); padding: 4px;
+        /* 视口过矮/过窄时内联 max-height/max-width 生效 → 菜单内部滚动，不整块越界 */
+        overflow: auto; overscroll-behavior: contain;
     }
     .rl-ctx button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 6px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: 6px; cursor: pointer; font-family: inherit; }
     .rl-ctx button:hover { background: var(--background-modifier-hover); }
-    .rl-ctx .rl-ctx-danger { color: #c0493f; }
-    .rl-ctx .rl-ctx-danger:hover { background: #c0493f; color: #fff; }
+    .rl-ctx .rl-ctx-danger { color: var(--rl-danger-strong); }
+    .rl-ctx .rl-ctx-danger:hover { background: var(--rl-danger-strong); color: #fff; }
     .rl-empty { text-align: center; color: var(--text-faint); padding: 40px 0; font-size: 13px; }
     .rl-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .rl-table th { text-align: left; padding: 6px 8px; font-size: 11px; color: var(--text-muted); border-bottom: 1px solid var(--background-modifier-border); white-space: nowrap; }
@@ -958,7 +989,7 @@
     .rl-th-sort { cursor: pointer; user-select: none; }
     .rl-th-sort:hover { color: var(--text-normal); }
     /* 列表大众评分列 */
-    .rl-thumb-score { font-size: 11px; font-weight: 600; color: #d99a2b; white-space: nowrap; }
+    .rl-thumb-score { font-size: 11px; font-weight: 600; color: var(--rl-score); white-space: nowrap; }
     .rl-thumb-score-na { color: var(--text-faint); font-weight: 400; }
     /* 列表进度列：文本 + 内联绿色进度条 */
     .rl-list-prog { font-size: 11px; color: var(--text-muted); display: block; white-space: nowrap; }

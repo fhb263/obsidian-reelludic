@@ -107,8 +107,38 @@ describe('bookProgress TXT 章节基准校正（按章节解析）', () => {
     });
 });
 
+describe('bookProgress EPUB 章节基准校正（spine 解析）', () => {
+    it('首次关联：无 totalPage → totalPage=spine 章节数，page 由 percent 派生，不迁移 pageCount', () => {
+        const r = reconcileBookProgress({ percent: 40 }, { format: 'epub', totalChapters: 12 });
+        expect(r).toEqual({ readingProgress: { page: 5, totalPage: 12, percent: 40 } }); // round(4.8)
+        expect(r.pageCount).toBeUndefined();
+    });
+
+    it('基准不一致（豆瓣 300 页 vs 本地 12 章）：totalPage 校正为章节数，page 按 percent 重算', () => {
+        const r = reconcileBookProgress({ page: 8, totalPage: 300, percent: 40 }, { format: 'epub', totalChapters: 12 });
+        expect(r.readingProgress).toEqual({ page: 5, totalPage: 12, percent: 40 });
+    });
+
+    it('手填无 percent 超界 → 钳制到章节数', () => {
+        const r = reconcileBookProgress({ page: 20, totalPage: 300 }, { format: 'epub', totalChapters: 12 });
+        expect(r.readingProgress).toEqual({ page: 12, totalPage: 12 });
+    });
+
+    it('无章节结构（单章 epub）：totalChapters=1，percent 100 → page 1', () => {
+        const r = reconcileBookProgress({ percent: 100 }, { format: 'epub', totalChapters: 1 });
+        expect(r.readingProgress).toEqual({ page: 1, totalPage: 1, percent: 100 });
+    });
+
+    it('totalChapters 非法（0/负/NaN/小数）：不校正', () => {
+        expect(reconcileBookProgress({ percent: 40 }, { format: 'epub', totalChapters: 0 })).toEqual({});
+        expect(reconcileBookProgress({ percent: 40 }, { format: 'epub', totalChapters: -3 })).toEqual({});
+        expect(reconcileBookProgress({ percent: 40 }, { format: 'epub', totalChapters: Number.NaN })).toEqual({});
+        expect(reconcileBookProgress({ percent: 40 }, { format: 'epub', totalChapters: 12.5 })).toEqual({});
+    });
+});
+
 describe('bookProgress 不校正场景', () => {
-    it('EPUB：percent 直落，不碰 totalPage（无轻量探针，页/章基准均不适用）', () => {
+    it('EPUB 旧占位（无 totalChapters）：percent 直落，不碰 totalPage（未探知章节数）', () => {
         expect(reconcileBookProgress({ page: 0, totalPage: 300, percent: 40 }, { format: 'epub' })).toEqual({});
     });
 

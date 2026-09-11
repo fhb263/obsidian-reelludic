@@ -241,3 +241,34 @@ describe('CatalogStore', () => {
         expect(parsed.entries[0].status).toBe('want');
     });
 });
+
+describe('parseCatalog / serializeCatalog 活动日志（今日记录数据源）', () => {
+    it('合法记录保留，脏数据逐条丢弃', () => {
+        const c = parseCatalog(JSON.stringify({
+            version: 1,
+            entries: [],
+            activityLog: [
+                { at: '2026-09-10T06:32:00.000Z', id: 'e1', status: 'watched' },
+                { at: 'not-a-date', id: 'e2', status: 'watched' }, // 时间非法 → 丢
+                { at: '2026-09-10T06:32:00.000Z', id: 'e3' }, // 缺 status → 丢
+                { at: '2026-09-10T06:32:00.000Z', id: 'e4', status: 'nope' }, // 状态非法 → 丢
+                'nope', // 非对象 → 丢
+            ],
+        }));
+        expect(c.activityLog).toEqual([{ at: '2026-09-10T06:32:00.000Z', id: 'e1', status: 'watched' }]);
+    });
+
+    it('无 activityLog → undefined；空数组 → []', () => {
+        expect(parseCatalog('{"version":1,"entries":[]}').activityLog).toBeUndefined();
+        expect(parseCatalog('{"version":1,"entries":[],"activityLog":[]}').activityLog).toEqual([]);
+    });
+
+    it('serializeCatalog 保留活动日志（load 返回也要带上）', async () => {
+        const log = [{ at: '2026-09-10T06:32:00.000Z', id: 'e1', status: 'watched' }] as const;
+        const text = serializeCatalog({ version: 1, entries: [], activityLog: [...log] });
+        expect(JSON.parse(text).activityLog).toHaveLength(1);
+        const io = memIO({ 'ReelLudic/catalog.json': text });
+        const c = await new CatalogStore(io, 'ReelLudic/catalog.json').load();
+        expect(c.activityLog).toEqual([...log]);
+    });
+});

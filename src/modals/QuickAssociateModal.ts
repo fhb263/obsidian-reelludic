@@ -145,7 +145,9 @@ export class QuickAssociateModal extends Modal {
             this.totalInput.value = String(this.total);
             this.totalInput.onchange = () => this.changeTotal(parseInt(this.totalInput!.value, 10));
             // 批量检索小图标（总集数行右侧；tv/anime）：选文件夹 → 识别集号自动填入未关联集（hover 出说明）
-            const batchBtn = trow.createEl('button', { cls: 'rl-qa-batch-btn', attr: { 'aria-label': '从文件夹检索剧集' } });
+            // 读屏名走隐藏文本而非 aria-label：aria-label 与 data-tip 同元素会让 Obsidian 官方气泡
+            // 与自绘气泡叠两层（UI-GUIDE §3 并存禁令）。经全仓扫描，这是唯一一处该违规。
+            const batchBtn = trow.createEl('button', { cls: 'rl-qa-batch-btn' });
             batchBtn.setAttribute('data-tip', '从文件夹检索剧集：选含剧集文件的文件夹，识别文件名集号（第N集 / S01E0N / 01…）自动填入本地路径，已填集跳过');
             batchBtn.onclick = () => void this.batchScan();
             try {
@@ -153,6 +155,8 @@ export class QuickAssociateModal extends Modal {
             } catch {
                 batchBtn.setText('📁');
             }
+            // 必须追加在 setIcon / setText 之后：这两个会把元素内容整体替换，先加会被清掉
+            batchBtn.createSpan({ cls: 'rl-sr', text: '从文件夹检索剧集' });
         }
 
         this.gridEl = wrap.createDiv({ cls: 'rl-eps-grid rl-qa-grid' });

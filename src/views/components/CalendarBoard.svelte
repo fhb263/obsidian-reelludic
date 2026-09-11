@@ -190,13 +190,13 @@
         <span class="rl-cal-sub">{monthTotal} 条计划</span>
         <div class="rl-cal-nav">
             {#if viewMode === 'month'}
-                <button class="rl-cal-ghost" aria-label="上个月" on:click={() => shiftMonth(-1)}><Icon icon="chevron-left" size={14} /></button>
+                <button class="rl-cal-ghost" on:click={() => shiftMonth(-1)}><Icon icon="chevron-left" size={14} /><span class="rl-sr">上个月</span></button>
                 <span class="rl-cal-month">{monthLabel}</span>
-                <button class="rl-cal-ghost" aria-label="下个月" on:click={() => shiftMonth(1)}><Icon icon="chevron-right" size={14} /></button>
+                <button class="rl-cal-ghost" on:click={() => shiftMonth(1)}><Icon icon="chevron-right" size={14} /><span class="rl-sr">下个月</span></button>
             {:else}
-                <button class="rl-cal-ghost" aria-label="上一周" on:click={() => shiftWeek(-1)}><Icon icon="chevron-left" size={14} /></button>
+                <button class="rl-cal-ghost" on:click={() => shiftWeek(-1)}><Icon icon="chevron-left" size={14} /><span class="rl-sr">上一周</span></button>
                 <span class="rl-cal-month">{weekLabel}</span>
-                <button class="rl-cal-ghost" aria-label="下一周" on:click={() => shiftWeek(1)}><Icon icon="chevron-right" size={14} /></button>
+                <button class="rl-cal-ghost" on:click={() => shiftWeek(1)}><Icon icon="chevron-right" size={14} /><span class="rl-sr">下一周</span></button>
             {/if}
             {#if viewMode === 'month'}
                 <button class="rl-cal-ghost rl-cal-today-btn" on:click={goToday}>今天</button>
@@ -223,7 +223,7 @@
                     <button class="rl-cal-banner-btn" on:click={() => startWatching(e)}>开始观看</button>
                 </span>
             {/each}
-            <button class="rl-cal-banner-close" aria-label="关闭提醒（今天不再提醒）" on:click={() => (bannerDismissed = true)}><Icon icon="x" size={12} /></button>
+            <button class="rl-cal-banner-close" on:click={() => (bannerDismissed = true)}><Icon icon="x" size={12} /><span class="rl-sr">关闭提醒（今天不再提醒）</span></button>
         </div>
     {/if}
 

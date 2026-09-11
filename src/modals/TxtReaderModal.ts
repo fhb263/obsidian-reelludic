@@ -47,6 +47,8 @@ export interface TxtReaderOptions {
     onHighlight?: (quote: string, loc: { chapter: number; pct: number }) => Promise<string | null>;
     /** 删除高亮（标注列表右键 → main 层确认 → 移除 <mark> + 从笔记删块；返回是否成功） */
     onDeleteHighlight?: (blockId: string) => Promise<boolean>;
+    /** 清除全部高亮确认（无 emoji 风格：ConfirmModal 由 Modal 包装层注入，替代原生 confirm） */
+    onConfirmClearHighlights?: (message: string) => Promise<boolean>;
 }
 
 /** 本次会话字号（会话内生效，跨面板共享；null=未初始化，打开时取设置默认） */
@@ -316,7 +318,7 @@ export class TxtReaderPanel {
         // 顶栏左快捷入口：书签/批注/翻译/高亮 —— 标注模式锁（激活后选中即自动触发；再点退出）
         const quickWrap = head.createDiv({ cls: 'rl-reader-quick' });
         const mkQuick = (id: 'bookmark' | 'quote' | 'languages' | 'highlighter', title: string): HTMLButtonElement => {
-            const b = quickWrap.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { title } });
+            const b = quickWrap.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': title } });
             safeSetIcon(b, id);
             b.addEventListener('mousedown', (ev) => ev.stopPropagation());
             b.addEventListener('click', () => this.toggleAnnotate(id));
@@ -1168,7 +1170,9 @@ export class TxtReaderPanel {
     private async clearAllHighlights(btn: HTMLButtonElement): Promise<void> {
         const n = this.highlightList.length;
         if (n === 0) return;
-        const ok = confirm(`确定删除全部 ${n} 条高亮吗？（将从笔记「## 高亮」区一并移除）`);
+        const ok = this.options.onConfirmClearHighlights
+            ? await this.options.onConfirmClearHighlights(`确定删除全部 ${n} 条高亮吗？（将从笔记「## 高亮」区一并移除）`)
+            : confirm(`确定删除全部 ${n} 条高亮吗？（将从笔记「## 高亮」区一并移除）`);
         if (!ok) return;
         btn.addClass('rl-hl-clearall-busy');
         try {

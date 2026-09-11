@@ -16,6 +16,17 @@ export const ENTRY_TYPE_LABELS: Record<EntryType, string> = {
     music: '音乐',
 };
 
+/** 类型 → 笔记子目录英文目录名（目录结构用：movie/teleplay/animation/book/game/music）。
+ *  与 UI 中文标签 ENTRY_TYPE_LABELS 解耦（界面展示仍走中文，勿混用）。 */
+export const ENTRY_TYPE_DIRS: Record<EntryType, string> = {
+    movie: 'movie',
+    tv: 'teleplay',
+    anime: 'animation',
+    book: 'book',
+    game: 'game',
+    music: 'music',
+};
+
 /** 类型识别色（卡片色条/占位图主色）：电影蓝 / 剧集紫 / 动画粉 / 书籍绿 / 游戏橙 / 音乐青 */
 export const TYPE_COLORS: Record<EntryType, string> = {
     movie: '#378ADD',
@@ -150,6 +161,10 @@ export interface MediaEntry {
     toc?: string;
     /** 简介/剧情简介（搜索回填自动记录，编辑表单可改；笔记「## 简介」章节） */
     summary?: string;
+    /** AI 一句话总结（编辑表单可手填/可 AI 生成；笔记「## 一句话总结」章节） */
+    aiSummary?: string;
+    /** AI 核心看点（每条一句，建议 3 条；笔记「## 核心看点」列表） */
+    aiHighlights?: string[];
     links: WatchLink[];
     notes: string;
     tags: string[];
@@ -165,7 +180,24 @@ export interface MediaEntry {
 export interface Catalog {
     version: number;
     entries: MediaEntry[];
+    /** 活动日志（append-only，新→旧不敏感、按时间升序）：状态翻转记录，「今日记录」/日记打卡的数据源。
+     *  仅记状态变更——「新增条目」以 MediaEntry.createdAt 为准（存量数据同样可回溯），避免双份真相。
+     *  超上限由写入侧截断最旧（见 ACTIVITY_LOG_LIMIT）。 */
+    activityLog?: ActivityEvent[];
 }
+
+/** 一条状态翻转记录（谁、何时、变成什么状态；标题展示时按 id 现查，条目删除后该条不再展示） */
+export interface ActivityEvent {
+    /** ISO 时间戳 */
+    at: string;
+    /** 条目 id（MediaEntry.id） */
+    id: string;
+    /** 变更后的状态 */
+    status: MediaStatus;
+}
+
+/** 活动日志保留条数上限（写入侧截断最旧，防 catalog 无限膨胀） */
+export const ACTIVITY_LOG_LIMIT = 500;
 
 export function createEntryId(now: number = Date.now()): string {
     return 'e_' + now + '_' + Math.random().toString(36).slice(2, 6);

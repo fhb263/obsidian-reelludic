@@ -18,11 +18,15 @@ export class ConfirmModal extends Modal {
     onOpen(): void {
         const { contentEl } = this;
         contentEl.empty();
-        contentEl.createDiv({ cls: 'rl-nc-icon', text: '⚠️' });
+        // 警告 emoji 圆形底（用户 2026-09-09 拍板：Obsidian 各版本 lucide 矢量图标不可见 → 回退 emoji 保证显示）
+        const icon = contentEl.createDiv({ cls: 'rl-nc-icon', text: '⚠️' });
+        void icon;
         contentEl.createDiv({ cls: 'rl-nc-desc', text: this.message });
         const ops = contentEl.createDiv({ cls: 'rl-nc-ops' });
-        const cancel = ops.createEl('button', { cls: 'mod-cta', text: '取消' });
+        // 取消：中性次按钮靠左
+        const cancel = ops.createEl('button', { cls: 'rl-btn', text: '取消' });
         cancel.onclick = () => this.finish(false);
+        // 确认：危险主按钮实心红靠右
         const ok = ops.createEl('button', { cls: 'rl-nc-danger', text: this.confirmText });
         ok.onclick = () => this.finish(true);
     }

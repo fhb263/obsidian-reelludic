@@ -9,25 +9,25 @@ import {
 } from 'pure/bookmark';
 
 describe('pure/bookmark bookmarksFilePath 书签文件路径', () => {
-    it('无尾斜杠 libraryDir → {libraryDir}/阅读进度/{id}.bookmarks.json', () => {
-        expect(bookmarksFilePath('entry-1', 'ReelLudic')).toBe('ReelLudic/阅读进度/entry-1.bookmarks.json');
+    it('无尾斜杠 libraryDir → {libraryDir}/阅读进度/{书名}-书签-{id}.json', () => {
+        expect(bookmarksFilePath('e_1788181824054_a2ry', '三体', 'ReelLudic'))
+            .toBe('ReelLudic/阅读进度/三体-书签-e_1788181824054_a2ry.json');
     });
 
     it('尾斜杠被去除（不产生 //）', () => {
-        expect(bookmarksFilePath('e2', 'MyLib/')).toBe('MyLib/阅读进度/e2.bookmarks.json');
-        expect(bookmarksFilePath('e2', 'MyLib//')).toBe('MyLib/阅读进度/e2.bookmarks.json');
+        expect(bookmarksFilePath('e_1', '书', 'MyLib/')).toBe('MyLib/阅读进度/书-书签-e_1.json');
+        expect(bookmarksFilePath('e_1', '书', 'MyLib//')).toBe('MyLib/阅读进度/书-书签-e_1.json');
     });
 
     it('空串/纯斜杠回退 ReelLudic（对齐 main.ts libDir 约定）', () => {
-        expect(bookmarksFilePath('e3', '')).toBe('ReelLudic/阅读进度/e3.bookmarks.json');
-        expect(bookmarksFilePath('e3', '/')).toBe('ReelLudic/阅读进度/e3.bookmarks.json');
+        expect(bookmarksFilePath('e_1', '书', '')).toBe('ReelLudic/阅读进度/书-书签-e_1.json');
+        expect(bookmarksFilePath('e_1', '书', '/')).toBe('ReelLudic/阅读进度/书-书签-e_1.json');
     });
 
-    it('entryId 出现在文件名且扩展名为 .bookmarks.json', () => {
-        const p = bookmarksFilePath('bm-entry-42', 'Lib');
+    it('文件名 = {书名}-书签-{entryId}.json（书名在前可读、ID 尾段保留关联）', () => {
+        const p = bookmarksFilePath('e_1788181824054_a2ry', '沙丘/第一部', 'Lib');
         expect(p).toContain('阅读进度');
-        expect(p).toMatch(/bm-entry-42\.bookmarks\.json$/);
-        expect(p.split('/').pop()).toBe('bm-entry-42.bookmarks.json');
+        expect(p.split('/').pop()).toBe('沙丘 第一部-书签-e_1788181824054_a2ry.json');
     });
 });
 

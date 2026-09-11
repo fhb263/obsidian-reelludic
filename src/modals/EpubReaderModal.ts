@@ -1,4 +1,4 @@
-// EPUB 书籍阅读器面板（原 Modal 弹窗，随 ReaderView 视图渲染）：目录侧栏 + iframe 渲染章节 + 单页连续滚动/双页两栏切换 + 进度持久化
+// EPUB 书籍阅读器面板（原 Modal 弹窗，随 ReaderView 视图渲染）：目录侧栏 + iframe 渲染章节 + 单页连续滚动/翻页式切换 + 进度持久化
 // 排版：字号 ±（注入 iframe 内样式，会话级默认 16px，行距 1.8）；目录跳转（href 定位章节）；
 // 滚动比例按章节持久化（与 TXT 阅读器共用 阅读进度/{id}.json，由 main.ts 读写）
 // 渲染：章节 XHTML 文本 → iframe.srcdoc（注入基础 CSS；二进制资源如图片本期不支持，占位）
@@ -7,6 +7,7 @@
 // 正文为 iframe：选中/滚动/鼠标事件发生在 frame 内文档（不冒泡到宿主），监听在 onFrameLoad 内挂到 contentDocument。
 import { Notice, setIcon, type Scope } from 'obsidian';
 import { estimatePercent } from 'pure/readingProgress';
+import { chapterTextLength } from 'pure/epubParse';
 import type { ParsedExcerpt } from 'pure/excerpt';
 import { newBookmark, type ReaderBookmark } from 'pure/bookmark';
 import { chapterHighlights, findQuoteSegment, decideHighlightToggle, type ReaderHighlight } from 'pure/highlight';
@@ -51,6 +52,8 @@ export interface EpubReaderOptions {
     onHighlight?: (quote: string, loc: { chapter: number; pct: number }) => Promise<string | null>;
     /** 删除高亮（标注列表右键 → main 层确认 → 移除 <mark> + 从笔记删块；返回是否成功） */
     onDeleteHighlight?: (blockId: string) => Promise<boolean>;
+    /** 清除全部高亮确认（无 emoji 风格：ConfirmModal 由 Modal 包装层注入，替代原生 confirm） */
+    onConfirmClearHighlights?: (message: string) => Promise<boolean>;
 }
 
 /** 会话级字号（px，跨面板共享；null=未初始化，首次打开取设置默认） */
@@ -107,8 +110,6 @@ export class EpubReaderPanel {
     private tocEntries: { label: string; href: string }[] = [];
     /** 目录列折叠状态 */
     private tocCollapsed = false;
-    /** 双页两栏模式 */
-    private doublePage = false;
     /** 滚动模式（连续/翻页；连续为主默认，翻页=单列一屏一页平移） */
     private mode: ScrollMode = 'continuous';
     /** 顶栏快捷「标注模式锁」：非空 = 该按钮已激活，之后选区 mouseup 自动触发对应标注动作 */
@@ -138,8 +139,6 @@ export class EpubReaderPanel {
     private bmListEl: HTMLDivElement | null = null;
     /** 正文 iframe（srcdoc 每章重建） */
     private frameEl!: HTMLIFrameElement;
-    /** 单页/双页切换按钮 */
-    private layoutBtn!: HTMLButtonElement;
     /** 头部条元素（auto-hide 显示/隐藏目标） */
     private headEl: HTMLElement | null = null;
     /** 侧栏折叠开关按钮（head 首元素，最左；点击 toggleToc，图标/标题随折叠态变化） */
@@ -325,7 +324,7 @@ export class EpubReaderPanel {
         // 顶栏左快捷入口：书签/批注/翻译/高亮 —— 标注模式锁（激活后选中即自动触发；再点退出）
         const quickWrap = head.createDiv({ cls: 'rl-reader-quick' });
         const mkQuick = (id: 'bookmark' | 'quote' | 'languages' | 'highlighter', title: string): HTMLButtonElement => {
-            const b = quickWrap.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { title } });
+            const b = quickWrap.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': title } });
             safeSetIcon(b, id);
             b.addEventListener('mousedown', (ev) => ev.stopPropagation());
             b.addEventListener('click', () => this.toggleAnnotate(id));
@@ -337,16 +336,13 @@ export class EpubReaderPanel {
         mkQuick('languages', '翻译模式：选中文字即翻译，再点退出');
         mkQuick('highlighter', '高亮模式：选中文字即高亮，再点退出');
 
-        // 目录/书签/摘抄 切换改由侧栏 tab 行承担（顶部仅渲染一次）；保留 ⇆双页 等 ops 按钮
+        // 目录/书签/摘抄 切换改由侧栏 tab 行承担（顶部仅渲染一次）；ops 仅保留 ≡ 设置
         const titleWrap = head.createDiv({ cls: 'rl-reader-title-wrap' });
         const icon = titleWrap.createSpan({ cls: 'rl-reader-title-icon' });
         safeSetIcon(icon, 'book-open');
         titleWrap.createSpan({ cls: 'rl-reader-title', text: `${this.options.title} · EPUB` });
 
         const ops = head.createDiv({ cls: 'rl-reader-ops' });
-        // 单页/双页切换（EPUB 专属，保留）
-        this.layoutBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '单页/双页切换' }, text: '⇆ 双页' });
-        this.layoutBtn.addEventListener('click', () => this.toggleLayout());
         // 阅读设置（≡）：T6 下拉菜单（字号/行距/滚动模式状态/全屏）；行距±按钮已并入菜单
         this.settingsBtn = ops.createEl('button', { cls: 'rl-btn rl-reader-btn rl-reader-settings', attr: { 'data-tip': '设置' }, text: '≡' });
         // 阻止 mousedown 冒泡到 document（onDocMouseDown 会先收起菜单，导致 click toggle 逻辑反相）
@@ -489,7 +485,7 @@ export class EpubReaderPanel {
         // 让 html 高度恰一屏，令列只在 fh 内断行并横向溢出（不出现纵向滚动）
         root.style.maxHeight = `${fh}px`;
         root.style.height = `${fh}px`;
-        // body 参与 html 列流：清双栏/居中限制，避免干扰
+        // body 参与 html 列流：清居中限制与列样式残留，避免干扰
         const body = doc.body;
         if (body) {
             body.style.maxWidth = 'none';
@@ -992,7 +988,9 @@ export class EpubReaderPanel {
     private async clearAllHighlights(btn: HTMLButtonElement): Promise<void> {
         const n = this.highlightList.length;
         if (n === 0) return;
-        const ok = confirm(`确定删除全部 ${n} 条高亮吗？（将从笔记「## 高亮」区一并移除）`);
+        const ok = this.options.onConfirmClearHighlights
+            ? await this.options.onConfirmClearHighlights(`确定删除全部 ${n} 条高亮吗？（将从笔记「## 高亮」区一并移除）`)
+            : confirm(`确定删除全部 ${n} 条高亮吗？（将从笔记「## 高亮」区一并移除）`);
         if (!ok) return;
         btn.addClass('rl-hl-clearall-busy');
         try {
@@ -1258,25 +1256,23 @@ export class EpubReaderPanel {
         return name.replace(/\.[^.]+$/, '');
     }
 
-    /** 注入 iframe 文档样式：字号/行距/列布局（srcdoc 每次重建后重新应用） */
+    /** 注入 iframe 文档样式：字号/行距/单页限宽（srcdoc 每次重建后重新应用） */
     private applyLayout(doc: Document): void {
         const body = doc.body;
         body.style.fontSize = `${readerFontSize ?? 16}px`;
         body.style.lineHeight = `${readerLineHeight ?? this.lineHeight}`;
         // 翻页模式：单列分页 columns 由 setupPagedLayout 管理，此处不动列/宽（避免覆盖）
         if (this.isPaged()) return;
-        body.style.columnCount = this.doublePage ? '2' : '1';
-        body.style.columnGap = this.doublePage ? '2.5em' : '';
-        body.style.maxWidth = this.doublePage ? 'none' : '720px';
+        body.style.maxWidth = '720px';
     }
 
     /** 生成 iframe srcdoc：基础 CSS + 章节 HTML（字体/背景取宿主样式缓存，避免每次切章 getComputedStyle 触发主文档重排） */
     private buildFrameDoc(bodyHtml: string): string {
         const { fontFamily, bg, color } = getHostStyle();
-        // 连续模式：双页两栏 columns:2 / 单页限宽，纵向滚动 + 底部 40vh 给触底空间；
+        // 连续模式：单页限宽，纵向滚动 + 底部 40vh 给触底空间；
         // 翻页模式：单列分页（columns 由 onFrameLoad/setupPagedLayout 内联设置），底部留小 padding 避免大底距干扰列高
         const padB = this.isPaged() ? '24px' : '40vh';
-        const layout = this.doublePage && !this.isPaged() ? 'columns:2;column-gap:2.5em;max-width:none;' : 'max-width:720px;';
+        const layout = 'max-width:720px;';
         const css = `html,body{margin:0;padding:0;background:${bg};color:${color};}
 body{font-family:${fontFamily};font-size:${readerFontSize ?? 16}px;line-height:${readerLineHeight ?? this.lineHeight};margin:0 auto;padding:26px 32px ${padB};${layout}}
 h1,h2,h3,h4,h5,h6{line-height:1.5;margin:0.8em 0 0.5em;}
@@ -1285,15 +1281,19 @@ p{margin:0 0 1em;text-align:justify;}
         return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style></head><body>${bodyHtml}</body></html>`;
     }
 
-    /** 目录高亮当前章（toc href 去 fragment 与当前章节路径比对） */
+    /** 目录高亮当前章（toc href 去 fragment 与当前章节路径比对；激活项按 href 匹配找，而非按 items 下标对齐——
+     *  toc 条目与 spine 章节非 1:1（nav 可含 landmarks 前的多余链接 / 缺章）时，items[chapterIndex] 会滑到错行） */
     private highlightToc(): void {
         const items = this.tocListEl.querySelectorAll('.rl-reader-toc-item');
         const cur = this.options.book.chapters[this.chapterIndex];
+        let activeIdx = -1;
         items.forEach((el, i) => {
             const href = this.tocEntries[i]?.href.split('#')[0];
-            el.toggleClass('active', href !== undefined && href === cur);
+            const isActive = href !== undefined && href === cur;
+            el.toggleClass('active', isActive);
+            if (isActive) activeIdx = i;
         });
-        const active = items[this.chapterIndex];
+        const active = activeIdx >= 0 ? items[activeIdx] : undefined;
         if (active) active.scrollIntoView({ block: 'nearest' });
     }
 
@@ -1597,10 +1597,12 @@ p{margin:0 0 1em;text-align:justify;}
         }
     }
 
-    /** 各章字符数（estimatePercent 加权；懒计算缓存） */
+    /** 各章纯文本字数（estimatePercent 加权；懒计算缓存）——
+     *  用 chapterTextLength 剥离 XHTML 标签计数：原 fileMap 原始串长把封面/版权/壳页的标签高估为权重，
+     *  纯文本字数才与实际阅读量成正比（全书 % 随滚动平滑、不虚高） */
     private chapterSizes(): number[] {
         if (this.chapterSizesCache === null) {
-            this.chapterSizesCache = this.options.book.chapters.map((c) => this.options.fileMap[c]?.length ?? 0);
+            this.chapterSizesCache = this.options.book.chapters.map((c) => chapterTextLength(this.options.fileMap[c] ?? ''));
         }
         return this.chapterSizesCache;
     }
@@ -1718,17 +1720,6 @@ p{margin:0 0 1em;text-align:justify;}
             safeSetIcon(this.sidebarToggleEl, 'panel-left-close');
             this.sidebarToggleEl.setAttribute('data-tip', '收起目录');
         }
-    }
-
-    /** 单页/双页两栏切换（CSS 注入 body 列布局，重排后回顶部；active 高亮当前布局态） */
-    private toggleLayout(): void {
-        this.doublePage = !this.doublePage;
-        this.layoutBtn.setText(this.doublePage ? '⇆ 单页' : '⇆ 双页');
-        this.layoutBtn.toggleClass('active', this.doublePage);
-        const doc = this.frameEl.contentDocument;
-        if (doc?.body) this.applyLayout(doc);
-        const scroller = doc?.scrollingElement || doc?.documentElement;
-        if (scroller) scroller.scrollTop = 0;
     }
 
     // ── 头部 auto-hide ──

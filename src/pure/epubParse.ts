@@ -97,7 +97,10 @@ export function parseOpf(
 
 /** 解析 nav 目录（EPUB3 nav.xhtml 或 EPUB2 NCX）：提取层级链接 → 扁平列表（一级为主）
  *  nav.xhtml：<a href="…">label</a>；NCX：<navPoint><navLabel><text>…</text></navLabel><content src="…"/></navPoint>
- *  href 相对 nav 文件所在目录（navDir）解析为绝对路径；#fragment 保留；校验目标文件存在于 fileMap */
+ *  href 相对 nav 文件所在目录（navDir）解析为绝对路径；#fragment 保留；校验目标文件存在于 fileMap
+ *  作用域限定：EPUB3 nav 常含 toc / landmarks / page-list 多个 <nav epub:type> 块，
+ *  只取 epub:type="toc" 块内的 <a>，防 landmarks（封面/目录/正文开始）与 page-list 污染目录；
+ *  无 epub:type="toc" 的 nav（老式/手写裸 nav）与 NCX 走整文档兜底 */
 export function parseTocNav(navXml: string, navDir: string, fileMap: EpubFileMap): { label: string; href: string }[] {
     const out: { label: string; href: string }[] = [];
     const push = (rawHref: string, rawLabel: string): void => {
@@ -110,10 +113,13 @@ export function parseTocNav(navXml: string, navDir: string, fileMap: EpubFileMap
         if (fileMap[abs] === undefined) return; // 目标文件缺失
         out.push({ label, href: abs + frag });
     };
+    // EPUB3 目录作用域：<nav epub:type="toc"> 块内容；无则整文档（裸 nav / NCX 兜底）
+    const tocNavRe = /<nav\b[^>]*epub:type\s*=\s*["']toc["'][^>]*>([\s\S]*?)<\/nav>/i;
+    const scope = tocNavRe.exec(navXml)?.[1] ?? navXml;
     // EPUB3 nav.xhtml：匹配 <a href="...">text</a>
     const aRe = /<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
     let m: RegExpExecArray | null;
-    while ((m = aRe.exec(navXml)) !== null) push(m[1], m[2]);
+    while ((m = aRe.exec(scope)) !== null) push(m[1], m[2]);
     if (out.length > 0) return out;
     // EPUB2 NCX：navPoint 块内配对 navLabel.text 与 content src
     const ncxRe = /<navPoint\b[^>]*>([\s\S]*?)<\/navPoint>/gi;
@@ -137,6 +143,12 @@ export function xhtmlToText(html: string): string {
         .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+/** 章节纯文本字数（全书进度加权口径）：HTML 壳/标签不占权重，与用户实际阅读量成正比 */
+export function chapterTextLength(html: string): number {
+    if (!html) return 0;
+    return xhtmlToText(html).length;
 }
 
 /**

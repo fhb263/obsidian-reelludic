@@ -1,7 +1,8 @@
 // 阅读器书签纯模型（纯逻辑，可单测，无 obsidian 依赖）：每本书一个 JSON 数组，
-// vault 内 {libraryDir}/阅读进度/{id}.bookmarks.json 由 main.ts 读写。
+// vault 内 {libraryDir}/阅读进度/{书名}-书签-{id}.json 由 main.ts 读写。
 // batch1 仅落位置书签：quote 为选段文本（可缺省=纯位置书签），note 预留批 2 批注。
 // 与 readingProgress.ts 同风格：解析容错、路径纯字符串拼接（不引 normalizePath）。
+import { bookmarksFileName } from 'pure/readingProgress';
 
 export interface ReaderBookmark {
     /** 书签唯一 id（bm-{Date.now().toString(36)}，调用方生成；解析器不依赖它，仅在原数据有时透传） */
@@ -19,13 +20,13 @@ export interface ReaderBookmark {
 }
 
 /**
- * 书签文件路径：{libraryDir}/阅读进度/{entryId}.bookmarks.json。
+ * 书签文件路径：{libraryDir}/阅读进度/{书名}-书签-{entryId}.json（文件名可读，尾段保留 ID）。
  *  libraryDir 去尾部斜杠，空串/纯斜杠回退 'ReelLudic'（对齐 main.ts libDir 约定）；
  *  vault 相对路径统一 '/' 分隔，纯字符串操作无 normalizePath。
  */
-export function bookmarksFilePath(entryId: string, libraryDir: string): string {
+export function bookmarksFilePath(entryId: string, title: string, libraryDir: string): string {
     const dir = libraryDir.replace(/\/+$/, '') || 'ReelLudic';
-    return `${dir}/阅读进度/${entryId}.bookmarks.json`;
+    return `${dir}/阅读进度/${bookmarksFileName(entryId, title)}`;
 }
 
 /**

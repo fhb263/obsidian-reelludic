@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { createEmptyProgress, normalizeProgress, isProgressDeeper, estimatePercent } from 'pure/readingProgress';
+import {
+    createEmptyProgress,
+    normalizeProgress,
+    isProgressDeeper,
+    estimatePercent,
+    sanitizeReaderTitle,
+    progressFileName,
+    bookmarksFileName,
+    readingProgressFilePath,
+    matchLegacyProgressFile,
+} from 'pure/readingProgress';
 
 describe('阅读进度存储 createEmptyProgress 空进度', () => {
     it('chapterIndex=-1 / scrollRatio=0 / updatedAt 为合法 ISO 时间', () => {
@@ -107,5 +117,80 @@ describe('阅读进度估算 estimatePercent 按章节大小加权', () => {
 
     it('单章书：读到一半 50%', () => {
         expect(estimatePercent([100], 0, 0.5)).toBe(50);
+    });
+
+    it('末章读到 ≥95% → 钳 100（拉到底/翻到底因容器余白 ratio 到不了 1.0，防止卡 98/99）', () => {
+        expect(estimatePercent([10, 20, 30], 2, 0.95)).toBe(100);
+        expect(estimatePercent([10, 20, 30], 2, 0.99)).toBe(100);
+        expect(estimatePercent([10, 20, 30], 2, 1)).toBe(100);
+    });
+
+    it('末章 <95% 不钳制（保持真实估算）', () => {
+        // (10+20+30*0.9)/60 = 57/60 = 95%
+        expect(estimatePercent([10, 20, 30], 2, 0.9)).toBe(95);
+        // 非末章高比例也不钳（第 2/3 章读到 0.99 不是读完）：(10+20*0.99)/60 ≈ 50%
+        expect(estimatePercent([10, 20, 30], 1, 0.99)).toBe(50);
+    });
+});
+
+describe('阅读进度文件可读命名 sanitizeReaderTitle（标题安全段）', () => {
+    it('清理非法文件名字符（/ \\ : * ? " < > | # ^ [ ]）为空格并压缩空白', () => {
+        expect(sanitizeReaderTitle('三体/全集:第一卷?')).toBe('三体 全集 第一卷');
+        expect(sanitizeReaderTitle('A:B*C?D"E<F>G|H#I^J[K]L')).toBe('A B C D E F G H I J K L');
+    });
+    it('空/纯空白 → 未命名', () => {
+        expect(sanitizeReaderTitle('')).toBe('未命名');
+        expect(sanitizeReaderTitle('   ')).toBe('未命名');
+    });
+    it('常规中文/英文标题原样保留', () => {
+        expect(sanitizeReaderTitle('三体')).toBe('三体');
+        expect(sanitizeReaderTitle('Boom Beach')).toBe('Boom Beach');
+    });
+});
+
+describe('progressFileName / bookmarksFileName 可读命名（书名-阅读进度|书签-原ID）', () => {
+    it('进度文件：{书名}-阅读进度-{id}.json', () => {
+        expect(progressFileName('e_1788181824054_a2ry', '三体')).toBe('三体-阅读进度-e_1788181824054_a2ry.json');
+    });
+    it('书签文件：{书名}-书签-{id}.json', () => {
+        expect(bookmarksFileName('e_1788181824054_a2ry', '三体')).toBe('三体-书签-e_1788181824054_a2ry.json');
+    });
+    it('同名书不同 id → 文件名不同（原 ID 保证关联与去重）', () => {
+        const a = progressFileName('e_1_a1', '活着');
+        const b = progressFileName('e_2_b2', '活着');
+        expect(a).not.toBe(b);
+        expect(a).toContain('e_1_a1');
+        expect(b).toContain('e_2_b2');
+    });
+    it('标题含非法字符先清理再入名（不产生破路径）', () => {
+        expect(progressFileName('e_1_a1', '沙丘/第一部')).toBe('沙丘 第一部-阅读进度-e_1_a1.json');
+        expect(bookmarksFileName('e_1_a1', '')).toBe('未命名-书签-e_1_a1.json');
+    });
+});
+
+describe('readingProgressFilePath 进度文件路径', () => {
+    it('无尾斜杠 libraryDir → {dir}/阅读进度/{书名}-阅读进度-{id}.json', () => {
+        expect(readingProgressFilePath('e_1788181824054_a2ry', '三体', 'ReelLudic'))
+            .toBe('ReelLudic/阅读进度/三体-阅读进度-e_1788181824054_a2ry.json');
+    });
+    it('尾斜杠去除；空/纯斜杠回退 ReelLudic', () => {
+        expect(readingProgressFilePath('e1', '书', 'MyLib//')).toBe('MyLib/阅读进度/书-阅读进度-e1.json');
+        expect(readingProgressFilePath('e1', '书', '')).toBe('ReelLudic/阅读进度/书-阅读进度-e1.json');
+        expect(readingProgressFilePath('e1', '书', '/')).toBe('ReelLudic/阅读进度/书-阅读进度-e1.json');
+    });
+});
+
+describe('matchLegacyProgressFile 旧格式文件名识别（迁移用）', () => {
+    it('旧进度 e_xxx.json → { id, kind: progress }', () => {
+        expect(matchLegacyProgressFile('e_1788181824054_a2ry.json')).toEqual({ entryId: 'e_1788181824054_a2ry', kind: 'progress' });
+    });
+    it('旧书签 e_xxx.bookmarks.json → kind: bookmarks', () => {
+        expect(matchLegacyProgressFile('e_1788181824054_a2ry.bookmarks.json')).toEqual({ entryId: 'e_1788181824054_a2ry', kind: 'bookmarks' });
+    });
+    it('新可读名/无关文件 → null（迁移幂等不误伤）', () => {
+        expect(matchLegacyProgressFile('三体-阅读进度-e_1788181824054_a2ry.json')).toBeNull();
+        expect(matchLegacyProgressFile('三体-书签-e_1788181824054_a2ry.json')).toBeNull();
+        expect(matchLegacyProgressFile('readme.txt')).toBeNull();
+        expect(matchLegacyProgressFile('e_1788181824054_a2ry')).toBeNull();
     });
 });

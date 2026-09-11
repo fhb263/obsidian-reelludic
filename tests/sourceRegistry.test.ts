@@ -142,7 +142,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             group: 'book', chain: ['douban'],
             douban: { reachable: false, cookieInvalid: false }, aux: {},
         });
-        expect(err).toBe('Douban 兜底不可用（请在 设置 → 服务集成 · Douban 配置 Cookie 过反爬）');
+        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 服务集成 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
         expect(err).toContain('Douban 兜底不可用');
     });
 
@@ -230,5 +230,58 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
         });
         expect(err).toContain('Bangumi');
         expect(err).toContain('请求失败');
+    });
+
+    // ── 处方文案（批B：失败提示补「怎么办」）──
+
+    it('通用文案：未配置源给出填写路径 + 测试连接', () => {
+        const err = deriveGroupSearchError({
+            group: 'movieTv', chain: ['tmdb'],
+            aux: { tmdb: 'unconfigured' },
+        });
+        expect(err).toContain('未配置凭据');
+        expect(err).toContain('设置 → 服务集成 · 数据源管理');
+        expect(err).toContain('测试连接');
+    });
+
+    it('通用文案：请求失败源给出「重试 / 换源」两条路子', () => {
+        const err = deriveGroupSearchError({
+            group: 'game', chain: ['igdb'],
+            aux: { igdb: 'failed' },
+        });
+        expect(err).toContain('请求失败');
+        expect(err).toContain('稍后重试');
+        expect(err).toContain('改用其他源');
+    });
+
+    it('通用文案：未配置与失败并存 → 两类原因并列、两类处方并列', () => {
+        const err = deriveGroupSearchError({
+            group: 'game', chain: ['steam', 'igdb'],
+            aux: { steam: 'unconfigured', igdb: 'failed' },
+        });
+        expect(err).toContain('Steam 未配置凭据');
+        expect(err).toContain('IGDB 请求失败');
+        expect(err).toContain('测试连接');
+        expect(err).toContain('稍后重试');
+    });
+
+    it('通用文案：同类多源合并为一项（不在括号里逐条重复文案）', () => {
+        const err = deriveGroupSearchError({
+            group: 'music', chain: ['musicbrainz', 'itunes'],
+            aux: { musicbrainz: 'failed', itunes: 'failed' },
+        });
+        expect(err).toContain('MusicBrainz、iTunes 请求失败');
+        // 处方只出现一次
+        expect(err!.split('稍后重试').length - 1).toBe(1);
+    });
+
+    it('anime 缺 Bangumi Token 文案补上填写路径', () => {
+        const err = deriveGroupSearchError({
+            group: 'anime', chain: ['douban', 'bangumi'],
+            douban: { reachable: true, cookieInvalid: false },
+            aux: { bangumi: 'unconfigured' },
+        });
+        expect(err).toContain('设置 → 服务集成 · 数据源管理');
+        expect(err).toContain('Bangumi Token');
     });
 });

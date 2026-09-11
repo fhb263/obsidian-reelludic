@@ -126,29 +126,3 @@ export function topRatedInYear(entries: MediaEntry[], year: number, limit = 5): 
         .sort((a, b) => (b.rating || 0) - (a.rating || 0))
         .slice(0, limit);
 }
-
-/** 单条动态（统计页「最近动态」时间线数据源） */
-export interface ActivityItem {
-    date: string;
-    text: string;
-    id: string;
-    type: EntryType;
-}
-
-/** 某年内最近动态（观看 / 追更进度 / 计划三类），日期倒序取前 limit 条；往年时间戳剔除 */
-export function recentActivity(entries: MediaEntry[], year: number, limit = 8): ActivityItem[] {
-    const items: ActivityItem[] = [];
-    const pushIf = (date: string | undefined, text: string, e: MediaEntry) => {
-        if (date && date.length >= 10 && inYear(date, year)) items.push({ date, text, id: e.id, type: e.type });
-    };
-    for (const e of entries) {
-        pushIf(e.watchedDate, `观看了《${e.title}》`, e);
-        const hs = e.progress?.history ?? [];
-        if (hs.length) {
-            const h = hs[hs.length - 1];
-            pushIf(h.date, `更新了《${e.title}》进度 S${h.season}E${h.episode}`, e);
-        }
-        pushIf(e.plannedDate, `计划观看《${e.title}》`, e);
-    }
-    return items.sort((a, b) => b.date.localeCompare(a.date)).slice(0, limit);
-}

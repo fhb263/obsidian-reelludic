@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
     parseTranslateResponse,
     buildTranslateBody,
+    DEFAULT_TRANSLATE_PROMPT,
     buildTranslatePingBody,
     translateChatUrl,
     modelFor,
@@ -119,5 +120,12 @@ describe('parseTranslateResponse', () => {
     it('content 保留首尾空白裁剪', () => {
         const r = parseTranslateResponse({ choices: [{ message: { content: '  hello  ' } }] });
         expect(r).toBe('hello');
+    });
+});
+describe('buildTranslateBody 自定义服务提示词（设置页可改）', () => {
+    it('传自定义 prompt → 作为 system；空白/缺省 → 默认英文翻译提示词', () => {
+        expect(buildTranslateBody('你好', 'zhipu', '只翻译成日语')!.messages[0].content).toBe('只翻译成日语');
+        expect(buildTranslateBody('你好', 'zhipu', '  ')!.messages[0].content).toBe(DEFAULT_TRANSLATE_PROMPT);
+        expect(buildTranslateBody('你好', 'zhipu')!.messages[0].content).toBe(DEFAULT_TRANSLATE_PROMPT);
     });
 });

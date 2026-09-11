@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 常见问题（FAQ）
+    url: https://github.com/fhb263/obsidian-reelludic#faq
+    about: 数据源搜不到东西、封面不显示、备份与导入导出等高频问题的自助排查
+  - name: 已知问题与限制
+    url: https://github.com/fhb263/obsidian-reelludic#known-issues
+    about: 提交反馈前请先确认这不是已记录的限制
+  - name: 使用说明
+    url: https://github.com/fhb263/obsidian-reelludic#使用方法
+    about: 安装、配置数据源、添加条目与日常管理

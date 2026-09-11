@@ -20,16 +20,20 @@ export class NoteConflictModal extends Modal {
     onOpen(): void {
         const { contentEl } = this;
         contentEl.empty();
-        contentEl.createDiv({ cls: 'rl-nc-icon', text: '⚠️' });
-        contentEl.createEl('h2', { text: '笔记已被外部修改' });
+        // 警告 emoji 圆形底（用户 2026-09-09 拍板回退 emoji 保证显示）
+        const icon = contentEl.createDiv({ cls: 'rl-nc-icon', text: '⚠️' });
+        void icon;
+        contentEl.createEl('h2', { cls: 'rl-nc-title', text: '笔记已被外部修改' });
         contentEl.createDiv({
             cls: 'rl-nc-desc',
             text: `《${this.entryTitle}》笔记与库数据不一致（检测到你在 Obsidian 中手动编辑过笔记内容）。选择如何处理？`,
         });
         const ops = contentEl.createDiv({ cls: 'rl-nc-ops' });
-        const keep = ops.createEl('button', { cls: 'mod-cta', text: '保留笔记改动' });
+        // 安全方向（保留手改）：中性次按钮靠左
+        const keep = ops.createEl('button', { cls: 'rl-btn', text: '保留笔记改动' });
         keep.setAttribute('data-tip', '不重写笔记，保留你的手动编辑（库数据已保存）');
         keep.onclick = () => this.finish('keep');
+        // 危险动作（覆盖手改）：危险主按钮实心红靠右
         const overwrite = ops.createEl('button', { cls: 'rl-nc-danger', text: '覆盖为库数据' });
         overwrite.setAttribute('data-tip', '用库数据重写笔记，你的手动编辑将被覆盖');
         overwrite.onclick = () => this.finish('overwrite');

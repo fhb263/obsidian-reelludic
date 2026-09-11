@@ -9,6 +9,7 @@ import { extractEditableFromNote, extractFrontmatterFromNote } from 'pure/noteEd
 import { orphanedDownloadedPosters } from 'pure/posterFile';
 import { NoteConflictModal } from 'modals/NoteConflictModal';
 import type { SearchProgressCb } from 'pure/searchProgress';
+import type { AiSummaryInput } from 'pure/aiSummary';
 
 export class EntryModal extends Modal {
     private form: EntryForm | null = null;
@@ -60,7 +61,7 @@ export class EntryModal extends Modal {
                     const text = await this.app.vault.read(f);
                     const ext = extractEditableFromNote(text);
                     const fm = extractFrontmatterFromNote(text);
-                    if (ext.notes !== undefined || ext.links || ext.summary !== undefined || ext.authorIntro !== undefined || ext.toc !== undefined || ext.sourceUrl !== undefined || Object.keys(fm).length > 0) {
+                    if (ext.notes !== undefined || ext.links || ext.summary !== undefined || ext.authorIntro !== undefined || ext.toc !== undefined || ext.aiSummary !== undefined || ext.aiHighlights !== undefined || ext.sourceUrl !== undefined || Object.keys(fm).length > 0) {
                         // banner（frontmatter 为库内完整路径，如 媒体库/封面/xx.jpg）→ poster（相对路径 封面/xx.jpg）
                         let poster = fm.poster;
                         if (poster && !/^https?:\/\//.test(poster)) {
@@ -74,6 +75,8 @@ export class EntryModal extends Modal {
                             summary: ext.summary ?? this.entry.summary,
                             authorIntro: ext.authorIntro ?? this.entry.authorIntro,
                             toc: ext.toc ?? this.entry.toc,
+                            aiSummary: ext.aiSummary ?? this.entry.aiSummary,
+                            aiHighlights: ext.aiHighlights ?? this.entry.aiHighlights,
                             source: ext.source ?? this.entry.source,
                             sourceUrl: ext.sourceUrl ?? this.entry.sourceUrl,
                             ...fm,
@@ -178,6 +181,8 @@ export class EntryModal extends Modal {
                 onPickLocalVideo: () => this.plugin.pickLocalVideoPath(),
                 /** 编辑表单「本地音频」：系统文件选择器选音频，返回 vault 相对路径（库外绝对路径） */
                 onPickLocalAudio: () => this.plugin.pickLocalAudioPath(),
+                /** 编辑表单「总结摘要」小标题右侧 ✨：AI 生成一句话总结 + 核心看点（复用阅读器翻译的服务商与 Key；失败返回 null 且已提示） */
+                onAiSummarize: (input: AiSummaryInput) => this.plugin.aiSummarizeEntry(input),
                 /** 编辑表单游戏「启动快捷方式」：系统文件选择器选 .lnk，返回 vault 相对路径（库外绝对路径） */
                 onPickGameLaunch: () => this.plugin.pickGameLaunchPath(),
                 /** 编辑表单书籍「浏览…」：系统文件选择器选 TXT/EPUB，返回 vault 相对路径 */

@@ -4,15 +4,15 @@
     //   → 月度看完趋势 × 今年动态 → 四库分区（数据主体）→ 快捷行；想看清单弹层保留
     // 移除（规划 D1/D2/D3 + 年度目标丢弃）：类型分布玻璃卡（子类型并入影视列）、霓虹热力图、
     //   年度目标圆环（localStorage 键不再读写）、emoji 图标（全量替换为文本/Lucide 白名单）
-    import type { MediaEntry, EntryType } from 'data/types';
+    import type { ActivityEvent, MediaEntry, EntryType } from 'data/types';
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS } from 'data/types';
     import {
         durationStats,
         finishedInYear,
         monthlyFinished,
-        recentActivity,
         topRatedInYear,
     } from 'pure/stats';
+    import { FEED_RANGE_WORDS, collectFeed, feedSpan, formatFeedTime, groupFeed, type FeedRange } from 'pure/activityFeed';
     import Icon from './Icon.svelte';
 
     export let entries: MediaEntry[] = [];
@@ -24,6 +24,24 @@
     export let onGenerateReport: () => Promise<void> = async () => {};
     /** 已生成的往年报告（年份降序；main.listYearReports） */
     export let yearReports: { year: number; path: string }[] = [];
+
+    /** 活动日志（状态翻转）：今日面板数据源 */
+    export let activityLog: ActivityEvent[] = [];
+
+    /** 一键把动态写进当天日记：**范围跟随当前 日/周/月/年 切换** */
+    export let onRecordJournal: (range: FeedRange) => Promise<void> = async () => {};
+
+    let recording = false;
+    /** 记录：把「当前范围」的动态写成打卡区块（切到周就记本周、切到月就记本月） */
+    async function recordCurrent() {
+        if (recording) return;
+        recording = true;
+        try {
+            await onRecordJournal(feedRange);
+        } finally {
+            recording = false;
+        }
+    }
     /** 打开某份年度报告（main.openReport） */
     export let onOpenReport: (path: string) => void = () => {};
 
@@ -40,16 +58,34 @@
     $: plannedThisMonth = entries.filter((e) => !!e.plannedDate && e.plannedDate.startsWith(monthPrefix)).length;
     $: libraryTotal = entries.length;
 
-    // ── 今年动态（时间线；D3=限今年，复用 pure/stats.recentActivity） ──
-    const TYPE_COLORS: Record<EntryType, string> = {
-        movie: '#5b9bd5',
-        tv: '#8e7cc3',
-        anime: '#c07ab8',
-        book: '#6aa87a',
-        game: '#d99b53',
-        music: '#2AA89B',
-    };
-    $: activity = recentActivity(entries, year, 8);
+    // ── 动态时间轴（合并原「今日」+「今年动态」）：日 / 周 / 月 / 年 日历范围切换 ──
+    const FEED_RANGES: { value: FeedRange; label: string }[] = [
+        { value: 'day', label: '日' },
+        { value: 'week', label: '周' },
+        { value: 'month', label: '月' },
+        { value: 'year', label: '年' },
+    ];
+    let feedRange: FeedRange = 'day';
+    $: span = feedSpan(feedRange);
+    $: feed = collectFeed(entries, activityLog, span);
+    $: feedCounts = feed.reduce(
+        (acc, f) => ({ ...acc, [f.kind]: (acc[f.kind] ?? 0) + 1 }),
+        {} as Partial<Record<string, number>>,
+    );
+    $: rangeWord = FEED_RANGE_WORDS[feedRange];
+    /** 周/月/年为「周期汇总」视图（周按日 / 月按周 / 年按月分块，块内归并成行）；日视图保留逐条时间轴 */
+    $: feedGroups = feedRange === 'day' ? [] : groupFeed(feed, feedRange);
+    $: feedSummary = ([
+        ['status', '状态变更'],
+        ['created', '新增'],
+        ['track', '追更'],
+        ['plan', '计划'],
+        ['watch', '完成'],
+        ['play', '游玩'],
+    ] as const)
+        .filter(([k]) => feedCounts[k])
+        .map(([k, label]) => `${label} ${feedCounts[k]}`)
+        .join(' · ');
     const todayStr = `${yearStr}-${monthPrefix.slice(5)}-${pad(now.getDate())}`;
     function fmtDate(d: string): string {
         if (d === todayStr) return '今天';
@@ -104,6 +140,13 @@
     $: monthlyGames = monthlyFinished(gameEntries, year);
     $: monthlyMusic = monthlyFinished(musicEntries, year);
     $: monthlyAllMax = Math.max(1, ...monthlyBooks, ...monthlyMedia, ...monthlyGames, ...monthlyMusic);
+    /** 趋势序列（含「本年是否有数据」标记：0 条的类型不画线——否则多条零值会叠成一条无信息量的贴底线） */
+    $: trendSeries = [
+        { label: '书籍', color: '#5f9d70', arr: monthlyBooks },
+        { label: '影视', color: '#4f8cc9', arr: monthlyMedia },
+        { label: '游戏', color: '#c98f4a', arr: monthlyGames },
+        { label: '音乐', color: '#1f9b90', arr: monthlyMusic },
+    ].map((t) => ({ ...t, on: t.arr.some((v) => v > 0) }));
     $: trendEmpty =
         monthlyAllMax <= 1 &&
         [...monthlyBooks, ...monthlyMedia, ...monthlyGames, ...monthlyMusic].every((v) => v === 0);
@@ -147,6 +190,9 @@
     <header class="rl-s-head">
         <div class="rl-s-title">{year} 统计</div>
         <div class="rl-s-actions">
+            <button class="rl-s-qbtn" on:click={() => onAdd()}><Icon icon="plus" size={13} /> 添加条目</button>
+            <button class="rl-s-qbtn" on:click={randomPick}><Icon icon="shuffle" size={13} /> 随机推荐</button>
+            <button class="rl-s-qbtn" on:click={() => (wantOpen = true)}><Icon icon="list" size={13} /> 想看的清单（{wantList.length}）</button>
             <button class="rl-btn rl-btn-primary" on:click={() => void onGenerateReport()}>生成今年总结</button>
             <div class="rl-dd">
                 <button class="rl-btn" on:click={() => (reportMenuOpen = !reportMenuOpen)}>
@@ -179,13 +225,74 @@
         <div class="rl-kpi"><b>{libraryTotal}</b><span>库内总数</span></div>
     </section>
 
+    <!-- 动态：状态变更 / 新增 / 追更 / 计划 / 游玩按 日·周·月·年 查看；一键把当天动态写进日记 -->
+    <section class="rl-s-panel rl-s-today">
+        <div class="rl-s-panel-title">
+            动态 · {span.label}
+            <span class="rl-s-title-right">
+                <span class="rl-feed-switch" role="group" aria-label="动态时间范围">
+                    {#each FEED_RANGES as r}
+                        <button class="rl-feed-tab" class:on={feedRange === r.value} on:click={() => (feedRange = r.value)}>{r.label}</button>
+                    {/each}
+                </span>
+                <button class="rl-btn rl-today-rec" disabled={recording || feed.length === 0} data-tip={feed.length === 0 ? `${rangeWord}还没有观影/阅读动态` : `把${rangeWord}的动态写成打卡区块，写入当天日记（重复点击只更新该区块）`} on:click={() => void recordCurrent()}>
+                    {recording ? '记录中…' : `记录${rangeWord}`}
+                </button>
+            </span>
+        </div>
+        {#if feed.length === 0}
+            <div class="rl-s-empty">{rangeWord}还没有观影/阅读动态 — 标记「在看 / 已看」或添加条目后会出现在这里</div>
+        {:else if feedRange === 'day'}
+            <div class="rl-today-list">
+                {#each feed as f}
+                    <div class="rl-today-item" role="link" tabindex="0" data-tip="打开笔记"
+                        on:click={() => onOpenEntry(f.id)}
+                        on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(f.id); }}>
+                        <span class="rl-today-time">{formatFeedTime(f, feedRange)}</span>
+                        <span class="rl-today-badge {f.status ? `rl-today-${f.status}` : 'rl-today-kind'}">{f.text}</span>
+                        <span class="rl-today-title">《{f.title}》</span>
+                    </div>
+                {/each}
+            </div>
+            <div class="rl-today-foot">共 {feed.length} 条动态（{feedSummary}）</div>
+        {:else}
+            <!-- 周 / 月 / 年：逐级细分的周期汇总（周按日分块、月按周分块、年按月分块），块内归并成「已读《A》《B》」这样的行 -->
+            <div class="rl-feed-groups">
+                {#each feedGroups as g}
+                    {#if g.label}
+                        <div class="rl-feed-group-title">{g.label}{#if g.range}<span class="rl-feed-group-range">{g.range}</span>{/if}<span class="rl-feed-group-n">共 {g.total} 条</span></div>
+                    {/if}
+                    <div class="rl-feed-rows">
+                        {#each g.rows as row}
+                            <div class="rl-feed-row">
+                                <span class="rl-feed-row-label">{row.label}</span>
+                                <div class="rl-feed-row-items">
+                                    {#each row.items as it}
+                                        <span class="rl-feed-chip" role="link" tabindex="0" data-tip="打开笔记"
+                                            on:click={() => onOpenEntry(it.id)}
+                                            on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(it.id); }}>《{it.title}》{#if it.detail}<i class="rl-feed-detail">{it.detail}</i>{/if}</span>
+                                    {/each}
+                                </div>
+                            </div>
+                        {/each}
+                    </div>
+                {/each}
+            </div>
+            <div class="rl-today-foot">共 {feed.length} 条动态（{feedSummary}）</div>
+        {/if}
+    </section>
+
     <!-- 中排：月度看完趋势 × 今年动态 -->
     <div class="rl-s-mid">
         <section class="rl-s-panel rl-s-trend">
             <div class="rl-s-panel-title">
                 {year} 月度看完趋势
                 <span class="rl-trend-legend">
-                    <span class="rl-tg-book">书籍</span><span class="rl-tg-media">影视</span><span class="rl-tg-game">游戏</span><span class="rl-tg-music">音乐</span>
+                    {#each trendSeries as s}
+                        <span class="rl-tg" class:rl-tg-off={!s.on}>
+                            <i class="rl-tg-dot" style={`background:${s.color}`}></i>{s.label}{s.on ? '' : ' 0'}
+                        </span>
+                    {/each}
                 </span>
             </div>
             {#if trendEmpty}
@@ -195,10 +302,11 @@
                     {#each [0, 1, 2, 3, 4] as g}
                         <line class="rl-trend-grid" x1={TREND_PAD_X} y1={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} x2={TREND_W - TREND_PAD_X} y2={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} />
                     {/each}
-                    <polyline class="rl-trend-line" points={trendPts(monthlyBooks)} stroke="#5f9d70" />
-                    <polyline class="rl-trend-line" points={trendPts(monthlyMedia)} stroke="#4f8cc9" />
-                    <polyline class="rl-trend-line" points={trendPts(monthlyGames)} stroke="#c98f4a" />
-                    <polyline class="rl-trend-line" points={trendPts(monthlyMusic)} stroke="#1f9b90" />
+                    {#each trendSeries as s}
+                        {#if s.on}
+                            <polyline class="rl-trend-line" points={trendPts(s.arr)} stroke={s.color} />
+                        {/if}
+                    {/each}
                     {#each monthlyBooks as _, i}
                         <text class="rl-trend-tick" x={trendTickX(i)} y={TREND_H - 1} text-anchor="middle">{i + 1}</text>
                     {/each}
@@ -206,30 +314,7 @@
             {/if}
         </section>
 
-        <section class="rl-s-panel rl-s-act">
-            <div class="rl-s-panel-title">今年动态</div>
-            {#if activity.length === 0}
-                <div class="rl-s-empty">暂无动态 — 观看/追更/计划后显示</div>
-            {:else}
-                <ul class="rl-timeline">
-                    {#each activity as a}
-                        <li class="rl-tl-item" role="link" tabindex="0" data-tip="打开笔记"
-                            on:click={() => onOpenEntry(a.id)}
-                            on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(a.id); }}>
-                            <span class="rl-tl-dot" style={`background:${TYPE_COLORS[a.type]}`}></span>
-                            <div class="rl-tl-body">
-                                <span class="rl-tl-date">{fmtDate(a.date)}</span>
-                                <span class="rl-tl-text">{a.text}</span>
-                            </div>
-                            <Icon icon="chevron-right" size={12} />
-                        </li>
-                    {/each}
-                </ul>
-            {/if}
-        </section>
-    </div>
-
-    <!-- 四库分区：数据主体（子类型计数并入影视列，D1） -->
+    <!-- 四库分区：数据主体（子类型计数并入影视列，D1）——与趋势并排（1:1），窄容器内部自适应 2×2 -->
     <section class="rl-s-panel rl-s-part">
         <div class="rl-s-panel-title">{year} 四库分区</div>
         <div class="rl-part-grid">
@@ -316,13 +401,9 @@
             </div>
         </div>
     </section>
+    </div>
 
     <!-- 快捷行 -->
-    <section class="rl-s-quick">
-        <button class="rl-s-qbtn" on:click={() => onAdd()}><Icon icon="plus" size={13} /> 添加条目</button>
-        <button class="rl-s-qbtn" on:click={randomPick}><Icon icon="shuffle" size={13} /> 随机推荐</button>
-        <button class="rl-s-qbtn" on:click={() => (wantOpen = true)}><Icon icon="list" size={13} /> 想看的清单（{wantList.length}）</button>
-    </section>
 </div>
 
 <!-- 想看清单弹层 -->
@@ -388,40 +469,26 @@
     .rl-kpi b { font-size: 23px; font-weight: 800; color: var(--text-normal); line-height: 1.1; }
     .rl-kpi span { font-size: 10.5px; color: var(--text-muted); }
 
-    /* ── 中排：趋势 × 动态 ── */
-    .rl-s-mid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; align-items: stretch; }
+    /* ── 趋势 × 四库分区并排（1.4:1）；≤900px 回落上下堆叠（见下方媒体查询） ── */
+    .rl-s-mid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: stretch; }
+    /* 趋势标题 + 图例：窄列里图例允许换行，避免溢出 */
+    .rl-s-trend .rl-s-panel-title { flex-wrap: wrap; }
     .rl-trend-legend { margin-left: auto; display: inline-flex; align-items: center; gap: 9px; }
-    .rl-trend-legend span { font-size: 10px; color: var(--text-muted); }
-    .rl-tg-book { color: #5f9d70; font-weight: 600; }
-    .rl-tg-media { color: #4f8cc9; font-weight: 600; }
-    .rl-tg-game { color: #c98f4a; font-weight: 600; }
-    .rl-tg-music { color: #1f9b90; font-weight: 600; }
+    .rl-trend-legend .rl-tg { font-size: 10px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; }
+    .rl-tg-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+    /* 本年 0 完成的类型：图例灰显并标 0（折线不画，避免贴底重叠） */
+    .rl-trend-legend .rl-tg-off { opacity: .45; }
     .rl-trend { width: 100%; height: 130px; display: block; }
     .rl-trend-grid { stroke: var(--background-modifier-border); stroke-width: 1; stroke-dasharray: 3 4; }
     .rl-trend-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .92; }
     .rl-trend-tick { font-size: 9px; fill: var(--text-faint); }
 
-    /* ── 今年动态时间线 ── */
-    .rl-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-    .rl-tl-item {
-        position: relative; padding: 6px 6px 6px 18px; border-radius: 7px;
-        display: flex; align-items: center; gap: 7px; cursor: pointer; min-width: 0;
+    /* ── 四库分区（容器查询自适应：并排时容器约四成宽 → 内部 2×2；堆叠全宽 → 4 列） ── */
+    .rl-s-part { container-type: inline-size; }
+    .rl-part-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    @container (min-width: 560px) {
+        .rl-part-grid { grid-template-columns: repeat(4, 1fr); }
     }
-    .rl-tl-item:hover { background: var(--background-modifier-hover); }
-    .rl-tl-item::before {
-        content: ''; position: absolute; left: 4px; top: 24px; bottom: -4px; width: 1.5px;
-        background: var(--background-modifier-border);
-    }
-    .rl-tl-item:last-child::before { display: none; }
-    .rl-tl-dot { position: absolute; left: 0; top: 12px; width: 9px; height: 9px; border-radius: 50%; flex: none; }
-    .rl-tl-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
-    .rl-tl-date { font-size: 10px; color: var(--text-faint); }
-    .rl-tl-text { font-size: 12px; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .rl-tl-item :global(svg) { flex: none; color: var(--text-faint); opacity: 0; }
-    .rl-tl-item:hover :global(svg) { opacity: 1; }
-
-    /* ── 四库分区 ── */
-    .rl-part-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
     .rl-part-col {
         display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
         background: var(--background-secondary); border: 1px solid var(--background-modifier-border);
@@ -446,13 +513,13 @@
     .rl-part-top-empty { font-size: 11px; color: var(--text-faint); opacity: .85; padding: 3px 2px; }
 
     /* ── 快捷行 ── */
-    .rl-s-quick { display: flex; flex-wrap: wrap; gap: 8px; }
+    /* 快捷按钮（原独立快捷行 → 页眉动作区，在「生成今年总结」左侧） */
     .rl-s-qbtn {
-        font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+        font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
         display: inline-flex; align-items: center; gap: 6px;
         border: 1px solid var(--background-modifier-border); border-radius: 8px;
         background: var(--background-primary); color: var(--text-muted);
-        padding: 7px 14px; transition: background .15s ease, color .15s ease;
+        padding: 6px 12px; transition: background .15s ease, color .15s ease;
     }
     .rl-s-qbtn:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 
@@ -488,6 +555,48 @@
     .rl-want-title { cursor: pointer; font-weight: 600; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rl-want-title:hover { color: var(--interactive-accent); text-decoration: underline; }
     .rl-want-meta { flex: none; font-size: 11px; color: var(--text-faint); }
+
+    /* ── 今日记录（状态变更「何时何分」+ 新增条目数；一键写进当天日记） ── */
+    .rl-s-today .rl-s-panel-title { justify-content: space-between; align-items: center; }
+    .rl-s-title-right { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
+    /* 时间范围切换（日/周/月/年）：分段控件，当前项用 accent 实心 */
+    .rl-feed-switch { display: inline-flex; border: 1px solid var(--background-modifier-border); border-radius: 6px; overflow: hidden; }
+    .rl-feed-tab {
+        font-family: inherit; font-size: 11px; padding: 2px 9px; border: none;
+        background: transparent; color: var(--text-muted); cursor: pointer;
+    }
+    .rl-feed-tab:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+    .rl-feed-tab.on { background: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
+    /* 周期汇总（周/月/年）：组标题（年视图按月）+ 归并行的标题清单；超高同样内部滚动 */
+    .rl-feed-groups { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px; }
+    .rl-feed-group-title { display: flex; align-items: baseline; gap: 8px; font-size: 11px; font-weight: 600; color: var(--text-muted); margin: 6px 0 4px; }
+    .rl-feed-group-title:first-child { margin-top: 0; }
+    .rl-feed-group-n { font-weight: 400; font-size: 10px; color: var(--text-faint); }
+    .rl-feed-group-range { font-weight: 400; font-size: 10px; color: var(--text-faint); }
+    .rl-feed-rows { display: flex; flex-direction: column; gap: 4px; }
+    .rl-feed-row { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+    .rl-feed-row-label { flex: none; min-width: 42px; font-size: 11px; color: var(--text-muted); }
+    .rl-feed-row-items { flex: 1 1 auto; display: flex; flex-wrap: wrap; gap: 2px 10px; min-width: 0; }
+    .rl-feed-chip { color: var(--text-normal); cursor: pointer; }
+    .rl-feed-chip:hover { color: var(--interactive-accent); }
+    .rl-feed-detail { font-style: normal; font-size: 10px; color: var(--text-faint); margin-left: 3px; }
+    /* 非状态类动态（新增/追更/计划/完成/游玩）的徽标：中性灰，不借用状态色 */
+    .rl-today-badge.rl-today-kind { background: var(--background-modifier-hover); color: var(--text-faint); }
+    .rl-today-rec { flex: none; font-size: 11px; padding: 2px 10px; cursor: pointer; }
+    .rl-today-rec:disabled { opacity: .45; cursor: not-allowed; }
+    /* 今日动态列表：一行一条（时间 + 状态 + 作品），条目多时纵向滚动（滑块见 styles.css 的豁免规则） */
+    .rl-today-list {
+        display: flex; flex-direction: column; gap: 4px;
+        max-height: 180px; overflow-y: auto; overscroll-behavior: contain;
+        padding-right: 6px; /* 给滑块留位，避免压住文字 */
+    }
+    .rl-today-item { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+    .rl-today-time { flex: none; min-width: 40px; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+    .rl-today-badge { flex: none; font-size: 10px; border-radius: 5px; padding: 1px 7px; background: var(--background-modifier-border); color: var(--text-muted); }
+    .rl-today-badge.rl-today-watched { color: var(--rl-good); }
+    .rl-today-badge.rl-today-watching { color: var(--interactive-accent); }
+    .rl-today-title { flex: 1 1 auto; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rl-today-foot { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
 
     /* 窄屏收敛：分区 2 列、KPI 保持可读 */
     @media (max-width: 900px) {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { EntryService } from 'services/EntryService';
 import type { VaultIO } from 'data/catalog';
+import { ACTIVITY_LOG_LIMIT } from 'data/types';
 
 function memIO(): VaultIO & { files: Record<string, string> } {
     const files: Record<string, string> = {};
@@ -109,6 +110,40 @@ describe('EntryService 状态流转', () => {
     });
 });
 
+describe('EntryService 书籍标记已读进度归 100', () => {
+    it('book → watched：readingProgress.percent 强制 100（已读=读完，海报墙进度条不再停在 98%）', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({
+            type: 'book', title: '活着', status: 'watching',
+            readingProgress: { page: 98, totalPage: 100, percent: 98 },
+        });
+        const done = await svc.setStatus(e.id, 'watched');
+        expect(done.status).toBe('watched');
+        expect(done.readingProgress!.percent).toBe(100);
+        // page/totalPage 保留（percent 是书架真源，页数仅展示口径）
+        expect(done.readingProgress!.page).toBe(98);
+        expect(done.readingProgress!.totalPage).toBe(100);
+    });
+
+    it('book → 非 watched（watching）不动 percent', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({
+            type: 'book', title: 'X', status: 'want',
+            readingProgress: { percent: 30 },
+        });
+        const watching = await svc.setStatus(e.id, 'watching');
+        expect(watching.readingProgress!.percent).toBe(30);
+    });
+
+    it('非 book（movie）→ watched 不影响 readingProgress（无该字段）', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        const done = await svc.setStatus(e.id, 'watched');
+        expect(done.status).toBe('watched');
+        expect(done.readingProgress).toBeUndefined();
+    });
+});
+
 describe('EntryService 追更标记', () => {
     it('markUpdated 推进集数并记录历史', async () => {
         const svc = new EntryService(memIO());
@@ -144,7 +179,7 @@ describe('EntryService 笔记生成', () => {
         const svc = new EntryService(io);
         const e = await svc.create({ type: 'tv', title: '葬送的芙莉莲', status: 'watching', rating: 5 });
         const path = await svc.writeNote(e.id);
-        expect(path).toBe('ReelLudic/笔记/电视剧/葬送的芙莉莲.md');
+        expect(path).toBe('ReelLudic/笔记/teleplay/葬送的芙莉莲.md');
         expect(io.files[path]).toContain('> [!bookinfo]+ **《葬送的芙莉莲》**');
         expect(io.files[path]).toContain('status: watching');
         expect((await svc.get(e.id))!.notePath).toBe(path);
@@ -163,8 +198,8 @@ describe('EntryService 自定义数据目录（libraryDir 接入）', () => {
         const e = await svc.create({ type: 'movie', title: '沙丘' });
         expect(io.files['MyLib/catalog.json']).toContain('沙丘');
         const path = await svc.writeNote(e.id);
-        expect(path).toBe('MyLib/entries/电影/沙丘.md');
-        expect(io.files['MyLib/entries/电影/沙丘.md']).toContain('> [!bookinfo]+ **《沙丘》**');
+        expect(path).toBe('MyLib/entries/movie/沙丘.md');
+        expect(io.files['MyLib/entries/movie/沙丘.md']).toContain('> [!bookinfo]+ **《沙丘》**');
     });
 
     it('空目录回退默认 ReelLudic（不产生 /catalog.json 根路径）', async () => {
@@ -336,7 +371,7 @@ describe('EntryService addPlaySession/removePlaySession 游玩记录', () => {
         // 总时长手动填写，记录不自动累计
         expect(r.playtimeMinutes).toBe(120);
         // 笔记已生成且包含新记录
-        const note = io.files['ReelLudic/笔记/游戏/黑神话悟空.md'];
+        const note = io.files['ReelLudic/笔记/game/黑神话悟空.md'];
         expect(note).toBeTruthy();
         expect(note).toContain('## 游玩记录');
         expect(note).toContain('**2026-08-01** · 0.8h · 刚打过虎先锋');
@@ -378,5 +413,60 @@ describe('EntryService addPlaySession/removePlaySession 游玩记录', () => {
     it('不存在的条目抛 not found', async () => {
         const svc = new EntryService(memIO());
         await expect(svc.addPlaySession('nope', { date: '2026-08-01', minutes: 30 })).rejects.toThrow('entry not found');
+    });
+});
+
+describe('EntryService 活动日志（今日记录数据源）', () => {
+    const readCatalog = (io: { files: Record<string, string> }) =>
+        JSON.parse(io.files['ReelLudic/catalog.json']) as { activityLog?: { at: string; id: string; status: string }[] };
+
+    it('setStatus 追加一条状态记录（含时间戳与目标状态）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '沙丘' }); // want
+        await svc.setStatus(e.id, 'watching');
+        const log = readCatalog(io).activityLog ?? [];
+        expect(log).toHaveLength(1);
+        expect(log[0].id).toBe(e.id);
+        expect(log[0].status).toBe('watching');
+        expect(new Date(log[0].at).getTime()).toBeGreaterThan(0);
+    });
+
+    it('update 改了状态才记；只改其他字段不记（防表单保存刷日志）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        await svc.update(e.id, { rating: 5 }); // 状态未变 → 不记
+        await svc.update(e.id, { status: 'watched' }); // 状态变 → 记
+        expect((readCatalog(io).activityLog ?? []).map((x) => x.status)).toEqual(['watched']);
+    });
+
+    it('连续变更按时间顺序累积', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        await svc.setStatus(e.id, 'watching');
+        await svc.setStatus(e.id, 'watched');
+        expect((readCatalog(io).activityLog ?? []).map((x) => x.status)).toEqual(['watching', 'watched']);
+    });
+
+    it('超出上限截断最旧（保留最近 500 条，新的在末尾）', async () => {
+        const io = memIO();
+        const old = Array.from({ length: ACTIVITY_LOG_LIMIT }, (_, i) => ({
+            at: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString(),
+            id: 'e_seed',
+            status: 'want',
+        }));
+        io.files['ReelLudic/catalog.json'] = JSON.stringify({
+            version: 1,
+            entries: [{ id: 'e_seed', type: 'movie', title: '沙丘', status: 'want' }],
+            activityLog: old,
+        });
+        const svc = new EntryService(io);
+        await svc.setStatus('e_seed', 'watching');
+        const log = readCatalog(io).activityLog ?? [];
+        expect(log).toHaveLength(ACTIVITY_LOG_LIMIT);
+        expect(log[0].at).toBe(old[1].at); // 最旧一条被挤掉
+        expect(log[log.length - 1].status).toBe('watching');
     });
 });

@@ -24,6 +24,7 @@ import {
     parseDoubanGameDetail,
     extractDoubanSection,
     toEntryDetailFields,
+    upscaleDoubanCover,
     DoubanCookieError,
     type DoubanSubject,
 } from 'services/douban';
@@ -40,7 +41,7 @@ function sub(partial: Partial<DoubanSubject> = {}): DoubanSubject {
 }
 
 describe('豆瓣搜索 items 解析（全类型通用）', () => {
-    it('解析单个 li：id/标题（去 from span）/年份/封面/评分/评价人数', () => {
+    it('解析单个 li：id/标题（去 from span）/年份/封面/评分/评价人数（封面自动高清化 s_ratio_poster → l_ratio_poster）', () => {
         const r = parseDoubanItem(SAMPLE_ITEM);
         expect(r).not.toBeNull();
         expect(r).toMatchObject({
@@ -48,7 +49,7 @@ describe('豆瓣搜索 items 解析（全类型通用）', () => {
             title: '肖申克的救赎',
             rating: 9.7,
             ratingCount: 2935822,
-            cover: 'https://img9.doubanio.com/view/photo/s_ratio_poster/public/p480747492.jpg',
+            cover: 'https://img9.doubanio.com/view/photo/l_ratio_poster/public/p480747492.jpg',
         });
     });
 
@@ -91,11 +92,11 @@ describe('豆瓣搜索 items 解析（全类型通用）', () => {
         expect(parseDoubanItem(SAMPLE_ITEM)?.title).toBe('肖申克的救赎');
     });
 
-    it('封面 URL 归一化：协议相对 //img2.doubanio.com/x.jpg → https://img2.doubanio.com/x.jpg（Obsidian Electron 下直接加载，避免断链图占位）', () => {
+    it('封面 URL 归一化：协议相对 //img2.doubanio.com/x.jpg → https 且高清化 l_ratio_poster（Obsidian Electron 下直接加载，避免断链图占位）', () => {
         const item = '<div class="result"><div class="pic"><a class="nbg" href="https://www.douban.com/link2/?url=https%3A%2F%2Fmovie.douban.com%2Fsubject%2F1292052%2F">'
             + '<img src="//img2.doubanio.com/view/photo/s_ratio_poster/public/p480747492.jpg"/></a></div>'
             + '<div class="content"><div class="title"><h3><a href="https://www.douban.com/link2/?url=https%3A%2F%2Fmovie.douban.com%2Fsubject%2F1292052%2F" onclick="moreurl(this,{sid: 1292052})">肖申克的救赎</a></h3></div></div></div>';
-        expect(parseDoubanItem(item)?.cover).toBe('https://img2.doubanio.com/view/photo/s_ratio_poster/public/p480747492.jpg');
+        expect(parseDoubanItem(item)?.cover).toBe('https://img2.doubanio.com/view/photo/l_ratio_poster/public/p480747492.jpg');
     });
 
     it('封面 URL 归一化：站内相对路径 /s/pics/x.jpg → https://img9.doubanio.com/s/pics/x.jpg', () => {
@@ -105,8 +106,8 @@ describe('豆瓣搜索 items 解析（全类型通用）', () => {
         expect(parseDoubanItem(item)?.cover).toBe('https://img9.doubanio.com/s/pics/p480747492.jpg');
     });
 
-    it('封面 URL 归一化：完整 https URL 原样保留', () => {
-        expect(parseDoubanItem(SAMPLE_ITEM)?.cover).toBe('https://img9.doubanio.com/view/photo/s_ratio_poster/public/p480747492.jpg');
+    it('封面 URL 归一化：完整 https URL 高清化（s_ratio_poster → l_ratio_poster）', () => {
+        expect(parseDoubanItem(SAMPLE_ITEM)?.cover).toBe('https://img9.doubanio.com/view/photo/l_ratio_poster/public/p480747492.jpg');
     });
 
     it('书籍：from span 首段作者提取（作者 / 出版社 / 年份），首段非数字才归属 author', () => {
@@ -350,6 +351,14 @@ describe('豆瓣详情 #info 区解析（国家/语言/片长/译者/ISBN 等全
     it('音乐：#info 表演者 → author 回填', () => {
         const r = applyDoubanInfo(sub(), 'music', parseDoubanInfo(musicInfo));
         expect(r.author).toBe('beyond');
+    });
+
+    it('音乐：#info 发行时间 → year、流派 → genres 回填（表单发行年/题材依赖）', () => {
+        const r = applyDoubanInfo(sub(), 'music', parseDoubanInfo(musicInfo));
+        expect(r.year).toBe(1993); // 发行时间 1993-05-14 → 1993
+        expect(r.genres).toEqual(['摇滚']);
+        // JSON-LD 已给 year 时不覆盖
+        expect(applyDoubanInfo(sub({ year: 1992 }), 'music', parseDoubanInfo(musicInfo)).year).toBe(1992);
     });
 
     it('无 #info 区：空映射且不破坏原条目', () => {
@@ -865,6 +874,20 @@ describe('Douban 详情 og meta 兜底集成（fetchDetail）', () => {
         expect(r.rating).toBe(9.7);
         expect(r.cover).toBe('https://img9.doubanio.com/view/photo/p480747492.jpg');
     });
+
+    it('JSON-LD 存在但无 image 字段时，封面从 og:image 兜底（JSON-LD 详情不带封面，og 是回源高清封面唯一来源）', async () => {
+        // JSON-LD 含标题/评分（ld+json 块），无 image；og:image 提供原图级封面
+        const html = '<html><head>'
+            + '<script type="application/ld+json">{"@type":"Movie","name":"肖申克的救赎","aggregateRating":{"ratingValue":"9.7"}}</script>'
+            + '<meta property="og:image" content="https://img9.doubanio.com/view/photo/m/public/p480747492.jpg"/>'
+            + '</head><body></body></html>';
+        const client = new DoubanClient(async () => html, async () => '{}');
+        const r = await client.fetchDetail(sub({ id: '1292052', title: '肖申克的救赎' }), 'movie');
+        expect(r.title).toBe('肖申克的救赎');
+        expect(r.rating).toBe(9.7);
+        // og 封面经 upscale 高清化：m → l
+        expect(r.cover).toBe('https://img9.doubanio.com/view/photo/l/public/p480747492.jpg');
+    });
 });
 
 describe('Douban 反爬拦截页集成（request 精确报错）', () => {
@@ -922,5 +945,32 @@ describe('Douban 游戏详情合并（fetchDetail 有值覆盖保护）', () => 
         );
         const r = await client.fetchDetail({ id: '12345', title: '游戏X', rating: 8, cast: [], genres: [] }, 'game');
         expect(r.rating).toBe(9.1);
+    });
+});
+
+describe('upscaleDoubanCover 封面高清化（2026-09-09：搜索列表 spic 缩略图落库糊）', () => {
+    it('老式图床 spic → lpic（游戏搜索封面 70×94 糊源）', () => {
+        expect(upscaleDoubanCover('https://img3.doubanio.com/spic/s33707673.jpg')).toBe('https://img3.doubanio.com/lpic/s33707673.jpg');
+    });
+    it('老式图床 mpic → lpic', () => {
+        expect(upscaleDoubanCover('https://img3.doubanio.com/mpic/s33707673.jpg')).toBe('https://img3.doubanio.com/lpic/s33707673.jpg');
+    });
+    it('view/photo 图床 s_ratio_poster → l_ratio_poster（影视搜索封面档）', () => {
+        expect(upscaleDoubanCover('https://img9.doubanio.com/view/photo/s_ratio_poster/public/p480747492.jpg')).toBe('https://img9.doubanio.com/view/photo/l_ratio_poster/public/p480747492.jpg');
+    });
+    it('view/photo 图床 m/s → l（详情页大图档）', () => {
+        expect(upscaleDoubanCover('https://img9.doubanio.com/view/photo/m/public/p480747492.jpg')).toBe('https://img9.doubanio.com/view/photo/l/public/p480747492.jpg');
+        expect(upscaleDoubanCover('https://img9.doubanio.com/view/photo/s/public/p480747492.jpg')).toBe('https://img9.doubanio.com/view/photo/l/public/p480747492.jpg');
+    });
+    it('已是高清档 lpic/l_ratio_poster/l 幂等（详情页封面不二次变换）', () => {
+        expect(upscaleDoubanCover('https://img9.doubanio.com/lpic/s28383824.jpg')).toBe('https://img9.doubanio.com/lpic/s28383824.jpg');
+        expect(upscaleDoubanCover('https://img9.doubanio.com/view/photo/l_ratio_poster/public/p480747492.jpg')).toBe('https://img9.doubanio.com/view/photo/l_ratio_poster/public/p480747492.jpg');
+        expect(upscaleDoubanCover('https://img9.doubanio.com/view/photo/l/public/p480747492.jpg')).toBe('https://img9.doubanio.com/view/photo/l/public/p480747492.jpg');
+    });
+    it('非豆瓣图床（tmdb/bangumi/本地 URL）原样返回', () => {
+        expect(upscaleDoubanCover('https://image.tmdb.org/t/p/w500/x.jpg')).toBe('https://image.tmdb.org/t/p/w500/x.jpg');
+        expect(upscaleDoubanCover('https://lain.bgm.tv/pic/cover/l/81/a9/147934_JzMo9.jpg')).toBe('https://lain.bgm.tv/pic/cover/l/81/a9/147934_JzMo9.jpg');
+        expect(upscaleDoubanCover('封面/我的世界 Minecraft.jpg')).toBe('封面/我的世界 Minecraft.jpg');
+        expect(upscaleDoubanCover(undefined)).toBeUndefined();
     });
 });

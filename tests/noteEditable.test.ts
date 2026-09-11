@@ -260,3 +260,33 @@ describe('pure/noteEditable 从笔记属性表格「来源」行提取数据源�
         expect(extractEditableFromNote('## 个人评语')).toMatchObject({});
     });
 });
+
+describe('extractEditableFromNote · AI 摘要章节（笔记手改可读回表单）', () => {
+    it('一句话总结 → aiSummary；核心看点列表 → aiHighlights', () => {
+        const note = [
+            '---', 'id: "e1"', '---', '',
+            '## 简介', '剧情简介内容', '',
+            '## 一句话总结', '沙漠星球的家族史诗', '',
+            '## 核心看点', '- 沙虫生态设定', '- 宗教与政治隐喻', '',
+            '## 个人评语', '很好看',
+        ].join('\n');
+        const ext = extractEditableFromNote(note);
+        expect(ext.aiSummary).toBe('沙漠星球的家族史诗');
+        expect(ext.aiHighlights).toEqual(['沙虫生态设定', '宗教与政治隐喻']);
+    });
+
+    it('多行总结不串到看点；看点容忍 * 与缩进；空章节不返回', () => {
+        const note = [
+            '## 一句话总结', '第一行', '第二行', '',
+            '## 核心看点', '  * 甲', '- 乙', '',
+            '## 个人评语', '评语',
+        ].join('\n');
+        const ext = extractEditableFromNote(note);
+        expect(ext.aiSummary).toBe('第一行\n第二行');
+        expect(ext.aiHighlights).toEqual(['甲', '乙']);
+
+        const empty = extractEditableFromNote('## 一句话总结\n\n## 核心看点\n\n## 个人评语\nx');
+        expect(empty.aiSummary).toBeUndefined();
+        expect(empty.aiHighlights).toBeUndefined();
+    });
+});

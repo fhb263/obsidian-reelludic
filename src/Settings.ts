@@ -8,7 +8,8 @@ import {
     resolveSourceChain, normalizeSourceChain, DEFAULT_CHAINS,
 } from 'pure/sourceRegistry';
 import { NORMAL_MS } from 'pure/timing';
-import { normalizeProvider } from 'pure/translate';
+import { normalizeProvider, DEFAULT_TRANSLATE_PROMPT } from 'pure/translate';
+import { DEFAULT_SUMMARY_PROMPT } from 'pure/aiSummary';
 import { PosterMigrateModal } from 'modals/PosterMigrateModal';
 import { PosterCleanupModal } from 'modals/PosterCleanupModal';
 
@@ -56,11 +57,24 @@ export interface ReelLudicSettings {
     readerZhipuKey?: string;
     /** DeepSeek AI 翻译 API Key（Bearer，发往 api.deepseek.com。批3 r3。append-only 可选字段） */
     readerDeepseekKey?: string;
+    /** AI 总结服务商（'zhipu' / 'deepseek'；与翻译服务各自独立可调。缺省 zhipu。append-only 可选字段）
+     *  两个服务共用上面两把 Key——服务商只是选「用哪家跑」，凭据不重复配置。 */
+    readerSummaryProvider?: 'zhipu' | 'deepseek';
+    /** 划词翻译自定义服务提示词（system）；留空/缺省 = 用 DEFAULT_TRANSLATE_PROMPT。append-only 可选字段 */
+    readerTranslatePrompt?: string;
+    /** AI 总结自定义服务提示词（system）；留空/缺省 = 用 DEFAULT_SUMMARY_PROMPT。append-only 可选字段 */
+    readerSummaryPrompt?: string;
     /** OMDb API Key（影视第三源，需 Key 1000 次/日；T1 预留字段，omdb 客户端接入后读取。append-only 可选字段，旧数据无此键不迁移） */
     omdbApiKey?: string;
-    /** 服务集成折叠项开合记忆（api=数据源管理(含数据源启用子块) / translate=阅读器翻译管理；true=展开）。
+    /** 服务集成折叠项开合记忆（api=数据源管理(含数据源启用子块) / translate=AI 翻译与总结；true=展开）。
      *  sources 键已弃用（数据源启用并入 api，不再单独折叠），类型保留兼容旧数据。append-only */
     serviceFoldOpen?: Partial<Record<'api' | 'sources' | 'translate', boolean>>;
+    /** 打卡日记所在文件夹（vault 内相对路径，如 日记）；留空/缺省 = 自动跟随核心「日记」插件配置。
+     *  09-10 起**设置页不再提供入口**（打卡动作只在统计页「今日」面板），字段保留兼容/兜底读取。 */
+    journalDir?: string;
+    /** 打卡日记文件名格式（moment 日期格式，如 YYYY-MM-DD）；留空/缺省 = 自动跟随核心「日记」插件，未检测到用 YYYY-MM-DD。
+     *  09-10 起设置页不再提供入口，字段保留兼容/兜底读取。 */
+    journalFormat?: string;
 }
 
 export const DEFAULT_SETTINGS: ReelLudicSettings = {
@@ -142,7 +156,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
 
     /**
      * 服务集成：两折叠项——① 数据源管理（内含「数据源启用」「数据源凭据」两个可折叠子块）+
-     * ② 阅读器翻译管理。数据源启用原为独立折叠并入 ①；数据源凭据收纳全部源行（三级折叠：①→子块→源行）。
+     * ② AI 翻译与总结。数据源启用原为独立折叠并入 ①；数据源凭据收纳全部源行（三级折叠：①→子块→源行）。
      */
     private renderServiceSection(parent: HTMLElement): void {
         // ① 数据源管理
@@ -157,8 +171,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             for (const id of FREE_SOURCE_ORDER) this.createFreeSourceRow(body, PROVIDER_META[id]);
         });
 
-        // ② 阅读器翻译管理：阅读器划词翻译配置（原 ③，去掉独立②数据源启用后改 ②）
-        const translateBody = this.createFoldout(parent, '② 阅读器翻译管理', 'translate');
+        // ② AI 翻译与总结：阅读器划词翻译 + 条目 AI 总结的配置（原「阅读器翻译管理」，09-10 加入总结服务后更名）
+        const translateBody = this.createFoldout(parent, '② AI 翻译与总结', 'translate');
         this.renderTranslateFold(translateBody);
     }
 
@@ -174,17 +188,17 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
-     * 阅读器翻译管理折叠项内容：服务商下拉 + 双源 Key（各为可折叠行，同 ① 数据源管理观感，
+     * AI 翻译与总结折叠项内容：翻译服务 + 总结服务两个服务商下拉（各自独立可调）+ 双源 Key（各为可折叠行，同 ① 数据源管理观感，
      * 展开显示 Key 密文输入 + 测试连接按钮 + 已配置徽标）。
      * 模型固定（智谱 GLM-4-Flash / DeepSeek deepseek-v4-flash），不再让用户配置。
      */
     private renderTranslateFold(body: HTMLDivElement): void {
-        // 服务商下拉（顶部，默认 zhipu）
+        // 翻译服务下拉（顶部，默认 zhipu）+ 其专属服务提示词
         new Setting(body)
             .setName('翻译服务')
-            .setDesc('划词翻译用的 AI 服务商。')
+            .setDesc('阅读器AI划词翻译')
             .addDropdown((d) => {
-                d.addOption('zhipu', '智谱 GLM-4-Flash');
+                d.addOption('zhipu', 'GLM-4-Flash');
                 d.addOption('deepseek', 'DeepSeek v4 Flash');
                 d.setValue(normalizeProvider(this.plugin.settings.readerTranslateProvider));
                 d.onChange(async (v: string) => {
@@ -192,14 +206,70 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 });
             });
+        this.renderPromptField(body, {
+            label: '翻译提示词',
+            value: this.plugin.settings.readerTranslatePrompt,
+            defaultText: DEFAULT_TRANSLATE_PROMPT,
+            onSave: (v) => {
+                this.plugin.settings.readerTranslatePrompt = v;
+                void this.plugin.saveSettings();
+            },
+        });
 
-        // 两个服务商 Key + 测试连接（始终都显示，不跟随服务商切换）
+        // 总结服务下拉（与翻译服务各自独立：条目 AI 生成一句话总结/核心看点用它跑）+ 其专属服务提示词
+        new Setting(body)
+            .setName('总结服务')
+            .setDesc('书籍、影视类型条目Ai总结与摘要')
+            .addDropdown((d) => {
+                d.addOption('zhipu', 'GLM-4-Flash');
+                d.addOption('deepseek', 'DeepSeek v4 Flash');
+                d.setValue(normalizeProvider(this.plugin.settings.readerSummaryProvider));
+                d.onChange(async (v: string) => {
+                    this.plugin.settings.readerSummaryProvider = v === 'deepseek' ? 'deepseek' : 'zhipu';
+                    await this.plugin.saveSettings();
+                });
+            });
+        this.renderPromptField(body, {
+            label: '总结提示词',
+            value: this.plugin.settings.readerSummaryPrompt,
+            defaultText: DEFAULT_SUMMARY_PROMPT,
+            onSave: (v) => {
+                this.plugin.settings.readerSummaryPrompt = v;
+                void this.plugin.saveSettings();
+            },
+        });
+
+        // 两个服务商 Key + 测试连接（始终都显示，不跟随服务商切换；翻译与总结共用）
         this.renderTranslateKeyBlock(body, 'zhipu', '智谱清言', 'readerZhipuKey', '你的智谱 API Key');
         this.renderTranslateKeyBlock(body, 'deepseek', 'DeepSeek', 'readerDeepseekKey', 'sk-…');
     }
 
     /**
-     * 渲染单个服务商 Key 行（阅读器翻译管理内）：可折叠（同 ① 数据源管理 createApiKeyRow 观感）——
+     * 提示词编辑块（翻译 / 总结各一块）：
+     *  - 默认提示词（DEFAULT_*_PROMPT）只作 **placeholder 灰字**呈现——不可编辑、点不掉，纯粹让人知道默认长什么样；
+     *  - 用户点进框里就是**空框**，写入自己的提示词即覆盖默认；清空（或粘贴回与默认完全一致）→ 存 undefined 恢复默认。
+     *  - 改动在失焦（change）时保存，不逐键写盘。
+     */
+    private renderPromptField(
+        body: HTMLDivElement,
+        opts: { label: string; value?: string; defaultText: string; onSave: (v: string | undefined) => void },
+    ): void {
+        const wrap = body.createDiv({ cls: 'rl-prompt-row' });
+        wrap.createDiv({ cls: 'rl-prompt-label', text: opts.label });
+        const ta = wrap.createEl('textarea', {
+            cls: 'rl-prompt-input',
+            attr: { rows: '4', spellcheck: 'false', placeholder: opts.defaultText },
+        });
+        ta.value = opts.value?.trim() ?? ''; // 未自定义 → 空框（默认文案在 placeholder 里）
+        ta.addEventListener('change', () => {
+            const raw = ta.value;
+            const trimmed = raw.trim();
+            opts.onSave(!trimmed || trimmed === opts.defaultText.trim() ? undefined : raw);
+        });
+    }
+
+    /**
+     * 渲染单个服务商 Key 行（AI 翻译与总结内，翻译与总结共用）：可折叠（同 ① 数据源管理 createApiKeyRow 观感）——
      * 头 = 服务商名 + 已配置徽标 + ▸，点击展开 body（Key 密文输入 + 测试连接 + 结果）。
      */
     private renderTranslateKeyBlock(
@@ -584,15 +654,15 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // ──────────── 服务集成（数据源）────────────
         new Setting(containerEl).setHeading().setName('服务集成');
 
-        // 服务集成两折叠项：① 数据源管理（数据源启用 + 数据源凭据 两可折叠子块）+ ② 阅读器翻译管理。
+        // 服务集成两折叠项：① 数据源管理（数据源启用 + 数据源凭据 两可折叠子块）+ ② AI 翻译与总结（翻译服务 / 总结服务 + 双源 Key）。
         // 旧 B1 凭据折叠行 / 每类型源链折叠行已完全移除，勾选面板为唯一入口
         this.renderServiceSection(containerEl);
 
-        // ──────────── 关于（支持作者，样式参考 LyricFlux about 区）────────────
+        // ──────────── 关于（支持 ReelLudic，样式参考 LyricFlux about 区）────────────
         new Setting(containerEl).setHeading().setName('关于');
         const about = containerEl.createDiv({ cls: 'rl-about' });
         const aboutText = about.createDiv({ cls: 'rl-about-text' });
-        aboutText.createDiv({ cls: 'rl-about-title', text: '支持作者' });
+        aboutText.createDiv({ cls: 'rl-about-title', text: '支持 ReelLudic' });
         aboutText.createDiv({ cls: 'rl-about-desc', text: '如果 ReelLudic 对你有帮助，欢迎在 GitHub 上给个 ⭐，或通过爱发电支持一下～' });
         const aboutBtns = about.createDiv({ cls: 'rl-about-buttons' });
         const githubBtn = aboutBtns.createEl('button', { cls: 'rl-about-btn', text: 'Github' });

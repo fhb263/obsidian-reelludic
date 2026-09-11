@@ -18,6 +18,10 @@ export interface NoteEditable {
     authorIntro?: string;
     /** 目录（图书笔记「## 目录」章节） */
     toc?: string;
+    /** AI 一句话总结（笔记「## 一句话总结」章节） */
+    aiSummary?: string;
+    /** AI 核心看点（笔记「## 核心看点」无序列表，逐行一条） */
+    aiHighlights?: string[];
     /** 数据源链接（属性表格「来源」行；笔记编辑回填表单 sourceUrl） */
     sourceUrl?: string;
     /** 数据源标识（由来源行中文标签映射；未知标签不返回，避免覆盖已有 source） */
@@ -43,6 +47,7 @@ const TEXT_SECTIONS: Record<string, keyof NoteEditable> = {
     '## 简介': 'summary',
     '## 作者简介': 'authorIntro',
     '## 目录': 'toc',
+    '## 一句话总结': 'aiSummary',
 };
 
 /** 从笔记 Markdown 提取用户手动维护的可编辑字段（个人评语/观看·相关链接/简介/作者简介/目录） */
@@ -52,7 +57,8 @@ export function extractEditableFromNote(text: string): NoteEditable {
     const notesLines: string[] = [];
     const links: WatchLink[] = [];
     const textBuf: Partial<Record<keyof NoteEditable, string[]>> = {};
-    let section: 'notes' | 'links' | keyof NoteEditable | null = null;
+    const highlights: string[] = [];
+    let section: 'notes' | 'links' | 'highlights' | keyof NoteEditable | null = null;
     // 链接章节标题（影视=观看链接，书/游戏=相关链接）
     const linkSections = new Set(['## 观看链接', '## 相关链接']);
 
@@ -61,6 +67,7 @@ export function extractEditableFromNote(text: string): NoteEditable {
         if (line.startsWith('## ') || line.startsWith('# ')) {
             if (line === '## 个人评语' || line === '# 个人评语') section = 'notes';
             else if (linkSections.has(line)) section = 'links';
+            else if (line === '## 核心看点') section = 'highlights'; // 无序列表，逐行采集
             else if (TEXT_SECTIONS[line]) section = TEXT_SECTIONS[line];
             else section = null; // 其余章节（游玩记录/属性等）不采集
             continue;
@@ -70,6 +77,10 @@ export function extractEditableFromNote(text: string): NoteEditable {
         } else if (section === 'links' && line.startsWith('- [')) {
             const m = /^- \[([^\]]*)\]\(([^)]+)\)/.exec(line);
             if (m) links.push({ label: m[1].trim(), url: m[2].trim() });
+        } else if (section === 'highlights') {
+            const m = /^\s*[-*•]\s+(.+)$/.exec(line);
+            const v = m ? m[1].trim() : '';
+            if (v) highlights.push(v);
         } else {
             // 属性表格「来源」行（表格区）：`| 来源 | [豆瓣](url) |` → 同步数据源链接到表单
             const srcM = /^\|\s*来源\s*\|\s*\[([^\]]*)\]\(([^)]+)\)\s*\|/.exec(line);
@@ -88,7 +99,8 @@ export function extractEditableFromNote(text: string): NoteEditable {
     const notes = notesLines.join('\n').trim();
     if (notes && notes !== NOTES_PLACEHOLDER) out.notes = notes;
     if (links.length) out.links = links;
-    for (const key of ['summary', 'authorIntro', 'toc'] as const) {
+    if (highlights.length) out.aiHighlights = highlights;
+    for (const key of ['summary', 'authorIntro', 'toc', 'aiSummary'] as const) {
         const val = (textBuf[key] ?? []).join('\n').trim();
         if (val) out[key] = val; // 章节为空视为未写，不覆盖 catalog
     }

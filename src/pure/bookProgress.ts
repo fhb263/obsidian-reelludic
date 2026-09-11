@@ -1,6 +1,6 @@
 // 书籍阅读进度基准校正（纯逻辑，可单测）：
-// 原则——percent 是唯一进度真源；本地文件是进度基准（PDF 按页 numPages 精确；TXT 无页数概念，按章节解析 totalChapters；
-// EPUB 无轻量探针不校正）；豆瓣 pageCount 只是元数据（展示/统计），不参与换算。
+// 原则——percent 是唯一进度真源；本地文件是进度基准（PDF 按页 numPages 精确；TXT/EPUB 无页数概念，按章节解析 totalChapters；
+// EPUB 解包拿 spine 章节数做基准；无文件/未知时 pageCount 只是元数据（展示/统计），不参与换算）。
 // 校正时机：打开书籍文件 / 表单选择保存文件时（main 层拿到本地基准后调用），静默失败不影响阅读。
 export interface BookProgressFields {
     page?: number;
@@ -11,11 +11,13 @@ export interface BookProgressFields {
     pageCount?: number;
 }
 
-/** 本地书籍文件探针结果（表单自动关联用）：PDF → 页数基准；TXT → 章节基准（按章节解析） */
+/** 本地书籍文件探针结果（表单自动关联用）：PDF → 页数基准；TXT → 章节基准（按章节解析）；EPUB → spine 章节基准 */
 export type BookProbeResult =
     | { format: 'pdf'; numPages: number }
-    | { format: 'txt'; totalChapters: number };
+    | { format: 'txt'; totalChapters: number }
+    | { format: 'epub'; totalChapters: number };
 
+/** 无探针信息的 EPUB 占位（兼容旧调用/旧数据：不校正）；null = 无本地文件 */
 export type BookFileInfo = BookProbeResult | { format: 'epub' } | null;
 
 export interface BookProgressReconcile {
@@ -36,14 +38,16 @@ export function pageFromPercent(percent: number, totalPage: number): number {
  * 进度基准校正：
  * - PDF：totalPage 收紧为本地 numPages（进度基准）；percent 存在 → page 由 percent 重算（percent 恒定，换文件自然平移）；
  *   手填无 percent → page 保留但超界钳制；旧 totalPage ≠ 本地页数且 pageCount 为空 → 惰性迁移 pageCount=旧 totalPage。
- * - TXT：与 PDF 同构，按章节解析——totalPage 收紧为本地 totalChapters；percent 恒定重算当前章；手填钳制；
- *   不做 pageCount 迁移（TXT 无「页」概念，豆瓣实体书页数与章节数无关）。
- * - EPUB / 无文件：不校正（percent 直落，totalPage 语义保持手填/豆瓣兜底）。
+ * - TXT / EPUB：与 PDF 同构，按章节解析——totalPage 收紧为本地 totalChapters；percent 恒定重算当前章；手填钳制；
+ *   不做 pageCount 迁移（TXT/EPUB 无「页」概念，豆瓣实体书页数与章节数无关）。
+ * - EPUB（无 totalChapters 的旧占位）/ 无文件：不校正（percent 直落，totalPage 语义保持手填/豆瓣兜底）。
  * - 无变化返回 {}（调用方可跳过落库）。
  */
 export function reconcileBookProgress(current: BookProgressFields, file: BookFileInfo): BookProgressReconcile {
-    if (!file || file.format === 'epub') return {};
-    // 进度基准：PDF=本地页数；TXT=本地章节数（按章节解析）
+    if (!file) return {};
+    // EPUB 旧占位（无 totalChapters 字段 = 未探知章节数）：不校正
+    if (file.format === 'epub' && !('totalChapters' in file)) return {};
+    // 进度基准：PDF=本地页数；TXT/EPUB=本地章节数（spine 解析）
     const base = file.format === 'pdf' ? file.numPages : file.totalChapters;
     if (!Number.isInteger(base) || base <= 0) return {};
 
