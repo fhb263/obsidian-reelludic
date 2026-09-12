@@ -14,7 +14,7 @@
     /** Tab 顺序：追番表(月历) → 书籍 → 影视(动画/剧集/电影聚合) → 游戏 → 统计 */
     const TAB_ORDER: HomeTab[] = ['tracking', 'book', 'media', 'game', 'music', 'stats'];
 
-    /** 页签图标（Obsidian 内建 Lucide）：计划表/书籍/影视/游戏/音乐/统计 */
+    /** 页签图标（Obsidian 内建 Lucide）：计划/书籍/影视/游戏/音乐/统计 */
     function tabIcon(t: HomeTab): string {
         if (t === 'tracking') return 'calendar-check';
         if (t === 'book') return 'book-open';
@@ -88,11 +88,11 @@
     export let defaultViewMode: 'grid' | 'list' = 'grid';
 
     let activeTab: HomeTab = initialTab;
-    /** 计划表视图：追更表 / 月历 */
+    /** 计划页签视图：追更表 / 月历 */
     let trackingMode: 'board' | 'calendar' = 'board';
 
     function tabLabel(t: HomeTab): string {
-        if (t === 'tracking') return '计划表';
+        if (t === 'tracking') return '计划';
         if (t === 'media') return '影视';
         if (t === 'stats') return '统计';
         return ENTRY_TYPE_LABELS[t];
@@ -158,7 +158,7 @@
     const TAB_PAD = 5;
 
     /**
-     * 重算指示器位置。切换 Tab、窗口缩放、容器横向滚动均需调用。
+     * 重算指示器位置。切换 Tab、窗口缩放后调用（横向滚动不需重算：指示器随内容一起滚，坐标系一致）。
      * 依赖 tick()：调用时机可能早于 DOM 完成布局（offsetLeft 会读到 0），故调用方一律 tick 后再调。
      * 任一引用缺失即静默返回——native 主题下指示器不渲染，属正常路径而非异常。
      */
@@ -166,7 +166,7 @@
         if (uiTheme !== 'modern' || !tabsEl || !indEl) return;
         const btn = tabsEl.querySelector<HTMLElement>('button.on');
         if (!btn) return;
-        indStyle = indicatorTransform(btn.offsetLeft, btn.offsetWidth, TAB_PAD, tabsEl.scrollLeft);
+        indStyle = indicatorTransform(btn.offsetLeft, btn.offsetWidth, TAB_PAD);
     }
 </script>
 
@@ -176,8 +176,7 @@
         class:rl-tabs-modern={uiTheme === 'modern'}
         role="tablist"
         aria-label="ReelLudic"
-        bind:this={tabsEl}
-        on:scroll={syncIndicator}>
+        bind:this={tabsEl}>
         {#if uiTheme === 'modern'}
             <span class="tab-ind" bind:this={indEl} style={indStyle}></span>
         {/if}

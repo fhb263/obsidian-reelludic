@@ -34,37 +34,33 @@ describe('normalizeUiTheme', () => {
 });
 
 describe('indicatorTransform', () => {
-    it('首项：offset 0，减掉容器内边距', () => {
-        expect(indicatorTransform(0, 48, 5)).toBe('translateX(0px);width:48px');
+    it('返回完整内联样式：必须带 transform: 属性名（回归：曾缺前缀被浏览器静默丢弃 → 指示器不动）', () => {
+        expect(indicatorTransform(0, 48, 5)).toBe('transform:translateX(0px);width:48px');
     });
     it('常规项：offset 减 padding 后位移', () => {
-        expect(indicatorTransform(60, 56, 5)).toBe('translateX(55px);width:56px');
+        expect(indicatorTransform(60, 56, 5)).toBe('transform:translateX(55px);width:56px');
     });
     it('padding 大于 offset 时不产生负位移（钳到 0）', () => {
-        expect(indicatorTransform(3, 40, 5)).toBe('translateX(0px);width:40px');
+        expect(indicatorTransform(3, 40, 5)).toBe('transform:translateX(0px);width:40px');
     });
     it('宽度为 0 的边界：仍返回合法串', () => {
-        expect(indicatorTransform(20, 0, 5)).toBe('translateX(15px);width:0px');
-    });
-    it('含滚动偏移时参与计算', () => {
-        expect(indicatorTransform(60, 56, 5, 20)).toBe('translateX(35px);width:56px');
+        expect(indicatorTransform(20, 0, 5)).toBe('transform:translateX(15px);width:0px');
     });
     it('小数四舍五入到整数像素（避免亚像素抖动）', () => {
-        expect(indicatorTransform(60.4, 55.6, 5)).toBe('translateX(55px);width:56px');
+        expect(indicatorTransform(60.4, 55.6, 5)).toBe('transform:translateX(55px);width:56px');
     });
     it('非有限输入退化为 0，不产出 NaNpx', () => {
-        expect(indicatorTransform(NaN, 56, 5)).toBe('translateX(0px);width:56px');
-        expect(indicatorTransform(Infinity, 56, 5)).toBe('translateX(0px);width:56px');
-        expect(indicatorTransform(60, NaN, 5)).toBe('translateX(55px);width:0px');
+        expect(indicatorTransform(NaN, 56, 5)).toBe('transform:translateX(0px);width:56px');
+        expect(indicatorTransform(Infinity, 56, 5)).toBe('transform:translateX(0px);width:56px');
+        expect(indicatorTransform(60, NaN, 5)).toBe('transform:translateX(55px);width:0px');
         // pad 为 NaN → 收口为 0（不减偏移），故 x = 60 而非 55
-        expect(indicatorTransform(60, 56, NaN)).toBe('translateX(60px);width:56px');
-        expect(indicatorTransform(60, 56, 5, NaN)).toBe('translateX(55px);width:56px');
+        expect(indicatorTransform(60, 56, NaN)).toBe('transform:translateX(60px);width:56px');
     });
     it('负数宽度钳到 0（不产出非法 CSS）', () => {
-        expect(indicatorTransform(60, -5, 5)).toBe('translateX(55px);width:0px');
+        expect(indicatorTransform(60, -5, 5)).toBe('transform:translateX(55px);width:0px');
     });
     it('pad 为 0（无内边距容器）不减偏移', () => {
-        expect(indicatorTransform(60, 56, 0)).toBe('translateX(60px);width:56px');
+        expect(indicatorTransform(60, 56, 0)).toBe('transform:translateX(60px);width:56px');
     });
 });
 
