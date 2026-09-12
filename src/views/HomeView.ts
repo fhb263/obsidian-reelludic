@@ -6,7 +6,7 @@ import { ConfirmModal } from 'modals/ConfirmModal';
 import { ImportBangumiModal } from 'modals/ImportBangumiModal';
 import type ReelLudicPlugin from '../../main';
 import type { MediaStatus } from 'pure/status';
-import type { ActivityEvent, EntryType, MediaEntry, UiTheme } from 'data/types';
+import type { ActivityEvent, BookKind, EntryType, MediaEntry, UiTheme } from 'data/types';
 import type { HomeTab } from './tab';
 import { normalizeUiTheme } from 'pure/themeTokens';
 import type { FeedRange } from 'pure/activityFeed';
@@ -89,7 +89,7 @@ export class HomeView extends ItemView {
                     this.plugin.homeTab = tab;
                 },
                 posterUrl: (e: MediaEntry) => this.plugin.resolvePoster(e),
-                onAdd: (t?: EntryType) => this.plugin.openAddModal(t),
+                onAdd: (t?: EntryType, kind?: BookKind) => this.plugin.openAddModal(t, kind),
                 onSelectDay: (dateStr: string) => new CalendarDayModal(this.app, this.plugin, dateStr, this.entries).open(),
                 /** 月历拖拽排期：待排卡片拖到日期格 → 设置计划观看日期 */
                 onPlanDate: (id: string, dateStr: string) => this.plugin.planEntry(id, dateStr),

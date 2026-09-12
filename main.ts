@@ -610,9 +610,10 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /** 某条目类型本次搜索「实际会发起」的源集合（链序）：链内 aux 需已配置（免 Key 源恒 true），douban 恒参与。
-     *  供搜索结果区固定占栏——栏数与源成败无关，只取决于源链配置。 */
-    sourcesForType(type: EntryType): ProviderId[] {
-        const group = sourceGroupForType(type);
+     *  供搜索结果区固定占栏——栏数与源成败无关，只取决于源链配置。
+     *  书籍类目传 kind：comic → 漫画源链组（与 searchBook 路由一致），其余 → 按类型映射。 */
+    sourcesForType(type: EntryType, kind?: BookKind): ProviderId[] {
+        const group: SourceGroup = type === 'book' && kind === 'comic' ? 'comic' : sourceGroupForType(type);
         const chain = resolveSourceChain(this.settings.sourceChains, group);
         return chain.filter((id) => id === 'douban' || this.providerConfigured(id));
     }
@@ -1158,9 +1159,9 @@ export default class ReelLudicPlugin extends Plugin {
     /** 当前打开的添加/编辑弹窗（防重复打开叠加：新开前先关闭旧的，避免遮罩堆叠导致新弹窗无法交互/无法输入搜索） */
     entryModal: EntryModal | null = null;
 
-    openAddModal(initialType?: EntryType): void {
+    openAddModal(initialType?: EntryType, initialBookKind?: BookKind): void {
         this.entryModal?.close();
-        this.entryModal = new EntryModal(this.app, this, undefined, initialType);
+        this.entryModal = new EntryModal(this.app, this, undefined, initialType, initialBookKind);
         this.entryModal.open();
     }
 

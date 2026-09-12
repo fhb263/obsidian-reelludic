@@ -20,7 +20,7 @@
     export let entries: MediaEntry[] = [];
     /** 书籍摘抄计数（bookId → 摘抄区块数），卡片徽标数据源 */
     export let excerptCounts: Record<string, number> = {};
-    export let onAdd: (t?: EntryType) => void = () => {};
+    export let onAdd: (t?: EntryType, kind?: BookKind) => void = () => {};
     export let onEditEntry: (id: string) => void = () => {};
     export let onOpenEntry: (id: string) => void = () => {};
     export let onOpenLink: (url: string) => void = () => {};
@@ -464,8 +464,9 @@
             on:keydown={(ev) => { if (ev.key === 'Escape') searchText = ''; }}
         />
     </div>
-    <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/电视剧/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType -->
-    <button class="rl-add mod-cta" data-tip="新建条目" on:click={() => onAdd(resolveAddType(lockType, typeFilter))}><Icon icon="plus" size={14} /> 添加</button>
+    <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/电视剧/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType。
+         书籍页签同步传当前子分类（kindFilter）：聚焦「漫画」→ 表单下拉选中「漫画」并走漫画源；「网文」→ 书籍+网文；「出版/全部」→ 缺省出版 -->
+    <button class="rl-add mod-cta" data-tip="新建条目" on:click={() => onAdd(resolveAddType(lockType, typeFilter), lockType === 'book' && kindFilter !== 'all' ? kindFilter : undefined)}><Icon icon="plus" size={14} /> 添加</button>
     <span class="rl-libstats" role="group" aria-label="库概览">
         <span class="rl-libstats-total">{overviewTotal} {overviewUnit}</span>
     </span>

@@ -27,6 +27,8 @@ export class EntryModal extends Modal {
         private entry?: MediaEntry,
         /** 新增模式初始类型：从某个 Tab 点「＋ 添加」时传入该 Tab 类型（默认电影） */
         private initialType?: EntryType,
+        /** 新增模式初始书籍分类：书籍页签聚焦子分类（漫画/网文）时传入（漫画态表单下拉选中「漫画」） */
+        private initialBookKind?: BookKind,
     ) {
         super(app);
     }
@@ -98,13 +100,14 @@ export class EntryModal extends Modal {
             props: {
                 entry: effective,
                 initialType: this.entry?.type ?? this.initialType ?? 'movie',
+                initialBookKind: this.entry?.bookKind ?? this.initialBookKind,
                 canSearch: !!this.plugin.settings.tmdbApiKey,
                 canSearchBook: true,
                 canSearchGame: true, // 游戏仅 Douban 源，始终可搜
                 /** 结果栏数变化 → 动态宽度（仅三栏加宽） */
                 onResultCols: (cols: number) => this.applyResultCols(cols),
                 /** 该类型本次搜索实际会发起的源集合（固定占栏用） */
-                onSourcesForType: (type: EntryType) => this.plugin.sourcesForType(type),
+                onSourcesForType: (type: EntryType, kind?: BookKind) => this.plugin.sourcesForType(type, kind),
                 onSearch: (q: string, t: 'movie' | 'tv', onProgress?: SearchProgressCb) => this.plugin.searchWithFallback(q, t, onProgress),
                 onSearchBook: (q: string, kind?: BookKind, onProgress?: SearchProgressCb) => this.plugin.searchBook(q, kind, onProgress),
                 onSearchGame: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchGame(q, onProgress),

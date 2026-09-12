@@ -4,6 +4,7 @@
     import { statusLabel, statusVerb, reviewLabel } from 'pure/labels';
     import { reconcileBookProgress, pageFromPercent, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
     import { normalizeBookKind } from 'pure/bookKind';
+import { toSearchTypeSel, applySearchTypeSel, type SearchTypeSel } from 'pure/searchTypeSel';
     import { normalizeMusicKind } from 'pure/musicKind';
     import { placeMenu } from 'pure/menuPlacement';
     import { AI_HIGHLIGHT_SUGGEST, aiFieldsToText, textToAiFields } from 'pure/aiSummary';
@@ -25,9 +26,18 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     type SearchResult = TmdbSearchResult | OmdbSearchResult | BookSearchResult | GameSearchResult | BangumiSearchResult | MusicSearchResult;
 
     /** 状态选项（想看/在看/已看/存档；存档选中时右侧不显示日期输入框；弃剧已移除，旧数据 dropped 编辑保存时迁移为存档） */
-    const STATUS_OPTIONS: MediaStatus[] = ['want', 'watching', 'watched', 'archived'];
+const STATUS_OPTIONS: MediaStatus[] = ['want', 'watching', 'watched', 'archived'];
+
+/** 类型下拉选项：六类型 + 书籍后插「漫画」（漫画 = 书籍类目子类的搜索快捷态，非独立 EntryType） */
+const TYPE_OPTIONS: ReadonlyArray<{ value: SearchTypeSel; label: string }> = ENTRY_TYPES.flatMap((t): { value: SearchTypeSel; label: string }[] =>
+    t === 'book'
+        ? [{ value: t, label: ENTRY_TYPE_LABELS[t] }, { value: 'comic', label: '漫画' }]
+        : [{ value: t, label: ENTRY_TYPE_LABELS[t] }],
+);
 
     export let initialType: EntryType = 'movie';
+/** 新增模式初始书籍分类：书籍页签聚焦子分类（漫画/网文）点「＋ 添加」传入（漫画态下拉选中「漫画」） */
+export let initialBookKind: BookKind | undefined = undefined;
     export let entry: MediaEntry | null = null;
     export let canSearch: boolean = false;
     export let canSearchBook: boolean = true;
@@ -65,8 +75,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     /** 结果栏数上报（宿主据此动态调弹窗宽度：三栏并排需加宽，一/两栏与编辑态用常规宽度）；
      *  0 = 未展示结果（搜索输入中/已选结果进编辑/手动填写） */
     export let onResultCols: (cols: number) => void = () => {};
-    /** 某类型本次搜索实际会发起的源集合（固定占栏依据：栏位只随源链/凭据配置变化，不随源成败增减） */
-    export let onSourcesForType: (type: EntryType) => string[] = () => [];
+    /** 某类型本次搜索实际会发起的源集合（固定占栏依据：栏位只随源链/凭据配置变化，不随源成败增减）；书籍类传分类（漫画 → comic 组源链） */
+    export let onSourcesForType: (type: EntryType, kind?: BookKind) => string[] = () => [];
     /** 书籍编辑表单「添加摘抄」：弹窗侧打开摘抄录入（固定挂载当前条目） */
     export let onAddExcerpt: () => void = () => {};
     /** 书籍编辑表单「阅读」：打开书籍阅读器，关闭后返回最新阅读进度（percent 真源 → 表单自动同步当前页/章） */
@@ -219,7 +229,16 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     $: { if (authorIntroEl) autosizeTextarea(authorIntroEl); void authorIntro; }
     $: { if (tocEl) autosizeTextarea(tocEl); void toc; }
     /** 书籍分类（1.0.3）：book 出版 / novel 网文 / comic 漫画；缺省归出版（pure/bookKind），表单三颗 chip 选择 */
-    let bookKind: BookKind = normalizeBookKind(entry?.bookKind);
+    let bookKind: BookKind = normalizeBookKind(entry?.bookKind ?? initialBookKind);
+    /** 搜索框类型下拉展示值（漫画 = 书籍+comic 分类快捷态）：纯派生自 type+bookKind，chips/编辑初始化全自动回显，规则见 pure/searchTypeSel */
+    let typeSel: SearchTypeSel;
+    $: typeSel = toSearchTypeSel(type, bookKind);
+    /** select 受控 change：把下拉选择按派生规则落成真实 type+bookKind（添加模式漫画→书籍复位出版；编辑模式不复位防静默改写；bind+on:change 同元素有编译警告，改显式 value+handler） */
+    function onTypeSelEl(ev: Event): void {
+        const next = applySearchTypeSel((ev.currentTarget as HTMLSelectElement).value as SearchTypeSel, type, bookKind, !entry);
+        type = next.type;
+        bookKind = next.bookKind;
+    }
     /** 音乐分类（1.0.3）：music 音乐 / other 其他（有声书/播客等）；缺省归音乐（pure/musicKind），表单两颗 chip 选择 */
     let musicKind: MusicKind = normalizeMusicKind(entry?.musicKind);
     let author = entry?.author ?? '';
@@ -452,7 +471,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
      * 头部「数据源」栏文案：跟随当前类型在设置页「数据源启用」勾选的源（onSourcesForType 实时解析，
      * 含已配置/免 Key 判断），如 movieTv 勾选 Douban+TMDB+OMDb → 「数据源：Douban / TMDB / OMDb」。
      */
-    $: activeSourcesForType = onSourcesForType(type);
+    $: activeSourcesForType = onSourcesForType(type, type === 'book' ? bookKind : undefined);
     $: sourceListText = (() => {
         const names = activeSourcesForType;
         return `数据源：${names.length > 0 ? sourceEnList(names) : sourceEnLabel('douban')}`;
@@ -536,7 +555,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
         results = [];
         picked = false;
         // 固定占栏：在发起搜索前按当前类型快照参与源（栏位自此恒定，不随本次各源成败增减）
-        sourcePlan = onSourcesForType(type);
+        sourcePlan = onSourcesForType(type, type === 'book' ? bookKind : undefined);
         srcLive = {}; // 逐源进度清零（本次重新搜索）
         progDone = 0;
         progTotal = 0;
@@ -1321,15 +1340,15 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
 >
     <div class="rl-fhd">
         {entry ? `编辑条目：${entry.title}` : pickedTitle ? `添加条目：${pickedTitle}` : '添加条目'}
-        <span class="rl-fsrc">类型：{ENTRY_TYPE_LABELS[type]} · {sourceListText}</span>
+        <span class="rl-fsrc">类型：{type === 'book' && bookKind === 'comic' ? '漫画' : ENTRY_TYPE_LABELS[type]} · {sourceListText}</span>
     </div>
 
     {#if !entry || refetchOpen}
         <div class="rl-frow">
             <div class="rl-searchbox">
-                <select class="rl-search-type" bind:value={type} aria-label="条目类型">
-                    {#each ENTRY_TYPES as t}
-                        <option value={t}>{ENTRY_TYPE_LABELS[t]}</option>
+                <select class="rl-search-type" value={typeSel} on:change={onTypeSelEl} aria-label="条目类型">
+                    {#each TYPE_OPTIONS as o}
+                        <option value={o.value}>{o.label}</option>
                     {/each}
                 </select>
                 <input class="rl-search-input" placeholder="输入标题…" bind:value={query} bind:this={queryInput}

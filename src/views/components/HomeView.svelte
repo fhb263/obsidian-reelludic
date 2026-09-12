@@ -5,7 +5,7 @@
     import TrackingBoard from './TrackingBoard.svelte';
     import StatsBoard from './StatsBoard.svelte';
     import { ENTRY_TYPE_LABELS, type ColorTheme, type EntryType } from 'data/types';
-    import type { ActivityEvent, MediaEntry, MediaStatus } from 'data/types';
+    import type { ActivityEvent, BookKind, MediaEntry, MediaStatus } from 'data/types';
     import type { FeedRange } from 'pure/activityFeed';
     import { MEDIA_TYPES, type HomeTab } from '../tab';
     import { indicatorTransform } from 'pure/themeTokens';
@@ -29,7 +29,7 @@
     export let excerptCounts: Record<string, number> = {};
     export let initialTab: HomeTab = 'media';
     export let onTabChange: (tab: HomeTab) => void = () => {};
-    export let onAdd: (t?: EntryType) => void = () => {};
+    export let onAdd: (t?: EntryType, kind?: BookKind) => void = () => {};
     export let onEditEntry: (id: string) => void = () => {};
     export let onOpenEntry: (id: string) => void = () => {};
     export let onOpenLink: (url: string) => void = () => {};
