@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS, ReelLudicSettingTab } from 'Settings';
 import type { ReelLudicSettings, SourceTestResult } from 'Settings';
 import { measure, withTimeout, TimedError, TIMEOUT_MS, retry } from 'pure/timing';
 import { createSearchCache } from 'pure/searchCache';
+import { normalizeUiTheme, THEME_CLASS } from 'pure/themeTokens';
 import { checkAnimeUpdate, isBlockedPage, type UpdateCheckResult } from 'pure/updateCheck';
 import { EntryService } from 'services/EntryService';
 import { AiSummaryService } from 'services/aiSummary';
@@ -163,8 +164,14 @@ export default class ReelLudicPlugin extends Plugin {
 
     async onload(): Promise<void> {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-        // v0.4 起设置页移除「色彩主题」选项，外观固定单色（不渲染色条）：
-        // 强制覆盖旧数据中的 colorful，避免老用户残留配置继续显示彩色
+        // 界面主题归一：旧数据无此字段或值损坏一律回退 native（升级无感）
+        this.settings.uiTheme = normalizeUiTheme(this.settings.uiTheme);
+        // colorTheme 迁移（**不是死代码，别删**）：v0.0.1 曾提供「色彩主题：彩色/单色」设置项，
+        // v0.4 起设置页移除该入口、外观固定单色。但设置项下线 ≠ 磁盘值消失 —— v0.0.1~v0.3.x 期间
+        // 选过「彩色」的用户，data.json 里会永久残留 colorTheme:"colorful"。此处必须强制定为 'mono'：
+        // 它曾是全仓**唯一**的纠正点，一旦删掉，MediaList.svelte 的 `{#if colorTheme === 'colorful'}`
+        // 分支就会对这批老用户复活（他们的 Svelte prop 默认值也是 'colorful'），
+        // 表现为升级后突然冒出类型色条 —— 而设置页已无入口、saveSettings 也不覆写，用户无法自救。
         this.settings.colorTheme = 'mono';
         // sourceChains 基线以磁盘加载值初始化：此后 saveSettings 只要链配置与上次持久化基线不同即清缓存
         this.sourceChainBaselineJson = JSON.stringify(this.settings.sourceChains ?? {});
@@ -174,6 +181,8 @@ export default class ReelLudicPlugin extends Plugin {
         // 阅读进度/书签文件名可读化迁移（旧 e_xxx 名 → {书名}-阅读进度|书签-{id}，幂等；须在 service 就绪后）
         await this.migrateProgressFileNames();
         this.rebuildClients();
+
+        this.applyUiTheme();
 
         this.registerView(HOME_VIEW_TYPE, (leaf) => new HomeView(leaf, this));
         // 全局统一 hover 提示（data-tip 自绘气泡，UI-GUIDE 规范；卸载自动清理）
@@ -214,9 +223,33 @@ export default class ReelLudicPlugin extends Plugin {
         this.addSettingTab(new ReelLudicSettingTab(this.app, this));
     }
 
-    async onunload(): Promise<void> {        if (this.refreshTimer !== null) {
+    async onunload(): Promise<void> {
+        // 卸载时清理主题类，避免插件禁用后 body 上残留孤儿类。
+        // 从 THEME_CLASS 取值而非硬编码类名：将来增删主题时不漏改清理点（native 的 '' 跳过）。
+        for (const cls of Object.values(THEME_CLASS)) {
+            if (cls !== '') document.body.removeClass(cls);
+        }
+        if (this.refreshTimer !== null) {
             window.clearTimeout(this.refreshTimer);
             this.refreshTimer = null;
+        }
+    }
+
+    /**
+     * 应用界面主题：在 document.body 挂/去 `rl-theme-modern`。
+     * 单点挂载即可覆盖主界面与**全部弹窗**——Obsidian 的所有 Modal 都挂在 body 下，
+     * 故 `.rl-theme-modern` 作为后代选择器前缀天然命中它们，无需逐个 Modal 改继承链。
+     * native 时不挂类，故 `--rl-t-*` 保持 :root 原值，观感与 1.0.2 逐像素一致。
+     */
+    applyUiTheme(): void {
+        const theme = normalizeUiTheme(this.settings.uiTheme);
+        const cls = THEME_CLASS[theme];
+        document.body.toggleClass('rl-theme-modern', cls !== '');
+        // 结构型主题差异（如页签的分段控件/指示器）无法只靠 CSS 变量表达，需把主题传给视图组件。
+        // 不复用 refreshViews()：那个方法会连带重新 list() 全部条目与摘抄计数（磁盘 IO），
+        // 而此处只需重推主题 prop。组件 $set 仅传 uiTheme，其余 props 保持不动。
+        for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
+            (leaf.view as HomeView).setUiTheme(theme);
         }
     }
 

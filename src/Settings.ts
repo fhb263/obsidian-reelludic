@@ -1,7 +1,7 @@
 // 设置类型、默认值与设置面板（字段只能追加，不能删除——AGENTS 红线）
 import { Notice, Platform, PluginSettingTab, Setting } from 'obsidian';
 import type ReelLudicPlugin from '../main';
-import type { ColorTheme } from 'data/types';
+import type { ColorTheme, UiTheme } from 'data/types';
 import type { ProviderId, SourceGroup, ProviderMeta } from 'pure/sourceRegistry';
 import {
     PROVIDERS, PROVIDER_META, GROUP_LABELS,
@@ -10,6 +10,7 @@ import {
 import { NORMAL_MS } from 'pure/timing';
 import { normalizeProvider, DEFAULT_TRANSLATE_PROMPT } from 'pure/translate';
 import { DEFAULT_SUMMARY_PROMPT } from 'pure/aiSummary';
+import { normalizeUiTheme } from 'pure/themeTokens';
 import { PosterMigrateModal } from 'modals/PosterMigrateModal';
 import { PosterCleanupModal } from 'modals/PosterCleanupModal';
 
@@ -40,6 +41,8 @@ export interface ReelLudicSettings {
     defaultViewMode: 'grid' | 'list';
     /** 隐藏插件内滚动条（外观）：开启后 ReelLudic 视图内滚动条不显示 */
     hideScrollbars: boolean;
+    /** 界面主题（1.0.3）：native 原生（默认）/ modern 现代。缺省时按 native 处理（normalizeUiTheme 兜底） */
+    uiTheme?: UiTheme;
     /** 阅读排版：字号（px，默认 16）/ 行距（倍数，默认 1.8）——设置项已移除（v0.5 起在阅读器内调整，写回本字段），字段保留兼容旧数据 */
     readerFontSize: number;
     readerLineHeight: number;
@@ -91,6 +94,7 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     localizePosters: false,
     defaultViewMode: 'grid',
     hideScrollbars: false,
+    uiTheme: 'native',
     readerFontSize: 16,
     readerLineHeight: 1.8,
     internalBookReader: false,
@@ -537,6 +541,22 @@ export class ReelLudicSettingTab extends PluginSettingTab {
 
         // ──────────── 外观 ────────────
         new Setting(containerEl).setHeading().setName('外观');
+
+        new Setting(containerEl)
+            .setName('界面主题')
+            .setDesc('原生：保持 Obsidian 克制风格（默认）；现代：更圆润的卡片与分段式页签。')
+            .addDropdown((dd) =>
+                dd
+                    .addOption('native', '原生')
+                    .addOption('modern', '现代')
+                    .setValue(normalizeUiTheme(this.plugin.settings.uiTheme))
+                    .onChange(async (value) => {
+                        this.plugin.settings.uiTheme = normalizeUiTheme(value);
+                        await this.plugin.saveSettings();
+                        // 即时生效：重挂 body 类，无需重载或重开视图（静默，不弹 Notice）
+                        this.plugin.applyUiTheme();
+                    }),
+            );
 
         new Setting(containerEl)
             .setName('隐藏插件内滚动条')
