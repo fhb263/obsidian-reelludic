@@ -79,7 +79,7 @@
     export let colorTheme: ColorTheme = 'colorful';
     /**
      * 界面主题（1.0.3）：native 原生（默认，页签保持 1.0.2 下划线形态）/
-     * modern 现代（分段控件 + 滑动指示器 + 纯文字）。
+     * modern 现代（分段控件 + 滑动指示器；图标两主题恒渲染——2026-09-12 用户裁定恢复）。
      * 默认值取 'native' 而非从 colorTheme 推导——必须与 Settings 的 DEFAULT_SETTINGS 一致，
      * 且与 normalizeUiTheme 的兜底值相同，避免「设置缺失」时落进现代主题。
      */
@@ -186,9 +186,7 @@
                 role="tab"
                 aria-selected={activeTab === t}
                 on:click={() => switchTab(t)}>
-                {#if uiTheme !== 'modern'}
-                    <Icon icon={tabIcon(t)} size={13} />
-                {/if}
+                <Icon icon={tabIcon(t)} size={13} />
                 {tabLabel(t)}
             </button>
         {/each}
@@ -311,9 +309,9 @@
         border-bottom-color: var(--interactive-accent);
     }
 
-    /* ── 1.0.3 现代主题页签：分段控件（胶囊容器 + 描边滑动指示器 + 纯文字）──
+    /* ── 1.0.3 现代主题页签：分段控件（胶囊容器 + 描边滑动指示器）──
        为何必须走结构分支而非纯 CSS 变量：变量能改颜色与圆角，但变不出新 DOM 节点（指示器），
-       也删不掉既有节点（图标），两者都只能靠模板 {#if} 表达。
+       只能靠模板 {#if} 表达。页签图标两主题恒渲染（定稿曾为纯文字，2026-09-12 用户裁定恢复）。
        fallback 说明：本块整体挂在 .rl-tabs-modern 下，native 主题选择器不匹配、规则根本不生效，
        故 var() 的第二参数纯属防御性冗余；此处仍一并写上，与 Task 3/4 中「native 也会命中」的规则保持一致纪律。 */
     .rl-tabs.rl-tabs-modern {
@@ -343,7 +341,7 @@
                     width var(--rl-t-dur-ind, .28s) var(--rl-t-ease-ind, cubic-bezier(.34, 1.3, .64, 1));
         pointer-events: none; z-index: 0;
     }
-    /* 文字压在指示器之上（z-index:1），并剥掉 native 的下划线/margin 负值 */
+    /* 图标与文字压在指示器之上（z-index:1），并剥掉 native 的下划线/margin 负值 */
     .rl-tabs.rl-tabs-modern button {
         position: relative; z-index: 1;
         padding: 7px 17px; border-radius: var(--rl-t-radius-pill, 999px);
