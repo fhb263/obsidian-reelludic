@@ -563,7 +563,7 @@
     padding: 4px 12px;
     cursor: pointer;
 }
-.rl-btn-primary, .rl-ex-btn-primary { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
+.rl-btn-primary, .rl-ex-btn-primary { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; box-shadow: var(--rl-t-shadow-cta, none); }
 .rl-btn:disabled, .rl-ex-btn:disabled { opacity: .5; cursor: not-allowed; }
 /* 主界面危险按钮（EntryForm 删除条目 / CalendarDay 清除排期）：红描边红字保守态，hover 红底白字
    （弹窗危险主按钮 rl-nc-danger 已独立为实心红，见冲突弹窗区块；二者分场景，勿合并） */

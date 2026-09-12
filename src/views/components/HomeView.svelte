@@ -350,9 +350,11 @@
         padding: 7px 17px; border-radius: var(--rl-t-radius-pill, 999px);
         border-bottom: none; margin-bottom: 0;
         background: transparent; white-space: nowrap;
-        transition: color var(--rl-t-dur, .18s) ease;
+        transition: color var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
     }
     .rl-tabs.rl-tabs-modern button:hover { background: transparent; }
+    /* 现代主题：分段控件按下不做缩放（native 的 :active scale(.96) 是原生按钮抖动，modern 下应克制） */
+    .rl-tabs.rl-tabs-modern button:active { transform: none; }
     /* 选中态不再用下划线+放大字重：由指示器承担视觉焦点，避免「描边药丸 + 下划线」双重强调 */
     .rl-tabs.rl-tabs-modern button.on {
         border-bottom: none; font-weight: 600;
