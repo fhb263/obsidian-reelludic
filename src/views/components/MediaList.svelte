@@ -767,13 +767,13 @@
     .rl-libstats-sep { opacity: .7; }
     .rl-toolbar button {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
-        background: var(--background-primary); color: var(--text-muted); border-radius: 6px; padding: 3px 10px; cursor: pointer;
+        background: var(--background-primary); color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); padding: 3px 10px; cursor: pointer;
     }
     .rl-toolbar .rl-cnt { opacity: .6; font-size: 10px; }
     /* 搜索框定宽（阶段7+：240~320px，无需通栏拉伸） */
     .rl-toolbar .rl-search {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
-        background: var(--background-primary); color: var(--text-normal); border-radius: 6px;
+        background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px);
         padding: 5px 10px; width: 280px; max-width: 320px; min-width: 240px; flex: none;
     }
     .rl-toolbar .rl-search:focus { outline: none; border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
@@ -785,18 +785,18 @@
         color: var(--text-on-accent) !important;
         font-weight: 600; flex: none;
     }
-    .rl-batchbar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--interactive-accent); border-radius: 8px; background: var(--background-modifier-hover); }
+    .rl-batchbar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--interactive-accent); border-radius: var(--rl-t-radius-lg, 8px); background: var(--background-modifier-hover); }
     .rl-batch-cnt { font-size: 12px; font-weight: 600; color: var(--text-normal); }
     .rl-batchbar select, .rl-batchbar button {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
-        background: var(--background-primary); color: var(--text-muted); border-radius: 6px; padding: 2px 8px; cursor: pointer;
+        background: var(--background-primary); color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); padding: 2px 8px; cursor: pointer;
     }
     .rl-batchbar button:hover { color: var(--text-normal); border-color: var(--interactive-accent); }
     .rl-batchbar button:disabled { opacity: .4; cursor: not-allowed; }
     .rl-batch-danger { color: var(--rl-danger) !important; border-color: var(--rl-danger) !important; }
     .rl-batch-tags {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
-        background: var(--background-primary); color: var(--text-normal); border-radius: 6px;
+        background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px);
         padding: 2px 8px; min-width: 150px; max-width: 200px;
     }
     .rl-batch-tags::placeholder { color: var(--text-faint); }
@@ -808,7 +808,7 @@
     .rl-vb-group { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
     .rl-vb-group button {
         font-family: inherit; font-size: 12px; color: var(--text-muted);
-        background: transparent; border: none; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+        background: transparent; border: none; padding: 4px 10px; border-radius: var(--rl-t-radius-pill, 999px); cursor: pointer;
         transition: background .15s ease, color .15s ease;
     }
     .rl-vb-group button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
@@ -825,7 +825,7 @@
     .rl-sel-label { font-size: 10px; color: var(--text-faint); }
     .rl-sort-select {
         font-family: inherit; font-size: 12px; color: var(--text-normal);
-        border: 1px solid var(--background-modifier-border); border-radius: 6px;
+        border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px);
         background: var(--background-primary); padding: 2px 8px; cursor: pointer;
     }
     .rl-sort-select:focus { outline: none; border-color: var(--interactive-accent); }
@@ -833,7 +833,7 @@
     .rl-vb-view { display: inline-flex; margin-left: auto; }
     .rl-vb-view button {
         font-family: inherit; font-size: 13px; color: var(--text-muted);
-        background: transparent; border: none; padding: 4px 9px; border-radius: 6px; cursor: pointer;
+        background: transparent; border: none; padding: 4px 9px; border-radius: var(--rl-t-radius-md, 6px); cursor: pointer;
         transition: background .15s ease, color .15s ease;
     }
     .rl-vb-view button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
@@ -842,8 +842,8 @@
     .rl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; align-items: stretch; }
     /* 卡片统一尺寸：列内 flex 等高，meta 区域最小高度保证各类型（电影/电视剧/动画/书籍/游戏）
        的卡片在视觉上同高，进度行贴底对齐 */
-    .rl-card { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; overflow: hidden; cursor: pointer; position: relative; display: flex; flex-direction: column; }
-    .rl-card:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
+    .rl-card { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); overflow: hidden; cursor: pointer; position: relative; display: flex; flex-direction: column; }
+    .rl-card:hover { box-shadow: var(--rl-t-shadow-card-hover, 0 2px 8px rgba(0, 0, 0, .12)); transform: translateY(var(--rl-t-lift, 0px)) scale(var(--rl-t-scale, 1)); }
     .rl-card.rl-sel-card { border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
     .rl-type-bar { height: 4px; flex: none; }
     /* Hover 快速操作（阶段6）：封面遮罩，默认透明；「打开笔记 ↗」文字按钮居中、⋯ 更多右上 */
@@ -858,18 +858,18 @@
     /* 瀑布流视图：只展示封面的多列流（列内卡片等高，列间自然参差） */
     .rl-masonry { display: flex; gap: 8px; align-items: flex-start; }
     .rl-m-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-    .rl-m-card { position: relative; border-radius: 6px; overflow: hidden; cursor: pointer; }
-    .rl-m-card:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, .16); }
-    .rl-m-cov { display: block; width: 100%; height: auto; border-radius: 6px; }
+    .rl-m-card { position: relative; border-radius: var(--rl-t-radius-md, 6px); overflow: hidden; cursor: pointer; }
+    .rl-m-card:hover { box-shadow: var(--rl-t-shadow-card-hover, 0 2px 8px rgba(0, 0, 0, .16)); transform: translateY(var(--rl-t-lift, 0px)) scale(var(--rl-t-scale, 1)); }
+    .rl-m-cov { display: block; width: 100%; height: auto; border-radius: var(--rl-t-radius-md, 6px); }
     .rl-m-ph {
-        aspect-ratio: 2 / 3; width: 100%; border-radius: 6px;
+        aspect-ratio: 2 / 3; width: 100%; border-radius: var(--rl-t-radius-md, 6px);
         display: flex; align-items: center; justify-content: center;
         background: color-mix(in srgb, var(--tc) 18%, var(--background-secondary));
         color: var(--tc); font-size: 22px; font-weight: 500;
     }
     /* 默认纯封面；hover 才浮出标题/评分/年份（底部渐变托底 + 底部对齐） */
     .rl-m-overlay {
-        position: absolute; inset: 0; border-radius: 6px;
+        position: absolute; inset: 0; border-radius: var(--rl-t-radius-md, 6px);
         display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
         padding-bottom: 6px;
         background: linear-gradient(0deg, rgba(0, 0, 0, .8), rgba(0, 0, 0, .3) 55%, transparent);
@@ -897,13 +897,13 @@
     .rl-hover-open {
         font-family: inherit; font-size: 12px; font-weight: 600;
         border: none; cursor: pointer; background: rgba(0, 0, 0, .55); color: #fff;
-        border-radius: 999px; padding: 7px 14px; line-height: 1;
+        border-radius: var(--rl-t-radius-pill, 999px); padding: 7px 14px; line-height: 1;
         transition: background .15s ease, transform .15s ease;
     }
     .rl-hover-open:hover { background: var(--interactive-accent); transform: scale(1.12); }
     .rl-hover-more {
         position: absolute; top: 8px; right: 8px;
-        width: 26px; height: 26px; border-radius: 6px;
+        width: 26px; height: 26px; border-radius: var(--rl-t-radius-md, 6px);
         border: none; cursor: pointer; background: rgba(0, 0, 0, .55); color: #fff;
         font-size: 15px; line-height: 1; display: flex; align-items: center; justify-content: center;
         transition: background .15s ease;
@@ -957,15 +957,15 @@
     .rl-prog { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
     /* 游戏时长空值占位：灰字「-」（与已填「已玩 Xh」同字重区，弱化不抢眼） */
     .rl-prog-na { color: var(--text-faint); }
-    .rl-ex-cnt { font-size: 10px; font-weight: 600; color: var(--interactive-accent); background: var(--background-modifier-hover); border-radius: 999px; padding: 1px 7px; margin-left: auto; }
+    .rl-ex-cnt { font-size: 10px; font-weight: 600; color: var(--interactive-accent); background: var(--background-modifier-hover); border-radius: var(--rl-t-radius-pill, 999px); padding: 1px 7px; margin-left: auto; }
     /* 阅读进度行（阶段7+）：左百分比 + 进度条，垂直居中对齐；百分比 muted 小字随风格 */
     .rl-readrow { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
     .rl-read-pct { font-size: 9px; line-height: 1; color: var(--text-faint); flex: none; }
     /* 阅读进度条：仅已开始的书渲染（未开始无灰线，避免像未加载占位符）；填充色更有存在感 */
-    .rl-readbar { height: 4px; flex: 1 1 auto; background: var(--background-modifier-border); border-radius: 999px; overflow: hidden; }
-    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: 999px; transition: width .3s ease; }
-    .rl-menu { position: absolute; top: 100%; left: 6px; margin-top: 4px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .15); padding: 4px; z-index: 30; min-width: 110px; }
-    .rl-menu button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 5px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: 6px; cursor: pointer; font-family: inherit; }
+    .rl-readbar { height: 4px; flex: 1 1 auto; background: var(--background-modifier-border); border-radius: var(--rl-t-radius-pill, 999px); overflow: hidden; }
+    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: var(--rl-t-radius-pill, 999px); transition: width .3s ease; }
+    .rl-menu { position: absolute; top: 100%; left: 6px; margin-top: 4px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); box-shadow: var(--rl-t-shadow-menu, 0 4px 14px rgba(0, 0, 0, .15)); padding: 4px; z-index: 30; min-width: 110px; }
+    .rl-menu button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 5px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer; font-family: inherit; }
     .rl-menu button:hover { background: var(--background-modifier-hover); }
     .rl-menu button.rl-sel { font-weight: 600; color: var(--interactive-accent); }
     .rl-menu button.rl-illegal { opacity: .35; cursor: not-allowed; }
@@ -976,11 +976,11 @@
     .rl-ctx {
         position: absolute; z-index: 100; min-width: 140px;
         background: var(--background-primary); border: 1px solid var(--background-modifier-border);
-        border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); padding: 4px;
+        border-radius: var(--rl-t-radius-lg, 8px); box-shadow: var(--rl-t-shadow-menu-strong, 0 4px 14px rgba(0, 0, 0, .18)); padding: 4px;
         /* 视口过矮/过窄时内联 max-height/max-width 生效 → 菜单内部滚动，不整块越界 */
         overflow: auto; overscroll-behavior: contain;
     }
-    .rl-ctx button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 6px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: 6px; cursor: pointer; font-family: inherit; }
+    .rl-ctx button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 6px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer; font-family: inherit; }
     .rl-ctx button:hover { background: var(--background-modifier-hover); }
     .rl-ctx .rl-ctx-danger { color: var(--rl-danger-strong); }
     .rl-ctx .rl-ctx-danger:hover { background: var(--rl-danger-strong); color: #fff; }
