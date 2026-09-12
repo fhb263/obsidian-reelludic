@@ -3,6 +3,33 @@
 > 版式：按版本分节，节内分「新增功能 / 界面美化 / 体验优化 / 问题修复 / 内部开发者」五类。
 > 版本号规则：manifest.json 与 package.json 同步，`npm run version` 统一回写。
 
+## 1.0.3 · UI 双主题（原生 / 现代）— 2026-09-12
+
+> **两正交维度**：明暗由 Obsidian 管（`body.theme-light` / `.theme-dark`），原生/现代由插件管（`body.rl-theme-modern`）→ 必须按 **2×2 组合**验收。默认 `native`，`native` 与 1.0.2 **逐像素一致**（本版首要验收标准）。
+
+> **① 令牌层 `--rl-t-*`（形态，与颜色的 `--rl-*` 正交）**：`styles.css` 内 `:root` 18 键给原生原值 + `.rl-theme-modern` 覆盖 12 项。管圆角 / 阴影 / 位移 / 时长 / 缓动。**三条纪律**：⑴**顺序敏感** —— `.rl-theme-modern` 必须写在令牌 `:root` **之后**，否则 modern 覆盖静默失效（已加机器断言）；⑵**fallback 必须给原值** —— 一律写 `var(--rl-t-radius-lg, 8px)`，第二参数缺失时令牌解析不到会让属性变**空白**（静默破样式，本机制最危险的失败模式；断言用平衡括号扫描逐个校验，朴素 `[^)]+` 会在 `rgba()` 内层 `)` 处截断 —— 本日踩过两次）；⑶**诊断口诀：某处主题 B 不生效 = 该处值仍是硬编码**。
+
+> **② 🔴 只迁移「能精确匹配某一档位」的原值（用户 2026-09-12 当场裁定）**：档位实际值为 `sm`=3px（**两主题相同**）/ `md`=6px→modern **10px** / `lg`=8px→modern **16px** / `pill`=999px（两主题同）。映射 = `3px→sm` / `6px→md` / `8px→lg` / `999px→pill`；**无档位的值（`2/4/5/7/9/10/12px`）保持硬编码**。⚠️ 计划里的映射表曾写「吸附到最近档位」，与「native 逐像素不变」的验收标准直接冲突，且 `10px→md` 在 modern 下仍是 10px（等于没迁移）—— **实施前必须与令牌层实际值对账，别照抄计划的估算表**。本裁定影响 Task 4（20 处未迁移）与 Task 5（`4px`×15 / `2px`×6 / `5px`×1 / `3px`×1 / `10px`×1 未迁移）。
+
+> **③ 主题挂载单点 = `document.body`（替代原设计的 `RlModal` 共享基类）**：设计文档 §3.3 的 `RlModal` 基类方案**已在计划阶段废弃**，原因：⑴**收益不足** —— 16 个 Modal 中仅 4 个持有 `plugin` 引用，其中 3 个（阅读器 / 播放器）又属排除范围，为挂一个类改 16 个文件的继承链成本远超收益；⑵**风险更低** —— 继承链改造触碰全部弹窗构造路径属 P1 风险，`body` 挂载零侵入；⑶**原方案优点保留** —— body 单点**天然覆盖未来新增弹窗**。故 `src/modals/*.ts` **16 个文件一行不改**。此决策已告知用户（计划文末「与设计文档的差异说明」）。
+
+> **④ 页签为唯一组件内结构分支**：`{#if uiTheme === 'modern'}` 增删 DOM 节点（变不出指示器、删不掉图标）—— 变量改不了 DOM，**结构差异必须走结构分支**。modern = 胶囊容器 + 描边滑动指示器 + **纯文字无图标**；`TAB_PAD=5` 必须与 CSS `padding:5px` 及指示器 `top/left:5px` **三处一致**；窄栏 `overflow-x:auto` 横向滚动、**不压缩字号**。⚠️ Svelte `$:` 响应式块**必须显式引用**依赖（仅写在函数体内 Svelte 不登记），节点在 `{#if}` 内**后挂载**时需 `void indEl` 建立依赖，否则指示器不动。
+
+> **⑤ 切换即时且静默**：`applyUiTheme()` 顺带调 `HomeView.setUiTheme()` 只重推 prop，**不走 `refreshViews()`**（那会连带 `list()` 全量条目 = 无谓磁盘 IO）；设置页下拉 onChange 不弹 Notice。
+
+> **⑥ 🔴 `main.ts:175` `this.settings.colorTheme = 'mono'` 不是死代码，勿删（修正原判断错误）**：既有内部文档曾判断「`colorTheme` 的硬写已解除」—— **恰好相反**。v0.0.1 曾有「色彩主题：彩色/单色」设置项；磁盘残留 `colorTheme:"colorful"` 的老用户靠这**唯一**纠正点兜底，删掉会让 `MediaList` 类型色条复活（Svelte prop 默认值也是 `'colorful'`）且设置页已无入口、**用户无法自救**。已加注释「不是死代码，别删」+ `assert-symbols.cjs` 正向断言 `colorTheme = "mono"` **守住该兜底存在**（防将来有人当死代码再删一次）。
+
+> **⑦ 现代弹窗骨架 + 沉浸式显式排除**：`styles.css` 尾部追加 `.rl-theme-modern .modal`（圆角令牌 / `--rl-t-shadow-modal` 大阴影 / 去边框）+ `.rl-theme-modern .modal.rl-reader-immersive`（`border-radius:0; box-shadow:none`）。⚠️ **两者特异性均为 (0,2,0)，靠书写顺序决胜 → 排除规则必须排在骨架之后**；顺序颠倒会让阅读器被套上圆角（已加顺序断言 + 突变验证）。**阅读器（TXT/EPUB/PDF）与播放器不参与主题化**。断言禁 `!important`。
+
+> **⑧ 令牌迁移实施面**：Task 3 `MediaList.svelte`（24 处：md×9 / lg×4 / pill×5 + 卡片/菜单 4 处阴影令牌 + 悬停 lift/scale）；Task 4 四组件 33 处（CalendarBoard 8 / TrackingBoard 6 / StatsBoard 4 / EntryForm 15）；Task 5 `styles.css` 全局层（md×29 / lg×4 / pill×5 + PDF 页卡阴影）。⚠️ `.rl-tip` 提示气泡**阴影不参与主题化**（气泡应跨主题一致），其圆角固定为 md 原值 6px 保证 modern 下也不变。
+
+> **⑨ 验证手段**：每任务独立探针 + **突变测试**证明断言非橡皮图章。Task 5 探针 **47/47**、突变 **13/13 全数被抓**（含撤 fallback / 改错 fallback / 漏迁移 / 删排除规则 / 倒置顺序 / 加 !important / 令牌块移位 / 误迁移 4px）。⚠️ **突变测试暴露探针自身两处空断言**：⑴`css.indexOf(':root {')` 命中的是 Obsidian 基础变量块（第 11 行）而非令牌层（第 62 行）→ 改锚定 `--rl-t-radius-sm`；⑵`.rl-theme-modern .modal.rl-reader-immersive` **以 `.modal.rl-reader-immersive` 为子串**，全局 `includes`/正则会被另一处满足 → 空断言，必须**分别取块**校验。**这是「断言写了 ≠ 断言有效」的实证**。
+
+> **⑩ 🔴 本日 git 对象库第二次静默损坏**：`git commit` 报 `fatal: could not parse HEAD`，`git fsck` 显示 `refs/heads/master: invalid sha1 pointer`；本会话 7 个 commit 全部丢失不可找回（最新幸存对象为 11:37 的 `8727a6a`）。恢复法：备份 `.git` 出工作区 → `mv .git .git-broken-20260912`（**必须移出工作区**，留里面污染 `git status`）→ `git init` → 回退基线 → **单根快照 commit**（message 注明损坏 + 所含原始 commit）→ 按任务逐个重放。**重放勿整文件 cp**（会带进其他任务的未完成改动）→ 逐块精确拼接 + 匹配次数断言 + 回读 `diff`（本轮 `styles.css` 踩了「截取块漏 7 行头注释」的 off-by-N，靠 `diff` 而非脚本自检发现）。**零实际工作丢失，仅历史丢失**。教训：**每个大任务完成即 commit 并立刻 `git log -1` 验证可读**。
+
+> **⑪ 交付数字**：全量测试 **65 文件 / 1034 用例全绿**；构建告警 **87**（与基线一致）；`assert-symbols.cjs` 新增 1.0.3 段（正向 7 js + 5 css、反向 2、防误删 2、顺序 2、fallback 全量扫描、colorTheme 兜底、native 形态 3）；UI-GUIDE **v5** 新增 §6（主题 B 豁免清单：阴影堆叠 / 圆角夸张 / 滑动动画 / 主按钮辉光，**边界** = 仅限 `.rl-theme-modern` 作用域、不含渐变/3D 倾斜/emoji/呼吸动画/`!important`、**文字对比度仍须 AA**）+ §6.1 令牌层使用纪律。Commit：`24e9a43`(T0) → `51b2b2b`(T1+2) → `80c1fd6`(T3) → `2ca7e5e`(T4) → `743e584`(T5) → `6d59c1f`(T6)。
+
+
 ## 未发布 → 随 v1.0.2（2026-09-09）发布收口
 
 > **1.0.2 发布说明**：本区为历史累积（1.0.0/1.0.1 期条目多未切分，仍在下方）；本版 = #234/#235 + 09-09 阅读器批次（当日早段，见 2026-09-09 记忆）＋下方 4 条 09-09 修复项，已全部收口于根 CHANGELOG [1.0.2] + RELEASE-NOTES-1.0.2.md（版本三文件 1.0.2，manifest/versions/package 同步）。
