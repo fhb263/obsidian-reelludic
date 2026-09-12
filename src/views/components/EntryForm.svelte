@@ -31,7 +31,7 @@ const STATUS_OPTIONS: MediaStatus[] = ['want', 'watching', 'watched', 'archived'
 /** 类型下拉选项：六类型 + 书籍后插「漫画」（漫画 = 书籍类目子类的搜索快捷态，非独立 EntryType） */
 const TYPE_OPTIONS: ReadonlyArray<{ value: SearchTypeSel; label: string }> = ENTRY_TYPES.flatMap((t): { value: SearchTypeSel; label: string }[] =>
     t === 'book'
-        ? [{ value: t, label: ENTRY_TYPE_LABELS[t] }, { value: 'comic', label: '漫画' }]
+        ? [{ value: t, label: ENTRY_TYPE_LABELS[t] }, { value: 'novel', label: '网文' }, { value: 'comic', label: '漫画' }]
         : [{ value: t, label: ENTRY_TYPE_LABELS[t] }],
 );
 
@@ -228,14 +228,14 @@ export let initialBookKind: BookKind | undefined = undefined;
     $: { if (summaryEl) autosizeTextarea(summaryEl); void summary; }
     $: { if (authorIntroEl) autosizeTextarea(authorIntroEl); void authorIntro; }
     $: { if (tocEl) autosizeTextarea(tocEl); void toc; }
-    /** 书籍分类（1.0.3）：book 出版 / novel 网文 / comic 漫画；缺省归出版（pure/bookKind），表单三颗 chip 选择 */
+    /** 书籍分类（1.0.3）：book 出版 / novel 网文 / comic 漫画；缺省归出版（pure/bookKind）；分类唯一入口 = 搜索框下拉（表单 chips 已移除，2026-09-12 用户裁定） */
     let bookKind: BookKind = normalizeBookKind(entry?.bookKind ?? initialBookKind);
-    /** 搜索框类型下拉展示值（漫画 = 书籍+comic 分类快捷态）：纯派生自 type+bookKind，chips/编辑初始化全自动回显，规则见 pure/searchTypeSel */
+    /** 搜索框类型下拉展示值（书籍态显示子类本名：书籍/网文/漫画）：纯派生自 type+bookKind，编辑初始化全自动回显，规则见 pure/searchTypeSel */
     let typeSel: SearchTypeSel;
     $: typeSel = toSearchTypeSel(type, bookKind);
-    /** select 受控 change：把下拉选择按派生规则落成真实 type+bookKind（添加模式漫画→书籍复位出版；编辑模式不复位防静默改写；bind+on:change 同元素有编译警告，改显式 value+handler） */
+    /** select 受控 change：把下拉选择落成真实 type+bookKind（下拉是书籍分类唯一入口：选「书籍」无条件复位出版，bind+on:change 同元素有编译警告，改显式 value+handler） */
     function onTypeSelEl(ev: Event): void {
-        const next = applySearchTypeSel((ev.currentTarget as HTMLSelectElement).value as SearchTypeSel, type, bookKind, !entry);
+        const next = applySearchTypeSel((ev.currentTarget as HTMLSelectElement).value as SearchTypeSel, bookKind);
         type = next.type;
         bookKind = next.bookKind;
     }
@@ -1340,7 +1340,7 @@ export let initialBookKind: BookKind | undefined = undefined;
 >
     <div class="rl-fhd">
         {entry ? `编辑条目：${entry.title}` : pickedTitle ? `添加条目：${pickedTitle}` : '添加条目'}
-        <span class="rl-fsrc">类型：{type === 'book' && bookKind === 'comic' ? '漫画' : ENTRY_TYPE_LABELS[type]} · {sourceListText}</span>
+        <span class="rl-fsrc">类型：{type === 'book' ? (bookKind === 'comic' ? '漫画' : bookKind === 'novel' ? '网文' : ENTRY_TYPE_LABELS[type]) : ENTRY_TYPE_LABELS[type]} · {sourceListText}</span>
     </div>
 
     {#if !entry || refetchOpen}
@@ -1526,12 +1526,6 @@ export let initialBookKind: BookKind | undefined = undefined;
                     </div>
                     {/if}
             {#if type === 'book'}
-                <div class="rl-kind-row">
-                    <span class="rl-lbl">书籍分类</span>
-                    <button class="rl-chip" class:on={bookKind === 'book'} on:click={() => (bookKind = 'book')}>出版</button>
-                    <button class="rl-chip" class:on={bookKind === 'novel'} on:click={() => (bookKind = 'novel')}>网文</button>
-                    <button class="rl-chip" class:on={bookKind === 'comic'} on:click={() => (bookKind = 'comic')}>漫画</button>
-                </div>
                 <div class="rl-2col">
                     <div><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} /></div>
                     <div><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} /></div>

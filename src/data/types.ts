@@ -100,7 +100,7 @@ export interface MediaEntry {
     durationMin?: number;
     /** 又名/别名（豆瓣详情回填） */
     aliases?: string[];
-    /** 书籍子分类（缺省视为 'book'，展示为「出版」；表单「书籍分类」三颗 chip 选择，归一见 pure/bookKind） */
+    /** 书籍子分类（缺省视为 'book'，展示为「出版」；分类唯一入口 = 搜索框类型下拉，归一见 pure/bookKind） */
     bookKind?: BookKind;
     /** 音乐子分类（缺省视为 'music'，展示为「音乐」；表单「音乐分类」两颗 chip 选择，归一见 pure/musicKind） */
     musicKind?: MusicKind;
