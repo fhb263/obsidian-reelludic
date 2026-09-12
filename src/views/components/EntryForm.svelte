@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount, tick } from 'svelte';
-    import { ENTRY_TYPES, ENTRY_TYPE_LABELS, type EntryType } from 'data/types';
+    import { ENTRY_TYPE_LABELS, type EntryType } from 'data/types';
     import { statusLabel, statusVerb, reviewLabel } from 'pure/labels';
     import { reconcileBookProgress, pageFromPercent, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
     import { normalizeBookKind } from 'pure/bookKind';
@@ -28,12 +28,17 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     /** 状态选项（想看/在看/已看/存档；存档选中时右侧不显示日期输入框；弃剧已移除，旧数据 dropped 编辑保存时迁移为存档） */
 const STATUS_OPTIONS: MediaStatus[] = ['want', 'watching', 'watched', 'archived'];
 
-/** 类型下拉选项：六类型 + 书籍后插「漫画」（漫画 = 书籍类目子类的搜索快捷态，非独立 EntryType） */
-const TYPE_OPTIONS: ReadonlyArray<{ value: SearchTypeSel; label: string }> = ENTRY_TYPES.flatMap((t): { value: SearchTypeSel; label: string }[] =>
-    t === 'book'
-        ? [{ value: t, label: ENTRY_TYPE_LABELS[t] }, { value: 'novel', label: '网文' }, { value: 'comic', label: '漫画' }]
-        : [{ value: t, label: ENTRY_TYPE_LABELS[t] }],
-);
+/** 类型下拉选项（显式顺序，2026-09-12 用户指定：文学 → 网文 → 漫画 → 动画 → 电视剧 → 电影 → 游戏 → 音乐；网文/漫画 = 书籍类目子类的搜索快捷态，非独立 EntryType） */
+const TYPE_OPTIONS: ReadonlyArray<{ value: SearchTypeSel; label: string }> = [
+    { value: 'book', label: '文学' },
+    { value: 'novel', label: '网文' },
+    { value: 'comic', label: '漫画' },
+    { value: 'anime', label: ENTRY_TYPE_LABELS.anime },
+    { value: 'tv', label: ENTRY_TYPE_LABELS.tv },
+    { value: 'movie', label: ENTRY_TYPE_LABELS.movie },
+    { value: 'game', label: ENTRY_TYPE_LABELS.game },
+    { value: 'music', label: ENTRY_TYPE_LABELS.music },
+];
 
     export let initialType: EntryType = 'movie';
 /** 新增模式初始书籍分类：书籍页签聚焦子分类（漫画/网文）点「＋ 添加」传入（漫画态下拉选中「漫画」） */
