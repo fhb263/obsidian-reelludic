@@ -517,7 +517,7 @@
     .rl-s-qbtn {
         font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
         display: inline-flex; align-items: center; gap: 6px;
-        border: 1px solid var(--background-modifier-border); border-radius: 8px;
+        border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px);
         background: var(--background-primary); color: var(--text-muted);
         padding: 6px 12px; transition: background .15s ease, color .15s ease;
     }
@@ -538,7 +538,7 @@
         font-family: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
         display: flex; align-items: center; gap: 7px;
         border: none; background: transparent; color: var(--text-normal);
-        padding: 7px 9px; border-radius: 6px;
+        padding: 7px 9px; border-radius: var(--rl-t-radius-md, 6px);
     }
     .rl-dd-item:hover { background: var(--background-modifier-hover); }
     .rl-dd-item b { color: var(--interactive-accent); font-size: 12.5px; }
@@ -549,7 +549,7 @@
     .rl-want-panel { width: min(560px, 90vw); max-height: 70vh; display: flex; flex-direction: column; background: var(--background-primary); border-radius: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, .25); padding: 14px 16px; }
     .rl-want-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; margin-bottom: 10px; }
     .rl-want-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-    .rl-want-list li { display: flex; align-items: baseline; gap: 8px; font-size: 12px; padding: 5px 8px; border-radius: 6px; }
+    .rl-want-list li { display: flex; align-items: baseline; gap: 8px; font-size: 12px; padding: 5px 8px; border-radius: var(--rl-t-radius-md, 6px); }
     .rl-want-list li:hover { background: var(--background-modifier-hover); }
     .rl-want-type { flex: none; font-size: 10px; color: var(--text-muted); background: var(--background-modifier-border); border-radius: 5px; padding: 1px 7px; }
     .rl-want-title { cursor: pointer; font-weight: 600; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -560,7 +560,7 @@
     .rl-s-today .rl-s-panel-title { justify-content: space-between; align-items: center; }
     .rl-s-title-right { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
     /* 时间范围切换（日/周/月/年）：分段控件，当前项用 accent 实心 */
-    .rl-feed-switch { display: inline-flex; border: 1px solid var(--background-modifier-border); border-radius: 6px; overflow: hidden; }
+    .rl-feed-switch { display: inline-flex; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); overflow: hidden; }
     .rl-feed-tab {
         font-family: inherit; font-size: 11px; padding: 2px 9px; border: none;
         background: transparent; color: var(--text-muted); cursor: pointer;

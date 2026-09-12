@@ -1876,14 +1876,14 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-fsrc { font-size: 11px; color: var(--text-faint); font-weight: 400; }
     .rl-frow { display: flex; gap: 8px; align-items: center; }
     /* 组合输入框：类型下拉（左 Label）+ 输入框（右），共享边框与圆角 */
-    .rl-searchbox { display: flex; align-items: stretch; flex: 1; min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-primary); overflow: hidden; }
+    .rl-searchbox { display: flex; align-items: stretch; flex: 1; min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); background: var(--background-primary); overflow: hidden; }
     .rl-searchbox:focus-within { border-color: var(--interactive-accent); }
     .rl-search-type { border: none; background: transparent; color: var(--text-muted); font-size: 12px; padding: 5px 8px; cursor: pointer; flex: none; border-right: 1px solid var(--background-modifier-border); }
     /* 类型下拉展开的选项列表：原生 option 不继承主题变量，暗黑模式下默认白底蓝字——显式设主题色（亮/暗自适应） */
     .rl-search-type option { background: var(--background-secondary); color: var(--text-normal); }
     .rl-search-input { border: none; background: transparent; color: var(--text-normal); font-size: 12px; padding: 5px 9px; flex: 1; min-width: 0; }
     .rl-search-input:focus { outline: none; }
-    .rl-input { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: 6px; padding: 5px 9px; width: 100%; }
+    .rl-input { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); padding: 5px 9px; width: 100%; }
     .rl-input:focus { outline: none; border-color: var(--interactive-accent); }
     .rl-btn-danger { color: var(--text-error); border-color: var(--text-error); background: transparent; font-weight: 600; }
     .rl-btn-danger:hover { background: var(--text-error); color: #fff; }
@@ -1904,7 +1904,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-progress-eta { color: var(--text-faint); }
     /* 逐源进度行：每源一个小标签，先返回的标记为已完成（主题色），未完成灰态 */
     .rl-prog-srcs { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 2px 0 6px; }
-    .rl-prog-src { font-size: 11px; color: var(--text-faint); border: 1px solid var(--background-modifier-border); border-radius: 999px; padding: 1px 9px; line-height: 18px; white-space: nowrap; user-select: none; }
+    .rl-prog-src { font-size: 11px; color: var(--text-faint); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-pill, 999px); padding: 1px 9px; line-height: 18px; white-space: nowrap; user-select: none; }
     .rl-prog-src-ok { color: var(--interactive-accent); border-color: var(--interactive-accent); }
     .rl-prog-src-bad { color: var(--text-error); border-color: var(--text-error); }
     .rl-res-head { display: flex; align-items: baseline; gap: 10px; margin: 8px 0 10px; }
@@ -1914,13 +1914,13 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     /* 单列横排卡片：左侧小封面 + 右侧信息列（标题 + 年份/评分/原名紧凑排布 + 来源徽标右上角） */
     /* 结果多栏 grid：列数 = 当前栏数（固定占栏），1~3 栏显式排布不再 auto-fit 猜——避免窄窗下栏位换行堆叠 */
     .rl-res { margin-top: 4px; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 4px 4px 0; max-height: 52vh; display: grid; grid-template-columns: repeat(var(--rl-cols, 1), minmax(0, 1fr)); gap: 10px 12px; align-items: start; }
-    .rl-res-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 4px 6px 6px; background: var(--background-secondary); }
+    .rl-res-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); padding: 4px 6px 6px; background: var(--background-secondary); }
     .rl-res-col-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px; margin-bottom: 4px; border-bottom: 1px solid var(--background-modifier-border); user-select: none; }
     .rl-res-col-name { font-size: 12px; font-weight: 600; color: var(--text-normal); flex: none; display: inline-flex; align-items: center; gap: 6px; }
     .rl-res-col-name::before { content: ''; display: inline-block; width: 3px; height: 12px; border-radius: 2px; background: var(--interactive-accent); flex: none; }
-    .rl-res-col-cnt { font-size: 10px; color: var(--text-muted); background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 0 6px; line-height: 16px; flex: none; margin-left: auto; }
-    .rl-res-col-empty { font-size: 11px; color: var(--text-faint); border: 1px dashed var(--background-modifier-border); border-radius: 8px; padding: 12px 8px; text-align: center; line-height: 1.5; user-select: none; }
-    .rl-res-item { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; font-family: inherit; font-size: 12px; border: 1px solid transparent; background: var(--background-primary); border-radius: 8px; padding: 6px 10px; cursor: pointer; color: var(--text-normal); line-height: 1.4; transition: background-color .12s, border-color .12s; }
+    .rl-res-col-cnt { font-size: 10px; color: var(--text-muted); background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); padding: 0 6px; line-height: 16px; flex: none; margin-left: auto; }
+    .rl-res-col-empty { font-size: 11px; color: var(--text-faint); border: 1px dashed var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); padding: 12px 8px; text-align: center; line-height: 1.5; user-select: none; }
+    .rl-res-item { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; font-family: inherit; font-size: 12px; border: 1px solid transparent; background: var(--background-primary); border-radius: var(--rl-t-radius-lg, 8px); padding: 6px 10px; cursor: pointer; color: var(--text-normal); line-height: 1.4; transition: background-color .12s, border-color .12s; }
     .rl-res-item:hover { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover, var(--background-modifier-border)); }
     .rl-res-item:focus-visible { outline: none; border-color: var(--interactive-accent); }
     /* 封面：48×72 px 缩略图（2:3 海报比例，object-fit: contain 完整显示不裁切；横图/方图上下留背景色） */
@@ -1950,8 +1950,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-watch-num { width: 64px; }
     .rl-watch-hint { font-size: 10.5px; color: var(--text-faint); margin-left: 4px; }
     .rl-3col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 10px; }
-    .rl-readbar { height: 5px; background: var(--background-modifier-border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
-    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: 3px; transition: background-color .2s; }
+    .rl-readbar { height: 5px; background: var(--background-modifier-border); border-radius: var(--rl-t-radius-sm, 3px); overflow: hidden; margin-top: 6px; }
+    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: var(--rl-t-radius-sm, 3px); transition: background-color .2s; }
     /* 进度条分阶段色阶：起步 / 进行中 / 接近完成 / 读完（四档均走主题变量） */
     .rl-readbar-low .rl-readbar-fill { background: var(--rl-danger-soft); }      /* <30% 警告红 */
     .rl-readbar-mid .rl-readbar-fill { background: var(--rl-score); }      /* 30-69% 进行中 琥珀 */
@@ -1976,7 +1976,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-section-cover-bottom { position: absolute; bottom: 0; left: 0; right: 0; margin-top: 0 !important; }
     .rl-poster-zone {
         width: 100px; height: 140px; border: 1.5px dashed var(--background-modifier-border-hover);
-        border-radius: 6px; display: flex; align-items: center; justify-content: center;
+        border-radius: var(--rl-t-radius-md, 6px); display: flex; align-items: center; justify-content: center;
         cursor: pointer; overflow: hidden; background: var(--background-secondary);
         transition: border-color .15s, background-color .15s;
     }
@@ -1995,7 +1995,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-ctx {
         position: fixed; z-index: 1000; min-width: 140px;
         background: var(--background-primary); border: 1px solid var(--background-modifier-border);
-        border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); padding: 4px;
+        border-radius: var(--rl-t-radius-lg, 8px); box-shadow: 0 4px 14px rgba(0, 0, 0, .18); padding: 4px;
         display: flex; flex-direction: column;
         overflow: auto; overscroll-behavior: contain;
     }
@@ -2057,12 +2057,12 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     }
     .rl-src-link:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
     .rl-status-lg .rl-chip { font-size: 13px; padding: 7px 18px; }
-    .rl-chip { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+    .rl-chip { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: var(--rl-t-radius-pill, 999px); padding: 3px 12px; cursor: pointer; }
     .rl-chip.on { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
     /* 类型/题材标签 chips（原格式：灰底胶囊，无 # 前缀） */
-    .rl-tagbox { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 5px 7px; background: var(--background-primary); }
+    .rl-tagbox { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 5px 7px; background: var(--background-primary); }
     .rl-tagbox:focus-within { border-color: var(--interactive-accent); }
-    .rl-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; background: var(--background-modifier-hover); border-radius: 999px; padding: 2px 8px; color: var(--text-normal); }
+    .rl-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; background: var(--background-modifier-hover); border-radius: var(--rl-t-radius-pill, 999px); padding: 2px 8px; color: var(--text-normal); }
     .rl-tag-x { border: none; background: transparent; color: var(--text-faint); cursor: pointer; font-size: 10px; padding: 0 2px; line-height: 1; }
     .rl-tag-x:hover { color: var(--rl-danger); }
     .rl-tag-input { flex: 1; min-width: 90px; border: none; background: transparent; color: var(--text-normal); font-size: 12px; font-family: inherit; padding: 2px 4px; }
@@ -2096,7 +2096,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-ep-btn {
         position: relative; width: 36px; height: 30px; font-family: inherit; font-size: 12px;
         border: 1px solid var(--background-modifier-border); background: var(--background-primary);
-        color: var(--text-muted); border-radius: 6px; cursor: pointer;
+        color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer;
         transition: background .12s ease, color .12s ease;
     }
     /* 电影单集「▶ 观看」按钮：与书籍「▶ 阅读」同款 auto 宽（图标+文字），沿用 rl-ep-btn-book */
