@@ -46,6 +46,8 @@
 
 > **⑯ 现代圆角放大回退（2026-09-12 用户上手反馈，随 1.0.3 折叠发布）**：modern 曾把 `--rl-t-radius-md` 6→10px、`--rl-t-radius-lg` 8→16px（lg 翻倍），海报卡 / 弹窗 / 日历卡观感过于夸张 → 用户选「全部回退与原生一致」：**删除 modern 块内两行圆角覆盖**，md/lg 落回 `:root` 原值（6/8px），弹窗骨架 `var(--rl-t-radius-lg, 8px)` fallback 自动生效、组件零改动。圆角维度两主题从此一致；现代感的区分度由阴影 / 悬停动效 / 页签胶囊 / 主按钮辉光承担。assert-symbols「modern 圆角 16」present 断言反转为 md/lg 两条 absent（突变验证恰好 2 FAIL）；UI-GUIDE §6 豁免表事实同步更新。教训同 ⑮：**形态放大档位是设计时想象，以上手复核为准；豁免清单里「允许偏离」不等于「必须偏离」。**
 
+> **⑰ 全面 modern + 删除主题切换入口（2026-09-12 用户裁定，随 1.0.3 折叠发布）**：设置页「外观 → 界面主题」下拉整段删除，现代风格成为唯一主题。实现与 `colorTheme='mono'` **同构的「下线项兜底」**：`uiTheme` 字段按 append-only 保留，`onload` 强制覆写 `this.settings.uiTheme = 'modern'`（磁盘残留 `native` 的老用户载入即迁移，`saveSettings` 写回 `modern` 自愈）；`DEFAULT_SETTINGS.uiTheme` 同步改 `'modern'`；`applyUiTheme()` / `normalizeUiTheme` / `THEME_CLASS` / HomeView `setUiTheme` 与模板 `{#if uiTheme === 'modern'}` 分支**全部保留不动**（prop 恒 'modern'、分支恒真，将来若恢复切换零成本）。悬停上浮 `--rl-t-lift` `-7px → -3px`（用户点名「幅度小点」；scale 1.025 未动）。assert-symbols：设置页三条 present（「界面主题」label / native / modern 选项）删除，新增 absent×2（产物不得再出现 `addOption("native"` 与「界面主题」label）+ present×1（`uiTheme = "modern"` 兜底行）。
+
 ## 未发布 → 随 v1.0.2（2026-09-09）发布收口
 
 > **1.0.2 发布说明**：本区为历史累积（1.0.0/1.0.1 期条目多未切分，仍在下方）；本版 = #234/#235 + 09-09 阅读器批次（当日早段，见 2026-09-09 记忆）＋下方 4 条 09-09 修复项，已全部收口于根 CHANGELOG [1.0.2] + RELEASE-NOTES-1.0.2.md（版本三文件 1.0.2，manifest/versions/package 同步）。

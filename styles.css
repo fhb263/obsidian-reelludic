@@ -94,7 +94,7 @@
     --rl-t-shadow-inset: inset 0 1px 3px rgba(0, 0, 0, .05);
     --rl-t-shadow-ind: 0 2px 6px rgba(0, 0, 0, .13);
     --rl-t-shadow-cta: 0 3px 10px color-mix(in srgb, var(--interactive-accent) 38%, transparent);
-    --rl-t-lift: -7px;
+    --rl-t-lift: -3px;
     --rl-t-scale: 1.025;
 }
 

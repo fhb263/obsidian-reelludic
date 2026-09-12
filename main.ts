@@ -164,8 +164,10 @@ export default class ReelLudicPlugin extends Plugin {
 
     async onload(): Promise<void> {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-        // 界面主题归一：旧数据无此字段或值损坏一律回退 native（升级无感）
-        this.settings.uiTheme = normalizeUiTheme(this.settings.uiTheme);
+        // 界面主题全面 modern（1.0.3）：设置页已删除切换入口，磁盘残留 native 的老用户在此强制迁移
+        // （与下方 colorTheme='mono' 同构的「下线项兜底」，saveSettings 会把 'modern' 写回磁盘自愈）。
+        // normalizeUiTheme 保留在 applyUiTheme 内做防御性归一，此处不再需要。
+        this.settings.uiTheme = 'modern';
         // colorTheme 迁移（**不是死代码，别删**）：v0.0.1 曾提供「色彩主题：彩色/单色」设置项，
         // v0.4 起设置页移除该入口、外观固定单色。但设置项下线 ≠ 磁盘值消失 —— v0.0.1~v0.3.x 期间
         // 选过「彩色」的用户，data.json 里会永久残留 colorTheme:"colorful"。此处必须强制定为 'mono'：
@@ -239,7 +241,8 @@ export default class ReelLudicPlugin extends Plugin {
      * 应用界面主题：在 document.body 挂/去 `rl-theme-modern`。
      * 单点挂载即可覆盖主界面与**全部弹窗**——Obsidian 的所有 Modal 都挂在 body 下，
      * 故 `.rl-theme-modern` 作为后代选择器前缀天然命中它们，无需逐个 Modal 改继承链。
-     * native 时不挂类，故 `--rl-t-*` 保持 :root 原值，观感与 1.0.2 逐像素一致。
+     * 1.0.3 起全面 modern：设置页已无切换入口，settings.uiTheme 恒为 'modern'（onload 强制覆写），
+     * 主题类始终挂上；本方法保留通用挂载逻辑（防御性 normalize），供将来恢复切换时复用。
      */
     applyUiTheme(): void {
         const theme = normalizeUiTheme(this.settings.uiTheme);
