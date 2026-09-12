@@ -33,7 +33,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     export let canSearchBook: boolean = true;
     export let canSearchGame: boolean = false;
     export let onSearch: (q: string, t: 'movie' | 'tv', onProgress?: SearchProgressCb) => Promise<TmdbSearchResult[]> = async () => [];
-    export let onSearchBook: (q: string, onProgress?: SearchProgressCb) => Promise<BookSearchResult[]> = async () => [];
+    export let onSearchBook: (q: string, kind?: BookKind, onProgress?: SearchProgressCb) => Promise<BookSearchResult[]> = async () => [];
     export let onSearchGame: (q: string, onProgress?: SearchProgressCb) => Promise<GameSearchResult[]> = async () => [];
     export let onSearchAnime: (q: string, onProgress?: SearchProgressCb) => Promise<BangumiSearchResult[]> = async () => [];
     export let onSearchMusic: (q: string, onProgress?: SearchProgressCb) => Promise<MusicSearchResult[]> = async () => [];
@@ -545,7 +545,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
         try {
             const q = query.trim();
             if (type === 'book') {
-                results = await onSearchBook(q, onSearchProgress);
+                // 传当前类目：漫画（comic）走 Bangumi 主源 + 豆瓣兜底，出版/网文走既有 book 链（main.searchBook 路由）
+                results = await onSearchBook(q, bookKind, onSearchProgress);
             } else if (type === 'game') {
                 results = await onSearchGame(q, onSearchProgress);
             } else if (type === 'anime') {

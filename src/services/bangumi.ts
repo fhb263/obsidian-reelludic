@@ -1,5 +1,6 @@
 // Bangumi（bgm.tv）动画元数据抓取（v0 API，Bearer token；纯逻辑：HTTP 注入可 mock）
 import { asRecord, parseYear } from 'pure/record';
+import type { BookSearchResult } from 'services/resultTypes';
 
 export interface BangumiSearchResult {
     id: number;
@@ -53,6 +54,11 @@ export function buildSearchBody(keyword: string, limit: number = BANGUMI_SEARCH_
     return JSON.stringify({ keyword, type: 2, limit });
 }
 
+/** 构造书籍类目搜索 POST body：type=1（书籍，含漫画）——漫画源适配（2026-09-12）：书籍类目 comic 组主源 */
+export function buildBookSearchBody(keyword: string, limit: number = BANGUMI_SEARCH_LIMIT): string {
+    return JSON.stringify({ keyword, type: 1, limit });
+}
+
 /** 提取 infobox 中指定 key 的文本值（value 可为字符串或 {v: ...}） */
 function infoboxValue(items: unknown, key: string): string | undefined {
     if (!Array.isArray(items)) return undefined;
@@ -88,6 +94,44 @@ export function parseBangumiResults(text: string): BangumiSearchResult[] {
                 cover: typeof images.large === 'string' ? images.large : (typeof images.common === 'string' ? images.common : undefined),
                 summary: typeof s.summary === 'string' ? s.summary : undefined,
                 rating: typeof s.score === 'number' ? Number(s.score.toFixed(1)) : undefined,
+            };
+        })
+        .filter((r) => r.title);
+}
+
+/**
+ * 解析书籍类目（type=1，含漫画）搜索响应 → BookSearchResult（书籍类目 comic 组主源）：
+ * infobox 作者/译者/出版社/页数搜索级直接可回填（不触发豆瓣详情补全，与 Open Library 结果同待遇）；
+ * 评分兼容两种形态：顶层 score 与 rating.score/total 对象（v0 search 实际返回 rating 对象）；
+ * id 带 bangumi: 前缀（与 douban:{id} 同约定），source='bangumi' 供结果列表徽标与表单选中分派。
+ */
+export function parseBangumiBookResults(text: string): BookSearchResult[] {
+    const data = asRecord(JSON.parse(text));
+    const list = Array.isArray(data.data) ? data.data : [];
+    return list
+        .map(asRecord)
+        .map((s): BookSearchResult => {
+            const images = asRecord(s.images);
+            const tags = Array.isArray(s.tags) ? s.tags.map(asRecord).filter((t) => typeof t.name === 'string').map((t) => t.name as string) : [];
+            const ratingObj = asRecord(s.rating);
+            const score = typeof s.score === 'number' ? s.score : (typeof ratingObj.score === 'number' ? ratingObj.score : undefined);
+            const total = typeof ratingObj.total === 'number' ? ratingObj.total : undefined;
+            const pages = infoboxValue(s.infobox, '页数');
+            const parsed = pages ? Number.parseInt(pages, 10) : NaN;
+            return {
+                id: `bangumi:${typeof s.id === 'number' ? s.id : 0}`,
+                title: (typeof s.name_cn === 'string' && s.name_cn) ? s.name_cn : (typeof s.name === 'string' ? s.name : ''),
+                author: infoboxValue(s.infobox, '作者'),
+                translator: infoboxValue(s.infobox, '译者'),
+                publisher: infoboxValue(s.infobox, '出版社'),
+                pageCount: Number.isNaN(parsed) ? undefined : parsed,
+                year: parseYear(s.date),
+                thumbnail: typeof images.large === 'string' ? images.large : (typeof images.common === 'string' ? images.common : undefined),
+                description: typeof s.summary === 'string' ? s.summary : undefined,
+                genres: tags,
+                rating: typeof score === 'number' ? Number(score.toFixed(1)) : undefined,
+                ratingCount: total,
+                source: 'bangumi',
             };
         })
         .filter((r) => r.title);
@@ -195,6 +239,13 @@ export class BangumiClient {
     async search(keyword: string): Promise<BangumiSearchResult[]> {
         const text = await this.httpPost(SEARCH_URL, buildSearchBody(keyword), authHeaders(this.token));
         return parseBangumiResults(text);
+    }
+
+    /** 漫画/书籍搜索（书籍类目 comic 组主源）：POST /v0/search/subjects type=1（书籍，含漫画）；
+     *  infobox 作者/出版社等搜索级直接带回 → 无需详情补全往返 */
+    async searchBooks(keyword: string): Promise<BookSearchResult[]> {
+        const text = await this.httpPost(SEARCH_URL, buildBookSearchBody(keyword), authHeaders(this.token));
+        return parseBangumiBookResults(text);
     }
 
     /** 详情补全：/v0/subjects/{id}（评分+评价人数+制作公司） */

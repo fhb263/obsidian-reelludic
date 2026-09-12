@@ -9,6 +9,7 @@ import { extractEditableFromNote, extractFrontmatterFromNote } from 'pure/noteEd
 import { orphanedDownloadedPosters } from 'pure/posterFile';
 import { NoteConflictModal } from 'modals/NoteConflictModal';
 import type { SearchProgressCb } from 'pure/searchProgress';
+import type { BookKind } from 'data/types';
 import type { AiSummaryInput } from 'pure/aiSummary';
 
 export class EntryModal extends Modal {
@@ -105,7 +106,7 @@ export class EntryModal extends Modal {
                 /** 该类型本次搜索实际会发起的源集合（固定占栏用） */
                 onSourcesForType: (type: EntryType) => this.plugin.sourcesForType(type),
                 onSearch: (q: string, t: 'movie' | 'tv', onProgress?: SearchProgressCb) => this.plugin.searchWithFallback(q, t, onProgress),
-                onSearchBook: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchBook(q, onProgress),
+                onSearchBook: (q: string, kind?: BookKind, onProgress?: SearchProgressCb) => this.plugin.searchBook(q, kind, onProgress),
                 onSearchGame: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchGame(q, onProgress),
                 onSearchAnime: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchAnime(q, onProgress),
                 onSearchMusic: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchMusic(q, onProgress),

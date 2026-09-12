@@ -11,14 +11,16 @@ export type ProviderId =
     | 'douban' | 'tmdb' | 'bangumi'
     | 'openLibrary' | 'googleBooks' | 'steam' | 'musicbrainz' | 'itunes' | 'omdb' | 'anilist' | 'igdb';
 
-/** 源链配置组：五组（movie/tv 共用 movieTv，见 sourceGroupForType） */
-export type SourceGroup = 'book' | 'game' | 'music' | 'movieTv' | 'anime';
+/** 源链配置组：六组（movie/tv 共用 movieTv；comic 为书籍类目子组——EntryType 无 comic，
+ *  sourceGroupForType 不产生 comic，仅书籍搜索按 bookKind=comic 显式路由，见 main.searchBook） */
+export type SourceGroup = 'book' | 'comic' | 'game' | 'music' | 'movieTv' | 'anime';
 
-export const SOURCE_GROUPS: readonly SourceGroup[] = ['book', 'game', 'music', 'movieTv', 'anime'];
+export const SOURCE_GROUPS: readonly SourceGroup[] = ['book', 'comic', 'game', 'music', 'movieTv', 'anime'];
 
 /** 组标签（设置页折叠行头、摘要文案） */
 export const GROUP_LABELS: Record<SourceGroup, string> = {
     book: '书籍',
+    comic: '漫画',
     game: '游戏',
     music: '音乐',
     movieTv: '影视',
@@ -48,7 +50,7 @@ export interface ProviderMeta {
 
 export const PROVIDERS: readonly ProviderMeta[] = [
     {
-        id: 'douban', label: '豆瓣', groups: ['book', 'game', 'music', 'movieTv', 'anime'],
+        id: 'douban', label: '豆瓣', groups: ['book', 'comic', 'game', 'music', 'movieTv', 'anime'],
         keyField: 'doubanCookie', implemented: true,
         hint: '主力源（默认每类链首）。需登录态 Cookie（含 dbcl2）否则 403：登录 douban.com → F12 复制任意请求的 Cookie 粘贴即可。',
     },
@@ -58,9 +60,9 @@ export const PROVIDERS: readonly ProviderMeta[] = [
         hint: '影视并排源。themoviedb.org 注册后获取 API Key；配置后与 Douban 并排，未配置仅用 Douban。',
     },
     {
-        id: 'bangumi', label: 'Bangumi', groups: ['anime'],
+        id: 'bangumi', label: 'Bangumi', groups: ['anime', 'comic'],
         keyField: 'bangumiToken', implemented: true,
-        hint: '动画并排源。bgm.tv → 设置 → 开发 → 创建 Access Token；配置后与 Douban 并排，未配置仅用 Douban。',
+        hint: '动画并排源 + 漫画（书籍类目）主源。bgm.tv → 设置 → 开发 → 创建 Access Token；动画与 Douban 并排，漫画类目链首主源（未配置仅用 Douban）。',
     },
     {
         id: 'openLibrary', label: 'Open Library', groups: ['book'],
@@ -125,9 +127,11 @@ export function sourceEnList(ids: readonly (ProviderId | string)[]): string {
     return ids.map(sourceEnLabel).join(' / ');
 }
 
-/** 各组默认链（T1 落上游 D2 表：book=douban+openLibrary；game=douban+steam；music=douban+musicbrainz+itunes 3 源满链；movieTv/anime 沿用 douban+tmdb/bangumi 不变；googleBooks/omdb/anilist 默认关、用户自选加入；链首 douban 为主力源不限时） */
+/** 各组默认链（T1 落上游 D2 表：book=douban+openLibrary；game=douban+steam；music=douban+musicbrainz+itunes 3 源满链；movieTv/anime 沿用 douban+tmdb/bangumi 不变；googleBooks/omdb/anilist 默认关、用户自选加入；链首 douban 为主力源不限时。
+ *  comic（书籍类目·漫画）=bangumi+douban：Bangumi 链首主源（type=1 书籍搜索，日漫覆盖全），douban 兜底——注意「主源不限时」仅 douban 特权，bangumi 仍按 aux 5s 超时，链序仅决定结果排前 */
 export const DEFAULT_CHAINS: Record<SourceGroup, readonly ProviderId[]> = {
     book: ['douban', 'openLibrary'],
+    comic: ['bangumi', 'douban'],
     game: ['douban', 'steam'],
     music: ['douban', 'musicbrainz', 'itunes'],
     movieTv: ['douban', 'tmdb'],

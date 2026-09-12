@@ -59,6 +59,7 @@ import { initGlobalTooltip } from 'services/globalTooltip';
 import { VideoPlayerModal, type EmbedVideoItem } from 'modals/VideoPlayerModal';
 import { mergeBySource, sortByRelevance } from 'pure/searchMerge';
 import { PROVIDER_META, resolveSourceChain, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
+import type { BookKind } from 'data/types';
 import { DIR_NOTES, DIR_COVERS, DIR_BACKUPS, DIR_REPORTS, typeDir, LEGACY_TYPE_DIR_ZH, relocateLegacyNotePath } from 'pure/dirs';
 import { generateYearReport, yearReportPath } from 'pure/report';
 import { listReportYears } from 'pure/reportIndex';
@@ -523,7 +524,8 @@ export default class ReelLudicPlugin extends Plugin {
         // T3：辅助源 runner 注册（新源接入在此追加一行；未注册的链内源由 runAuxSource 静默跳过）
         this.auxRunners = {
             tmdb: (query, type) => this.tmdb.search(query, type as 'movie' | 'tv'),
-            bangumi: (query) => this.bangumi.search(query),
+            // bangumi 按 runner 收到的组类型分流：anime 组（type='anime'）→ 动画搜索；comic 书籍类目组（type='book'）→ 书籍类目搜索（type=1，含漫画）
+            bangumi: (query, type) => (type === 'anime' ? this.bangumi.search(query) : this.bangumi.searchBooks(query)),
             openLibrary: (query) => this.openLibrary.search(query),
             // googleBooks 默认链不含 → 仅用户自选后参与（book 组）；key 未配时 providerConfigured 对可选 Key 源放行
             googleBooks: (query) => this.googleBooks.search(query),
@@ -780,20 +782,21 @@ export default class ReelLudicPlugin extends Plugin {
         return merged;
     }
 
-    /** 书籍搜索（Douban 单源，结果缓存 30min） */
-    async searchBook(query: string, onProgress?: SearchProgressCb): Promise<BookSearchResult[]> {
+    /** 书籍搜索（结果缓存 30min）：bookKind=comic 路由漫画组（Bangumi 主源 + 豆瓣兜底），其余走 book 组（豆瓣 + Open Library）；缓存 key 按类目隔离防串 */
+    async searchBook(query: string, kind?: BookKind, onProgress?: SearchProgressCb): Promise<BookSearchResult[]> {
         const q = query.trim();
         if (!q) return [];
-        return this.cachedSearch(`book:${q.toLowerCase()}`, () => this.searchBookFresh(q, onProgress));
+        return this.cachedSearch(`book:${kind ?? ''}:${q.toLowerCase()}`, () => this.searchBookFresh(q, kind, onProgress));
     }
 
-    private async searchBookFresh(query: string, onProgress?: SearchProgressCb): Promise<BookSearchResult[]> {
-        // T3/T4：book 组 runner 集合执行——douban 主源（不限时）与 aux openLibrary（5s 超时）并行
-        const run = await this.collectGroupSources<BookSearchResult>('book', 'book', query, toBookResult, createSearchProgress(onProgress));
+    private async searchBookFresh(query: string, kind?: BookKind, onProgress?: SearchProgressCb): Promise<BookSearchResult[]> {
+        // T3/T4：组内 runner 集合执行——book 组：douban 主源（不限时）+ aux openLibrary（5s 超时）；comic 组：bangumi（type=1 书籍，5s 超时）+ douban 兜底
+        const group: SourceGroup = kind === 'comic' ? 'comic' : 'book';
+        const run = await this.collectGroupSources<BookSearchResult>(group, 'book', query, toBookResult, createSearchProgress(onProgress));
         const merged = this.mergeGroupResults(run, query);
         if (merged.length === 0) {
             const err = deriveGroupSearchError({
-                group: 'book',
+                group,
                 chain: run.chain,
                 douban: run.douban ? { reachable: run.douban.reachable, cookieInvalid: run.douban.cookieInvalid } : undefined,
                 aux: run.aux,

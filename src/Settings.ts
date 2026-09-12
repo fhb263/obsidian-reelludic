@@ -114,8 +114,8 @@ const KEY_SOURCE_ORDER: readonly ProviderId[] = ['douban', 'tmdb', 'bangumi', 'o
 /** ① 数据源管理折叠项内免 Key 源展示顺序（T1：Open Library/Steam/MusicBrainz/iTunes/AniList——无凭据可填，仅展示说明） */
 const FREE_SOURCE_ORDER: readonly ProviderId[] = ['openLibrary', 'steam', 'musicbrainz', 'itunes', 'anilist'];
 
-/** ② 数据源启用分类展示顺序（spec S5：书籍/影视/动画/音乐/游戏；registry SOURCE_GROUPS 顺序不同，UI 行序以此为准） */
-const GROUP_DISPLAY_ORDER: readonly SourceGroup[] = ['book', 'movieTv', 'anime', 'music', 'game'];
+/** ② 数据源启用分类展示顺序（spec S5：书籍/影视/动画/音乐/游戏；comic 漫画为书籍类目子组，紧跟书籍；registry SOURCE_GROUPS 顺序不同，UI 行序以此为准） */
+const GROUP_DISPLAY_ORDER: readonly SourceGroup[] = ['book', 'comic', 'movieTv', 'anime', 'music', 'game'];
 
 /** 需 Key 但 Key 可选的数据源（未配仍照常工作，仅限流；空态徽标文案标「可选」而非「未配置」） */
 const OPTIONAL_KEY_SOURCES: ReadonlySet<ProviderId> = new Set(['googleBooks']);

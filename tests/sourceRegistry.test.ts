@@ -55,7 +55,7 @@ describe('注册表元数据', () => {
         }
     });
 
-    it('douban 适用于全部 5 组且带 cookie 凭据字段', () => {
+    it('douban 适用于全部 6 组（comic 为书籍类目子组）且带 cookie 凭据字段', () => {
         for (const g of SOURCE_GROUPS) {
             expect(PROVIDER_META.douban.groups).toContain(g);
         }
@@ -65,14 +65,16 @@ describe('注册表元数据', () => {
     it('组标签齐全（UI 组头用）', () => {
         expect(GROUP_LABELS.movieTv).toBe('影视');
         expect(GROUP_LABELS.book).toBe('书籍');
-        expect(SOURCE_GROUPS).toEqual(['book', 'game', 'music', 'movieTv', 'anime']);
+        expect(GROUP_LABELS.comic).toBe('漫画');
+        expect(SOURCE_GROUPS).toEqual(['book', 'comic', 'game', 'music', 'movieTv', 'anime']);
     });
 });
 
 describe('候选源矩阵（T1：各组适用源全部 implemented → 候选 = 该组全部源，槽位 ≤3）', () => {
-    it('book/game/music/movieTv/anime 五组候选恰为各组合法源集合', () => {
+    it('六组候选恰为各组合法源集合（comic 漫画=Bangumi+豆瓣；openLibrary/googleBooks 不适用漫画）', () => {
         const expectSet: Record<SourceGroup, ProviderId[]> = {
             book: ['douban', 'openLibrary', 'googleBooks'],
+            comic: ['douban', 'bangumi'],
             game: ['douban', 'steam', 'igdb'],
             music: ['douban', 'musicbrainz', 'itunes'],
             movieTv: ['douban', 'tmdb', 'omdb'],
@@ -87,8 +89,9 @@ describe('候选源矩阵（T1：各组适用源全部 implemented → 候选 = 
 });
 
 describe('默认链（T1 落上游 D2 表）', () => {
-    it('book=douban+openLibrary；game=douban+steam；music=douban+musicbrainz+itunes（3 源满）；影视/动画不变', () => {
+    it('book=douban+openLibrary；comic=bangumi+douban（Bangumi 链首主源、豆瓣兜底）；game/music/movieTv/anime 不变', () => {
         expect(DEFAULT_CHAINS.book).toEqual(['douban', 'openLibrary']);
+        expect(DEFAULT_CHAINS.comic).toEqual(['bangumi', 'douban']);
         expect(DEFAULT_CHAINS.game).toEqual(['douban', 'steam']);
         expect(DEFAULT_CHAINS.music).toEqual(['douban', 'musicbrainz', 'itunes']);
         expect(DEFAULT_CHAINS.movieTv).toEqual(['douban', 'tmdb']);
@@ -106,11 +109,17 @@ describe('normalizeSourceChain 归一', () => {
         const r = normalizeSourceChain('movieTv', ['tmdb', 'omdb', 'douban']);
         expect(r).toEqual(['tmdb', 'omdb', 'douban']);
     });
+
+    it('comic 组滤除 openLibrary（书籍源不适用漫画类目），保序保留 bangumi/douban', () => {
+        const r = normalizeSourceChain('comic', ['bangumi', 'openLibrary', 'douban', 'bangumi']);
+        expect(r).toEqual(['bangumi', 'douban']);
+    });
 });
 
 describe('resolveSourceChain 解析', () => {
     it('未配置（undefined）→ 默认链', () => {
         expect(resolveSourceChain(undefined, 'movieTv')).toEqual(['douban', 'tmdb']);
+        expect(resolveSourceChain(undefined, 'comic')).toEqual(['bangumi', 'douban']);
     });
 
     it('已配置合法链 → 原样（保序）', () => {
