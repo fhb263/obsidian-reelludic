@@ -529,7 +529,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     }
 
     async function doSearch() {
-        if (!query.trim()) return;
+        // 空输入提示态（2026-09-12 用户需求）：原静默 return 用户无感知，就地给行内红字
+        if (!query.trim()) { searchError = '请输入标题'; return; }
         searching = true;
         searchError = '';
         results = [];
@@ -1330,12 +1331,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
                         <option value={t}>{ENTRY_TYPE_LABELS[t]}</option>
                     {/each}
                 </select>
-                <div class="rl-query-wrap">
-                    <!-- 占位字前置 lucide 搜索图标（与 MediaList/ExcerptModal 同款，2026-09-12） -->
-                    <Icon icon="search" size={13} cls="rl-query-ico" />
-                    <input class="rl-search-input" placeholder="输入标题…" bind:value={query} bind:this={queryInput}
-                        on:keydown={(ev) => { if (ev.key === 'Enter') doSearch(); else if (ev.key === 'Escape') query = ''; }} />
-                </div>
+                <input class="rl-search-input" placeholder="输入标题…" bind:value={query} bind:this={queryInput}
+                    on:keydown={(ev) => { if (ev.key === 'Enter') doSearch(); else if (ev.key === 'Escape') query = ''; }} />
             </div>
             <button class="rl-btn rl-btn-primary" disabled={searching} on:click={doSearch}>
                 {searching ? '搜索中…' : '搜索'}
@@ -1904,12 +1901,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-search-type { border: none; background: transparent; color: var(--text-muted); font-size: 12px; padding: 5px 8px; cursor: pointer; flex: none; border-right: 1px solid var(--background-modifier-border); }
     /* 类型下拉展开的选项列表：原生 option 不继承主题变量，暗黑模式下默认白底蓝字——显式设主题色（亮/暗自适应） */
     .rl-search-type option { background: var(--background-secondary); color: var(--text-normal); }
-    .rl-query-wrap { position: relative; flex: 1; min-width: 0; }
-    .rl-query-wrap :global(.rl-query-ico) {
-        position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
-        color: var(--text-faint); pointer-events: none;
-    }
-    .rl-search-input { border: none; background: transparent; color: var(--text-normal); font-size: 12px; padding: 5px 9px 5px 27px; width: 100%; }
+    .rl-search-input { border: none; background: transparent; color: var(--text-normal); font-size: 12px; padding: 5px 9px; flex: 1; min-width: 0; }
     .rl-search-input:focus { outline: none; }
     .rl-input { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); padding: 5px 9px; width: 100%; }
     .rl-input:focus { outline: none; border-color: var(--interactive-accent); }
