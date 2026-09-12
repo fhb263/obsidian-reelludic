@@ -7,6 +7,7 @@ import {
     statusTypeMatrix,
     durationStats,
     monthlyFinished,
+    trendShownMonths,
     monthlyActive,
     topRatedInYear,
 } from 'pure/stats';
@@ -126,5 +127,18 @@ describe('pure/stats topRatedInYear 高分榜', () => {
         ];
         const top = topRatedInYear(list, year, 2);
         expect(top.map((x) => x.title)).toEqual(['高分', '低分']);
+    });
+});
+describe('trendShownMonths 当年趋势截断点', () => {
+    const now = new Date(2026, 8, 12); // 本地时区 2026-09-12
+    it('往年画满 12 个月', () => {
+        expect(trendShownMonths(2025, now)).toBe(12);
+    });
+    it('当年只画到当前月（1 月→1，12 月→12）', () => {
+        expect(trendShownMonths(2026, new Date(2026, 0, 1))).toBe(1);
+        expect(trendShownMonths(2026, new Date(2026, 11, 31))).toBe(12);
+    });
+    it('未来年 0（防御）', () => {
+        expect(trendShownMonths(2027, now)).toBe(0);
     });
 });

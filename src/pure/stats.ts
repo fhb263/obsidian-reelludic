@@ -101,6 +101,14 @@ export function monthlyFinished(entries: MediaEntry[], year: number): number[] {
     return out;
 }
 
+/** 当年趋势截断点（09-12 T2）：往年画满 12 个月，当年只画到当前月（消除未来月份全零坠底假象），未来年 0 */
+export function trendShownMonths(year: number, now: Date): number {
+    const y = now.getFullYear();
+    if (year < y) return 12;
+    if (year > y) return 0;
+    return Math.min(12, Math.max(0, now.getMonth() + 1));
+}
+
 /** 月度「活跃」趋势（1-12 月计数，任一动态时间戳口径） */
 export function monthlyActive(entries: MediaEntry[], year: number): number[] {
     const out = new Array<number>(12).fill(0);

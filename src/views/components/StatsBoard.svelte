@@ -1,7 +1,7 @@
 <script lang="ts">
     // 统计页（17-统计页完全重构规划落地）：数据优先 / 克制视觉 / 对齐 UI-GUIDE
     //   页眉动作（生成今年总结 + 往年报告下拉）→ KPI 行（今年看完/本月看完/在追/本月计划/库内总数）
-    //   → 月度看完趋势 × 今年动态 → 四库分区（数据主体）→ 快捷行；想看清单弹层保留
+    //   → 月度看完趋势 × 今年动态 → 概览（数据主体）→ 快捷行；想看清单弹层保留
     // 移除（规划 D1/D2/D3 + 年度目标丢弃）：类型分布玻璃卡（子类型并入影视列）、霓虹热力图、
     //   年度目标圆环（localStorage 键不再读写）、emoji 图标（全量替换为文本/Lucide 白名单）
     import type { ActivityEvent, MediaEntry, EntryType } from 'data/types';
@@ -11,12 +11,13 @@
         finishedInYear,
         monthlyFinished,
         topRatedInYear,
+        trendShownMonths,
     } from 'pure/stats';
     import { FEED_RANGE_WORDS, collectFeed, feedSpan, formatFeedTime, groupFeed, type FeedRange } from 'pure/activityFeed';
     import Icon from './Icon.svelte';
 
     export let entries: MediaEntry[] = [];
-    /** 书籍摘抄计数（bookId → 摘抄区块数），书籍分区列用 */
+    /** 书籍摘抄计数（bookId → 摘抄区块数），概览书籍列用 */
     export let excerptCounts: Record<string, number> = {};
     export let onAdd: (t?: EntryType) => void = () => {};
     export let onOpenEntry: (id: string) => void = () => {};
@@ -92,7 +93,7 @@
         return `${Number(d.slice(5, 7))}月${Number(d.slice(8, 10))}日`;
     }
 
-    // ── 四库分区（数据主体） ──
+    // ── 概览（数据主体） ──
     const isMedia = (t: EntryType) => t === 'movie' || t === 'tv' || t === 'anime';
     const isBook = (t: EntryType) => t === 'book';
     const isGame = (t: EntryType) => t === 'game';
@@ -152,13 +153,25 @@
         [...monthlyBooks, ...monthlyMedia, ...monthlyGames, ...monthlyMusic].every((v) => v === 0);
     const TREND_W = 620;
     const TREND_H = 130;
-    const TREND_PAD_X = 8;
+    /** T2 截断：当年视图实线/点位只画到当前月，未来月份刻度淡显（2026-09-12 用户批准） */
+    $: shownMonths = trendShownMonths(year, now);
+    /** T3 悬停：气泡锚定月份（0-11），列出该月各在画序列的值 */
+    let hoverM: number | null = null;
+    $: hoverRows =
+        hoverM === null
+            ? []
+            : trendSeries.filter((t) => t.on).map((t) => ({ label: t.label, color: t.color, v: t.arr[hoverM as number] }));
+    /** 单点 Y 坐标（折线与圆点共用） */
+    function trendPtY(v: number): number {
+        return TREND_H - TREND_PAD_Y - (v / monthlyAllMax) * (TREND_H - 2 * TREND_PAD_Y);
+    }
+    const TREND_PAD_X = 26;
     const TREND_PAD_Y = 10;
     function trendPts(arr: number[]): string {
-        return arr
+        return arr.slice(0, shownMonths)
             .map((v, i) => {
                 const x = TREND_PAD_X + (i * (TREND_W - 2 * TREND_PAD_X)) / 11;
-                const y = TREND_H - TREND_PAD_Y - (v / monthlyAllMax) * (TREND_H - 2 * TREND_PAD_Y);
+                const y = trendPtY(v);
                 return `${x.toFixed(1)},${y.toFixed(1)}`;
             })
             .join(' ');
@@ -302,21 +315,45 @@
                     {#each [0, 1, 2, 3, 4] as g}
                         <line class="rl-trend-grid" x1={TREND_PAD_X} y1={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} x2={TREND_W - TREND_PAD_X} y2={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} />
                     {/each}
+                    <text class="rl-trend-y" x="2" y={TREND_PAD_Y + 3} text-anchor="start">{monthlyAllMax}</text>
+                    <text class="rl-trend-y" x="2" y={TREND_H - TREND_PAD_Y + 3} text-anchor="start">0</text>
                     {#each trendSeries as s}
                         {#if s.on}
                             <polyline class="rl-trend-line" points={trendPts(s.arr)} stroke={s.color} />
                         {/if}
                     {/each}
+                    {#each trendSeries as s}
+                        {#if s.on}
+                            {#each s.arr.slice(0, shownMonths) as v, i}
+                                {#if v > 0}
+                                    <circle class="rl-trend-dot" cx={trendTickX(i)} cy={trendPtY(v)} r="2.5" fill={s.color} />
+                                {/if}
+                            {/each}
+                        {/if}
+                    {/each}
                     {#each monthlyBooks as _, i}
-                        <text class="rl-trend-tick" x={trendTickX(i)} y={TREND_H - 1} text-anchor="middle">{i + 1}</text>
+                        <text class="rl-trend-tick" class:rl-trend-tick-future={i + 1 > shownMonths} x={trendTickX(i)} y={TREND_H - 1} text-anchor="middle">{i + 1}</text>
+                    {/each}
+                    {#each monthlyBooks as _, i}
+                        {#if i < shownMonths}
+                            <rect class="rl-trend-hot" role="presentation" aria-hidden="true" x={trendTickX(i) - (TREND_W - 2 * TREND_PAD_X) / 22} y="0" width={(TREND_W - 2 * TREND_PAD_X) / 11} height={TREND_H} fill="transparent" on:mouseenter={() => (hoverM = i)} on:mouseleave={() => (hoverM = null)} />
+                        {/if}
                     {/each}
                 </svg>
             {/if}
+            {#if hoverM !== null && hoverRows.length > 0}
+                <div class="rl-trend-tip" style={`left:${(trendTickX(hoverM) / TREND_W) * 100}%; transform:${hoverM < 2 ? 'none' : hoverM > 9 ? 'translateX(-100%)' : 'translateX(-50%)'};`}>
+                    <b>{hoverM + 1} 月</b>
+                    {#each hoverRows as r}
+                        <span><i style={`background:${r.color}`}></i>{r.label} {r.v}</span>
+                    {/each}
+                </div>
+            {/if}
         </section>
 
-    <!-- 四库分区：数据主体（子类型计数并入影视列，D1）——与趋势并排（1:1），窄容器内部自适应 2×2 -->
+    <!-- 概览：数据主体（子类型计数并入影视列，D1）——与趋势并排（1:1），窄容器内部自适应 2×2 -->
     <section class="rl-s-panel rl-s-part">
-        <div class="rl-s-panel-title">{year} 四库分区</div>
+        <div class="rl-s-panel-title">{year} 概览</div>
         <div class="rl-part-grid">
             <!-- 书籍 -->
             <div class="rl-part-col">
@@ -469,7 +506,7 @@
     .rl-kpi b { font-size: 23px; font-weight: 800; color: var(--text-normal); line-height: 1.1; }
     .rl-kpi span { font-size: 10.5px; color: var(--text-muted); }
 
-    /* ── 趋势 × 四库分区并排（1.4:1）；≤900px 回落上下堆叠（见下方媒体查询） ── */
+    /* ── 趋势 × 概览并排（1.4:1）；≤900px 回落上下堆叠（见下方媒体查询） ── */
     .rl-s-mid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: stretch; }
     /* 趋势标题 + 图例：窄列里图例允许换行，避免溢出 */
     .rl-s-trend .rl-s-panel-title { flex-wrap: wrap; }
@@ -482,8 +519,22 @@
     .rl-trend-grid { stroke: var(--background-modifier-border); stroke-width: 1; stroke-dasharray: 3 4; }
     .rl-trend-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .92; }
     .rl-trend-tick { font-size: 9px; fill: var(--text-faint); }
+    .rl-trend-tick-future { opacity: .35; }
+    .rl-trend-dot { stroke: var(--background-primary); stroke-width: 1; }
+    .rl-trend-y { font-size: 9px; fill: var(--text-faint); }
+    .rl-trend-hot { cursor: crosshair; }
+    .rl-s-trend { position: relative; }
+    .rl-trend-tip {
+        position: absolute; top: 26px; z-index: 5; pointer-events: none;
+        display: flex; flex-direction: column; gap: 2px; white-space: nowrap;
+        background: var(--background-secondary); border: 1px solid var(--background-modifier-border);
+        border-radius: var(--rl-t-radius-md, 6px); padding: 4px 8px; font-size: 11px; color: var(--text-normal);
+    }
+    .rl-trend-tip b { font-weight: 600; }
+    .rl-trend-tip span { display: inline-flex; align-items: center; gap: 4px; }
+    .rl-trend-tip i { width: 8px; height: 8px; border-radius: 2px; flex: none; display: inline-block; }
 
-    /* ── 四库分区（容器查询自适应：并排时容器约四成宽 → 内部 2×2；堆叠全宽 → 4 列） ── */
+    /* ── 概览（容器查询自适应：并排时容器约四成宽 → 内部 2×2；堆叠全宽 → 4 列） ── */
     .rl-s-part { container-type: inline-size; }
     .rl-part-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
     @container (min-width: 560px) {
@@ -598,7 +649,7 @@
     .rl-today-title { flex: 1 1 auto; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rl-today-foot { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
 
-    /* 窄屏收敛：分区 2 列、KPI 保持可读 */
+    /* 窄屏收敛：概览 2 列、KPI 保持可读 */
     @media (max-width: 900px) {
         .rl-s-mid { grid-template-columns: 1fr; }
         .rl-part-grid { grid-template-columns: repeat(2, 1fr); }
