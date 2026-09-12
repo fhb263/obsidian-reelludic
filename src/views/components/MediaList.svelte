@@ -452,14 +452,18 @@
 
 <!-- 层2：搜索（定宽）+ 添加 + 概览（小字弱化置右） -->
 <div class="rl-toolbar">
-    <input
-        class="rl-search"
-        type="search"
-        placeholder={searchPlaceholder}
-        bind:value={searchText}
-        aria-label="搜索条目"
-        on:keydown={(ev) => { if (ev.key === 'Escape') searchText = ''; }}
-    />
+    <div class="rl-search-wrap">
+        <!-- 占位字前置搜索图标（lucide search，灰同占位字；用户 2026-09-12 需求） -->
+        <Icon icon="search" size={13} cls="rl-search-ico" />
+        <input
+            class="rl-search"
+            type="search"
+            placeholder={searchPlaceholder}
+            bind:value={searchText}
+            aria-label="搜索条目"
+            on:keydown={(ev) => { if (ev.key === 'Escape') searchText = ''; }}
+        />
+    </div>
     <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/电视剧/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType -->
     <button class="rl-add mod-cta" data-tip="新建条目" on:click={() => onAdd(resolveAddType(lockType, typeFilter))}><Icon icon="plus" size={14} /> 添加</button>
     <span class="rl-libstats" role="group" aria-label="库概览">
@@ -813,11 +817,16 @@
         background: var(--background-primary); color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); padding: 3px 10px; cursor: pointer;
     }
     .rl-toolbar .rl-cnt { opacity: .6; font-size: 10px; }
-    /* 搜索框定宽（阶段7+：240~320px，无需通栏拉伸） */
+    /* 搜索框定宽（阶段7+：240~320px，无需通栏拉伸）；内嵌 lucide 搜索图标（09-12） */
+    .rl-toolbar .rl-search-wrap { position: relative; flex: none; width: 280px; max-width: 320px; min-width: 240px; }
+    .rl-toolbar :global(.rl-search-ico) {
+        position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+        color: var(--text-faint); pointer-events: none;
+    }
     .rl-toolbar .rl-search {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
         background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px);
-        padding: 5px 10px; width: 280px; max-width: 320px; min-width: 240px; flex: none;
+        padding: 5px 10px 5px 27px; width: 100%;
     }
     .rl-toolbar .rl-search:focus { outline: none; border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
     .rl-toolbar .rl-search::placeholder { color: var(--text-faint); }
