@@ -150,6 +150,25 @@ describe('filterAndSort 综合筛选 + 排序', () => {
         expect(out.map((x) => x.id)).toEqual(['b1']);
     });
 
+    it('musicKind 筛选：other 只留显式其他（有声书/播客）', () => {
+        const musics = [
+            e({ id: 'mu1', type: 'music', title: '歌曲A' }),
+            e({ id: 'mu2', type: 'music', title: '有声书B', musicKind: 'other' }),
+            e({ id: 'b1', type: 'book', title: '图书C' }),
+        ];
+        const out = filterAndSort(musics, { status: 'all', type: 'all', query: '', sortBy: 'recent', musicKind: 'other' });
+        expect(out.map((x) => x.id)).toEqual(['mu2']);
+    });
+
+    it('musicKind 筛选：music 含缺省条目（缺省归音乐，存量音乐不丢失）', () => {
+        const musics = [
+            e({ id: 'mu1', type: 'music', title: '歌曲A' }),
+            e({ id: 'mu2', type: 'music', title: '有声书B', musicKind: 'other' }),
+        ];
+        const out = filterAndSort(musics, { status: 'all', type: 'all', query: '', sortBy: 'recent', musicKind: 'music' });
+        expect(out.map((x) => x.id)).toEqual(['mu1']);
+    });
+
     it('title-asc 排序（A-Z，zh locale）', () => {
         const out = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'title-asc' });
         const titles = out.map((x) => x.title);

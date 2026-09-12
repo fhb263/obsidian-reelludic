@@ -1,13 +1,22 @@
-// 书籍子分类（出版 / 网文）纯逻辑：归一 + 匹配 + 计数。
-// 1.0.3 起阅读页签提供【全部 / 出版 / 网文】子分类 chips（对标影视聚合页签的类型 chips）。
-// 缺省归「book」（展示为「出版」；用户 2026-09-12 裁定）：未指定 bookKind 的存量书籍不丢失，网文在表单显式选择。
+// 书籍子分类（出版 / 网文 / 漫画）纯逻辑：归一 + 匹配 + 计数。
+// 1.0.3 起阅读页签提供【全部 / 出版 / 网文 / 漫画】子分类 chips（对标影视聚合页签的类型 chips）。
+// 缺省归「book」（展示为「出版」；用户 2026-09-12 裁定）：未指定 bookKind 的存量书籍不丢失，网文 / 漫画在表单显式选择。
 import type { BookKind } from 'data/types';
 
-export const BOOK_KINDS: BookKind[] = ['book', 'novel'];
+export const BOOK_KINDS: BookKind[] = ['book', 'novel', 'comic'];
 
 export const BOOK_KIND_LABELS: Record<BookKind, string> = {
     book: '出版',
     novel: '网文',
+    comic: '漫画',
+};
+
+/** chips 计数量词（用户 2026-09-12 指定：5 本书 / 5 本网文 / 5 本漫画）——书籍各桶一律「本」 */
+export const BOOK_KIND_UNITS: Record<'all' | BookKind, string> = {
+    all: '本',
+    book: '本',
+    novel: '本',
+    comic: '本',
 };
 
 // ⚠️ 合法值集合以 BOOK_KIND_LABELS 的**自有键**为准（与 THEME_CLASS 同法，防两处定义漂移）。
@@ -29,9 +38,9 @@ export function matchesBookKind(e: { type: string; bookKind?: BookKind }, kind: 
     return normalizeBookKind(e.bookKind) === kind;
 }
 
-/** 三桶计数（只统计 book 类型条目；all = book 总数）——阅读页签 chips 数字 */
+/** 四桶计数（只统计 book 类型条目；all = book 总数）——阅读页签 chips 数字 */
 export function bookKindCounts(entries: ReadonlyArray<{ type: string; bookKind?: BookKind }>): Record<'all' | BookKind, number> {
-    const out: Record<'all' | BookKind, number> = { all: 0, book: 0, novel: 0 };
+    const out: Record<'all' | BookKind, number> = { all: 0, book: 0, novel: 0, comic: 0 };
     for (const e of entries) {
         if (e.type !== 'book') continue;
         out[normalizeBookKind(e.bookKind)]++;

@@ -5,8 +5,11 @@ import type { Rating } from 'pure/rating';
 // 六库扩展点：movie/tv/anime 影视动画，book/game 预留，music 已落地（平铺单选，schema 只增不改）
 export type EntryType = 'movie' | 'tv' | 'anime' | 'book' | 'game' | 'music';
 
-/** 书籍子分类（1.0.3）：book 出版（缺省）/ novel 网文——阅读页签【全部/出版/网文】chips 维度（schema append-only） */
-export type BookKind = 'book' | 'novel';
+/** 书籍子分类（1.0.3）：book 出版（缺省）/ novel 网文 / comic 漫画——阅读页签【全部/出版/网文/漫画】chips 维度（schema append-only） */
+export type BookKind = 'book' | 'novel' | 'comic';
+
+/** 音乐子分类（1.0.3）：music 音乐（缺省）/ other 其他（有声书 / 播客等）——收听页签【全部/音乐/其他】chips 维度（schema append-only） */
+export type MusicKind = 'music' | 'other';
 
 export const ENTRY_TYPES: readonly EntryType[] = ['movie', 'tv', 'anime', 'book', 'game', 'music'];
 
@@ -97,8 +100,10 @@ export interface MediaEntry {
     durationMin?: number;
     /** 又名/别名（豆瓣详情回填） */
     aliases?: string[];
-    /** 书籍子分类（缺省视为 'book'，展示为「出版」；表单「书籍分类」两颗 chip 选择，归一见 pure/bookKind） */
+    /** 书籍子分类（缺省视为 'book'，展示为「出版」；表单「书籍分类」三颗 chip 选择，归一见 pure/bookKind） */
     bookKind?: BookKind;
+    /** 音乐子分类（缺省视为 'music'，展示为「音乐」；表单「音乐分类」两颗 chip 选择，归一见 pure/musicKind） */
+    musicKind?: MusicKind;
     /** 书籍作者 */
     author?: string;
     /** 书籍译者（豆瓣详情回填） */

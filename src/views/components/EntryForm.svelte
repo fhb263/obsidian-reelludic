@@ -4,6 +4,7 @@
     import { statusLabel, statusVerb, reviewLabel } from 'pure/labels';
     import { reconcileBookProgress, pageFromPercent, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
     import { normalizeBookKind } from 'pure/bookKind';
+    import { normalizeMusicKind } from 'pure/musicKind';
     import { placeMenu } from 'pure/menuPlacement';
     import { AI_HIGHLIGHT_SUGGEST, aiFieldsToText, textToAiFields } from 'pure/aiSummary';
     import type { AiSummaryInput, AiSummaryResult } from 'pure/aiSummary';
@@ -19,7 +20,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import type { SearchProgressCb, SearchProgress } from 'pure/searchProgress';
     import type { MediaStatus } from 'pure/status';
     import Icon from './Icon.svelte';
-    import type { MediaEntry, BookKind } from 'data/types';
+    import type { MediaEntry, BookKind, MusicKind } from 'data/types';
 
     type SearchResult = TmdbSearchResult | OmdbSearchResult | BookSearchResult | GameSearchResult | BangumiSearchResult | MusicSearchResult;
 
@@ -217,8 +218,10 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     $: { if (summaryEl) autosizeTextarea(summaryEl); void summary; }
     $: { if (authorIntroEl) autosizeTextarea(authorIntroEl); void authorIntro; }
     $: { if (tocEl) autosizeTextarea(tocEl); void toc; }
-    /** 书籍分类（1.0.3）：book 出版 / novel 网文；缺省归出版（pure/bookKind），表单两颗 chip 选择 */
+    /** 书籍分类（1.0.3）：book 出版 / novel 网文 / comic 漫画；缺省归出版（pure/bookKind），表单三颗 chip 选择 */
     let bookKind: BookKind = normalizeBookKind(entry?.bookKind);
+    /** 音乐分类（1.0.3）：music 音乐 / other 其他（有声书/播客等）；缺省归音乐（pure/musicKind），表单两颗 chip 选择 */
+    let musicKind: MusicKind = normalizeMusicKind(entry?.musicKind);
     let author = entry?.author ?? '';
     let album = entry?.album ?? '';
     let audioPath = entry?.audioPath ?? '';
@@ -1214,6 +1217,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
             input.gameLaunchPath = gameLaunchPath.trim() || undefined; // 启动快捷方式（.lnk）
         }
         if (type === 'music') {
+            input.musicKind = musicKind; // 恒写（normalize 后必有值；'music' 显式落盘语义等价缺省）
             input.author = author.trim() || undefined;
             input.album = album.trim() || undefined;
             input.audioPath = audioPath.trim() || undefined;
@@ -1505,6 +1509,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
                     <span class="rl-lbl">书籍分类</span>
                     <button class="rl-chip" class:on={bookKind === 'book'} on:click={() => (bookKind = 'book')}>出版</button>
                     <button class="rl-chip" class:on={bookKind === 'novel'} on:click={() => (bookKind = 'novel')}>网文</button>
+                    <button class="rl-chip" class:on={bookKind === 'comic'} on:click={() => (bookKind = 'comic')}>漫画</button>
                 </div>
                 <div class="rl-2col">
                     <div><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} /></div>
@@ -1516,6 +1521,11 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
                 </div>
             {/if}
             {#if type === 'music'}
+                <div class="rl-kind-row">
+                    <span class="rl-lbl">音乐分类</span>
+                    <button class="rl-chip" class:on={musicKind === 'music'} on:click={() => (musicKind = 'music')}>音乐</button>
+                    <button class="rl-chip" class:on={musicKind === 'other'} on:click={() => (musicKind = 'other')}>其他</button>
+                </div>
                 <div class="rl-2col">
                     <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder="歌手 / 艺术家" /></div>
                     <div><label class="rl-lbl">专辑</label><input class="rl-input" bind:value={album} placeholder="所属专辑（手动填写）" /></div>

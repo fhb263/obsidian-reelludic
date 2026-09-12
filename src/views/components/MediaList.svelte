@@ -7,13 +7,14 @@
     import { starString, starClass } from 'pure/rating';
     import { describeBulkApply } from 'pure/bulkConfirm';
     import { filterAndSort } from 'pure/search';
-    import { BOOK_KINDS, BOOK_KIND_LABELS, bookKindCounts } from 'pure/bookKind';
+    import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_UNITS, bookKindCounts } from 'pure/bookKind';
+    import { MUSIC_KINDS, MUSIC_KIND_LABELS, MUSIC_KIND_UNITS, musicKindCounts } from 'pure/musicKind';
     import { groupMusicByArtist } from 'pure/musicGroup';
     import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres } from 'pure/cardMeta';
     import { resolveAddType } from 'pure/focusType';
     import { placeMenu } from 'pure/menuPlacement';
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS, TYPE_COLORS, type ColorTheme, type EntryType } from 'data/types';
-    import type { MediaEntry, MediaStatus, BookKind } from 'data/types';
+    import type { MediaEntry, MediaStatus, BookKind, MusicKind } from 'data/types';
     import Icon from './Icon.svelte';
 
     export let entries: MediaEntry[] = [];
@@ -73,9 +74,12 @@
     // 否则组件被 Svelte 复用时 typeFilter 停留在上一个页签的类型，切回影视页签卡片不显示
     $: if (lockType) typeFilter = lockType;
     else typeFilter = 'all';
-    // 书籍子分类（1.0.3）：阅读页签 chips【全部/出版/网文】，缺省归出版（pure/bookKind）
+    // 书籍子分类（1.0.3）：阅读页签 chips【全部/出版/网文/漫画】，缺省归出版（pure/bookKind）
     let kindFilter: 'all' | BookKind = 'all';
     const kindChips: ReadonlyArray<'all' | BookKind> = ['all', ...BOOK_KINDS];
+    // 音乐子分类（1.0.3）：收听页签 chips【全部/音乐/其他】，缺省归音乐（pure/musicKind）
+    let musicFilter: 'all' | MusicKind = 'all';
+    const musicChips: ReadonlyArray<'all' | MusicKind> = ['all', ...MUSIC_KINDS];
     /** 空状态文案按锁定类型动态化（聚合页签用通用「库」文案；音乐页签不再显示「书架」） */
     function emptyText(): string {
         switch (lockType) {
@@ -210,6 +214,7 @@
         query: debouncedSearch,
         sortBy,
         bookKind: lockType === 'book' ? kindFilter : undefined,
+        musicKind: lockType === 'music' ? musicFilter : undefined,
     });
 
     // 音乐页签歌单：按歌手分组（组名拼音序，未分类置底；组内专辑→年份→标题），纯逻辑见 pure/musicGroup
@@ -235,8 +240,10 @@
         for (const t of ENTRY_TYPES) out[t] = entries.filter((e) => e.type === t).length;
         return out;
     })();
-    // 书籍子分类三桶计数（阅读页签 chips 数字；all = book 总数，缺省归出版桶）
+    // 书籍子分类四桶计数（阅读页签 chips 数字；all = book 总数，缺省归出版桶）
     $: kindCounts = bookKindCounts(lockType === 'book' ? entries : []);
+    // 音乐子分类三桶计数（收听页签 chips 数字；all = music 总数，缺省归音乐桶）
+    $: musicCounts = musicKindCounts(lockType === 'music' ? entries : []);
 
     function toggleMenu(id: string) {
         menuOpenFor = menuOpenFor === id ? null : id;
@@ -467,7 +474,17 @@
         <span class="rl-vb-group" role="group" aria-label="书籍分类">
             {#each kindChips as k}
                 <button class:on={kindFilter === k} on:click={() => (kindFilter = k)}>
-                    {k === 'all' ? '全部' : BOOK_KIND_LABELS[k]}<span class="rl-cnt">{kindCounts[k]}</span>
+                    {k === 'all' ? '全部' : BOOK_KIND_LABELS[k]}<span class="rl-cnt">{kindCounts[k]}{BOOK_KIND_UNITS[k]}</span>
+                </button>
+            {/each}
+        </span>
+        <span class="rl-vb-sep" aria-hidden="true"></span>
+    {/if}
+    {#if lockType === 'music'}
+        <span class="rl-vb-group" role="group" aria-label="音乐分类">
+            {#each musicChips as k}
+                <button class:on={musicFilter === k} on:click={() => (musicFilter = k)}>
+                    {k === 'all' ? '全部' : MUSIC_KIND_LABELS[k]}<span class="rl-cnt">{musicCounts[k]}{MUSIC_KIND_UNITS[k]}</span>
                 </button>
             {/each}
         </span>
