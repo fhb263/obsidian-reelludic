@@ -217,7 +217,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     $: { if (summaryEl) autosizeTextarea(summaryEl); void summary; }
     $: { if (authorIntroEl) autosizeTextarea(authorIntroEl); void authorIntro; }
     $: { if (tocEl) autosizeTextarea(tocEl); void toc; }
-    /** 图书分类（1.0.3）：book 图书 / novel 小说；缺省归图书（pure/bookKind），表单两颗 chip 选择 */
+    /** 书籍分类（1.0.3）：book 出版 / novel 网文；缺省归出版（pure/bookKind），表单两颗 chip 选择 */
     let bookKind: BookKind = normalizeBookKind(entry?.bookKind);
     let author = entry?.author ?? '';
     let album = entry?.album ?? '';
@@ -1502,9 +1502,9 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
                     {/if}
             {#if type === 'book'}
                 <div class="rl-kind-row">
-                    <span class="rl-lbl">图书分类</span>
-                    <button class="rl-chip" class:on={bookKind === 'book'} on:click={() => (bookKind = 'book')}>图书</button>
-                    <button class="rl-chip" class:on={bookKind === 'novel'} on:click={() => (bookKind = 'novel')}>小说</button>
+                    <span class="rl-lbl">书籍分类</span>
+                    <button class="rl-chip" class:on={bookKind === 'book'} on:click={() => (bookKind = 'book')}>出版</button>
+                    <button class="rl-chip" class:on={bookKind === 'novel'} on:click={() => (bookKind = 'novel')}>网文</button>
                 </div>
                 <div class="rl-2col">
                     <div><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} /></div>

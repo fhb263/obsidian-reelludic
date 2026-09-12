@@ -5,7 +5,7 @@ import type { Rating } from 'pure/rating';
 // 六库扩展点：movie/tv/anime 影视动画，book/game 预留，music 已落地（平铺单选，schema 只增不改）
 export type EntryType = 'movie' | 'tv' | 'anime' | 'book' | 'game' | 'music';
 
-/** 书籍子分类（1.0.3）：book 图书（缺省）/ novel 小说——书籍页签【全部/图书/小说】chips 维度（schema append-only） */
+/** 书籍子分类（1.0.3）：book 出版（缺省）/ novel 网文——阅读页签【全部/出版/网文】chips 维度（schema append-only） */
 export type BookKind = 'book' | 'novel';
 
 export const ENTRY_TYPES: readonly EntryType[] = ['movie', 'tv', 'anime', 'book', 'game', 'music'];
@@ -97,7 +97,7 @@ export interface MediaEntry {
     durationMin?: number;
     /** 又名/别名（豆瓣详情回填） */
     aliases?: string[];
-    /** 书籍子分类（缺省视为 'book' 图书；表单「图书分类」两颗 chip 选择，归一见 pure/bookKind） */
+    /** 书籍子分类（缺省视为 'book'，展示为「出版」；表单「书籍分类」两颗 chip 选择，归一见 pure/bookKind） */
     bookKind?: BookKind;
     /** 书籍作者 */
     author?: string;

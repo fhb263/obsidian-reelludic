@@ -46,7 +46,7 @@ export function filterAndSort(
         type: 'all' | EntryType;
         query: string;
         sortBy: SortBy;
-        /** 书籍子分类（1.0.3）：仅书籍页签传入（'all' = 不过滤）；缺省/undefined 不过滤（聚合页签与旧调用不受影响） */
+        /** 书籍子分类（1.0.3）：仅阅读页签传入（'all' = 不过滤）；缺省/undefined 不过滤（聚合页签与旧调用不受影响） */
         bookKind?: 'all' | BookKind;
     },
 ): MediaEntry[] {

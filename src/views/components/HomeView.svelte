@@ -95,6 +95,9 @@
         if (t === 'tracking') return '计划';
         if (t === 'media') return '影视';
         if (t === 'stats') return '统计';
+        // 页签显示名覆盖（1.0.3 用户裁定）：书籍→阅读、音乐→收听，仅页签生效，其余场景仍走 ENTRY_TYPE_LABELS
+        if (t === 'book') return '阅读';
+        if (t === 'music') return '收听';
         return ENTRY_TYPE_LABELS[t];
     }
 

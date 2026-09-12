@@ -73,7 +73,7 @@
     // 否则组件被 Svelte 复用时 typeFilter 停留在上一个页签的类型，切回影视页签卡片不显示
     $: if (lockType) typeFilter = lockType;
     else typeFilter = 'all';
-    // 书籍子分类（1.0.3）：书籍页签 chips【全部/图书/小说】，缺省归图书（pure/bookKind）
+    // 书籍子分类（1.0.3）：阅读页签 chips【全部/出版/网文】，缺省归出版（pure/bookKind）
     let kindFilter: 'all' | BookKind = 'all';
     const kindChips: ReadonlyArray<'all' | BookKind> = ['all', ...BOOK_KINDS];
     /** 空状态文案按锁定类型动态化（聚合页签用通用「库」文案；音乐页签不再显示「书架」） */
@@ -235,7 +235,7 @@
         for (const t of ENTRY_TYPES) out[t] = entries.filter((e) => e.type === t).length;
         return out;
     })();
-    // 书籍子分类三桶计数（书籍页签 chips 数字；all = book 总数，缺省归图书桶）
+    // 书籍子分类三桶计数（阅读页签 chips 数字；all = book 总数，缺省归出版桶）
     $: kindCounts = bookKindCounts(lockType === 'book' ? entries : []);
 
     function toggleMenu(id: string) {
@@ -464,7 +464,7 @@
         <span class="rl-vb-sep" aria-hidden="true"></span>
     {/if}
     {#if lockType === 'book'}
-        <span class="rl-vb-group" role="group" aria-label="图书分类">
+        <span class="rl-vb-group" role="group" aria-label="书籍分类">
             {#each kindChips as k}
                 <button class:on={kindFilter === k} on:click={() => (kindFilter = k)}>
                     {k === 'all' ? '全部' : BOOK_KIND_LABELS[k]}<span class="rl-cnt">{kindCounts[k]}</span>

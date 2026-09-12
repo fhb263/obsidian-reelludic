@@ -76,7 +76,7 @@ export class ExcerptModal extends Modal {
                 : allBooks;
             listEl.empty();
             if (allBooks.length === 0) {
-                listEl.createDiv({ cls: 'rl-ex-empty', text: '库内还没有书籍 — 先在「书籍」页签添加书目，再回来添加摘抄' });
+                listEl.createDiv({ cls: 'rl-ex-empty', text: '库内还没有书籍 — 先在「阅读」页签添加书目，再回来添加摘抄' });
                 return;
             }
             if (matched.length === 0) {

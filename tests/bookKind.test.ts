@@ -1,9 +1,9 @@
-// 书籍子分类（图书 / 小说）纯逻辑单测：normalize 兜底 + 匹配 + 计数
-// 缺省归「图书」（用户 2026-09-12 裁定）：未指定 bookKind 的存量书籍不丢失
+// 书籍子分类（出版 / 网文）纯逻辑单测：normalize 兜底 + 匹配 + 计数
+// 缺省归「book」（展示为「出版」；用户 2026-09-12 裁定）：未指定 bookKind 的存量书籍不丢失
 import { describe, it, expect } from 'vitest';
 import { BOOK_KINDS, BOOK_KIND_LABELS, normalizeBookKind, matchesBookKind, bookKindCounts } from 'pure/bookKind';
 
-describe('normalizeBookKind 合法值归一（缺省 → 图书）', () => {
+describe('normalizeBookKind 合法值归一（缺省 → 出版）', () => {
     it('合法值原样返回', () => {
         expect(normalizeBookKind('book')).toBe('book');
         expect(normalizeBookKind('novel')).toBe('novel');
@@ -30,10 +30,10 @@ describe('matchesBookKind 分类匹配', () => {
         expect(matchesBookKind(book, 'all')).toBe(true);
         expect(matchesBookKind(movie, 'all')).toBe(true);
     });
-    it('book/novel 按 normalize 后匹配（缺省书落图书桶）', () => {
+    it('book/novel 按 normalize 后匹配（缺省书落出版桶）', () => {
         expect(matchesBookKind(book, 'novel')).toBe(true);
         expect(matchesBookKind(book, 'book')).toBe(false);
-        expect(matchesBookKind(legacyBook, 'book')).toBe(true);
+        expect(matchesBookKind(legacyBook, 'book')).toBe(true); // 缺省书落出版桶
         expect(matchesBookKind(legacyBook, 'novel')).toBe(false);
     });
     it('非 book 类型在显式 kind 下不命中（从严：bookKind 只应作用于书籍页签）', () => {
@@ -43,7 +43,7 @@ describe('matchesBookKind 分类匹配', () => {
 });
 
 describe('bookKindCounts 三桶计数', () => {
-    it('只统计 book 类型条目；缺省归图书桶', () => {
+    it('只统计 book 类型条目；缺省归出版桶', () => {
         const entries = [
             { type: 'book' as const, bookKind: undefined },
             { type: 'book' as const, bookKind: 'book' as const },
@@ -60,6 +60,6 @@ describe('bookKindCounts 三桶计数', () => {
 describe('常量定义', () => {
     it('BOOK_KINDS 与 LABELS 一致', () => {
         expect(BOOK_KINDS).toEqual(['book', 'novel']);
-        expect(BOOK_KIND_LABELS).toEqual({ book: '图书', novel: '小说' });
+        expect(BOOK_KIND_LABELS).toEqual({ book: '出版', novel: '网文' });
     });
 });
