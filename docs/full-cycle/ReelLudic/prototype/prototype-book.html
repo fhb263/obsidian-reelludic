@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReelLudic 书籍库原型 · 书摘双链 v0.1</title>
+<style>
+  :root{
+    --bg:#eae9e7; --panel:#ffffff; --border:#e1e0dd; --border2:#d2d0cc;
+    --text:#1e1e1e; --muted:#7a7875; --faint:#b0aeaa;
+    --accent:#7c6cd9; --accent-soft:#efeefb; --accent-border:#c9c2ef;
+    --want:#8a8a86; --reading:#d99a2b; --finished:#4d9b52; --dropped:#c0493f;
+    --book:#3d7d5f; --book-soft:#e8f3ee;
+    --wf-ink:#3a3a3a; --wf-line:#9a9a96; --wf-fill:#f2f1ee; --wf-accent:#3b82f6;
+    --radius:10px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+    --hand:"Segoe Print","Comic Sans MS","Microsoft YaHei",cursive;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.55}
+  header.top{background:var(--panel);border-bottom:1px solid var(--border2);padding:14px 24px;position:sticky;top:0;z-index:20;display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+  header.top h1{font-size:17px;font-weight:600}
+  header.top .tag{font-size:12px;color:var(--muted)}
+  header.top .gate{font-size:12px;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-border);padding:2px 10px;border-radius:999px}
+  nav.tabs{display:flex;gap:8px;padding:10px 24px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+  nav.tabs button{font-family:inherit;font-size:13px;border:1px solid var(--border2);background:var(--panel);color:var(--muted);padding:6px 14px;border-radius:8px;cursor:pointer}
+  nav.tabs button:hover{border-color:var(--accent);color:var(--accent)}
+  nav.tabs button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
+  section.screen{display:none}
+  section.screen.active{display:block}
+  .screen-head{margin-bottom:14px}
+  .screen-head h2{font-size:16px;font-weight:600}
+  .screen-head p{color:var(--muted);font-size:13px;margin-top:2px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:900px){.cols{grid-template-columns:1fr}}
+  .art{border:1px solid var(--border2);border-radius:var(--radius);background:var(--panel);overflow:hidden}
+  .art-cap{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600}
+  .art-cap .dot{width:8px;height:8px;border-radius:50%}
+  .art-cap.wf{background:#fbfaf8;color:#6b6b67}
+  .art-cap.wf .dot{background:#b9b9b4}
+  .art-cap.hf{background:var(--accent-soft);color:var(--accent)}
+  .art-cap.hf .dot{background:var(--accent)}
+  .art-body{padding:14px}
+  .art-note{font-size:12px;color:var(--muted);padding:8px 14px;border-top:1px dashed var(--border);line-height:1.5}
+  .art-note b{color:var(--text)}
+  .stage{position:relative;background:var(--wf-fill);border:1.5px solid var(--wf-line);border-radius:8px;padding:10px;font-family:var(--hand)}
+  .stage .bar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .stage .bar .cd{width:10px;height:10px;border-radius:50%;background:var(--wf-line)}
+  .stage .bar .tabx{width:60px;height:10px;background:var(--wf-line);opacity:.55;border-radius:3px}
+  .wf-box{border:1.5px dashed var(--wf-ink);border-radius:6px;background:#fff;padding:8px;font-size:12px;color:var(--wf-ink);position:relative}
+  .wf-box.dim{border-style:solid;border-color:var(--wf-line);color:#7c7c78;background:var(--wf-fill)}
+  .wf-btn{border:1.5px solid var(--wf-ink);border-radius:5px;background:#fff;padding:3px 8px;font-size:11px;display:inline-block;font-family:var(--hand)}
+  .wf-btn.act{background:var(--wf-accent);border-color:var(--wf-accent);color:#fff}
+  .wf-chip{border:1px solid var(--wf-ink);border-radius:999px;padding:2px 8px;font-size:10px;display:inline-block;background:#fff}
+  .wf-chip.on{background:var(--wf-ink);color:#fff}
+  .wf-arrow{font-size:12px;color:var(--wf-accent);text-align:center}
+  .wf-note{font-size:10px;color:#8d6c1f;background:#fdf6e3;border:1px dashed #d9c183;border-radius:5px;padding:4px 7px;margin-top:6px;font-family:var(--hand)}
+
+  .obs{background:#f6f5f4;border:1px solid var(--border2);border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .obs-titlebar{display:flex;align-items:center;gap:8px;background:#dcdbd9;padding:6px 10px;border-bottom:1px solid var(--border2)}
+  .obs-titlebar .t{width:10px;height:10px;border-radius:50%}
+  .obs-titlebar .t1{background:#e06c5f}.obs-titlebar .t2{background:#e8b84c}.obs-titlebar .t3{background:#67b763}
+  .obs-titlebar span{font-size:11px;color:var(--muted);margin-left:8px}
+  .obs-body{padding:14px;min-height:320px;background:#fff}
+  .note-title{font-size:20px;font-weight:600;margin-bottom:10px}
+  .fm{border:1px solid var(--border);background:#fafaf9;border-radius:8px;padding:8px 12px;font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#5a5956;margin-bottom:12px;line-height:1.7}
+  .fm b{color:var(--book);font-weight:600}
+  .callout{border-left:3px solid var(--book);background:var(--book-soft);border-radius:0 8px 8px 0;padding:8px 12px;font-size:12px;margin-bottom:12px}
+  .callout b{color:var(--book)}
+  .h2{font-size:15px;font-weight:600;margin:16px 0 8px;padding-bottom:3px;border-bottom:1px solid var(--border)}
+  .ex-block{border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:8px 12px;margin-bottom:8px;background:#fff;position:relative}
+  .ex-block .q{font-size:13px;color:#3a3a3a;line-height:1.6}
+  .ex-block .q::before{content:"“";color:var(--accent);font-weight:600}
+  .ex-block .q::after{content:"”";color:var(--accent);font-weight:600}
+  .ex-block .meta{font-size:11px;color:var(--muted);margin-top:5px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .ex-block .meta .pg{color:var(--book);font-weight:600}
+  .ex-block .bid{position:absolute;top:8px;right:10px;font-size:10px;color:var(--faint);font-family:ui-monospace,Consolas,monospace}
+  .ex-block .ref{font-size:11px;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:6px;padding:2px 8px;margin-top:6px;display:inline-block}
+  .ex-block .note{font-size:12px;color:#444;margin-top:6px;border-left:2px solid var(--border);padding-left:8px}
+  .modal-sim{background:#fff;border:1px solid var(--border2);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.12);overflow:hidden;margin:0 auto;max-width:560px}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600}
+  .modal-body{padding:16px;font-size:13px}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600}
+  .input{border:1px solid var(--border2);border-radius:7px;padding:7px 10px;font-size:13px;font-family:inherit;width:100%;background:#fff;color:var(--text)}
+  .input:focus{outline:2px solid var(--accent-border);border-color:var(--accent)}
+  .input-row{display:flex;gap:10px}
+  .input-row .grow{flex:1}
+  .input-row .narrow{width:120px}
+  .search-list{border:1px solid var(--border2);border-radius:8px;overflow:hidden;margin-top:4px}
+  .search-item{display:flex;align-items:center;gap:10px;padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer}
+  .search-item:last-child{border-bottom:none}
+  .search-item:hover{background:var(--accent-soft)}
+  .search-item .bk{width:26px;height:38px;border-radius:4px;flex:none;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff}
+  .search-item .nm{font-size:12px;font-weight:600}
+  .search-item .au{font-size:11px;color:var(--muted)}
+  .search-item .sel-mark{margin-left:auto;color:var(--accent);font-weight:600}
+  .preview{border:1px dashed var(--accent-border);background:var(--accent-soft);border-radius:8px;padding:8px 12px;font-size:12px}
+  .preview .lbl{font-size:10px;color:var(--accent);font-weight:600;margin-bottom:3px}
+  .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:10px 16px;border-top:1px solid var(--border);background:#fafaf9}
+  .btn-pri{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-ghost{background:#fff;border:1px solid var(--border2);border-radius:7px;padding:6px 14px;font-size:12px;color:var(--muted);cursor:pointer}
+  .chip{border:1px solid var(--border2);background:#fff;border-radius:999px;padding:3px 11px;font-size:12px;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip.want{color:var(--want)}.chip.want.on{background:var(--want);border-color:var(--want);color:#fff}
+  .chip.reading{color:var(--reading)}.chip.reading.on{background:var(--reading);border-color:var(--reading);color:#fff}
+  .chip.finished{color:var(--finished)}.chip.finished.on{background:var(--finished);border-color:var(--finished);color:#fff}
+  .chip.dropped{color:var(--dropped)}.chip.dropped.on{background:var(--dropped);border-color:var(--dropped);color:#fff}
+  .readbar-wrap{background:var(--border);border-radius:999px;height:8px;position:relative;overflow:hidden}
+  .readbar-fill{background:linear-gradient(90deg,#5daa82,#3d7d5f);height:100%;border-radius:999px}
+  .readbar-label{font-size:11px;color:var(--muted);margin-top:4px}
+  .grid-book{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px}
+  .bcard{background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;transition:box-shadow .15s;position:relative}
+  .bcard:hover{box-shadow:0 2px 8px rgba(0,0,0,.12)}
+  .bcard .cov{aspect-ratio:2/3;display:flex;align-items:flex-end;padding:6px;font-size:10px;color:#fff;position:relative}
+  .bcard .meta{padding:6px 7px}
+  .bcard .ttl{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bcard .sub{font-size:10px;color:var(--muted);margin-top:2px}
+  .bcard .rb{margin-top:5px}
+  .bcard .ft{display:flex;justify-content:space-between;align-items:center;margin-top:5px}
+  .ex-count{font-size:10px;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:999px;padding:1px 7px;font-weight:600}
+  .status-dot{font-size:9px;font-weight:600;padding:1px 6px;border-radius:999px;color:#fff}
+  .s-reading{background:var(--reading)}.s-finished{background:var(--finished)}.s-want{background:var(--want)}
+  .cov-book{background:linear-gradient(135deg,#5a9e7d,#3d7d5f)}
+  .cov-book2{background:linear-gradient(135deg,#7d9e5a,#5f7d3d)}
+  .cov-book3{background:linear-gradient(135deg,#5a7d9e,#3d5f7d)}
+  .cov-book4{background:linear-gradient(135deg,#9e7d5a,#7d5f3d)}
+  .cov-book5{background:linear-gradient(135deg,#8a6f9e,#6b4f7d)}
+  .flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .flow-step{border:1.5px solid var(--wf-ink);border-radius:7px;background:#fff;padding:6px 10px;font-size:11px;font-family:var(--hand);text-align:center}
+  .flow-step.act{background:var(--wf-accent);border-color:var(--wf-accent);color:#fff}
+  .flow-arr{font-size:13px;color:var(--wf-accent);font-family:var(--hand)}
+  .confirm-table{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid var(--border2);border-radius:8px;overflow:hidden}
+  .confirm-table th{background:#f7f6f5;text-align:left;padding:8px 12px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)}
+  .confirm-table td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  .confirm-table tr:last-child td{border-bottom:none}
+  .confirm-table .opt{color:var(--accent);font-weight:600}
+  .tagline{font-size:12px;color:var(--muted);margin-top:6px}
+  .tagline b{color:var(--text)}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>ReelLudic 书籍库原型 · 书摘双链 v0.1</h1>
+  <span class="tag">阶段 2 · 书籍库 G3 门禁审查版</span>
+  <span class="gate">4 屏 + 5 待确认点</span>
+</header>
+<nav class="tabs">
+  <button class="active" data-s="s1">01 书目笔记摘抄区</button>
+  <button data-s="s2">02 摘抄录入弹窗</button>
+  <button data-s="s3">03 阅读进度交互</button>
+  <button data-s="s4">04 书籍卡片增强</button>
+  <button data-s="s5">待确认点</button>
+</nav>
+<main>
+
+<!-- ══════════════ 屏 01：书目笔记摘抄区 ══════════════ -->
+<section class="screen active" id="s1">
+  <div class="screen-head">
+    <h2>01 · 书目笔记摘抄区</h2>
+    <p>摘抄内嵌于书目笔记「个人评语」之后，每条摘抄自带 <b>^id</b> 块引用锚点，可被库内任意笔记引用。</p>
+  </div>
+  <div class="cols">
+    <div class="art">
+      <div class="art-cap wf"><span class="dot"></span>线框 · 笔记结构</div>
+      <div class="art-body">
+        <div class="stage">
+          <div class="bar"><span class="cd"></span><span class="tabx"></span><span class="tabx" style="width:40px"></span></div>
+          <div class="wf-box dim">frontmatter（元数据 + reading_page / reading_total_page）</div>
+          <div style="height:8px"></div>
+          <div class="wf-box dim"># 《置身事内》<br>基本信息 callout（作者/出版社/ISBN/页数）</div>
+          <div style="height:8px"></div>
+          <div class="wf-box dim">## 个人评语（用户自由区，可写 [[双链]]）</div>
+          <div style="height:8px"></div>
+          <div class="wf-box" style="border-color:var(--wf-accent)">
+            ## 摘抄（新增章节 · 位置固定）<br>
+            <span style="color:#8d6c1f">3 条摘抄块 · 每条含 引用 + 页码 + 心得 + ^id</span>
+          </div>
+          <div style="height:8px"></div>
+          <div class="wf-box dim">## 相关链接</div>
+          <div class="wf-note">合并写入策略：重写模板时按「## 摘抄」标记行提取旧内容原样回填 → 摘抄区不被清空</div>
+        </div>
+      </div>
+      <div class="art-note"><b>关键点</b>：摘抄区位置固定（评语后/链接前），既是阅读顺序也是合并写入的提取边界；frontmatter 只增字段（reading_page/reading_total_page 已就绪）。</div>
+    </div>
+    <div class="art">
+      <div class="art-cap hf"><span class="dot"></span>高保真 · Obsidian 笔记视图</div>
+      <div class="art-body">
+        <div class="obs">
+          <div class="obs-titlebar"><span class="t t1"></span><span class="t t2"></span><span class="t t3"></span><span>ReelLudic/entries/《置身事内》.md — 阅读模式</span></div>
+          <div class="obs-body">
+            <div class="note-title">《置身事内》</div>
+            <div class="fm">type: <b>book</b> · status: <b>reading</b> · rating: 4<br>reading_page: <b>128</b> · reading_total_page: <b>340</b></div>
+            <div class="callout"><b>基本信息</b> · 兰小欢 / 上海人民出版社 / ISBN 9787208144266 / 340 页</div>
+            <div class="h2">个人评语</div>
+            <div style="font-size:13px;color:#444">土地财政是理解中国经济增长的一把钥匙……（此处可写 [[双链]]）</div>
+            <div class="h2" style="color:var(--accent)">摘抄</div>
+            <div class="ex-block">
+              <span class="bid">^bk001a</span>
+              <div class="q">所谓「比较优势」，不是说你比所有人都强，而是你比所有替代方案都好。</div>
+              <div class="meta"><span class="pg">p.128</span><span>心得：地方政府的激励结构解释了很多「意外」</span></div>
+              <div class="ref">被 2 篇笔记引用 · 读书周报#^bk001a</div>
+            </div>
+            <div class="ex-block">
+              <span class="bid">^bk001b</span>
+              <div class="q">债务问题的本质是未来收益的提前支取。</div>
+              <div class="meta"><span class="pg">p.203</span><span>心得：和《债务危机》对照阅读</span></div>
+            </div>
+            <div class="ex-block">
+              <span class="bid">^bk001c</span>
+              <div class="q">工业化需要政府做的，不只是「放水养鱼」，还有「搭桥修路」。</div>
+              <div class="meta"><span class="pg">p.55</span><span>心得：案例：合肥政府投资京东方</span></div>
+              <div class="ref">[[读书笔记/产业政策#^bk001c]]</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art-note"><b>交互</b>：点击摘抄块页码可跳转该书进度；任意笔记用 <b>[[书目笔记#^bk001a]]</b> 引用摘抄，阅读模式点击即跳回。摘抄块手动编辑安全（合并写入不回写）。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 屏 02：摘抄录入弹窗 ══════════════ -->
+<section class="screen" id="s2">
+  <div class="screen-head">
+    <h2>02 · 摘抄录入弹窗</h2>
+    <p>外部阅读器复制 → 命令「添加摘抄」→ 粘贴 + 页码 + 挂载书目 + 心得 → 生成带 ^id 的摘抄块。</p>
+  </div>
+  <div class="cols">
+    <div class="art">
+      <div class="art-cap wf"><span class="dot"></span>线框 · 录入流程</div>
+      <div class="art-body">
+        <div class="stage">
+          <div class="flow">
+            <div class="flow-step">外部阅读器<br>选中复制</div>
+            <span class="flow-arr">→</span>
+            <div class="flow-step">命令<br>「添加摘抄」</div>
+            <span class="flow-arr">→</span>
+            <div class="flow-step act">弹窗粘贴<br>+ 填页码</div>
+            <span class="flow-arr">→</span>
+            <div class="flow-step">选挂载书目<br>+ 写心得</div>
+            <span class="flow-arr">→</span>
+            <div class="flow-step">生成 ^id<br>追加到摘抄区</div>
+          </div>
+          <div style="height:10px"></div>
+          <div class="wf-box">弹窗字段：引用文本（自动清格式）｜页码（可选）｜书目搜索（默认当前书籍）｜心得（可选）</div>
+          <div class="wf-note">30 秒完成主操作；页码可留空不阻塞（未知页码场景）</div>
+        </div>
+      </div>
+      <div class="art-note"><b>入口</b>：命令面板（Ctrl+P → 「添加摘抄」）+ 书目笔记右键菜单 + 书籍卡片快捷。挂载书目搜索复用 Google Books 三级兜底。</div>
+    </div>
+    <div class="art">
+      <div class="art-cap hf"><span class="dot"></span>高保真 · 录入弹窗</div>
+      <div class="art-body">
+        <div class="modal-sim">
+          <div class="modal-head">添加摘抄 <span style="color:var(--muted);font-weight:400;font-size:12px">将追加到书目笔记「摘抄」区</span></div>
+          <div class="modal-body">
+            <div class="field">
+              <label>引用文本（已从剪贴板带入，自动清格式）</label>
+              <textarea class="input" rows="3" style="resize:vertical">所谓「比较优势」，不是说你比所有人都强，而是你比所有替代方案都好。</textarea>
+            </div>
+            <div class="input-row">
+              <div class="field narrow">
+                <label>页码（可选）</label>
+                <input class="input" value="128">
+              </div>
+              <div class="field grow">
+                <label>挂载书目</label>
+                <input class="input" value="置身事内">
+                <div class="search-list">
+                  <div class="search-item"><span class="bk cov-book" style="background:#3d7d5f">置</span><div><div class="nm">置身事内：中国政府与经济发展</div><div class="au">兰小欢 · 2021</div></div><span class="sel-mark">✓</span></div>
+                  <div class="search-item"><span class="bk" style="background:#5f7d3d">身</span><div><div class="nm">置身事内（解读版）</div><div class="au">得到 · 2022</div></div></div>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label>心得（可选，支持 [[双链]]）</label>
+              <input class="input" value="地方政府的激励结构解释了很多「意外」">
+            </div>
+            <div class="preview">
+              <div class="lbl">生成预览 · 将追加到《置身事内》摘抄区（自动分配 ^bk001d）</div>
+              <div style="color:#3a3a3a">“所谓「比较优势」…… 都比所有替代方案都好。”</div>
+              <div style="color:var(--book);font-size:11px;margin-top:3px">p.128 · 心得：地方政府…</div>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost">取消</button>
+            <button class="btn-pri">生成摘抄</button>
+          </div>
+        </div>
+      </div>
+      <div class="art-note"><b>交互</b>：生成后摘抄块追加到书目笔记「摘抄」区末尾，Notice 提示「已添加 · 3 条摘抄」，书架卡片摘抄数徽标 +1；无需跳转，可连续录入。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 屏 03：阅读进度交互 ══════════════ -->
+<section class="screen" id="s3">
+  <div class="screen-head">
+    <h2>03 · 阅读进度交互</h2>
+    <p>页码 + 百分比双轨记录，任一填写自动换算；状态 chips 复用四态（想读/在读/已读/弃读）。</p>
+  </div>
+  <div class="cols">
+    <div class="art">
+      <div class="art-cap wf"><span class="dot"></span>线框 · 进度区块</div>
+      <div class="art-body">
+        <div class="stage">
+          <div class="wf-box dim">状态：<span class="wf-chip">想读</span> <span class="wf-chip on" style="background:var(--wf-accent);border-color:var(--wf-accent);color:#fff">在读</span> <span class="wf-chip">已读</span> <span class="wf-chip">弃读</span></div>
+          <div style="height:8px"></div>
+          <div class="wf-box">页码 [ 128 ] / 总页 [ 340 ]　→　百分比自动 = 38%<br>（也可直接填百分比，反算页码）</div>
+          <div style="height:8px"></div>
+          <div class="wf-box">进度条：▓▓▓▓▓░░░░░░░░░ 38%</div>
+          <div class="wf-note">读完（页码=总页）→ 提示「标记为已读」一键；进度写入 catalog + frontmatter 双向同步</div>
+        </div>
+      </div>
+      <div class="art-note"><b>存储</b>：readingProgress{page,totalPage} 已就绪（types.ts），percent 由 page/totalPage 派生，避免往返换算误差。</div>
+    </div>
+    <div class="art">
+      <div class="art-cap hf"><span class="dot"></span>高保真 · 编辑弹窗进度区</div>
+      <div class="art-body">
+        <div class="modal-sim">
+          <div class="modal-head">编辑条目 · 《置身事内》</div>
+          <div class="modal-body">
+            <div class="field">
+              <label>阅读状态</label>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <span class="chip want">想读</span>
+                <span class="chip reading on">在读</span>
+                <span class="chip finished">已读</span>
+                <span class="chip dropped">弃读</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>阅读进度</label>
+              <div class="input-row">
+                <div class="field narrow"><label>页码</label><input class="input" value="128"></div>
+                <div class="field narrow"><label>总页数</label><input class="input" value="340"></div>
+                <div class="field grow"><label>百分比（自动换算）</label><input class="input" value="38%" style="background:var(--book-soft);color:var(--book)"></div>
+              </div>
+            </div>
+            <div class="field">
+              <div class="readbar-wrap"><div class="readbar-fill" style="width:38%"></div></div>
+              <div class="readbar-label">已读 128 / 340 页 · 38% · 预计再 3 天读完</div>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn-ghost">取消</button>
+              <button class="btn-pri">保存进度</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art-note"><b>交互</b>：填页码或百分比任一，另一字段自动换算（展示层，存储以用户输入为准）；「已读 128/340」进度条实时渲染；读完时按钮文案变「标记为已读」。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 屏 04：书籍卡片增强 ══════════════ -->
+<section class="screen" id="s4">
+  <div class="screen-head">
+    <h2>04 · 书籍卡片增强</h2>
+    <p>书架书籍卡片：封面 + 进度条（复用 .rl-readbar）+ 摘抄数徽标；状态徽章用书籍文案。</p>
+  </div>
+  <div class="cols">
+    <div class="art">
+      <div class="art-cap wf"><span class="dot"></span>线框 · 卡片结构</div>
+      <div class="art-body">
+        <div class="stage">
+          <div class="wf-box" style="width:150px;margin:0 auto">
+            <div class="wf-box dim" style="height:70px;display:flex;align-items:center;justify-content:center">封面 2:3</div>
+            <div style="height:6px"></div>
+            <div style="font-size:11px">《置身事内》</div>
+            <div style="font-size:10px;color:#7c7c78">兰小欢 · 2021</div>
+            <div style="height:6px"></div>
+            <div class="wf-box" style="padding:3px;border-style:solid">▓▓▓▓▓▓░░░░ 38%</div>
+            <div style="height:6px"></div>
+            <div style="display:flex;justify-content:space-between;font-size:10px">
+              <span class="wf-chip on" style="background:var(--wf-accent);border-color:var(--wf-accent);color:#fff">在读</span>
+              <span>摘抄 · 3</span>
+            </div>
+          </div>
+          <div class="wf-note">摘抄数徽标 = 该书笔记「摘抄」区块数（解析计数）；无进度条（想读/已读完整）时显示对应文案</div>
+        </div>
+      </div>
+      <div class="art-note"><b>复用</b>：MediaList.svelte 已有 .rl-readbar 进度条（312 行），增强仅加摘抄数徽标 + 书籍状态徽章文案。</div>
+    </div>
+    <div class="art">
+      <div class="art-cap hf"><span class="dot"></span>高保真 · 书籍书架（书籍页签）</div>
+      <div class="art-body">
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          <span class="chip">全部</span><span class="chip on">在读</span><span class="chip">想读</span><span class="chip">已读</span>
+        </div>
+        <div class="grid-book">
+          <div class="bcard">
+            <div class="cov cov-book"><span class="status-dot s-reading">在读</span></div>
+            <div class="meta">
+              <div class="ttl">置身事内</div>
+              <div class="sub">兰小欢 · 2021</div>
+              <div class="rb"><div class="readbar-wrap"><div class="readbar-fill" style="width:38%"></div></div></div>
+              <div class="ft"><span style="font-size:10px;color:var(--muted)">128/340</span><span class="ex-count">摘抄 3</span></div>
+            </div>
+          </div>
+          <div class="bcard">
+            <div class="cov cov-book2"><span class="status-dot s-want">想读</span></div>
+            <div class="meta">
+              <div class="ttl">置身事内之外</div>
+              <div class="sub">贾樟柯 · 2022</div>
+              <div class="ft"><span style="font-size:10px;color:var(--faint)">未开始</span><span style="font-size:10px;color:var(--faint)">—</span></div>
+            </div>
+          </div>
+          <div class="bcard">
+            <div class="cov cov-book3"><span class="status-dot s-finished">已读</span></div>
+            <div class="meta">
+              <div class="ttl">乡土中国</div>
+              <div class="sub">费孝通 · 1948</div>
+              <div class="rb"><div class="readbar-wrap"><div class="readbar-fill" style="width:100%;background:#4d9b52"></div></div></div>
+              <div class="ft"><span style="font-size:10px;color:var(--muted)">读完</span><span class="ex-count">摘抄 12</span></div>
+            </div>
+          </div>
+          <div class="bcard">
+            <div class="cov cov-book4"><span class="status-dot s-reading">在读</span></div>
+            <div class="meta">
+              <div class="ttl">债务危机</div>
+              <div class="sub">瑞·达利欧 · 2019</div>
+              <div class="rb"><div class="readbar-wrap"><div class="readbar-fill" style="width:62%"></div></div></div>
+              <div class="ft"><span style="font-size:10px;color:var(--muted)">210/340</span><span class="ex-count">摘抄 5</span></div>
+            </div>
+          </div>
+          <div class="bcard">
+            <div class="cov cov-book5"><span class="status-dot s-want">想读</span></div>
+            <div class="meta">
+              <div class="ttl">置身事内</div>
+              <div class="sub">英文版 · 2023</div>
+              <div class="ft"><span style="font-size:10px;color:var(--faint)">未开始</span><span style="font-size:10px;color:var(--faint)">—</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art-note"><b>信息密度</b>：在读卡片 = 进度条 + 页码 + 摘抄数；想读/已读卡片简化（无进度条或满格）。筛选 chips 沿用现有类型/状态筛选。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 待确认点 ══════════════ -->
+<section class="screen" id="s5">
+  <div class="screen-head">
+    <h2>待确认点（G3 门禁）</h2>
+    <p>5 个决策点，请在审查原型时一并确认。</p>
+  </div>
+  <div style="overflow-x:auto">
+  <table class="confirm-table">
+    <tr><th style="width:40px">#</th><th>问题</th><th>备选</th><th>默认建议</th></tr>
+    <tr>
+      <td>1</td>
+      <td>摘抄区在书目笔记中的位置？</td>
+      <td class="opt">个人评语之后（当前）/ 相关链接之后 / 笔记最前</td>
+      <td>评语后：先想法后证据，且作合并写入的固定提取边界</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>页码 vs 百分比，谁为主？</td>
+      <td class="opt">双轨并列，自动换算（当前）/ 页码为主（纸质书）/ 百分比为主（电子书）</td>
+      <td>双轨并列：纸质电子书通吃；存储以用户输入为准避免换算误差</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>摘抄的编辑方式？</td>
+      <td class="opt">直接改笔记 Markdown（当前，合并写入不回写）/ 弹窗重写（结构化但重）</td>
+      <td>直改笔记：符合 Obsidian 心智，合并写入保证不覆盖</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>摘抄数徽标的信息密度？</td>
+      <td class="opt">仅数量「摘抄 3」（当前）/ 数量 + 最近页码 / 无徽标</td>
+      <td>仅数量：轻量不喧宾夺主；页码可从笔记看</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>页码 ↔ 百分比联动换算？</td>
+      <td class="opt">双向自动换算（当前）/ 只展示不换算（各填各的）</td>
+      <td>双向换算：填写体验顺滑；换算仅展示层</td>
+    </tr>
+  </table>
+  </div>
+</section>
+
+</main>
+<script>
+  const btns = document.querySelectorAll('nav.tabs button');
+  btns.forEach(b => b.addEventListener('click', () => {
+    btns.forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.querySelectorAll('section.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(b.dataset.s).classList.add('active');
+  }));
+</script>
+</body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReelLudic · Douban 兜底诊断器</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f5f4; color: #2c2c2a; padding: 24px; line-height: 1.6; }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .sub { font-size: 13px; color: #6e6e6a; margin-bottom: 18px; }
+  .card { background: #fff; border: 1px solid #e3e2df; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+  .form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input, select, button { font-family: inherit; font-size: 13px; border: 1px solid #d8d7d4; border-radius: 8px; padding: 6px 10px; background: #fff; color: #2c2c2a; }
+  input { flex: 1; min-width: 160px; }
+  button.primary { background: #185fa5; border-color: #185fa5; color: #fff; font-weight: 500; cursor: pointer; }
+  button.primary:hover { background: #0c447c; }
+  button.primary:disabled { opacity: .5; cursor: not-allowed; }
+  .ref { font-size: 12px; color: #444441; background: #f1efe8; border-radius: 8px; padding: 10px 12px; font-family: ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+  .chan { border: 1px solid #e3e2df; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .chan-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .chan-name { font-weight: 600; font-size: 13px; }
+  .tag { font-size: 11px; border-radius: 999px; padding: 1px 8px; font-weight: 500; }
+  .tag-idle { background: #f1efe8; color: #6e6e6a; }
+  .tag-ok { background: #eaf3de; color: #3b6d11; }
+  .tag-bad { background: #fcebeb; color: #a32d2d; }
+  .tag-slow { background: #faeeda; color: #854f0b; }
+  .chan .line { font-size: 12px; color: #5f5e5a; margin: 2px 0; }
+  .chan .resp { font-size: 12px; color: #444441; background: #fafaf9; border: 1px solid #ecebe8; border-radius: 6px; padding: 8px 10px; font-family: ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; max-height: 110px; overflow: auto; margin-top: 6px; }
+  .checks { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .check { font-size: 11px; border: 1px solid #d8d7d4; border-radius: 6px; padding: 2px 8px; color: #6e6e6a; }
+  .check.yes { border-color: #97c459; color: #3b6d11; background: #eaf3de; }
+  .check.no { border-color: #f09595; color: #a32d2d; background: #fcebeb; }
+  .concl { font-size: 13px; border-radius: 8px; padding: 10px 14px; background: #e6f1fb; border: 1px solid #b5d4f4; }
+  .concl b { color: #0c447c; }
+  .url-box { font-size: 11px; color: #6e6e6a; word-break: break-all; margin-top: 4px; }
+  a { color: #185fa5; }
+  .hint { font-size: 12px; color: #6e6e6a; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ReelLudic · Douban 兜底诊断器</h1>
+  <div class="sub">复现 douban.ts 的请求逻辑（j/search + 浏览器头），多通道实测豆瓣接口为何不返回结果。<br>判定项与插件代码一致：HTTP 状态码 / Challenge(PoW) 表单 / JSON items / 「禁止访问」页 / 耗时。</div>
+
+  <div class="card">
+    <h2>发起诊断</h2>
+    <div class="form-row">
+      <input id="kw" placeholder="关键词，如：沙丘" value="沙丘">
+      <select id="cat">
+        <option value="1002" data-label="movie/tv/anime">影视/动画（cat=1002）</option>
+        <option value="1001" data-label="book">书籍（cat=1001）</option>
+        <option value="3114" data-label="game">游戏（cat=3114）</option>
+      </select>
+      <button class="primary" id="run">开始诊断</button>
+    </div>
+    <div class="url-box" id="urlInfo"></div>
+  </div>
+
+  <div class="card">
+    <h2>参考基准（当前机器 curl 实测，2026-08-26）</h2>
+    <div class="ref">GET https://www.douban.com/j/search?q=test&cat=1002  （带 Chrome UA + Referer）
+HTTP 403 · 288ms · 21B
+响应体：{"r": 1, "code": 403}
+→ 无 Cookie 的机器请求被豆瓣直接拒绝（非 Challenge 页，纯 JSON 403）。</div>
+    <div class="hint">插件内 DoubanClient.request 仅接受 status===200，403 走 throw → doubanFallback 判定 reachable=false → 提示「Douban 兜底不可用（需配置 Cookie）」。</div>
+  </div>
+
+  <div class="card">
+    <h2>四通道实测</h2>
+    <div id="chans"></div>
+    <div id="concl" class="concl" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+const CAT_LABEL = { 1002: '影视/动画', 1001: '书籍', 3114: '游戏' };
+
+function chanDefs(kwEnc, cat) {
+  const raw = `https://www.douban.com/j/search?q=${kwEnc}&cat=${cat}`;
+  return [
+    { name: '直连 fetch（浏览器）', build: () => fetch(raw, { headers: { 'Accept-Language': 'zh-CN' } }), url: raw, direct: true },
+    { name: 'allorigins 代理', build: () => fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(raw)}`, { redirect: 'follow' }), url: `https://api.allorigins.win/raw?url=${encodeURIComponent(raw)}` },
+    { name: 'corsproxy.io 代理', build: () => fetch(`https://corsproxy.io/?url=${encodeURIComponent(raw)}`), url: `https://corsproxy.io/?url=${encodeURIComponent(raw)}` },
+  ];
+}
+
+async function textOf(resp) {
+  const t = await resp.text();
+  return t;
+}
+
+function checks(text, status) {
+  const out = [];
+  out.push({ k: `HTTP ${status}`, yes: status === 200 });
+  out.push({ k: 'Challenge(PoW) 表单', yes: text.includes('name="cha"') && text.includes('name="sol"') });
+  out.push({ k: 'JSON 且含 items', yes: (() => { try { const j = JSON.parse(text); return Array.isArray(j.items); } catch { return false; } })() });
+  out.push({ k: '豆瓣 JSON 403(r:1)', yes: text.includes('"r": 1') && text.includes('403') });
+  out.push({ k: '禁止访问页', yes: /<title[^>]*>\s*禁止访问\s*<\/title>/i.test(text) });
+  out.push({ k: '登录跳转页', yes: /accounts\.douban\.com\/passport\/login/.test(text) });
+  return out;
+}
+
+function verdict(c) {
+  if (c.direct) return '浏览器直连跨域：fetch 被 CORS 拦截（TypeError），插件内用 Obsidian requestUrl 可绕 CORS，但 403 依旧。';
+  if (c.status === 200 && c.items) return '接口正常返回 JSON items —— 该通道可用！';
+  if (c.status === 403 && c.json403) return '豆瓣返回 JSON 403（r:1）→ 反爬拒绝，需 Cookie。';
+  if (c.challenge) return '豆瓣返回 PoW 安全验证表单 → 插件会自动求解后重试。';
+  if (c.status === 200 && c.login) return 'HTTP 200 但为登录跳转页 → 需登录态（Cookie）。';
+  if (c.error) return '请求失败（' + c.error + '）';
+  return '未知形态，请查看下方响应原文。';
+}
+
+function renderChan(d, i, ms, res) {
+  const tag = res.error ? '<span class="tag tag-bad">失败</span>'
+    : res.status === 200 ? (ms > 1000 ? '<span class="tag tag-slow">偏慢</span>' : '<span class="tag tag-ok">成功</span>')
+    : '<span class="tag tag-bad">HTTP ' + res.status + '</span>';
+  const checksHtml = res.error ? '' : '<div class="checks">' + res.checks.map(c => `<span class="check ${c.yes ? 'yes' : 'no'}">${c.k}</span>`).join('') + '</div>';
+  const body = res.error ? '— 请求未完成 —' : (res.text.slice(0, 300) || '（空响应体）');
+  return `<div class="chan">
+    <div class="chan-head"><span class="chan-name">${d.name}</span>${tag}<span style="font-size:11px;color:#8a8a86">${ms}ms</span></div>
+    <div class="line">判定：<b>${verdict(res)}</b></div>
+    <div class="url-box">${d.url}</div>
+    ${checksHtml}
+    <div class="resp">${escapeHtml(body)}</div>
+  </div>`;
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
+
+async function run() {
+  const kw = document.getElementById('kw').value.trim();
+  const cat = document.getElementById('cat').value;
+  const btn = document.getElementById('run');
+  if (!kw) { alert('请输入关键词'); return; }
+  btn.disabled = true; btn.textContent = '诊断中…';
+  const kwEnc = encodeURIComponent(kw);
+  document.getElementById('urlInfo').textContent = '原始接口：https://www.douban.com/j/search?q=' + kwEnc + '&cat=' + cat + '（' + CAT_LABEL[cat] + '）';
+  const defs = chanDefs(kwEnc, cat);
+  const box = document.getElementById('chans');
+  box.innerHTML = defs.map((d, i) => `<div class="chan"><div class="chan-head"><span class="chan-name">${d.name}</span><span class="tag tag-idle">测试中…</span></div></div>`).join('');
+
+  const results = [];
+  for (let i = 0; i < defs.length; i++) {
+    const d = defs[i];
+    const t0 = performance.now();
+    let res = { error: null, status: 0, text: '', checks: [], items: false, json403: false, challenge: false, login: false };
+    try {
+      const r = await d.build();
+      res.status = r.status;
+      const text = await textOf(r);
+      res.text = text;
+      res.checks = checks(text, r.status);
+      res.items = res.checks.some(c => c.k === 'JSON 且含 items' && c.yes);
+      res.json403 = res.checks.some(c => c.k === '豆瓣 JSON 403(r:1)' && c.yes);
+      res.challenge = res.checks.some(c => c.k === 'Challenge(PoW) 表单' && c.yes);
+      res.login = res.checks.some(c => c.k === '登录跳转页' && c.yes);
+    } catch (e) {
+      res.error = e instanceof TypeError ? 'CORS 拦截或网络失败（TypeError）' : String(e.message || e);
+    }
+    const ms = Math.round(performance.now() - t0);
+    results.push(res);
+    box.innerHTML = defs.map((dd, j) => j <= i ? renderChan(dd, j, j === i ? ms : results[j] ? 0 : 0, j === i ? res : (results[j] || { error: '—' })) : `<div class="chan"><div class="chan-head"><span class="chan-name">${dd.name}</span><span class="tag tag-idle">测试中…</span></div></div>`).join('');
+  }
+
+  const concl = document.getElementById('concl');
+  const direct = results[0];
+  if (direct.error) {
+    concl.innerHTML = '<b>诊断结论：</b>浏览器直连被 <b>CORS 拦截</b>（' + direct.error + '）——这是浏览器安全限制，<b>不是豆瓣拒绝</b>。插件内用 Obsidian <code>requestUrl</code>（Electron/移动端原生请求）可绕过 CORS；真正影响结果的要看代理通道：<b>若代理通道也 403/空，说明豆瓣反爬拒绝了无 Cookie 请求，需在设置页配置 Douban Cookie</b>。';
+  } else if (direct.status === 403 && direct.json403) {
+    concl.innerHTML = '<b>诊断结论：</b>豆瓣返回 <b>JSON 403（{"r":1,"code":403}）</b>——反爬拒绝无 Cookie 请求。与 curl 实测一致。解决：设置 → 其他 · Douban 填写浏览器 Cookie（F12 → 网络 → 任意外部请求 → 复制 Cookie 请求头）。配置后插件 DoubanClient 会携带 Cookie 重试。';
+  } else if (direct.status === 200 && direct.items) {
+    concl.innerHTML = '<b>诊断结论：</b>接口正常返回 <b>JSON items</b>（' + kw + ' 命中）——当前网络/环境可直连豆瓣，插件兜底应可用。若插件内仍无结果，检查 main.ts doubanFallback 的 reachable 判定或 Cookie 配置。';
+  } else if (direct.challenge) {
+    concl.innerHTML = '<b>诊断结论：</b>豆瓣返回 <b>PoW 安全验证表单</b>——插件会自动求解（sha512 找 nonce）后 POST 验证重取，属正常流程；若求解失败会抛「安全验证未能完成」。';
+  } else {
+    concl.innerHTML = '<b>诊断结论：</b>响应形态见上方各通道原文；若直连 403 且代理通道也异常，基本可判定为豆瓣反爬（无 Cookie），按设置页提示配置 Cookie 后重试。';
+  }
+  concl.style.display = 'block';
+  btn.disabled = false; btn.textContent = '重新诊断';
+}
+
+document.getElementById('run').addEventListener('click', run);
+document.getElementById('kw').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+</script>
+</body>
+</html>

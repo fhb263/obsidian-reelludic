@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReelLudic 原型 · G3 门禁审查版</title>
+<style>
+  :root{
+    --bg:#eae9e7; --panel:#ffffff; --border:#e1e0dd; --border2:#d2d0cc;
+    --text:#1e1e1e; --muted:#7a7875; --faint:#b0aeaa;
+    --accent:#7c6cd9; --accent-soft:#efeefb; --accent-border:#c9c2ef;
+    --want:#8a8a86; --watching:#d99a2b; --watched:#4d9b52; --dropped:#c0493f;
+    --wf-ink:#3a3a3a; --wf-line:#9a9a96; --wf-fill:#f2f1ee; --wf-accent:#3b82f6;
+    --radius:10px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+    --hand:"Segoe Print","Comic Sans MS","Microsoft YaHei",cursive;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.55}
+  header.top{background:var(--panel);border-bottom:1px solid var(--border2);padding:14px 24px;position:sticky;top:0;z-index:20;display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+  header.top h1{font-size:17px;font-weight:600}
+  header.top .tag{font-size:12px;color:var(--muted)}
+  header.top .gate{font-size:12px;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-border);padding:2px 10px;border-radius:999px}
+  nav.tabs{display:flex;gap:8px;padding:10px 24px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+  nav.tabs button{font-family:inherit;font-size:13px;border:1px solid var(--border2);background:var(--panel);color:var(--muted);padding:6px 14px;border-radius:8px;cursor:pointer}
+  nav.tabs button:hover{border-color:var(--accent);color:var(--accent)}
+  nav.tabs button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
+  section.screen{display:none}
+  section.screen.active{display:block}
+  .screen-head{margin-bottom:14px}
+  .screen-head h2{font-size:16px;font-weight:600}
+  .screen-head p{color:var(--muted);font-size:13px;margin-top:2px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:900px){.cols{grid-template-columns:1fr}}
+  .art{border:1px solid var(--border2);border-radius:var(--radius);background:var(--panel);overflow:hidden}
+  .art-cap{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600}
+  .art-cap .dot{width:8px;height:8px;border-radius:50%}
+  .art-cap.wf{background:#fbfaf8;color:#6b6b67}
+  .art-cap.wf .dot{background:#b9b9b4}
+  .art-cap.hf{background:var(--accent-soft);color:var(--accent)}
+  .art-cap.hf .dot{background:var(--accent)}
+  .art-body{padding:14px}
+  .art-note{font-size:12px;color:var(--muted);padding:8px 14px;border-top:1px dashed var(--border);line-height:1.5}
+  .art-note b{color:var(--text)}
+  .stage{position:relative;background:var(--wf-fill);border:1.5px solid var(--wf-line);border-radius:8px;padding:10px;font-family:var(--hand)}
+  .stage .bar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  .stage .bar .cd{width:10px;height:10px;border-radius:50%;background:var(--wf-line)}
+  .stage .bar .tabx{width:60px;height:10px;background:var(--wf-line);opacity:.55;border-radius:3px}
+  .wf-box{border:1.5px dashed var(--wf-ink);border-radius:6px;background:#fff;padding:8px;font-size:12px;color:var(--wf-ink);position:relative}
+  .wf-box.dim{border-style:solid;border-color:var(--wf-line);color:#7c7c78;background:var(--wf-fill)}
+  .wf-btn{border:1.5px solid var(--wf-ink);border-radius:5px;background:#fff;padding:3px 8px;font-size:11px;display:inline-block;font-family:var(--hand)}
+  .wf-btn.act{background:var(--wf-accent);border-color:var(--wf-accent);color:#fff}
+  .wf-chip{border:1px solid var(--wf-ink);border-radius:999px;padding:2px 8px;font-size:10px;display:inline-block;background:#fff}
+  .wf-chip.on{background:var(--wf-ink);color:#fff}
+  .wf-post{border:1.5px solid var(--wf-line);background:#fff;border-radius:5px;display:flex;align-items:center;justify-content:center;color:#8d8d89;font-size:10px}
+  .wf-label{font-size:10px;color:#777;margin-top:3px;text-align:center}
+  .wf-arrow{font-size:12px;color:var(--wf-accent);text-align:center}
+  .wf-note{font-size:10px;color:#8d6c1f;background:#fdf6e3;border:1px dashed #d9c183;border-radius:5px;padding:4px 7px;margin-top:6px;font-family:var(--hand)}
+
+  .obs{background:#f6f5f4;border:1px solid var(--border2);border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .obs-titlebar{display:flex;align-items:center;gap:8px;background:#dcdbd9;padding:6px 10px;border-bottom:1px solid var(--border2)}
+  .obs-titlebar .t{width:10px;height:10px;border-radius:50%}
+  .obs-titlebar .t1{background:#e06c5f}.obs-titlebar .t2{background:#e8b84c}.obs-titlebar .t3{background:#67b763}
+  .obs-titlebar span{font-size:11px;color:var(--muted);margin-left:8px}
+  .obs-body{display:flex;min-height:320px}
+  .obs-ribbon{width:34px;background:#e3e2e0;border-right:1px solid var(--border2);padding:8px 0;display:flex;flex-direction:column;align-items:center;gap:8px}
+  .obs-ribbon .ri{width:22px;height:22px;border-radius:6px;background:#fff;border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)}
+  .obs-ribbon .ri.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .obs-main{flex:1;padding:10px;min-width:0}
+  .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .seg{display:flex;border:1px solid var(--border2);border-radius:7px;overflow:hidden;background:#fff}
+  .seg button{font-family:inherit;font-size:12px;border:none;background:transparent;padding:4px 12px;cursor:pointer;color:var(--muted)}
+  .seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .chip{border:1px solid var(--border2);background:#fff;border-radius:999px;padding:3px 11px;font-size:12px;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip b{font-weight:600}
+  .btn-add{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+  .btn-sm{background:#fff;border:1px solid var(--border2);border-radius:6px;padding:3px 9px;font-size:11px;color:var(--muted);cursor:pointer;font-family:inherit}
+  .grid-poster{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px}
+  .poster{background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;transition:box-shadow .15s}
+  .poster:hover{box-shadow:0 2px 8px rgba(0,0,0,.12)}
+  .poster .cov{aspect-ratio:2/3;display:flex;align-items:flex-end;padding:6px;font-size:10px;color:#fff}
+  .poster .meta{padding:6px 7px}
+  .poster .ttl{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .poster .sub{font-size:10px;color:var(--muted);margin-top:2px;display:flex;justify-content:space-between;align-items:center}
+  .badge{font-size:9px;font-weight:600;padding:1px 6px;border-radius:999px;color:#fff}
+  .b-want{background:var(--want)}.b-watching{background:var(--watching)}.b-watched{background:var(--watched)}.b-dropped{background:var(--dropped)}
+  .stars{font-size:9px;color:#d99a2b;letter-spacing:.5px}
+  .cov1{background:linear-gradient(135deg,#5a6f9e,#3d4f7d)}
+  .cov2{background:linear-gradient(135deg,#9e5a6f,#7d3d52)}
+  .cov3{background:linear-gradient(135deg,#5a9e7d,#3d7d5f)}
+  .cov4{background:linear-gradient(135deg,#8a6f9e,#6b4f7d)}
+  .cov5{background:linear-gradient(135deg,#9e8a5a,#7d6b3d)}
+  .cov6{background:linear-gradient(135deg,#5a9e9e,#3d7d7d)}
+  table.list{width:100%;border-collapse:collapse;font-size:12px;background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  table.list th{background:#f7f6f5;text-align:left;padding:6px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)}
+  table.list td{padding:6px 10px;border-bottom:1px solid var(--border)}
+  table.list tr:last-child td{border-bottom:none}
+  .thumb{width:22px;height:30px;border-radius:4px;display:inline-block;vertical-align:middle;margin-right:8px}
+  .menu{position:relative;display:inline-block}
+  .menu-pop{position:absolute;top:100%;left:0;margin-top:4px;background:#fff;border:1px solid var(--border2);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.12);padding:4px;z-index:30;min-width:120px}
+  .menu-pop .mi{font-size:12px;padding:5px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:7px}
+  .menu-pop .mi:hover{background:var(--accent-soft);color:var(--accent)}
+  .menu-pop .mi.sel{font-weight:600;color:var(--accent)}
+  .menu-pop .mi.legal{opacity:1}
+  .menu-pop .mi.illegal{opacity:.35}
+  .trk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+  .trk-card{background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .trk-card .hd{display:flex;gap:10px;padding:8px}
+  .trk-card .cv{width:52px;height:74px;border-radius:6px;flex:none}
+  .trk-card .inf{flex:1;min-width:0}
+  .trk-card .nm{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trk-card .ep{font-size:11px;color:var(--accent);font-weight:600;margin-top:2px}
+  .trk-card .up{font-size:10px;color:var(--muted);margin-top:2px}
+  .trk-card .ft{display:flex;justify-content:space-between;align-items:center;padding:7px 8px;border-top:1px solid var(--border);background:#fafaf9}
+  .btn-up{background:var(--watched);color:#fff;border:none;border-radius:7px;padding:4px 12px;font-size:11px;font-weight:600;cursor:pointer}
+  .log{font-size:11px;color:var(--muted)}
+  .log b{color:var(--text);font-weight:600}
+  .empty{text-align:center;color:var(--faint);padding:40px 0;font-size:13px}
+  .modal{background:#fff;border:1px solid var(--border2);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.15);max-width:560px;margin:0 auto;overflow:hidden}
+  .modal .mhd{padding:12px 16px;border-bottom:1px solid var(--border);font-size:14px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .modal .mbd{padding:14px 16px}
+  .modal .mft{padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;background:#fafaf9}
+  .lbl{font-size:11px;color:var(--muted);margin:10px 0 4px;font-weight:600}
+  .inp{width:100%;border:1px solid var(--border2);border-radius:7px;padding:6px 10px;font-size:12px;font-family:inherit;background:#fff;color:var(--text)}
+  .inp:focus{outline:none;border-color:var(--accent)}
+  .row{display:flex;gap:8px;align-items:center}
+  .row .grow{flex:1}
+  .src-box{display:flex;gap:8px}
+  .src-meta{font-size:10px;color:var(--faint);margin-top:3px}
+  .res-item{display:flex;gap:9px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:7px 9px;margin-top:6px;cursor:pointer}
+  .res-item.sel{border-color:var(--accent);background:var(--accent-soft)}
+  .res-item .rt{width:30px;height:42px;border-radius:4px;flex:none}
+  .res-item .ri-n{font-size:12px;font-weight:600}
+  .res-item .ri-s{font-size:10px;color:var(--muted)}
+  .form-2col{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+  .stars-input{display:flex;gap:3px;font-size:18px;color:#d9cba0;cursor:pointer}
+  .stars-input span.on{color:#d99a2b}
+  .link-row{display:flex;gap:6px;margin-top:5px}
+  .link-row select,.link-row input{font-family:inherit;font-size:11px}
+  .switch{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+  .switch .sw{width:30px;height:16px;border-radius:999px;background:#d6d5d2;position:relative;display:inline-block}
+  .switch .sw::after{content:"";position:absolute;width:12px;height:12px;border-radius:50%;background:#fff;top:2px;left:2px}
+  .switch.off .sw{background:#c9c8c5}
+  .switch.on .sw{background:var(--accent)}
+  .switch.on .sw::after{left:16px}
+  .hint{font-size:11px;color:var(--faint);margin-top:4px}
+  .prog-chip{font-size:10px;background:var(--accent-soft);color:var(--accent);border-radius:5px;padding:1px 6px;font-weight:600}
+  .quick{font-size:10px;color:var(--accent);border:1px solid var(--accent-border);border-radius:5px;padding:1px 6px;cursor:pointer;background:#fff}
+  footer{margin-top:26px;border-top:1px solid var(--border2);padding-top:14px;font-size:12px;color:var(--muted)}
+  footer h3{font-size:13px;color:var(--text);margin-bottom:6px}
+  footer ul{margin-left:18px}
+  footer li{margin:3px 0}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>ReelLudic · 影视库 MVP 原型</h1>
+  <span class="tag">G3 门禁审查版 · 每屏左侧=线框 / 右侧=高保真</span>
+  <span class="gate">待确认</span>
+</header>
+
+<nav class="tabs">
+  <button class="active" data-t="s1">01 书架视图</button>
+  <button data-t="s2">02 状态与筛选</button>
+  <button data-t="s3">03 追更视图</button>
+  <button data-t="s4">04 录入表单</button>
+</nav>
+
+<main>
+
+<!-- ============ S1 书架视图 ============ -->
+<section class="screen active" id="s1">
+  <div class="screen-head"><h2>01 书架视图（海报墙 / 列表）</h2>
+  <p>主界面：视图切换 + 筛选排序 + 添加入口；卡片显示封面/标题/状态徽章/评分/进度。</p></div>
+  <div class="cols">
+    <div class="art">
+      <div class="art-cap wf"><span class="dot"></span>线框图 · 结构</div>
+      <div class="art-body">
+        <div class="stage">
+          <div class="bar"><span class="cd"></span><span class="cd"></span><span class="cd"></span><span class="tabx"></span></div>
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <span class="wf-btn act">海报墙</span><span class="wf-btn">列表</span>
+            <span class="wf-chip on">类型▾</span><span class="wf-chip on">年份▾</span><span class="wf-chip on">状态▾</span><span class="wf-chip on">评分▾</span>
+            <span class="wf-btn" style="margin-left:auto;background:var(--wf-accent);border-color:var(--wf-accent);color:#fff">＋ 添加</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px">
+            <div><div class="wf-post" style="height:64px">封面</div><div class="wf-label">标题 / 状态</div></div>
+            <div><div class="wf-post" style="height:64px">封面</div><div class="wf-label">标题 / 状态</div></div>
+            <div><div class="wf-post" style="height:64px">封面</div><div class="wf-label">标题 / 状态</div></div>
+            <div><div class="wf-post" style="height:64px">封面</div><div class="wf-label">标题 / 状态</div></div>
+            <div><div class="wf-post" style="height:64px">封面</div><div class="wf-label">标题 / 状态</div></div>
+            <div><div class="wf-post" style="height:64px">封面</div><div class="wf-label">标题 / 状态</div></div>
+          </div>
+          <div class="wf-note">切换「列表」→ 表格行：封面缩略 / 标题 / 类型 / 年份 / 状态 / 评分 / 进度。筛选与排序同工具条。</div>
+        </div>
+      </div>
+      <div class="art-note"><b>要点：</b>海报墙 auto-fill 自适应视图宽度；列表视图用于密集浏览；工具条集中放置 视图/筛选/排序/添加。</div>
+    </div>
+    <div class="art">
+      <div class="art-cap hf"><span class="dot"></span>高保真 · 交互（点「列表」切换）</div>
+      <div class="art-body">
+        <div class="obs">
+          <div class="obs-titlebar"><span class="t t1"></span><span class="t t2"></span><span class="t t3"></span><span>ReelLudic · 书架</span></div>
+          <div class="obs-body">
+            <div class="obs-ribbon"><span class="ri on">📚</span><span class="ri">🔔</span><span class="ri">＋</span></div>
+            <div class="obs-main">
+              <div class="toolbar">
+                <div class="seg" id="seg1">
+                  <button class="on" data-v="grid">海报墙</button>
+                  <button data-v="list">列表</button>
+                </div>
+                <span class="chip on">全部 <b>12</b></span>
+                <span class="chip">想看</span><span class="chip">在看</span><span class="chip">已看</span><span class="chip">弃剧</span>
+                <span class="chip">类型 ▾</span><span class="chip">年份 ▾</span>
+                <button class="btn-add" style="margin-left:auto">＋ 添加影视</button>
+              </div>
+              <div id="v-grid">
+                <div class="grid-poster">
+                  <div class="poster"><div class="cov cov1">进击的巨人</div><div class="meta"><div class="ttl">进击的巨人 最终季</div><div class="sub"><span class="badge b-watching">在看</span><span class="stars">★★★★</span></div><div class="sub"><span class="prog-chip">S4E16</span></div></div></div>
+                  <div class="poster"><div class="cov cov2">沙丘2</div><div class="meta"><div class="ttl">沙丘2</div><div class="sub"><span class="badge b-watched">已看</span><span class="stars">★★★★★</span></div><div class="sub"><span>2024</span></div></div></div>
+                  <div class="poster"><div class="cov cov3">葬送的芙莉莲</div><div class="meta"><div class="ttl">葬送的芙莉莲</div><div class="sub"><span class="badge b-watching">在看</span><span class="stars">★★★★★</span></div><div class="sub"><span class="prog-chip">S1E24</span></div></div></div>
+                  <div class="poster"><div class="cov cov4">流浪地球2</div><div class="meta"><div class="ttl">流浪地球2</div><div class="sub"><span class="badge b-want">想看</span><span class="stars">—</span></div><div class="sub"><span>2023</span></div></div></div>
+                  <div class="poster"><div class="cov cov5">双城之战</div><div class="meta"><div class="ttl">双城之战</div><div class="sub"><span class="badge b-watched">已看</span><span class="stars">★★★★</span></div><div class="sub"><span>2021</span></div></div></div>
+                  <div class="poster"><div class="cov cov6">银翼杀手2049</div><div class="meta"><div class="ttl">银翼杀手2049</div><div class="sub"><span class="badge b-dropped">弃剧</span><span class="stars">★★★</span></div><div class="sub"><span>2017</span></div></div></div>
+                </div>
+              </div>
+              <div id="v-list" style="display:none">
+                <table class="list">
+                  <tr><th>标题</th><th>类型</th><th>年份</th><th>状态</th><th>评分</th><th>进度</th></tr>
+                  <tr><td><span class="thumb cov1"></span>进击的巨人 最终季</td><td>剧集</td><td>2020</td><td><span class="badge b-watching">在看</span></td><td>★★★★</td><td>S4E16</td></tr>
+                  <tr><td><span class="thumb cov2"></span>沙丘2</td><td>电影</td><td>2024</td><td><span class="badge b-watched">已看</span></td><td>★★★★★</td><td>—</td></tr>
+                  <tr><td><span class="thumb cov3"></span>葬送的芙莉莲</td><td>剧集</td><td>2023</td><td><span class="badge b-watching">在看</span></td><td>★★★★★</td><td>S1E24</td></tr>
+                  <tr><td><span class="thumb cov4"></span>流浪地球2</td><td>电影</td><td>2023</td><td><span class="badge b-want">想看</span></td><td>—</td><td>—</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art-note"><b>交互：</b>右上「海报墙/列表」实时切换；状态徽章点击 = 弹出四态菜单（见 02）；卡片点击 = 打开详情笔记。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ S2 状态与筛选 ============ -->
+<section class="screen" id="s2">
+  <div class="screen-head"><h2>02 状态与筛选（四态流转）</h2>
+  <p>状态徽章一键切换 想看/在看/已看/弃剧；筛选条按状态过滤；在看条目支持「＋1 集」快捷。</p></div>
+  <div class="cols">
+    <div class="art">
+      <div class="art-cap wf"><span class="dot"></span>线框图 · 状态机</div>
+      <div class="art-body">
+        <div class="stage">
+          <div style="text-align:center;font-size:13px;margin-bottom:10px">
+            <span class="wf-chip">想看</span> <span class="wf-arrow">▶</span> <span class="wf-chip">在看</span> <span class="wf-arrow">▶</span> <span class="wf-chip">已看</span>
+            <div style="font-size:11px;margin-top:6px">任意状态 ▶ <span class="wf-chip">弃剧</span>（单向，不回退）</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <span class="wf-chip on">全部</span><span class="wf-chip">想看</span><span class="wf-chip">在看</span><span class="wf-chip">已看</span><span class="wf-chip">弃剧</span>
+          </div>
+          <div class="wf-box" style="margin-bottom:6px">
+            卡片上的<b>状态徽章</b>（如「在看」）→ 点击弹出四态菜单
+            <div style="margin-top:6px;border:1.5px dashed var(--wf-ink);border-radius:6px;padding:6px;width:150px;background:#fff">
+              <div>▸ 想看</div><div>▸ 在看（当前）</div><div>▸ 已看</div><div>▸ 弃剧</div>
+            </div>
+          </div>
+          <div class="wf-box dim">剧集「在看」→ 进度徽章旁 <span class="wf-btn">＋1 集</span> 快捷推进；电影「已看」→ 记录观看日期</div>
+        </div>
+      </div>
+      <div class="art-note"><b>要点：</b>流转规则「想看→在看→已看，任意→弃剧」；菜单中不合规的跳转置灰（如想看→弃剧仍允许，但已看→想看禁止）。</div>
+    </div>
+    <div class="art">
+      <div class="art-cap hf"><span class="dot"></span>高保真 · 交互（点击徽章弹出菜单）</div>
+      <div class="art-body">
+        <div class="obs">
+          <div class="obs-titlebar"><span class="t t1"></span><span class="t t2"></span><span class="t t3"></span><span>ReelLudic · 筛选</span></div>
+          <div class="obs-body">
+            <div class="obs-ribbon"><span class="ri on">📚</span><span class="ri">🔔</span><span class="ri">＋</span></div>
+            <div class="obs-main">
+              <div class="toolbar">
+                <span class="chip on">全部 <b>12</b></span>
+                <span class="chip">想看 <b>3</b></span>
+                <span class="chip">在看 <b>4</b></span>
+                <span class="chip">已看 <b>4</b></span>
+                <span class="chip">弃剧 <b>1</b></span>
+              </div>
+              <div class="grid-poster" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))">
+                <div class="poster">
+                  <div class="cov cov1" style="height:80px"></div>
+                  <div class="meta">
+                    <div class="ttl">进击的巨人 最终季</div>
+                    <div class="sub"><span class="badge b-watching">在看</span></div>
+                    <div class="sub" style="margin-top:4px"><span class="prog-chip">S4E16</span><span class="quick" id="q-plus">＋1 集</span></div>
+                  </div>
+                </div>
+                <div class="poster">
+                  <div class="cov cov2" style="height:80px"></div>
+                  <div class="meta">
+                    <div class="ttl">沙丘2</div>
+                    <div class="sub"><span class="badge b-watched">已看</span></div>
+                    <div class="sub" style="margin-top:4px"><span style="font-size:10px;color:var(--muted)">2024-03-08 观看</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="menu" id="status-menu-demo" style="margin-top:12px">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:4px">点击「在看」徽章 →</div>
+                <div class="poster" style="width:200px">
+                  <div class="cov cov1" style="height:60px"></div>
+                  <div class="meta" style="position:relative">
+                    <div class="sub"><span class="badge b-watching" id="demo-badge">在看</span></div>
+                    <div class="menu-pop" id="demo-menu">
+                      <div class="mi" data-st="want">👁 想看</div>
+                      <div class="mi sel">▶ 在看（当前）</div>
+                      <div class="mi">✔ 已看</div>
+                      <div class="mi illegal">✕ 弃剧</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="hint" style="margin-top:10px">已看→想看 等回退跳转置灰；弃剧在四态菜单中置灰显示，但允许从任意状态进入。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art-note"><b>交互：</b>菜单项点击即切换状态并写入 catalog；「＋1 集」快捷推进进度；电影显示观看日期。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ S3 追更视图 ============ -->
+<section class="screen" id="s3">
+  <div class="screen-head"><h2>03 追更视图（追更表）</h2>
+  <p>连载中条目集中管理：卡片显示当前进度与最近更新时间，「已更新」一键推进集数并生成更新日志。</p></div>
+  <div class="cols">
+    <div class="art">
+      <div class="art-cap wf"><span class="dot"></span>线框图 · 结构</div>
+      <div class="art-body">
+        <div class="stage">
+          <div class="wf-box" style="margin-bottom:8px"><b>追更表（4 部连载中）</b>　按最近更新时间倒序</div>
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:8px">
+            <div class="wf-box"><b>封面/标题</b><br>S4E15 · 3 天前更新<br><span class="wf-btn act">✔ 已更新</span></div>
+            <div class="wf-box"><b>封面/标题</b><br>S1E24 · 5 天前更新<br><span class="wf-btn act">✔ 已更新</span></div>
+          </div>
+          <div class="wf-box dim"><b>更新日志</b>（最近 5 条）<br>08-25 《X》更新至 S4E16<br>08-22 《Y》更新至 S1E24<br>…</div>
+        </div>
+      </div>
+      <div class="art-note"><b>要点：</b>「已更新」弹小框确认集数（默认=当前+1）→ 写进度 + 生成日志 + 卡片置顶；空态给引导。</div>
+    </div>
+    <div class="art">
+      <div class="art-cap hf"><span class="dot"></span>高保真 · 交互（点「已更新」演示）</div>
+      <div class="art-body">
+        <div class="obs">
+          <div class="obs-titlebar"><span class="t t1"></span><span class="t t2"></span><span class="t t3"></span><span>ReelLudic · 追更表</span></div>
+          <div class="obs-body">
+            <div class="obs-ribbon"><span class="ri">📚</span><span class="ri on">🔔</span><span class="ri">＋</span></div>
+            <div class="obs-main">
+              <div class="trk-grid">
+                <div class="trk-card" data-ep="15" data-name="进击的巨人 最终季">
+                  <div class="hd"><div class="cv cov1"></div><div class="inf"><div class="nm">进击的巨人 最终季</div><div class="ep">S4E15</div><div class="up">3 天前更新</div></div></div>
+                  <div class="ft"><span class="badge b-watching">连载中</span><button class="btn-up" data-bump="1">✔ 已更新</button></div>
+                </div>
+                <div class="trk-card" data-ep="24" data-name="葬送的芙莉莲">
+                  <div class="hd"><div class="cv cov3"></div><div class="inf"><div class="nm">葬送的芙莉莲</div><div class="ep">S1E24</div><div class="up">5 天前更新</div></div></div>
+                  <div class="ft"><span class="badge b-watching">连载中</span><button class="btn-up" data-bump="1">✔ 已更新</button></div>
+                </div>
+                <div class="trk-card" data-ep="52" data-name="海贼王">
+                  <div class="hd"><div class="cv cov5"></div><div class="inf"><div class="nm">海贼王</div><div class="ep">S21E52</div><div class="up">今天更新</div></div></div>
+                  <div class="ft"><span class="badge b-watching">连载中</span><button class="btn-up" data-bump="1">✔ 已更新</button></div>
+                </div>
+              </div>
+              <div style="margin-top:12px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+                <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px">更新日志（最近）</div>
+                <div class="log" id="up-log">
+                  <div>08-25 <b>《海贼王》</b> 更新至 S21E52</div>
+                  <div>08-22 <b>《葬送的芙莉莲》</b> 更新至 S1E24</div>
+                  <div>08-20 <b>《进击的巨人 最终季》</b> 更新至 S4E15</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art-note"><b>交互：</b>点「已更新」→ 集数 +1、日志新增、卡片按时间重排。真实实现会弹出确认框（默认 = 当前 +1）。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ S4 录入表单 ============ -->
+<section class="screen" id="s4">
+  <div class="screen-head"><h2>04 录入表单（手动 + 自动抓取）</h2>
+  <p>输入标题 → TMDB 搜索回填 → 手动覆盖；无 Key / 网络失败不阻塞，直接手动填写。</p></div>
+  <div class="cols">
+    <div class="art">
+      <div class="art-cap wf"><span class="dot"></span>线框图 · 流程</div>
+      <div class="art-body">
+        <div class="stage">
+          <div class="wf-box" style="margin-bottom:6px">标题输入 ▓▓▓▓▓　<span class="wf-btn act">搜索(TMDB)</span></div>
+          <div class="wf-note">无 API Key → 搜索禁用 + 提示引导；直接手动填写。</div>
+          <div class="wf-box" style="margin-top:6px;margin-bottom:6px">搜索结果（候选 2~5 条，点选回填）<br>▸ 沙丘2 ｜ 2024 ｜ 电影 ｜ ★<br>▸ 沙丘 ｜ 2021 ｜ 电影 ｜ ★</div>
+          <div class="wf-box dim" style="margin-bottom:6px">回填字段（可手动改）：标题/原标题/导演/演员/年份/类型/封面</div>
+          <div class="wf-box dim" style="margin-bottom:6px">链接行：平台下拉 ▾ ＋ URL 输入 ＋ 添加行</div>
+          <div class="wf-box dim">状态▾ 评分★ 进度（季/集 或 日期）→ [保存] [取消]</div>
+        </div>
+      </div>
+      <div class="art-note"><b>要点：</b>搜索→选中→回填→可覆盖；豆瓣兜底开关默认关闭（反爬风险）；保存后写 catalog + 生成 .md 笔记。</div>
+    </div>
+    <div class="art">
+      <div class="art-cap hf"><span class="dot"></span>高保真 · 录入弹窗</div>
+      <div class="art-body">
+        <div class="obs">
+          <div class="obs-titlebar"><span class="t t1"></span><span class="t t2"></span><span class="t t3"></span><span>ReelLudic · 添加影视</span></div>
+          <div class="obs-body">
+            <div class="obs-ribbon"><span class="ri on">📚</span><span class="ri">🔔</span><span class="ri">＋</span></div>
+            <div class="obs-main">
+              <div class="modal" style="box-shadow:none;border:1px solid var(--border2)">
+                <div class="mhd">添加影视 <span class="src-meta">数据源：TMDB</span></div>
+                <div class="mbd">
+                  <div class="lbl" style="margin-top:0">标题</div>
+                  <div class="src-box">
+                    <input class="inp" value="沙丘">
+                    <button class="btn-add">搜索</button>
+                  </div>
+                  <div class="src-meta">TMDB 免费 Key 在设置页配置 · 未配置时跳过搜索直接手动填写</div>
+                  <div class="res-item sel"><span class="rt cov2"></span><div><div class="ri-n">沙丘2 Dune: Part Two</div><div class="ri-s">2024 · 电影 · 科幻/冒险</div></div></div>
+                  <div class="res-item"><span class="rt cov6"></span><div><div class="ri-n">沙丘 Dune</div><div class="ri-s">2021 · 电影 · 科幻/冒险</div></div></div>
+                  <div class="lbl">回填字段（可覆盖）</div>
+                  <div class="form-2col">
+                    <div><div class="lbl">导演</div><input class="inp" value="丹尼斯·维伦纽瓦"></div>
+                    <div><div class="lbl">年份</div><input class="inp" value="2024"></div>
+                    <div><div class="lbl">主演</div><input class="inp" value="提莫西·查拉梅 / 赞达亚"></div>
+                    <div><div class="lbl">类型</div><input class="inp" value="科幻 / 冒险 / 剧情"></div>
+                  </div>
+                  <div class="lbl">封面</div>
+                  <input class="inp" value="covers/e_xxx.jpg（自动下载）">
+                  <div class="lbl">观看链接</div>
+                  <div class="link-row"><select class="inp" style="width:110px"><option>B站</option><option>Netflix</option><option>豆瓣</option><option>爱奇艺</option><option>腾讯视频</option></select><input class="inp grow" placeholder="https://..."><button class="btn-sm">＋</button></div>
+                  <div class="link-row"><select class="inp" style="width:110px"><option>豆瓣</option></select><input class="inp grow" value="https://movie.douban.com/subject/xxx/"></div>
+                  <div class="lbl">状态 / 评分 / 进度</div>
+                  <div class="row" style="gap:14px;flex-wrap:wrap">
+                    <span class="chip on">在看</span><span class="chip">想看</span><span class="chip">已看</span><span class="chip">弃剧</span>
+                    <span class="stars-input"><span class="on">★</span><span class="on">★</span><span class="on">★</span><span class="on">★</span><span>★</span></span>
+                    <span class="prog-chip">S3</span><input class="inp" style="width:64px" value="E15">
+                  </div>
+                  <div style="margin-top:10px">
+                    <span class="switch off" id="douban-sw"><span class="sw"></span>豆瓣兜底（默认关闭 · 反爬风险）</span>
+                    <div class="hint">开启后 TMDB 未命中时可尝试豆瓣搜索；v0.0.1 默认关闭。</div>
+                  </div>
+                </div>
+                <div class="mft"><button class="btn-sm">取消</button><button class="btn-add">保存并生成笔记</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="art-note"><b>交互：</b>点选搜索结果回填字段；「＋」添加链接行；保存 → 写 catalog.json + 生成 ReelLudic/entries/*.md。</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <h3>G3 设计说明（要点）</h3>
+  <ul>
+    <li><b>视觉基调</b>：贴合 Obsidian 亮色主题（灰白面板 + 紫色强调 #7c6cd9），全部用 CSS 变量，天然适配主题切换。</li>
+    <li><b>信息架构</b>：书架（浏览/筛选）↔ 追更（连载管理）↔ 录入（添加）三视图，Ribbon 图标 + 命令双入口。</li>
+    <li><b>状态机</b>：想看→在看→已看，任意→弃剧；菜单置灰不合规回退（已看→想看 等）。</li>
+    <li><b>待确认点</b>：① 海报墙卡片密度（每行 6 张 vs 5 张）② 追更卡片是否要「观看日期」③ 表单是否默认展开全部字段 ④ 豆瓣兜底开关是否保留在表单底部。</li>
+  </ul>
+</footer>
+
+</main>
+
+<script>
+  const tabs=document.querySelectorAll('nav.tabs button');
+  const screens=document.querySelectorAll('section.screen');
+  tabs.forEach(b=>b.addEventListener('click',()=>{
+    tabs.forEach(x=>x.classList.remove('active'));
+    screens.forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById(b.dataset.t).classList.add('active');
+  }));
+  document.getElementById('seg1').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    document.getElementById('seg1').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    const g=document.getElementById('v-grid'),l=document.getElementById('v-list');
+    if(b.dataset.v==='grid'){g.style.display='';l.style.display='none'}else{g.style.display='none';l.style.display=''}
+  }));
+  const db=document.getElementById('demo-badge');
+  if(db){db.addEventListener('click',()=>{const m=document.getElementById('demo-menu');m.style.display=m.style.display==='none'?'':'none'});document.getElementById('demo-menu').style.display='none'}
+  document.querySelectorAll('.btn-up').forEach(b=>b.addEventListener('click',()=>{
+    const c=b.closest('.trk-card');
+    let ep=+c.dataset.ep+1;c.dataset.ep=ep;
+    c.querySelector('.ep').textContent='S'+(ep>99?21:1)+'E'+ep;
+    c.querySelector('.up').textContent='刚刚更新';
+    const log=document.getElementById('up-log');
+    const d=new Date();const ds=(d.getMonth()+1)+'-'+d.getDate();
+    const row=document.createElement('div');
+    row.innerHTML=ds+' <b>《'+c.dataset.name+'》</b> 更新至 S'+(ep>99?21:1)+'E'+ep;
+    log.prepend(row);
+    const cards=[...document.querySelectorAll('.trk-card')];
+    cards.sort((a,b)=>+b.dataset.ep-+a.dataset.ep);
+    const grid=c.closest('.trk-grid');
+    cards.forEach(x=>grid.appendChild(x));
+  }));
+  document.querySelectorAll('.quick').forEach(q=>q.addEventListener('click',()=>{
+    const sub=q.parentElement;const chip=sub.querySelector('.prog-chip');
+    if(chip){const m=chip.textContent.match(/(\d+)$/);if(m){chip.textContent=chip.textContent.replace(m[1],+m[1]+1)}}
+  }));
+  document.getElementById('douban-sw').addEventListener('click',()=>{document.getElementById('douban-sw').classList.toggle('on')});
+</script>
+</body>
+</html>
