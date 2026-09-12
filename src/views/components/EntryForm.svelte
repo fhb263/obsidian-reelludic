@@ -3,6 +3,7 @@
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS, type EntryType } from 'data/types';
     import { statusLabel, statusVerb, reviewLabel } from 'pure/labels';
     import { reconcileBookProgress, pageFromPercent, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
+    import { normalizeBookKind } from 'pure/bookKind';
     import { placeMenu } from 'pure/menuPlacement';
     import { AI_HIGHLIGHT_SUGGEST, aiFieldsToText, textToAiFields } from 'pure/aiSummary';
     import type { AiSummaryInput, AiSummaryResult } from 'pure/aiSummary';
@@ -18,7 +19,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import type { SearchProgressCb, SearchProgress } from 'pure/searchProgress';
     import type { MediaStatus } from 'pure/status';
     import Icon from './Icon.svelte';
-    import type { MediaEntry } from 'data/types';
+    import type { MediaEntry, BookKind } from 'data/types';
 
     type SearchResult = TmdbSearchResult | OmdbSearchResult | BookSearchResult | GameSearchResult | BangumiSearchResult | MusicSearchResult;
 
@@ -216,6 +217,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     $: { if (summaryEl) autosizeTextarea(summaryEl); void summary; }
     $: { if (authorIntroEl) autosizeTextarea(authorIntroEl); void authorIntro; }
     $: { if (tocEl) autosizeTextarea(tocEl); void toc; }
+    /** 图书分类（1.0.3）：book 图书 / novel 小说；缺省归图书（pure/bookKind），表单两颗 chip 选择 */
+    let bookKind: BookKind = normalizeBookKind(entry?.bookKind);
     let author = entry?.author ?? '';
     let album = entry?.album ?? '';
     let audioPath = entry?.audioPath ?? '';
@@ -1192,6 +1195,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
             input.links = entry?.links ?? [];
         }
         if (type === 'book') {
+            input.bookKind = bookKind; // 恒写（normalize 后必有值；'book' 显式落盘语义等价缺省）
             input.author = author.trim() || undefined;
             input.publisher = publisher.trim() || undefined;
             input.producer = producer.trim() || undefined;
@@ -1497,6 +1501,11 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
                     </div>
                     {/if}
             {#if type === 'book'}
+                <div class="rl-kind-row">
+                    <span class="rl-lbl">图书分类</span>
+                    <button class="rl-chip" class:on={bookKind === 'book'} on:click={() => (bookKind = 'book')}>图书</button>
+                    <button class="rl-chip" class:on={bookKind === 'novel'} on:click={() => (bookKind = 'novel')}>小说</button>
+                </div>
                 <div class="rl-2col">
                     <div><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} /></div>
                     <div><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} /></div>
@@ -2082,6 +2091,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     /* 「观看链接」标题行：label + 批量检索小图标（动画/电视剧）并排；行内覆盖 label 底边距防图标下沉 */
     .rl-lbl-row { display: flex; align-items: center; gap: 2px; }
     .rl-lbl-row .rl-lbl { margin-bottom: 0; }
+    .rl-kind-row { display: flex; align-items: center; gap: 8px; }
+    .rl-kind-row .rl-lbl { margin-bottom: 0; }
     .rl-ep-batch-btn {
         display: inline-flex; align-items: center; justify-content: center;
         width: 20px; height: 18px; padding: 0;

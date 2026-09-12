@@ -7,12 +7,13 @@
     import { starString, starClass } from 'pure/rating';
     import { describeBulkApply } from 'pure/bulkConfirm';
     import { filterAndSort } from 'pure/search';
+    import { BOOK_KINDS, BOOK_KIND_LABELS, bookKindCounts } from 'pure/bookKind';
     import { groupMusicByArtist } from 'pure/musicGroup';
     import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres } from 'pure/cardMeta';
     import { resolveAddType } from 'pure/focusType';
     import { placeMenu } from 'pure/menuPlacement';
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS, TYPE_COLORS, type ColorTheme, type EntryType } from 'data/types';
-    import type { MediaEntry, MediaStatus } from 'data/types';
+    import type { MediaEntry, MediaStatus, BookKind } from 'data/types';
     import Icon from './Icon.svelte';
 
     export let entries: MediaEntry[] = [];
@@ -72,6 +73,9 @@
     // 否则组件被 Svelte 复用时 typeFilter 停留在上一个页签的类型，切回影视页签卡片不显示
     $: if (lockType) typeFilter = lockType;
     else typeFilter = 'all';
+    // 书籍子分类（1.0.3）：书籍页签 chips【全部/图书/小说】，缺省归图书（pure/bookKind）
+    let kindFilter: 'all' | BookKind = 'all';
+    const kindChips: ReadonlyArray<'all' | BookKind> = ['all', ...BOOK_KINDS];
     /** 空状态文案按锁定类型动态化（聚合页签用通用「库」文案；音乐页签不再显示「书架」） */
     function emptyText(): string {
         switch (lockType) {
@@ -205,6 +209,7 @@
         type: lockType ?? typeFilter,
         query: debouncedSearch,
         sortBy,
+        bookKind: lockType === 'book' ? kindFilter : undefined,
     });
 
     // 音乐页签歌单：按歌手分组（组名拼音序，未分类置底；组内专辑→年份→标题），纯逻辑见 pure/musicGroup
@@ -230,6 +235,8 @@
         for (const t of ENTRY_TYPES) out[t] = entries.filter((e) => e.type === t).length;
         return out;
     })();
+    // 书籍子分类三桶计数（书籍页签 chips 数字；all = book 总数，缺省归图书桶）
+    $: kindCounts = bookKindCounts(lockType === 'book' ? entries : []);
 
     function toggleMenu(id: string) {
         menuOpenFor = menuOpenFor === id ? null : id;
@@ -451,6 +458,16 @@
             {#each typeChips as t}
                 <button class:on={typeFilter === t} on:click={() => (typeFilter = t)}>
                     {t === 'all' ? '全部' : ENTRY_TYPE_LABELS[t]}<span class="rl-cnt">{typeCounts[t]}</span>
+                </button>
+            {/each}
+        </span>
+        <span class="rl-vb-sep" aria-hidden="true"></span>
+    {/if}
+    {#if lockType === 'book'}
+        <span class="rl-vb-group" role="group" aria-label="图书分类">
+            {#each kindChips as k}
+                <button class:on={kindFilter === k} on:click={() => (kindFilter = k)}>
+                    {k === 'all' ? '全部' : BOOK_KIND_LABELS[k]}<span class="rl-cnt">{kindCounts[k]}</span>
                 </button>
             {/each}
         </span>

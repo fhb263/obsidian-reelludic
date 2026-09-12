@@ -131,6 +131,25 @@ describe('filterAndSort 综合筛选 + 排序', () => {
         expect(out.map((x) => x.id)).toEqual(['d']);
     });
 
+    it('bookKind 筛选：novel 只留显式小说', () => {
+        const books = [
+            e({ id: 'b1', type: 'book', title: '图书A' }),
+            e({ id: 'b2', type: 'book', title: '小说B', bookKind: 'novel' }),
+            e({ id: 'm1', type: 'movie', title: '电影C' }),
+        ];
+        const out = filterAndSort(books, { status: 'all', type: 'all', query: '', sortBy: 'recent', bookKind: 'novel' });
+        expect(out.map((x) => x.id)).toEqual(['b2']);
+    });
+
+    it('bookKind 筛选：book 含缺省条目（缺省归图书，存量书不丢失）', () => {
+        const books = [
+            e({ id: 'b1', type: 'book', title: '图书A' }),
+            e({ id: 'b2', type: 'book', title: '小说B', bookKind: 'novel' }),
+        ];
+        const out = filterAndSort(books, { status: 'all', type: 'all', query: '', sortBy: 'recent', bookKind: 'book' });
+        expect(out.map((x) => x.id)).toEqual(['b1']);
+    });
+
     it('title-asc 排序（A-Z，zh locale）', () => {
         const out = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'title-asc' });
         const titles = out.map((x) => x.title);
