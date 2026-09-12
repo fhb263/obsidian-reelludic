@@ -1877,7 +1877,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
         </div>
         <div class="rl-fft-right">
             {#if picked}
-                <button class="rl-btn rl-btn-primary" disabled={!title.trim()} on:click={submit}>保存并生成笔记</button>
+                <button class="rl-btn rl-btn-primary" disabled={!title.trim()} on:click={submit}>{entry ? '更新笔记' : '保存并生成笔记'}</button>
             {/if}
         </div>
     </div>
@@ -1907,8 +1907,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-input:focus { outline: none; border-color: var(--interactive-accent); }
     .rl-btn-danger { color: var(--text-error); border-color: var(--text-error); background: transparent; font-weight: 600; }
     .rl-btn-danger:hover { background: var(--text-error); color: #fff; }
-    .rl-btn-excerpt { color: var(--interactive-accent); border-color: var(--interactive-accent); background: transparent; font-weight: 600; margin-left: 8px; }
-    .rl-btn-excerpt:hover { background: var(--interactive-accent); color: var(--text-on-accent); }
+    /* 恒实底 accent（2026-09-12 用户裁定：不用 hover 才变化，始终显示 hover 后的实底态）；记录游玩共用此类同款 */
+    .rl-btn-excerpt { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; margin-left: 8px; }
     .rl-hint { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
     .rl-err { font-size: 11px; color: var(--text-error); margin-top: 6px; }
     /* ── 搜索进度条（朴素版：无流光/脉冲/淡出等网页式动效，符合 Obsidian 插件观感） ── */
