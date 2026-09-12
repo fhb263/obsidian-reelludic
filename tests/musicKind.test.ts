@@ -2,7 +2,7 @@
 // 缺省归「music」（展示为「音乐」；用户 2026-09-12 需求）：未指定 musicKind 的存量音乐不丢失
 import { describe, it, expect } from 'vitest';
 import type { MusicKind } from 'data/types';
-import { MUSIC_KINDS, MUSIC_KIND_LABELS, MUSIC_KIND_UNITS, normalizeMusicKind, matchesMusicKind, musicKindCounts } from 'pure/musicKind';
+import { MUSIC_KINDS, MUSIC_KIND_LABELS, MUSIC_KIND_TOP_UNITS, normalizeMusicKind, matchesMusicKind, musicKindCounts } from 'pure/musicKind';
 
 describe('normalizeMusicKind 合法值归一（缺省 → 音乐）', () => {
     it('合法值原样返回', () => {
@@ -70,7 +70,7 @@ describe('常量与量词', () => {
     it('MUSIC_KIND_LABELS 展示名', () => {
         expect(MUSIC_KIND_LABELS).toEqual({ music: '音乐', other: '其他' });
     });
-    it('MUSIC_KIND_UNITS 量词（5 首音乐 / 5 项其他 / 全部用项）', () => {
-        expect(MUSIC_KIND_UNITS).toEqual({ all: '项', music: '首', other: '项' });
+    it('MUSIC_KIND_TOP_UNITS 顶部量词（子分类 chip 选中时：5 首音乐 / 5 项其他）', () => {
+        expect(MUSIC_KIND_TOP_UNITS).toEqual({ music: '首音乐', other: '项其他' });
     });
 });

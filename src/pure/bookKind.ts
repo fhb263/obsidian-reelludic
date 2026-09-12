@@ -11,12 +11,12 @@ export const BOOK_KIND_LABELS: Record<BookKind, string> = {
     comic: '漫画',
 };
 
-/** chips 计数量词（用户 2026-09-12 指定：5 本书 / 5 本网文 / 5 本漫画）——书籍各桶一律「本」 */
-export const BOOK_KIND_UNITS: Record<'all' | BookKind, string> = {
-    all: '本',
-    book: '本',
-    novel: '本',
-    comic: '本',
+/** 顶部概览量词（子分类 chip 选中非 all 时用；用户 2026-09-12 指定：5 本书 / 5 本网文 / 5 本漫画）。
+ *  「全部」chip 不用此表——回落 pure/labels.overviewUnitLabel('book') = 「本书」。 */
+export const BOOK_KIND_TOP_UNITS: Record<BookKind, string> = {
+    book: '本书',
+    novel: '本网文',
+    comic: '本漫画',
 };
 
 // ⚠️ 合法值集合以 BOOK_KIND_LABELS 的**自有键**为准（与 THEME_CLASS 同法，防两处定义漂移）。

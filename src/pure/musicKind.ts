@@ -10,11 +10,11 @@ export const MUSIC_KIND_LABELS: Record<MusicKind, string> = {
     other: '其他',
 };
 
-/** chips 计数量词（用户 2026-09-12 指定：5 首音乐 / 5 项其他）——「全部」跨音乐+其他两量词，用中性「项」 */
-export const MUSIC_KIND_UNITS: Record<'all' | MusicKind, string> = {
-    all: '项',
-    music: '首',
-    other: '项',
+/** 顶部概览量词（子分类 chip 选中非 all 时用；用户 2026-09-12 指定：5 首音乐 / 5 项其他）。
+ *  「全部」chip 不用此表——回落 pure/labels.overviewUnitLabel('music') = 「首音乐」。 */
+export const MUSIC_KIND_TOP_UNITS: Record<MusicKind, string> = {
+    music: '首音乐',
+    other: '项其他',
 };
 
 // ⚠️ 合法值集合以 MUSIC_KIND_LABELS 的**自有键**为准（与 bookKind 同法，防两处定义漂移）。

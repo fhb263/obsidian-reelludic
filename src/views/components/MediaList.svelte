@@ -7,8 +7,8 @@
     import { starString, starClass } from 'pure/rating';
     import { describeBulkApply } from 'pure/bulkConfirm';
     import { filterAndSort } from 'pure/search';
-    import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_UNITS, bookKindCounts } from 'pure/bookKind';
-    import { MUSIC_KINDS, MUSIC_KIND_LABELS, MUSIC_KIND_UNITS, musicKindCounts } from 'pure/musicKind';
+    import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_TOP_UNITS, bookKindCounts } from 'pure/bookKind';
+    import { MUSIC_KINDS, MUSIC_KIND_LABELS, MUSIC_KIND_TOP_UNITS, musicKindCounts } from 'pure/musicKind';
     import { groupMusicByArtist } from 'pure/musicGroup';
     import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres } from 'pure/cardMeta';
     import { resolveAddType } from 'pure/focusType';
@@ -180,8 +180,17 @@
         { value: 'myrating-asc', label: '个人评分 ↑' },
     ];
 
-    // 概览量词（「N X」里的 X）：映射下沉到 pure/labels.overviewUnitLabel，避免此处逐类型 if 链漏项
-    $: overviewUnit = overviewUnitLabel(lockType ?? (typeFilter !== 'all' ? typeFilter : null));
+    // 概览量词（「N X」里的 X）：类型级回落 pure/labels.overviewUnitLabel（本书/首音乐/部电影…）；
+    // 单类型页签下子分类 chip 选中（非 all）时跟随子分类（本网文/本漫画/项其他）——对齐影视「8 部电视剧」模式
+    $: overviewUnit =
+        lockType === 'book' && kindFilter !== 'all' ? BOOK_KIND_TOP_UNITS[kindFilter]
+        : lockType === 'music' && musicFilter !== 'all' ? MUSIC_KIND_TOP_UNITS[musicFilter]
+        : overviewUnitLabel(lockType ?? (typeFilter !== 'all' ? typeFilter : null));
+    // 概览总数与量词配套：子分类选中时取桶数（kindCounts/musicCounts，与 chips 数字同源），否则类型池总数
+    $: overviewTotal =
+        lockType === 'book' && kindFilter !== 'all' ? kindCounts[kindFilter]
+        : lockType === 'music' && musicFilter !== 'all' ? musicCounts[musicFilter]
+        : statusCounts.all;
 
     /** 搜索占位符随当前类型动态（书籍=书名/作者、游戏=标题/开发商、音乐=标题/作者，均已真实参与 matchesSearch；影视仅标题可搜，原名不宣传） */
     $: searchPlaceholder = (() => {
@@ -454,7 +463,7 @@
     <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/电视剧/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType -->
     <button class="rl-add mod-cta" data-tip="新建条目" on:click={() => onAdd(resolveAddType(lockType, typeFilter))}><Icon icon="plus" size={14} /> 添加</button>
     <span class="rl-libstats" role="group" aria-label="库概览">
-        <span class="rl-libstats-total">{statusCounts.all} {overviewUnit}</span>
+        <span class="rl-libstats-total">{overviewTotal} {overviewUnit}</span>
     </span>
 </div>
 
@@ -474,7 +483,7 @@
         <span class="rl-vb-group" role="group" aria-label="书籍分类">
             {#each kindChips as k}
                 <button class:on={kindFilter === k} on:click={() => (kindFilter = k)}>
-                    {k === 'all' ? '全部' : BOOK_KIND_LABELS[k]}<span class="rl-cnt">{kindCounts[k]}{BOOK_KIND_UNITS[k]}</span>
+                    {k === 'all' ? '全部' : BOOK_KIND_LABELS[k]}<span class="rl-cnt">{kindCounts[k]}</span>
                 </button>
             {/each}
         </span>
@@ -484,7 +493,7 @@
         <span class="rl-vb-group" role="group" aria-label="音乐分类">
             {#each musicChips as k}
                 <button class:on={musicFilter === k} on:click={() => (musicFilter = k)}>
-                    {k === 'all' ? '全部' : MUSIC_KIND_LABELS[k]}<span class="rl-cnt">{musicCounts[k]}{MUSIC_KIND_UNITS[k]}</span>
+                    {k === 'all' ? '全部' : MUSIC_KIND_LABELS[k]}<span class="rl-cnt">{musicCounts[k]}</span>
                 </button>
             {/each}
         </span>

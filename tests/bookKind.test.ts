@@ -1,7 +1,7 @@
 // 书籍子分类（出版 / 网文 / 漫画）纯逻辑单测：normalize 兜底 + 匹配 + 计数 + 量词
 // 缺省归「book」（展示为「出版」；用户 2026-09-12 裁定）：未指定 bookKind 的存量书籍不丢失
 import { describe, it, expect } from 'vitest';
-import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_UNITS, normalizeBookKind, matchesBookKind, bookKindCounts } from 'pure/bookKind';
+import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_TOP_UNITS, normalizeBookKind, matchesBookKind, bookKindCounts } from 'pure/bookKind';
 
 describe('normalizeBookKind 合法值归一（缺省 → 出版）', () => {
     it('合法值原样返回', () => {
@@ -70,7 +70,7 @@ describe('常量定义', () => {
         expect(BOOK_KINDS).toEqual(['book', 'novel', 'comic']);
         expect(BOOK_KIND_LABELS).toEqual({ book: '出版', novel: '网文', comic: '漫画' });
     });
-    it('BOOK_KIND_UNITS 量词（书籍各桶一律「本」）', () => {
-        expect(BOOK_KIND_UNITS).toEqual({ all: '本', book: '本', novel: '本', comic: '本' });
+    it('BOOK_KIND_TOP_UNITS 顶部量词（子分类 chip 选中时：5 本书 / 5 本网文 / 5 本漫画）', () => {
+        expect(BOOK_KIND_TOP_UNITS).toEqual({ book: '本书', novel: '本网文', comic: '本漫画' });
     });
 });
