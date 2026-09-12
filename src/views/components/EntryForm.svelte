@@ -2146,9 +2146,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-summary { overflow: hidden; min-height: 2.4em; }
     .rl-fft {
         display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; align-items: center;
-        flex: none; /* 固定在弹窗底部（rl-form flex 布局），内容滚动时完整遮住背后信息 */
+        flex: none; /* sticky 悬浮钉底；2026-09-12 用户裁定：不铺整行背景条遮挡内容——只按钮本身悬浮，滚动内容从按钮间穿过 */
         position: sticky; bottom: 0; z-index: 10;
-        background: var(--background-primary);
         padding: 8px 0 2px;
     }
     .rl-fft-right { display: flex; gap: 8px; align-items: center; }
