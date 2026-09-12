@@ -1,9 +1,9 @@
-// 书籍子分类（出版 / 网文 / 漫画）纯逻辑单测：normalize 兜底 + 匹配 + 计数 + 量词
-// 缺省归「book」（展示为「出版」；用户 2026-09-12 裁定）：未指定 bookKind 的存量书籍不丢失
+// 书籍子分类（文学 / 网文 / 漫画）纯逻辑单测：normalize 兜底 + 匹配 + 计数 + 量词
+// 缺省归「book」（展示为「文学」；用户 2026-09-12 裁定改名，原「出版」）：未指定 bookKind 的存量书籍不丢失
 import { describe, it, expect } from 'vitest';
 import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_TOP_UNITS, normalizeBookKind, matchesBookKind, bookKindCounts } from 'pure/bookKind';
 
-describe('normalizeBookKind 合法值归一（缺省 → 出版）', () => {
+describe('normalizeBookKind 合法值归一（缺省 → 文学）', () => {
     it('合法值原样返回', () => {
         expect(normalizeBookKind('book')).toBe('book');
         expect(normalizeBookKind('novel')).toBe('novel');
@@ -32,12 +32,12 @@ describe('matchesBookKind 分类匹配', () => {
         expect(matchesBookKind(book, 'all')).toBe(true);
         expect(matchesBookKind(movie, 'all')).toBe(true);
     });
-    it('book/novel/comic 按 normalize 后匹配（缺省书落出版桶）', () => {
+    it('book/novel/comic 按 normalize 后匹配（缺省书落文学桶）', () => {
         expect(matchesBookKind(book, 'novel')).toBe(true);
         expect(matchesBookKind(book, 'book')).toBe(false);
         expect(matchesBookKind(comic, 'comic')).toBe(true);
         expect(matchesBookKind(comic, 'novel')).toBe(false);
-        expect(matchesBookKind(legacyBook, 'book')).toBe(true); // 缺省书落出版桶
+        expect(matchesBookKind(legacyBook, 'book')).toBe(true); // 缺省书落文学桶
         expect(matchesBookKind(legacyBook, 'novel')).toBe(false);
         expect(matchesBookKind(legacyBook, 'comic')).toBe(false);
     });
@@ -49,7 +49,7 @@ describe('matchesBookKind 分类匹配', () => {
 });
 
 describe('bookKindCounts 四桶计数', () => {
-    it('只统计 book 类型条目；缺省归出版桶，comic 独立成桶', () => {
+    it('只统计 book 类型条目；缺省归文学桶，comic 独立成桶', () => {
         const entries = [
             { type: 'book' as const, bookKind: undefined },
             { type: 'book' as const, bookKind: 'book' as const },
@@ -68,7 +68,7 @@ describe('bookKindCounts 四桶计数', () => {
 describe('常量定义', () => {
     it('BOOK_KINDS 与 LABELS 一致（chips 顺序依据）', () => {
         expect(BOOK_KINDS).toEqual(['book', 'novel', 'comic']);
-        expect(BOOK_KIND_LABELS).toEqual({ book: '出版', novel: '网文', comic: '漫画' });
+        expect(BOOK_KIND_LABELS).toEqual({ book: '文学', novel: '网文', comic: '漫画' });
     });
     it('BOOK_KIND_TOP_UNITS 顶部量词（子分类 chip 选中时：5 本书 / 5 本网文 / 5 本漫画）', () => {
         expect(BOOK_KIND_TOP_UNITS).toEqual({ book: '本书', novel: '本网文', comic: '本漫画' });

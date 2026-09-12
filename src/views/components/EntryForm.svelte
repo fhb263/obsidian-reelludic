@@ -228,12 +228,12 @@ export let initialBookKind: BookKind | undefined = undefined;
     $: { if (summaryEl) autosizeTextarea(summaryEl); void summary; }
     $: { if (authorIntroEl) autosizeTextarea(authorIntroEl); void authorIntro; }
     $: { if (tocEl) autosizeTextarea(tocEl); void toc; }
-    /** 书籍分类（1.0.3）：book 出版 / novel 网文 / comic 漫画；缺省归出版（pure/bookKind）；分类唯一入口 = 搜索框下拉（表单 chips 已移除，2026-09-12 用户裁定） */
+    /** 书籍分类（1.0.3）：book 文学 / novel 网文 / comic 漫画；缺省归文学（pure/bookKind，原「出版」）；分类唯一入口 = 搜索框下拉（表单 chips 已移除，2026-09-12 用户裁定） */
     let bookKind: BookKind = normalizeBookKind(entry?.bookKind ?? initialBookKind);
     /** 搜索框类型下拉展示值（书籍态显示子类本名：书籍/网文/漫画）：纯派生自 type+bookKind，编辑初始化全自动回显，规则见 pure/searchTypeSel */
     let typeSel: SearchTypeSel;
     $: typeSel = toSearchTypeSel(type, bookKind);
-    /** select 受控 change：把下拉选择落成真实 type+bookKind（下拉是书籍分类唯一入口：选「书籍」无条件复位出版，bind+on:change 同元素有编译警告，改显式 value+handler） */
+    /** select 受控 change：把下拉选择落成真实 type+bookKind（下拉是书籍分类唯一入口：选「书籍」无条件复位文学，bind+on:change 同元素有编译警告，改显式 value+handler） */
     function onTypeSelEl(ev: Event): void {
         const next = applySearchTypeSel((ev.currentTarget as HTMLSelectElement).value as SearchTypeSel, bookKind);
         type = next.type;
@@ -564,7 +564,7 @@ export let initialBookKind: BookKind | undefined = undefined;
         try {
             const q = query.trim();
             if (type === 'book') {
-                // 传当前类目：漫画（comic）走 Bangumi 主源 + 豆瓣兜底，出版/网文走既有 book 链（main.searchBook 路由）
+                // 传当前类目：漫画（comic）走 Bangumi 主源 + 豆瓣兜底，文学/网文走既有 book 链（main.searchBook 路由）
                 results = await onSearchBook(q, bookKind, onSearchProgress);
             } else if (type === 'game') {
                 results = await onSearchGame(q, onSearchProgress);

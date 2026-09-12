@@ -92,6 +92,18 @@ describe('normalizeEntry 缺字段兜底', () => {
         expect(normalizeEntry({ title: 'x' }).plannedDate).toBeUndefined();
     });
 
+    it('bookKind/musicKind 子分类透传（合法值保留；非法/缺省 → undefined，读取端 normalizeBookKind 兜底）——回归锁定：normalizeEntry 白名单曾缺这两字段，搜索保存的网文/漫画条目被静默丢分类落错视图', () => {
+        expect(normalizeEntry({ title: 'x', bookKind: 'book' }).bookKind).toBe('book');
+        expect(normalizeEntry({ title: 'x', bookKind: 'novel' }).bookKind).toBe('novel');
+        expect(normalizeEntry({ title: 'x', bookKind: 'comic' }).bookKind).toBe('comic');
+        expect(normalizeEntry({ title: 'x', bookKind: 'xxx' as never }).bookKind).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).bookKind).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', musicKind: 'music' }).musicKind).toBe('music');
+        expect(normalizeEntry({ title: 'x', musicKind: 'other' }).musicKind).toBe('other');
+        expect(normalizeEntry({ title: 'x', musicKind: 'xxx' as never }).musicKind).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).musicKind).toBeUndefined();
+    });
+
     it('豆瓣适配字段归一化：字符串透传、数组过滤、空数组归 undefined', () => {
         const e = normalizeEntry({
             screenwriter: ['诺兰', '弟弟'],

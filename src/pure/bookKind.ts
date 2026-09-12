@@ -1,12 +1,12 @@
-// 书籍子分类（出版 / 网文 / 漫画）纯逻辑：归一 + 匹配 + 计数。
-// 1.0.3 起阅读页签提供【全部 / 出版 / 网文 / 漫画】子分类 chips（对标影视聚合页签的类型 chips）。
-// 缺省归「book」（展示为「出版」；用户 2026-09-12 裁定）：未指定 bookKind 的存量书籍不丢失，网文 / 漫画在表单显式选择。
+// 书籍子分类（文学 / 网文 / 漫画）纯逻辑：归一 + 匹配 + 计数。
+// 1.0.3 起阅读页签提供【全部 / 文学 / 网文 / 漫画】子分类 chips（对标影视聚合页签的类型 chips）。
+// 缺省归「book」（展示为「文学」；用户 2026-09-12 裁定改名，原「出版」）：未指定 bookKind 的存量书籍不丢失，网文 / 漫画在表单显式选择。
 import type { BookKind } from 'data/types';
 
 export const BOOK_KINDS: BookKind[] = ['book', 'novel', 'comic'];
 
 export const BOOK_KIND_LABELS: Record<BookKind, string> = {
-    book: '出版',
+    book: '文学',
     novel: '网文',
     comic: '漫画',
 };
@@ -23,7 +23,7 @@ export const BOOK_KIND_TOP_UNITS: Record<BookKind, string> = {
 const VALID_KINDS = Object.keys(BOOK_KIND_LABELS) as BookKind[];
 
 /**
- * 归一书籍分类：合法值原样返回，其余（缺省 / 空值 / 损坏数据）一律归「book」（展示为「出版」）。
+ * 归一书籍分类：合法值原样返回，其余（缺省 / 空值 / 损坏数据）一律归「book」（展示为「文学」）。
  * ⚠️ 合法值校验用 `Object.keys` 而非 `in`——`in` 会沿原型链查找，
  * `normalizeBookKind('toString')` 会误判合法（教训同 pure/themeTokens.normalizeUiTheme，有回归测试守）。
  */

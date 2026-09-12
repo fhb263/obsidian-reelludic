@@ -2,7 +2,7 @@
 // 「网文」「漫画」下拉选项 = 书籍类目子类（bookKind novel/comic）的快捷态：搜索框下拉是书籍分类的唯一入口
 // （表单内「书籍分类」chips 已移除）：
 //  - toSearchTypeSel：真实 (type, bookKind) → 下拉展示值（书籍态显示子类本名，非书籍恒类型本名）；
-//  - applySearchTypeSel：下拉选择 → 真实 (type, bookKind)——选「书籍」无条件复位出版（下拉即分类，切换即明确意图）。
+//  - applySearchTypeSel：下拉选择 → 真实 (type, bookKind)——选「书籍」无条件复位文学（下拉即分类，切换即明确意图）。
 import { describe, it, expect } from 'vitest';
 import { toSearchTypeSel, applySearchTypeSel } from 'pure/searchTypeSel';
 
@@ -13,7 +13,7 @@ describe('toSearchTypeSel — 真实类型 → 下拉展示值', () => {
     it('书籍 + 网文分类 → 「网文」', () => {
         expect(toSearchTypeSel('book', 'novel')).toBe('novel');
     });
-    it('书籍 + 出版分类 → 「书籍」', () => {
+    it('书籍 + 文学分类 → 「书籍」', () => {
         expect(toSearchTypeSel('book', 'book')).toBe('book');
     });
     it('非书籍类型恒原样（分类残留不影响展示）', () => {
@@ -31,7 +31,7 @@ describe('applySearchTypeSel — 下拉选择 → 真实类型派生', () => {
         expect(applySearchTypeSel('novel', 'book')).toEqual({ type: 'book', bookKind: 'novel' });
         expect(applySearchTypeSel('novel', 'comic')).toEqual({ type: 'book', bookKind: 'novel' });
     });
-    it('选「书籍」→ 无条件复位出版（下拉是分类唯一入口，切换即明确意图；添加/编辑一致）', () => {
+    it('选「书籍」→ 无条件复位文学（下拉是分类唯一入口，切换即明确意图；添加/编辑一致）', () => {
         expect(applySearchTypeSel('book', 'comic')).toEqual({ type: 'book', bookKind: 'book' });
         expect(applySearchTypeSel('book', 'novel')).toEqual({ type: 'book', bookKind: 'book' });
         expect(applySearchTypeSel('book', 'book')).toEqual({ type: 'book', bookKind: 'book' });

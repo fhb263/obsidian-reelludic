@@ -141,7 +141,7 @@ describe('filterAndSort 综合筛选 + 排序', () => {
         expect(out.map((x) => x.id)).toEqual(['b2']);
     });
 
-    it('bookKind 筛选：book 含缺省条目（缺省归出版，存量书不丢失）', () => {
+    it('bookKind 筛选：book 含缺省条目（缺省归文学，存量书不丢失）', () => {
         const books = [
             e({ id: 'b1', type: 'book', title: '图书A' }),
             e({ id: 'b2', type: 'book', title: '小说B', bookKind: 'novel' }),

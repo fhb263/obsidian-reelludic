@@ -74,7 +74,7 @@
     // 否则组件被 Svelte 复用时 typeFilter 停留在上一个页签的类型，切回影视页签卡片不显示
     $: if (lockType) typeFilter = lockType;
     else typeFilter = 'all';
-    // 书籍子分类（1.0.3）：阅读页签 chips【全部/出版/网文/漫画】，缺省归出版（pure/bookKind）
+    // 书籍子分类（1.0.3）：阅读页签 chips【全部/文学/网文/漫画】，缺省归文学（pure/bookKind，原「出版」）
     let kindFilter: 'all' | BookKind = 'all';
     const kindChips: ReadonlyArray<'all' | BookKind> = ['all', ...BOOK_KINDS];
     // 音乐子分类（1.0.3）：收听页签 chips【全部/音乐/其他】，缺省归音乐（pure/musicKind）
@@ -249,7 +249,7 @@
         for (const t of ENTRY_TYPES) out[t] = entries.filter((e) => e.type === t).length;
         return out;
     })();
-    // 书籍子分类四桶计数（阅读页签 chips 数字；all = book 总数，缺省归出版桶）
+    // 书籍子分类四桶计数（阅读页签 chips 数字；all = book 总数，缺省归文学桶）
     $: kindCounts = bookKindCounts(lockType === 'book' ? entries : []);
     // 音乐子分类三桶计数（收听页签 chips 数字；all = music 总数，缺省归音乐桶）
     $: musicCounts = musicKindCounts(lockType === 'music' ? entries : []);
@@ -465,7 +465,7 @@
         />
     </div>
     <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/电视剧/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType。
-         书籍页签同步传当前子分类（kindFilter）：聚焦「漫画」→ 表单下拉选中「漫画」并走漫画源；「网文」→ 书籍+网文；「出版/全部」→ 缺省出版 -->
+         书籍页签同步传当前子分类（kindFilter）：聚焦「漫画」→ 表单下拉选中「漫画」并走漫画源；「网文」→ 书籍+网文；「文学/全部」→ 缺省文学 -->
     <button class="rl-add mod-cta" data-tip="新建条目" on:click={() => onAdd(resolveAddType(lockType, typeFilter), lockType === 'book' && kindFilter !== 'all' ? kindFilter : undefined)}><Icon icon="plus" size={14} /> 添加</button>
     <span class="rl-libstats" role="group" aria-label="库概览">
         <span class="rl-libstats-total">{overviewTotal} {overviewUnit}</span>
