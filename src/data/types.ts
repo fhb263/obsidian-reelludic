@@ -40,6 +40,9 @@ export const TYPE_COLORS: Record<EntryType, string> = {
 /** 色彩主题：彩色（类型色条 + 状态五色）/ 单色（关闭类型色条，仅状态色） */
 export type ColorTheme = 'colorful' | 'mono';
 
+/** 界面主题（1.0.3）：native 原生（默认，保持 Obsidian 克制风格）/ modern 现代 App 风 */
+export type UiTheme = 'native' | 'modern';
+
 export interface ProgressPoint {
     season: number;
     episode: number;
