@@ -195,7 +195,7 @@
             <span class="rl-tr-cnt rl-tr-cnt-new"><Icon icon="bell" size={11} /> {updatedCount} 部有更新</span>
         {/if}
         <span class="rl-tr-hint">更新置顶 · 滞后置顶 · 点击标题打开笔记</span>
-        <button class="rl-tr-refresh" disabled={checking} on:click={() => runChecks(true)}>
+        <button class="rl-tr-refresh" disabled={checking} data-tip="重新检查所有在追条目的更新" on:click={() => runChecks(true)}>
             {checking ? '检测中…' : '重新检测'}
         </button>
         <button class="rl-tr-import" on:click={onImportBangumi} data-tip="从 Bangumi 收藏列表批量导入动画条目">从 Bangumi 导入</button>
@@ -280,14 +280,14 @@
     .rl-tracking { font-size: 13px; }
     .rl-tr-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
     .rl-tr-title { font-size: 14px; font-weight: 700; }
-    .rl-tr-cnt { font-size: 11px; color: var(--text-muted); background: var(--background-modifier-hover); border-radius: 999px; padding: 1px 9px; }
+    .rl-tr-cnt { font-size: 11px; color: var(--text-muted); background: var(--background-modifier-hover); border-radius: var(--rl-t-radius-pill, 999px); padding: 1px 9px; }
     .rl-tr-cnt-new { color: var(--rl-danger); background: rgba(255, 107, 107, .14); font-weight: 700; }
     .rl-tr-hint { font-size: 11px; color: var(--text-faint); }
-    .rl-tr-refresh { font-family: inherit; font-size: 11px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: 6px; padding: 1px 10px; cursor: pointer; margin-left: auto; transition: background .1s, transform .05s; }
+    .rl-tr-refresh { font-family: inherit; font-size: 11px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); padding: 1px 10px; cursor: pointer; margin-left: auto; transition: background .1s, transform .05s; }
     .rl-tr-refresh:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
     .rl-tr-refresh:active { background: var(--background-modifier-hover); transform: scale(.95); }
     .rl-tr-refresh:disabled { opacity: .5; cursor: default; }
-    .rl-tr-import { font-family: inherit; font-size: 11px; border: 1px solid var(--interactive-accent); background: transparent; color: var(--interactive-accent); border-radius: 6px; padding: 1px 10px; cursor: pointer; transition: background .1s, transform .05s; }
+    .rl-tr-import { font-family: inherit; font-size: 11px; border: 1px solid var(--interactive-accent); background: transparent; color: var(--interactive-accent); border-radius: var(--rl-t-radius-md, 6px); padding: 1px 10px; cursor: pointer; transition: background .1s, transform .05s; }
     .rl-tr-import:hover { background: rgba(69, 122, 251, .12); }
     .rl-tr-import:active { transform: scale(.95); }
     .rl-tr-empty { text-align: center; color: var(--text-faint); padding: 36px 0; font-size: 13px; }
@@ -301,12 +301,12 @@
     .rl-tr-season { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
     .rl-tr-prog { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--text-normal); white-space: nowrap; }
     .rl-tr-last { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
-    .rl-tr-act { font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: 999px; white-space: nowrap; }
+    .rl-tr-act { font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: var(--rl-t-radius-pill, 999px); white-space: nowrap; }
     .rl-tr-act-active { background: rgba(81, 207, 102, .14); color: var(--rl-good); }
     .rl-tr-act-idle { background: rgba(255, 193, 7, .14); color: #b08800; }
     .rl-tr-act-stale { background: rgba(255, 107, 107, .14); color: var(--rl-danger); }
     .rl-tr-act-none { background: var(--background-modifier-hover); color: var(--text-faint); }
-    .rl-tr-upd { font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: 999px; white-space: nowrap; }
+    .rl-tr-upd { font-size: 11px; font-weight: 600; padding: 1px 9px; border-radius: var(--rl-t-radius-pill, 999px); white-space: nowrap; }
     .rl-tr-upd-new { background: rgba(255, 107, 107, .14); color: var(--rl-danger); }
     .rl-tr-upd-ok { background: rgba(81, 207, 102, .14); color: var(--rl-good); }
     .rl-tr-upd-na { background: var(--background-modifier-hover); color: var(--text-faint); }
@@ -314,6 +314,6 @@
     .rl-tr-upd-blocked { background: rgba(240, 146, 51, .14); color: var(--rl-warn); }
     .rl-tr-upd-check { background: var(--background-modifier-hover); color: var(--text-muted); }
     .rl-tr-ops { display: flex; gap: 6px; }
-    .rl-tr-btn { font-family: inherit; font-size: 11px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: 6px; padding: 2px 10px; cursor: pointer; transition: color .15s ease, border-color .15s ease, background .15s ease, transform .12s ease; }
+    .rl-tr-btn { font-family: inherit; font-size: 11px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); padding: 2px 10px; cursor: pointer; transition: color .15s ease, border-color .15s ease, background .15s ease, transform .12s ease; }
     .rl-tr-btn:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); transform: scale(1.12); }
 </style>

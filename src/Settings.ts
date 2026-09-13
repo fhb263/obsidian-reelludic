@@ -1,7 +1,7 @@
 // 设置类型、默认值与设置面板（字段只能追加，不能删除——AGENTS 红线）
 import { Notice, Platform, PluginSettingTab, Setting } from 'obsidian';
 import type ReelLudicPlugin from '../main';
-import type { ColorTheme } from 'data/types';
+import type { ColorTheme, UiTheme } from 'data/types';
 import type { ProviderId, SourceGroup, ProviderMeta } from 'pure/sourceRegistry';
 import {
     PROVIDERS, PROVIDER_META, GROUP_LABELS,
@@ -40,6 +40,8 @@ export interface ReelLudicSettings {
     defaultViewMode: 'grid' | 'list';
     /** 隐藏插件内滚动条（外观）：开启后 ReelLudic 视图内滚动条不显示 */
     hideScrollbars: boolean;
+    /** 界面主题（1.0.3）：全面 modern 后恒为 'modern'（设置页已无切换入口；字段按 schema append-only 保留） */
+    uiTheme?: UiTheme;
     /** 阅读排版：字号（px，默认 16）/ 行距（倍数，默认 1.8）——设置项已移除（v0.5 起在阅读器内调整，写回本字段），字段保留兼容旧数据 */
     readerFontSize: number;
     readerLineHeight: number;
@@ -91,6 +93,7 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     localizePosters: false,
     defaultViewMode: 'grid',
     hideScrollbars: false,
+    uiTheme: 'modern',
     readerFontSize: 16,
     readerLineHeight: 1.8,
     internalBookReader: false,
@@ -111,7 +114,7 @@ const KEY_SOURCE_ORDER: readonly ProviderId[] = ['douban', 'tmdb', 'bangumi', 'o
 /** ① 数据源管理折叠项内免 Key 源展示顺序（T1：Open Library/Steam/MusicBrainz/iTunes/AniList——无凭据可填，仅展示说明） */
 const FREE_SOURCE_ORDER: readonly ProviderId[] = ['openLibrary', 'steam', 'musicbrainz', 'itunes', 'anilist'];
 
-/** ② 数据源启用分类展示顺序（spec S5：书籍/影视/动画/音乐/游戏；registry SOURCE_GROUPS 顺序不同，UI 行序以此为准） */
+/** ② 数据源启用分类展示顺序（spec S5：书籍/影视/动画/音乐/游戏；1.0.3.1 起漫画子组已下线，registry SOURCE_GROUPS 顺序不同，UI 行序以此为准） */
 const GROUP_DISPLAY_ORDER: readonly SourceGroup[] = ['book', 'movieTv', 'anime', 'music', 'game'];
 
 /** 需 Key 但 Key 可选的数据源（未配仍照常工作，仅限流；空态徽标文案标「可选」而非「未配置」） */
@@ -537,6 +540,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
 
         // ──────────── 外观 ────────────
         new Setting(containerEl).setHeading().setName('外观');
+
+        // 界面主题切换入口已删（1.0.3 全面 modern）：onload 强制 settings.uiTheme = 'modern'。
 
         new Setting(containerEl)
             .setName('隐藏插件内滚动条')

@@ -1,6 +1,8 @@
 // 详情笔记生成（纯逻辑，可单测）
 import type { MediaEntry } from 'data/types';
-import { ENTRY_TYPE_DIRS, ENTRY_TYPE_LABELS } from 'data/types';
+import { ENTRY_TYPE_LABELS } from 'data/types';
+import { noteSubDir } from 'pure/dirs';
+import { normalizeBookKind } from 'pure/bookKind';
 import { starString } from 'pure/rating';
 import { formatPlaytime } from 'pure/playtime';
 import { localDateOf } from 'pure/dailyLog';
@@ -76,7 +78,7 @@ export function entryFrontmatter(e: MediaEntry, libraryDir: string = 'ReelLudic'
         if (e.readingProgress.page) lines.push(`reading_page: ${e.readingProgress.page}`);
         if (e.readingProgress.totalPage) lines.push(`reading_total_page: ${e.readingProgress.totalPage}`);
     }
-    if (e.type === 'book' && e.pageCount) lines.push(`page_count: ${e.pageCount}`); // 元数据页数（豆瓣实体书，仅展示/统计）
+    if (e.type === 'book' && e.pageCount) lines.push(`page_count: ${e.pageCount}`); // 元数据页数（豆瓣实体书，仅展示/统计）；网文同字段 = 章数，键名不变（Dataview 查询兼容，1.0.3）
     if (e.type === 'game' && e.playtimeMinutes) lines.push(`playtime_minutes: ${e.playtimeMinutes}`);
     // progress_percent：进度百分比（Dataview 排序/筛选用）——书籍优先 percent，回退 page/totalPage（与书架进度条同口径）；
     // 剧集/动画按已看集数比；游戏/音乐无统一百分比，不输出
@@ -161,6 +163,8 @@ export function generateNoteMarkdown(e: MediaEntry, libraryDir: string = 'ReelLu
 
     // 属性表格：固定行 类型/作者/年份/来源/评分 + 有值附加行（保留豆瓣适配的完整字段）
     // 音乐四行（作者/发行年/来源/评分），不参与影视/书籍附加行
+    // 网文（1.0.3）：年份行按「上架年」呈现；出版侧字段（译者/出版社/出品方/ISBN/装帧/定价/丛书）与「## 目录」不渲染——见下方 book 分支
+    const novel = e.type === 'book' && normalizeBookKind(e.bookKind) === 'novel';
     const rows: [string, string][] = e.type === 'music'
         ? [
             ['作者', e.author ?? ''],
@@ -173,22 +177,26 @@ export function generateNoteMarkdown(e: MediaEntry, libraryDir: string = 'ReelLu
         : [
             ['类型', `${ENTRY_TYPE_LABELS[e.type]}${e.genres.length ? ` · ${e.genres.join(' / ')}` : ''}`],
             ['作者', creatorOf(e) ?? ''],
-            ['年份', e.year ? String(e.year) : ''],
+            [novel ? '上架年' : '年份', e.year ? String(e.year) : ''],
             ['来源', sourceLinkText(e)],
             ['大众评分', e.communityScore != null ? String(e.communityScore) : ''],
             ['个人评分', `${starString(e.rating)}（${e.rating}/5）`],
         ];
     if (e.type === 'book') {
-        if (e.translator) rows.push(['译者', e.translator]);
-        if (e.publisher) rows.push(['出版社', e.publisher]);
-        if (e.producer) rows.push(['出品方', e.producer]);
-        if (e.isbn) rows.push(['ISBN', e.isbn]);
-        // 页数 = 元数据（豆瓣实体书）优先，旧数据回退进度基准 totalPage
+        if (!novel) {
+            if (e.translator) rows.push(['译者', e.translator]);
+            if (e.publisher) rows.push(['出版社', e.publisher]);
+            if (e.producer) rows.push(['出品方', e.producer]);
+            if (e.isbn) rows.push(['ISBN', e.isbn]);
+        }
+        // 页数 = 元数据（豆瓣实体书）优先，旧数据回退进度基准 totalPage；网文同字段按「章数」呈现
         const bookPages = e.pageCount ?? e.readingProgress?.totalPage;
-        if (bookPages) rows.push(['页数', String(bookPages)]);
-        if (e.binding) rows.push(['装帧', e.binding]);
-        if (e.price) rows.push(['定价', e.price]);
-        if (e.series) rows.push(['丛书', e.series]);
+        if (bookPages) rows.push([novel ? '章数' : '页数', String(bookPages)]);
+        if (!novel) {
+            if (e.binding) rows.push(['装帧', e.binding]);
+            if (e.price) rows.push(['定价', e.price]);
+            if (e.series) rows.push(['丛书', e.series]);
+        }
     } else if (e.type === 'game') {
         if (e.platform) rows.push(['平台', e.platform]);
         if (e.playtimeMinutes) rows.push(['时长', `${Math.round(e.playtimeMinutes / 60)}h`]);
@@ -231,7 +239,8 @@ export function generateNoteMarkdown(e: MediaEntry, libraryDir: string = 'ReelLu
         s.push(e.authorIntro.trim());
         s.push('');
     }
-    if (e.type === 'book' && e.toc?.trim()) {
+    // 目录：仅文学（网文无出版目录——1.0.3 表单已删该框，存量 toc 也不再渲染，用户 2026-09-13 裁定）
+    if (e.type === 'book' && !novel && e.toc?.trim()) {
         s.push('## 目录');
         s.push('');
         s.push(e.toc.trim());
@@ -294,7 +303,8 @@ export function generateNoteMarkdown(e: MediaEntry, libraryDir: string = 'ReelLu
     return s.join('\n');
 }
 
-/** 条目笔记在 vault 内的路径：按类型分子目录（笔记/movie/、笔记/teleplay/…，英文目录名），各类型互不混杂 */
+/** 条目笔记在 vault 内的路径：按类型分子目录（笔记/movie/、笔记/teleplay/…，英文目录名），各类型互不混杂；
+ *  书籍再按子分类分（笔记/book/ 文学、笔记/novel/ 网文，1.0.3.1）——子目录裁决统一走 pure/dirs.noteSubDir */
 export function entryNotePath(e: MediaEntry, baseDir: string = 'ReelLudic/笔记'): string {
-    return `${baseDir}/${ENTRY_TYPE_DIRS[e.type]}/${safeFilename(e.title)}.md`;
+    return `${baseDir}/${noteSubDir(e)}/${safeFilename(e.title)}.md`;
 }

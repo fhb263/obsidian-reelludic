@@ -409,6 +409,14 @@ describe('entryNotePath', () => {
         expect(entryNotePath(baseEntry({ type: 'movie' }))).toBe('ReelLudic/笔记/movie/进击的巨人 最终季.md');
         expect(entryNotePath(baseEntry({ type: 'book' }))).toBe('ReelLudic/笔记/book/进击的巨人 最终季.md');
     });
+    it('书籍按子分类分目录（1.0.3.1）：文学 book/、网文 novel/（缺省与已下线 comic 归 book/）', () => {
+        expect(entryNotePath(baseEntry({ type: 'book', bookKind: 'book' }))).toBe('ReelLudic/笔记/book/进击的巨人 最终季.md');
+        expect(entryNotePath(baseEntry({ type: 'book', bookKind: 'novel' }))).toBe('ReelLudic/笔记/novel/进击的巨人 最终季.md');
+        expect(entryNotePath(baseEntry({ type: 'book', bookKind: 'comic' as never }))).toBe('ReelLudic/笔记/book/进击的巨人 最终季.md');
+    });
+    it('自定义库目录同样带子分类段', () => {
+        expect(entryNotePath(baseEntry({ type: 'book', bookKind: 'novel' }), '媒体库/笔记')).toBe('媒体库/笔记/novel/进击的巨人 最终季.md');
+    });
 });
 
 describe('generateNoteMarkdown 游戏游玩记录', () => {
@@ -486,5 +494,81 @@ describe('generateNoteMarkdown · AI 摘要章节', () => {
     it('空数组/全空白看点不渲染该章节', () => {
         const md = generateNoteMarkdown(baseEntry({ aiHighlights: ['  ', ''] }));
         expect(md).not.toContain('## 核心看点');
+    });
+});
+
+// 网文口径（1.0.3，用户 2026-09-13 裁定）：年份行 → 上架年；页数行 → 章数；
+// 出版侧字段（译者/出版社/出品方/ISBN/装帧/定价/丛书）与「## 目录」小节不渲染（文学保持原样）
+describe('generateNoteMarkdown · 网文（novel）口径', () => {
+    /** 同一份数据分别以文学 / 网文渲染，便于对照断言 */
+    const bookish = (bookKind: 'book' | 'novel') =>
+        baseEntry({
+            type: 'book',
+            bookKind,
+            title: '斗罗大陆',
+            author: '唐家三少',
+            year: 2008,
+            genres: ['玄幻'],
+            translator: '某译',
+            publisher: '某出版社',
+            producer: '某出品方',
+            isbn: '9787555218296',
+            binding: '平装',
+            price: '29.80',
+            series: '斗罗系列',
+            toc: '第一章 觉醒',
+            pageCount: 1200,
+            director: undefined,
+            cast: [],
+            progress: undefined,
+        });
+
+    it('网文：年份行按「上架年」呈现，不含「年份」行', () => {
+        const md = generateNoteMarkdown(bookish('novel'));
+        expect(md).toContain('| 上架年 | 2008 |');
+        expect(md).not.toContain('| 年份 |');
+    });
+
+    it('网文：元数据按「章数」呈现，不含「页数」行', () => {
+        const md = generateNoteMarkdown(bookish('novel'));
+        expect(md).toContain('| 章数 | 1200 |');
+        expect(md).not.toContain('| 页数 |');
+    });
+
+    it('网文：出版侧字段不渲染（译者/出版社/出品方/ISBN/装帧/定价/丛书）', () => {
+        const md = generateNoteMarkdown(bookish('novel'));
+        for (const label of ['| 译者 |', '| 出版社 |', '| 出品方 |', '| ISBN |', '| 装帧 |', '| 定价 |', '| 丛书 |']) {
+            expect(md).not.toContain(label);
+        }
+    });
+
+    it('网文：即使有 toc 也不渲染「## 目录」小节（作者简介保留）', () => {
+        const md = generateNoteMarkdown(baseEntry({ type: 'book', bookKind: 'novel', authorIntro: '唐家三少介绍', toc: '第一章 觉醒' }));
+        expect(md).not.toContain('## 目录');
+        expect(md).toContain('## 作者简介');
+    });
+
+    it('文学回归锁定：年份/页数/出版侧字段/目录 全部照旧（网文分支不得误伤）', () => {
+        const md = generateNoteMarkdown(bookish('book'));
+        expect(md).toContain('| 年份 | 2008 |');
+        expect(md).toContain('| 页数 | 1200 |');
+        expect(md).toContain('| 译者 | 某译 |');
+        expect(md).toContain('| 出版社 | 某出版社 |');
+        expect(md).toContain('| ISBN | 9787555218296 |');
+        expect(md).toContain('## 目录');
+        expect(md).not.toContain('| 上架年 |');
+        expect(md).not.toContain('| 章数 |');
+    });
+
+    it('缺省 bookKind（老数据）按文学口径渲染', () => {
+        const md = generateNoteMarkdown(baseEntry({ type: 'book', year: 2010, pageCount: 340, toc: '第一章' }));
+        expect(md).toContain('| 年份 | 2010 |');
+        expect(md).toContain('| 页数 | 340 |');
+        expect(md).toContain('## 目录');
+    });
+
+    it('frontmatter：page_count 键名不变（网文同字段 = 章数，Dataview 查询兼容）', () => {
+        expect(entryFrontmatter(bookish('novel'))).toContain('page_count: 1200');
+        expect(entryFrontmatter(bookish('book'))).toContain('page_count: 1200');
     });
 });

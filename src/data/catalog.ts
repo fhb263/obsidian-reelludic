@@ -1,8 +1,10 @@
 // catalog.json 读写（纯逻辑：文件 IO 通过注入的 VaultIO 完成，可单测）
-import type { ActivityEvent, Catalog, MediaEntry, PlaySession, WatchLink } from 'data/types';
+import type { ActivityEvent, BookKind, Catalog, MediaEntry, MusicKind, PlaySession, WatchLink } from 'data/types';
 import { ACTIVITY_LOG_LIMIT, createEntryId, ENTRY_TYPES } from 'data/types';
 import { isMediaStatus } from 'pure/status';
 import { normalizeRating } from 'pure/rating';
+import { BOOK_KINDS } from 'pure/bookKind';
+import { MUSIC_KINDS } from 'pure/musicKind';
 
 export const CATALOG_VERSION = 1;
 
@@ -56,6 +58,8 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
             const v = Array.isArray(raw.aliases) ? raw.aliases.filter(isString) : [];
             return v.length ? v : undefined;
         })(),
+        bookKind: BOOK_KINDS.includes(raw.bookKind as BookKind) ? raw.bookKind : undefined, // 书籍子分类（合法值透传；非法/缺省/已下线 comic → undefined，读取端 normalizeBookKind 兜底归文学）——回归锁定：白名单曾缺此字段，搜索保存的网文被静默丢分类落错视图
+        musicKind: MUSIC_KINDS.includes(raw.musicKind as MusicKind) ? raw.musicKind : undefined, // 音乐子分类（同上，缺省/已下线 other 读取端归 music）
         author: isString(raw.author) ? raw.author : undefined,
         translator: isString(raw.translator) ? raw.translator : undefined,
         publisher: isString(raw.publisher) ? raw.publisher : undefined,

@@ -11,7 +11,8 @@ export type ProviderId =
     | 'douban' | 'tmdb' | 'bangumi'
     | 'openLibrary' | 'googleBooks' | 'steam' | 'musicbrainz' | 'itunes' | 'omdb' | 'anilist' | 'igdb';
 
-/** 源链配置组：五组（movie/tv 共用 movieTv，见 sourceGroupForType） */
+/** 源链配置组：五组（movie/tv 共用 movieTv；书籍/游戏/音乐/影视/动画）。
+ *  1.0.3.1：原「comic 漫画」书籍类目子组随漫画子视图下线（用户 2026-09-13 裁定），书籍类目回归单链。 */
 export type SourceGroup = 'book' | 'game' | 'music' | 'movieTv' | 'anime';
 
 export const SOURCE_GROUPS: readonly SourceGroup[] = ['book', 'game', 'music', 'movieTv', 'anime'];
@@ -125,7 +126,8 @@ export function sourceEnList(ids: readonly (ProviderId | string)[]): string {
     return ids.map(sourceEnLabel).join(' / ');
 }
 
-/** 各组默认链（T1 落上游 D2 表：book=douban+openLibrary；game=douban+steam；music=douban+musicbrainz+itunes 3 源满链；movieTv/anime 沿用 douban+tmdb/bangumi 不变；googleBooks/omdb/anilist 默认关、用户自选加入；链首 douban 为主力源不限时） */
+/** 各组默认链（T1 落上游 D2 表：book=douban+openLibrary；game=douban+steam；music=douban+musicbrainz+itunes 3 源满链；movieTv/anime 沿用 douban+tmdb/bangumi 不变；googleBooks/omdb/anilist 默认关、用户自选加入；链首 douban 为主力源不限时。
+ *  1.0.3.1：原 comic 组（bangumi+douban）随漫画子视图下线（用户 2026-09-13 裁定）。 */
 export const DEFAULT_CHAINS: Record<SourceGroup, readonly ProviderId[]> = {
     book: ['douban', 'openLibrary'],
     game: ['douban', 'steam'],

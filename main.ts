@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS, ReelLudicSettingTab } from 'Settings';
 import type { ReelLudicSettings, SourceTestResult } from 'Settings';
 import { measure, withTimeout, TimedError, TIMEOUT_MS, retry } from 'pure/timing';
 import { createSearchCache } from 'pure/searchCache';
+import { normalizeUiTheme, THEME_CLASS } from 'pure/themeTokens';
 import { checkAnimeUpdate, isBlockedPage, type UpdateCheckResult } from 'pure/updateCheck';
 import { EntryService } from 'services/EntryService';
 import { AiSummaryService } from 'services/aiSummary';
@@ -58,7 +59,9 @@ import { initGlobalTooltip } from 'services/globalTooltip';
 import { VideoPlayerModal, type EmbedVideoItem } from 'modals/VideoPlayerModal';
 import { mergeBySource, sortByRelevance } from 'pure/searchMerge';
 import { PROVIDER_META, resolveSourceChain, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
+import type { BookKind } from 'data/types';
 import { DIR_NOTES, DIR_COVERS, DIR_BACKUPS, DIR_REPORTS, typeDir, LEGACY_TYPE_DIR_ZH, relocateLegacyNotePath } from 'pure/dirs';
+import { migrateNovelNotes } from 'services/novelMigration';
 import { generateYearReport, yearReportPath } from 'pure/report';
 import { listReportYears } from 'pure/reportIndex';
 import { ENTRY_TYPES, type MediaEntry, type EntryType } from 'data/types';
@@ -163,8 +166,16 @@ export default class ReelLudicPlugin extends Plugin {
 
     async onload(): Promise<void> {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-        // v0.4 起设置页移除「色彩主题」选项，外观固定单色（不渲染色条）：
-        // 强制覆盖旧数据中的 colorful，避免老用户残留配置继续显示彩色
+        // 界面主题全面 modern（1.0.3）：设置页已删除切换入口，磁盘残留 native 的老用户在此强制迁移
+        // （与下方 colorTheme='mono' 同构的「下线项兜底」，saveSettings 会把 'modern' 写回磁盘自愈）。
+        // normalizeUiTheme 保留在 applyUiTheme 内做防御性归一，此处不再需要。
+        this.settings.uiTheme = 'modern';
+        // colorTheme 迁移（**不是死代码，别删**）：v0.0.1 曾提供「色彩主题：彩色/单色」设置项，
+        // v0.4 起设置页移除该入口、外观固定单色。但设置项下线 ≠ 磁盘值消失 —— v0.0.1~v0.3.x 期间
+        // 选过「彩色」的用户，data.json 里会永久残留 colorTheme:"colorful"。此处必须强制定为 'mono'：
+        // 它曾是全仓**唯一**的纠正点，一旦删掉，MediaList.svelte 的 `{#if colorTheme === 'colorful'}`
+        // 分支就会对这批老用户复活（他们的 Svelte prop 默认值也是 'colorful'），
+        // 表现为升级后突然冒出类型色条 —— 而设置页已无入口、saveSettings 也不覆写，用户无法自救。
         this.settings.colorTheme = 'mono';
         // sourceChains 基线以磁盘加载值初始化：此后 saveSettings 只要链配置与上次持久化基线不同即清缓存
         this.sourceChainBaselineJson = JSON.stringify(this.settings.sourceChains ?? {});
@@ -174,6 +185,8 @@ export default class ReelLudicPlugin extends Plugin {
         // 阅读进度/书签文件名可读化迁移（旧 e_xxx 名 → {书名}-阅读进度|书签-{id}，幂等；须在 service 就绪后）
         await this.migrateProgressFileNames();
         this.rebuildClients();
+
+        this.applyUiTheme();
 
         this.registerView(HOME_VIEW_TYPE, (leaf) => new HomeView(leaf, this));
         // 全局统一 hover 提示（data-tip 自绘气泡，UI-GUIDE 规范；卸载自动清理）
@@ -214,15 +227,41 @@ export default class ReelLudicPlugin extends Plugin {
         this.addSettingTab(new ReelLudicSettingTab(this.app, this));
     }
 
-    async onunload(): Promise<void> {        if (this.refreshTimer !== null) {
+    async onunload(): Promise<void> {
+        // 卸载时清理主题类，避免插件禁用后 body 上残留孤儿类。
+        // 从 THEME_CLASS 取值而非硬编码类名：将来增删主题时不漏改清理点（native 的 '' 跳过）。
+        for (const cls of Object.values(THEME_CLASS)) {
+            if (cls !== '') document.body.removeClass(cls);
+        }
+        if (this.refreshTimer !== null) {
             window.clearTimeout(this.refreshTimer);
             this.refreshTimer = null;
         }
     }
 
+    /**
+     * 应用界面主题：在 document.body 挂/去 `rl-theme-modern`。
+     * 单点挂载即可覆盖主界面与**全部弹窗**——Obsidian 的所有 Modal 都挂在 body 下，
+     * 故 `.rl-theme-modern` 作为后代选择器前缀天然命中它们，无需逐个 Modal 改继承链。
+     * 1.0.3 起全面 modern：设置页已无切换入口，settings.uiTheme 恒为 'modern'（onload 强制覆写），
+     * 主题类始终挂上；本方法保留通用挂载逻辑（防御性 normalize），供将来恢复切换时复用。
+     */
+    applyUiTheme(): void {
+        const theme = normalizeUiTheme(this.settings.uiTheme);
+        const cls = THEME_CLASS[theme];
+        document.body.toggleClass('rl-theme-modern', cls !== '');
+        // 结构型主题差异（如页签的分段控件/指示器）无法只靠 CSS 变量表达，需把主题传给视图组件。
+        // 不复用 refreshViews()：那个方法会连带重新 list() 全部条目与摘抄计数（磁盘 IO），
+        // 而此处只需重推主题 prop。组件 $set 仅传 uiTheme，其余 props 保持不动。
+        for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
+            (leaf.view as HomeView).setUiTheme(theme);
+        }
+    }
+
     /** 目录命名演进迁移（幂等，旧版任意起点一步到位；须在 rebuildService 之前执行，service 用新路径构造）：
      *  v0.4：顶层通俗化 entries/covers/backups/reports → 笔记/封面/备份/报告，类型子目录用中文标签；
-     *  本版：类型子目录中文标签 → 英文（笔记/电影 → 笔记/movie、电视剧 → teleplay、动画 → animation、书籍 → book、游戏 → game、音乐 → music）。 */
+     *  本版：类型子目录中文标签 → 英文（笔记/电影 → 笔记/movie、电视剧 → teleplay、动画 → animation、书籍 → book、游戏 → game、音乐 → music）；
+     *  1.0.3.1：书籍再按子分类分目录（笔记/book/ 文学、笔记/novel/ 网文）。 */
     private async migrateDirectories(): Promise<void> {
         const dir = this.libDir;
         const vault = this.app.vault;
@@ -294,6 +333,36 @@ export default class ReelLudicPlugin extends Plugin {
                 // catalog 解析失败：跳过引用更新（目录已搬，新条目用新路径）
             }
         }
+        // 4) 网文笔记并入 笔记/novel/（1.0.3.1：书籍按子分类分目录，用户 2026-09-13 指定）
+        await this.migrateNovelNotes();
+    }
+
+    /** 网文（bookKind=novel）笔记迁入 笔记/novel/（1.0.3.1，幂等）：
+     *  迁移算法下沉 services/novelMigration（结构性 vault 接口 + 内存假 vault 单测 10 例：幂等 / 冲突不覆盖 /
+     *  源缺只补引用 / 非网文不动 / 解析失败静默），此处只做 Obsidian Vault API 薄适配。 */
+    private async migrateNovelNotes(): Promise<void> {
+        const vault = this.app.vault;
+        const libDir = this.libDir;
+        await migrateNovelNotes({
+            exists: (p) => vault.getAbstractFileByPath(p) != null,
+            isFile: (p) => vault.getAbstractFileByPath(p) instanceof TFile,
+            read: async (p) => {
+                const f = vault.getAbstractFileByPath(p);
+                if (!(f instanceof TFile)) throw new Error('ENOENT: ' + p);
+                return vault.read(f);
+            },
+            write: async (p, content) => {
+                const f = vault.getAbstractFileByPath(p);
+                if (f instanceof TFile) await vault.modify(f, content);
+            },
+            createFolder: async (p) => {
+                await vault.createFolder(p);
+            },
+            move: async (from, to) => {
+                const f = vault.getAbstractFileByPath(from);
+                if (f instanceof TFile) await vault.rename(f, to);
+            },
+        }, { notesDir: `${libDir}/${DIR_NOTES}`, catalogPath: `${libDir}/catalog.json` });
     }
 
     /** 数据文件变更（防抖 500ms）：仅响应本库 catalog.json 与 笔记/ 目录，其余文件不触发 */
@@ -487,6 +556,7 @@ export default class ReelLudicPlugin extends Plugin {
         // T3：辅助源 runner 注册（新源接入在此追加一行；未注册的链内源由 runAuxSource 静默跳过）
         this.auxRunners = {
             tmdb: (query, type) => this.tmdb.search(query, type as 'movie' | 'tv'),
+            // bangumi 仅服务 anime 组（1.0.3.1 起书籍类目搜索随漫画子视图下线，无需再按组类型分流）
             bangumi: (query) => this.bangumi.search(query),
             openLibrary: (query) => this.openLibrary.search(query),
             // googleBooks 默认链不含 → 仅用户自选后参与（book 组）；key 未配时 providerConfigured 对可选 Key 源放行
@@ -572,9 +642,10 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /** 某条目类型本次搜索「实际会发起」的源集合（链序）：链内 aux 需已配置（免 Key 源恒 true），douban 恒参与。
-     *  供搜索结果区固定占栏——栏数与源成败无关，只取决于源链配置。 */
+     *  供搜索结果区固定占栏——栏数与源成败无关，只取决于源链配置。
+     *  1.0.3.1：漫画源组已下线（用户 2026-09-13 裁定），书籍类目回归单链，故不再需要按子分类分流。 */
     sourcesForType(type: EntryType): ProviderId[] {
-        const group = sourceGroupForType(type);
+        const group: SourceGroup = sourceGroupForType(type);
         const chain = resolveSourceChain(this.settings.sourceChains, group);
         return chain.filter((id) => id === 'douban' || this.providerConfigured(id));
     }
@@ -744,20 +815,22 @@ export default class ReelLudicPlugin extends Plugin {
         return merged;
     }
 
-    /** 书籍搜索（Douban 单源，结果缓存 30min） */
-    async searchBook(query: string, onProgress?: SearchProgressCb): Promise<BookSearchResult[]> {
+    /** 书籍搜索（结果缓存 30min）：统一走 book 组（豆瓣主源 + Open Library / Google Books）；缓存 key 按子分类隔离防串（文学/网文命中同一源链，仅结果缓存分桶） */
+    async searchBook(query: string, kind?: BookKind, onProgress?: SearchProgressCb): Promise<BookSearchResult[]> {
         const q = query.trim();
         if (!q) return [];
-        return this.cachedSearch(`book:${q.toLowerCase()}`, () => this.searchBookFresh(q, onProgress));
+        return this.cachedSearch(`book:${kind ?? ''}:${q.toLowerCase()}`, () => this.searchBookFresh(q, kind, onProgress));
     }
 
-    private async searchBookFresh(query: string, onProgress?: SearchProgressCb): Promise<BookSearchResult[]> {
-        // T3/T4：book 组 runner 集合执行——douban 主源（不限时）与 aux openLibrary（5s 超时）并行
-        const run = await this.collectGroupSources<BookSearchResult>('book', 'book', query, toBookResult, createSearchProgress(onProgress));
+    private async searchBookFresh(query: string, kind?: BookKind, onProgress?: SearchProgressCb): Promise<BookSearchResult[]> {
+        // T3/T4：组内 runner 集合执行——book 组：douban 主源（不限时）+ aux openLibrary（5s 超时）。
+        // 1.0.3.1：原 comic 组（Bangumi 主源）随漫画子视图下线（用户 2026-09-13 裁定），书籍类目回归单链
+        const group: SourceGroup = 'book';
+        const run = await this.collectGroupSources<BookSearchResult>(group, 'book', query, toBookResult, createSearchProgress(onProgress));
         const merged = this.mergeGroupResults(run, query);
         if (merged.length === 0) {
             const err = deriveGroupSearchError({
-                group: 'book',
+                group,
                 chain: run.chain,
                 douban: run.douban ? { reachable: run.douban.reachable, cookieInvalid: run.douban.cookieInvalid } : undefined,
                 aux: run.aux,
@@ -1119,9 +1192,9 @@ export default class ReelLudicPlugin extends Plugin {
     /** 当前打开的添加/编辑弹窗（防重复打开叠加：新开前先关闭旧的，避免遮罩堆叠导致新弹窗无法交互/无法输入搜索） */
     entryModal: EntryModal | null = null;
 
-    openAddModal(initialType?: EntryType): void {
+    openAddModal(initialType?: EntryType, initialBookKind?: BookKind): void {
         this.entryModal?.close();
-        this.entryModal = new EntryModal(this.app, this, undefined, initialType);
+        this.entryModal = new EntryModal(this.app, this, undefined, initialType, initialBookKind);
         this.entryModal.open();
     }
 

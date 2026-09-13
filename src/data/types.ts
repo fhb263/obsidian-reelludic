@@ -5,6 +5,14 @@ import type { Rating } from 'pure/rating';
 // 六库扩展点：movie/tv/anime 影视动画，book/game 预留，music 已落地（平铺单选，schema 只增不改）
 export type EntryType = 'movie' | 'tv' | 'anime' | 'book' | 'game' | 'music';
 
+/** 书籍子分类（1.0.3）：book 文学（缺省，原「出版」）/ novel 网文——阅读页签【全部/文学/网文】chips 维度（schema append-only）。
+ *  1.0.3.1 起原 comic「漫画」子视图下线（用户 2026-09-13 裁定）：存量 comic 读取时归一为 book（文学），见 pure/bookKind。 */
+export type BookKind = 'book' | 'novel';
+
+/** 音乐子分类：1.0.3.1 起音乐不再分子类（用户 2026-09-13 裁定删除「其他」）——合法值仅 music，
+ *  收听页签子分类行与表单「音乐分类」选择已下线；字段按 schema append-only 保留，存量 other 读取时归一为 music，见 pure/musicKind。 */
+export type MusicKind = 'music';
+
 export const ENTRY_TYPES: readonly EntryType[] = ['movie', 'tv', 'anime', 'book', 'game', 'music'];
 
 export const ENTRY_TYPE_LABELS: Record<EntryType, string> = {
@@ -17,7 +25,8 @@ export const ENTRY_TYPE_LABELS: Record<EntryType, string> = {
 };
 
 /** 类型 → 笔记子目录英文目录名（目录结构用：movie/teleplay/animation/book/game/music）。
- *  与 UI 中文标签 ENTRY_TYPE_LABELS 解耦（界面展示仍走中文，勿混用）。 */
+ *  与 UI 中文标签 ENTRY_TYPE_LABELS 解耦（界面展示仍走中文，勿混用）。
+ *  ⚠️ 书籍另有子分类分目录（文学 book/ 网文 novel/），由 pure/dirs.noteSubDir 统一裁决，勿在本表按 bookKind 分裂。 */
 export const ENTRY_TYPE_DIRS: Record<EntryType, string> = {
     movie: 'movie',
     tv: 'teleplay',
@@ -39,6 +48,9 @@ export const TYPE_COLORS: Record<EntryType, string> = {
 
 /** 色彩主题：彩色（类型色条 + 状态五色）/ 单色（关闭类型色条，仅状态色） */
 export type ColorTheme = 'colorful' | 'mono';
+
+/** 界面主题（1.0.3）：native 原生（默认，保持 Obsidian 克制风格）/ modern 现代 App 风 */
+export type UiTheme = 'native' | 'modern';
 
 export interface ProgressPoint {
     season: number;
@@ -91,6 +103,10 @@ export interface MediaEntry {
     durationMin?: number;
     /** 又名/别名（豆瓣详情回填） */
     aliases?: string[];
+    /** 书籍子分类（缺省视为 'book'，展示为「文学」；分类唯一入口 = 搜索框类型下拉，归一见 pure/bookKind） */
+    bookKind?: BookKind;
+    /** 音乐子分类（1.0.3.1 起恒 'music'；页签子分类行与表单选择已下线，保留字段兼容存量 other，归一见 pure/musicKind） */
+    musicKind?: MusicKind;
     /** 书籍作者 */
     author?: string;
     /** 书籍译者（豆瓣详情回填） */

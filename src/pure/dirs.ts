@@ -2,8 +2,10 @@
 // 演进：v0.4 通俗化顶层目录（entries/→笔记、covers/→封面、backups/→备份、reports/→报告）；
 //      本版类型子目录中文标签 → 英文（笔记/电影 → 笔记/movie、电视剧 → teleplay、动画 → animation、
 //      书籍 → book、游戏 → game、音乐 → music）。UI 中文标签（ENTRY_TYPE_LABELS）与目录名解耦。
+//      1.0.3.1：书籍按子分类再分目录（文学 book/、网文 novel/），见 noteSubDir。
 // 纯逻辑无 obsidian 依赖；catalog.json 文件名不变（数据索引文件，兼容性依赖多）
-import { ENTRY_TYPE_DIRS, ENTRY_TYPE_LABELS, ENTRY_TYPES, type EntryType } from 'data/types';
+import { ENTRY_TYPE_DIRS, ENTRY_TYPE_LABELS, ENTRY_TYPES, type BookKind, type EntryType, type MediaEntry } from 'data/types';
+import { normalizeBookKind } from 'pure/bookKind';
 
 /** 条目笔记目录（v0.4 起中文名，保持；类型子目录在其下按英文名分） */
 export const DIR_NOTES = '笔记';
@@ -17,6 +19,18 @@ export const DIR_REPORTS = '报告';
 /** 类型 → 笔记子目录英文名（movie/teleplay/animation/book/game/music） */
 export function typeDir(type: EntryType): string {
     return ENTRY_TYPE_DIRS[type];
+}
+
+/** 书籍子分类 → 笔记子目录名（1.0.3.1 网文独立目录，用户 2026-09-13 指定；文学沿用 book/） */
+export const BOOK_KIND_DIRS: Record<BookKind, string> = {
+    book: 'book',
+    novel: 'novel',
+};
+
+/** 条目 → 笔记子目录名：书籍按子分类分（文学 book/、网文 novel/），其余类型 = 类型目录。
+ *  ⚠️ 唯一入口：笔记路径生成（noteGenerator.entryNotePath）与存量迁移（main.migrateDirectories）都走这里，勿散落硬编码。 */
+export function noteSubDir(e: Pick<MediaEntry, 'type' | 'bookKind'>): string {
+    return e.type === 'book' ? BOOK_KIND_DIRS[normalizeBookKind(e.bookKind)] : ENTRY_TYPE_DIRS[e.type];
 }
 
 /** 旧版类型子目录中文名（v0.4–v1.0.1，迁移识别用；勿用于新路径生成） */

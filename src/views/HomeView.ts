@@ -6,8 +6,9 @@ import { ConfirmModal } from 'modals/ConfirmModal';
 import { ImportBangumiModal } from 'modals/ImportBangumiModal';
 import type ReelLudicPlugin from '../../main';
 import type { MediaStatus } from 'pure/status';
-import type { ActivityEvent, EntryType, MediaEntry } from 'data/types';
+import type { ActivityEvent, BookKind, EntryType, MediaEntry, UiTheme } from 'data/types';
 import type { HomeTab } from './tab';
+import { normalizeUiTheme } from 'pure/themeTokens';
 import type { FeedRange } from 'pure/activityFeed';
 
 export const HOME_VIEW_TYPE = 'reelludic-home';
@@ -47,6 +48,16 @@ export class HomeView extends ItemView {
         await this.render();
     }
 
+    /**
+     * 主题切换即时生效（1.0.3）：仅重推 uiTheme prop，不重新读取条目。
+     * 与 refresh() 的区别：refresh() 会重新 list() 全量条目 + 摘抄计数 + 年度报告（磁盘 IO），
+     * 而主题切换只影响一处结构分支（页签指示器），走全量刷新属于不必要的开销。
+     * 组件尚未挂载（视图未打开）时静默跳过——下一次 render() 会带上正确的 uiTheme。
+     */
+    setUiTheme(theme: UiTheme): void {
+        this.component?.$set({ uiTheme: theme });
+    }
+
     private async render(): Promise<void> {
         const [entries, excerptCounts, yearReports, activityLog] = await Promise.all([
             this.plugin.service.list(),
@@ -59,7 +70,7 @@ export class HomeView extends ItemView {
         this.contentEl.toggleClass('rl-hide-scroll', this.plugin.settings.hideScrollbars);
         if (this.component) {
             // 增量更新：保留组件实例与本地状态（当前 Tab/视图模式/筛选），仅刷新数据，立即生效
-            this.component.$set({ entries, colorTheme: this.plugin.settings.colorTheme, defaultViewMode: this.plugin.settings.defaultViewMode, excerptCounts, yearReports, activityLog });
+            this.component.$set({ entries, colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), defaultViewMode: this.plugin.settings.defaultViewMode, excerptCounts, yearReports, activityLog });
             return;
         }
         this.contentEl.empty();
@@ -72,12 +83,13 @@ export class HomeView extends ItemView {
                 activityLog,
                 initialTab: this.plugin.homeTab,
                 colorTheme: this.plugin.settings.colorTheme,
+                uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme),
                 defaultViewMode: this.plugin.settings.defaultViewMode,
                 onTabChange: (tab: HomeTab) => {
                     this.plugin.homeTab = tab;
                 },
                 posterUrl: (e: MediaEntry) => this.plugin.resolvePoster(e),
-                onAdd: (t?: EntryType) => this.plugin.openAddModal(t),
+                onAdd: (t?: EntryType, kind?: BookKind) => this.plugin.openAddModal(t, kind),
                 onSelectDay: (dateStr: string) => new CalendarDayModal(this.app, this.plugin, dateStr, this.entries).open(),
                 /** 月历拖拽排期：待排卡片拖到日期格 → 设置计划观看日期 */
                 onPlanDate: (id: string, dateStr: string) => this.plugin.planEntry(id, dateStr),

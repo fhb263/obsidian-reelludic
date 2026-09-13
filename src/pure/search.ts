@@ -1,8 +1,9 @@
 // 关键词过滤（纯逻辑，可单测）：按当前 Tab 维度（types）筛后再按搜索词筛
 // 用于 MediaList 的实时标题/原名模糊匹配（不区分大小写、去首尾空白）
-import type { EntryType, MediaEntry } from 'data/types';
+import type { EntryType, MediaEntry, BookKind } from 'data/types';
 import type { MediaStatus } from 'pure/status';
 import { MEDIA_STATUSES } from 'pure/status';
+import { matchesBookKind } from 'pure/bookKind';
 
 /** 状态排序基准（想看 0 < 在看 1 < 已看 2 < 存档 3） */
 const STATUS_RANK: Record<MediaStatus, number> = Object.fromEntries(MEDIA_STATUSES.map((s, i) => [s, i])) as Record<MediaStatus, number>;
@@ -45,11 +46,15 @@ export function filterAndSort(
         type: 'all' | EntryType;
         query: string;
         sortBy: SortBy;
+        /** 书籍子分类（1.0.3）：仅阅读页签传入（'all' = 不过滤）；缺省/undefined 不过滤（聚合页签与旧调用不受影响）。
+         *  音乐子分类维度已于 1.0.3.1 下线（用户 2026-09-13 裁定），不再有此过滤项。 */
+        bookKind?: 'all' | BookKind;
     },
 ): MediaEntry[] {
     return entries
         .filter((e) => matchesStatus(e, opts.status))
         .filter((e) => matchesType(e, opts.type))
+        .filter((e) => matchesBookKind(e, opts.bookKind ?? 'all'))
         .filter((e) => matchesSearch(e, opts.query))
         .slice()
         .sort((a, b) => {

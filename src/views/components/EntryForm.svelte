@@ -1,8 +1,11 @@
 <script lang="ts">
     import { onMount, tick } from 'svelte';
-    import { ENTRY_TYPES, ENTRY_TYPE_LABELS, type EntryType } from 'data/types';
+    import { ENTRY_TYPE_LABELS, type EntryType } from 'data/types';
     import { statusLabel, statusVerb, reviewLabel } from 'pure/labels';
     import { reconcileBookProgress, pageFromPercent, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
+    import { normalizeBookKind, BOOK_KIND_LABELS } from 'pure/bookKind';
+import { toSearchTypeSel, applySearchTypeSel, type SearchTypeSel } from 'pure/searchTypeSel';
+    import { normalizeMusicKind } from 'pure/musicKind';
     import { placeMenu } from 'pure/menuPlacement';
     import { AI_HIGHLIGHT_SUGGEST, aiFieldsToText, textToAiFields } from 'pure/aiSummary';
     import type { AiSummaryInput, AiSummaryResult } from 'pure/aiSummary';
@@ -18,20 +21,33 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import type { SearchProgressCb, SearchProgress } from 'pure/searchProgress';
     import type { MediaStatus } from 'pure/status';
     import Icon from './Icon.svelte';
-    import type { MediaEntry } from 'data/types';
+    import type { MediaEntry, BookKind, MusicKind } from 'data/types';
 
     type SearchResult = TmdbSearchResult | OmdbSearchResult | BookSearchResult | GameSearchResult | BangumiSearchResult | MusicSearchResult;
 
     /** 状态选项（想看/在看/已看/存档；存档选中时右侧不显示日期输入框；弃剧已移除，旧数据 dropped 编辑保存时迁移为存档） */
-    const STATUS_OPTIONS: MediaStatus[] = ['want', 'watching', 'watched', 'archived'];
+const STATUS_OPTIONS: MediaStatus[] = ['want', 'watching', 'watched', 'archived'];
+
+/** 类型下拉选项（显式顺序，2026-09-12 用户指定；1.0.3.1 删「漫画」选项，2026-09-13 用户裁定）：文学 → 网文 → 动画 → 电视剧 → 电影 → 游戏 → 音乐（网文 = 书籍类目子类的搜索快捷态，非独立 EntryType） */
+const TYPE_OPTIONS: ReadonlyArray<{ value: SearchTypeSel; label: string }> = [
+    { value: 'book', label: '文学' },
+    { value: 'novel', label: '网文' },
+    { value: 'anime', label: ENTRY_TYPE_LABELS.anime },
+    { value: 'tv', label: ENTRY_TYPE_LABELS.tv },
+    { value: 'movie', label: ENTRY_TYPE_LABELS.movie },
+    { value: 'game', label: ENTRY_TYPE_LABELS.game },
+    { value: 'music', label: ENTRY_TYPE_LABELS.music },
+];
 
     export let initialType: EntryType = 'movie';
+/** 新增模式初始书籍分类：书籍页签聚焦子分类（漫画/网文）点「＋ 添加」传入（漫画态下拉选中「漫画」） */
+export let initialBookKind: BookKind | undefined = undefined;
     export let entry: MediaEntry | null = null;
     export let canSearch: boolean = false;
     export let canSearchBook: boolean = true;
     export let canSearchGame: boolean = false;
     export let onSearch: (q: string, t: 'movie' | 'tv', onProgress?: SearchProgressCb) => Promise<TmdbSearchResult[]> = async () => [];
-    export let onSearchBook: (q: string, onProgress?: SearchProgressCb) => Promise<BookSearchResult[]> = async () => [];
+    export let onSearchBook: (q: string, kind?: BookKind, onProgress?: SearchProgressCb) => Promise<BookSearchResult[]> = async () => [];
     export let onSearchGame: (q: string, onProgress?: SearchProgressCb) => Promise<GameSearchResult[]> = async () => [];
     export let onSearchAnime: (q: string, onProgress?: SearchProgressCb) => Promise<BangumiSearchResult[]> = async () => [];
     export let onSearchMusic: (q: string, onProgress?: SearchProgressCb) => Promise<MusicSearchResult[]> = async () => [];
@@ -216,6 +232,19 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     $: { if (summaryEl) autosizeTextarea(summaryEl); void summary; }
     $: { if (authorIntroEl) autosizeTextarea(authorIntroEl); void authorIntro; }
     $: { if (tocEl) autosizeTextarea(tocEl); void toc; }
+    /** 书籍分类（1.0.3）：book 文学 / novel 网文；缺省归文学（pure/bookKind，原「出版」）；分类唯一入口 = 搜索框下拉（表单 chips 已移除，2026-09-12 用户裁定；1.0.3.1 漫画已下线） */
+    let bookKind: BookKind = normalizeBookKind(entry?.bookKind ?? initialBookKind);
+    /** 搜索框类型下拉展示值（书籍态显示子类本名：文学/网文）：纯派生自 type+bookKind，编辑初始化全自动回显，规则见 pure/searchTypeSel */
+    let typeSel: SearchTypeSel;
+    $: typeSel = toSearchTypeSel(type, bookKind);
+    /** select 受控 change：把下拉选择落成真实 type+bookKind（下拉是书籍分类唯一入口：选「书籍」无条件复位文学，bind+on:change 同元素有编译警告，改显式 value+handler） */
+    function onTypeSelEl(ev: Event): void {
+        const next = applySearchTypeSel((ev.currentTarget as HTMLSelectElement).value as SearchTypeSel, bookKind);
+        type = next.type;
+        bookKind = next.bookKind;
+    }
+    /** 音乐分类（1.0.3.1 起不再分：用户 2026-09-13 裁定删除「其他」，表单选择行已下线）；字段保留恒归一为 music（pure/musicKind） */
+    let musicKind: MusicKind = normalizeMusicKind(entry?.musicKind);
     let author = entry?.author ?? '';
     let album = entry?.album ?? '';
     let audioPath = entry?.audioPath ?? '';
@@ -523,7 +552,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     }
 
     async function doSearch() {
-        if (!query.trim()) return;
+        // 空输入提示态（2026-09-12 用户需求）：原静默 return 用户无感知，就地给行内红字
+        if (!query.trim()) { searchError = '请输入标题'; return; }
         searching = true;
         searchError = '';
         results = [];
@@ -538,7 +568,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
         try {
             const q = query.trim();
             if (type === 'book') {
-                results = await onSearchBook(q, onSearchProgress);
+                // 传当前子分类：文学/网文均走 book 链（豆瓣主源 + Open Library），仅落库 bookKind 不同
+                results = await onSearchBook(q, bookKind, onSearchProgress);
             } else if (type === 'game') {
                 results = await onSearchGame(q, onSearchProgress);
             } else if (type === 'anime') {
@@ -1192,15 +1223,24 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
             input.links = entry?.links ?? [];
         }
         if (type === 'book') {
+            input.bookKind = bookKind; // 恒写（normalize 后必有值；'book' 显式落盘语义等价缺省）
             input.author = author.trim() || undefined;
-            input.publisher = publisher.trim() || undefined;
+            if (bookKind === 'novel') {
+                // 网文（1.0.3，用户裁定「顺便清空存量」）：出版侧字段对网文不适用——显式写 undefined 即清空存量
+                // （update 走 normalizeEntry({...prev, ...patch})，显式 undefined 会覆盖旧值并在归一后被丢弃）
+                input.publisher = undefined;
+                input.isbn = undefined;
+                input.toc = undefined;
+            } else {
+                input.publisher = publisher.trim() || undefined;
+                input.isbn = isbn.trim() || undefined;
+                input.toc = toc.trim() || undefined;
+            }
             input.producer = producer.trim() || undefined;
-            input.isbn = isbn.trim() || undefined;
             input.binding = binding.trim() || undefined;
             input.price = price.trim() || undefined;
             input.series = series.trim() || undefined;
             input.authorIntro = authorIntro.trim() || undefined;
-            input.toc = toc.trim() || undefined;
             input.bookFile = bookFileVal.trim() || undefined;
         }
         if (type === 'game') {
@@ -1210,6 +1250,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
             input.gameLaunchPath = gameLaunchPath.trim() || undefined; // 启动快捷方式（.lnk）
         }
         if (type === 'music') {
+            input.musicKind = musicKind; // 恒写（normalize 后恒为 'music'；1.0.3.1 起无子分类，写入即把存量 other 归一）
             input.author = author.trim() || undefined;
             input.album = album.trim() || undefined;
             input.audioPath = audioPath.trim() || undefined;
@@ -1311,15 +1352,15 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
 >
     <div class="rl-fhd">
         {entry ? `编辑条目：${entry.title}` : pickedTitle ? `添加条目：${pickedTitle}` : '添加条目'}
-        <span class="rl-fsrc">类型：{ENTRY_TYPE_LABELS[type]} · {sourceListText}</span>
+        <span class="rl-fsrc">类型：{type === 'book' ? BOOK_KIND_LABELS[bookKind] : ENTRY_TYPE_LABELS[type]} · {sourceListText}</span>
     </div>
 
     {#if !entry || refetchOpen}
         <div class="rl-frow">
             <div class="rl-searchbox">
-                <select class="rl-search-type" bind:value={type} aria-label="条目类型">
-                    {#each ENTRY_TYPES as t}
-                        <option value={t}>{ENTRY_TYPE_LABELS[t]}</option>
+                <select class="rl-search-type" value={typeSel} on:change={onTypeSelEl} aria-label="条目类型">
+                    {#each TYPE_OPTIONS as o}
+                        <option value={o.value}>{o.label}</option>
                     {/each}
                 </select>
                 <input class="rl-search-input" placeholder="输入标题…" bind:value={query} bind:this={queryInput}
@@ -1497,6 +1538,22 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
                     </div>
                     {/if}
             {#if type === 'book'}
+                {#if bookKind === 'novel'}
+                <!-- 网文（1.0.3，用户 2026-09-13 裁定）：上架年 / 作者 / 题材 / 元数据章数。
+                     出版侧字段（出版社 / ISBN / 目录）对网文不适用，表单不展示；保存时清空存量（见 submit） -->
+                <div class="rl-2col">
+                    <div><label class="rl-lbl">上架年</label><input class="rl-input" bind:value={year} /></div>
+                    <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} /></div>
+                </div>
+                <div class="rl-2col">
+                    <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
+                    <div>
+                        <label class="rl-lbl">元数据章数</label>
+                        <input class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="如 1200 章（仅展示/统计）" />
+                    </div>
+                </div>
+                {:else}
+                <!-- 文学：出版年 / 出版社 / 作者 / 题材（文学口径不变） -->
                 <div class="rl-2col">
                     <div><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} /></div>
                     <div><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} /></div>
@@ -1505,6 +1562,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
                     <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} /></div>
                     <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
                 </div>
+                {/if}
             {/if}
             {#if type === 'music'}
                 <div class="rl-2col">
@@ -1561,7 +1619,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
                     </div>
                 </div>
             {/if}
-            {#if type === 'book'}
+            {#if type === 'book' && bookKind !== 'novel'}
+                <!-- ISBN + 元数据页数：仅文学（网文为「元数据章数」，已在书籍区首两行） -->
                 <div class="rl-2col">
                     <div><label class="rl-lbl">ISBN</label><input class="rl-input" bind:value={isbn} placeholder="如 9787536692930" /></div>
                     <div>
@@ -1631,8 +1690,11 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
             {#if type === 'book'}
                 <label class="rl-lbl">作者简介</label>
                 <textarea class="rl-input rl-summary" rows="3" bind:this={authorIntroEl} placeholder="作者介绍（豆瓣详情页回填，可手动修改）" bind:value={authorIntro}></textarea>
+                {#if bookKind !== 'novel'}
+                <!-- 目录：仅文学（网文无出版目录；用户 2026-09-13 裁定删除该框） -->
                 <label class="rl-lbl">目录</label>
                 <textarea class="rl-input rl-summary" rows="4" bind:this={tocEl} placeholder="图书目录（豆瓣详情页回填，可手动修改）" bind:value={toc}></textarea>
+                {/if}
                 {#if type === 'book'}
             <!-- AI 摘要（单框合并：第 1 行一句话总结，其余每行一条看点）：可手填 / 可点「总结摘要」右侧 ✨ 生成 -->
             <div class="rl-lbl-row">
@@ -1857,7 +1919,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
         </div>
         <div class="rl-fft-right">
             {#if picked}
-                <button class="rl-btn rl-btn-primary" disabled={!title.trim()} on:click={submit}>保存并生成笔记</button>
+                <button class="rl-btn rl-btn-primary" disabled={!title.trim()} on:click={submit}>{entry ? '更新笔记' : '保存并生成笔记'}</button>
             {/if}
         </div>
     </div>
@@ -1876,19 +1938,19 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-fsrc { font-size: 11px; color: var(--text-faint); font-weight: 400; }
     .rl-frow { display: flex; gap: 8px; align-items: center; }
     /* 组合输入框：类型下拉（左 Label）+ 输入框（右），共享边框与圆角 */
-    .rl-searchbox { display: flex; align-items: stretch; flex: 1; min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-primary); overflow: hidden; }
+    .rl-searchbox { display: flex; align-items: stretch; flex: 1; min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); background: var(--background-primary); overflow: hidden; }
     .rl-searchbox:focus-within { border-color: var(--interactive-accent); }
     .rl-search-type { border: none; background: transparent; color: var(--text-muted); font-size: 12px; padding: 5px 8px; cursor: pointer; flex: none; border-right: 1px solid var(--background-modifier-border); }
     /* 类型下拉展开的选项列表：原生 option 不继承主题变量，暗黑模式下默认白底蓝字——显式设主题色（亮/暗自适应） */
     .rl-search-type option { background: var(--background-secondary); color: var(--text-normal); }
     .rl-search-input { border: none; background: transparent; color: var(--text-normal); font-size: 12px; padding: 5px 9px; flex: 1; min-width: 0; }
     .rl-search-input:focus { outline: none; }
-    .rl-input { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: 6px; padding: 5px 9px; width: 100%; }
+    .rl-input { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); padding: 5px 9px; width: 100%; }
     .rl-input:focus { outline: none; border-color: var(--interactive-accent); }
     .rl-btn-danger { color: var(--text-error); border-color: var(--text-error); background: transparent; font-weight: 600; }
     .rl-btn-danger:hover { background: var(--text-error); color: #fff; }
-    .rl-btn-excerpt { color: var(--interactive-accent); border-color: var(--interactive-accent); background: transparent; font-weight: 600; margin-left: 8px; }
-    .rl-btn-excerpt:hover { background: var(--interactive-accent); color: var(--text-on-accent); }
+    /* 恒实底 accent（2026-09-12 用户裁定：不用 hover 才变化，始终显示 hover 后的实底态）；记录游玩共用此类同款 */
+    .rl-btn-excerpt { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; margin-left: 8px; }
     .rl-hint { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
     .rl-err { font-size: 11px; color: var(--text-error); margin-top: 6px; }
     /* ── 搜索进度条（朴素版：无流光/脉冲/淡出等网页式动效，符合 Obsidian 插件观感） ── */
@@ -1904,7 +1966,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-progress-eta { color: var(--text-faint); }
     /* 逐源进度行：每源一个小标签，先返回的标记为已完成（主题色），未完成灰态 */
     .rl-prog-srcs { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 2px 0 6px; }
-    .rl-prog-src { font-size: 11px; color: var(--text-faint); border: 1px solid var(--background-modifier-border); border-radius: 999px; padding: 1px 9px; line-height: 18px; white-space: nowrap; user-select: none; }
+    .rl-prog-src { font-size: 11px; color: var(--text-faint); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-pill, 999px); padding: 1px 9px; line-height: 18px; white-space: nowrap; user-select: none; }
     .rl-prog-src-ok { color: var(--interactive-accent); border-color: var(--interactive-accent); }
     .rl-prog-src-bad { color: var(--text-error); border-color: var(--text-error); }
     .rl-res-head { display: flex; align-items: baseline; gap: 10px; margin: 8px 0 10px; }
@@ -1914,13 +1976,13 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     /* 单列横排卡片：左侧小封面 + 右侧信息列（标题 + 年份/评分/原名紧凑排布 + 来源徽标右上角） */
     /* 结果多栏 grid：列数 = 当前栏数（固定占栏），1~3 栏显式排布不再 auto-fit 猜——避免窄窗下栏位换行堆叠 */
     .rl-res { margin-top: 4px; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 4px 4px 0; max-height: 52vh; display: grid; grid-template-columns: repeat(var(--rl-cols, 1), minmax(0, 1fr)); gap: 10px 12px; align-items: start; }
-    .rl-res-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 4px 6px 6px; background: var(--background-secondary); }
+    .rl-res-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); padding: 4px 6px 6px; background: var(--background-secondary); }
     .rl-res-col-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px; margin-bottom: 4px; border-bottom: 1px solid var(--background-modifier-border); user-select: none; }
     .rl-res-col-name { font-size: 12px; font-weight: 600; color: var(--text-normal); flex: none; display: inline-flex; align-items: center; gap: 6px; }
     .rl-res-col-name::before { content: ''; display: inline-block; width: 3px; height: 12px; border-radius: 2px; background: var(--interactive-accent); flex: none; }
-    .rl-res-col-cnt { font-size: 10px; color: var(--text-muted); background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 0 6px; line-height: 16px; flex: none; margin-left: auto; }
-    .rl-res-col-empty { font-size: 11px; color: var(--text-faint); border: 1px dashed var(--background-modifier-border); border-radius: 8px; padding: 12px 8px; text-align: center; line-height: 1.5; user-select: none; }
-    .rl-res-item { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; font-family: inherit; font-size: 12px; border: 1px solid transparent; background: var(--background-primary); border-radius: 8px; padding: 6px 10px; cursor: pointer; color: var(--text-normal); line-height: 1.4; transition: background-color .12s, border-color .12s; }
+    .rl-res-col-cnt { font-size: 10px; color: var(--text-muted); background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); padding: 0 6px; line-height: 16px; flex: none; margin-left: auto; }
+    .rl-res-col-empty { font-size: 11px; color: var(--text-faint); border: 1px dashed var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); padding: 12px 8px; text-align: center; line-height: 1.5; user-select: none; }
+    .rl-res-item { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; font-family: inherit; font-size: 12px; border: 1px solid transparent; background: var(--background-primary); border-radius: var(--rl-t-radius-lg, 8px); padding: 6px 10px; cursor: pointer; color: var(--text-normal); line-height: 1.4; transition: background-color .12s, border-color .12s; }
     .rl-res-item:hover { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover, var(--background-modifier-border)); }
     .rl-res-item:focus-visible { outline: none; border-color: var(--interactive-accent); }
     /* 封面：48×72 px 缩略图（2:3 海报比例，object-fit: contain 完整显示不裁切；横图/方图上下留背景色） */
@@ -1950,8 +2012,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-watch-num { width: 64px; }
     .rl-watch-hint { font-size: 10.5px; color: var(--text-faint); margin-left: 4px; }
     .rl-3col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 10px; }
-    .rl-readbar { height: 5px; background: var(--background-modifier-border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
-    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: 3px; transition: background-color .2s; }
+    .rl-readbar { height: 5px; background: var(--background-modifier-border); border-radius: var(--rl-t-radius-sm, 3px); overflow: hidden; margin-top: 6px; }
+    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: var(--rl-t-radius-sm, 3px); transition: background-color .2s; }
     /* 进度条分阶段色阶：起步 / 进行中 / 接近完成 / 读完（四档均走主题变量） */
     .rl-readbar-low .rl-readbar-fill { background: var(--rl-danger-soft); }      /* <30% 警告红 */
     .rl-readbar-mid .rl-readbar-fill { background: var(--rl-score); }      /* 30-69% 进行中 琥珀 */
@@ -1976,7 +2038,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-section-cover-bottom { position: absolute; bottom: 0; left: 0; right: 0; margin-top: 0 !important; }
     .rl-poster-zone {
         width: 100px; height: 140px; border: 1.5px dashed var(--background-modifier-border-hover);
-        border-radius: 6px; display: flex; align-items: center; justify-content: center;
+        border-radius: var(--rl-t-radius-md, 6px); display: flex; align-items: center; justify-content: center;
         cursor: pointer; overflow: hidden; background: var(--background-secondary);
         transition: border-color .15s, background-color .15s;
     }
@@ -1995,7 +2057,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-ctx {
         position: fixed; z-index: 1000; min-width: 140px;
         background: var(--background-primary); border: 1px solid var(--background-modifier-border);
-        border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); padding: 4px;
+        border-radius: var(--rl-t-radius-lg, 8px); box-shadow: 0 4px 14px rgba(0, 0, 0, .18); padding: 4px;
         display: flex; flex-direction: column;
         overflow: auto; overscroll-behavior: contain;
     }
@@ -2057,12 +2119,12 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     }
     .rl-src-link:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
     .rl-status-lg .rl-chip { font-size: 13px; padding: 7px 18px; }
-    .rl-chip { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+    .rl-chip { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-muted); border-radius: var(--rl-t-radius-pill, 999px); padding: 3px 12px; cursor: pointer; }
     .rl-chip.on { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
     /* 类型/题材标签 chips（原格式：灰底胶囊，无 # 前缀） */
-    .rl-tagbox { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 5px 7px; background: var(--background-primary); }
+    .rl-tagbox { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 5px 7px; background: var(--background-primary); }
     .rl-tagbox:focus-within { border-color: var(--interactive-accent); }
-    .rl-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; background: var(--background-modifier-hover); border-radius: 999px; padding: 2px 8px; color: var(--text-normal); }
+    .rl-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; background: var(--background-modifier-hover); border-radius: var(--rl-t-radius-pill, 999px); padding: 2px 8px; color: var(--text-normal); }
     .rl-tag-x { border: none; background: transparent; color: var(--text-faint); cursor: pointer; font-size: 10px; padding: 0 2px; line-height: 1; }
     .rl-tag-x:hover { color: var(--rl-danger); }
     .rl-tag-input { flex: 1; min-width: 90px; border: none; background: transparent; color: var(--text-normal); font-size: 12px; font-family: inherit; padding: 2px 4px; }
@@ -2096,7 +2158,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-ep-btn {
         position: relative; width: 36px; height: 30px; font-family: inherit; font-size: 12px;
         border: 1px solid var(--background-modifier-border); background: var(--background-primary);
-        color: var(--text-muted); border-radius: 6px; cursor: pointer;
+        color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer;
         transition: background .12s ease, color .12s ease;
     }
     /* 电影单集「▶ 观看」按钮：与书籍「▶ 阅读」同款 auto 宽（图标+文字），沿用 rl-ep-btn-book */
@@ -2124,9 +2186,8 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     .rl-summary { overflow: hidden; min-height: 2.4em; }
     .rl-fft {
         display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; align-items: center;
-        flex: none; /* 固定在弹窗底部（rl-form flex 布局），内容滚动时完整遮住背后信息 */
+        flex: none; /* sticky 悬浮钉底；2026-09-12 用户裁定：不铺整行背景条遮挡内容——只按钮本身悬浮，滚动内容从按钮间穿过 */
         position: sticky; bottom: 0; z-index: 10;
-        background: var(--background-primary);
         padding: 8px 0 2px;
     }
     .rl-fft-right { display: flex; gap: 8px; align-items: center; }

@@ -1,4 +1,5 @@
 // Bangumi（bgm.tv）动画元数据抓取（v0 API，Bearer token；纯逻辑：HTTP 注入可 mock）
+// 1.0.3.1：书籍类目（type=1，含漫画）搜索随漫画子视图下线删除（用户 2026-09-13 裁定）——本客户端只服务动画。
 import { asRecord, parseYear } from 'pure/record';
 
 export interface BangumiSearchResult {

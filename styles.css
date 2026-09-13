@@ -52,6 +52,52 @@
     --rl-badge-archived: #3f6db8; /* 白字 5.13（原暗色，本就达标） */
 }
 
+/* ── 主题令牌 `--rl-t-*`（1.0.3 UI 双主题）──────────────────────────────
+   与 `--rl-*` 语义色板的分工：`--rl-*` 管**颜色**（随明暗主题覆盖），
+   `--rl-t-*` 管**形态**（圆角/阴影/位移/时长，随「原生/现代」主题覆盖）。两者正交。
+   使用方式：组件内写 `var(--rl-t-radius-lg, 8px)` —— **第二参数必须给原值**，
+   这样令牌层缺失时自动退回 1.0.2 观感，且不影响任何未迁移的代码。
+   覆盖位置：`.rl-theme-modern`（挂在 document.body，见 main.ts applyUiTheme）。
+   ⚠️ 顺序敏感：`.rl-theme-modern` 必须写在**本 :root 之后**，否则 modern 覆盖失效。 */
+:root {
+    /* 圆角 */
+    --rl-t-radius-sm: 3px;        /* 缩略图 / 小标签 */
+    --rl-t-radius-md: 6px;        /* 按钮 / 输入框 / 菜单项（原生基准） */
+    --rl-t-radius-lg: 8px;        /* 卡片 / 弹窗 */
+    --rl-t-radius-pill: 999px;    /* 全圆（进度条 / 药丸） */
+    /* 阴影 */
+    --rl-t-shadow-card: 0 2px 8px rgba(0, 0, 0, .12);           /* 卡片静止 */
+    --rl-t-shadow-card-hover: 0 2px 8px rgba(0, 0, 0, .12);     /* 原生：悬停不加深，与静止同值；modern 另给 */
+    --rl-t-shadow-menu: 0 4px 14px rgba(0, 0, 0, .15);          /* 浮出菜单 */
+    --rl-t-shadow-menu-strong: 0 4px 14px rgba(0, 0, 0, .18);   /* 右键菜单 */
+    --rl-t-shadow-modal: none;                                   /* 弹窗外阴影：原生交给 Obsidian 自带 */
+    --rl-t-shadow-inset: none;                                   /* 分段容器内阴影 */
+    --rl-t-shadow-ind: none;                                     /* 页签指示器阴影 */
+    --rl-t-shadow-cta: none;                                     /* 主按钮辉光 */
+    /* 交互位移（原生不位移，保持克制） */
+    --rl-t-lift: 0px;             /* 卡片悬停上浮 */
+    --rl-t-scale: 1;              /* 卡片悬停放大 */
+    /* 动效（原生沿用既有值） */
+    --rl-t-dur: .18s;
+    --rl-t-ease: ease;
+    --rl-t-dur-ind: .28s;
+    --rl-t-ease-ind: cubic-bezier(.34, 1.3, .64, 1);
+}
+
+/* 现代主题：只覆盖「与原生不同」的项（同 --rl-* 的「只列差异」原则） */
+.rl-theme-modern {
+    --rl-t-shadow-card: 0 1px 3px rgba(0, 0, 0, .10), 0 4px 12px rgba(0, 0, 0, .06);
+    --rl-t-shadow-card-hover: 0 10px 30px rgba(0, 0, 0, .22);
+    --rl-t-shadow-menu: 0 4px 16px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .08);
+    --rl-t-shadow-menu-strong: 0 6px 22px rgba(0, 0, 0, .18), 0 1px 4px rgba(0, 0, 0, .10);
+    --rl-t-shadow-modal: 0 2px 8px rgba(0, 0, 0, .09), 0 16px 44px rgba(0, 0, 0, .15);
+    --rl-t-shadow-inset: inset 0 1px 3px rgba(0, 0, 0, .05);
+    --rl-t-shadow-ind: 0 2px 6px rgba(0, 0, 0, .13);
+    --rl-t-shadow-cta: 0 3px 10px color-mix(in srgb, var(--interactive-accent) 38%, transparent);
+    --rl-t-lift: -3px;
+    --rl-t-scale: 1.025;
+}
+
 /* ── 纯图标按钮的读屏名（视觉隐藏、读屏可读）────────────────────────────
    为何不用 aria-label：Obsidian 会对「带 aria-label 的悬停目标（含祖先就近匹配）」自绘
    官方气泡，会与插件自己的 data-tip 气泡叠成两层；且 UI-GUIDE §3 规定纯图标按钮的读屏名
@@ -61,7 +107,7 @@
 /* ── 设置页：服务集成两折叠项（#165 T11：① API 管理 + ② 数据源启用；旧 B1 rl-src-* / rl-chain-* 折叠样式已清理） ── */
 .rl-fold {
     border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     margin: 6px 0;
     overflow: hidden;
     background: var(--background-primary);
@@ -98,7 +144,7 @@
 /* API 管理：单源配置行（头点击内联展开） */
 .rl-key-row {
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     margin: 2px 0;
 }
 .rl-key-row.rl-key-open {
@@ -110,7 +156,7 @@
     align-items: center;
     gap: 8px;
     padding: 6px 8px;
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     cursor: pointer;
     user-select: none;
 }
@@ -121,7 +167,7 @@
     color: var(--text-muted);
     background: var(--background-secondary-alt);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 999px;
+    border-radius: var(--rl-t-radius-pill, 999px);
     padding: 0 8px;
     line-height: 18px;
 }
@@ -195,7 +241,7 @@
 /* 数据源启用：五分类行（每组一行内并排 checkbox，链序沿用注册表） */
 .rl-srcchk-group {
     border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     padding: 8px 10px;
     margin: 2px 0;
 }
@@ -212,20 +258,20 @@
     margin: 6px 0 2px;
     padding: 8px 10px;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     background: var(--background-secondary);
 }
 .rl-mig-prog.show { display: block; }
 .rl-mig-bar {
     height: 6px;
-    border-radius: 999px;
+    border-radius: var(--rl-t-radius-pill, 999px);
     background: var(--background-modifier-border);
     overflow: hidden;
 }
 .rl-mig-fill {
     height: 100%;
     width: 0;
-    border-radius: 999px;
+    border-radius: var(--rl-t-radius-pill, 999px);
     background: var(--interactive-accent);
     transition: width .25s ease;
 }
@@ -246,7 +292,7 @@
     max-height: 40vh;
     overflow-y: auto;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     padding: 6px 8px;
     margin-bottom: 10px;
 }
@@ -281,7 +327,7 @@
     align-items: center;
     gap: 12px;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     padding: 10px 12px;
     background: var(--background-primary);
 }
@@ -318,7 +364,7 @@
 .rl-day-btn:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
 
 /* ── 状态徽标（全局唯一实现：CalendarDayModal 等 DOM 渲染 + MediaList/HomeView Svelte 共用；色值见文件头色板，白字按主题各自达标） ── */
-.rl-badge { font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 999px; color: #fff; cursor: pointer; }
+.rl-badge { font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: var(--rl-t-radius-pill, 999px); color: #fff; cursor: pointer; }
 .rl-badge-want { background: var(--rl-badge-want); }
 .rl-badge-watching { background: var(--rl-badge-watching); }
 .rl-badge-watched { background: var(--rl-badge-watched); }
@@ -342,7 +388,7 @@
     align-items: center;
     gap: 10px;
     padding: 6px 8px;
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     cursor: pointer;
 }
 .rl-music-row:hover { background: var(--background-modifier-hover); }
@@ -378,7 +424,7 @@
 .rl-music-play {
     width: 26px;
     height: 26px;
-    border-radius: 999px;
+    border-radius: var(--rl-t-radius-pill, 999px);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -422,12 +468,15 @@
 .rl-ex-hint { font-size: var(--font-ui-smaller); color: var(--text-faint); }
 .rl-ex-field { margin-bottom: 10px; }
 .rl-ex-label { display: block; font-size: var(--font-ui-smaller); color: var(--text-muted); margin-bottom: 4px; font-weight: 600; }
-.rl-ex-textarea { font-family: inherit; font-size: var(--font-ui-medium); line-height: 1.55; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: 6px; padding: 7px 10px; width: 100%; resize: vertical; }
-.rl-ex-input { font-family: inherit; font-size: var(--font-ui-medium); border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: 6px; padding: 6px 10px; width: 100%; }
+.rl-ex-textarea { font-family: inherit; font-size: var(--font-ui-medium); line-height: 1.55; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); padding: 7px 10px; width: 100%; resize: vertical; }
+.rl-ex-search-wrap { position: relative; }
+.rl-ex-search-ico { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); width: 13px; height: 13px; color: var(--text-faint); pointer-events: none; }
+.rl-ex-search-ico svg { width: 100%; height: 100%; stroke-width: 2; }
+.rl-ex-input { font-family: inherit; font-size: var(--font-ui-medium); border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); padding: 6px 10px 6px 27px; width: 100%; }
 .rl-ex-input:focus, .rl-ex-textarea:focus { outline: none; border-color: var(--interactive-accent); }
 .rl-ex-row { display: flex; gap: 10px; }
 .rl-ex-grow { flex: 1; }
-.rl-ex-book-list { border: 1px solid var(--background-modifier-border); border-radius: 6px; overflow: hidden; margin-top: 4px; max-height: 180px; overflow-y: auto; }
+.rl-ex-book-list { border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); overflow: hidden; margin-top: 4px; max-height: 180px; overflow-y: auto; }
 .rl-ex-book-item { display: flex; align-items: baseline; gap: 8px; padding: 7px 11px; border-bottom: 1px solid var(--background-modifier-border); cursor: pointer; font-size: var(--font-ui-medium); color: var(--text-normal); position: relative; }
 .rl-ex-book-item:last-child { border-bottom: none; }
 .rl-ex-book-item:hover { background: var(--background-modifier-hover); }
@@ -436,15 +485,15 @@
 .rl-ex-book-au { font-size: var(--font-ui-smaller); color: inherit; opacity: .8; }
 .rl-ex-book-check { margin-left: auto; font-weight: 700; }
 .rl-ex-empty { padding: 10px 12px; font-size: var(--font-ui-small); color: var(--text-faint); }
-.rl-ex-preview { border: 1px dashed var(--background-modifier-border); border-radius: 6px; padding: 8px 12px; font-size: var(--font-ui-small); color: var(--text-muted); margin-bottom: 10px; }
+.rl-ex-preview { border: 1px dashed var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 8px 12px; font-size: var(--font-ui-small); color: var(--text-muted); margin-bottom: 10px; }
 .rl-ex-preview-muted { color: var(--text-faint); }
 .rl-ex-preview-lbl { font-weight: 600; color: var(--text-normal); margin-bottom: 4px; }
 .rl-ex-preview-fname { font-weight: 400; color: var(--text-faint); font-size: var(--font-ui-smaller); }
-.rl-ex-preview-md { font-family: var(--font-monospace); font-size: var(--font-ui-smaller); white-space: pre-wrap; background: var(--background-secondary); border-radius: 6px; padding: 6px 9px; margin: 0; }
+.rl-ex-preview-md { font-family: var(--font-monospace); font-size: var(--font-ui-smaller); white-space: pre-wrap; background: var(--background-secondary); border-radius: var(--rl-t-radius-md, 6px); padding: 6px 9px; margin: 0; }
 .rl-ex-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
-.rl-ex-fixed-book { font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 6px 10px; }
+.rl-ex-fixed-book { font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 6px 10px; }
 /* 阅读器回写弹窗：引用只读灰色块 */
-.rl-ex-quote { font-size: var(--font-ui-medium); line-height: 1.55; color: var(--text-muted); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 7px 10px; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow-y: auto; }
+.rl-ex-quote { font-size: var(--font-ui-medium); line-height: 1.55; color: var(--text-muted); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 7px 10px; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow-y: auto; }
 .rl-ex-quote:empty { color: var(--text-faint); }
 
 /* ── G 双写冲突 / 删除确认弹窗（NoteConflictModal / ConfirmModal / PosterCleanupModal） ──
@@ -470,7 +519,7 @@
 .modal button.rl-nc-danger {
     font-family: inherit;
     font-size: var(--font-ui-small);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     padding: 4px 14px;
     cursor: pointer;
     font-weight: 600;
@@ -490,7 +539,7 @@
 .modal button.rl-btn {
     font-family: inherit;
     font-size: var(--font-ui-small);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     padding: 4px 14px;
     cursor: pointer;
 }
@@ -511,18 +560,18 @@
     border: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
     color: var(--text-normal);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     padding: 4px 12px;
     cursor: pointer;
 }
-.rl-btn-primary, .rl-ex-btn-primary { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
+.rl-btn-primary, .rl-ex-btn-primary { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; box-shadow: var(--rl-t-shadow-cta, none); }
 .rl-btn:disabled, .rl-ex-btn:disabled { opacity: .5; cursor: not-allowed; }
 /* 主界面危险按钮（EntryForm 删除条目 / CalendarDay 清除排期）：红描边红字保守态，hover 红底白字
    （弹窗危险主按钮 rl-nc-danger 已独立为实心红，见冲突弹窗区块；二者分场景，勿合并） */
 .rl-btn-danger, .rl-day-btn-danger {
     font-family: inherit;
     font-size: var(--font-ui-small);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     padding: 4px 12px;
     cursor: pointer;
     font-weight: 600;
@@ -541,7 +590,7 @@
 
 /* ── 观看来源选择弹窗（LinkPickerModal） ── */
 .rl-linkpick-title { font-weight: 600; color: var(--text-normal); }
-.rl-linkpick-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; margin-bottom: 14px; }
+.rl-linkpick-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); margin-bottom: 14px; }
 .rl-linkpick-row { display: flex; align-items: center; gap: 12px; padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--background-modifier-border); transition: background .12s ease; }
 .rl-linkpick-row:last-child { border-bottom: none; }
 .rl-linkpick-row:hover, .rl-linkpick-row:focus-visible { background: var(--background-modifier-hover); outline: none; }
@@ -550,11 +599,11 @@
 
 /* ── 本地剧集集数选择弹窗（EpisodePickerModal） ── */
 .rl-eps-title { font-weight: 600; color: var(--text-normal); }
-.rl-eps-grid { display: flex; flex-wrap: wrap; gap: 8px; max-height: 320px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 12px; margin-bottom: 14px; }
+.rl-eps-grid { display: flex; flex-wrap: wrap; gap: 8px; max-height: 320px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 12px; margin-bottom: 14px; }
 .rl-eps-btn {
     width: auto; min-width: 44px; padding: 0 10px; height: 34px; font-family: inherit; font-size: var(--font-ui-small);
     border: 1px solid var(--background-modifier-border); background: var(--background-primary);
-    color: var(--text-muted); border-radius: 6px; cursor: pointer;
+    color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer;
     transition: background .12s ease;
 }
 .rl-eps-btn.linked { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
@@ -570,7 +619,7 @@
 .rl-qa-input {
     flex: 1; min-width: 0; width: 100%; box-sizing: border-box;
     font-family: inherit; font-size: var(--font-ui-small);
-    border: 1px solid var(--background-modifier-border); border-radius: 6px;
+    border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px);
     background: var(--background-primary); color: var(--text-normal); padding: 5px 8px;
 }
 .rl-qa-input:focus { outline: none; border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
@@ -610,7 +659,7 @@
     color: #f2f2f2;
     background: rgba(28, 28, 30, 0.94);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);
     white-space: pre-line;
     word-break: break-word;
@@ -622,7 +671,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 
 .rl-pc-desc { font-size: var(--font-ui-medium); color: var(--text-muted); margin: 8px 0 12px; line-height: 1.6; }
 .rl-pc-empty { font-size: var(--font-ui-medium); color: var(--text-faint); padding: 20px 0; text-align: center; }
-.rl-pc-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; margin-bottom: 14px; }
+.rl-pc-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); margin-bottom: 14px; }
 .rl-pc-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--background-modifier-border); }
 .rl-pc-row:last-child { border-bottom: none; }
 .rl-pc-name { font-size: var(--font-ui-small); font-family: var(--font-monospace); color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -635,7 +684,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     justify-content: space-between;
     gap: 12px;
     background: var(--background-secondary);
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     padding: 12px 14px;
     margin: 8px 0 4px;
 }
@@ -645,7 +694,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-about-buttons { display: flex; gap: 8px; flex-shrink: 0; }
 .rl-about-btn {
     padding: 6px 12px;
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     border: 1px solid var(--background-modifier-border) !important;
     background: var(--background-primary) !important;
     color: var(--text-normal) !important;
@@ -1150,7 +1199,7 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     gap: 2px;
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
+    border-radius: var(--rl-t-radius-lg, 8px);
     box-shadow: 0 4px 16px var(--background-modifier-box-shadow);
 }
 .rl-reader-menu.hidden { display: none; }
@@ -1209,7 +1258,7 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     align-items: center;
     gap: 2px;
     padding: 4px;
-    border-radius: 8px;
+    border-radius: var(--rl-t-radius-lg, 8px);
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
     box-shadow: 0 2px 8px var(--background-modifier-box-shadow);
@@ -1218,7 +1267,7 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 .rl-selbar button {
     font-size: 12px;
     padding: 2px 8px;
-    border-radius: 6px;
+    border-radius: var(--rl-t-radius-md, 6px);
     border: 1px solid transparent;
     background: transparent;
     color: var(--text-normal);
@@ -1235,7 +1284,7 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     z-index: 45;
     width: 320px;
     max-width: 80%;
-    border-radius: 8px;
+    border-radius: var(--rl-t-radius-lg, 8px);
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
     box-shadow: 0 2px 12px var(--background-modifier-box-shadow);
@@ -1286,7 +1335,7 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     width: 100%; box-sizing: border-box; font-family: inherit;
     font-size: 11px; line-height: 1.5; color: var(--text-normal);
     background: var(--background-primary); border: 1px solid var(--background-modifier-border);
-    border-radius: 6px; padding: 4px 8px; resize: vertical;
+    border-radius: var(--rl-t-radius-md, 6px); padding: 4px 8px; resize: vertical;
 }
 .rl-prompt-input::placeholder { color: var(--text-faint); opacity: 1; }
 .rl-prompt-input:focus { border-color: var(--interactive-accent); outline: none; }
@@ -1313,7 +1362,7 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 .rl-pdf-page {
     position: relative;
     flex-shrink: 0;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    box-shadow: var(--rl-t-shadow-card, 0 1px 4px rgba(0, 0, 0, 0.18));
     background: #fff;
 }
 .rl-pdf-canvas {
@@ -1360,7 +1409,7 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 .rl-res-head-cnt::before { content: ''; display: inline-block; width: 3px; height: 12px; border-radius: 2px; background: var(--interactive-accent); margin-right: 7px; vertical-align: -2px; }
 .rl-res-head-hint { font-size: 10px; color: var(--text-faint); }
 .rl-res { margin-top: 4px; flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 4px 0; max-height: 52vh; }
-.rl-res-item { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; font-family: inherit; font-size: 12px; border: 1px solid transparent; background: var(--background-primary); border-radius: 8px; padding: 6px 10px; cursor: pointer; color: var(--text-normal); line-height: 1.4; transition: background-color .12s, border-color .12s; }
+.rl-res-item { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; font-family: inherit; font-size: 12px; border: 1px solid transparent; background: var(--background-primary); border-radius: var(--rl-t-radius-lg, 8px); padding: 6px 10px; cursor: pointer; color: var(--text-normal); line-height: 1.4; transition: background-color .12s, border-color .12s; }
 .rl-res-item:hover { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover, var(--background-modifier-border)); }
 .rl-res-item:focus-visible { outline: none; border-color: var(--interactive-accent); }
 .rl-res-cv { width: 48px; height: 72px; border-radius: 4px; flex: none; display: block; object-fit: contain; background-color: var(--background-secondary); overflow: hidden; }
@@ -1440,4 +1489,20 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     height: auto;
     background: #000;
     outline: none;
+}
+
+/* ── 1.0.3 现代主题：弹窗骨架（Obsidian 原生 .modal 为宿主类，靠 body 主题前缀获得特异性）──
+   挂载点 = document.body（main.ts applyUiTheme），因此主界面与全部弹窗自动继承；
+   src/modals/*.ts 无需任何改动。阴影/圆角均走令牌，native 下取 :root 原值。 */
+.rl-theme-modern .modal {
+    border-radius: var(--rl-t-radius-lg, 8px);
+    box-shadow: var(--rl-t-shadow-modal, none);
+    border: none;
+}
+/* 阅读器/播放器沉浸态维持现状（圆角 0 / 无阴影 / 无边框）：显式排除，不受现代骨架影响。
+   注：.modal.rl-reader-immersive（0,2,0）本来就能压过 .rl-theme-modern .modal（0,2,0）——后者靠
+   「晚出现」取胜，故本排除规则必须排在骨架之后，且顺序一旦颠倒阅读器会被套上圆角。 */
+.rl-theme-modern .modal.rl-reader-immersive {
+    border-radius: 0;
+    box-shadow: none;
 }

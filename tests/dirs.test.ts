@@ -1,7 +1,8 @@
 // 目录命名中枢测试：类型子目录英文名（movie/teleplay/animation/book/game/music）
+// + 书籍子分类目录（1.0.3.1：文学 book/、网文 novel/）
 // + 旧版中文类型目录 notePath 的英文化迁移（relocateLegacyNotePath，幂等防误伤）
 import { describe, it, expect } from 'vitest';
-import { typeDir, relocateLegacyNotePath } from 'pure/dirs';
+import { typeDir, noteSubDir, BOOK_KIND_DIRS, relocateLegacyNotePath } from 'pure/dirs';
 import { ENTRY_TYPES } from 'data/types';
 
 describe('typeDir 类型 → 笔记子目录英文名', () => {
@@ -18,6 +19,24 @@ describe('typeDir 类型 → 笔记子目录英文名', () => {
         const names = ENTRY_TYPES.map(typeDir);
         expect(names).toHaveLength(6);
         for (const n of names) expect(/^[a-z]+$/.test(n)).toBe(true);
+    });
+});
+
+describe('noteSubDir 笔记子目录裁决（书籍按子分类分，其余按类型）', () => {
+    it('书籍：文学 → book/、网文 → novel/（1.0.3.1 网文独立目录）', () => {
+        expect(noteSubDir({ type: 'book', bookKind: 'book' })).toBe('book');
+        expect(noteSubDir({ type: 'book', bookKind: 'novel' })).toBe('novel');
+    });
+    it('书籍缺省 / 已下线 comic → book/（存量数据不落空目录）', () => {
+        expect(noteSubDir({ type: 'book' })).toBe('book');
+        expect(noteSubDir({ type: 'book', bookKind: 'comic' as never })).toBe('book');
+    });
+    it('非书籍类型忽略 bookKind（分类残留不影响目录）', () => {
+        expect(noteSubDir({ type: 'movie', bookKind: 'novel' })).toBe('movie');
+        expect(noteSubDir({ type: 'music' })).toBe('music');
+    });
+    it('BOOK_KIND_DIRS 与 noteSubDir 一致（单一真相表）', () => {
+        expect(BOOK_KIND_DIRS).toEqual({ book: 'book', novel: 'novel' });
     });
 });
 

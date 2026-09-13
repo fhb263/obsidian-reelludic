@@ -190,22 +190,22 @@
         <span class="rl-cal-sub">{monthTotal} 条计划</span>
         <div class="rl-cal-nav">
             {#if viewMode === 'month'}
-                <button class="rl-cal-ghost" on:click={() => shiftMonth(-1)}><Icon icon="chevron-left" size={14} /><span class="rl-sr">上个月</span></button>
+                <button class="rl-cal-ghost" data-tip="上个月" on:click={() => shiftMonth(-1)}><Icon icon="chevron-left" size={14} /><span class="rl-sr">上个月</span></button>
                 <span class="rl-cal-month">{monthLabel}</span>
-                <button class="rl-cal-ghost" on:click={() => shiftMonth(1)}><Icon icon="chevron-right" size={14} /><span class="rl-sr">下个月</span></button>
+                <button class="rl-cal-ghost" data-tip="下个月" on:click={() => shiftMonth(1)}><Icon icon="chevron-right" size={14} /><span class="rl-sr">下个月</span></button>
             {:else}
-                <button class="rl-cal-ghost" on:click={() => shiftWeek(-1)}><Icon icon="chevron-left" size={14} /><span class="rl-sr">上一周</span></button>
+                <button class="rl-cal-ghost" data-tip="上一周" on:click={() => shiftWeek(-1)}><Icon icon="chevron-left" size={14} /><span class="rl-sr">上一周</span></button>
                 <span class="rl-cal-month">{weekLabel}</span>
-                <button class="rl-cal-ghost" on:click={() => shiftWeek(1)}><Icon icon="chevron-right" size={14} /><span class="rl-sr">下一周</span></button>
+                <button class="rl-cal-ghost" data-tip="下一周" on:click={() => shiftWeek(1)}><Icon icon="chevron-right" size={14} /><span class="rl-sr">下一周</span></button>
             {/if}
             {#if viewMode === 'month'}
-                <button class="rl-cal-ghost rl-cal-today-btn" on:click={goToday}>今天</button>
+                <button class="rl-cal-ghost rl-cal-today-btn" data-tip="回到今天" on:click={goToday}>今天</button>
             {:else}
-                <button class="rl-cal-ghost rl-cal-today-btn" on:click={goThisWeek}>今天</button>
+                <button class="rl-cal-ghost rl-cal-today-btn" data-tip="回到本周" on:click={goThisWeek}>今天</button>
             {/if}
             <span class="rl-cal-viewswitch">
-                <button class="rl-cal-viewbtn" class:on={viewMode === 'month'} on:click={() => (viewMode = 'month')}>月</button>
-                <button class="rl-cal-viewbtn" class:on={viewMode === 'week'} on:click={() => (viewMode = 'week')}>周</button>
+                <button class="rl-cal-viewbtn" class:on={viewMode === 'month'} data-tip="月视图" on:click={() => (viewMode = 'month')}>月</button>
+                <button class="rl-cal-viewbtn" class:on={viewMode === 'week'} data-tip="周视图" on:click={() => (viewMode = 'week')}>周</button>
             </span>
         </div>
     </div>
@@ -223,7 +223,7 @@
                     <button class="rl-cal-banner-btn" on:click={() => startWatching(e)}>开始观看</button>
                 </span>
             {/each}
-            <button class="rl-cal-banner-close" on:click={() => (bannerDismissed = true)}><Icon icon="x" size={12} /><span class="rl-sr">关闭提醒（今天不再提醒）</span></button>
+            <button class="rl-cal-banner-close" data-tip="关闭提醒（今天不再提醒）" on:click={() => (bannerDismissed = true)}><Icon icon="x" size={12} /><span class="rl-sr">关闭提醒（今天不再提醒）</span></button>
         </div>
     {/if}
 
@@ -347,7 +347,7 @@
     .rl-cal-nav { margin-left: auto; display: flex; align-items: center; gap: 2px; }
     .rl-cal-ghost {
         font-family: inherit; font-size: 12px; border: none; background: transparent;
-        color: var(--text-muted); border-radius: 6px; padding: 3px 9px; cursor: pointer; line-height: 1.4;
+        color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); padding: 3px 9px; cursor: pointer; line-height: 1.4;
         transition: background .15s ease, color .15s ease;
     }
     .rl-cal-ghost:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
@@ -358,10 +358,10 @@
     .rl-cal-banner {
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
         background: rgba(255, 107, 107, .10); border: 1px solid rgba(255, 107, 107, .28);
-        border-radius: 8px; padding: 7px 12px; margin-bottom: 12px; font-size: 12px;
+        border-radius: var(--rl-t-radius-lg, 8px); padding: 7px 12px; margin-bottom: 12px; font-size: 12px;
     }
     .rl-cal-banner-txt { font-weight: 600; color: var(--text-normal); white-space: nowrap; }
-    .rl-cal-banner-item { display: inline-flex; align-items: center; gap: 6px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 2px 8px; }
+    .rl-cal-banner-item { display: inline-flex; align-items: center; gap: 6px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 2px 8px; }
     .rl-cal-banner-title { cursor: pointer; font-weight: 500; color: var(--text-normal); }
     .rl-cal-banner-title:hover { color: var(--interactive-accent); text-decoration: underline; }
     .rl-cal-banner-btn {
@@ -382,13 +382,13 @@
     .rl-cal-side-head { font-size: 11px; font-weight: 600; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
     .rl-cal-side-cnt {
         font-size: 10px; font-weight: 600; color: var(--interactive-accent);
-        background: var(--background-modifier-hover); border-radius: 999px; padding: 0 7px; line-height: 1.5;
+        background: var(--background-modifier-hover); border-radius: var(--rl-t-radius-pill, 999px); padding: 0 7px; line-height: 1.5;
     }
     .rl-cal-side-empty { font-size: 11px; color: var(--text-faint); padding: 10px 2px; }
     /* 待排迷你卡片：封面 + 标题 + 类型 tag，可拖拽 */
     .rl-cal-card {
         display: flex; align-items: center; gap: 8px;
-        padding: 6px 8px; border: 1px solid var(--background-modifier-border); border-radius: 8px;
+        padding: 6px 8px; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px);
         background: var(--background-primary); cursor: grab; user-select: none;
         transition: border-color .15s ease, box-shadow .15s ease, transform .12s ease;
     }
@@ -404,7 +404,7 @@
     /* ── 细边框连贯网格（非浮空圆角）：容器 1px 边框 + 格子右/下边线，overflow 裁边 ── */
     .rl-cal-grid {
         display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
-        border: 1px solid var(--background-modifier-border); border-radius: 8px; overflow: hidden;
+        border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); overflow: hidden;
     }
     .rl-cal-wd {
         text-align: center; font-size: 10.5px; font-weight: 600; color: var(--text-faint);
@@ -444,7 +444,7 @@
     .rl-cal-more { font-size: 9.5px; color: var(--text-faint); padding: 1px 2px; }
 
     /* ── 视图切换 ── */
-    .rl-cal-viewswitch { display: inline-flex; align-items: center; border: 1px solid var(--background-modifier-border); border-radius: 6px; overflow: hidden; margin-left: 4px; }
+    .rl-cal-viewswitch { display: inline-flex; align-items: center; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); overflow: hidden; margin-left: 4px; }
     .rl-cal-viewbtn { font-family: inherit; font-size: 11px; border: none; background: transparent; color: var(--text-muted); padding: 3px 10px; cursor: pointer; }
     .rl-cal-viewbtn.on { background: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
 
@@ -458,7 +458,7 @@
     .rl-cal-wday-name { font-size: 12px; font-weight: 700; color: var(--text-muted); }
     .rl-cal-wdate { font-size: 11px; color: var(--text-faint); }
     .rl-cal-witems { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; overflow-y: auto; }
-    .rl-cal-wcard { display: flex; gap: 6px; align-items: center; border: 1px solid color-mix(in srgb, var(--tc) 30%, transparent); background: color-mix(in srgb, var(--tc) 8%, transparent); border-radius: 8px; padding: 4px 6px; cursor: pointer; min-width: 0; }
+    .rl-cal-wcard { display: flex; gap: 6px; align-items: center; border: 1px solid color-mix(in srgb, var(--tc) 30%, transparent); background: color-mix(in srgb, var(--tc) 8%, transparent); border-radius: var(--rl-t-radius-lg, 8px); padding: 4px 6px; cursor: pointer; min-width: 0; }
     .rl-cal-wcard:hover { background: color-mix(in srgb, var(--tc) 16%, transparent); }
     .rl-cal-wcard-cov { width: 28px; height: 38px; object-fit: cover; border-radius: 4px; flex: none; }
     .rl-cal-wcard-ph { display: flex; align-items: center; justify-content: center; font-size: 13px; color: #fff; font-weight: 700; }

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-reelludic",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "影视/书籍/游戏/音乐收藏管理：书架视图、追更排期、统计看板、多源元数据抓取与双链笔记",
   "main": "main.js",
   "scripts": {
@@ -24,7 +24,8 @@
     "svelte-preprocess": "^5.0.4",
     "tslib": "2.4.0",
     "typescript": "5.2.2",
-    "vitest": "^4.1.10"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "jszip": "^3.10.1",

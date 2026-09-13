@@ -7,18 +7,19 @@
     import { starString, starClass } from 'pure/rating';
     import { describeBulkApply } from 'pure/bulkConfirm';
     import { filterAndSort } from 'pure/search';
+    import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_TOP_UNITS, bookKindCounts } from 'pure/bookKind';
     import { groupMusicByArtist } from 'pure/musicGroup';
     import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres } from 'pure/cardMeta';
     import { resolveAddType } from 'pure/focusType';
     import { placeMenu } from 'pure/menuPlacement';
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS, TYPE_COLORS, type ColorTheme, type EntryType } from 'data/types';
-    import type { MediaEntry, MediaStatus } from 'data/types';
+    import type { MediaEntry, MediaStatus, BookKind } from 'data/types';
     import Icon from './Icon.svelte';
 
     export let entries: MediaEntry[] = [];
     /** 书籍摘抄计数（bookId → 摘抄区块数），卡片徽标数据源 */
     export let excerptCounts: Record<string, number> = {};
-    export let onAdd: (t?: EntryType) => void = () => {};
+    export let onAdd: (t?: EntryType, kind?: BookKind) => void = () => {};
     export let onEditEntry: (id: string) => void = () => {};
     export let onOpenEntry: (id: string) => void = () => {};
     export let onOpenLink: (url: string) => void = () => {};
@@ -72,6 +73,10 @@
     // 否则组件被 Svelte 复用时 typeFilter 停留在上一个页签的类型，切回影视页签卡片不显示
     $: if (lockType) typeFilter = lockType;
     else typeFilter = 'all';
+    // 书籍子分类（1.0.3）：阅读页签 chips【全部/文学/网文】，缺省归文学（pure/bookKind，原「出版」；1.0.3.1 漫画已下线）
+    let kindFilter: 'all' | BookKind = 'all';
+    const kindChips: ReadonlyArray<'all' | BookKind> = ['all', ...BOOK_KINDS];
+    // 音乐页签子分类行已于 1.0.3.1 下线（用户 2026-09-13 裁定删除「其他」，音乐回归单一类目）
     /** 空状态文案按锁定类型动态化（聚合页签用通用「库」文案；音乐页签不再显示「书架」） */
     function emptyText(): string {
         switch (lockType) {
@@ -172,8 +177,15 @@
         { value: 'myrating-asc', label: '个人评分 ↑' },
     ];
 
-    // 概览量词（「N X」里的 X）：映射下沉到 pure/labels.overviewUnitLabel，避免此处逐类型 if 链漏项
-    $: overviewUnit = overviewUnitLabel(lockType ?? (typeFilter !== 'all' ? typeFilter : null));
+    // 概览量词（「N X」里的 X）：类型级回落 pure/labels.overviewUnitLabel（本书/首音乐/部电影…）；
+    // 单类型页签下子分类 chip 选中（非 all）时跟随子分类（本网文）——对齐影视「8 部电视剧」模式
+    $: overviewUnit =
+        lockType === 'book' && kindFilter !== 'all' ? BOOK_KIND_TOP_UNITS[kindFilter]
+        : overviewUnitLabel(lockType ?? (typeFilter !== 'all' ? typeFilter : null));
+    // 概览总数与量词配套：子分类选中时取桶数（kindCounts，与 chips 数字同源），否则类型池总数
+    $: overviewTotal =
+        lockType === 'book' && kindFilter !== 'all' ? kindCounts[kindFilter]
+        : statusCounts.all;
 
     /** 搜索占位符随当前类型动态（书籍=书名/作者、游戏=标题/开发商、音乐=标题/作者，均已真实参与 matchesSearch；影视仅标题可搜，原名不宣传） */
     $: searchPlaceholder = (() => {
@@ -205,6 +217,7 @@
         type: lockType ?? typeFilter,
         query: debouncedSearch,
         sortBy,
+        bookKind: lockType === 'book' ? kindFilter : undefined,
     });
 
     // 音乐页签歌单：按歌手分组（组名拼音序，未分类置底；组内专辑→年份→标题），纯逻辑见 pure/musicGroup
@@ -230,6 +243,8 @@
         for (const t of ENTRY_TYPES) out[t] = entries.filter((e) => e.type === t).length;
         return out;
     })();
+    // 书籍子分类三桶计数（阅读页签 chips 数字；all = book 总数，缺省与存量漫画归文学桶）
+    $: kindCounts = bookKindCounts(lockType === 'book' ? entries : []);
 
     function toggleMenu(id: string) {
         menuOpenFor = menuOpenFor === id ? null : id;
@@ -429,18 +444,23 @@
 
 <!-- 层2：搜索（定宽）+ 添加 + 概览（小字弱化置右） -->
 <div class="rl-toolbar">
-    <input
-        class="rl-search"
-        type="search"
-        placeholder={searchPlaceholder}
-        bind:value={searchText}
-        aria-label="搜索条目"
-        on:keydown={(ev) => { if (ev.key === 'Escape') searchText = ''; }}
-    />
-    <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/电视剧/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType -->
-    <button class="rl-add mod-cta" on:click={() => onAdd(resolveAddType(lockType, typeFilter))}><Icon icon="plus" size={14} /> 添加</button>
+    <div class="rl-search-wrap">
+        <!-- 占位字前置搜索图标（lucide search，灰同占位字；用户 2026-09-12 需求） -->
+        <Icon icon="search" size={13} cls="rl-search-ico" />
+        <input
+            class="rl-search"
+            type="search"
+            placeholder={searchPlaceholder}
+            bind:value={searchText}
+            aria-label="搜索条目"
+            on:keydown={(ev) => { if (ev.key === 'Escape') searchText = ''; }}
+        />
+    </div>
+    <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/电视剧/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType。
+         书籍页签同步传当前子分类（kindFilter）：聚焦「漫画」→ 表单下拉选中「漫画」并走漫画源；「网文」→ 书籍+网文；「文学/全部」→ 缺省文学 -->
+    <button class="rl-add mod-cta" data-tip="新建条目" on:click={() => onAdd(resolveAddType(lockType, typeFilter), lockType === 'book' && kindFilter !== 'all' ? kindFilter : undefined)}><Icon icon="plus" size={14} /> 添加</button>
     <span class="rl-libstats" role="group" aria-label="库概览">
-        <span class="rl-libstats-total">{statusCounts.all} {overviewUnit}</span>
+        <span class="rl-libstats-total">{overviewTotal} {overviewUnit}</span>
     </span>
 </div>
 
@@ -456,6 +476,16 @@
         </span>
         <span class="rl-vb-sep" aria-hidden="true"></span>
     {/if}
+    {#if lockType === 'book'}
+        <span class="rl-vb-group" role="group" aria-label="书籍分类">
+            {#each kindChips as k}
+                <button class:on={kindFilter === k} on:click={() => (kindFilter = k)}>
+                    {k === 'all' ? '全部' : BOOK_KIND_LABELS[k]}<span class="rl-cnt">{kindCounts[k]}</span>
+                </button>
+            {/each}
+        </span>
+        <span class="rl-vb-sep" aria-hidden="true"></span>
+    {/if}
     <span class="rl-vb-select">
         <span class="rl-sel-label">状态</span>
         <select class="rl-sort-select" bind:value={statusFilter} aria-label="状态筛选">
@@ -464,7 +494,7 @@
             {/each}
         </select>
     </span>
-    {#if viewMode === 'grid'}
+    {#if viewMode !== 'grouped'}
         <span class="rl-vb-select">
             <span class="rl-sel-label">排序</span>
             <select class="rl-sort-select" bind:value={sortBy} aria-label="排序方式">
@@ -475,11 +505,11 @@
         </span>
     {/if}
     <span class="rl-vb-view" role="group" aria-label="视图切换">
-        <button class:on={viewMode === 'grid'} on:click={() => (viewMode = 'grid')}>▦<span class="rl-sr">海报墙视图</span></button>
-        <button class:on={viewMode === 'list'} on:click={() => (viewMode = 'list')}>☷<span class="rl-sr">列表视图</span></button>
-        <button class:on={viewMode === 'masonry'} on:click={() => (viewMode = 'masonry')}>▥<span class="rl-sr">瀑布流视图</span></button>
+        <button class:on={viewMode === 'grid'} on:click={() => (viewMode = 'grid')} data-tip="海报墙视图">▦<span class="rl-sr">海报墙视图</span></button>
+        <button class:on={viewMode === 'list'} on:click={() => (viewMode = 'list')} data-tip="列表视图">☷<span class="rl-sr">列表视图</span></button>
+        <button class:on={viewMode === 'masonry'} on:click={() => (viewMode = 'masonry')} data-tip="瀑布流视图">▥<span class="rl-sr">瀑布流视图</span></button>
         {#if lockType === 'music'}
-            <button class:on={viewMode === 'grouped'} on:click={() => (viewMode = 'grouped')}>☰<span class="rl-sr">分组歌单视图</span></button>
+            <button class:on={viewMode === 'grouped'} on:click={() => (viewMode = 'grouped')} data-tip="分组歌单视图">☰<span class="rl-sr">分组歌单视图</span></button>
         {/if}
     </span>
 </div>
@@ -502,8 +532,8 @@
         </select>
         <input class="rl-batch-tags" placeholder="批量标签（逗号分隔）" bind:value={bulkTagsText} aria-label="批量标签" />
         <button class="rl-batch-btn" disabled={!bulkStatus && !bulkRating && !bulkTagsText.trim()} on:click={applyBulkAll} data-tip="应用到选中条目">应用</button>
-        <button class="rl-batch-btn rl-batch-danger" on:click={bulkDelete}>删除</button>
-        <button class="rl-batch-btn" on:click={clearSelection}>取消选择</button>
+        <button class="rl-batch-btn rl-batch-danger" on:click={bulkDelete} data-tip="删除选中条目（不可撤销，删除前会二次确认）">删除</button>
+        <button class="rl-batch-btn" on:click={clearSelection} data-tip="取消当前选中（不改动任何条目）">取消选择</button>
     </div>
 {/if}
 
@@ -533,9 +563,9 @@
                     </div>
                     <div class="rl-music-ops">
                         {#if e.audioPath}
-                            <button class="rl-music-play" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon="play" size={13} /><span class="rl-sr">播放音乐</span></button>
+                            <button class="rl-music-play" data-tip="播放音乐" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon="play" size={13} /><span class="rl-sr">播放音乐</span></button>
                         {/if}
-                        <button class="rl-music-edit" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onEditEntry(e.id); }}>✎<span class="rl-sr">编辑条目</span></button>
+                        <button class="rl-music-edit" data-tip="编辑条目" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onEditEntry(e.id); }}>✎<span class="rl-sr">编辑条目</span></button>
                     </div>
                 </div>
             {/each}
@@ -568,15 +598,18 @@
                     <div class="rl-cov-hover">
                         <button
                             class="rl-hover-more"
+                            data-tip="更多操作（右键菜单）"
                             on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); openCtx(e, ev); }}>⋯<span class="rl-sr">更多操作</span></button>
                         <button
                             class="rl-hover-open"
+                            data-tip="在新选项卡打开条目笔记"
                             on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onOpenEntry(e.id); }}>打开笔记 ↗</button>
                     </div>
                     <!-- 主操作按钮：影视（有观看入口）、书籍（有文件）、游戏（有快捷方式）、音乐（有音频）→ 封面右下角圆形，hover 浮现 -->
                     {#if hasActionEntry(e)}
                         <button
                             class="rl-watch-btn"
+                            data-tip={actionAriaLabel(e.type)}
                             on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon={actionIcon(e.type)} size={14} /><span class="rl-sr">{actionAriaLabel(e.type)}</span></button>
                     {/if}
                 </div>
@@ -712,10 +745,12 @@
                 <td>
                     <button
                         class="rl-edit-row"
+                        data-tip="编辑条目"
                         on:click={(ev) => { ev.stopPropagation(); onEditEntry(e.id); }}>✎<span class="rl-sr">编辑条目</span></button>
                     {#if hasActionEntry(e)}
                         <button
                             class="rl-edit-row rl-edit-watch"
+                            data-tip={actionAriaLabel(e.type)}
                             on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon={actionIcon(e.type)} size={14} /><span class="rl-sr">{actionAriaLabel(e.type)}</span></button>
                     {/if}
                 </td>
@@ -737,14 +772,14 @@
                 on:contextmenu={(ev) => ev.preventDefault()}>
                 <!-- 主操作（四类统一）：入口可用=动词直接执行；不可用=「动词 · 去关联」→ 快捷关联弹窗 -->
                 <button on:click={() => ctxPrimary(ctxEntry)} data-tip={ctxPrimaryHint(ctxEntry)}>{actionMenuTitle(ctxEntry)}</button>
-                <button on:click={() => { closeCtx(); onEditEntry(ctxEntry.id); }}>编辑条目</button>
+                <button on:click={() => { closeCtx(); onEditEntry(ctxEntry.id); }} data-tip="修改该条目的字段与关联">编辑条目</button>
                 {#if ctxEntry.type === 'book'}
                     <button on:click={() => { closeCtx(); onAddExcerpt(ctxEntry); }} data-tip="从外部阅读器复制文本，生成摘抄块">添加摘抄</button>
                 {/if}
                 {#if ctxEntry.type === 'game'}
                     <button on:click={() => { closeCtx(); onOpenGameSessionModal(ctxEntry); }} data-tip="日期 + 时长 + 心得，保存到游戏笔记">记录游玩</button>
                 {/if}
-                <button class="rl-ctx-danger" on:click={() => ctxDelete(ctxEntry)}>删除条目</button>
+                <button class="rl-ctx-danger" on:click={() => ctxDelete(ctxEntry)} data-tip="删除该条目（会二次确认）">删除条目</button>
             </div>
         {/if}
     {/if}
@@ -762,14 +797,19 @@
     .rl-libstats-sep { opacity: .7; }
     .rl-toolbar button {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
-        background: var(--background-primary); color: var(--text-muted); border-radius: 6px; padding: 3px 10px; cursor: pointer;
+        background: var(--background-primary); color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); padding: 3px 10px; cursor: pointer;
     }
     .rl-toolbar .rl-cnt { opacity: .6; font-size: 10px; }
-    /* 搜索框定宽（阶段7+：240~320px，无需通栏拉伸） */
+    /* 搜索框定宽（阶段7+：240~320px，无需通栏拉伸）；内嵌 lucide 搜索图标（09-12） */
+    .rl-toolbar .rl-search-wrap { position: relative; flex: none; width: 280px; max-width: 320px; min-width: 240px; }
+    .rl-toolbar :global(.rl-search-ico) {
+        position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+        color: var(--text-faint); pointer-events: none;
+    }
     .rl-toolbar .rl-search {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
-        background: var(--background-primary); color: var(--text-normal); border-radius: 6px;
-        padding: 5px 10px; width: 280px; max-width: 320px; min-width: 240px; flex: none;
+        background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px);
+        padding: 5px 10px 5px 27px; width: 100%;
     }
     .rl-toolbar .rl-search:focus { outline: none; border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
     .rl-toolbar .rl-search::placeholder { color: var(--text-faint); }
@@ -780,18 +820,18 @@
         color: var(--text-on-accent) !important;
         font-weight: 600; flex: none;
     }
-    .rl-batchbar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--interactive-accent); border-radius: 8px; background: var(--background-modifier-hover); }
+    .rl-batchbar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--interactive-accent); border-radius: var(--rl-t-radius-lg, 8px); background: var(--background-modifier-hover); }
     .rl-batch-cnt { font-size: 12px; font-weight: 600; color: var(--text-normal); }
     .rl-batchbar select, .rl-batchbar button {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
-        background: var(--background-primary); color: var(--text-muted); border-radius: 6px; padding: 2px 8px; cursor: pointer;
+        background: var(--background-primary); color: var(--text-muted); border-radius: var(--rl-t-radius-md, 6px); padding: 2px 8px; cursor: pointer;
     }
     .rl-batchbar button:hover { color: var(--text-normal); border-color: var(--interactive-accent); }
     .rl-batchbar button:disabled { opacity: .4; cursor: not-allowed; }
     .rl-batch-danger { color: var(--rl-danger) !important; border-color: var(--rl-danger) !important; }
     .rl-batch-tags {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
-        background: var(--background-primary); color: var(--text-normal); border-radius: 6px;
+        background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px);
         padding: 2px 8px; min-width: 150px; max-width: 200px;
     }
     .rl-batch-tags::placeholder { color: var(--text-faint); }
@@ -803,7 +843,7 @@
     .rl-vb-group { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
     .rl-vb-group button {
         font-family: inherit; font-size: 12px; color: var(--text-muted);
-        background: transparent; border: none; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+        background: transparent; border: none; padding: 4px 10px; border-radius: var(--rl-t-radius-pill, 999px); cursor: pointer;
         transition: background .15s ease, color .15s ease;
     }
     .rl-vb-group button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
@@ -820,7 +860,7 @@
     .rl-sel-label { font-size: 10px; color: var(--text-faint); }
     .rl-sort-select {
         font-family: inherit; font-size: 12px; color: var(--text-normal);
-        border: 1px solid var(--background-modifier-border); border-radius: 6px;
+        border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px);
         background: var(--background-primary); padding: 2px 8px; cursor: pointer;
     }
     .rl-sort-select:focus { outline: none; border-color: var(--interactive-accent); }
@@ -828,7 +868,7 @@
     .rl-vb-view { display: inline-flex; margin-left: auto; }
     .rl-vb-view button {
         font-family: inherit; font-size: 13px; color: var(--text-muted);
-        background: transparent; border: none; padding: 4px 9px; border-radius: 6px; cursor: pointer;
+        background: transparent; border: none; padding: 4px 9px; border-radius: var(--rl-t-radius-md, 6px); cursor: pointer;
         transition: background .15s ease, color .15s ease;
     }
     .rl-vb-view button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
@@ -837,8 +877,8 @@
     .rl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; align-items: stretch; }
     /* 卡片统一尺寸：列内 flex 等高，meta 区域最小高度保证各类型（电影/电视剧/动画/书籍/游戏）
        的卡片在视觉上同高，进度行贴底对齐 */
-    .rl-card { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; overflow: hidden; cursor: pointer; position: relative; display: flex; flex-direction: column; }
-    .rl-card:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
+    .rl-card { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); overflow: hidden; cursor: pointer; position: relative; display: flex; flex-direction: column; }
+    .rl-card:hover { box-shadow: var(--rl-t-shadow-card-hover, 0 2px 8px rgba(0, 0, 0, .12)); transform: translateY(var(--rl-t-lift, 0px)) scale(var(--rl-t-scale, 1)); }
     .rl-card.rl-sel-card { border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
     .rl-type-bar { height: 4px; flex: none; }
     /* Hover 快速操作（阶段6）：封面遮罩，默认透明；「打开笔记 ↗」文字按钮居中、⋯ 更多右上 */
@@ -853,18 +893,18 @@
     /* 瀑布流视图：只展示封面的多列流（列内卡片等高，列间自然参差） */
     .rl-masonry { display: flex; gap: 8px; align-items: flex-start; }
     .rl-m-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-    .rl-m-card { position: relative; border-radius: 6px; overflow: hidden; cursor: pointer; }
-    .rl-m-card:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, .16); }
-    .rl-m-cov { display: block; width: 100%; height: auto; border-radius: 6px; }
+    .rl-m-card { position: relative; border-radius: var(--rl-t-radius-md, 6px); overflow: hidden; cursor: pointer; }
+    .rl-m-card:hover { box-shadow: var(--rl-t-shadow-card-hover, 0 2px 8px rgba(0, 0, 0, .16)); transform: translateY(var(--rl-t-lift, 0px)) scale(var(--rl-t-scale, 1)); }
+    .rl-m-cov { display: block; width: 100%; height: auto; border-radius: var(--rl-t-radius-md, 6px); }
     .rl-m-ph {
-        aspect-ratio: 2 / 3; width: 100%; border-radius: 6px;
+        aspect-ratio: 2 / 3; width: 100%; border-radius: var(--rl-t-radius-md, 6px);
         display: flex; align-items: center; justify-content: center;
         background: color-mix(in srgb, var(--tc) 18%, var(--background-secondary));
         color: var(--tc); font-size: 22px; font-weight: 500;
     }
     /* 默认纯封面；hover 才浮出标题/评分/年份（底部渐变托底 + 底部对齐） */
     .rl-m-overlay {
-        position: absolute; inset: 0; border-radius: 6px;
+        position: absolute; inset: 0; border-radius: var(--rl-t-radius-md, 6px);
         display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
         padding-bottom: 6px;
         background: linear-gradient(0deg, rgba(0, 0, 0, .8), rgba(0, 0, 0, .3) 55%, transparent);
@@ -892,13 +932,13 @@
     .rl-hover-open {
         font-family: inherit; font-size: 12px; font-weight: 600;
         border: none; cursor: pointer; background: rgba(0, 0, 0, .55); color: #fff;
-        border-radius: 999px; padding: 7px 14px; line-height: 1;
+        border-radius: var(--rl-t-radius-pill, 999px); padding: 7px 14px; line-height: 1;
         transition: background .15s ease, transform .15s ease;
     }
     .rl-hover-open:hover { background: var(--interactive-accent); transform: scale(1.12); }
     .rl-hover-more {
         position: absolute; top: 8px; right: 8px;
-        width: 26px; height: 26px; border-radius: 6px;
+        width: 26px; height: 26px; border-radius: var(--rl-t-radius-md, 6px);
         border: none; cursor: pointer; background: rgba(0, 0, 0, .55); color: #fff;
         font-size: 15px; line-height: 1; display: flex; align-items: center; justify-content: center;
         transition: background .15s ease;
@@ -952,15 +992,15 @@
     .rl-prog { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
     /* 游戏时长空值占位：灰字「-」（与已填「已玩 Xh」同字重区，弱化不抢眼） */
     .rl-prog-na { color: var(--text-faint); }
-    .rl-ex-cnt { font-size: 10px; font-weight: 600; color: var(--interactive-accent); background: var(--background-modifier-hover); border-radius: 999px; padding: 1px 7px; margin-left: auto; }
+    .rl-ex-cnt { font-size: 10px; font-weight: 600; color: var(--interactive-accent); background: var(--background-modifier-hover); border-radius: var(--rl-t-radius-pill, 999px); padding: 1px 7px; margin-left: auto; }
     /* 阅读进度行（阶段7+）：左百分比 + 进度条，垂直居中对齐；百分比 muted 小字随风格 */
     .rl-readrow { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
     .rl-read-pct { font-size: 9px; line-height: 1; color: var(--text-faint); flex: none; }
     /* 阅读进度条：仅已开始的书渲染（未开始无灰线，避免像未加载占位符）；填充色更有存在感 */
-    .rl-readbar { height: 4px; flex: 1 1 auto; background: var(--background-modifier-border); border-radius: 999px; overflow: hidden; }
-    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: 999px; transition: width .3s ease; }
-    .rl-menu { position: absolute; top: 100%; left: 6px; margin-top: 4px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .15); padding: 4px; z-index: 30; min-width: 110px; }
-    .rl-menu button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 5px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: 6px; cursor: pointer; font-family: inherit; }
+    .rl-readbar { height: 4px; flex: 1 1 auto; background: var(--background-modifier-border); border-radius: var(--rl-t-radius-pill, 999px); overflow: hidden; }
+    .rl-readbar-fill { height: 100%; background: var(--rl-good-bar); border-radius: var(--rl-t-radius-pill, 999px); transition: width .3s ease; }
+    .rl-menu { position: absolute; top: 100%; left: 6px; margin-top: 4px; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); box-shadow: var(--rl-t-shadow-menu, 0 4px 14px rgba(0, 0, 0, .15)); padding: 4px; z-index: 30; min-width: 110px; }
+    .rl-menu button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 5px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer; font-family: inherit; }
     .rl-menu button:hover { background: var(--background-modifier-hover); }
     .rl-menu button.rl-sel { font-weight: 600; color: var(--interactive-accent); }
     .rl-menu button.rl-illegal { opacity: .35; cursor: not-allowed; }
@@ -971,11 +1011,11 @@
     .rl-ctx {
         position: absolute; z-index: 100; min-width: 140px;
         background: var(--background-primary); border: 1px solid var(--background-modifier-border);
-        border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); padding: 4px;
+        border-radius: var(--rl-t-radius-lg, 8px); box-shadow: var(--rl-t-shadow-menu-strong, 0 4px 14px rgba(0, 0, 0, .18)); padding: 4px;
         /* 视口过矮/过窄时内联 max-height/max-width 生效 → 菜单内部滚动，不整块越界 */
         overflow: auto; overscroll-behavior: contain;
     }
-    .rl-ctx button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 6px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: 6px; cursor: pointer; font-family: inherit; }
+    .rl-ctx button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 6px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer; font-family: inherit; }
     .rl-ctx button:hover { background: var(--background-modifier-hover); }
     .rl-ctx .rl-ctx-danger { color: var(--rl-danger-strong); }
     .rl-ctx .rl-ctx-danger:hover { background: var(--rl-danger-strong); color: #fff; }

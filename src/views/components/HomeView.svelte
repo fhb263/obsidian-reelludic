@@ -1,19 +1,20 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
     import MediaList from './MediaList.svelte';
     import CalendarBoard from './CalendarBoard.svelte';
     import TrackingBoard from './TrackingBoard.svelte';
     import StatsBoard from './StatsBoard.svelte';
     import { ENTRY_TYPE_LABELS, type ColorTheme, type EntryType } from 'data/types';
-    import type { ActivityEvent, MediaEntry, MediaStatus } from 'data/types';
+    import type { ActivityEvent, BookKind, MediaEntry, MediaStatus } from 'data/types';
     import type { FeedRange } from 'pure/activityFeed';
     import { MEDIA_TYPES, type HomeTab } from '../tab';
+    import { indicatorTransform } from 'pure/themeTokens';
     import Icon from './Icon.svelte';
 
     /** Tab 顺序：追番表(月历) → 书籍 → 影视(动画/剧集/电影聚合) → 游戏 → 统计 */
     const TAB_ORDER: HomeTab[] = ['tracking', 'book', 'media', 'game', 'music', 'stats'];
 
-    /** 页签图标（Obsidian 内建 Lucide）：计划表/书籍/影视/游戏/音乐/统计 */
+    /** 页签图标（Obsidian 内建 Lucide）：计划/书籍/影视/游戏/音乐/统计 */
     function tabIcon(t: HomeTab): string {
         if (t === 'tracking') return 'calendar-check';
         if (t === 'book') return 'book-open';
@@ -28,7 +29,7 @@
     export let excerptCounts: Record<string, number> = {};
     export let initialTab: HomeTab = 'media';
     export let onTabChange: (tab: HomeTab) => void = () => {};
-    export let onAdd: (t?: EntryType) => void = () => {};
+    export let onAdd: (t?: EntryType, kind?: BookKind) => void = () => {};
     export let onEditEntry: (id: string) => void = () => {};
     export let onOpenEntry: (id: string) => void = () => {};
     export let onOpenLink: (url: string) => void = () => {};
@@ -76,17 +77,27 @@
     export let posterUrl: (e: MediaEntry) => string | undefined = () => undefined;
     /** 色彩主题（设置页配置）：彩色显示类型色条 / 单色关闭 */
     export let colorTheme: ColorTheme = 'colorful';
+    /**
+     * 界面主题（1.0.3）：native 原生（默认，页签保持 1.0.2 下划线形态）/
+     * modern 现代（分段控件 + 滑动指示器；图标两主题恒渲染——2026-09-12 用户裁定恢复）。
+     * 默认值取 'native' 而非从 colorTheme 推导——必须与 Settings 的 DEFAULT_SETTINGS 一致，
+     * 且与 normalizeUiTheme 的兜底值相同，避免「设置缺失」时落进现代主题。
+     */
+    export let uiTheme: 'native' | 'modern' = 'native';
     /** 书架默认视图（设置页配置）：海报墙 grid / 列表 list */
     export let defaultViewMode: 'grid' | 'list' = 'grid';
 
     let activeTab: HomeTab = initialTab;
-    /** 计划表视图：追更表 / 月历 */
+    /** 计划页签视图：追更表 / 月历 */
     let trackingMode: 'board' | 'calendar' = 'board';
 
     function tabLabel(t: HomeTab): string {
-        if (t === 'tracking') return '计划表';
+        if (t === 'tracking') return '计划';
         if (t === 'media') return '影视';
         if (t === 'stats') return '统计';
+        // 页签显示名覆盖（1.0.3 用户裁定）：书籍→阅读，仅页签生效，其余场景仍走 ENTRY_TYPE_LABELS；
+        // 音乐页签 1.0.3.1 起回归类型本名「音乐」（原「收听」，用户 2026-09-13 裁定）
+        if (t === 'book') return '阅读';
         return ENTRY_TYPE_LABELS[t];
     }
 
@@ -116,16 +127,62 @@
             showTop = (scrollEl?.scrollTop ?? 0) > SHOW_TOP_THRESHOLD;
         };
         scrollEl?.addEventListener('scroll', onScroll, { passive: true });
-        return () => scrollEl?.removeEventListener('scroll', onScroll);
+        // 现代主题：窗口尺寸变化后按钮宽度会变，指示器必须重算（native 下 syncIndicator 自身会短路）
+        window.addEventListener('resize', syncIndicator);
+        return () => {
+            scrollEl?.removeEventListener('scroll', onScroll);
+            window.removeEventListener('resize', syncIndicator);
+        };
     });
+
+    // 指示器重算时机：首帧渲染后、主题切换时、activeTab 变化时。
+    // 显式 void activeTab 建立依赖——否则 Svelte 无法从函数体内推出该响应式块依赖 activeTab。
+    // 不能依赖 `await tick()` 的微任务顺序来替代：这里用 .then 是为了不阻塞 Svelte 的更新队列。
+    $: if (uiTheme === 'modern' && activeTab) {
+        void activeTab;
+        void tick().then(() => {
+            syncIndicator();
+            void indEl; // 建立对指示器节点的依赖：节点在 {#if} 内后挂载，需待其就位后重算
+        });
+    }
 
     function scrollToTop() {
         scrollEl?.scrollTo({ top: 0, behavior: 'smooth' });
     }
+
+    // ── 现代主题页签：滑动指示器定位（纯函数 indicatorTransform 算最终样式串）──
+    /** 页签容器引用（读取 offsetLeft/scrollLeft 作为定位基准） */
+    let tabsEl: HTMLElement | null = null;
+    /** 指示器节点引用（仅 modern 下渲染，故可能为 null） */
+    let indEl: HTMLElement | null = null;
+    /** 指示器的 transform + width（走内联 style，因数值随布局实时变化） */
+    let indStyle = '';
+    /** 容器内边距，必须与下方 CSS `.rl-tabs.rl-tabs-modern` 的 padding 保持一致 */
+    const TAB_PAD = 5;
+
+    /**
+     * 重算指示器位置。切换 Tab、窗口缩放后调用（横向滚动不需重算：指示器随内容一起滚，坐标系一致）。
+     * 依赖 tick()：调用时机可能早于 DOM 完成布局（offsetLeft 会读到 0），故调用方一律 tick 后再调。
+     * 任一引用缺失即静默返回——native 主题下指示器不渲染，属正常路径而非异常。
+     */
+    function syncIndicator(): void {
+        if (uiTheme !== 'modern' || !tabsEl || !indEl) return;
+        const btn = tabsEl.querySelector<HTMLElement>('button.on');
+        if (!btn) return;
+        indStyle = indicatorTransform(btn.offsetLeft, btn.offsetWidth, TAB_PAD);
+    }
 </script>
 
 <div class="rl-home" bind:this={rootEl}>
-    <div class="rl-tabs" role="tablist" aria-label="ReelLudic">
+    <div
+        class="rl-tabs"
+        class:rl-tabs-modern={uiTheme === 'modern'}
+        role="tablist"
+        aria-label="ReelLudic"
+        bind:this={tabsEl}>
+        {#if uiTheme === 'modern'}
+            <span class="tab-ind" bind:this={indEl} style={indStyle}></span>
+        {/if}
         {#each TAB_ORDER as t}
             <button
                 class:on={activeTab === t}
@@ -141,8 +198,8 @@
     <div class="rl-tab-body">
         {#if activeTab === 'tracking'}
             <div class="rl-tracking-switch">
-                <button class:on={trackingMode === 'board'} on:click={() => (trackingMode = 'board')}>追番表</button>
-                <button class:on={trackingMode === 'calendar'} on:click={() => (trackingMode = 'calendar')}>排期表</button>
+                <button class:on={trackingMode === 'board'} data-tip="列表式追番看板（按更新时间排序）" on:click={() => (trackingMode = 'board')}>追番表</button>
+                <button class:on={trackingMode === 'calendar'} data-tip="日历式排期看板（按播出日期）" on:click={() => (trackingMode = 'calendar')}>排期表</button>
             </div>
             {#if trackingMode === 'calendar'}
                 <CalendarBoard
@@ -197,6 +254,7 @@
     <button
         class="rl-to-top"
         class:show={showTop}
+        data-tip="回到顶部"
         on:click={scrollToTop}>↑<span class="rl-sr">回到顶部</span></button>
 </div>
 
@@ -240,7 +298,7 @@
         font-family: inherit; font-size: 13px; font-weight: 500;
         display: inline-flex; align-items: center; gap: 5px;
         border: none; background: transparent; color: var(--text-muted);
-        border-radius: 6px 6px 0 0;
+        border-radius: var(--rl-t-radius-md, 6px) var(--rl-t-radius-md, 6px) 0 0;
         padding: 7px 16px; cursor: pointer;
         border-bottom: 2px solid transparent;
         margin-bottom: -1px;
@@ -253,5 +311,55 @@
         color: var(--interactive-accent); font-weight: 600;
         border-bottom-color: var(--interactive-accent);
     }
+
+    /* ── 1.0.3 现代主题页签：分段控件（胶囊容器 + 描边滑动指示器）──
+       为何必须走结构分支而非纯 CSS 变量：变量能改颜色与圆角，但变不出新 DOM 节点（指示器），
+       只能靠模板 {#if} 表达。页签图标两主题恒渲染（定稿曾为纯文字，2026-09-12 用户裁定恢复）。
+       fallback 说明：本块整体挂在 .rl-tabs-modern 下，native 主题选择器不匹配、规则根本不生效，
+       故 var() 的第二参数纯属防御性冗余；此处仍一并写上，与 Task 3/4 中「native 也会命中」的规则保持一致纪律。 */
+    .rl-tabs.rl-tabs-modern {
+        position: relative;
+        display: inline-flex; align-items: center; gap: 0;
+        width: fit-content; max-width: 100%;
+        margin: 0 auto 12px; padding: 5px;
+        background: var(--background-secondary);
+        border: 1px solid var(--background-modifier-border);
+        border-bottom: 1px solid var(--background-modifier-border);
+        border-radius: var(--rl-t-radius-pill, 999px);
+        box-shadow: var(--rl-t-shadow-inset, none);
+        flex-wrap: nowrap;
+        /* 窄侧栏（~320px）：横向滚动而非压缩字号，保证点击目标不缩小 */
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+    .rl-tabs.rl-tabs-modern::-webkit-scrollbar { display: none; }
+    /* 指示器：绝对定位 + transform 平移，left/top 固定为 padding 值 */
+    .rl-tabs.rl-tabs-modern .tab-ind {
+        position: absolute; top: 5px; left: 5px; height: calc(100% - 10px);
+        background: var(--background-primary);
+        border: 1.5px solid var(--interactive-accent);
+        border-radius: var(--rl-t-radius-pill, 999px);
+        box-shadow: var(--rl-t-shadow-ind, none);
+        transition: transform var(--rl-t-dur-ind, .28s) var(--rl-t-ease-ind, cubic-bezier(.34, 1.3, .64, 1)),
+                    width var(--rl-t-dur-ind, .28s) var(--rl-t-ease-ind, cubic-bezier(.34, 1.3, .64, 1));
+        pointer-events: none; z-index: 0;
+    }
+    /* 图标与文字压在指示器之上（z-index:1），并剥掉 native 的下划线/margin 负值 */
+    .rl-tabs.rl-tabs-modern button {
+        position: relative; z-index: 1;
+        padding: 7px 17px; border-radius: var(--rl-t-radius-pill, 999px);
+        border-bottom: none; margin-bottom: 0;
+        background: transparent; white-space: nowrap;
+        transition: color var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
+    }
+    .rl-tabs.rl-tabs-modern button:hover { background: transparent; }
+    /* 现代主题：分段控件按下不做缩放（native 的 :active scale(.96) 是原生按钮抖动，modern 下应克制） */
+    .rl-tabs.rl-tabs-modern button:active { transform: none; }
+    /* 选中态不再用下划线+放大字重：由指示器承担视觉焦点，避免「描边药丸 + 下划线」双重强调 */
+    .rl-tabs.rl-tabs-modern button.on {
+        border-bottom: none; font-weight: 600;
+        color: var(--interactive-accent);
+    }
+
     .rl-tab-body { flex: 1; min-width: 0; }
 </style>

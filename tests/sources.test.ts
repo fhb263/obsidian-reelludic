@@ -1,4 +1,5 @@
 // Bangumi 数据源纯逻辑测试（Douban 数据源测试见 douban.test.ts；Google Books/RAWG/Open Library 已随源移除）
+// 1.0.3.1：书籍类目（含漫画）搜索已随漫画子视图下线（用户 2026-09-13 裁定），Bangumi 仅保留动画检索
 import { describe, it, expect } from 'vitest';
 import { buildSearchBody, parseBangumiResults, parseBangumiCollections, parseBangumiPersons, BangumiClient, BANGUMI_SEARCH_LIMIT } from 'services/bangumi';
 

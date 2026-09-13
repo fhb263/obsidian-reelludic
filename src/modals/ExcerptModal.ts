@@ -1,6 +1,6 @@
 // 摘抄录入弹窗：外部阅读器复制 → 粘贴 + 页码 + 挂载书目 + 心得 → 生成摘抄块（^id）
 // DOM API 渲染（非 Svelte），样式写入 styles.css（rl-ex-*）
-import { App, Modal, Notice } from 'obsidian';
+import { App, Modal, Notice, setIcon } from 'obsidian';
 import type ReelLudicPlugin from '../../main';
 import type { MediaEntry } from 'data/types';
 import { renderExcerptBlock } from 'pure/excerpt';
@@ -54,7 +54,11 @@ export class ExcerptModal extends Modal {
         } else {
             const bookField = contentEl.createDiv({ cls: 'rl-ex-field' });
             bookField.createEl('label', { cls: 'rl-ex-label', text: '挂载书目（从库内书籍中选择）' });
-            searchEl = bookField.createEl('input', { cls: 'rl-ex-input', placeholder: '搜索书名 / 作者…' });
+            // 搜索框与 MediaList 同款：占位字前置 lucide 搜索图标（2026-09-12「所有搜索框加同款」）
+            const searchWrap = bookField.createDiv({ cls: 'rl-ex-search-wrap' });
+            searchEl = searchWrap.createEl('input', { cls: 'rl-ex-input', placeholder: '搜索书名 / 作者…' });
+            const searchIco = searchWrap.createSpan({ cls: 'rl-ex-search-ico' });
+            setIcon(searchIco, 'search');
             listEl = bookField.createDiv({ cls: 'rl-ex-book-list' });
         }
 
@@ -76,7 +80,7 @@ export class ExcerptModal extends Modal {
                 : allBooks;
             listEl.empty();
             if (allBooks.length === 0) {
-                listEl.createDiv({ cls: 'rl-ex-empty', text: '库内还没有书籍 — 先在「书籍」页签添加书目，再回来添加摘抄' });
+                listEl.createDiv({ cls: 'rl-ex-empty', text: '库内还没有书籍 — 先在「阅读」页签添加书目，再回来添加摘抄' });
                 return;
             }
             if (matched.length === 0) {
