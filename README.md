@@ -20,7 +20,6 @@ ReelLudic是一个 Obsidian 插件，把六类收藏（电影 / 电视剧 / 动�
 
 <img width="1143" height="949" alt="image" src="https://github.com/user-attachments/assets/507061bd-d148-4c15-8254-efab39403594" />
 
-
 **核心理念：一切收藏都以 Markdown + JSON 落盘，原生融入双链笔记生态。**
 - `catalog.json` 是**结构化事实源**（目录元数据）
 - 每条目自动生成 Markdown **详情笔记**（frontmatter + 属性表 + 简介/评语/链接章节），可手动批注、可被任意笔记双链引用
