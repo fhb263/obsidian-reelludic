@@ -20,6 +20,7 @@ ReelLudic是一个 Obsidian 插件，把六类收藏（电影 / 电视剧 / 动�
 
 <img width="1143" height="949" alt="image" src="https://github.com/user-attachments/assets/507061bd-d148-4c15-8254-efab39403594" />
 
+
 **核心理念：一切收藏都以 Markdown + JSON 落盘，原生融入双链笔记生态。**
 - `catalog.json` 是**结构化事实源**（目录元数据）
 - 每条目自动生成 Markdown **详情笔记**（frontmatter + 属性表 + 简介/评语/链接章节），可手动批注、可被任意笔记双链引用
@@ -191,7 +192,7 @@ ReelLudic/
 - **语言**：TypeScript（strict）
 - **构建**：esbuild + tsc（类型检查）
 - **UI**：Svelte 4
-- **测试**：Vitest（1824 单测，106 文件）
+- **测试**：Vitest（1851 单测，107 文件）
 - **运行时依赖**：Obsidian API；抓取走 Node https（桌面端）/ requestUrl
 
 ---
@@ -287,9 +288,13 @@ npm run version    # 版本号同步
 - 各数据源 API Key / Cookie 仅保存在你的本地设置中，不会上传到插件侧服务器。
 
 **关于参考与致谢**
-- [Bangumi-Bridge-Obsidian](https://github.com/Yasikap/Bangumi-Bridge-Obsidian) — 追番表蓝本
+
 - [obsidian-douban](https://github.com/Wanxp/obsidian-douban) — 元数据抓取参考
 - [obsidian-media-db](https://github.com/czottmann/obsidian-media-db) — 元数据抓取参考
+- [Bangumi-Bridge-Obsidian](https://github.com/Yasikap/Bangumi-Bridge-Obsidian) — 追番表蓝本
+- [KOReader](https://github.com/koreader/koreader) — 阅读数据存档格式参考
+- 第三方库：[pdf.js](https://github.com/mozilla/pdf.js)（Apache-2.0）、[JSZip](https://github.com/Stuk/jszip)（MIT）、[Svelte](https://github.com/sveltejs/svelte)（MIT）
+- 上述项目版权归各自作者所有；涉及实现参考的部分均在源码注释中逐处标注出处。
 
 ---
 
