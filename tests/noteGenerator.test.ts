@@ -162,6 +162,33 @@ describe('generateNoteMarkdown', () => {
         expect(movie).not.toContain('## 作者简介');
     });
 
+    it('笔记表格开关：opts.table=false → 不渲染属性表格，其余章节（简介/评语/链接）照旧', () => {
+        const on = generateNoteMarkdown(baseEntry({ summary: 'x' }), 'ReelLudic', { table: true });
+        expect(on).toContain('| 属性 | 内容 |');
+        const off = generateNoteMarkdown(baseEntry({ summary: 'x' }), 'ReelLudic', { table: false });
+        expect(off).not.toContain('| 属性 | 内容 |');
+        expect(off).not.toContain('|:-----|:-----|');
+        expect(off).not.toContain('| 类型 |'); // 表格行不得残留
+        expect(off).toContain('> [!bookinfo]+ **《进击的巨人 最终季》**');
+        expect(off).toContain('## 简介');
+        expect(off).toContain('## 个人评语');
+        expect(off).toContain('## 观看链接');
+        // 关表后「来源」链接随表格一起消失（口径：表格 = 来源链接的载体）
+        const withSource = baseEntry({ source: 'douban', sourceUrl: 'https://movie.douban.com/subject/1/' });
+        expect(generateNoteMarkdown(withSource)).toContain('https://movie.douban.com/subject/1/');
+        expect(generateNoteMarkdown(withSource, 'ReelLudic', { table: false })).not.toContain('https://movie.douban.com/subject/1/');
+    });
+
+    it('笔记表格开关缺省 = 开（不传 opts 与传 {} 都出表格）；音乐对齐表格同受开关控制', () => {
+        expect(generateNoteMarkdown(baseEntry())).toContain('| 属性 | 内容 |');
+        expect(generateNoteMarkdown(baseEntry(), 'ReelLudic', {})).toContain('| 属性 | 内容 |');
+        const music = baseEntry({ type: 'music', author: '歌手', year: 2024, cast: [], progress: undefined });
+        expect(generateNoteMarkdown(music)).toContain('| 属性 | 内容 |');
+        const musicOff = generateNoteMarkdown(music, 'ReelLudic', { table: false });
+        expect(musicOff).not.toContain('| 属性 | 内容 |');
+        expect(musicOff).toContain('# 个人评语'); // 音乐一级标题不受影响
+    });
+
     it('封面 banner：frontmatter 输出 banner，正文标题前嵌入封面（URL 直用/本地 wikilink）', () => {
         const urlEntry = baseEntry({ poster: 'https://img.example.com/poster.jpg' });
         expect(entryFrontmatter(urlEntry)).toContain('banner: "https://img.example.com/poster.jpg"');

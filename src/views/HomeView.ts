@@ -9,6 +9,7 @@ import type { MediaStatus } from 'pure/status';
 import type { ActivityEvent, BookKind, EntryType, MediaEntry, UiTheme } from 'data/types';
 import type { HomeTab } from './tab';
 import { normalizeUiTheme } from 'pure/themeTokens';
+import { normalizePosterDensity, normalizePosterColumns } from 'pure/posterGrid';
 import type { FeedRange } from 'pure/activityFeed';
 
 export const HOME_VIEW_TYPE = 'reelludic-home';
@@ -58,6 +59,17 @@ export class HomeView extends ItemView {
         this.component?.$set({ uiTheme: theme });
     }
 
+    /**
+     * 海报密度即时生效（用户 2026-09-22）：与 setUiTheme 同思路 —— 只重推两个 prop，不重读条目。
+     * 设置页改档位/列数后调用，否则要等下次 refresh() 才看到新密度。
+     */
+    setPosterGrid(density: unknown, columns: unknown): void {
+        this.component?.$set({
+            posterDensity: normalizePosterDensity(density),
+            posterColumns: normalizePosterColumns(columns),
+        });
+    }
+
     private async render(): Promise<void> {
         const [entries, excerptCounts, yearReports, activityLog] = await Promise.all([
             this.plugin.service.list(),
@@ -70,7 +82,7 @@ export class HomeView extends ItemView {
         this.contentEl.toggleClass('rl-hide-scroll', this.plugin.settings.hideScrollbars);
         if (this.component) {
             // 增量更新：保留组件实例与本地状态（当前 Tab/视图模式/筛选），仅刷新数据，立即生效
-            this.component.$set({ entries, colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), defaultViewMode: this.plugin.settings.defaultViewMode, excerptCounts, yearReports, activityLog });
+            this.component.$set({ entries, colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), defaultViewMode: this.plugin.settings.defaultViewMode, posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity), posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns), excerptCounts, yearReports, activityLog });
             return;
         }
         this.contentEl.empty();
@@ -85,6 +97,8 @@ export class HomeView extends ItemView {
                 colorTheme: this.plugin.settings.colorTheme,
                 uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme),
                 defaultViewMode: this.plugin.settings.defaultViewMode,
+                posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity),
+                posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns),
                 onTabChange: (tab: HomeTab) => {
                     this.plugin.homeTab = tab;
                 },

@@ -157,6 +157,8 @@ export interface MediaEntry {
     plannedDate?: string;
     /** 书籍阅读进度（页码/总页，可选；percent = 阅读器进度百分比估算 0-100，书架进度条优先读） */
     readingProgress?: { page?: number; totalPage?: number; percent?: number };
+    /** 本地视频播放位置（key = 剧集下标字符串，value = 秒）：内置播放器打开时续播、暂停/切集/关闭时写回 */
+    videoPositions?: Record<string, number>;
     /** 书籍元数据页数（豆瓣实体书；仅展示与统计，不参与进度换算——进度基准 totalPage 以本地文件为准） */
     pageCount?: number;
     /** 游戏游玩时长（分钟，可选；playSessions 的快捷累计，两者保持同步） */

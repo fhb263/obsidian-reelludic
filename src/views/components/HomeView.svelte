@@ -8,7 +8,9 @@
     import type { ActivityEvent, BookKind, MediaEntry, MediaStatus } from 'data/types';
     import type { FeedRange } from 'pure/activityFeed';
     import { MEDIA_TYPES, type HomeTab } from '../tab';
-    import { indicatorTransform } from 'pure/themeTokens';
+    import { indicatorStyle } from 'pure/themeTokens';
+    import { resolveTabKey } from 'pure/tabNav';
+    import { POSTER_COLUMNS_DEFAULT, type PosterDensity } from 'pure/posterGrid';
     import Icon from './Icon.svelte';
 
     /** Tab 顺序：追番表(月历) → 书籍 → 影视(动画/剧集/电影聚合) → 游戏 → 统计 */
@@ -86,6 +88,10 @@
     export let uiTheme: 'native' | 'modern' = 'native';
     /** 书架默认视图（设置页配置）：海报墙 grid / 列表 list */
     export let defaultViewMode: 'grid' | 'list' = 'grid';
+    /** 海报密度（设置页配置，pure/posterGrid 归一）：紧凑 / 标准 / 宽松 / 自定义列数 */
+    export let posterDensity: PosterDensity = 'standard';
+    /** 自定义列数的目标列数（仅 posterDensity === 'custom' 生效；实际列数仍由容器宽度决定） */
+    export let posterColumns: number = POSTER_COLUMNS_DEFAULT;
 
     let activeTab: HomeTab = initialTab;
     /** 计划页签视图：追更表 / 月历 */
@@ -104,6 +110,24 @@
     function switchTab(t: HomeTab) {
         activeTab = t;
         onTabChange(t);
+    }
+
+    /**
+     * 页签键盘导航（1.0.4，ARIA APG Tabs 模式）：
+     * 整组只占一个 Tab 停留点（仅当前页签 tabindex=0），进入后用 ←/→ 在组内移动并立即激活，
+     * Home/End 跳首尾（是否回绕见 pure/tabNav）。与页签无关的按键一律放行 ——
+     * 否则会吃掉 Tab 本身与浏览器/输入法的默认行为。
+     */
+    function onTabKeydown(ev: KeyboardEvent, current: HomeTab) {
+        const r = resolveTabKey(ev.key, TAB_ORDER.indexOf(current), TAB_ORDER.length);
+        if (!r.handled) return;
+        ev.preventDefault();
+        const next = TAB_ORDER[r.index];
+        if (next !== current) switchTab(next);
+        // 焦点跟随：不主动聚焦会留在原按钮上，而那个按钮已变成 tabindex=-1
+        void tick().then(() => {
+            tabsEl?.querySelectorAll<HTMLElement>('button')[r.index]?.focus();
+        });
     }
 
     // ── 回到顶部按钮：下滑超过页签+筛选栏高度时右下角浮现 ──
@@ -129,7 +153,15 @@
         scrollEl?.addEventListener('scroll', onScroll, { passive: true });
         // 现代主题：窗口尺寸变化后按钮宽度会变，指示器必须重算（native 下 syncIndicator 自身会短路）
         window.addEventListener('resize', syncIndicator);
+        // 🔴 但只靠 window resize 不够（2026-09-23 修）：**后台 leaf 重新可见**、侧栏收放、拖分隔条
+        //    都不会触发 window.resize —— 而「视图先前不可见 ⇒ 首测读到 0 宽」正是这次 bug 的入口。
+        //    ResizeObserver 盯住页签容器自身：容器 0×0 → 真实尺寸的**那一次**也会回调，
+        //    就是「不可见期间测错、可见后自愈」的那条路径。
+        //    ⚠️ 指示器是容器的 absolute 子项、不参与容器尺寸 ⇒ 改宽度不会反过来触发 RO（无回调环）。
+        const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => syncIndicator());
+        if (ro && tabsEl) ro.observe(tabsEl);
         return () => {
+            ro?.disconnect();
             scrollEl?.removeEventListener('scroll', onScroll);
             window.removeEventListener('resize', syncIndicator);
         };
@@ -159,6 +191,10 @@
     let indStyle = '';
     /** 容器内边距，必须与下方 CSS `.rl-tabs.rl-tabs-modern` 的 padding 保持一致 */
     const TAB_PAD = 5;
+    /** 布局未就绪时的重试计数（防无限 rAF） */
+    let indRetry = 0;
+    /** 重试上限（约 10 帧）；仍不就绪则交给 ResizeObserver —— 视图一旦可见它会立刻回调 */
+    const IND_RETRY_MAX = 10;
 
     /**
      * 重算指示器位置。切换 Tab、窗口缩放后调用（横向滚动不需重算：指示器随内容一起滚，坐标系一致）。
@@ -169,7 +205,22 @@
         if (uiTheme !== 'modern' || !tabsEl || !indEl) return;
         const btn = tabsEl.querySelector<HTMLElement>('button.on');
         if (!btn) return;
-        indStyle = indicatorTransform(btn.offsetLeft, btn.offsetWidth, TAB_PAD);
+        const style = indicatorStyle(btn.offsetLeft, btn.offsetWidth, TAB_PAD);
+        // 🔴 测量未就绪（视图不可见 / 首帧，容器与按钮的 offsetWidth 读到 0）：**不提交**。
+        //    提交了就会得到「0 宽指示器 = 只剩左右两条描边的一条竖线，且 translateX(0) 把它钉在容器最左」，
+        //    选中项同时失去描边（描边本就由指示器承担）—— 2026-09-23 用户截图报障的正是这个形态
+        //    （实测：x=29..32、高 30px 的 4px 竖线；文字却正常变蓝，因为那是 `.on` 的职责）。
+        //    ⛔ 别指望「用户再点一次就好」：`activeTab = t` 赋同值时 Svelte 不标记脏，
+        //    而重算时机只有 window resize 与 activeTab 变化 ⇒ 点「已选中项」永远不会触发重算。
+        if (!style) {
+            if (indRetry < IND_RETRY_MAX) {
+                indRetry++;
+                requestAnimationFrame(syncIndicator);
+            }
+            return;
+        }
+        indRetry = 0;
+        indStyle = style;
     }
 </script>
 
@@ -179,27 +230,33 @@
         class:rl-tabs-modern={uiTheme === 'modern'}
         role="tablist"
         aria-label="ReelLudic"
+        aria-orientation="horizontal"
         bind:this={tabsEl}>
         {#if uiTheme === 'modern'}
             <span class="tab-ind" bind:this={indEl} style={indStyle}></span>
         {/if}
         {#each TAB_ORDER as t}
             <button
+                id={`rl-tab-${t}`}
                 class:on={activeTab === t}
                 role="tab"
                 aria-selected={activeTab === t}
-                on:click={() => switchTab(t)}>
+                aria-controls="rl-home-tabpanel"
+                tabindex={activeTab === t ? 0 : -1}
+                on:click={() => switchTab(t)}
+                on:keydown={(ev) => onTabKeydown(ev, t)}>
                 <Icon icon={tabIcon(t)} size={13} />
                 {tabLabel(t)}
             </button>
         {/each}
     </div>
 
-    <div class="rl-tab-body">
+    <!-- 单一面板承载全部页签内容：id 固定，所有 tab 的 aria-controls 都指向它（比「每 tab 一个 panel」更贴合实际结构） -->
+    <div class="rl-tab-body" id="rl-home-tabpanel" role="tabpanel" aria-labelledby={`rl-tab-${activeTab}`} tabindex="0">
         {#if activeTab === 'tracking'}
             <div class="rl-tracking-switch">
-                <button class:on={trackingMode === 'board'} data-tip="列表式追番看板（按更新时间排序）" on:click={() => (trackingMode = 'board')}>追番表</button>
-                <button class:on={trackingMode === 'calendar'} data-tip="日历式排期看板（按播出日期）" on:click={() => (trackingMode = 'calendar')}>排期表</button>
+                <button class:on={trackingMode === 'board'} aria-pressed={trackingMode === 'board'} data-tip="列表式追番看板（按更新时间排序）" on:click={() => (trackingMode = 'board')}>追番表</button>
+                <button class:on={trackingMode === 'calendar'} aria-pressed={trackingMode === 'calendar'} data-tip="日历式排期看板（按播出日期）" on:click={() => (trackingMode = 'calendar')}>排期表</button>
             </div>
             {#if trackingMode === 'calendar'}
                 <CalendarBoard
@@ -226,10 +283,11 @@
         {:else}
             <MediaList
                 entries={activeTab === 'media' ? entries.filter((e) => MEDIA_TYPES.includes(e.type)) : entries}
-                {excerptCounts}
                 {posterUrl}
                 {colorTheme}
                 {defaultViewMode}
+                {posterDensity}
+                {posterColumns}
                 {onAdd}
                 {onEditEntry}
                 {onOpenEntry}
@@ -328,11 +386,38 @@
         border-radius: var(--rl-t-radius-pill, 999px);
         box-shadow: var(--rl-t-shadow-inset, none);
         flex-wrap: nowrap;
+        /* 🔴 必须显式 flex-start（2026-09-21 用户报「窄栏下胶囊与按钮容器边界冲突」的根因）：
+           上面 `.rl-tabs`（原生主题）那条 `justify-content: center` 会**继承到这里**（同一元素、
+           且本块没声明该属性）。一旦溢出（窄侧栏 + 6 页签 ≈ 508px 宽），居中会把内容整体左移
+           `C = (内容宽 - 可用宽) / 2`：① 首个页签被推出容器**左缘之外**，而 `scrollLeft` 最小值是 0
+           ⇒ **永久看不见、也滚不回来**；② 指示器是 absolute 定位（不是 flex 项），**不参与居中位移**
+           ⇒ 与选中页签错开 C 像素（实测 dx=40~73px），而宽度仍正确 —— 正是用户在截图里看到的
+           「选中态（胶囊）压在两个页签边界上」。
+           容器自身的居中由 `margin: 0 auto` 承担，与 justify-content 无关，故改成 flex-start
+           观感零变化；附带好处：offsetLeft 变成与面板宽度无关的常量 ⇒ 面板拖宽拖窄都不会让
+           指示器失准（原先只在 window.resize 时重算，拖分隔条不触发）。 */
+        justify-content: flex-start;
         /* 窄侧栏（~320px）：横向滚动而非压缩字号，保证点击目标不缩小 */
         overflow-x: auto;
         scrollbar-width: none;
     }
     .rl-tabs.rl-tabs-modern::-webkit-scrollbar { display: none; }
+    /* 🔴 深色模式：轨道必须**比页面亮**一档（#375 用户实测报障：「页签为什么在深色模式下会深一个度」）——
+       上面那条 `background: var(--background-secondary)` 暗含一个**只在自带主题成立**的假定：
+       自带深色里 secondary = base-20 = `#282828`，比页面 primary = base-00 = `#1C1C1C` **亮**（浮起面）。
+       而用户主题（Minimal 系）恰好相反 —— `--bg2 = hsl(base-l - 2%)`、`--bg1 = hsl(base-l)`
+       ⇒ secondary **比页面暗 2% 亮度**（实测 页面 `#262626` / 轨道 `#212121`），于是整条页签凹下去一个色阶。
+       ⚠️ 同族的 `--background-secondary-alt` / `--background-primary-alt` 在该主题里同样偏暗，**换哪个都不救**。
+       🔴 写法与 `body.theme-dark` 的 `.rl-home` 一致：**只覆盖深色**，浅色模式保持原观感
+       （用户 2026-09-22 裁定「方案 B · 只修深色」）。
+       色向 = 页面色混入 6% 主题色阶**亮端**；自带深色下 `--color-base-100` = `#dadada` ⇒ 实测落 `#313131`
+       （与 Minimal 自己的 `--ui1`（base-l + 6%）同量级 ⇒ 不突兀）。
+       兜底 `#ffffff`：主题若删掉 `--color-base-100`，`color-mix` 里含无效 var 会让**整条声明失效**
+       ⇒ 轨道退回透明（比原来的「暗一档」更糟）；深色分支下兜白是安全方向。
+       ⛔ 别把它写成 `inset` 内阴影去「补光」——`--rl-t-shadow-inset` 是另一条令牌（仅本容器在用）。 */
+    :global(body.theme-dark) .rl-tabs.rl-tabs-modern {
+        background: color-mix(in srgb, var(--background-primary), var(--color-base-100, #ffffff) 6%);
+    }
     /* 指示器：绝对定位 + transform 平移，left/top 固定为 padding 值 */
     .rl-tabs.rl-tabs-modern .tab-ind {
         position: absolute; top: 5px; left: 5px; height: calc(100% - 10px);

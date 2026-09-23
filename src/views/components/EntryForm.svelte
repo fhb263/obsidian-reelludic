@@ -468,7 +468,7 @@ export let initialBookKind: BookKind | undefined = undefined;
 
     $: sourceReady = true; // 全部类型均可搜（Douban 单源/并存；影视/动画未配 Key 时仅 Douban 结果）
     $: sourceHint = (type === 'movie' || type === 'tv') && !canSearch
-        ? 'TMDB API Key 未配置 — 电影/剧集仅显示 Douban 结果（可在 设置 → 服务集成 · TMDB 配置后叠加）'
+        ? 'TMDB API Key 未配置 — 电影/剧集仅显示 Douban 结果（可在 设置 → 数据源配置 › 数据源凭据 · TMDB 配置后叠加）'
         : '';
 
     /**
@@ -880,7 +880,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             openSource(u);
             return;
         }
-        new Notice(`第 ${i + 1} 集未关联 — 右键该按钮编辑本地/网络链接`);
+        new Notice(type === 'movie' ? '未关联 — 右键该按钮编辑本地/网络链接' : `第 ${i + 1} 集未关联 — 右键该按钮编辑本地/网络链接`);
     }
     /** 批量检索本地剧集文件：选文件夹 → main 读目录识别文件名集号 → 未关联集保位填入本地路径；
      *  总集数不足时自动扩到最大命中集号；已填本地路径的集跳过（不覆盖）。 */
@@ -933,7 +933,7 @@ export let initialBookKind: BookKind | undefined = undefined;
         episodeUrls = episodeUrls.map((v, idx) => (idx === i ? editUrl.trim() || undefined : v));
         episodeTitles = episodeTitles.map((v, idx) => (idx === i ? editTitle.trim() || undefined : v));
         editEp = null;
-        new Notice(`第 ${i + 1} 集关联已保存`);
+        new Notice(type === 'movie' ? '关联已保存' : `第 ${i + 1} 集关联已保存`);
     }
     /** 编辑弹窗清除该集全部关联 */
     function clearEpEditor() {
@@ -943,11 +943,16 @@ export let initialBookKind: BookKind | undefined = undefined;
         episodeUrls = episodeUrls.map((v, idx) => (idx === i ? undefined : v));
         episodeTitles = episodeTitles.map((v, idx) => (idx === i ? undefined : v));
         editEp = null;
-        new Notice(`第 ${i + 1} 集关联已清除`);
+        new Notice(type === 'movie' ? '关联已清除' : `第 ${i + 1} 集关联已清除`);
     }
-    /** 集按钮 hover 提示：第 N 集 + 填写的集标题（如「第 1 集 开始」；未填标题只显示「第 N 集」） */
+    /** 集按钮 hover 提示：第 N 集 + 填写的集标题（如「第 1 集 开始」；未填标题只显示「第 N 集」）；
+     *  电影无集概念（单集）：只显示标题，未填则提示右键编辑关联 */
     function epLinkHint(i: number): string {
         const t = episodeTitles[i];
+        if (type === 'movie') {
+            if (t) return t;
+            return episodeFiles[i] || episodeUrls[i] ? '右键编辑本地/网络链接' : '未关联 — 右键编辑本地/网络链接';
+        }
         return t ? `第 ${i + 1} 集 ${t}` : `第 ${i + 1} 集`;
     }
     /** 编辑弹窗「浏览…」：系统文件选择器（Electron remote.dialog 绝对路径），填入编辑框，保存时写回 */
@@ -1391,7 +1396,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             <div class="rl-progress-fill" style={`width:${progPct}%`}></div>
         </div>
         <div class="rl-progress-meta">
-            <span class="rl-progress-label">{sourcePlan.length > 0 ? `正在搜索 ${sourcePlan.length} 个数据源` : (progLabel || '正在搜索…')}</span>
+            <span class="rl-progress-label"><span class="rl-spinner"></span> {sourcePlan.length > 0 ? `正在搜索 ${sourcePlan.length} 个数据源` : (progLabel || '正在搜索…')}</span>
             <span class="rl-progress-eta">{progPct}%</span>
         </div>
     {/if}
@@ -1505,7 +1510,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                     {#if type === 'book'}
                         <label class="rl-lbl">书名</label>
                         <div class="rl-title-row">
-                            <input class="rl-input" bind:value={title} bind:this={titleInput} />
+                            <input class="rl-input" bind:value={title} bind:this={titleInput} placeholder="作品名称" />
                             {#if communityScore || ratingCount}
                                 <span class="rl-title-score" data-tip="大众评分（数据源回填，只读）">★ {communityScore || '—'}{ratingCount ? ` · ${ratingCount}人评价` : ''}</span>
                             {/if}
@@ -1516,7 +1521,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                     {:else}
                         <label class="rl-lbl">标题</label>
                         <div class="rl-title-row">
-                            <input class="rl-input" bind:value={title} bind:this={titleInput} />
+                            <input class="rl-input" bind:value={title} bind:this={titleInput} placeholder="作品名称" />
                             {#if communityScore || ratingCount}
                                 <span class="rl-title-score" data-tip="大众评分（数据源回填，只读）">★ {communityScore || '—'}{ratingCount ? ` · ${ratingCount}人评价` : ''}</span>
                             {/if}
@@ -1533,7 +1538,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                         </div>
                         <div>
                             <label class="rl-lbl">{type === 'movie' ? '上映年' : type === 'game' || type === 'music' ? '发行年' : '首播年'}</label>
-                            <input class="rl-input" bind:value={year} />
+                            <input class="rl-input" bind:value={year} placeholder="如 2024" />
                         </div>
                     </div>
                     {/if}
@@ -1542,24 +1547,24 @@ export let initialBookKind: BookKind | undefined = undefined;
                 <!-- 网文（1.0.3，用户 2026-09-13 裁定）：上架年 / 作者 / 题材 / 元数据章数。
                      出版侧字段（出版社 / ISBN / 目录）对网文不适用，表单不展示；保存时清空存量（见 submit） -->
                 <div class="rl-2col">
-                    <div><label class="rl-lbl">上架年</label><input class="rl-input" bind:value={year} /></div>
-                    <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} /></div>
+                    <div><label class="rl-lbl">上架年</label><input class="rl-input" bind:value={year} placeholder="如 2024" /></div>
+                    <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder="作者名，多个用 / 分隔" /></div>
                 </div>
                 <div class="rl-2col">
                     <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
                     <div>
                         <label class="rl-lbl">元数据章数</label>
-                        <input class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="如 1200 章（仅展示/统计）" />
+                        <input class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="如 1200 章" />
                     </div>
                 </div>
                 {:else}
                 <!-- 文学：出版年 / 出版社 / 作者 / 题材（文学口径不变） -->
                 <div class="rl-2col">
-                    <div><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} /></div>
-                    <div><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} /></div>
+                    <div><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} placeholder="如 2024" /></div>
+                    <div><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} placeholder="出版社名" /></div>
                 </div>
                 <div class="rl-2col">
-                    <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} /></div>
+                    <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder="作者名，多个用 / 分隔" /></div>
                     <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
                 </div>
                 {/if}
@@ -1567,11 +1572,11 @@ export let initialBookKind: BookKind | undefined = undefined;
             {#if type === 'music'}
                 <div class="rl-2col">
                     <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder="歌手 / 艺术家" /></div>
-                    <div><label class="rl-lbl">专辑</label><input class="rl-input" bind:value={album} placeholder="所属专辑（手动填写）" /></div>
+                    <div><label class="rl-lbl">专辑</label><input class="rl-input" bind:value={album} placeholder="专辑名" /></div>
                 </div>
                 <div class="rl-2col">
                     <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
-                    <div><label class="rl-lbl">发行年</label><input class="rl-input" bind:value={year} /></div>
+                    <div><label class="rl-lbl">发行年</label><input class="rl-input" bind:value={year} placeholder="如 2024" /></div>
                 </div>
             {/if}
             {#if type === 'movie' || type === 'tv' || type === 'anime'}
@@ -1588,7 +1593,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                     {:else if type === 'tv' || type === 'anime'}
                         <div>
                             <label class="rl-lbl">总集数</label>
-                            <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="可留空" />
+                            <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="如 12" />
                         </div>
                     {/if}
                 </div>
@@ -1596,7 +1601,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             {#if type === 'game'}
                 <div class="rl-2col">
                     <div><label class="rl-lbl">平台</label><input class="rl-input" bind:value={platform} placeholder="PC / Switch / PS5" /></div>
-                    <div><label class="rl-lbl">开发商</label><input class="rl-input" bind:value={developer} /></div>
+                    <div><label class="rl-lbl">开发商</label><input class="rl-input" bind:value={developer} placeholder="开发商名" /></div>
                 </div>
             {/if}
 
@@ -1606,7 +1611,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                 <div class="rl-2col">
                     <div>
                         <label class="rl-lbl">总集数</label>
-                        <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="可留空" />
+                        <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="如 12" />
                     </div>
                     <div>
                         <label class="rl-lbl" data-tip="列表/月历按此显示进度">当前进度</label>
@@ -1625,13 +1630,13 @@ export let initialBookKind: BookKind | undefined = undefined;
                     <div><label class="rl-lbl">ISBN</label><input class="rl-input" bind:value={isbn} placeholder="如 9787536692930" /></div>
                     <div>
                         <label class="rl-lbl">元数据页数</label>
-                        <input class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="豆瓣页数（实体书，仅展示/统计）" />
+                        <input class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="如 320" />
                     </div>
                 </div>
             {/if}
 
             <label class="rl-lbl">{type === 'book' ? '内容简介' : '简介'}</label>
-            <textarea class="rl-input rl-summary" rows="6" bind:this={summaryEl} placeholder={type === 'book' ? '图书内容简介（豆瓣详情回填，可手动修改）' : '作品剧情简介（搜索自动回填，可手动修改）'} bind:value={summary}></textarea>
+            <textarea class="rl-input rl-summary" rows="6" bind:this={summaryEl} placeholder={type === 'book' ? '填写图书内容简介…' : '填写作品剧情简介…'} bind:value={summary}></textarea>
             {#if type !== 'book'}
             <!-- AI 摘要（单框合并：第 1 行一句话总结，其余每行一条看点）：可手填 / 可点「总结摘要」右侧 ✨ 生成 -->
             <div class="rl-lbl-row">
@@ -1653,7 +1658,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             {/if}
             {#if type === 'game'}
                 <div class="rl-2col">
-                    <div><label class="rl-lbl">游玩时长（小时）</label><input class="rl-input" type="number" min="0" step="0.1" bind:value={playtimeHours} placeholder="如 12（有游玩记录时以明细为准）" /></div>
+                    <div><label class="rl-lbl">游玩时长（小时）</label><input class="rl-input" type="number" min="0" step="0.1" bind:value={playtimeHours} placeholder="如 12" /></div>
                 </div>
                 <div>
                     <label class="rl-lbl">启动快捷方式</label>
@@ -1674,7 +1679,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                                 <div class="rl-ep-edit-title" id="rl-ep-title-game">启动快捷方式（.lnk）</div>
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
-                                    <input class="rl-input rl-ep-edit-input" value={gameLaunchVal} on:input={(ev) => (gameLaunchVal = inputVal(ev))} placeholder="vault 相对路径或系统绝对路径（.lnk）" />
+                                    <input class="rl-input rl-ep-edit-input" value={gameLaunchVal} on:input={(ev) => (gameLaunchVal = inputVal(ev))} placeholder="库内路径，或系统绝对路径（.lnk）" />
                                     <button class="rl-btn rl-link-act" on:click={(ev) => browseGameLaunch(ev)} data-tip="选择游戏启动快捷方式（系统文件管理器）">浏览…</button>
                                 </div>
                                 <div class="rl-ep-edit-ops">
@@ -1689,11 +1694,11 @@ export let initialBookKind: BookKind | undefined = undefined;
             {/if}
             {#if type === 'book'}
                 <label class="rl-lbl">作者简介</label>
-                <textarea class="rl-input rl-summary" rows="3" bind:this={authorIntroEl} placeholder="作者介绍（豆瓣详情页回填，可手动修改）" bind:value={authorIntro}></textarea>
+                <textarea class="rl-input rl-summary" rows="3" bind:this={authorIntroEl} placeholder="填写作者介绍…" bind:value={authorIntro}></textarea>
                 {#if bookKind !== 'novel'}
                 <!-- 目录：仅文学（网文无出版目录；用户 2026-09-13 裁定删除该框） -->
                 <label class="rl-lbl">目录</label>
-                <textarea class="rl-input rl-summary" rows="4" bind:this={tocEl} placeholder="图书目录（豆瓣详情页回填，可手动修改）" bind:value={toc}></textarea>
+                <textarea class="rl-input rl-summary" rows="4" bind:this={tocEl} placeholder="填写图书目录，每行一项…" bind:value={toc}></textarea>
                 {/if}
                 {#if type === 'book'}
             <!-- AI 摘要（单框合并：第 1 行一句话总结，其余每行一条看点）：可手填 / 可点「总结摘要」右侧 ✨ 生成 -->
@@ -1718,11 +1723,12 @@ export let initialBookKind: BookKind | undefined = undefined;
                 <div class="rl-prog-range">
                     <input class="rl-input rl-prog-input" type="number" min="0" bind:value={readingPage} placeholder="当前" />
                     <span class="rl-prog-dash">-</span>
-                    <input class="rl-input rl-prog-input" type="number" min="0" bind:value={readingTotalPage} placeholder={bookUnit === '章' ? '总章节（自动解析）' : '总页数（自动解析）'} />
+                    <input class="rl-input rl-prog-input" type="number" min="0" bind:value={readingTotalPage} placeholder={bookUnit === '章' ? '总章节' : '总页数'} />
                     <button
                         class="rl-prog-refresh"
+                        data-tip="按本地文件重新解析阅读进度"
                         on:click={() => void autoLinkBookProgress(bookFileVal.trim(), true)}>
-                        <Icon icon="refresh-cw" size={11} /><span class="rl-sr">重新解析本地文件（测试获取）</span>
+                        <Icon icon="refresh-cw" size={11} /><span class="rl-sr">重新解析本地文件进度</span>
                     </button>
                 </div>
                 {#if readingPage && readingTotalPage}
@@ -1753,7 +1759,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                                 <div class="rl-ep-edit-title" id="rl-ep-title-audio">本地音频</div>
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
-                                    <input class="rl-input rl-ep-edit-input" value={audioPathVal} on:input={(ev) => (audioPathVal = inputVal(ev))} placeholder="vault 相对路径或系统绝对路径" />
+                                    <input class="rl-input rl-ep-edit-input" value={audioPathVal} on:input={(ev) => (audioPathVal = inputVal(ev))} placeholder="库内路径，或系统绝对路径（mp3/flac/m4a…）" />
                                     <button class="rl-btn rl-link-act" on:click={(ev) => browseAudio(ev)} data-tip="选择音频（系统文件管理器）">浏览…</button>
                                 </div>
                                 <div class="rl-ep-edit-ops">
@@ -1787,7 +1793,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                                 <div class="rl-ep-edit-title" id="rl-ep-title-book">书籍文件（TXT/EPUB/PDF）</div>
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
-                                    <input class="rl-input rl-ep-edit-input" value={bookFileVal} on:input={(ev) => (bookFileVal = inputVal(ev))} placeholder="vault 相对路径，如 书籍/三体.txt" />
+                                    <input class="rl-input rl-ep-edit-input" value={bookFileVal} on:input={(ev) => (bookFileVal = inputVal(ev))} placeholder="库内路径，如 书籍/书名.txt（TXT/EPUB/PDF）" />
                                     <button class="rl-btn rl-link-act" on:click={(ev) => browseBookFile(ev)} data-tip="选择书籍文件（系统文件管理器）">浏览…</button>
                                 </div>
                                 <div class="rl-ep-edit-ops">
@@ -1811,6 +1817,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                             <!-- 批量检索（动画/电视剧）图标：选文件夹 → 识别文件名集号自动填入未关联集本地路径（已填跳过） -->
                             <button
                                 class="rl-ep-batch-btn"
+                                data-tip={'从文件夹检索剧集：识别文件名集号自动填入本地路径\n（第N集 / S01E0N / 01…，已填集跳过）'}
                                 on:click={() => void batchScanLocalEps()}><Icon icon="folder-search" size={13} /><span class="rl-sr">从文件夹检索剧集</span></button>
                         {/if}
                     </div>
@@ -1841,22 +1848,22 @@ export let initialBookKind: BookKind | undefined = undefined;
                     {/if}
                 </div>
                 {#if editEp !== null}
-                    <!-- 第 N 集编辑弹窗（EntryForm 内自绘浮层，不需 Obsidian App）：填写集标题 / 本地路径 / 网络地址 -->
+                    <!-- 集编辑浮层（EntryForm 内自绘，不需 Obsidian App）：填写标题 / 本地路径 / 网络地址；电影态标题为「编辑观看链接」、文案无集数 -->
                     <div class="rl-ep-edit-mask" on:click={() => (editEp = null)}></div>
                     <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-ep">
-                        <div class="rl-ep-edit-title" id="rl-ep-title-ep">编辑第 {editEp + 1} 集</div>
-                        <label class="rl-lbl-inline">集标题（悬停显示「第 N 集 + 标题」）</label>
+                        <div class="rl-ep-edit-title" id="rl-ep-title-ep">{type === 'movie' ? '编辑观看链接' : '编辑第 ' + (editEp + 1) + ' 集'}</div>
+                        <label class="rl-lbl-inline">{type === 'movie' ? '标题（悬停显示）' : '集标题（悬停显示「第 N 集 + 标题」）'}</label>
                         <input class="rl-input rl-ep-edit-input" value={editTitle} on:input={(ev) => (editTitle = inputVal(ev))} placeholder="如：开始" />
                         <label class="rl-lbl-inline">本地路径</label>
                         <div class="rl-ep-edit-row">
-                            <input class="rl-input rl-ep-edit-input" value={editLocal} on:input={(ev) => (editLocal = inputVal(ev))} placeholder="本地视频路径" />
+                            <input class="rl-input rl-ep-edit-input" value={editLocal} on:input={(ev) => (editLocal = inputVal(ev))} placeholder="库内路径，或系统绝对路径" />
                             <button class="rl-btn rl-link-act" on:click={(ev) => browseLocalVideo(ev)} data-tip="选择本地视频（系统文件管理器）">浏览…</button>
                         </div>
                         <label class="rl-lbl-inline">网络地址</label>
                         <input class="rl-input rl-ep-edit-input" value={editUrl} on:input={(ev) => (editUrl = inputVal(ev))} placeholder="https://…" />
                         <div class="rl-ep-edit-ops">
-                            <button class="rl-btn" on:click={saveEpEditor} data-tip="保存本集标题/本地/网络关联">保存</button>
-                            <button class="rl-btn" on:click={clearEpEditor} data-tip="清除本集标题与本地/网络关联">清除</button>
+                            <button class="rl-btn" on:click={saveEpEditor} data-tip={type === 'movie' ? '保存标题/本地/网络关联' : '保存本集标题/本地/网络关联'}>保存</button>
+                            <button class="rl-btn" on:click={clearEpEditor} data-tip={type === 'movie' ? '清除标题与本地/网络关联' : '清除本集标题与本地/网络关联'}>清除</button>
                             <button class="rl-btn" on:click={() => (editEp = null)}>取消</button>
                         </div>
                     </div>
@@ -1890,7 +1897,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                     </span>
                 {/if}
             </div>
-            <label class="rl-lbl">我的评分</label>
+            <label class="rl-lbl">个人评分</label>
             <div class="rl-stars-input">
                 {#each [1, 2, 3, 4, 5] as n}
                     <span class:on={n <= rating} on:click={() => setStar(n)}>★</span>
@@ -1906,14 +1913,14 @@ export let initialBookKind: BookKind | undefined = undefined;
     {/if}
 
     <div class="rl-fft">
-        <div>
+        <div class="rl-fft-left">
             {#if entry}
                 <button class="rl-btn rl-btn-danger" on:click={onDelete}>删除条目</button>
-                <button class="rl-btn" on:click={startRefetch} data-tip="按当前标题重搜数据源，回填客观字段（不覆盖主观内容与关联）">重新拉取</button>
+                <button class="rl-btn rl-btn-accent" on:click={startRefetch} data-tip="按当前标题重搜数据源，回填客观字段（不覆盖主观内容与关联）">重新拉取</button>
                 {#if entry.type === 'book'}
-                    <button class="rl-btn rl-btn-excerpt" on:click={onAddExcerpt} data-tip="从外部阅读器复制文本，生成摘抄块">添加摘抄</button>
+                    <button class="rl-btn rl-btn-accent" on:click={onAddExcerpt} data-tip="从外部阅读器复制文本，生成摘抄块">添加摘抄</button>
                 {:else if entry.type === 'game'}
-                    <button class="rl-btn rl-btn-excerpt" on:click={onRecordPlaySession} data-tip="日期 + 时长 + 心得，保存到游戏笔记">记录游玩</button>
+                    <button class="rl-btn rl-btn-accent" on:click={onRecordPlaySession} data-tip="日期 + 时长 + 心得，保存到游戏笔记">记录游玩</button>
                 {/if}
             {/if}
         </div>
@@ -1947,10 +1954,12 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-search-input:focus { outline: none; }
     .rl-input { font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border); background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); padding: 5px 9px; width: 100%; }
     .rl-input:focus { outline: none; border-color: var(--interactive-accent); }
-    .rl-btn-danger { color: var(--text-error); border-color: var(--text-error); background: transparent; font-weight: 600; }
-    .rl-btn-danger:hover { background: var(--text-error); color: #fff; }
-    /* 恒实底 accent（2026-09-12 用户裁定：不用 hover 才变化，始终显示 hover 后的实底态）；记录游玩共用此类同款 */
-    .rl-btn-excerpt { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; margin-left: 8px; }
+    .rl-btn-danger { color: var(--rl-danger, var(--text-error)); border-color: var(--rl-danger, var(--text-error)); background: var(--background-primary); font-weight: 600; }
+    .rl-btn-danger:hover { background: var(--rl-danger-strong, var(--text-error)); border-color: var(--rl-danger-strong, var(--text-error)); color: #fff; }
+    /* 次级强调按钮（重新拉取 / 添加摘抄 / 记录游玩）：与「删除条目」同款描边语义，颜色走主题色 ——
+       中性不透明底 + accent 字 + accent 描边；hover 反色（accent 底 + on-accent 字，与危险按钮「红底白字」同构）。
+       2026-09-12 的「恒实底 accent」裁定 → 09-15 先降为中性 → 同日再定为「accent 描边」；三处按钮统一用 .rl-btn-accent。 */
+    .rl-btn-accent { background: var(--background-primary); border-color: var(--interactive-accent); color: var(--interactive-accent); font-weight: 600; }
     .rl-hint { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
     .rl-err { font-size: 11px; color: var(--text-error); margin-top: 6px; }
     /* ── 搜索进度条（朴素版：无流光/脉冲/淡出等网页式动效，符合 Obsidian 插件观感） ── */
@@ -2087,7 +2096,7 @@ export let initialBookKind: BookKind | undefined = undefined;
     /* 总结摘要：小标题右侧 ✨ 小图标（尺寸对齐「从文件夹检索剧集」：20×18 命中区 / 13px 图标） */
     .rl-ai-btn {
         flex: none; display: inline-flex; align-items: center; justify-content: center;
-        width: 20px; height: 18px; padding: 0; margin-left: 4px; border: none; background: transparent;
+        width: 20px; height: 18px; padding: 0; border: none; background: transparent;
         color: var(--text-muted); border-radius: 4px; cursor: pointer;
         transition: color .12s ease, background .12s ease;
     }
@@ -2142,10 +2151,10 @@ export let initialBookKind: BookKind | undefined = undefined;
     /* 观看链接区块：1..N 集按钮网格，左键播放/打开、右键编辑；本地绿点 / 网络蓝点双角标 */
     .rl-ep-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
     /* 「观看链接」标题行：label + 批量检索小图标（动画/电视剧）并排；行内覆盖 label 底边距防图标下沉 */
-    .rl-lbl-row { display: flex; align-items: center; gap: 2px; }
+    .rl-lbl-row { display: flex; align-items: center; gap: 4px; }
     .rl-lbl-row .rl-lbl { margin-bottom: 0; }
     .rl-ep-batch-btn {
-        display: inline-flex; align-items: center; justify-content: center;
+        flex: none; display: inline-flex; align-items: center; justify-content: center;
         width: 20px; height: 18px; padding: 0;
         border: none; background: transparent; color: var(--text-muted);
         border-radius: 4px; cursor: pointer;
@@ -2183,12 +2192,64 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-ep-edit-ops { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
     .rl-notes { resize: vertical; }
     /* 简介类 textarea auto-grow：高度由内容驱动（scrollHeight 计算），隐藏滚动条防高度抖动；min-height 为空/少文字基线（约 2 行） */
-    .rl-summary { overflow: hidden; min-height: 2.4em; }
+    .rl-summary { overflow: hidden; min-height: 2.4em; resize: vertical; }
     .rl-fft {
         display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; align-items: center;
         flex: none; /* sticky 悬浮钉底；2026-09-12 用户裁定：不铺整行背景条遮挡内容——只按钮本身悬浮，滚动内容从按钮间穿过 */
         position: sticky; bottom: 0; z-index: 10;
-        padding: 8px 0 2px;
+        padding: 8px 0;
     }
     .rl-fft-right { display: flex; gap: 8px; align-items: center; }
+    .rl-fft-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    /* 底部按钮统一体系（2026-09-15）：**背景必须不透明** + 同高 / 同圆角 / 同内边距 + hover·按下·禁用齐全 + 间距一律 8px。
+       不透明是硬要求：本栏 sticky 钉底，且按 2026-09-12 用户裁定**不铺整行背景条**（滚动内容会从按钮缝隙穿过），
+       所以按钮自身一旦透明（原 .rl-btn-danger 的 background: transparent）就会直接透出下层滚动内容，
+       深色模式下文字与边界尤其看不清。间距统一来源 = 两个组的 gap: 8px，按钮自身不再带 margin。 */
+    .rl-fft :global(button.rl-btn) {
+        font-family: inherit; font-size: var(--font-ui-small); font-weight: 500;
+        line-height: 20px; min-height: 30px; padding: 4px 12px;
+        border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px);
+        background: var(--background-primary); color: var(--text-normal);
+        cursor: pointer;
+        transition: background .12s ease, color .12s ease, border-color .12s ease, transform .1s ease;
+    }
+    .rl-fft :global(button.rl-btn:hover:not(:disabled)) {
+        background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent);
+    }
+    .rl-fft :global(button.rl-btn:active:not(:disabled)) { transform: scale(.97); }
+    .rl-fft :global(button.rl-btn:disabled) { opacity: .5; cursor: not-allowed; }
+    /* 危险（删除条目）：不透明底 + 语义红字红边（--rl-danger 两主题各达标），hover 转实心红 + 白字 */
+    .rl-fft :global(button.rl-btn-danger) {
+        color: var(--rl-danger, var(--text-error));
+        border-color: var(--rl-danger, var(--text-error));
+        background: var(--background-primary);
+        font-weight: 600;
+    }
+    /* 次级强调（重新拉取 / 添加摘抄 / 记录游玩）：删除条目同款的描边，主题色版本 */
+    .rl-fft :global(button.rl-btn-accent) {
+        color: var(--interactive-accent);
+        border-color: var(--interactive-accent);
+        background: var(--background-primary);
+        font-weight: 600;
+    }
+    .rl-fft :global(button.rl-btn-accent:hover:not(:disabled)) {
+        background: var(--interactive-accent); border-color: var(--interactive-accent);
+        color: var(--text-on-accent);
+    }
+    .rl-fft :global(button.rl-btn-danger:hover:not(:disabled)) {
+        background: var(--rl-danger-strong, var(--text-error));
+        border-color: var(--rl-danger-strong, var(--text-error));
+        color: #fff;
+    }
+    /* 实底主按钮（更新笔记 / 保存并生成笔记）：不参与 hover 反色（UI-GUIDE §3），改用极轻亮度变化给出反馈。
+       ⚠️ 2026-09-12 曾裁定「添加摘抄 / 记录游玩」同样恒实底；2026-09-15 用户改裁为**次级中性按钮**
+       （与主按钮同色会分不清主次），故这两个类不再在此列，回落到上方 button.rl-btn 的次级中性基准。 */
+    .rl-fft :global(button.rl-btn-primary) {
+        background: var(--interactive-accent); border-color: var(--interactive-accent);
+        color: var(--text-on-accent); font-weight: 600;
+    }
+    .rl-fft :global(button.rl-btn-primary:hover:not(:disabled)) {
+        background: var(--interactive-accent); border-color: var(--interactive-accent);
+        color: var(--text-on-accent); filter: brightness(1.07);
+    }
 </style>

@@ -1,5 +1,7 @@
 // TXT 书籍解析（纯逻辑，可单测）：文本 → 章节拆分 + 章节内段落
 
+import { countReadingUnits, makeWordSegmenter, type WordSegmenter } from 'pure/readingUnits';
+
 export interface TxtChapter {
     /** 章节标题（无标题章返回「第 N 章」占位） */
     title: string;
@@ -23,6 +25,43 @@ export interface TxtBook {
     chapters: TxtChapter[];
 }
 
+/** 单章软上限（字）：超过则按段落边界自动切节。
+ *
+ * 为什么需要：中文 TXT 若编码识别失败（乱码）或本身没有「第X章」标记，`parseTxtBook` 会退化成
+ * 「整书单章」—— 渲染层是一次性渲染整章的，于是一本 300 万字的书会生成几十万个 DOM 节点，
+ * 主线程直接卡死（2026-09-17 用户实测）。切节后每章恒定可控，这一档风险被结构性消除。 */
+export const SPLIT_CHARS_PER_CHAPTER = 30000;
+
+/** 按字数把超大章切成多节（段落边界，不切断段落）；超出一节时标题加「 · N」后缀 */
+function splitOversizeChapters(paragraphs: string[], raw: TxtChapter[]): TxtChapter[] {
+    // 先算每章各节的起始段落索引
+    const cutsPerChapter: number[][] = [];
+    for (let i = 0; i < raw.length; i++) {
+        const start = raw[i].startPara;
+        const end = i + 1 < raw.length ? raw[i + 1].startPara : paragraphs.length;
+        const cuts: number[] = [start];
+        let acc = 0;
+        for (let p = start; p < end; p++) {
+            acc += paragraphs[p]?.length ?? 0;
+            if (acc >= SPLIT_CHARS_PER_CHAPTER && p + 1 < end) {
+                cuts.push(p + 1);
+                acc = 0;
+            }
+        }
+        cutsPerChapter.push(cuts);
+    }
+    // 再统一命名：切成多节才加后缀，保持普通书标题原样
+    const out: TxtChapter[] = [];
+    for (let i = 0; i < raw.length; i++) {
+        const cuts = cutsPerChapter[i];
+        const multi = cuts.length > 1;
+        cuts.forEach((startPara, k) => {
+            out.push({ title: multi ? `${raw[i].title} · ${k + 1}` : raw[i].title, startPara });
+        });
+    }
+    return out;
+}
+
 export function parseTxtBook(text: string): TxtBook {
     const paragraphs: string[] = [];
     const chapters: TxtChapter[] = [];
@@ -36,7 +75,7 @@ export function parseTxtBook(text: string): TxtBook {
     }
     // 无章节标题：整书单章
     if (chapters.length === 0) chapters.push({ title: '全文', startPara: 0 });
-    return { paragraphs, chapters };
+    return { paragraphs, chapters: splitOversizeChapters(paragraphs, chapters) };
 }
 
 /** 取章节段落范围（闭区间），chapterIndex 越界返回空数组 */
@@ -45,4 +84,26 @@ export function chapterParagraphs(book: TxtBook, chapterIndex: number): string[]
     const start = book.chapters[chapterIndex].startPara;
     const end = chapterIndex + 1 < book.chapters.length ? book.chapters[chapterIndex + 1].startPara : book.paragraphs.length;
     return book.paragraphs.slice(start, end);
+}
+
+/**
+ * 每章字数（#338 目录显示 / #345 换中英口径）：第 i 章 = 段落 `[startPara[i], startPara[i+1])` 的
+ * **阅读量单位**累计（中文按字 + 英文按词，见 `pure/readingUnits`），末章到段落结尾。
+ * 越界下标按 0 处理；无章节 → 空数组。
+ * ⚠️ 与阅读进度无关：TXT 的进度按段落比例算，不经过本函数。
+ */
+export function txtChapterUnits(
+    paragraphs: string[],
+    chapters: { startPara: number; title?: string }[],
+    seg: WordSegmenter | null = makeWordSegmenter(),
+): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < chapters.length; i++) {
+        const from = Math.max(0, chapters[i].startPara);
+        const to = i + 1 < chapters.length ? chapters[i + 1].startPara : paragraphs.length;
+        let n = 0;
+        for (let p = from; p < Math.min(to, paragraphs.length); p++) n += countReadingUnits(paragraphs[p] ?? '', seg);
+        out.push(n);
+    }
+    return out;
 }

@@ -1,8 +1,9 @@
 // ReelLudic 插件入口：命令/视图/设置注册 + 服务编排
-import { Plugin, WorkspaceLeaf, requestUrl, TFile, TFolder, normalizePath, Notice, Platform, moment, type FileSystemAdapter } from 'obsidian';
+import { Plugin, WorkspaceLeaf, MarkdownView, requestUrl, TFile, TFolder, normalizePath, parseLinktext, Notice, Platform, moment, type FileSystemAdapter } from 'obsidian';
 import { DEFAULT_SETTINGS, ReelLudicSettingTab } from 'Settings';
 import type { ReelLudicSettings, SourceTestResult } from 'Settings';
 import { measure, withTimeout, TimedError, TIMEOUT_MS, retry } from 'pure/timing';
+import { CLOUD_VOICE_DEFAULT, buildSpeechBody, classifySpeechError, speechEndpointUrl } from 'pure/ttsCloud';
 import { createSearchCache } from 'pure/searchCache';
 import { normalizeUiTheme, THEME_CLASS } from 'pure/themeTokens';
 import { checkAnimeUpdate, isBlockedPage, type UpdateCheckResult } from 'pure/updateCheck';
@@ -37,26 +38,64 @@ import { LinkPickerModal } from 'modals/LinkPickerModal';
 import { EpisodePickerModal } from 'modals/EpisodePickerModal';
 import { QuickAssociateModal, type QuickAssociateResult, type QuickAssocPickKind } from 'modals/QuickAssociateModal';
 import { ExcerptModal } from 'modals/ExcerptModal';
-import { ReaderExcerptModal } from 'modals/ReaderExcerptModal';
+import { AssetCleanupModal } from 'modals/AssetCleanupModal';
+import { DeleteEntryModal } from 'modals/DeleteEntryModal';
 import { GameSessionModal } from 'modals/GameSessionModal';
 import { VaultFileSuggest } from 'modals/VaultFileSuggest';
-import { TxtReaderModal, EpubReaderModal } from 'modals/ReaderModal';
-import { PdfReaderModal, probePdfNumPages } from 'modals/PdfReaderModal';
-import { countExcerpts, parseExcerptBlocks, type ParsedExcerpt } from 'pure/excerpt';
-import { parseHighlightBlocks, type ReaderHighlight } from 'pure/highlight';
+import { EpubReaderView, PdfReaderView, TxtReaderView, EPUB_READER_VIEW_TYPE, PDF_READER_VIEW_TYPE, TXT_READER_VIEW_TYPE } from 'views/ReaderViews';
+import { probePdfNumPages } from 'modals/PdfReaderModal';
+// #351 阅读排版载荷（两个阅读器与宿主共用一份形状；字体/字重/字距的归一化也从这里取）
+import { normalizeFontFamily, normalizeFontWeight, normalizeLetterSpacing, type ReaderTypoPayload } from 'pure/readerTypography';
+import { countExcerpts, generateBlockId, parseExcerptBlocks, type ParsedExcerpt } from 'pure/excerpt';
+import {
+    parseHighlightBlocks,
+    normalizeHlStyle,
+    normalizeHlColor,
+    findSameExcerpt,
+    type HlStyle,
+    type HlColor,
+    type ReaderHighlight,
+} from 'pure/highlight';
 import { normalizeProgress, readingProgressFilePath, matchLegacyProgressFile, progressFileName, bookmarksFileName } from 'pure/readingProgress';
 import { pageFromPercent, reconcileBookProgress, type BookFileInfo, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
-import { bookmarksFilePath, parseBookmarks, serializeBookmarks, type ReaderBookmark } from 'pure/bookmark';
-import { buildTranslateBody, buildTranslatePingBody, parseTranslateResponse, translateChatUrl, normalizeProvider, type TranslateProvider } from 'pure/translate';
+import { bookmarksFilePath, parseBookmarks, type ReaderBookmark } from 'pure/bookmark';
+import {
+    mergeLegacyStore,
+    normalizeStore,
+    readerStoreDir,
+    readerStoreFilePath,
+    serializeStore,
+    withBookmarks,
+    withHighlights,
+    withProgress,
+    type ReaderStore,
+} from 'pure/readerStore';
+import { buildTranslateBody, buildTranslatePingBody, parseTranslateResponse, translateChatUrl, normalizeProvider, normalizeAiChoice, AI_PROVIDER_OFF, type AiProviderChoice, type TranslateProvider, type TranslateRequestBody } from 'pure/translate';
+import { buildSearchBody, buildSearchQuestionBody } from 'pure/readerSearch';
 import { parseTxtBook } from 'pure/txtParse';
-import { containerRootfile, parseOpf, parseTocNav, extractChapterLabel } from 'pure/epubParse';
-import { sanitizePosterTitle, orphanCoverFiles } from 'pure/posterFile';
+import { decodeTxtBytes } from 'pure/txtEncoding';
+import { containerRootfile, parseOpf, parseTocNav, extractChapterLabel, isTocAmbiguous, rebuildTocFromSpine } from 'pure/epubParse';
+import { parseReaderDeepLink, readerDeepLinkFromParams } from 'pure/readerLink';
+import {
+    buildShotBlock,
+    buildTimeLink,
+    matchLineLink,
+    parseTimeLink,
+    shotFileName,
+    videoDeepLinkFromParams,
+    type VideoTimeTarget,
+} from 'pure/videoLink';
+import { type VideoMark } from 'pure/videoMarks';
+import { sanitizePosterTitle } from 'pure/posterFile';
+// #349 附件清理：孤儿资产判定（封面 + 阅读存档）收敛在纯模块里；#350 起同一模块还产「删除条目的资产计划」
+import { buildOrphanAssets, entryAssetPlan, type OrphanAsset } from 'pure/orphanAssets';
 import { imageSizeFromBytes } from 'pure/imageSize';
 import { toFileUrl } from 'pure/mediaFileUrl';
 import { isEmbeddableVideoPath, VIDEO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
+import { dirOfPath, fileNameOfPath, pickSubtitleCandidates, srtToVtt, type SubtitleCandidate } from 'pure/subtitle';
 import { scanEpisodeNumbers } from 'pure/episodeScan';
 import { initGlobalTooltip } from 'services/globalTooltip';
-import { VideoPlayerModal, type EmbedVideoItem } from 'modals/VideoPlayerModal';
+import { VideoPlayerView, VIDEO_PLAYER_VIEW_TYPE, type EmbedVideoItem, type VideoPlayerOptions } from 'views/VideoPlayerView';
 import { mergeBySource, sortByRelevance } from 'pure/searchMerge';
 import { PROVIDER_META, resolveSourceChain, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
 import type { BookKind } from 'data/types';
@@ -115,6 +154,18 @@ interface GroupSearchRun<T> {
     douban: DoubanRun<T> | undefined;
 }
 
+/** 阅读数据存档的内存态（进度 + 书签 + 高亮三合一；落盘由 flush 合并，见 readerStores 注释） */
+interface ReaderStoreMem {
+    store: ReaderStore;
+    /** 条目标题（文件名基准；条目改名后按新名落盘，旧文件成孤儿） */
+    title: string;
+    /** 合并窗口定时器（非 null = 已有待写，滚动期间不重复起表） */
+    timer: number | null;
+}
+
+/** 进度落盘的合并窗口（ms）：滚动期间最多 1 写/秒（KOReader 式内存态 + 合并落盘，压住写放大） */
+const READER_STORE_FLUSH_MS = 1000;
+
 export default class ReelLudicPlugin extends Plugin {
     settings: ReelLudicSettings = DEFAULT_SETTINGS;
     service!: EntryService;
@@ -135,6 +186,8 @@ export default class ReelLudicPlugin extends Plugin {
     private sourceChainBaselineJson = '';
     /** 系统文件/目录选择器上次选中目录（会话级记忆）：逐集「浏览…」/批量检索接续上次位置（defaultPath） */
     private lastSystemDir = '';
+    /** 笔记内块锚点链接 → 该书阅读器 leaf（M1 双向溯源：同一本书不重复开标签，D-4）；用前按 getLeavesOfType 校验存活 */
+    private readonly readerLeaves = new Map<string, WorkspaceLeaf>();
     /**
      * 辅助源 runner 注册表（T3）：新源接入 = 在 rebuildClients 里注册一行 runner，不再改搜索函数。
      * 链中含但未注册 runner 的源在搜索时静默跳过（aux=absent），保证「注册表/默认链先行、客户端分批落地」的中间态不回归。
@@ -165,6 +218,9 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     async onload(): Promise<void> {
+        // 构建标识（#334）：每次加载打一行 —— 用来判断「磁盘上这份构建到底有没有被 Obsidian 读进去」。
+        // 值 = 打包时刻（esbuild `define` 注入），与 `main.js` 的修改时间对齐；**不参与任何逻辑**。
+        console.log(`[ReelLudic] build ${__REEL_BUILD__}`);
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
         // 界面主题全面 modern（1.0.3）：设置页已删除切换入口，磁盘残留 native 的老用户在此强制迁移
         // （与下方 colorTheme='mono' 同构的「下线项兜底」，saveSettings 会把 'modern' 写回磁盘自愈）。
@@ -189,6 +245,36 @@ export default class ReelLudicPlugin extends Plugin {
         this.applyUiTheme();
 
         this.registerView(HOME_VIEW_TYPE, (leaf) => new HomeView(leaf, this));
+        this.registerView(VIDEO_PLAYER_VIEW_TYPE, (leaf) => new VideoPlayerView(leaf));
+        // 阅读器三件（TXT / EPUB / PDF）：工作区新标签页打开（Modal 宿主于本批整体撤除）
+        this.registerView(TXT_READER_VIEW_TYPE, (leaf) => new TxtReaderView(leaf));
+        this.registerView(EPUB_READER_VIEW_TYPE, (leaf) => new EpubReaderView(leaf));
+        this.registerView(PDF_READER_VIEW_TYPE, (leaf) => new PdfReaderView(leaf));
+        // 笔记内摘录/高亮块头行链接 → 打开阅读器并定位（M1 双向溯源）。
+        // 捕获阶段挂 document：既抢在 Obsidian「打开源文件」之前，也能 stopPropagation 彻底拦下那次导航。
+        this.registerDomEvent(document, 'click', this.onWorkspaceAnchorClick, true);
+        // 「回到原文」深链（`[↩](obsidian://reelludic?…)`）的**兜底通道**：笔记内点击由上面的捕获阶段拦截处理，
+        // 万一被别的插件抢先 / 或从浏览器等外部唤起，Obsidian 会把 `obsidian://reelludic?…` 路由到这里。
+        // 🔴 插件**无法**注册 OS 级自定义协议（`app.setAsDefaultProtocolClient` 是 Electron 主进程能力，
+        //    插件只跑在渲染进程）—— `obsidian://` 就是官方给的等效机制（生态里 Bible Tools / Slurp 同款）。
+        // 🔴 2026-09-19 用户第三次报障的**真根因就在这里**：本处理器原先「把 params 拼回 URL 再交给
+        //    `parseReaderDeepLink` / `parseTimeLink`」，而 Obsidian 的 URI 语义是 `obsidian://<action>?<params>`
+        //    —— **host 就是 action**，查询里写的 `action=video` 会被 host 名覆盖掉。用户日志实证：
+        //    `Received URL action {action: 'reelludic', entry: 'e_…', ep: '0', t: '430'}`
+        //    → 拼回的 URL action 已不是 `video`（也不是 `jump`）→ **两个解析器都 null → 静默什么都不做**。
+        //    （日志里能看到 URL 被收到、界面上却毫无反应，正是这个形态。）
+        //    ⇒ 现在**按参数形状分派**：`book`+`block` = 阅读器跳转；`entry` = 视频时间戳。**完全不看 action**。
+        //    顺带修好了用户笔记里已经写好的旧链接（它们的 `action=jump` / `action=video` 同样是死的）。
+        this.registerObsidianProtocolHandler('reelludic', (params) => {
+            const p = (params ?? {}) as Record<string, unknown>;
+            const reader = readerDeepLinkFromParams(p);
+            if (reader) {
+                void this.openDeepLinkTarget(reader);
+                return;
+            }
+            const video = videoDeepLinkFromParams(p);
+            if (video) void this.openVideoAt(video);
+        });
         // 全局统一 hover 提示（data-tip 自绘气泡，UI-GUIDE 规范；卸载自动清理）
         this.register(initGlobalTooltip().destroy);
         // 书籍阅读器视图（新 Tab 打开，可拖出独立窗口）
@@ -208,7 +294,28 @@ export default class ReelLudicPlugin extends Plugin {
             name: '打开媒体库',
             callback: () => void this.activateHome('media'),
         });
+        // #326：时间戳 / 截图也挂命令面板（用户裁定 D-6：按钮 + 快捷键 + 命令三入口）。
+        // 只在活动页是播放器时可用（checkCallback）—— 没有播放器就没有「当前帧」可言。
         this.addCommand({
+            id: 'player-insert-timestamp',
+            name: '播放器：插入当前时间戳',
+            checkCallback: (checking) => {
+                const view = this.app.workspace.getActiveViewOfType(VideoPlayerView);
+                if (!view) return false;
+                if (!checking) void view.insertStamp();
+                return true;
+            },
+        });
+        this.addCommand({
+            id: 'player-capture-frame',
+            name: '播放器：截取当前帧并写入笔记',
+            checkCallback: (checking) => {
+                const view = this.app.workspace.getActiveViewOfType(VideoPlayerView);
+                if (!view) return false;
+                if (!checking) void view.takeShot();
+                return true;
+            },
+        });        this.addCommand({
             id: 'open-tracking-board',
             name: '打开计划表',
             callback: () => void this.activateHome('tracking'),
@@ -222,6 +329,12 @@ export default class ReelLudicPlugin extends Plugin {
             id: 'add-excerpt',
             name: '添加摘抄（书籍）',
             callback: () => this.openExcerptModal(),
+        });
+        // #349 附件清理：条目删除后遗留的封面 / 阅读存档此前只能去设置页找，补一个命令面板入口
+        this.addCommand({
+            id: 'cleanup-orphan-assets',
+            name: '附件清理：清理未引用的封面 / 阅读存档',
+            callback: () => void this.openAssetCleanup(),
         });
 
         this.addSettingTab(new ReelLudicSettingTab(this.app, this));
@@ -237,6 +350,15 @@ export default class ReelLudicPlugin extends Plugin {
             window.clearTimeout(this.refreshTimer);
             this.refreshTimer = null;
         }
+        // 阅读数据存档：把合并窗口里还没落盘的进度写掉 —— 否则禁用插件/关应用会丢掉最后一次滚动
+        const pending = [...this.readerStores.keys()];
+        for (const mem of this.readerStores.values()) {
+            if (mem.timer !== null) {
+                window.clearTimeout(mem.timer);
+                mem.timer = null;
+            }
+        }
+        await Promise.all(pending.map((id) => this.flushReaderStore(id)));
     }
 
     /**
@@ -406,7 +528,13 @@ export default class ReelLudicPlugin extends Plugin {
     /** 按设置的数据目录重建服务（libraryDir 变更立即生效；空值回退 ReelLudic） */
     rebuildService(): void {
         const dir = this.libDir;
-        this.service = new EntryService(createVaultIO(this.app), `${dir}/catalog.json`, `${dir}/${DIR_NOTES}`);
+        // 笔记表格开关随服务重建一并注入（saveSettings 会调本方法 → 改开关即时生效）
+        this.service = new EntryService(
+            createVaultIO(this.app),
+            `${dir}/catalog.json`,
+            `${dir}/${DIR_NOTES}`,
+            this.settings.noteTable !== false,
+        );
     }
 
     /** 重建元数据客户端（TMDB / Bangumi / Douban，凭据变更立即生效） */
@@ -1205,9 +1333,21 @@ export default class ReelLudicPlugin extends Plugin {
 
     /** 添加摘抄：写入书目笔记摘抄区，随后立即刷新视图（摘抄数徽标即时更新） */
     async addExcerpt(bookId: string, excerpt: ParsedExcerpt): Promise<{ count: number }> {
-        const r = await this.service.addExcerpt(bookId, excerpt);
+        const e = await this.service.get(bookId);
+        const r = await this.service.addExcerpt(bookId, excerpt, { refLink: this.excerptRefLink(e) });
         await this.refreshViews();
         return r;
+    }
+
+    /** 摘抄头行的源文件 wikilink 目标：库内文件取最短链接文本（metadataCache）；库外/无文件 → undefined（头行只写标签、块尾补 ^id） */
+    excerptRefLink(e: MediaEntry | undefined): string | undefined {
+        const rel = e?.bookFile;
+        if (!rel) return undefined;
+        try {
+            const f = this.app.vault.getAbstractFileByPath(normalizePath(rel));
+            if (f instanceof TFile) return this.app.metadataCache.fileToLinktext(f, e?.notePath ?? '');
+        } catch { /* 链接文本解析失败不阻断写入 */ }
+        return undefined;
     }
 
     /** 摘抄计数（P1 性能缓存）：优先读 catalog.excerptCount（addExcerpt 时维护，零文件读）；
@@ -1300,24 +1440,81 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
-    /** 删除条目：Modal 确认（替代 window.confirm，避免原生对话框阻塞/焦点竞争）→ 删条目+连带删笔记 → 刷新视图 */
+    /**
+     * 删除条目（#350 · 方案文档 M4）：**清单式确认 → 逐项清理 → 删条目记录 → 刷新视图**。
+     * 原实现是「一句轻量警告 + 删条目 + 连带删笔记」，封面 / 阅读存档会被遗弃（用户报障的盲区）。
+     *
+     * 🔴 三条硬口径：
+     *  ⑴ **确认职责在本插件**：`fileManager.promptForDeletion` 在用户关掉 Obsidian「删除前确认」时
+     *     **不弹窗、直接删**（asar 反查实证，见方案 D-9）—— 所以绝不依赖它来确认。
+     *  ⑵ **笔记交给 Obsidian 原生弹窗删**：1.12 起它自带「一并删除附件」，能顺带处理**笔记里链接过的**文件
+     *     （封面与播放器截图都嵌在笔记里）；用户在官方弹窗上取消 → **整体中止**（⛔ 不留半个删除）。
+     *  ⑶ 其余勾选项（封面 / 阅读存档 / 书签文件 / 库内媒体）逐个走 **`trashFile`**（进回收站，可还原）。
+     */
     async deleteEntry(id: string): Promise<void> {
         const e = await this.service.get(id);
         if (!e) return;
-        const ok = await new ConfirmModal(this.app, `确定删除「${e.title}」？已生成的笔记文件将一并删除。`).open();
-        if (!ok) return;
-        await this.service.removeWithNote(id);
+        const assets = entryAssetPlan({
+            entry: e,
+            libraryDir: this.settings.libraryDir || 'ReelLudic',
+            exists: (p) => this.app.vault.getAbstractFileByPath(normalizePath(p)) instanceof TFile,
+        });
+        const picked = await new DeleteEntryModal(this.app, `删除条目「${e.title}」`, assets).open();
+        if (!picked) return; // 取消 / 直接关闭 → 什么都不做
+        // ① 笔记：先交官方弹窗（唯一能顺带处理「笔记里链接过的附件」的通道）
+        const note = picked.find((a) => a.kind === 'note');
+        if (note) {
+            const f = this.app.vault.getAbstractFileByPath(normalizePath(note.path));
+            if (f instanceof TFile && (await this.app.fileManager.promptForDeletion(f)) === false) return;
+        }
+        // ② 其余勾选项：逐个进回收站（单条失败不阻断其余）
+        for (const a of picked) {
+            if (a.kind === 'note' || !a.deletable) continue;
+            const f = this.app.vault.getAbstractFileByPath(normalizePath(a.path));
+            if (!(f instanceof TFile)) continue;
+            try {
+                await this.app.fileManager.trashFile(f);
+            } catch {
+                // 文件可能已被外部移除：不阻断
+            }
+        }
+        // ③ 条目记录（⛔ 不用 removeWithNote —— 笔记已在上面处理过，避免重复删同一个文件）
+        await this.service.remove(id);
         await this.refreshViews();
     }
 
-    /** 批量删除（列表多选）：一次 Modal 确认后逐条删除，失败单条跳过不阻断 */
+    /**
+     * 批量删除（列表多选，）：一次确认后逐条删除，失败单条跳过不阻断。
+     * ⚠️ 批量**不做逐项清单**（方案文档 D-3：会弹出 N 次）⇒ 直接清掉**安全项**（笔记 / 封面 / 阅读存档 / 书签文件），
+     *    ⛔ 媒体文件永不默认删（那是用户自己的资产）。删除同样进回收站。
+     */
     async deleteEntries(ids: string[]): Promise<void> {
         if (ids.length === 0) return;
-        const ok = await new ConfirmModal(this.app, `确定删除选中的 ${ids.length} 个条目？已生成的笔记文件将一并删除。`).open();
+        const ok = await new ConfirmModal(
+            this.app,
+            `确定删除选中的 ${ids.length} 个条目？笔记、封面与阅读存档将一并清理（进回收站）；媒体文件不会被动。`,
+        ).open();
         if (!ok) return;
+        const lib = this.settings.libraryDir || 'ReelLudic';
         for (const id of ids) {
             try {
+                const e = await this.service.get(id);
+                if (!e) {
+                    await this.service.remove(id);
+                    continue;
+                }
+                // 先算计划（笔记还在时能查到），再删——否则计划里的路径已经不存在
+                const plan = entryAssetPlan({
+                    entry: e,
+                    libraryDir: lib,
+                    exists: (p) => this.app.vault.getAbstractFileByPath(normalizePath(p)) instanceof TFile,
+                }).filter((a) => a.risk === 'safe');
                 await this.service.removeWithNote(id);
+                for (const a of plan) {
+                    if (a.kind === 'note' || !a.deletable) continue; // 笔记已由 removeWithNote 处理
+                    const f = this.app.vault.getAbstractFileByPath(normalizePath(a.path));
+                    if (f instanceof TFile) await this.app.fileManager.trashFile(f);
+                }
             } catch {
                 // 单条失败不阻断其余
             }
@@ -1351,7 +1548,7 @@ export default class ReelLudicPlugin extends Plugin {
             const p = eps[0];
             const u = urls[0];
             if (p) {
-                this.openEpisodeLocal(entry, 0);
+                void this.openEpisodeLocal(entry, 0);
                 return;
             }
             if (u) {
@@ -1365,11 +1562,11 @@ export default class ReelLudicPlugin extends Plugin {
             const files: (string | undefined)[] = Array.from({ length: n }, (_, i) => eps[i]);
             const net: (string | undefined)[] = Array.from({ length: n }, (_, i) => urls[i]);
             const titles: (string | undefined)[] = Array.from({ length: n }, (_, i) => entry.episodeTitles?.[i]);
-            const idx = await new EpisodePickerModal(this.app, entry.title, files, net, titles).open();
+            const idx = await new EpisodePickerModal(this.app, entry.title, files, net, titles, entry.type === 'movie').open();
             if (idx !== null) {
                 const p = entry.episodeFiles?.[idx];
                 const u = entry.episodeUrls?.[idx];
-                if (p) this.openEpisodeLocal(entry, idx);
+                if (p) void this.openEpisodeLocal(entry, idx);
                 else if (u) this.openExternalUrl(u);
             }
             return;
@@ -1546,12 +1743,14 @@ export default class ReelLudicPlugin extends Plugin {
     /** 打开某剧集本地视频（海报墙/列表「观看」选集后）：受设置「内置播放器打开视频文件」控制——
      *  关闭（默认）→ 系统播放器打开文件；开启时按整剧 episodeFiles 收集可内嵌集建播放列表打开内置播放器
      *  （支持上一集/下一集）；所选集为 Chromium 不可内嵌格式（mkv/h265 等）→ 自动转系统播放器 */
-    private openEpisodeLocal(entry: MediaEntry, startIdx: number): void {
+    private async openEpisodeLocal(entry: MediaEntry, startIdx: number, seekSec?: number, forceInternal = false): Promise<void> {
         const all = entry.episodeFiles ?? [];
         const startPath = all[startIdx];
         if (!startPath) return;
         // 设置「内置播放器打开视频文件」关闭（默认）→ 一律系统播放器打开文件（镜像 internalBookReader 语义）
-        if (!this.settings.internalMediaPlayback) {
+        // 🔴 `forceInternal`（时间戳深链专用）：**必须走内置播放器** —— 只有它能定位到某秒；
+        //    走系统播放器会从头播 = 「点了等于没跳」（2026-09-19 用户实测报障）。
+        if (!forceInternal && !this.settings.internalMediaPlayback) {
             void this.openWithSystemPlayer(startPath);
             return;
         }
@@ -1587,12 +1786,81 @@ export default class ReelLudicPlugin extends Plugin {
             it.isLast = k === items.length - 1;
         });
         const pos = items.findIndex((it) => it.index === startIdx);
-        new VideoPlayerModal(this.app, {
+        // 进度条标记（#333）：从**条目笔记**解析（真源仍是笔记；视图按当前集过滤）。
+        const marks = await this.service.readNoteMarks(entry.id);
+        const opts = {
+            marks,
+            // 卡片里的截图缩略图：库内资源 → `app://` URL（视图不碰 vault）
+            markImageUrl: (image: string) => this.resolveNoteImageUrl(image, entry),
+            // 「在笔记中打开」（#333 D-3）：明确是用户点按钮 ⇒ 聚焦笔记 + 滚到标记那一行
+            onOpenMarkNote: (mark: VideoMark) => this.openNoteAtMark(entry, mark),
+        };
+        void this.openVideoPlayer({
             entryTitle: entry.title,
             items,
             startIndex: pos >= 0 ? pos : 0,
+            single: entry.type === 'movie',
+            // 时间戳链接定位（#326）：等 loadedmetadata 后跳转并播放（与续播位置互斥，见视图内 consumePendingSeek）
+            pendingSeek: seekSec !== undefined && seekSec > 0 ? { index: startIdx, seconds: seekSec } : undefined,
             onExternalFallback: (path) => void this.openWithSystemPlayer(path),
-        }).open();
+            // 记忆播放位置（落 catalog.videoPositions）+ 字幕（同目录自动 + 手动选）
+            entryId: entry.id,
+            initialPositions: entry.videoPositions,
+            onSavePosition: (key, seconds) => void this.persistVideoPosition(entry.id, key, seconds),
+            listSubtitles: (videoPath) => this.listSubtitleCandidates(videoPath),
+            loadSubtitleVtt: (subPath) => this.readSubtitleAsVtt(subPath),
+            pickSubtitleFile: () => this.pickSubtitleFromSystem(),
+            ...opts,
+            // 时间戳插入 + 一键截图（#326）：宿主负责「构造链接 / 落盘 / 写笔记 / 提示」
+            onInsertStamp: (info) => this.insertVideoStamp(entry, info),
+            onCaptureShot: (info) => this.saveVideoShot(entry, info),
+            onOpenNote: async () => { await this.openVideoNote(entry); },
+            // 三个播放器开关（齿轮内可改，改完落 settings）
+            ...this.playerSwitchOptions(),
+        });
+    }
+
+    /** 在内嵌播放器视图（工作区新标签页，Media Extended 式）里打开视频：
+     *  当前活动页已是播放器 → 直接换片复用；否则开新标签页。
+     *  关闭语义 = 关标签页：点视频区黑边 / 「外部打开」/ 解码失败兜底都走视图内部。 */
+    private async openVideoPlayer(opts: VideoPlayerOptions): Promise<void> {
+        const workspace = this.app.workspace;
+        const active = workspace.activeLeaf;
+        let leaf = active && active.view instanceof VideoPlayerView ? active : null;
+        if (!leaf) {
+            leaf = workspace.getLeaf('tab');
+            await leaf.setViewState({ type: VIDEO_PLAYER_VIEW_TYPE, active: true });
+        }
+        const view = leaf.view;
+        if (view instanceof VideoPlayerView) {
+            view.openWith(opts);
+        }
+    }
+
+    /** 播放器三个开关 → 视图选项（两处 openVideoPlayer 共用一份，免得缺省口径各写一遍漂掉）。
+     *  缺省：后台播放关 / 自动切集开（= 历史行为）/ 单集循环关。 */
+    private playerSwitchOptions(): Pick<
+        VideoPlayerOptions,
+        'backgroundPlay' | 'autoNextEpisode' | 'loopSingleEpisode' | 'onToggleSetting'
+    > {
+        return {
+            backgroundPlay: this.settings.playerBgPlay === true,
+            autoNextEpisode: this.settings.playerAutoNext !== false,
+            loopSingleEpisode: this.settings.playerLoopOne === true,
+            onToggleSetting: (key, value) => void this.persistPlayerSetting(key, value),
+        };
+    }
+
+    /** 播放器开关写回 settings（append-only 可选字段；落盘失败静默 —— 本次会话已经生效） */
+    private async persistPlayerSetting(key: 'bgPlay' | 'autoNext' | 'loopOne', value: boolean): Promise<void> {
+        if (key === 'bgPlay') this.settings.playerBgPlay = value;
+        else if (key === 'autoNext') this.settings.playerAutoNext = value;
+        else this.settings.playerLoopOne = value;
+        try {
+            await this.saveSettings();
+        } catch {
+            // 落盘失败不影响本次会话已生效的开关
+        }
     }
 
     /** 打开单个本地视频（编辑表单「集按钮」）：受设置「内置播放器打开视频文件」控制——
@@ -1614,12 +1882,14 @@ export default class ReelLudicPlugin extends Plugin {
             return;
         }
         const item: EmbedVideoItem = { index: 0, url, path, isFirst: true, isLast: true };
-        new VideoPlayerModal(this.app, {
+        void this.openVideoPlayer({
             entryTitle: path.split(/[\\/]/).pop() ?? path,
             items: [item],
             startIndex: 0,
+            single: true,
             onExternalFallback: (p) => void this.openWithSystemPlayer(p),
-        }).open();
+            ...this.playerSwitchOptions(),
+        });
     }
 
     /** 外部系统播放器打开本地文件（桌面 Electron shell.openPath；不可内嵌格式/解码失败兜底共用） */
@@ -1661,6 +1931,77 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
+    /** 播放位置写回（节流由播放器负责）：并入 catalog.videoPositions；0 秒/无变化不写；失败静默 */
+    private async persistVideoPosition(entryId: string, epKey: string, seconds: number): Promise<void> {
+        try {
+            if (!/^\d+$/.test(epKey)) return;
+            const s = Math.max(0, Math.floor(seconds));
+            if (s <= 0) return;
+            const e = await this.service.get(entryId);
+            if (!e) return;
+            const map = { ...(e.videoPositions ?? {}) };
+            if (map[epKey] === s) return;
+            map[epKey] = s;
+            await this.service.update(entryId, { videoPositions: map });
+        } catch {
+            /* 落库失败静默（不影响观看） */
+        }
+    }
+
+    /** 视频所在目录的绝对路径（库内 = vault 根 + 相对路径；库外 = 自身目录）；解析失败返回空串 */
+    private videoAbsDir(videoPath: string): string {
+        try {
+            const rel = this.toVaultRelPath(videoPath);
+            const f = this.app.vault.getAbstractFileByPath(rel);
+            if (f instanceof TFile) {
+                const adapter = this.app.vault.adapter as FileSystemAdapter;
+                const base = typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
+                return base ? dirOfPath(`${base}/${rel}`) : '';
+            }
+            return dirOfPath(videoPath);
+        } catch {
+            return '';
+        }
+    }
+
+    /** 同目录字幕候选（fs 扫描 + pure/subtitle 匹配排序）；非桌面端/失败 → 空数组 */
+    private async listSubtitleCandidates(videoPath: string): Promise<SubtitleCandidate[]> {
+        if (!Platform.isDesktopApp) return [];
+        const dir = this.videoAbsDir(videoPath);
+        if (!dir) return [];
+        try {
+            const fs = require('fs/promises') as typeof import('fs/promises');
+            const names = await fs.readdir(dir);
+            return pickSubtitleCandidates(fileNameOfPath(videoPath), names);
+        } catch {
+            return [];
+        }
+    }
+
+    /** 读取字幕文件并转成 WebVTT（库内走 adapter、库外走 fs）；失败返回 null */
+    private async readSubtitleAsVtt(subtitlePath: string): Promise<string | null> {
+        try {
+            const rel = this.toVaultRelPath(subtitlePath);
+            const f = this.app.vault.getAbstractFileByPath(rel);
+            let text: string | null = null;
+            if (f instanceof TFile) {
+                text = await this.app.vault.adapter.read(rel);
+            } else if (Platform.isDesktopApp) {
+                const fs = require('fs/promises') as typeof import('fs/promises');
+                text = await fs.readFile(subtitlePath, 'utf8');
+            }
+            if (text === null) return null;
+            return srtToVtt(text);
+        } catch {
+            return null;
+        }
+    }
+
+    /** 系统选择器挑字幕（.srt/.vtt）；取消/不可用返回 null */
+    private async pickSubtitleFromSystem(): Promise<string | null> {
+        const picked = await this.pickSystemFile(['srt', 'vtt'], '字幕文件', false);
+        return picked ?? null;
+    }
     /** Obsidian app:// 自定义协议 ID（用 adapter.getResourcePath 推导，会话内缓存一次）。
      *  vault 内资源文件经此协议加载；协议处理器可读库外绝对路径（Chromium 自定义 scheme，流式） */
     private appSchemeId(): string {
@@ -1876,21 +2217,6 @@ export default class ReelLudicPlugin extends Plugin {
         return abs;
     }
 
-    /** 阅读器摘录回写（ReaderView 回调注入）：选中文本 → ReaderExcerptModal 手动确认 → addExcerpt 写回书目笔记；loc = 原书定位（章序:百分比）；
-     *  onSaved 可选：写入成功后由 main 层重读笔记摘抄区并刷新已打开的阅读器书签列表（实时更新） */
-    openReaderExcerpt(entryId: string, quote: string, page: number | undefined, loc?: { chapter: number; pct: number }, onSaved?: () => void | Promise<void>): void {
-        new ReaderExcerptModal(this.app, {
-            entryId,
-            quote,
-            page,
-            loc,
-            onConfirm: async (ex) => {
-                await this.addExcerpt(entryId, ex);
-                await onSaved?.();
-            },
-        }).open();
-    }
-
     /** 删除摘抄（阅读器书签右键）：ConfirmModal 确认 → 从笔记摘抄区移除块；返回是否删除成功（供面板刷新书签列表） */
     async deleteBookExcerpt(entryId: string, blockId: string): Promise<boolean> {
         try {
@@ -1911,30 +2237,48 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
-    /** 一键即黄即记：写笔记「## 高亮」区（service.addHighlight）并返回新块 id；失败 null（不抛，已 Notice 原因）。
-     *  高亮数据真源在笔记；阅读器本地用返回的 id 即时渲染 mark + 追加本地列表项（供后续删除/重渲染）。 */
+    /** 一键即黄即记：写入**阅读数据存档**（高亮真源）并返回新块 id 供阅读器即时 mark；失败 null（不抛，已 Notice 原因）。
+     *  ⚠️ 2026-09-18 前这里写的是笔记「## 高亮」区（连笔记都要顺手造一本）；现在笔记那份只是 JSON 生成的镜像。 */
     private async addBookHighlight(
         entryId: string,
+        title: string,
         quote: string,
         loc: { chapter: number; pct: number },
+        style?: HlStyle,
+        color?: HlColor,
     ): Promise<string | null> {
         try {
-            const r = await this.service.addHighlight(entryId, quote, loc);
-            return r.id;
+            const mem = await this.ensureReaderStore(entryId, title);
+            const id = generateBlockId('hl');
+            const hl: ReaderHighlight = {
+                quote: quote.trim(),
+                id,
+                loc,
+                style: normalizeHlStyle(style),
+                color: normalizeHlColor(color),
+            };
+            mem.store = withHighlights(mem.store, [...mem.store.highlights, hl]);
+            await this.flushReaderStore(entryId);
+            await this.syncHighlightMirror(entryId);
+            return id;
         } catch (err) {
             new Notice(`高亮失败：${err instanceof Error ? err.message : String(err)}`);
             return null;
         }
     }
 
-    /** 删除高亮（阅读器标注右键）：ConfirmModal 确认 → 从笔记「## 高亮」区移除块；返回是否成功 */
+    /** 删除高亮（阅读器标注右键）：ConfirmModal 确认 → 从存档移除 + 同步笔记镜像；返回是否成功 */
     async deleteBookHighlight(entryId: string, blockId: string): Promise<boolean> {
         try {
             const e = await this.service.get(entryId);
             if (!e) return false;
-            const ok = await new ConfirmModal(this.app, `将从《${e.title}》笔记「## 高亮」区移除该高亮（删除后不可恢复）。`, '删除').open();
+            const ok = await new ConfirmModal(this.app, `将从《${e.title}》的高亮中移除该条（删除后不可恢复）。`, '删除').open();
             if (!ok) return false;
-            await this.service.deleteHighlight(entryId, blockId);
+            const n = await this.removeReaderHighlights(entryId, e.title, [blockId], []);
+            if (!n) {
+                new Notice('该高亮不存在或已删除');
+                return false;
+            }
             new Notice(`已删除高亮 · 《${e.title}》`);
             return true;
         } catch (err) {
@@ -1946,13 +2290,20 @@ export default class ReelLudicPlugin extends Plugin {
     /** 读取书籍文件文本（TXT）：vault 相对 → vault.read；库外绝对路径（toVaultRelPath 未转换）→ fs 读取；失败返回 null */
     /** 读取书籍文本（TXT）：vault 相对或库外绝对双路径；供 ReaderView 视图内读取（对齐 weave-reader 视图自行加载） */
     async readBookText(path: string): Promise<string | null> {
+        // 🔴 必须读二进制再嗅探编码：中文网络小说 TXT 多为 GBK/GB18030 且无 BOM，
+        // 直接按 utf8 解会全篇 U+FFFD（乱码）→ 章节正则匹配不到 → 整书退化成单章 → 一次渲染数百万字 DOM 卡死。
+        // 零新依赖：Chromium/Node 的 TextDecoder 原生支持 gb18030。
         const file = this.app.vault.getAbstractFileByPath(path);
-        if (file instanceof TFile) return this.app.vault.read(file);
+        if (file instanceof TFile) {
+            const buf = await this.app.vault.readBinary(file);
+            return decodeTxtBytes(new Uint8Array(buf));
+        }
         if (Platform.isDesktopApp) {
             try {
                 // 注意：Obsidian 渲染进程原生 import() 不可靠，用 require
                 const fs = require('fs/promises') as typeof import('fs/promises');
-                return await fs.readFile(path, 'utf8');
+                const buf = await fs.readFile(path);
+                return decodeTxtBytes(new Uint8Array(buf));
             } catch {
                 return null;
             }
@@ -2011,77 +2362,208 @@ export default class ReelLudicPlugin extends Plugin {
         return null;
     }
 
-    /** 阅读进度读取（{libraryDir}/阅读进度/{书名}-阅读进度-{id}.json）：目录缺失先创建；无进度返回 undefined */
-    private async readReaderProgress(entryId: string, title: string): Promise<{ chapterIndex: number; scrollRatio: number } | undefined> {
+    // ── 阅读数据存档（进度 + 书签 + 高亮，一本一个 JSON 文件）────────────────────────────────
+    // 位置 `{libraryDir}/阅读进度/{书名}-阅读-{id}.json`；schema / 容错 / 路径全在 `pure/readerStore`。
+    // 落盘策略（KOReader 式）：**内存态即真源**，滚动的进度按 1000ms 合并窗口落盘（最多 1 写/秒），
+    // 标注/书签增删、翻章、关闭阅读器、插件卸载一律**立即落盘**（都是明确动作，不能等）。
+    // 旧三源（进度文件 / 书签文件 / 笔记「## 高亮」区）在首次打开该书时**懒迁移**进来；旧文件按 D-5 保留一个版本。
+
+    /** 内存态（按条目 id 缓存，打开阅读器时载入） */
+    private readerStores = new Map<string, ReaderStoreMem>();
+    /** 载入去重（同一本书被并发打开时只读一遍、只迁移一遍） */
+    private readerStoreLoads = new Map<string, Promise<ReaderStoreMem>>();
+
+    /** 取内存态（无则载入 + 懒迁移）；title 每次都刷新（条目可能改过名，文件名基准要跟着走） */
+    private async ensureReaderStore(entryId: string, title: string): Promise<ReaderStoreMem> {
+        const hit = this.readerStores.get(entryId);
+        if (hit) {
+            hit.title = title;
+            return hit;
+        }
+        const inflight = this.readerStoreLoads.get(entryId);
+        if (inflight) return inflight;
+        const p = (async (): Promise<ReaderStoreMem> => {
+            const mem: ReaderStoreMem = { store: await this.loadOrMigrateReaderStore(entryId, title), title, timer: null };
+            this.readerStores.set(entryId, mem);
+            return mem;
+        })();
+        this.readerStoreLoads.set(entryId, p);
         try {
-            const progDir = normalizePath(`${this.settings.libraryDir}/阅读进度`);
-            if (!(this.app.vault.getAbstractFileByPath(progDir) instanceof TFolder)) {
-                try {
-                    await this.app.vault.createFolder(progDir);
-                } catch { /* 已存在/创建失败：写入时再兜底 */ }
-            }
-            const progPath = normalizePath(readingProgressFilePath(entryId, title, this.settings.libraryDir));
-            let text: string | null = null;
-            try {
-                text = await this.app.vault.adapter.read(progPath);
-            } catch {
-                // 旧格式文件名兜底（迁移前 e_xxx.json；正常升级已被自动改名，仅极端遗留触发）
-                try { text = await this.app.vault.adapter.read(normalizePath(`${progDir}/${entryId}.json`)); } catch { text = null; }
-            }
-            if (text === null) return undefined;
-            const n = normalizeProgress(JSON.parse(text));
-            return { chapterIndex: n.chapterIndex, scrollRatio: n.scrollRatio };
-        } catch { /* 无进度 */ }
-        return undefined;
+            return await p;
+        } finally {
+            this.readerStoreLoads.delete(entryId);
+        }
     }
 
-    /** 阅读进度落盘（ReaderView 注入的保存回调）：写入 {libraryDir}/阅读进度/{书名}-阅读进度-{id}.json；失败静默不打断阅读 */
-    async saveReadingProgress(entryId: string, title: string, p: { chapterIndex: number; scrollRatio: number }): Promise<void> {
+    /** 读存档：文件存在且能解析出 version → 归一后返回；否则走懒迁移（升级首开 / 坏档同路：按空档重建）。 */
+    private async loadOrMigrateReaderStore(entryId: string, title: string): Promise<ReaderStore> {
+        const path = normalizePath(readerStoreFilePath(entryId, title, this.settings.libraryDir));
+        let raw: unknown;
         try {
-            const progDir = normalizePath(`${this.settings.libraryDir}/阅读进度`);
-            if (!(this.app.vault.getAbstractFileByPath(progDir) instanceof TFolder)) {
+            raw = JSON.parse(await this.app.vault.adapter.read(path));
+        } catch {
+            raw = undefined;
+        }
+        if (typeof raw === 'object' && raw !== null && typeof (raw as Record<string, unknown>).version === 'number') {
+            return normalizeStore(raw);
+        }
+        // 懒迁移（一次性、幂等、非破坏）：合成新档 → 先写盘，旧文件与笔记原区**一律不删**
+        const store = mergeLegacyStore(await this.readLegacyReaderData(entryId, title));
+        await this.writeReaderStoreFile(entryId, title, store);
+        return store;
+    }
+
+    /** 旧三源读取（**只给懒迁移用**，迁移后不再增量写）：旧进度文件 + 旧书签文件 + 笔记「## 高亮」区。各源失败互不牵连。 */
+    private async readLegacyReaderData(
+        entryId: string,
+        title: string,
+    ): Promise<{ progress?: unknown; bookmarks?: unknown; highlights?: unknown }> {
+        const progDir = normalizePath(readerStoreDir(this.settings.libraryDir));
+        const out: { progress?: unknown; bookmarks?: unknown; highlights?: unknown } = {};
+        // 旧进度（含更早的 e_xxx.json 名兜底）
+        try {
+            let text: string | null = null;
+            try {
+                text = await this.app.vault.adapter.read(normalizePath(readingProgressFilePath(entryId, title, this.settings.libraryDir)));
+            } catch {
                 try {
-                    await this.app.vault.createFolder(progDir);
+                    text = await this.app.vault.adapter.read(normalizePath(`${progDir}/${entryId}.json`));
+                } catch {
+                    text = null;
+                }
+            }
+            if (text !== null) out.progress = JSON.parse(text);
+        } catch { /* 无进度 / 坏 JSON */ }
+        // 旧书签（含更早的 e_xxx.bookmarks.json 名兜底）
+        try {
+            let text: string | null = null;
+            try {
+                text = await this.app.vault.adapter.read(normalizePath(bookmarksFilePath(entryId, title, this.settings.libraryDir)));
+            } catch {
+                try {
+                    text = await this.app.vault.adapter.read(normalizePath(`${progDir}/${entryId}.bookmarks.json`));
+                } catch {
+                    text = null;
+                }
+            }
+            if (text !== null) out.bookmarks = parseBookmarks(text);
+        } catch { /* 无书签 */ }
+        // 旧高亮：笔记「## 高亮」区（解析出来即搬进 JSON；笔记区之后由镜像接管）
+        try {
+            const e = await this.service.get(entryId);
+            if (e?.notePath) {
+                const f = this.app.vault.getAbstractFileByPath(e.notePath);
+                const md = f instanceof TFile ? await this.app.vault.read(f) : await this.app.vault.adapter.read(e.notePath);
+                // 历史块可能没有 `^hl…` 锚点（老数据/手改）→ 补一个：存档里 id 是删除与镜像锚点的唯一钥匙，
+                // 缺了它这条高亮在阅读器里既取消不掉也清不掉（旧实现只能提示「去笔记里手动删」）。
+                out.highlights = parseHighlightBlocks(md).map((h) => (h.id ? h : { ...h, id: generateBlockId('hl') }));
+            }
+        } catch { /* 无笔记 */ }
+        return out;
+    }
+
+    /** 写存档（覆盖写）：目录缺失先建；失败静默（不打断阅读，下次 flush 重试） */
+    private async writeReaderStoreFile(entryId: string, title: string, store: ReaderStore): Promise<void> {
+        try {
+            const dir = normalizePath(readerStoreDir(this.settings.libraryDir));
+            if (!(this.app.vault.getAbstractFileByPath(dir) instanceof TFolder)) {
+                try {
+                    await this.app.vault.createFolder(dir);
                 } catch { /* 已存在/创建失败：写入时再兜底 */ }
             }
-            const progPath = normalizePath(readingProgressFilePath(entryId, title, this.settings.libraryDir));
-            await this.app.vault.adapter.write(progPath, JSON.stringify({ ...p, updatedAt: new Date().toISOString() }));
+            const path = normalizePath(readerStoreFilePath(entryId, title, this.settings.libraryDir));
+            const text = serializeStore(store);
+            const f = this.app.vault.getAbstractFileByPath(path);
+            if (f instanceof TFile) await this.app.vault.modify(f, text);
+            else await this.app.vault.create(path, text);
         } catch { /* 落盘失败静默（不影响阅读） */ }
     }
 
-    /** 阅读器书签读取（{libraryDir}/阅读进度/{书名}-书签-{id}.json）；无文件/损坏 → [] */
-    async readBookmarks(entryId: string, title: string): Promise<ReaderBookmark[]> {
-        try {
-            const path = bookmarksFilePath(entryId, title, this.settings.libraryDir);
-            const dir = path.slice(0, path.lastIndexOf('/'));
-            const dirObj = this.app.vault.getAbstractFileByPath(dir);
-            if (!(dirObj instanceof TFolder)) return [];
-            const f = this.app.vault.getAbstractFileByPath(path);
-            if (f instanceof TFile) return parseBookmarks(await this.app.vault.read(f));
-            // 旧格式兜底（迁移前 e_xxx.bookmarks.json；正常升级已自动改名，仅极端遗留触发）
-            const legacyFile = this.app.vault.getAbstractFileByPath(`${dir}/${entryId}.bookmarks.json`);
-            if (legacyFile instanceof TFile) return parseBookmarks(await this.app.vault.read(legacyFile));
-            return [];
-        } catch { return []; }
+    /** 立即落盘：清掉合并窗口，把当前内存态写掉（标注增删 / 翻章 / 关闭阅读器 / 插件卸载） */
+    async flushReaderStore(entryId: string): Promise<void> {
+        const mem = this.readerStores.get(entryId);
+        if (!mem) return;
+        if (mem.timer !== null) {
+            window.clearTimeout(mem.timer);
+            mem.timer = null;
+        }
+        await this.writeReaderStoreFile(entryId, mem.title, mem.store);
     }
 
-    /** 阅读器书签落盘（{libraryDir}/阅读进度/{书名}-书签-{id}.json）；目录缺失先创建；失败静默 */
-    async saveBookmarks(entryId: string, title: string, list: ReaderBookmark[]): Promise<void> {
+    /** 进度写入（滚动期间高频）：只更内存态 + 起合并窗口。
+     *  ⚠️ 已载入时**同步**改内存（不走 await）—— 关闭阅读器时 `flushSave → onSaveProgress → 紧接着 flushReaderStore`，
+     *  若这里还要 await，flush 可能先跑完把旧进度写下去（最后一次滚动丢失）。 */
+    async saveReaderProgress(entryId: string, title: string, p: { chapterIndex: number; scrollRatio: number }): Promise<void> {
+        const hit = this.readerStores.get(entryId);
+        if (hit) {
+            hit.title = title;
+            this.applyReaderProgress(hit, entryId, p);
+            return;
+        }
+        this.applyReaderProgress(await this.ensureReaderStore(entryId, title), entryId, p);
+    }
+
+    /** 进度段合并 + 起窗（内存态已是真源，窗口只决定"什么时候落盘"） */
+    private applyReaderProgress(mem: ReaderStoreMem, entryId: string, p: unknown): void {
+        mem.store = withProgress(mem.store, p);
+        if (mem.timer !== null) return; // 窗口内已有待写：不必重新起表
+        mem.timer = window.setTimeout(() => {
+            mem.timer = null;
+            void this.flushReaderStore(entryId);
+        }, READER_STORE_FLUSH_MS);
+    }
+
+    /** 书签写入（增删/清空是用户明确动作）：立即落盘 */
+    async saveReaderBookmarks(entryId: string, title: string, list: ReaderBookmark[]): Promise<void> {
+        const mem = await this.ensureReaderStore(entryId, title);
+        mem.store = withBookmarks(mem.store, list);
+        await this.flushReaderStore(entryId);
+    }
+
+    /** 同步笔记「## 高亮」只读镜像（D-3②）。失败静默：真源在 JSON，镜像只是给人看/给 Obsidian 搜索用的。
+     *  🔴 必须经 EntryService（笔记与 noteFingerprint 的唯一拥有者）—— 自己直接写笔记会让指纹过期，
+     *  下次编辑该条目被误判「笔记被外部修改」。 */
+    private async syncHighlightMirror(entryId: string): Promise<void> {
+        const mem = this.readerStores.get(entryId);
+        if (!mem) return;
         try {
-            const path = bookmarksFilePath(entryId, title, this.settings.libraryDir);
-            const dir = path.slice(0, path.lastIndexOf('/'));
-            if (!(this.app.vault.getAbstractFileByPath(dir) instanceof TFolder)) {
-                await this.app.vault.createFolder(dir);
-            }
-            const f = this.app.vault.getAbstractFileByPath(path);
-            const text = serializeBookmarks(list);
-            if (f instanceof TFile) await this.app.vault.modify(f, text);
-            else await this.app.vault.create(path, text);
-        } catch { /* 失败静默不打断阅读 */ }
+            const e = await this.service.get(entryId);
+            await this.service.syncHighlightMirror(entryId, mem.store.highlights, { refLink: this.excerptRefLink(e) });
+        } catch { /* 镜像失败不影响真源 */ }
+    }
+
+    /**
+     * 批量移除高亮（阅读器垃圾桶 / 侧栏「清除全部」共用）：先按块 id，再按**引用文本**兜底
+     * （去空白归一；老数据/手改的条目可能没有 id）—— 只按 id 删会「提示删了却还在」。
+     * 一次 flush + 一次镜像；返回实际移除条数（调用方据此提示）。
+     */
+    private async removeReaderHighlights(entryId: string, title: string, ids: string[], quotes: string[]): Promise<number> {
+        const mem = await this.ensureReaderStore(entryId, title);
+        let list = mem.store.highlights;
+        let n = 0;
+        for (const id of ids) {
+            if (!id) continue;
+            const before = list.length;
+            list = list.filter((x) => x.id !== id);
+            if (list.length < before) n++;
+        }
+        for (const q of quotes) {
+            const hit = findSameExcerpt(list, q);
+            if (!hit) continue;
+            list = list.filter((x) => x !== hit);
+            n++;
+        }
+        if (n) {
+            mem.store = withHighlights(mem.store, list);
+            await this.flushReaderStore(entryId);
+            await this.syncHighlightMirror(entryId);
+        }
+        return n;
     }
 
     /** 阅读进度/书签文件名可读化迁移（幂等，启动时执行）：旧 e_xxx.json / e_xxx.bookmarks.json
-     *  → {书名}-阅读进度|书签-{id}.json；孤儿文件（对应条目已删）保留原名；失败静默（下次启动重试）。 */
+     *  → {书名}-阅读进度|书签-{id}.json；孤儿文件（对应条目已删）保留原名；失败静默（下次启动重试）。
+     *  （2026-09-18 起进度/书签已并入存档 JSON：本步只为把**待迁移**的旧文件改成可读名，便于人工识别） */
     private async migrateProgressFileNames(): Promise<void> {
         try {
             const dir = (this.settings.libraryDir || 'ReelLudic').replace(/\/+$/, '') || 'ReelLudic';
@@ -2106,21 +2588,38 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /**
-     * 划词翻译（AI 大模型，OpenAI 兼容，自动中英互译）：POST 当前服务商 chat/completions，Bearer Key + messages body。
-     * 服务商 zhipu（默认）/ deepseek 由 settings.readerTranslateProvider 选；模型固定 GLM-4-Flash / deepseek-v4-flash。
-     * 未配对应 Key → Notice 引导；失败/超时 → 细分 Notice 并返回 null（不抛）。
+     * AI 对话补全（阅读器**划词翻译**与**划词搜索**共用一条通道，避免两套凭据/两套错误处理漂移）：
+     * POST 当前服务商 chat/completions，Bearer Key + messages body；模型固定 GLM-4-Flash / deepseek-v4-flash。
+     * 未配对应 Key → Notice 引导；失败/超时 → 细分 Notice 并返回 null（不抛）。`label` 只用于错误文案（翻译 / 搜索）。
      */
-    async translateText(text: string): Promise<string | null> {
-        const provider: TranslateProvider = normalizeProvider(this.settings.readerTranslateProvider);
+    /**
+     * 「不启用」守卫（用户 2026-09-18）：该 AI 功能在设置页被选成「不启用」→ 提示并返回 true，
+     * 调用方直接 return null（**不发网络请求**）。三处服务下拉各自独立，互不影响。
+     */
+    private aiOffBlocked(choice: AiProviderChoice, label: string): boolean {
+        if (choice !== AI_PROVIDER_OFF) return false;
+        new Notice(`${label}已在设置中关闭（设置 → AI集成 · AI服务 可改为服务商重新启用）`, 4000);
+        return true;
+    }
+
+    private async chatCompletion(input: {
+        text: string;
+        provider: TranslateProvider;
+        prompt?: string;
+        /** 用途名，进错误文案（「翻译失败：…」/「搜索失败：…」） */
+        label: string;
+        build: (text: string, provider: TranslateProvider, prompt?: string) => TranslateRequestBody | null;
+    }): Promise<string | null> {
+        const { text, provider, prompt, label, build } = input;
         const keyField = provider === 'zhipu' ? 'readerZhipuKey' : 'readerDeepseekKey';
         const key = ((this.settings as unknown as Record<string, unknown>)[keyField] as string | undefined ?? '').trim();
         const url = translateChatUrl(provider);
         if (!key) {
-            new Notice(`未配置 ${provider === 'zhipu' ? '智谱' : 'DeepSeek'} API Key，请先到 设置 → 服务集成 → AI 翻译与总结 填写`, 4000);
+            new Notice(`未配置 ${provider === 'zhipu' ? '智谱' : 'DeepSeek'} API Key，请先到 设置 → AI集成 · API凭据 填写`, 4000);
             return null;
         }
-        const body = buildTranslateBody(text, provider, this.settings.readerTranslatePrompt); // 提示词可在设置页改
-        if (!body) return null; // 空文本不发请求
+        const body = build(text, provider, prompt); // 提示词可在设置页改；空文本返回 null → 不发请求
+        if (!body) return null;
         try {
             // 15s 超时（远程推理需给足时间）
             const res = await withTimeout(
@@ -2134,35 +2633,82 @@ export default class ReelLudicPlugin extends Plugin {
                 15000,
             );
             if (res.status === 401) {
-                new Notice(`翻译失败：${provider === 'zhipu' ? '智谱' : 'DeepSeek'} API Key 无效（HTTP 401），请检查设置`, 5000);
+                new Notice(`${label}失败：${provider === 'zhipu' ? '智谱' : 'DeepSeek'} API Key 无效（HTTP 401），请检查设置`, 5000);
                 return null;
             }
             if (res.status === 429) {
-                new Notice('翻译失败：请求过于频繁或额度不足（HTTP 429）', 5000);
+                new Notice(`${label}失败：请求过于频繁或额度不足（HTTP 429）`, 5000);
                 return null;
             }
             if (res.status !== 200) {
-                new Notice(`翻译失败（HTTP ${res.status}）`, 4000);
+                new Notice(`${label}失败（HTTP ${res.status}）`, 4000);
                 return null;
             }
             let json: unknown;
             try {
                 json = JSON.parse(res.text);
             } catch {
-                new Notice('翻译失败（响应非 JSON）', 4000);
+                new Notice(`${label}失败（响应非 JSON）`, 4000);
                 return null;
             }
-            const translated = parseTranslateResponse(json);
-            if (!translated) {
-                new Notice('翻译失败（模型未返回译文）', 4000);
+            const out = parseTranslateResponse(json);
+            if (!out) {
+                new Notice(`${label}失败（模型未返回内容）`, 4000);
                 return null;
             }
-            return translated;
+            return out;
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            new Notice(`翻译失败：${msg || `无法连接 ${provider === 'zhipu' ? '智谱' : 'DeepSeek'}`}\n请检查网络或 API Key（${url}）`, 5000);
+            new Notice(`${label}失败：${msg || `无法连接 ${provider === 'zhipu' ? '智谱' : 'DeepSeek'}`}\n请检查网络或 API Key（${url}）`, 5000);
             return null;
         }
+    }
+
+    /**
+     * 划词翻译（AI 大模型，OpenAI 兼容，自动中英互译）：服务商由 settings.readerTranslateProvider 选。
+     */
+    async translateText(text: string): Promise<string | null> {
+        const choice = normalizeAiChoice(this.settings.readerTranslateProvider);
+        if (this.aiOffBlocked(choice, '翻译')) return null;
+        return this.chatCompletion({
+            text,
+            provider: normalizeProvider(choice),
+            prompt: this.settings.readerTranslatePrompt, // 提示词可在设置页改
+            label: '翻译',
+            build: buildTranslateBody,
+        });
+    }
+
+    /**
+     * 划词 AI 搜索（阅读器搜索卡内自动发起）：与翻译同一通道，服务商由 settings.readerSearchProvider 选、
+     * 提示词由 settings.readerSearchPrompt 覆盖（缺省用 DEFAULT_SEARCH_PROMPT）。
+     */
+    async aiSearchText(text: string): Promise<string | null> {
+        const choice = normalizeAiChoice(this.settings.readerSearchProvider);
+        if (this.aiOffBlocked(choice, 'AI 搜索')) return null;
+        return this.chatCompletion({
+            text,
+            provider: normalizeProvider(choice),
+            prompt: this.settings.readerSearchPrompt,
+            label: '搜索',
+            build: buildSearchBody,
+        });
+    }
+
+    /**
+     * 划词 AI 搜索「自定义提问」（用户 2026-09-18）：选段 + 问题一起发，**不读设置页提示词**
+     * （那条提示词只服务「解读选段」态）。同一条 chatCompletion 通道 → 凭据与错误处理不漂移。
+     */
+    async aiAskText(text: string, question: string): Promise<string | null> {
+        const choice = normalizeAiChoice(this.settings.readerSearchProvider);
+        if (this.aiOffBlocked(choice, 'AI 搜索')) return null;
+        return this.chatCompletion({
+            text,
+            provider: normalizeProvider(choice),
+            prompt: undefined, // 显式不传：build 走内置提问提示词
+            label: '提问',
+            build: (_t, provider) => buildSearchQuestionBody(text, question, provider),
+        });
     }
 
     // ──────────── AI 摘要（编辑表单「总结摘要」小标题右侧小图标）────────────
@@ -2173,7 +2719,7 @@ export default class ReelLudicPlugin extends Plugin {
         if (!this.aiSummaryService) {
             this.aiSummaryService = new AiSummaryService({
                 getConfig: () => {
-                    // 总结服务商独立于翻译服务商（设置页「AI 翻译与总结」内两项各自可调），但共用同一组 Key
+                    // 总结服务商独立于翻译服务商（设置页「AI 翻译 / 总结 / 搜索」内两项各自可调），但共用同一组 Key
                     const provider = normalizeProvider(this.settings.readerSummaryProvider);
                     const keyField = provider === 'zhipu' ? 'readerZhipuKey' : 'readerDeepseekKey';
                     const key = (((this.settings as unknown as Record<string, unknown>)[keyField] as string | undefined) ?? '').trim();
@@ -2189,6 +2735,8 @@ export default class ReelLudicPlugin extends Plugin {
 
     /** AI 生成条目摘要（一句话总结 + 核心看点）：失败返回 null（服务内部已 Notice） */
     aiSummarizeEntry(input: AiSummaryInput): Promise<AiSummaryResult | null> {
+        const choice = normalizeAiChoice(this.settings.readerSummaryProvider);
+        if (this.aiOffBlocked(choice, '总结')) return Promise.resolve(null);
         return this.getAiSummaryService().generate(input);
     }
 
@@ -2219,6 +2767,39 @@ export default class ReelLudicPlugin extends Plugin {
         });
     }
 
+
+    /**
+     * 测试云合成连接（设置页「AI集成 › API凭据 · 硅基流动 › 测试连接」，#344 方案 C）。
+     * 🔴 真打一次 `/audio/speech`（最短文本）而**不是**只查 Key ——
+     *    「Key 有效」不等于「能出声」，只有拿到**音频二进制**才算通。代价 = 一句两个字的合成额度。
+     * ⚠️ 返回体是二进制 ⇒ 必须 `responseType: 'arraybuffer'`（同磁盘图床下载那条先例），
+     *    不能走 chat 那套 JSON 解析。
+     */
+    async testSpeechConnection(): Promise<SourceTestResult> {
+        const key = (this.settings.readerSiliconflowKey ?? '').trim();
+        return this.runTest('云端语音合成', async () => {
+            if (!key) return { ok: false, message: '未配置 API Key' };
+            const body = buildSpeechBody({ text: '测试', voice: CLOUD_VOICE_DEFAULT, rate: 1 });
+            if (!body) return { ok: false, message: '请求体构造失败' };
+            try {
+                const res = await requestUrl({
+                    url: speechEndpointUrl(),
+                    method: 'POST',
+                    contentType: 'application/json',
+                    headers: { Authorization: `Bearer ${key}` },
+                    body: JSON.stringify(body),
+                    responseType: 'arraybuffer',
+                } as unknown as Parameters<typeof requestUrl>[0]);
+                const verdict = classifySpeechError(res.status, res.text);
+                if (verdict.kind !== 'ok') return { ok: false, message: `合成失败：${verdict.message}` };
+                const bytes = res.arrayBuffer?.byteLength ?? 0;
+                if (!bytes) return { ok: false, message: '合成失败：返回了空音频' };
+                return { ok: true, message: `合成成功：已取到 ${bytes} 字节音频` };
+            } catch (e) {
+                return { ok: false, message: '合成失败：' + (e instanceof Error ? e.message : String(e)) };
+            }
+        });
+    }
 
     /** 阅读整体百分比写回 catalog（书架进度条数据源）：保留手填 page/totalPage，仅更新 percent；失败静默 */
     private async persistReadingPercent(entryId: string, percent: number): Promise<void> {
@@ -2288,6 +2869,14 @@ export default class ReelLudicPlugin extends Plugin {
                 if (navToc.length > 0) { toc = navToc; break; }
             }
         }
+        // 目录**错位**（Calibre「先写 NCX、后重切文件」的遗留：多个条目指向完全相同的位置）→
+        // 该目录在数据上区分不开这些章，会同时点亮多章（用户 2026-09-19 报「目录连章」），
+        // 且顶栏章名与正文对不上 → 改按 spine **内容文件** 1:1 重建目录。
+        // 判据只认「重复目标」，一个文件含多章但锚点唯一（合法结构）不受影响，见 pure/epubParse 注释。
+        if (toc !== null && isTocAmbiguous(toc)) {
+            const rebuilt = rebuildTocFromSpine(parsed.chapters, fileMap, toc);
+            if (rebuilt.length > 0) toc = rebuilt;
+        }
         if (toc === null) {
             // 最终兜底：抽章节 XHTML 的 <h1>/<title>
             toc = parsed.chapters.map((href) => {
@@ -2308,19 +2897,6 @@ export default class ReelLudicPlugin extends Plugin {
             const md = f instanceof TFile ? await this.app.vault.read(f) : await this.app.vault.adapter.read(e.notePath);
             // 统一用 pure 的 ^id 锚点切块（区标题缺省「摘抄」）
             return parseExcerptBlocks(md);
-        } catch {
-            return [];
-        }
-    }
-
-    /** 读取条目笔记「## 高亮」区 → 逐块解析（供阅读器页内持久黄标渲染；失败/无笔记返回空数组） */
-    private async loadEntryHighlights(entryId: string): Promise<ReaderHighlight[]> {
-        try {
-            const e = await this.service.get(entryId);
-            if (!e?.notePath) return [];
-            const f = this.app.vault.getAbstractFileByPath(e.notePath);
-            const md = f instanceof TFile ? await this.app.vault.read(f) : await this.app.vault.adapter.read(e.notePath);
-            return parseHighlightBlocks(md);
         } catch {
             return [];
         }
@@ -2347,6 +2923,315 @@ export default class ReelLudicPlugin extends Plugin {
         return await this.openBookInternal(entry, path);
     }
 
+    /**
+     * 笔记内链接点击拦截（M1 双向溯源 + 「回到原文」深链，document 捕获阶段）。三种形态：
+     *  ① **`[↩](obsidian://reelludic?…)` 深链**（用户 2026-09-19）：markdown 外部链接形态、没有 `data-href`。
+     *     与书在库内还是库外**无关**（参数是 entryId）→ 治「库外书头行写不出 wikilink、点不回去」的断点。
+     *  ② **`[[源文件#^bk…|标签]]` 块锚点**：Obsidian 拿到只会去打开源文件本身（txt 当纯文本铺开、epub 无从渲染）、
+     *     **无法定位** → 解析块 id 反查条目，开（或复用）阅读器并注入 pendingTargetId。
+     *  ③ **视频时间戳链接**（`[7:10](…)`，库内 `影片.mp4#t=430` / 库外条目深链）。
+     * 🔴 形态 ①③ 在**编辑视图里不是 `<a>`**（是 CM6 span，见 ③ 处注释）→ 目标得回所在行的 markdown 源码里取。
+     * 三种之外的链接**一律不拦**（交回 Obsidian 默认行为，绝不吞掉用户正常的链接点击）。
+     */
+    private onWorkspaceAnchorClick = (ev: MouseEvent): void => {
+        const target = ev.target as HTMLElement | null;
+        const a = target?.closest?.('a') as HTMLAnchorElement | null;
+        // ① 阅读器深链（它同时带 href 与 data-href 的场合也不会有歧义）
+        const href = a?.getAttribute('href') ?? '';
+        const dataHref = a?.getAttribute('data-href') ?? '';
+        const deep = parseReaderDeepLink(href) ?? parseReaderDeepLink(dataHref);
+        // ② 视频**时间戳链接**（#326）—— 两种形态都认：
+        //    · 库外/兜底：`obsidian://reelludic?action=video&…`（在 href 上）
+        //    · 库内：`影片.mp4#t=3`（Obsidian 把库内链接目标放在 **data-href**，href 可能是 app:// 形态 → 先看 data-href）
+        let vTime = deep ? null : (parseTimeLink(dataHref) ?? parseTimeLink(href));
+        // ③ 🔴 编辑视图（Live Preview / 源码模式）里的链接**不是 `<a>`**（2026-09-19 用户第三次报障的根因之二）：
+        //    读 Obsidian 核心 `onEditorClick`（app.js @2548591）得到判据 —— 它认可点 token 只认
+        //    `.external-link` / `.cm-url` / `.cm-link` / `.cm-underline` 这些 **CM6 span**。所以
+        //    `closest('a')` 在编辑视图里**恒为 null**，而旧实现第一行是 `if (!a) return` ⇒
+        //    **编辑视图永远拦不到**（阅读视图是 `<a>` → 只有那里能跳 = 用户报的「只能阅读视图跳」）。
+        //    CM6 的链接目标**不在 DOM 属性上**（渲染出来的只有显示文字）→ 回「点击处所在行」的 markdown 源码，
+        //    按「点击处文字 === 链接文字 / 链接目标」把目标取回来（`matchLineLink`；行内别的字、整行都不命中，
+        //    所以**不会误吞普通点击**）。⛔ 别把这条判据换成「行里有链接就拦」——那样用户连点这行放光标都会被抢。
+        if (!deep && !vTime && !a && target?.closest?.('.cm-editor')) {
+            const dest = matchLineLink(target.closest('.cm-line')?.textContent ?? '', target.textContent ?? '');
+            if (dest) vTime = parseTimeLink(dest);
+        }
+        // 🔴 **归属判断必须排在 `defaultPrevented` 之前**（2026-09-19 用户实测报障）：
+        //    Live Preview 里 CodeMirror / Obsidian 会在**更早的阶段**处理 `mousedown` 并 `preventDefault()`
+        //    （为接管光标定位与链接闪现），于是随后的 `click` 带着 `defaultPrevented=true` 进来 ——
+        //    旧实现第一行就 `if (ev.defaultPrevented) return` 直接放行 → **编辑视图里本插件深链永远跳不了**，
+        //    而阅读视图没人 preventDefault 所以正常 —— 症状正是「只能阅读视图跳」。
+        //    判据：**是本插件要抢的链接就无条件拦下**；只有「不是我们的」才去尊重别人的 preventDefault。
+        if (deep || vTime) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (deep) void this.openDeepLinkTarget(deep);
+            else if (vTime) void this.openVideoAt(vTime);
+            return;
+        }
+        // 不是本插件的链接 → 绝不吞掉用户的普通点击
+        if (ev.defaultPrevented) return;
+        // ③ 块锚点 wikilink
+        const parsed = parseLinktext(dataHref);
+        const subpath = parsed.subpath ?? '';
+        const id = subpath.startsWith('#^') ? subpath.slice(2) : '';
+        if (!parsed.path || !/^[\w-]+$/.test(id)) return;
+        const sourcePath = this.app.workspace.getActiveFile()?.path ?? '';
+        // 链接缓存优先；未索引到（罕见）再按 vault 路径兜一次
+        const file =
+            this.app.metadataCache.getFirstLinkpathDest(parsed.path, sourcePath) ??
+            this.app.vault.getAbstractFileByPath(normalizePath(parsed.path));
+        if (!(file instanceof TFile)) return;
+        const ext = file.path.split('.').pop()?.toLowerCase();
+        if (ext !== 'txt' && ext !== 'epub' && ext !== 'pdf') return;
+        // 认定由本插件接管 → 必须同步拦下：否则 Obsidian 会把源文件同时铺到另一个标签页
+        ev.preventDefault();
+        ev.stopPropagation();
+        void this.openBookAtAnchor(file, id, dataHref, sourcePath);
+    };
+
+    /** 「回到原文」深链落地：按 entryId 反查条目 → 开（或复用）阅读器并注入 pendingTargetId。
+     *  未命中条目（已删）→ 明确提示，**不**去猜文件路径（深链刻意不带路径）。 */
+    private async openDeepLinkTarget(target: { book: string; block: string }): Promise<void> {
+        try {
+            const entry = await this.service.get(target.book);
+            if (!entry?.bookFile) {
+                new Notice('找不到这本书的条目（可能已删除）', 4000);
+                return;
+            }
+            // 深链只在内置阅读器里才有意义（外部程序无法定位块锚点）→ 不看 internalBookReader 开关
+            await this.openBookInternal(entry, normalizePath(entry.bookFile), target.block);
+        } catch (err) {
+            new Notice(`打开定位失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+        }
+    }
+
+    /** 时间戳链接里的库内文件路径 → 「条目 + 集下标」（库内链接只有路径，没有条目 id） */
+    private async videoPathTarget(filePath: string): Promise<{ entry: MediaEntry; index: number } | null> {
+        const sourcePath = this.app.workspace.getActiveFile()?.path ?? '';
+        const file =
+            this.app.metadataCache.getFirstLinkpathDest(filePath, sourcePath) ??
+            this.app.vault.getAbstractFileByPath(normalizePath(filePath));
+        if (!(file instanceof TFile)) return null;
+        for (const entry of await this.service.list()) {
+            const idx = (entry.episodeFiles ?? []).indexOf(file.path);
+            if (idx >= 0) return { entry, index: idx };
+        }
+        return null;
+    }
+
+    /**
+     * 视频**时间戳链接**落地（#326）：定位到「条目 + 集」→ 已开着同条目的播放器就**直接跳转播放**，
+     * 否则开/复用播放器并注入 pendingSeek（与阅读器的 `pendingTargetId` 同款手法）。
+     * ⚠️ 不看 `internalMediaPlayback` 开关：深链只在内置播放器里才有意义（外部程序定位不到某秒）。
+     */
+    /** 时间戳链接（#326 双轨）：库内优先用文件链接文本（生态标准 `影片.mp4#t=3`，别的工具也认），
+     *  库外 / 取不到文件时用条目深链。两种都取不到 → null（不产出不可用链接）。 */
+    private videoTimeLink(entry: MediaEntry, ep: number, seconds: number): string | null {
+        const raw = entry.episodeFiles?.[ep];
+        let filePath: string | undefined;
+        if (raw) {
+            const f = this.app.vault.getAbstractFileByPath(normalizePath(raw));
+            if (f instanceof TFile) filePath = this.app.metadataCache.fileToLinktext(f, entry.notePath ?? '');
+        }
+        return buildTimeLink({ seconds, filePath, entryId: entry.id, ep });
+    }
+
+    /**
+     * #326 插入时间戳。用户 2026-09-19 定稿口径：**写进条目笔记**，并在插入前把该笔记**开在分屏**上
+     * （不抢焦点 → 播放器留在左侧继续播）→ 结果立刻看得见、点一下就能跳回去。
+     * 🔴 该口径**取代**首版的「优先最近 Markdown 编辑器光标处」（D-2 Ⓒ）：那条路有个隐性坑 ——
+     * Live Preview 会把**光标所在行**渲染成源码，刚插完链接就在光标旁 → 看着是链接却**点不动**（用户实测报障）。
+     */
+    async insertVideoStamp(entry: MediaEntry, info: { seconds: number; ep: number }): Promise<void> {
+        try {
+            const link = this.videoTimeLink(entry, info.ep, info.seconds);
+            if (!link) {
+                new Notice('取不到这个视频的位置信息，没法生成时间戳', 4000);
+                return;
+            }
+            const notePath = await this.openVideoNote(entry, false);
+            const { line } = await this.service.appendNoteSection(entry.id, link, '时间戳');
+            if (notePath) this.scrollNoteToLine(notePath, line);
+            await this.refreshPlayerMarks(entry.id);
+            new Notice(`已插入时间戳 · 《${entry.title}》笔记`, 3000);
+        } catch (err) {
+            new Notice(`插入时间戳失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+        }
+    }
+
+    /**
+     * #326 一键截图（用户裁定 D-3 Ⓑ 极简两行 + D-4 Ⓐ 跟随附件设置）：
+     * 抓到的帧 → `getAvailablePathForAttachment` 落盘（重名自动加序号）→ 写进**条目笔记「## 截图」**区
+     * （`![[图]]` + `[00:03](链接)`）。
+     * ⚠️ 库外媒体也是存**库内**：Obsidian 只管理库内文件。
+     */
+    async saveVideoShot(entry: MediaEntry, info: { png: ArrayBuffer; seconds: number; ep: number }): Promise<void> {
+        try {
+            const link = this.videoTimeLink(entry, info.ep, info.seconds);
+            if (!link) {
+                new Notice('取不到这个视频的位置信息，没法生成回跳链接', 4000);
+                return;
+            }
+            const path = await this.app.fileManager.getAvailablePathForAttachment(shotFileName(entry.title, info.seconds), entry.notePath ?? '');
+            await this.app.vault.createBinary(path, info.png);
+            // 🔴 入参是 `buildTimeLink` 的**完整 markdown 链接**（`timeLink`）—— 别把裸目标塞进去：
+            //    旧签名收裸目标而这里传的是完整链接 → 产出**嵌套链接**、点了完全不跳（2026-09-19 用户报障）。
+            const block = buildShotBlock({ fileName: path, timeLink: link });
+            if (!block) {
+                // 形态守卫（`buildShotBlock` 是 fail-closed）：走到这里说明链接形态不对，
+                // 明确报出来比「静默什么都不写、却提示已截取」诚实。
+                new Notice('回跳链接形态不对，这一帧没写进笔记', 4000);
+                return;
+            }
+            const notePath = await this.openVideoNote(entry, false);
+            const { line } = await this.service.appendNoteSection(entry.id, block, '截图');
+            if (notePath) this.scrollNoteToLine(notePath, line);
+            await this.refreshPlayerMarks(entry.id);
+            new Notice(`已截取当前帧 · 《${entry.title}》笔记`, 3000);
+        } catch (err) {
+            new Notice(`截图失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+        }
+    }
+
+    /**
+     * 打开（或聚焦）这条视频的**笔记**；缺笔记先生成（走 `writeNote`，与摘抄同款）。
+     * `focus=true`（顶栏「打开笔记」按钮）→ 打开并聚焦；`focus=false`（插入时间戳/截图时自动打开）→
+     * **竖向分屏打开且不抢焦点** —— 播放器留在左侧继续播（用户 2026-09-19：「要打开当前视频笔记并分屏显示」）。
+     * 已经在某个标签页里开着 → 只按 `focus` 决定是否切过去，**不重复开**。
+     * **返回笔记路径**（调用方接着用它把视图滚到插入处）；取不到笔记 → null。
+     */
+    private async openVideoNote(entry: MediaEntry, focus = true): Promise<string | null> {
+        let notePath = (await this.service.get(entry.id))?.notePath;
+        if (!notePath) {
+            await this.service.writeNote(entry.id);
+            notePath = (await this.service.get(entry.id))?.notePath;
+        }
+        const file = notePath ? this.app.vault.getAbstractFileByPath(notePath) : null;
+        if (!(file instanceof TFile)) {
+            new Notice('这条视频还没有笔记', 4000);
+            return null;
+        }
+        // 已开着（任意标签页）→ 不重复开；按 focus 决定要不要切过去
+        for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+            const view = leaf.view;
+            if (view instanceof MarkdownView && view.file?.path === file.path) {
+                if (focus) this.app.workspace.setActiveLeaf(leaf, { focus: true });
+                return file.path;
+            }
+        }
+        // 竖向分屏 = 左右并排（播放器在左、笔记在右）；`active: focus` → 自动打开时不抢焦点
+        const leaf = this.app.workspace.getLeaf('split', 'vertical');
+        await leaf.openFile(file, { active: focus });
+        return file.path;
+    }
+
+    /** 笔记里 `![[图]]` 的文件名 → 资源 URL（#333 卡片缩略图）；解析不到 → null（卡片只显示文字） */
+    private resolveNoteImageUrl(image: string, entry: MediaEntry): string | null {
+        try {
+            const file =
+                this.app.metadataCache.getFirstLinkpathDest(image, entry.notePath ?? '') ??
+                this.app.vault.getAbstractFileByPath(normalizePath(image));
+            return file instanceof TFile ? this.app.vault.getResourcePath(file) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** 「在笔记中打开」（#333 D-3）：开/复用条目笔记（**聚焦** —— 是用户主动点的按钮）→ 滚到标记那一行 */
+    private async openNoteAtMark(entry: MediaEntry, mark: VideoMark): Promise<void> {
+        const notePath = await this.openVideoNote(entry, true);
+        if (notePath) this.scrollNoteToLine(notePath, mark.line);
+    }
+
+    /** 插入时间戳 / 截图后：把重算好的标记推给**同一条目**正开着的播放器（#333：不重开也能看到新点） */
+    private async refreshPlayerMarks(entryId: string): Promise<void> {
+        try {
+            const marks = await this.service.readNoteMarks(entryId);
+            for (const leaf of this.app.workspace.getLeavesOfType(VIDEO_PLAYER_VIEW_TYPE)) {
+                const view = leaf.view;
+                if (view instanceof VideoPlayerView && view.playingEntryId === entryId) view.setMarks(marks);
+            }
+        } catch {
+            /* 标记刷新失败不该影响插入本身 */
+        }
+    }
+
+    /** 把某条笔记的编辑器**滚到指定行**（用户 2026-09-19：「插入后应定位到时间戳的位置显示，
+     * 而不是又从笔记开头显示」）。**只滚视图、不动光标、不抢焦点** —— 插入是顺手动作，不该打断用户。
+     */
+    private scrollNoteToLine(notePath: string, line: number): void {
+        if (!this.scrollToLineNow(notePath, line)) return;
+        // 🔴 **下一帧再补一次**：分屏是**刚挂上 DOM** 的，布局还没跑完时 `clientHeight` 为 0，
+        //    `scrollIntoView` 会算歪甚至不动（用户报「插入后没定位到插入处」的可能来源之一）。
+        //    同一目标重复滚动无副作用 —— 滚动比"没滚"安全。
+        window.setTimeout(() => this.scrollToLineNow(notePath, line), 90);
+    }
+
+    /** 真正滚一次：找那条笔记所在的 Markdown 叶子 → `scrollIntoView`（只滚视图、不动光标）。命中返回 true */
+    private scrollToLineNow(notePath: string, line: number): boolean {
+        for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+            const view = leaf.view;
+            if (!(view instanceof MarkdownView) || view.file?.path !== notePath) continue;
+            const target = Math.max(0, Math.min(line, view.editor.lastLine()));
+            const pos = { line: target, ch: 0 };
+            view.editor.scrollIntoView({ from: pos, to: pos }, true);
+            return true;
+        }
+        return false;
+    }
+
+    private async openVideoAt(target: VideoTimeTarget): Promise<void> {
+        try {
+            let entry: MediaEntry | undefined;
+            let index = 0;
+            if (target.kind === 'entry') {
+                entry = await this.service.get(target.entryId);
+                index = target.ep;
+            } else {
+                const hit = await this.videoPathTarget(target.filePath);
+                if (hit) {
+                    entry = hit.entry;
+                    index = hit.index;
+                }
+            }
+            if (!entry) {
+                new Notice('找不到这条视频（条目可能已删除）', 4000);
+                return;
+            }
+            // 已开着**同一条目**的播放器 → 切集 + 跳转播放（不重开标签页）
+            for (const leaf of this.app.workspace.getLeavesOfType(VIDEO_PLAYER_VIEW_TYPE)) {
+                const view = leaf.view;
+                if (view instanceof VideoPlayerView && view.playingEntryId === entry.id) {
+                    this.app.workspace.setActiveLeaf(leaf, { focus: true });
+                    view.seekToEpisode(index, target.seconds);
+                    return;
+                }
+            }
+            void this.openEpisodeLocal(entry, index, target.seconds, true);
+        } catch (err) {
+            new Notice(`跳到时间戳失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+        }
+    }
+
+    /** 打开笔记里的块锚点：命中条目 → 内置阅读器定位；未命中（非插件管理的书 / 条目已删）→ 还原 Obsidian 默认打开 */
+    private async openBookAtAnchor(file: TFile, blockId: string, href: string, sourcePath: string): Promise<void> {
+        try {
+            const entries = await this.service.list();
+            const entry = entries.find((e) => e.bookFile && normalizePath(e.bookFile) === file.path);
+            if (!entry?.bookFile) {
+                await this.app.workspace.openLinkText(href, sourcePath);
+                return;
+            }
+            // 锚点链接只能靠内置阅读器定位（外部程序无法定位到块锚点），故此处不看 internalBookReader 开关
+            void this.openBookInternal(entry, normalizePath(entry.bookFile), blockId).catch((err) => {
+                new Notice(`打开定位失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+            });
+        } catch (err) {
+            new Notice(`打开定位失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+        }
+    }
+
     /** 外部打开：系统默认程序（桌面端 shell.openPath；vault 相对路径转真实路径，库外绝对路径直接用） */
     private async openBookExternally(path: string): Promise<void> {
         try {
@@ -2369,15 +3254,30 @@ export default class ReelLudicPlugin extends Plugin {
         return path;
     }
 
-    /** 内置阅读器：读文件（TXT 文本 / EPUB 解包解析）→ 进度读取 → Modal 渲染；关闭后 resolve 最新落库阅读进度 */
-    private async openBookInternal(entry: MediaEntry, path: string): Promise<BookProgressFields | undefined> {
+    /** 内置阅读器：读文件（TXT 文本 / EPUB 解包解析）→ **阅读数据存档载入**（进度/书签/高亮三合一）→ Modal 渲染；
+     *  关闭后 resolve 最新落库阅读进度
+     *  pendingTargetId：笔记内链接进场带上的目标块 id（`^bk…`/`^hl…` 去 `^`），阅读器渲染完成后自行消费定位 */
+    private async openBookInternal(entry: MediaEntry, path: string, pendingTargetId?: string): Promise<BookProgressFields | undefined> {
         const ext = path.split('.').pop()?.toLowerCase();
         // 回归弹窗（视图/新 Tab 方式在部分 Obsidian 版本渲染不可靠）：读文件 → Modal 渲染
-        const progress = await this.readReaderProgress(entry.id, entry.title);
-        const bookmarks = await this.readBookmarks(entry.id, entry.title);
-        const settings = { fontSize: this.settings.readerFontSize, lineHeight: this.settings.readerLineHeight };
+        // 阅读数据存档载入（打开时一次）：存档不存在（升级首开）→ 顺带把旧三源懒迁移进来；
+        // 载入后内存态常驻，滚动/标注的写入都先落内存再合并落盘（见 readerStores 注释）
+        const mem = await this.ensureReaderStore(entry.id, entry.title);
+        const progress = mem.store.progress;
+        const bookmarks = mem.store.bookmarks;
+        const settings = {
+            fontSize: this.settings.readerFontSize,
+            lineHeight: this.settings.readerLineHeight,
+            indent: this.settings.readerIndent !== false,
+            hlStyle: normalizeHlStyle(this.settings.readerHlStyle),
+            hlColor: normalizeHlColor(this.settings.readerHlColor),
+            // #351 字体 / 字重 / 字距（缺省 = 跟随主题 / 常规 / 不写字距）
+            fontFamily: normalizeFontFamily(this.settings.readerFontFamily),
+            fontWeight: normalizeFontWeight(this.settings.readerFontWeight),
+            letterSpacing: normalizeLetterSpacing(this.settings.readerLetterSpacing),
+        };
         const onSaveProgress = (p: { chapterIndex: number; scrollRatio: number }) => {
-            void this.saveReadingProgress(entry.id, entry.title, p);
+            void this.saveReaderProgress(entry.id, entry.title, p);
         };
         // 进度百分比低频写回 catalog（翻章/关闭时；保留手填 page/totalPage，不覆盖）
         // lastPersist 跟踪最近一次落库 Promise：关闭回读前先等落库完成，避免竞态读到旧 readingProgress
@@ -2385,19 +3285,21 @@ export default class ReelLudicPlugin extends Plugin {
         const onProgressPersist = (percent: number) => {
             lastPersist = this.persistReadingPercent(entry.id, percent);
         };
-        // 已打开的阅读器弹窗引用（摘抄保存成功后刷新书签列表；onExcerpt 闭包捕获，先声明后赋值）
-        let modal: TxtReaderModal | EpubReaderModal | PdfReaderModal | null = null;
-        // 打开阅读器并等待关闭：包装原 onClose（先执行清理/落库——panel.destroy → flushSave），
+        // 已打开的阅读器视图引用（摘抄保存成功后刷新书签列表；onExcerptSave 闭包捕获，先声明后赋值）
+        let view: TxtReaderView | EpubReaderView | PdfReaderView | null = null;
+        // 打开阅读器并等待关闭：包装视图 onClose（先执行清理/落库——panel.destroy → flushSave），
         // 待最近一次 percent 落库完成后再读取最新 readingProgress（percent 真源）返回，供表单「当前进度页」自动同步。
-        // 不能直接赋值覆盖 onClose：三个阅读器的 flushSave（关闭时进度/percent 落库）都挂在 onClose → destroy 链上，覆盖会导致进度丢失
-        const opened = (m: TxtReaderModal | EpubReaderModal | PdfReaderModal): Promise<BookProgressFields | undefined> => {
-            m.open();
+        // 不能覆盖 onClose 而不调原实现：三个阅读器的 flushSave（关闭时进度/percent 落库）都挂在 onClose → destroy 链上，覆盖会导致进度丢失。
+        const waitReaderClosed = (v: TxtReaderView | EpubReaderView | PdfReaderView): Promise<BookProgressFields | undefined> => {
             return new Promise((resolve) => {
-                const origOnClose = m.onClose.bind(m);
-                m.onClose = () => {
+                const origOnClose = v.onClose.bind(v);
+                v.onClose = async () => {
                     try {
-                        origOnClose();
+                        await origOnClose();
                     } catch { /* 清理失败不影响返回 */ }
+                    // 关闭时立刻落盘最后一次进度（原实现是 flushSave 里直接写文件；现在内存态 + 合并窗口，
+                    // 不等窗口到点，否则「滚到底 → 直接关标签页」会丢掉最后一次滚动）
+                    await this.flushReaderStore(entry.id);
                     void lastPersist
                         .then(() => this.service.get(entry.id))
                         .then((e) => resolve(e?.readingProgress))
@@ -2405,26 +3307,109 @@ export default class ReelLudicPlugin extends Plugin {
                 };
             });
         };
-        const onExcerpt = (quote: string, page: number | undefined, loc?: { chapter: number; pct: number }) =>
-            this.openReaderExcerpt(entry.id, quote, page, loc, async () => {
-                modal?.refreshExcerpts(await this.loadEntryExcerpts(entry.id));
-            });
+        /** 在新标签页打开阅读器视图：options 直接交给视图实例（不经 setViewState 的 state —— 避免大对象序列化）；返回视图或 null */
+        const openReaderTab = async (type: string): Promise<TxtReaderView | EpubReaderView | PdfReaderView | null> => {
+            // 同一本书已在本类型标签里打开 → 复用（D-4：对齐 PDF++ 实测经验，避免同一文件堆标签）。
+            // 复用前用 getLeavesOfType 校验 leaf 仍存活 —— 读者可能早已关掉它，那时走下面的新开分支。
+            const prev = this.readerLeaves.get(entry.id);
+            if (prev && this.app.workspace.getLeavesOfType(type).includes(prev)) {
+                this.app.workspace.setActiveLeaf(prev, { focus: true });
+                return prev.view as TxtReaderView | EpubReaderView | PdfReaderView;
+            }
+            const leaf = this.app.workspace.getLeaf('tab');
+            await leaf.setViewState({ type, active: true });
+            const v = leaf.view;
+            const isReader = v instanceof TxtReaderView || v instanceof EpubReaderView || v instanceof PdfReaderView;
+            if (isReader) this.readerLeaves.set(entry.id, leaf);
+            return isReader ? (v as TxtReaderView | EpubReaderView | PdfReaderView) : null;
+        };
+        /** 摘抄就地卡片保存（阅读器内划词 → 卡里写想法 → Enter/保存）：写回笔记「## 摘抄」区 + 刷新阅读器摘抄列表；
+         *  返回是否成功 —— false 时阅读器保留卡片与输入便于重试（用户 2026-09-17 裁定 C 方案，替换原弹窗） */
+        const onExcerptSave = async (quote: string, note: string | undefined, loc: { chapter: number; pct: number }): Promise<boolean> => {
+            try {
+                const r = await this.addExcerpt(entry.id, { quote, note, loc });
+                // 成功提示（用户 2026-09-19 报「保存摘抄没弹出轻提示」—— 此前只有失败路径有 Notice，
+                // 就地卡片保存完什么反馈都没有；文案与摘抄弹窗（ExcerptModal）保持同一句式）
+                new Notice(`已添加摘抄 · 《${entry.title}》现有 ${r.count} 条`);
+                view?.refreshExcerpts(await this.loadEntryExcerpts(entry.id));
+                return true;
+            } catch (err) {
+                new Notice(`写入摘抄失败：${err instanceof Error ? err.message : String(err)}`);
+                return false;
+            }
+        };
         // 摘抄书签数据源（读笔记摘抄区；打开时读一次）
         const excerpts = await this.loadEntryExcerpts(entry.id);
-        // 高亮数据源（读笔记「## 高亮」区；打开时读一次，用于页内黄标渲染）
-        const highlights = await this.loadEntryHighlights(entry.id);
+        // 高亮数据源（阅读数据存档里的高亮段；打开时读一次，用于页内黄标渲染）
+        const highlights = mem.store.highlights;
         // 排版调整写回设置（阅读器内 A±/行距± → settings 全局记住；saveData 轻量落盘，不重建客户端）
         const onDeleteExcerpt = (blockId: string) => this.deleteBookExcerpt(entry.id, blockId);
-        // 一键即黄即记：写笔记「## 高亮」区 → 返回新块 id（null=失败，阅读器本地据此即时 mark）
-        const onHighlight = (quote: string, loc: { chapter: number; pct: number }) =>
-            this.addBookHighlight(entry.id, quote, loc);
+        // 一键即黄即记：写入阅读数据存档（真源）→ 同步笔记镜像 → 返回新块 id（null=失败，阅读器本地据此即时 mark）
+        const onHighlight = (quote: string, loc: { chapter: number; pct: number }, style?: HlStyle, color?: HlColor) =>
+            this.addBookHighlight(entry.id, entry.title, quote, loc, style, color);
         const onDeleteHighlight = (blockId: string) => this.deleteBookHighlight(entry.id, blockId);
-        const onBookmarksChange = (list: ReaderBookmark[]) => {
-            void this.saveBookmarks(entry.id, entry.title, list);
+        /** 动作条垃圾桶：直删（不弹确认，用户 2026-09-16 选定）—— 高亮出存档、摘抄出笔记摘抄区。
+         *  `opts.quiet` ＝ 静默（改样式路径「先删旧再写新」的中间步骤用：改样式是一次用户动作，
+         *  只该报一条提示 —— 旧实现这条删 + 阅读器的「已高亮」+「已更新高亮样式」共弹三条，用户 2026-09-18 报障）。 */
+        const onTrashSelection = async (
+            t: { highlightIds: string[]; excerptIds: string[]; highlightQuotes?: string[] },
+            opts?: { quiet?: boolean },
+        ): Promise<number> => {
+            // 高亮：一次批量删（内部按 id + 引用文本兜底，只 flush 一次、镜像重写一次）
+            let hlN = 0;
+            try {
+                hlN = await this.removeReaderHighlights(entry.id, entry.title, t.highlightIds, t.highlightQuotes ?? []);
+            } catch { /* 单条失败不中断 */ }
+            let exN = 0;
+            for (const eid of t.excerptIds) {
+                try { await this.service.deleteExcerpt(entry.id, eid); exN++; } catch { /* 同上 */ }
+            }
+            const n = hlN + exN;
+            if (n) {
+                // 提示写清**删的是哪一类**（用户 2026-09-18 报障时的困惑源头：只写「已删除 1 条」，
+                // 而同一选段若同时存在摘抄与高亮，删掉摘抄后高亮仍在 → 看上去「删了却没删」）。
+                // 静默模式下不报（调用方会把这一步并进它自己那一条提示里）。
+                if (!opts?.quiet) {
+                    const parts = [hlN ? `${hlN} 条高亮` : '', exN ? `${exN} 条摘抄` : ''].filter(Boolean);
+                    new Notice(`已删除 ${parts.join('、')}`);
+                }
+                view?.refreshExcerpts(await this.loadEntryExcerpts(entry.id));
+            }
+            return n;
         };
-        const onSettingsChange = (s: { fontSize: number; lineHeight: number }) => {
+        /** 清除全部标注（侧栏「清除全部」按钮，已一次性确认）：按 kind 逐条删，**不再逐条弹确认**；
+         *  删完刷新阅读器列表（高亮由阅读器本地清、摘抄/书签列表一并重读） */
+        const onPurgeAnnotations = async (kind: 'highlight' | 'excerpt', blockIds: string[]): Promise<number> => {
+            if (kind === 'highlight') {
+                // 高亮走存档（一次批量删 + 一次镜像重写）
+                return await this.removeReaderHighlights(entry.id, entry.title, blockIds, []).catch(() => 0);
+            }
+            let n = 0;
+            for (const bid of blockIds) {
+                if (!bid) continue;
+                try {
+                    await this.service.deleteExcerpt(entry.id, bid);
+                    n++;
+                } catch { /* 单条失败不中断（对齐垃圾桶容错） */ }
+            }
+            if (n) view?.refreshExcerpts(await this.loadEntryExcerpts(entry.id));
+            return n;
+        };
+        /** 打开条目笔记（阅读器顶栏「打开笔记」按钮；无笔记时 openEntryNote 内部提示） */
+        const onOpenNote = (): void => void this.openEntryNote(entry.id);
+        const onBookmarksChange = (list: ReaderBookmark[]) => {
+            void this.saveReaderBookmarks(entry.id, entry.title, list);
+        };
+        const onSettingsChange = (s: ReaderTypoPayload) => {
             this.settings.readerFontSize = s.fontSize;
             this.settings.readerLineHeight = s.lineHeight;
+            if (s.indent !== undefined) this.settings.readerIndent = s.indent;
+            if (s.hlStyle !== undefined) this.settings.readerHlStyle = s.hlStyle;
+            if (s.hlColor !== undefined) this.settings.readerHlColor = s.hlColor;
+            // #351 字体 / 字重 / 字距（缺省 = 本次不动这一项，见 ReaderTypoPayload 注释）
+            if (s.fontFamily !== undefined) this.settings.readerFontFamily = s.fontFamily;
+            if (s.fontWeight !== undefined) this.settings.readerFontWeight = s.fontWeight;
+            if (s.letterSpacing !== undefined) this.settings.readerLetterSpacing = s.letterSpacing;
             void this.saveData(this.settings);
         };
         // 滚动模式（连续/翻页）：初始读持久字段（缺省 continuous），切换写回设置（append-only，跨面板/重开记住）
@@ -2434,6 +3419,22 @@ export default class ReelLudicPlugin extends Plugin {
             this.settings.readerScrollMode = m;
             void this.saveData(this.settings);
         };
+        // 行宽（严格/全宽）：初始读持久字段（缺省 strict），切换写回设置（append-only，跨面板/重开记住）
+        const lineWidth = this.settings.readerLineWidth ?? 'strict';
+        const onLineWidthChange = (w: 'strict' | 'full') => {
+            if (this.settings.readerLineWidth === w) return;
+            this.settings.readerLineWidth = w;
+            void this.saveData(this.settings);
+        };
+        // 阅读主题（1.0.5）：初始读持久字段（缺省 follow = 跟随 Obsidian 主题），切换写回设置（append-only，三件阅读器共用）
+        const theme = this.settings.readerTheme ?? 'follow';
+        const onThemeChange = (t: 'follow' | 'light' | 'dark' | 'green' | 'gray' | 'sepia') => {
+            if (this.settings.readerTheme === t) return;
+            this.settings.readerTheme = t;
+            void this.saveData(this.settings);
+        };
+        /** 云合成 Key 读取（#344 方案 C）：交给阅读器面板**每次现取** ⇒ 设置页刚填完就能用，不必重开阅读器 */
+        const getCloudKey = (): string => (this.settings.readerSiliconflowKey ?? '').trim();
         if (ext === 'txt') {
             const text = await this.readBookText(path);
             if (text === null) {
@@ -2442,27 +3443,44 @@ export default class ReelLudicPlugin extends Plugin {
             }
             // TXT 打开时同样校正进度基准（按章节解析：totalPage=章节数，percent 恒定重算当前章；与 PDF 双通道对称）
             void this.reconcileBookProgressOnOpen(entry.id, { format: 'txt', totalChapters: parseTxtBook(text).chapters.length });
-            modal = new TxtReaderModal(this.app, {
+            const reader = await openReaderTab(TXT_READER_VIEW_TYPE) as TxtReaderView | null;
+            if (!reader) return undefined;
+            view = reader;
+            reader.openWith({
                 title: entry.title,
                 text,
+                pendingTargetId,
+                onOpenNote,
                 progress,
                 settings,
                 scrollMode,
                 onScrollModeChange,
+                lineWidth,
+                onLineWidthChange,
+                theme,
+                onThemeChange,
+                getCloudKey,
                 excerpts,
                 bookmarks,
                 highlights,
                 onBookmarksChange,
                 onSaveProgress,
                 onProgressPersist,
-                onExcerpt,
+                onExcerptSave,
+                onPurgeAnnotations,
                 onSettingsChange,
                 onDeleteExcerpt,
+                onTrashSelection,
                 onHighlight,
                 onDeleteHighlight,
                 onTranslate: (text) => this.translateText(text),
+                onAiSearch: (text) => this.aiSearchText(text),
+                // AI 卡「自定义提问」：走同一条 AI 通道但不读设置页提示词（用户 2026-09-18）
+                onAiAsk: (text, question) => this.aiAskText(text, question),
+                // 网络搜索浮层引擎 chip → 系统浏览器（openExternalUrl 已限 http/https）
+                onOpenExternal: (url) => this.openExternalUrl(url),
             });
-            return opened(modal);
+            return waitReaderClosed(reader);
         } else if (ext === 'epub') {
             let epub: { fileMap: Record<string, string>; book: { title: string; chapters: string[]; toc: { label: string; href: string }[]; manifest: Record<string, string> } } | null = null;
             try {
@@ -2477,28 +3495,45 @@ export default class ReelLudicPlugin extends Plugin {
             }
             // EPUB 打开时同样校正进度基准（spine 章节数：totalPage=章节数，percent 恒定重算当前章；与 TXT/PDF 对称）
             void this.reconcileBookProgressOnOpen(entry.id, { format: 'epub', totalChapters: epub.book.chapters.length });
-            modal = new EpubReaderModal(this.app, {
+            const reader = await openReaderTab(EPUB_READER_VIEW_TYPE) as EpubReaderView | null;
+            if (!reader) return undefined;
+            view = reader;
+            reader.openWith({
                 title: entry.title,
                 fileMap: epub.fileMap,
+                pendingTargetId,
+                onOpenNote,
                 book: epub.book,
                 progress,
                 settings,
                 scrollMode,
                 onScrollModeChange,
+                lineWidth,
+                onLineWidthChange,
+                theme,
+                onThemeChange,
+                getCloudKey,
                 excerpts,
                 bookmarks,
                 highlights,
                 onBookmarksChange,
                 onSaveProgress,
                 onProgressPersist,
-                onExcerpt,
+                onExcerptSave,
+                onPurgeAnnotations,
                 onSettingsChange,
                 onDeleteExcerpt,
+                onTrashSelection,
                 onHighlight,
                 onDeleteHighlight,
                 onTranslate: (text) => this.translateText(text),
+                onAiSearch: (text) => this.aiSearchText(text),
+                // AI 卡「自定义提问」：走同一条 AI 通道但不读设置页提示词（用户 2026-09-18）
+                onAiAsk: (text, question) => this.aiAskText(text, question),
+                // 网络搜索浮层引擎 chip → 系统浏览器（openExternalUrl 已限 http/https）
+                onOpenExternal: (url) => this.openExternalUrl(url),
             });
-            return opened(modal);
+            return waitReaderClosed(reader);
         } else {
             // PDF：读二进制 → PdfReaderModal（无字号/行距设置，其余管道复用）
             const data = await this.readPdf(path);
@@ -2506,21 +3541,30 @@ export default class ReelLudicPlugin extends Plugin {
                 new Notice(`书籍文件不存在：${entry.bookFile}`, 5000);
                 return undefined;
             }
-            modal = new PdfReaderModal(this.app, {
+            const reader = await openReaderTab(PDF_READER_VIEW_TYPE) as PdfReaderView | null;
+            if (!reader) return undefined;
+            view = reader;
+            reader.openWith({
                 title: entry.title,
                 data,
                 progress,
+                onOpenNote,
+                theme,
+                onThemeChange,
                 excerpts,
+                // #382b：PDF 也接书签（同一条落库通道 `saveReaderBookmarks`）—— 位置存「页码（1 基）+ 页内 %」
+                // ⚠️ `onConfirmClear` 不在这里传：它由 `PdfReaderView.prepare()` 统一注入（面板无 app，与 TXT/EPUB 同口）
+                bookmarks,
+                onBookmarksChange,
                 onSaveProgress,
                 onProgressPersist,
-                onExcerpt,
                 onDeleteExcerpt,
                 // PDF 加载完成后校正进度基准（totalPage=本地页数；percent 恒定重算 page；旧 totalPage 惰性迁移为元数据）
                 onPdfReady: (numPages) => {
                     void this.reconcileBookProgressOnOpen(entry.id, { format: 'pdf', numPages });
                 },
             });
-            return opened(modal);
+            return waitReaderClosed(reader);
         }
     }
 
@@ -2555,6 +3599,17 @@ export default class ReelLudicPlugin extends Plugin {
     async refreshViews(): Promise<void> {
         for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
             await (leaf.view as HomeView).refresh();
+        }
+    }
+
+    /**
+     * 海报密度即时生效（设置页「外观与体验 › 海报密度」改动后调用，用户 2026-09-22）。
+     * 与 setUiTheme 同思路：只重推两个 prop（不重读条目、不落盘）——密度是纯展示参数，
+     * 走 refreshViews() 会白跑一遍 catalog 磁盘 IO。
+     */
+    syncPosterGrid(): void {
+        for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
+            (leaf.view as HomeView).setPosterGrid(this.settings.posterDensity, this.settings.posterColumns);
         }
     }
 
@@ -2598,19 +3653,33 @@ export default class ReelLudicPlugin extends Plugin {
         return `${DIR_COVERS}/${name}`;
     }
 
-    /** H：扫描封面目录孤儿文件（未被任何条目 poster 引用的封面，如取消添加弹窗残留/旧版本遗留），供清理弹窗列出 */
-    async listOrphanPosters(): Promise<string[]> {
+    /**
+     * 附件清理（#349）：扫描**未被引用的附件** —— 封面目录 + 阅读进度目录，供清理弹窗逐项列出。
+     * 判定全在纯模块 `pure/orphanAssets`（可单测）。本方法由原来的「只扫封面」扩为两类资产。
+     * 🔴 目录内路径一律转**库内相对**（只去库目录前缀、保留 `封面/` `阅读进度/`），与 poster / 存档存储格式一致，
+     *    否则清单里的路径拼不回 vault 全路径。（存档侧另按**文件名解析出的条目 id** 判孤儿。）
+     */
+    async listOrphanAssets(): Promise<OrphanAsset[]> {
         const entries = await this.service.list();
-        const referenced = entries.map((e) => e.poster).filter((p): p is string => !!p);
+        const referencedPosters = entries.map((e) => e.poster).filter((p): p is string => !!p);
         const lib = normalizePath(this.settings.libraryDir || 'ReelLudic');
-        const coverDir = normalizePath(`${lib}/${DIR_COVERS}`);
-        // coverFiles 转相对路径（仅去库目录前缀，保留 封面/ 前缀）——与 poster 存储格式（封面/xxx.jpg）一致，
-        // 否则 orphanCoverFiles 精确比对失配，导致所有被引用封面被误判为孤儿
-        const coverFiles = this.app.vault
-            .getFiles()
-            .filter((f) => f.path.startsWith(coverDir + '/'))
-            .map((f) => f.path.slice(lib.length + 1));
-        return orphanCoverFiles(coverFiles, referenced);
+        const rel = (dir: string) =>
+            this.app.vault
+                .getFiles()
+                .filter((f) => f.path.startsWith(dir + '/'))
+                .map((f) => f.path.slice(lib.length + 1));
+        return buildOrphanAssets({
+            coverFiles: rel(normalizePath(`${lib}/${DIR_COVERS}`)),
+            referencedPosters,
+            storeFiles: rel(normalizePath(readerStoreDir(this.settings.libraryDir || 'ReelLudic'))),
+            liveIds: entries.map((e) => e.id),
+        });
+    }
+
+    /** 附件清理入口（#349）：扫描 → 弹窗逐项勾选清理。设置页与命令面板共用这一条路径。 */
+    async openAssetCleanup(): Promise<void> {
+        const assets = await this.listOrphanAssets();
+        new AssetCleanupModal(this.app, assets, this.settings.libraryDir || 'ReelLudic').open();
     }
 
     /** 下载 URL 图片为 ArrayBuffer：豆瓣图床（doubanio.com）防盗链要求 Referer 为 douban.com，

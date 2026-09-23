@@ -41,19 +41,19 @@ const SINGLE_LABEL: Record<'book' | 'game' | 'music', { label: string; title: st
     book: {
         label: '本地文件路径',
         title: '关联书籍文件',
-        placeholder: 'vault 相对路径，如 书籍/三体.txt（TXT/EPUB/PDF）',
+        placeholder: '库内路径，如 书籍/书名.txt（TXT/EPUB/PDF）',
         hint: '选择 TXT / EPUB / PDF 电子书',
     },
     game: {
         label: '本地文件路径',
         title: '关联启动快捷方式',
-        placeholder: 'vault 相对路径或系统绝对路径（.lnk）',
+        placeholder: '库内路径，或系统绝对路径（.lnk）',
         hint: '选择游戏启动快捷方式（.lnk）',
     },
     music: {
         label: '本地文件路径',
         title: '关联本地音频',
-        placeholder: 'vault 相对路径或系统绝对路径（mp3/flac/m4a…）',
+        placeholder: '库内路径，或系统绝对路径（mp3/flac/m4a…）',
         hint: '选择本地音频文件',
     },
 };
@@ -173,14 +173,14 @@ export class QuickAssociateModal extends Modal {
         const frow = div.createDiv({ cls: 'rl-qa-row' });
         this.fileInput = frow.createEl('input', {
             cls: 'rl-qa-input',
-            attr: { type: 'text', placeholder: '本地视频路径（库内相对/系统绝对）', spellcheck: 'false' },
+            attr: { type: 'text', placeholder: '库内路径，或系统绝对路径', spellcheck: 'false' },
         });
         const browse = frow.createEl('button', { cls: 'rl-btn rl-link-act', text: '浏览…' });
         browse.onclick = () => void this.pickInto(this.fileInput, 'video');
-        div.createDiv({ cls: 'rl-qa-lbl', text: '集标题（可选）' });
+        div.createDiv({ cls: 'rl-qa-lbl', text: e.type === 'movie' ? '标题（可选）' : '集标题（可选）' });
         this.titleInput = div.createEl('input', {
             cls: 'rl-qa-input',
-            attr: { type: 'text', placeholder: '如：开始（悬停显示「第 N 集 标题」）', spellcheck: 'false' },
+            attr: { type: 'text', placeholder: '如：开始', spellcheck: 'false' },
         });
         this.populateCur();
     }
@@ -196,7 +196,8 @@ export class QuickAssociateModal extends Modal {
                 text: String(i + 1),
             });
             const title = this.titles[i];
-            btn.setAttribute('data-tip', title ? `第 ${i + 1} 集 ${title}` : `第 ${i + 1} 集`);
+            const linkedTip = this.entry.type === 'movie' ? title || '观看链接' : title ? `第 ${i + 1} 集 ${title}` : `第 ${i + 1} 集`;
+            btn.setAttribute('data-tip', linkedTip);
             btn.onclick = () => {
                 this.flushCurIntoArrays();
                 this.curEp = i;
@@ -282,6 +283,7 @@ export class QuickAssociateModal extends Modal {
 
     private curLabel(): string {
         const t = this.titles[this.curEp];
+        if (this.entry.type === 'movie') return t ? `标题：${t}` : '观看链接';
         return `第 ${this.curEp + 1} 集${t ? `：${t}` : ''}`;
     }
 

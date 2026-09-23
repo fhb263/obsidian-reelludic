@@ -40,6 +40,30 @@ export function normalizeProvider(provider: unknown): TranslateProvider {
     return provider === 'deepseek' || provider === 'zhipu' ? provider : DEFAULT_TRANSLATE_PROVIDER;
 }
 
+/**
+ * AI 服务开关值（用户 2026-09-18）：三处服务下拉各可单独选「不启用」。
+ * `'off'` 只作设置页取值 —— 归一后由 main 侧守卫拦在发请求之前（翻译 / 总结 / 搜索 各自独立）。
+ */
+export const AI_PROVIDER_OFF = 'off';
+
+/** 服务商或「不启用」 */
+export type AiProviderChoice = TranslateProvider | typeof AI_PROVIDER_OFF;
+
+/**
+ * 归一「服务商 or 不启用」：仅 'zhipu' / 'deepseek' / 'off' 直通，其余（含脏数据 / 原型链键名）回退 zhipu。
+ * ⚠️ 不能拿 `normalizeProvider` 顶替 —— 它会把 'off' 静默吃掉变回 zhipu（「关了又自己开了」）。
+ */
+export function normalizeAiChoice(v: unknown): AiProviderChoice {
+    return v === AI_PROVIDER_OFF || v === 'deepseek' || v === 'zhipu' ? v : DEFAULT_TRANSLATE_PROVIDER;
+}
+
+/** 设置页下拉选项（顺序即 UI 顺序；「不启用」放最后，避免误选） */
+export const AI_PROVIDER_OPTIONS: { value: AiProviderChoice; label: string }[] = [
+    { value: 'zhipu', label: 'GLM-4-Flash' },
+    { value: 'deepseek', label: 'DeepSeek v4 Flash' },
+    { value: AI_PROVIDER_OFF, label: '不启用' },
+];
+
 /** OpenAI 兼容 chat/completions 请求体结构（智谱 GLM / DeepSeek 通用） */
 export interface TranslateRequestBody {
     model: string;

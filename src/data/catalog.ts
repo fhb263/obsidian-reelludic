@@ -5,6 +5,28 @@ import { isMediaStatus } from 'pure/status';
 import { normalizeRating } from 'pure/rating';
 import { BOOK_KINDS } from 'pure/bookKind';
 import { MUSIC_KINDS } from 'pure/musicKind';
+import {
+    BACKUP_FILE,
+    BACKUP_KEEP,
+    LEGACY_BACKUP_DIR,
+    backupStamp,
+    countEntries,
+    emptyBackupFile,
+    legacyBackupStamp,
+    legacyStampToAt,
+    parseBackupFile,
+    pushSnapshot,
+    serializeBackupFile,
+    sortLegacyBackupNames,
+    type BackupFile,
+} from 'pure/catalogBackup';
+
+/** 与给定文件同级的路径（用于把「备份文件 / 旧备份目录」放在 catalog.json 旁边） */
+function siblingPath(filePath: string, name: string): string {
+    const i = filePath.lastIndexOf('/');
+    const dir = i >= 0 ? filePath.slice(0, i) : '';
+    return dir ? `${dir}/${name}` : name;
+}
 
 export const CATALOG_VERSION = 1;
 
@@ -19,6 +41,12 @@ export interface VaultIO {
     writeText(path: string, content: string): Promise<void>;
     /** 删除文件（不存在时静默，不抛错） */
     deleteFile(path: string): Promise<void>;
+    /**
+     * 列出目录下的文件名（不含子目录；目录不存在返回空数组）。
+     * **可选**：单文件备份（`catalog-backups.json`）不需要列目录就能轮转，故未实现时备份照常工作；
+     * 它只影响「旧 `.backups/` 多文件备份的一次性导入与清理」——缺能力时旧文件原样保留、不做导入。
+     */
+    listFiles?(folder: string): Promise<string[]>;
 }
 
 function isString(v: unknown): v is string {
@@ -90,6 +118,19 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
                     : undefined,
             }
             : undefined,
+        // 本地视频播放位置（键必须是集下标数字串、值必须是正的有限数；空对象不落库）——
+        // ⚠️ 新增 schema 字段必须同步本白名单，否则读取端 normalizeEntry 会静默丢弃（历史踩坑）
+        videoPositions: (() => {
+            const src = raw.videoPositions;
+            if (!src || typeof src !== 'object') return undefined;
+            const out: Record<string, number> = {};
+            for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
+                if (!/^\d+$/.test(k)) continue;
+                if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) continue;
+                out[k] = Math.floor(v);
+            }
+            return Object.keys(out).length ? out : undefined;
+        })(),
         playtimeMinutes: typeof raw.playtimeMinutes === 'number' ? raw.playtimeMinutes : undefined,
         pageCount: typeof raw.pageCount === 'number' && raw.pageCount > 0 ? raw.pageCount : undefined, // 书籍元数据页数（豆瓣，仅展示/统计）
         playSessions: Array.isArray(raw.playSessions)
@@ -177,6 +218,26 @@ export function serializeCatalog(c: Catalog): string {
     return JSON.stringify(clean, null, 2);
 }
 
+/**
+ * 写前自检：序列化文本必须「能回读」，且回读到的条目数与预期一致。
+ *
+ * 为什么值得单独一关：catalog.json 是全量重写，一次坏写入会把整库覆盖掉；
+ * 而 serializeCatalog 的正常路径几乎不可能出问题 —— 这一关防的是「将来有人改坏了序列化 / 归一化」，
+ * 让故障停在写盘之前（宁可不写，也不要用坏数据盖掉好数据）。
+ */
+export function isCatalogTextConsistent(text: string, expectedEntries: number): boolean {
+    let raw: unknown;
+    try {
+        raw = JSON.parse(text);
+    } catch {
+        return false;
+    }
+    if (typeof raw !== 'object' || raw === null) return false;
+    const entries = (raw as Record<string, unknown>).entries;
+    if (!Array.isArray(entries)) return false;
+    return entries.filter(isEntryLike).length === expectedEntries;
+}
+
 export class CatalogStore {
     constructor(private io: VaultIO, private path: string = 'ReelLudic/catalog.json') {}
 
@@ -194,6 +255,101 @@ export class CatalogStore {
     }
 
     async save(catalog: Catalog): Promise<void> {
-        await this.io.writeText(this.path, serializeCatalog(catalog));
+        const text = serializeCatalog(catalog);
+        // ① 写前自检：回读不通就中止（错误上抛给调用方，不静默吞掉）
+        if (!isCatalogTextConsistent(text, catalog.entries.length)) {
+            throw new Error(`catalog 写前校验失败：序列化结果无法回读 ${catalog.entries.length} 条条目`);
+        }
+        // ② 覆盖前留一份滚动备份
+        await this.backupBeforeWrite(text);
+        // ③ 落盘
+        await this.io.writeText(this.path, text);
+    }
+
+    /**
+     * 备份文件：与 catalog.json 同级（`<库目录>/catalog-backups.json`）。
+     * 单文件内含最近 BACKUP_KEEP 版快照 —— 2026-09-14 用户裁定：不再一版一个文件
+     * （「catalog 就没有单文件的备份方案了吗，太多文件我管理不过来」）。
+     */
+    private get backupPath(): string {
+        return siblingPath(this.path, BACKUP_FILE);
+    }
+
+    /** 旧的多文件备份目录（`<库目录>/.backups`）：仅供一次性导入与清理，之后不再写 */
+    private get legacyBackupDir(): string {
+        return siblingPath(this.path, LEGACY_BACKUP_DIR);
+    }
+
+    /**
+     * 覆盖前留一版备份（单文件、内部保留最近 BACKUP_KEEP 版）。
+     *
+     * - 读不到旧文件（首次建库）或旧内容与本次**完全相同**（无实质变化）→ 跳过，
+     *   否则光是反复切换状态就会刷出一堆同内容快照。
+     * - 备份链的任何失败都**不阻断**本次写入：备份是兜底手段，
+     *   不该反过来变成写盘的新故障点（失败静默，宁可少一份备份也不能写不进库）。
+     */
+    private async backupBeforeWrite(nextText: string): Promise<void> {
+        try {
+            let prev: string;
+            try {
+                prev = await this.io.readText(this.path);
+            } catch {
+                return;
+            }
+            if (prev === nextText) return;
+            await this.importLegacyBackups();
+            let bf: BackupFile;
+            try {
+                bf = parseBackupFile(await this.io.readText(this.backupPath));
+            } catch {
+                bf = emptyBackupFile();
+            }
+            const next = pushSnapshot(bf, { at: backupStamp(new Date()), entries: countEntries(prev), text: prev }, BACKUP_KEEP);
+            if (next === bf) return; // 同一版已记录过（引用相等）→ 不重写文件
+            await this.io.writeText(this.backupPath, serializeBackupFile(next));
+        } catch {
+            // 备份链失败不改变本次写入的结果
+        }
+    }
+
+    /** 旧 `.backups/` 一次性导入（导入并**回读校验**通过后才清理旧文件；失败一律保留旧文件） */
+    private legacyImported = false;
+
+    private async importLegacyBackups(): Promise<void> {
+        if (this.legacyImported || !this.io.listFiles) return;
+        // 一次性：无论成败都只尝试一次，避免每次 save 都去扫目录
+        this.legacyImported = true;
+        try {
+            const names = sortLegacyBackupNames(await this.io.listFiles(this.legacyBackupDir)).filter(
+                (n) => legacyBackupStamp(n) !== null,
+            );
+            if (names.length === 0) return;
+
+            let bf: BackupFile;
+            try {
+                bf = parseBackupFile(await this.io.readText(this.backupPath));
+            } catch {
+                bf = emptyBackupFile();
+            }
+            // 旧文件按「旧 → 新」逐个 push（push 是头插）→ 结果仍是新的在前
+            for (const name of names) {
+                try {
+                    const text = await this.io.readText(`${this.legacyBackupDir}/${name}`);
+                    bf = pushSnapshot(bf, { at: legacyStampToAt(name), entries: countEntries(text), text }, BACKUP_KEEP);
+                } catch {
+                    // 单个旧档读失败：跳过它，不影响其余
+                }
+            }
+            await this.io.writeText(this.backupPath, serializeBackupFile(bf));
+
+            // ⚠️ 回读校验：单文件里确实装下了这些版本，才允许删旧文件（宁可多几个文件，也不能丢备份）
+            const back = parseBackupFile(await this.io.readText(this.backupPath));
+            if (back.snapshots.length < bf.snapshots.length) return;
+            for (const name of names) {
+                await this.io.deleteFile(`${this.legacyBackupDir}/${name}`);
+            }
+        } catch {
+            // 导入失败：旧文件原样保留，用户仍可按老办法手工还原
+        }
     }
 }

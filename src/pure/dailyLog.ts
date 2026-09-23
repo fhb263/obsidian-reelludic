@@ -7,10 +7,11 @@
  *  - 「新增条目」取 MediaEntry.createdAt（存量数据无需迁移即可回溯）；
  *    「状态变更」取 catalog.activityLog（仅记录状态翻转，见 data/types ACTIVITY_EVENT）。
  *  - 已删除条目的状态记录不再展示（标题按 id 现查）。
+ *  - 状态文案**统一用通用状态名**（想看 / 在看 / 已看 / 存档，见 pure/status STATUS_LABELS），
+ *    不按类型分化（用户 2026-09-15 裁定：记录 / 动态里不要「已读 / 想读 / 想听 / 通关」混着出现）。
  */
 import type { ActivityEvent, EntryType, MediaEntry } from 'data/types';
-import type { MediaStatus } from 'pure/status';
-import { statusLabel } from 'pure/labels';
+import { STATUS_LABELS, type MediaStatus } from 'pure/status';
 
 /** 日记打卡区块的标题前缀（幂等替换时按它定位；日期后缀 = YYYY-MM-DD） */
 export const JOURNAL_HEADING_PREFIX = '## ReelLudic 打卡 · ';
@@ -91,7 +92,7 @@ export function collectDayActivity(
 export function renderJournalBlock(dateStr: string, act: DayActivity): string | null {
     if (act.total === 0) return null;
     const lines = [`${JOURNAL_HEADING_PREFIX}${dateStr}`, `> [!reelludic] 今日 ${act.total} 条动态`];
-    for (const s of act.statuses) lines.push(`> - ${s.time} ${statusLabel(s.type, s.status)}《${s.title}》`);
+    for (const s of act.statuses) lines.push(`> - ${s.time} ${STATUS_LABELS[s.status] ?? '状态更新'}《${s.title}》`);
     if (act.created.length) lines.push(`> 新增条目 ${act.created.length}：${act.created.map((c) => c.title).join(' / ')}`);
     return lines.join('\n');
 }

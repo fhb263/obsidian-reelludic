@@ -195,9 +195,7 @@
             <span class="rl-tr-cnt rl-tr-cnt-new"><Icon icon="bell" size={11} /> {updatedCount} 部有更新</span>
         {/if}
         <span class="rl-tr-hint">更新置顶 · 滞后置顶 · 点击标题打开笔记</span>
-        <button class="rl-tr-refresh" disabled={checking} data-tip="重新检查所有在追条目的更新" on:click={() => runChecks(true)}>
-            {checking ? '检测中…' : '重新检测'}
-        </button>
+        <button class="rl-tr-refresh" class:rl-btn-loading={checking} disabled={checking} data-tip="重新检查所有在追条目的更新" on:click={() => runChecks(true)}>重新检测</button>
         <button class="rl-tr-import" on:click={onImportBangumi} data-tip="从 Bangumi 收藏列表批量导入动画条目">从 Bangumi 导入</button>
     </div>
 
@@ -221,7 +219,7 @@
                     {@const u = updateMap[e.id]}
                     <tr class:rl-tr-stale={activityOf(e) === 'stale'}>
                         <td>
-                            <span class="rl-tr-title-cell" role="link" tabindex="0" data-tip="打开笔记：{e.title}" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>
+                            <span class="rl-tr-title-cell" role="link" tabindex="0" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>
                                 {e.title}
                             </span>
                         </td>
@@ -229,7 +227,7 @@
                         <td><span class="rl-tr-prog">{progressText(e)}</span></td>
                         <td>
                             {#if u === 'checking'}
-                                <span class="rl-tr-upd rl-tr-upd-check">检测中…</span>
+                                <span class="rl-tr-upd rl-tr-upd-check"><span class="rl-spinner"></span> 检测中…</span>
                             {:else if !u}
                                 <span class="rl-tr-upd rl-tr-upd-na" data-tip="该条目没有观看链接 — 编辑条目添加后即可检测更新">— 未设置</span>
                             {:else if u.status === 'updated'}

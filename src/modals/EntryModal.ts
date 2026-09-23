@@ -136,7 +136,12 @@ export class EntryModal extends Modal {
                                 // G 双写冲突：笔记被外部修改（手动编辑过）→ 弹窗二选一；「保留」跳过重写（catalog 已保存）
                                 if (await this.plugin.service.noteWasExternallyModified(updated.id)) {
                                     const choice = await new NoteConflictModal(this.app, updated.title).open();
+                                    // 🔴 两种情况都必须让指纹跟上，否则该条目**下次保存还会再问一遍**
+                                    //    （用户 2026-09-21 报「总会有外部修改提示」的真因之一）：
+                                    //    「覆盖」= writeNote 用库数据重写（自带刷指纹）；
+                                    //    「保留」= 认可当前笔记为新基线（旧实现这里什么也没做 ⇒ 永远问不完）。
                                     if (choice === 'overwrite') await this.plugin.service.writeNote(updated.id);
+                                    else await this.plugin.service.adoptNoteAsBaseline(updated.id);
                                 } else {
                                     await this.plugin.service.writeNote(updated.id);
                                 }

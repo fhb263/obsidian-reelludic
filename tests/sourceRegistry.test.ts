@@ -9,6 +9,7 @@ import {
     normalizeSourceChain,
     resolveSourceChain,
     deriveGroupSearchError,
+    sourceLabel,
     DEFAULT_CHAINS,
     type ProviderId,
     type SourceGroup,
@@ -148,7 +149,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             group: 'book', chain: ['douban'],
             douban: { reachable: false, cookieInvalid: false }, aux: {},
         });
-        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 服务集成 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
+        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 数据源配置 › 数据源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
         expect(err).toContain('Douban 兜底不可用');
     });
 
@@ -158,7 +159,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: false, cookieInvalid: true },
             aux: { tmdb: 'unconfigured' },
         });
-        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 服务集成 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
+        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 数据源配置 › 数据源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
         expect(err).toContain('豆瓣 Cookie 已失效或过期');
     });
 
@@ -246,7 +247,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             aux: { tmdb: 'unconfigured' },
         });
         expect(err).toContain('未配置凭据');
-        expect(err).toContain('设置 → 服务集成 · 数据源管理');
+        expect(err).toContain('设置 → 数据源配置 › 数据源凭据');
         expect(err).toContain('测试连接');
     });
 
@@ -287,7 +288,44 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: true, cookieInvalid: false },
             aux: { bangumi: 'unconfigured' },
         });
-        expect(err).toContain('设置 → 服务集成 · 数据源管理');
+        expect(err).toContain('设置 → 数据源配置 › 数据源凭据');
         expect(err).toContain('Bangumi Token');
+    });
+});
+
+// 海报墙评分角标的数据源展示名（用户 2026-09-22：「封面右上角大众评分要显示数据源」）。
+// 🔴 穷举锁：角标要把来源名直接画在封面上，任何源漏登记都会让角标少半截（静默可读性损失）
+//    —— 所以这里对全 11 源逐项比对，并且额外钉「与注册表 label 同源」，防止将来有人再手抄一份小表。
+describe('sourceLabel 数据源展示名（评分角标 / data-tip 共用）', () => {
+    it('全 11 源穷举：每个 id 都有非空展示名', () => {
+        const expected: Array<[ProviderId, string]> = [
+            ['douban', '豆瓣'], ['tmdb', 'TMDB'], ['bangumi', 'Bangumi'],
+            ['openLibrary', 'Open Library'], ['googleBooks', 'Google Books'],
+            ['steam', 'Steam'], ['musicbrainz', 'MusicBrainz'], ['itunes', 'iTunes'],
+            ['omdb', 'OMDb'], ['anilist', 'AniList'], ['igdb', 'IGDB'],
+        ];
+        for (const [id, label] of expected) {
+            expect(sourceLabel(id), id).toBe(label);
+            expect(sourceLabel(id).length, id).toBeGreaterThan(0);
+        }
+    });
+
+    it('与注册表 label 同源（单一真源：改 PROVIDERS 即改角标，不另维护手写表）', () => {
+        expect(PROVIDERS.length).toBe(11);
+        for (const p of PROVIDERS) {
+            expect(sourceLabel(p.id), p.id).toBe(p.label);
+        }
+    });
+
+    it('空值 / 未知 id → 空串（角标退化为「数值★」，绝不显示 undefined / null）', () => {
+        for (const bad of [undefined, '', 'rawg', 'tvdb', 'douban ', 'DOUBAN', '豆瓣']) {
+            expect(sourceLabel(bad as string | undefined), String(bad)).toBe('');
+        }
+    });
+
+    it('⛔ 不沿原型链取值（__proto__ / constructor / toString 不得被当成合法源）', () => {
+        for (const k of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+            expect(sourceLabel(k), k).toBe('');
+        }
     });
 });

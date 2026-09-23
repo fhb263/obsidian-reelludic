@@ -27,7 +27,7 @@ export class ImportBangumiModal extends Modal {
         contentEl.createEl('h2', { text: '从 Bangumi 导入追番' });
         contentEl.createEl('div', {
             cls: 'rl-import-hint',
-            text: '拉取你的 Bangumi 收藏列表为动画条目（按标题+类型去重，已存在的跳过）。需已配置 Bangumi Token（设置 → 服务集成）。',
+            text: '拉取你的 Bangumi 收藏列表为动画条目（按标题+类型去重，已存在的跳过）。需已配置 Bangumi Token（设置 → 数据源配置 › 数据源凭据）。',
         });
 
         // 用户 ID 输入（可选）

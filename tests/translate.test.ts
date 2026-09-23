@@ -9,6 +9,9 @@ import {
     translateChatUrl,
     modelFor,
     normalizeProvider,
+    normalizeAiChoice,
+    AI_PROVIDER_OPTIONS,
+    AI_PROVIDER_OFF,
     ZHIPU_CHAT_URL,
     DEEPSEEK_CHAT_URL,
     ZHIPU_MODEL,
@@ -127,5 +130,26 @@ describe('buildTranslateBody 自定义服务提示词（设置页可改）', () 
         expect(buildTranslateBody('你好', 'zhipu', '只翻译成日语')!.messages[0].content).toBe('只翻译成日语');
         expect(buildTranslateBody('你好', 'zhipu', '  ')!.messages[0].content).toBe(DEFAULT_TRANSLATE_PROMPT);
         expect(buildTranslateBody('你好', 'zhipu')!.messages[0].content).toBe(DEFAULT_TRANSLATE_PROMPT);
+    });
+});
+
+describe('normalizeAiChoice（服务商 or 不启用）', () => {
+    it("'zhipu' / 'deepseek' / 'off' 直通（off 不能被吃掉成 zhipu）", () => {
+        expect(normalizeAiChoice('zhipu')).toBe('zhipu');
+        expect(normalizeAiChoice('deepseek')).toBe('deepseek');
+        expect(normalizeAiChoice('off')).toBe('off');
+        expect(AI_PROVIDER_OFF).toBe('off');
+    });
+    it('脏数据 / 空 / 原型链键名一律回退 zhipu', () => {
+        expect(normalizeAiChoice(undefined)).toBe('zhipu');
+        expect(normalizeAiChoice('')).toBe('zhipu');
+        expect(normalizeAiChoice('disabled')).toBe('zhipu');
+        expect(normalizeAiChoice('toString')).toBe('zhipu');
+        expect(normalizeAiChoice('constructor')).toBe('zhipu');
+        expect(normalizeAiChoice(0)).toBe('zhipu');
+    });
+    it('下拉选项三项且「不启用」在最后（防误选）', () => {
+        expect(AI_PROVIDER_OPTIONS.map((o) => o.value)).toEqual(['zhipu', 'deepseek', 'off']);
+        expect(AI_PROVIDER_OPTIONS[AI_PROVIDER_OPTIONS.length - 1].label).toBe('不启用');
     });
 });

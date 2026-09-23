@@ -104,48 +104,241 @@
    走隐藏文本或 aria-labelledby。EntryForm 另有同名 scoped 规则，声明一致、重复无害。 */
 .rl-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
-/* ── 设置页：服务集成两折叠项（#165 T11：① API 管理 + ② 数据源启用；旧 B1 rl-src-* / rl-chain-* 折叠样式已清理） ── */
-.rl-fold {
-    border: 1px solid var(--background-modifier-border);
-    border-radius: var(--rl-t-radius-md, 6px);
-    margin: 6px 0;
-    overflow: hidden;
-    background: var(--background-primary);
-}
-.rl-fold-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    cursor: pointer;
-    user-select: none;
-}
-.rl-fold-head:hover { background: var(--background-modifier-hover); }
-.rl-fold-title { font-weight: 600; }
-.rl-fold-caret {
-    color: var(--text-faint);
-    font-size: var(--font-ui-smaller);
-}
-.rl-fold-open .rl-fold-caret { transform: rotate(90deg); }
-.rl-fold-body {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 12px 10px;
-    border-top: 1px solid var(--background-modifier-border);
-}
-.rl-fold-body.rl-fold-body-closed { display: none; }
 .rl-hint-note {
     font-size: var(--font-ui-smaller);
     color: var(--text-muted);
     line-height: 1.5;
     padding: 2px 0 6px;
 }
+/* #380：媒体库目录输入框的即时提示复用上面的排版，出错时转红（走语义变量，六档主题/明暗都自动适配） */
+.rl-hint-note.is-error { color: var(--text-error); }
 /* API 管理：单源配置行（头点击内联展开） */
 .rl-key-row {
     border: 1px solid transparent;
     border-radius: var(--rl-t-radius-md, 6px);
     margin: 2px 0;
+}
+/* 服务集成分组（设置页）—— 用户 2026-09-18 第七次裁定「重做这个服务集成样式」：
+   ① **一级标题（数据源管理 / AI集成）改用原生 `setHeading()`** —— 官方 Plugin guidelines 明文要求
+      「Use `setHeading` instead of a `<h2>`」，理由是自造标题元素会造成**跨插件样式不一致**；
+      自造的 `.rl-svc-section-title`（13px、贴容器左缘）已删除 → 「上级比下级还小」的层级倒挂消失。
+   ② **子分组标题行** = 原生设置行的**左缘与字号**：容器内距 48 + 内距 16 = **文字左缘 64px**
+      （与 `.setting-item` / `.setting-item-heading` 完全齐平），13px / 600 / `--text-normal`；
+      ▸ 箭头**紧贴标题文字**（不再 `margin-left: auto` 顶到容器最右缘 —— 那会让箭头离标题 400+px、
+      hover 时铺出一条横跨整页的色带）；hover 底色只铺「标题 + 箭头」这一小段（`width: fit-content`）。
+   ③ 组内容再缩进一档（48 + 32 = 80px），形成「一级标题 64 → 子分组标题 64 → 内容 80」的稳定阶梯。 */
+.rl-svc-group { margin: var(--size-4-2) 0; }
+.rl-svc-group-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    padding: 5px var(--size-4-4);
+    border-radius: var(--rl-t-radius-md, 6px);
+    font-size: var(--font-ui-small);
+    font-weight: 600;
+    color: var(--text-normal);
+    user-select: none;
+}
+/* #352：子分组**不再折叠**（内容常显）⇒ 标题是**静态标签**，去掉 cursor: pointer 与悬停底色
+   —— 留着会让用户以为还能点。折叠能力已上移给「左栏导航 / 窄屏手风琴标题」。 */
+.rl-svc-group-icon { display: flex; align-items: center; flex: 0 0 auto; color: var(--text-faint); }
+.rl-svc-group-icon svg { width: 1em; height: 1em; }
+.rl-svc-group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 0 6px calc(var(--size-4-4) * 2);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   设置页导航（#354）：**固定顶栏 Tab + 内容区独立滚动**（4 个平级 Tab）
+
+   🔴 **结构（shell 是 flex 列 / height:100%）**：
+      .rl-set-shell > .rl-set-bar（flex:0 0 auto，天然固定）+ .rl-set-content（唯一滚动区）
+      ⛔ 不碰 Obsidian 设置外框 —— 它本身就是 `height:100%; overflow-y:auto`（实测 app.css），
+        所以 shell 拿得到定高；「固定栏」不再靠 `position: sticky`（那是整面板滚动时代的替代方案）。
+      🔴 `.rl-set-content` 的 `min-height: 0` 是这条公式里**必须**的一行：flex 项默认
+        `min-height:auto` ⇒ 会被内容撑高、`overflow` 永不生效，整页又变回「外框在滚」。
+
+   🔴 **亮暗主题适配 = 零硬编码**：文字色走 Obsidian 原生导航语义变量（--nav-item-*），
+      悬停底走 `--background-modifier-hover`（实测亮=黑 6.7% / 暗=白 6.7% 中性底），
+      激活走 `--interactive-accent` ⇒ 主题切换自动跟随，⛔ 一个字面色值都不写。
+   🔴 **必须写兜底 var(--nav-item-x, 后备值)**：老版本 Obsidian 或第三方主题可能没定义这套变量，
+      没有兜底就会出现「文字变透明」这种最难查的故障。
+   🔴 **悬停铺浅底 + 激活「强调色字 + 2px 下划线」**（#354 用户明确要求「悬停浅灰底」）：
+      两条视觉通道分离 ⇒ 「悬停」与「我在这一页」不会互相冒充。
+      ⚠️ 这**推翻了 #353 的「悬停只变色不铺底」**（那条的判据是 2026-09-14 的「并排切换只变色」）——
+        两者在本轮不冲突：底色**逐项铺**（带圆角 + 4px 项间距，不会连成色带），
+        且**激活不靠底色**承载。判据以本轮为准。
+      ⚠️ 另外**不要照抄核心** `.horizontal-tab-nav-item`：它桌面激活态**就是**铺
+        `--background-modifier-hover` ⇒ 悬停与激活长得一模一样，用户分不出自己在哪页。
+   ⚠️ Tab 是 `<button>` ⇒ **规则必须两级前缀**（≥0,2,0）：核心 `button:not(.clickable-icon)`（0,1,1）
+      会压过单类（0,1,0），出灰底 + `--input-shadow` 内阴影 = #351 那版「厚重感」（§3 v15 老坑）。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 🔴 全宽度**只有这一个形态**：#352 那套「宽屏左栏 / 窄屏手风琴」双形态已整体退场
+   （窄屏改由 Tab 栏自己横向滚动承接），所以这里不再有任何「布局切换」的余地。
+   🔴 #357：**退回「外框滚 + 栏 sticky」**（#354 那版「内容区独立滚动」已撤）——
+      原因是用户要「滚动条像别的插件那样贴**界面边缘**」，而这条**只有让外框来滚**才能做到：
+      外框的横向内距是 `max(var(--size-4-8), var(--setting-group-center-offset))`，
+      其中 `--setting-group-center-offset: calc((100% - var(--setting-group-max-width)) / 2)`
+      ⇒ **面板越宽、内容越往里缩**（动态值，纯 CSS 拿不到）⇒ 任何「自己滚的内容区」
+        滚动条都会被画在**内容盒右缘**（离面板边缘 32px 起步、面板越宽越靠里）。
+      ⚠️ 这是两条**互斥**的要求：「内容区独立滚动」与「滚动条贴界面边缘」只能选一个 ——
+        以用户本轮口径为准（后者），栏的固定改由 `position: sticky` 承担，观感不变。
+   🔴 #358：**外框那 48px 上内距的补偿方式改了**（用户实机截图：Tab 上方多出一大块空白）——
+      #357 把补偿写成栏的 `padding-top`，可外框**自己也有** `padding-top: var(--size-4-12)`，
+      两段是**叠加**的 ⇒ 静止时 Tab 被顶到 96px 处（截图里那块空白）。
+      改成：**用 shell 的负 `margin-top` 把外框那段抵消掉**，再由栏自己的 `padding-top` 补回来
+      ⇒ 静止时只有一段 48px（与原生一致）、滚动时栏的 padding box 正好盖住 [面板顶, Tab 顶] 这一段。
+      ⚠️ 两处必须**成对**出现（负 margin 少一处 ⇒ 顶部多一条正文；padding 少一处 ⇒ Tab 顶到面板边）。 */
+.rl-set-shell {
+    display: block;
+    /* 🔴 抵消外框的 `padding-top: var(--size-4-12)`：让 shell 从**面板顶**开始算，
+       这样栏的 padding box 能覆盖面板顶那一段（正文才不会从栏上方穿过去）。 */
+    margin-top: calc(-1 * var(--size-4-12));
+}
+
+/* 顶栏 = Tab 栏（4 项，可横向滚动）。#354 起「关于」已回归为平级 Tab
+   ⇒ 栏里只有这一个滚动容器，不再有「右上角常驻按钮」那套例外。 */
+.rl-set-bar {
+    /* 🔴 栏由 `sticky` 固定（外框在滚）。**这里是本轮最反直觉的一处，实测数据在下面**：
+       sticky 的吸附参照边**不是**滚动口的 border box，而是**内容盒边 + `top` 偏移**
+       —— 外框自带 `padding-top: 48`，所以 `top: 0` 会把栏**按回内容盒顶端（= 面板顶下 48px）**，
+       再叠加栏自己的 `padding-top: 48` ⇒ Tab 被顶到 **96px**（用户截图里那块空白就是这么来的）。
+       ⇒ 必须写 **`top: -48`**（吸附边抬到面板顶）**并且**让 shell 用负 `margin-top` 把自然位置也抬到面板顶；
+         两者缺一：只给负 top ⇒ 静止时 Tab 跑到面板最上沿（没留 48px）；只给负 margin ⇒ sticky 把栏按回去（本次踩的坑）。 */
+    position: sticky;
+    top: calc(-1 * var(--size-4-12));
+    z-index: 1;
+    /* 栏是固定的，正文会从栏下穿过 ⇒ 必须给不透明底（外框底色同为一处，观感无缝） */
+    background: var(--background-primary);
+    /* 补回被 shell 负外边距抵消掉的那段外框顶部内距（静止时 Tab 距面板顶 = 48px，与原生一致） */
+    padding-top: var(--size-4-12);
+    display: flex;
+    align-items: flex-end;
+    gap: var(--size-4-2);
+    /* 项 36px + 2px 呼吸 + 1px 底线 = 39px（与规范稿的「约 40px」一致）。
+       ⚠️ 不写死 height：`box-sizing` 由核心主题决定，写死高度在非 border-box 下会多出 1px。 */
+    padding-bottom: 2px;
+    /* 🔴 固定栏**必须**有一条底线：内容会从栏下穿过，没有线会糊成一片。
+       （这推翻了 #353 的「不要容器底线」—— 那条的前提是"整面板一起滚"，现在前提变了。） */
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: var(--size-4-3);
+}
+.rl-set-tabs {
+    display: flex;
+    align-items: center;
+    /* 🔴 #357 用户要求：Tab 整组**居中**。
+       ⚠️ 用 `safe center` 而不是裸 `center`：溢出时裸 center 会把首项推到容器左缘之外，
+         而 `scrollLeft` 最小是 0 ⇒ 那一项**永久看不见也滚不回来**（#355 海报墙页签踩过的同一个坑，
+         见 UI-GUIDE §6.2）。`safe` 让「放得下就居中、放不下就退回从头排」。
+       ⚠️ 若某天运行环境不认 `safe` 关键字 ⇒ 整条声明失效、退回默认 `flex-start`（= 旧的左对齐），
+         只会"没居中"，⛔ 不会出现够不着的项（降级是安全的）。 */
+    justify-content: safe center;
+    gap: var(--size-4-1);
+    flex: 1 1 auto;
+    /* ⚠️ min-width: 0 必须给：flex 项的自动最小尺寸默认取内容宽度 ⇒ 永远不触发 overflow，
+       整条 Tab 栏反过来把容器撑破。 */
+    min-width: 0;
+    /* 溢出方案①：横向滚动 + **隐藏滚动条**（触控板 / Shift+滚轮照常可用） */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    /* ⚠️ 安全内距 + 负外边距：遮罩的渐隐会把**焦点环**裁掉一角（mask 改绘制不改布局）
+       ⇒ 首尾各留 16px 安全边；再用负外边距把这 16px「抵消」掉（居中时两侧对称，
+         不影响居中；未溢出时首项仍与下方内容**左缘对齐**）。 */
+    padding-inline: var(--size-4-4);
+    margin-inline: calc(-1 * var(--size-4-4));
+}
+.rl-set-tabs::-webkit-scrollbar { display: none; }
+/* 溢出方案②：**门控**遮罩 —— 只有「那一端确实还有内容」才挂类（滑到端点就不再遮）。
+   🔴 ⛔ 不要常驻遮罩：那是"撒谎"的遮罩，滑到最右端还把最后一项遮淡 = 看起来像坏了。
+   ⚠️ mask-image 与 -webkit-mask-image **必须双写**（核心自己也只用前缀形式）。
+   ⚠️ 渐变里的 `#000` 是 **alpha 遮罩的"全不透明"语义**，与主题无关（唯一允许出现的字面色值）。 */
+.rl-set-tabs.is-overflow-end {
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 28px), rgba(0, 0, 0, 0) 100%);
+            mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 28px), rgba(0, 0, 0, 0) 100%);
+}
+.rl-set-tabs.is-overflow-start {
+    -webkit-mask-image: linear-gradient(to right, rgba(0, 0, 0, 0) 0, #000 28px, #000 100%);
+            mask-image: linear-gradient(to right, rgba(0, 0, 0, 0) 0, #000 28px, #000 100%);
+}
+/* 两端同时（滑动中）：两个类都在 ⇒ 合并成一条四停渐变（写在单端规则**之后**才生效） */
+.rl-set-tabs.is-overflow-start.is-overflow-end {
+    -webkit-mask-image: linear-gradient(to right, rgba(0, 0, 0, 0) 0, #000 28px, #000 calc(100% - 28px), rgba(0, 0, 0, 0) 100%);
+            mask-image: linear-gradient(to right, rgba(0, 0, 0, 0) 0, #000 28px, #000 calc(100% - 28px), rgba(0, 0, 0, 0) 100%);
+}
+/* 🔴 **两级前缀不可省**：Tab 是 `<button>`，核心 `button:not(.clickable-icon)`（0,1,1）会压过单类
+   （0,1,0），出灰底 + `--input-shadow` 内阴影 = #351 那版「厚重感」（§3 v15 老坑）。
+   ⇒ 首项写 `.rl-set-tabs .rl-set-tab`（≥0,2,0），下面所有 `.rl-set-tab*` 规则一律跟着这个前缀。 */
+.rl-set-tabs .rl-set-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* ⛔ 不用 flex:1 —— 那会把 4 项挤成全等宽并截断中文标签（MD 明文：不截断标签，改滚动） */
+    flex: 0 0 auto;
+    height: 36px;
+    padding: 0 10px;
+    /* 重置核心 button 样式（两级前缀的理由见上方块注释） */
+    border: 0;
+    /* 圆角取核心横向 tab 的值（`--radius-m` = 8px）；激活项上圆角下直角，好让 2px 短线贴住底线 */
+    border-radius: var(--radius-m);
+    background: transparent;
+    box-shadow: none;
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    line-height: 1.5;
+    white-space: nowrap;
+    color: var(--nav-item-color, var(--text-muted));
+    cursor: var(--cursor);
+    user-select: none;
+}
+/* 悬停：铺**极浅中性底**（⛔ 不用强调色，避免与激活态抢） */
+.rl-set-tabs .rl-set-tab:hover:not(.is-active) {
+    color: var(--nav-item-color-hover, var(--text-normal));
+    background: var(--background-modifier-hover);
+}
+/* 激活：强调色字 + 600 + 下方 2px 短线，⛔ **不铺底**（把"我在这一页"交给下划线这条独立通道） */
+.rl-set-tabs .rl-set-tab.is-active {
+    color: var(--interactive-accent);
+    font-weight: 600;
+    border-radius: var(--radius-s) var(--radius-s) 0 0;
+    /* ⛔ **不用 border-bottom** —— 它会给激活项加 2px 高度把文字顶动
+       （#352 的 `border-left` 撑宽 3px 是同一类判例）；inset box-shadow 不参与布局。 */
+    box-shadow: inset 0 -2px 0 var(--interactive-accent);
+}
+/* 焦点环：照抄核心 `.vertical-tab-nav-item:focus-visible`（⛔ 不用 outline，与核心保持同一语言） */
+.rl-set-tabs .rl-set-tab:focus-visible {
+    box-shadow: 0 0 0 var(--input-border-width-focus) var(--background-modifier-border-focus);
+    outline: none;
+}
+
+.rl-set-tab-icon { display: flex; align-items: center; flex: 0 0 auto; color: inherit; }
+/* 图标走相对 em 单位（⛔ 绝对 px 会与文字基线错位） */
+.rl-set-tab-icon svg { width: 1em; height: 1em; }
+
+/* 🔴 #357：内容区**不再自己滚**（滚动交回外框 `.vertical-tab-content`）。
+   理由见上方 `.rl-set-shell` 的注释：只有让外框来滚，滚动条才会落在**界面边缘**
+   （核心在外框上写了 `overflow-y: auto`，滚动条画在它的 padding box 外缘 = 面板右缘）。
+   ⇒ 这个容器现在只是个普通块级包裹（保留类名与结构，⛔ 不动 `display()` 里的 DOM）。 */
+
+/* 一次只显示一页（`display()` 里 4 页全部预渲染，只靠 is-active 切换可见性） */
+.rl-set-page { display: none; }
+.rl-set-page.is-active { display: block; }
+/* 🔴 去掉页标题后，页内**首个元素就是子分组**，而 `.rl-svc-group` 自带上下外边距
+   ⇒ 不收掉它，页顶会平白空出一段（看起来像"内容没对齐"）。 */
+.rl-set-page-body > .rl-svc-group:first-child { margin-top: 0; }
+
+/* ── 窄屏（< 720px）：Primer 溢出策略的第一步 —— **先藏图标**腾宽度（D-2(a)）──
+   阈值 720 与阅读器顶栏同一口径（全项目只保留一个「窄屏」概念）。
+   ⚠️ 实测口径：合并成 4 项后，藏图标 + `padding:0 8px` 在 360pt 手机上**刚好放下**（零余量）
+      ⇒ 溢出方案仍然必须留（更窄的手机 / 更长文案 / 更宽的字体主题 / 将来的多语言都会溢出）。 */
+@media (max-width: 719px) {
+    .rl-set-tab-icon { display: none; }
+    .rl-set-tabs .rl-set-tab { padding: 0 8px; }
 }
 .rl-key-row.rl-key-open {
     background: var(--background-secondary);
@@ -184,14 +377,14 @@
     letter-spacing: .3px;
 }
 .rl-key-caret { color: var(--text-faint); margin-left: auto; }
-.rl-key-open .rl-key-caret { transform: rotate(90deg); }
+.rl-key-row.rl-key-open > .rl-key-head > .rl-key-caret { transform: rotate(90deg); }
 .rl-key-body {
     display: none;
     flex-direction: column;
     gap: 6px;
     padding: 0 10px 10px;
 }
-.rl-key-open .rl-key-body { display: flex; }
+.rl-key-row.rl-key-open > .rl-key-body { display: flex; }
 .rl-key-body .rl-hint-note { padding-bottom: 0; }
 
 .rl-key-actions {
@@ -207,7 +400,6 @@
     overflow-wrap: anywhere;
 }
 .rl-key-result-ok { color: var(--color-green); }
-.rl-key-result-slow { color: var(--color-orange); }
 .rl-key-result-bad { color: var(--color-red); }
 /* 密文输入（显示/隐藏切换，复用 createSecretField） */
 .rl-secret {
@@ -364,7 +556,10 @@
 .rl-day-btn:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
 
 /* ── 状态徽标（全局唯一实现：CalendarDayModal 等 DOM 渲染 + MediaList/HomeView Svelte 共用；色值见文件头色板，白字按主题各自达标） ── */
-.rl-badge { font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: var(--rl-t-radius-pill, 999px); color: #fff; cursor: pointer; }
+/* 🔴 状态徽标必须 nowrap（#369 跟修）：海报墙卡片的 `.rl-row1` 是 flex，窄卡（紧凑档）下
+   浏览器会**压缩徽标**而不是换行 ⇒ 缺了 nowrap 会把「存档」拆成「存 / 档」竖排（用户实测截图）。
+   与 `.rl-row1 { flex-wrap: wrap }` 配对使用：徽标保持完整，放不下的项整块换行。 */
+.rl-badge { font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: var(--rl-t-radius-pill, 999px); color: #fff; cursor: pointer; white-space: nowrap; }
 .rl-badge-want { background: var(--rl-badge-want); }
 .rl-badge-watching { background: var(--rl-badge-watching); }
 .rl-badge-watched { background: var(--rl-badge-watched); }
@@ -460,6 +655,12 @@
 .rl-hide-scroll .rl-feed-groups::-webkit-scrollbar { display: block; }
 .rl-hide-scroll .rl-today-list,
 .rl-hide-scroll .rl-feed-groups { scrollbar-width: thin; }
+
+/* ── 海报密度设置行（用户 2026-09-22）：列数输入框窄一点，避免把设置行撑开 ──
+   ⚠️ 设置页 DOM 由 Settings.ts 直接拼，样式**必须**写在本文件（不经 Svelte 编译，不写就无样式）。
+   仅「自定义列数」档显示：显隐由 Settings.renderAppearanceRows 切换 display，这里只管观感。 */
+.rl-poster-cols { width: 64px; }
+.rl-poster-cols-unit { font-size: 12px; color: var(--text-muted); }
 
 
 /* ── 摘抄录入弹窗（rl-ex-*）── */
@@ -675,6 +876,16 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-pc-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--background-modifier-border); }
 .rl-pc-row:last-child { border-bottom: none; }
 .rl-pc-name { font-size: var(--font-ui-small); font-family: var(--font-monospace); color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 附件清理（#349；`rl-pc` 是「poster cleanup」的历史前缀，现服务于附件清理）：类型徽章 + 回收站提示 + 底排按钮 */
+.rl-pc-kind {
+    flex: none;
+    padding: 1px 6px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+.rl-pc-hint { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-bottom: 8px; }
 .rl-pc-foot { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ── 支持作者（样式参考 LyricFlux about 区） ── */
@@ -721,42 +932,191 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     height: 100%;
     overflow: hidden;
     font-family: var(--font-text);
-    /* Obsidian .modal 默认 user-select:none，覆盖允许正文选中（批注/摘录依赖） */
+    /* Obsidian .modal 默认 user-select:none，覆盖允许正文选中（摘抄/摘录依赖） */
     user-select: text;
     /* 定位上下文：让 .rl-reader-head 以本容器为包含块做 absolute 悬浮 */
     position: relative;
 }
-/* 批1.5 软件式沉浸：rl-reader-immersive 加在 Modal 的 modalEl 上，覆盖 Obsidian 原生 modal 骨架
-   （去标题栏/圆角/阴影，拉满近屏）。用 display:none 覆盖而非删除 DOM——结构为 Obsidian 未公开，
-   若某版本失效则外观降级为普通弹窗，功能不受影响。仅限本类作用域，不影响插件其他弹窗。 */
-.modal.rl-reader-immersive {
-    width: 97vw;
-    max-width: none;
-    height: 95vh;
-    max-height: none;
-    border-radius: 0;
-    box-shadow: none;
-    border: none;
-    padding: 0;
-    margin: 0;
+/* ── 阅读主题（用户 2026-09-16 裁定）：在阅读器容器上重定义 Obsidian 语义变量 ──
+   面板内所有既有样式（顶栏 / 侧栏 / 正文 / 底栏 / 设置菜单 / 浮层）都读这些变量，
+   一处覆盖即整套换肤；follow 档不挂类 = 完整继承 Obsidian 主题（含「跟随系统」夜间自动切换）。
+   ⚠️ EPUB 正文在 iframe 里（独立文档，不继承容器变量）→ 由 buildFrameCss 读容器计算值注入，
+   切主题时面板必须再调 refreshTheme() 重建注入样式（见 EpubReaderModal.setTheme）。 */
+/* 顶/底栏底色（用户 2026-09-16）：**一律比正文底（--background-primary）更深一档**，且顶≠底（两者不同色）。
+   默认档（follow）与纯黑混合 —— 浅/深色主题下都是「变深」方向；六档主题各自显式覆盖（见 .rl-rt-* 块）。 */
+.rl-reader {
+    /* 跟随档再浅一点（用户 2026-09-16 十一轮「跟随主题的颜色浅一点」）：与纯黑只混 4%/10% */
+    --rl-chrome-head: color-mix(in srgb, var(--background-primary) 96%, #000);
+    --rl-chrome-foot: color-mix(in srgb, var(--background-primary) 90%, #000);
+    /* 滚动条滑块（用户 2026-09-16 十轮）：Obsidian 的滚动条走它自己的 --scrollbar-thumb-bg（基于 --mono-100），
+       不在六档主题覆盖的 19 个语义变量里 → 正文滚动条不随主题变、且偏重。这里用 --text-normal 轻量派生，
+       六档主题各自重定义 --text-normal → 滚动条自动跟随、且只有 18% 透明度（轻）。 */
+    --rl-scroll-thumb: color-mix(in srgb, var(--text-normal) 18%, transparent);
+    /* 底栏与目录页签行的共用高度（用户 2026-09-16 十三轮：两侧要对齐）—— 改这一处两边一起动。
+       🔴 #359（用户 2026-09-21：「稍微抬高点阅读器目录边栏底按钮的高度与正文底栏高度一致」）：
+          原值 38px 只够**页签行**（内容 = 图标行），而**正文底栏**的高度是**内容撑出来的** ——
+          它那排高频四钮没有显式定高，走的是 Obsidian 原生 `button` 的约 30px，加上自身 `padding: 8px 0`
+          ⇒ 实际 ≈ **46px**（用户截图实测 58 截图px ÷ 1.26 UI 缩放 ≈ 46）。两侧差 8px，正是用户看到的「矮一截」。
+          ⇒ 把**共用值提到 46px**（抬的是页签行那一侧，正文底栏本来就 46 ⇒ 不变），两侧重新严格等高。
+          ⚠️ 这个数**跟着正文底栏的内容走**：若哪天给 `.rl-reader-fops .rl-reader-btn` 显式定高（如 fnav 那样的 22px），
+            底栏会回落到 38 左右 ⇒ 这里也要跟着回调，⛔ 别让两者再次分叉。 */
+    --rl-chrome-bar-h: 46px;
+    --rl-scroll-thumb-hover: color-mix(in srgb, var(--text-normal) 30%, transparent);
 }
-.modal.rl-reader-immersive .modal-title { display: none; }
-.modal.rl-reader-immersive .modal-close { display: none; }
-.modal.rl-reader-immersive .modal-content,
-.modal.rl-reader-immersive .modal-body {
-    padding: 0;
-    height: 100%;
-    overflow: hidden;
+.rl-reader.rl-rt-light {
+    --background-primary: #ffffff;
+    --background-primary-alt: #f7f8f9;
+    --background-secondary: #f4f5f7;
+    --background-secondary-alt: #eceef1;
+    --background-modifier-border: #e2e4e8;
+    --background-modifier-border-hover: #d3d6db;
+    --background-modifier-hover: #eff1f3;
+    --background-modifier-active-hover: #e6e9ec;
+    --background-modifier-box-shadow: rgba(0, 0, 0, 0.14);
+    /* 顶/底栏专属底（比 primary 深一档；顶比底浅，两者不同色） */
+    --rl-chrome-head: #f4f5f7;
+    --rl-chrome-foot: #e8eaee;
+    --text-normal: #1d1f23;
+    --text-muted: #666b73;
+    --text-faint: #9aa0a8;
+    --interactive-normal: #f0f1f3;
+    --interactive-hover: #e7e9ec;
+    --interactive-accent: #2f6fd0;
+    --interactive-accent-hover: #2a63ba;
+    --text-on-accent: #ffffff;
 }
-/* 去弹窗半透明遮罩背景（保留 .modal-bg 父容器布局，避免连带隐藏子 .modal 阅读器） */
-body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
-/* 阅读器改为 Obsidian 视图后：contentEl 即 .view-content，去默认滚动/内边距，由内部布局接管 */
+.rl-reader.rl-rt-dark {
+    --background-primary: #16181c;
+    --background-primary-alt: #1b1e23;
+    --background-secondary: #1b1e23;
+    --background-secondary-alt: #22262c;
+    --background-modifier-border: #2c3037;
+    --background-modifier-border-hover: #383d45;
+    --background-modifier-hover: #23272d;
+    --background-modifier-active-hover: #2a2f36;
+    --background-modifier-box-shadow: rgba(0, 0, 0, 0.55);
+    /* 顶/底栏专属底（比 primary 深一档；顶比底浅，两者不同色） */
+    --rl-chrome-head: #101216;
+    --rl-chrome-foot: #0a0c0e;
+    --text-normal: #c9cdd3;
+    --text-muted: #8c9299;
+    --text-faint: #6b7079;
+    --interactive-normal: #23272d;
+    --interactive-hover: #2a2f36;
+    --interactive-accent: #4a8fe0;
+    --interactive-accent-hover: #5c9be6;
+    --text-on-accent: #ffffff;
+}
+.rl-reader.rl-rt-green {
+    --background-primary: #c7edcc;
+    --background-primary-alt: #bfe8c5;
+    --background-secondary: #bfe8c5;
+    --background-secondary-alt: #b3e0ba;
+    --background-modifier-border: #a6d5ae;
+    --background-modifier-border-hover: #93c79c;
+    --background-modifier-hover: #b9e3c0;
+    --background-modifier-active-hover: #aedbb6;
+    --background-modifier-box-shadow: rgba(28, 52, 33, 0.18);
+    /* 顶/底栏专属底（比 primary 深一档；顶比底浅，两者不同色） */
+    --rl-chrome-head: #b6e3bd;
+    --rl-chrome-foot: #a4d6ac;
+    --text-normal: #223026;
+    --text-muted: #4d6352;
+    --text-faint: #6f8875;
+    --interactive-normal: #b9e3c0;
+    --interactive-hover: #aedbb6;
+    --interactive-accent: #2f7a46;
+    --interactive-accent-hover: #286a3c;
+    --text-on-accent: #f2fbf3;
+}
+.rl-reader.rl-rt-gray {
+    --background-primary: #2e3238;
+    --background-primary-alt: #282c31;
+    --background-secondary: #282c31;
+    --background-secondary-alt: #33383f;
+    --background-modifier-border: #3c4249;
+    --background-modifier-border-hover: #4a515a;
+    --background-modifier-hover: #383d44;
+    --background-modifier-active-hover: #40464e;
+    --background-modifier-box-shadow: rgba(0, 0, 0, 0.45);
+    /* 顶/底栏专属底（比 primary 深一档；顶比底浅，两者不同色） */
+    --rl-chrome-head: #262a2f;
+    --rl-chrome-foot: #1e2126;
+    --text-normal: #d4d8dd;
+    --text-muted: #9ba2aa;
+    --text-faint: #7d848c;
+    --interactive-normal: #383d44;
+    --interactive-hover: #40464e;
+    --interactive-accent: #6ea8e8;
+    --interactive-accent-hover: #82b4ec;
+    --text-on-accent: #1b1f24;
+}
+.rl-reader.rl-rt-sepia {
+    --background-primary: #f6eedd;
+    --background-primary-alt: #efe5cf;
+    --background-secondary: #efe5cf;
+    --background-secondary-alt: #e8dcc2;
+    --background-modifier-border: #dfd0b4;
+    --background-modifier-border-hover: #cfbc9a;
+    --background-modifier-hover: #ece0c9;
+    --background-modifier-active-hover: #e4d6ba;
+    --background-modifier-box-shadow: rgba(74, 58, 36, 0.2);
+    /* 顶/底栏专属底（比 primary 深一档；顶比底浅，两者不同色） */
+    --rl-chrome-head: #eee2cb;
+    --rl-chrome-foot: #e3d3b4;
+    --text-normal: #43382b;
+    --text-muted: #7a6a55;
+    --text-faint: #9c8a72;
+    --interactive-normal: #ece0c9;
+    --interactive-hover: #e4d6ba;
+    --interactive-accent: #9c6b3c;
+    --interactive-accent-hover: #8a5d33;
+    --text-on-accent: #fbf5e9;
+}
+/* 勾选标记 mask（自绘 checkbox 用；口径同 Obsidian 的 ✓，黑色描边 → alpha 通道即图形） */
+.rl-reader {
+    /* 勾形：图形（含 round 端帽）在 24×24 视区里**几何精确居中**，否则勾会在框内偏左上（用户 2026-09-16 反馈「勾在框中不居中」）。
+       算式：本 points「20 6.5 9 17.5 4 12.5」+ stroke 3.6 → 含 round 端帽的包络 x 2.2..21.8（中心 12 ✓）/ y 4.7..19.3（中心 12 ✓），与 24×24 视区中心重合。
+       ⚠️ 改坐标或 stroke-width 后必须重算包络中心，别凭肉眼定。 */
+    --rl-check-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6.5 9 17.5 4 12.5'/%3E%3C/svg%3E");
+    /* 侧栏水平栅格（#345 用户报「标题 / 指示条 / 正文 / 右侧操作区没对齐」）：
+       安全边距 8px；类型指示条占 8–13px 槽位 ⇒ **所有文本线统一到左 16 / 右 16**。
+       算式：pane 内边距(8) + 列表项 padding-left(8) = 16；指示条 left:0 恰好落在 8 处。
+       ⚠️ 侧栏是「pane → list → item」三层，⛔ 别再让中间层（list）自带左右内边距 —— 会叠加出第三条基线。 */
+    --rl-side-pad: 8px;
+    --rl-side-bar-w: 5px;
+}
+/* 阅读器（TXT / EPUB / PDF）改为工作区标签页视图（用户 2026-09-15 裁定）：
+   Modal 时代的软件式沉浸骨架（去标题栏/圆角/阴影 + 遮罩透明）随宿主一并撤除 —— 视图本就没有弹窗骨架，
+   只剩两件事：隐藏该视图页头、内容区去内距并撑满。
+   ⚠️ 2026-08-30 曾改过视图又因「空白」回退弹窗（进度表 #147~#150）：当时的两个坑（state 传大对象、
+   容器 0 高时 mount）现已在 views/ReaderViews.ts 里各设一道防线，勿把 options 改回经 state 传递。 */
+.rl-reader-view .view-header { display: none; }
 .view-content.rl-reader {
     padding: 0;
     overflow: hidden;
+    /* Obsidian 核心给 .view-content 写的是 height: calc(100% - var(--header-height))：页头虽已隐藏，
+       该变量仍在 → 不显式铺满会在底部留一条背景色白带（与播放器视图同款修正）。 */
+    height: 100%;
+    min-height: 0;
 }
+/* 视图被 Obsidian 恢复布局、但当前没有打开的书时的占位 */
+.rl-reader-empty { margin: auto; padding: 28px 32px; text-align: center; color: var(--text-muted); }
+.rl-reader-empty-title { font-size: 16px; font-weight: 600; color: var(--text-normal); margin-bottom: 8px; }
+.rl-reader-empty-hint { font-size: 13px; line-height: 1.6; }
 /* 顶栏：半透明渐变悬浮浮层（跟随系统明暗）。absolute 于 .rl-reader 顶部，不占文档流，正文可下穿。
    常驻显示（批1 G6 已撤销自动隐藏）。 */
+/* 顶栏下沿渐变线（同口径） */
+.rl-reader .rl-reader-head::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(to right, transparent, var(--background-modifier-border) 12%, var(--background-modifier-border) 88%, transparent);
+}
 .rl-reader-head {
     position: absolute;
     top: 0;
@@ -767,12 +1127,14 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     align-items: center;
     gap: 10px;
     padding: 10px 16px;
-    /* 半透明渐变浮层：顶部实色保可读，向下渐隐到透明 */
-    background: linear-gradient(to bottom,
-        var(--background-primary) 0%,
-        color-mix(in srgb, var(--background-primary) 60%, transparent) 55%,
-        transparent 100%);
+    /* 毛玻璃顶栏（用户 2026-09-16 十轮：「颜色太重了」→ 改毛玻璃）—— 与目录栏同色，半透明 + 背景模糊；
+       正文从其下滑过时会透出并被打散，既保留「框」的层次又比实色轻很多。 */
+    background: color-mix(in srgb, var(--rl-chrome-head) 62%, transparent);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
     flex-shrink: 0;
+    /* 沉浸模式收起/展开过渡（用户 2026-09-15：200ms）；非沉浸时无显隐切换，无副作用 */
+    transition: transform 200ms ease, opacity 200ms ease;
 }
 /* 自动隐藏头部：translateY 上移出视野（仍占位，布局不塌陷），仅状态切换时生效 */
 .rl-reader-head.hidden {
@@ -781,16 +1143,42 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     pointer-events: none;
 }
 .rl-reader-title-wrap {
+    /* ── #379 顶栏标题：回到**绝对居中**，宽度由 JS 按实测两侧边缘算 ────────────────────
+       历史：#345 之前是 `position:absolute; left:50%; max-width:44%` 的绝对居中 —— 写死的 44% 不知道
+       右侧有多宽，窗口窄于约 950px 时标题压到右侧图标上（用户报障）；#345 改成**流式三段**修掉压图标。
+       ⚠️ 但流式的代价是：中段只在自己那段里居中 ⇒ **偏移 =（左组宽 − 右组宽）/ 2**。
+          左组仅 2 钮（目录 + 打开笔记 ≈ 86px），右组装着 6 个快捷入口 + 设置（≈ 250px）
+          ⇒ 真实 Chromium 量得（`_shot/rl379-head.html`）**标题恒定偏左 81.8px**（窄屏收纳后只偏 6px）。
+       ⇒ 现回到**绝对居中**，但宽度不再写死：由 `pure/readerHead` 的 `headTitleSymmetricWidth`
+          按**实测**两侧边缘算「取较近一侧做半径」的对称可用宽，写成内联 `max-width`
+          （见 `attachHeadDensity` / `attachHeadTitle`）。半径对称 ⇒ **中心恒在面板正中**；
+          `max-width` 保证左右都不越界 ⇒ **两条老问题同时消掉**（不偏、不压图标）。
+       🔴 `box-sizing: border-box` 不能省：下面那 16px 内边距要计入 `max-width`，
+          否则实际外框会比算出来的宽 32px、又压到图标上。
+       ⛔ 别再退回 `flex: 1 1 auto`（= 流式三段，偏左会回来；已有产物反向守卫钉住）。 */
+    position: absolute;
+    left: 50%;
+    top: 0;
+    height: 100%;
+    transform: translateX(-50%);
+    box-sizing: border-box;
+    /* JS 未就绪（首帧 / 未布局）时的兜底：等于容器宽 —— 居中且不会溢出顶栏，仅可能短暂压住图标 */
+    max-width: 100%;
+    min-width: 0;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
-    min-width: 0;
+    /* 标题两侧安全距离（#345 间距规范：左右各 ≥16px；与 head 的 gap:10px 叠加后实际约 26px） */
+    padding: 0 16px;
 }
-.rl-reader-title-icon { display: flex; color: var(--text-muted); }
 .rl-reader-title {
     font-size: var(--font-ui-medium);
     font-weight: 600;
     color: var(--text-normal);
+    /* #345：min-width:0 是省略号生效的前提 —— flex 子级默认 min-width:auto 会撑到内容宽，
+       长章节名就会顶开中段、反过来挤压右侧图标（只写 overflow 不够）。全称走 data-tip 悬停显示。 */
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -819,9 +1207,27 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     padding: 4px 10px;
 }
 .rl-reader-close svg { width: 14px; height: 14px; }
+/* 顶栏左组（侧栏开关 + 打开笔记）：⛔ 绝不压缩 —— #345 需求 1「优先保证功能按钮的点击热区与视觉完整性」 */
+.rl-reader-sidebar-toggle,
+.rl-reader-note-link { flex-shrink: 0; }
+/* 顶栏「更多」⋮（窄屏收纳快捷入口）：常态隐藏，窄屏（head 加 .rl-head-narrow）才出现 */
+.rl-reader-more { display: none; }
+.rl-reader-head.rl-head-narrow .rl-reader-ops > .rl-reader-quick { display: none; }
+.rl-reader-head.rl-head-narrow .rl-reader-more { display: inline-flex; }
+/* 「更多」浮层（#346 建 / #347 修宽 / #348 去掉文字）：**一排纯图标按钮**，与顶栏那排同款同尺寸。
+   🔴 两条踩过的坑，别再动：
+   ⑴ 必须用**两个类**选 —— `.rl-reader-menu{min-width:212px}` 与单类**同特异性**、位置更靠后，会把单类规则压掉；
+   ⑵ 必须显式给 **`width: max-content`** —— 浮层是 `.rl-reader-ops`（`position: relative`，仅 ~90px 宽）的
+      **绝对定位子级**，shrink-to-fit 的可用宽被包含块卡死在 90px ⇒ 不给 width 就会排成一列。
+   ⚠️ 用户 2026-09-20 裁定「收起菜单不要文字了，改成原图标大小横排」⇒ 本组**不再有标签样式**，
+      按钮尺寸直接沿用 `.rl-reader-quick .rl-reader-btn`（4px 8px）与图标 16px（不另立尺寸）。 */
+.rl-reader-menu.rl-reader-more-panel { width: max-content; min-width: 0; padding: 4px; max-width: calc(100vw - 48px); }
+.rl-reader-more-panel .rl-reader-quick { flex-direction: row; flex-wrap: wrap; gap: 2px; justify-content: flex-end; }
 /* 侧栏折叠开关（头部最左，图标按钮，无文字） */
 .rl-reader-sidebar-toggle svg { width: 16px; height: 16px; }
-/* 顶栏左快捷入口（书签/批注/翻译/高亮，图标按钮） */
+/* 顶栏「打开条目笔记」按钮（目录按钮右旁）：图标尺寸与侧栏开关一致 */
+.rl-reader-note-link svg { width: 16px; height: 16px; }
+/* 顶栏左快捷入口（书签/摘抄/翻译/高亮，图标按钮） */
 .rl-reader-quick { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .rl-reader-quick .rl-reader-btn { padding: 4px 8px; }
 .rl-reader-quick svg { width: 16px; height: 16px; }
@@ -837,12 +1243,52 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 .rl-reader-toc-toggles { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .rl-reader-toc-toggles .rl-reader-btn { padding: 4px 8px; }
 .rl-reader-toc-toggles svg { width: 14px; height: 14px; }
-/* 批注开关：开启态主题色高亮（选中文本可回写摘抄） */
+/* 摘抄开关：开启态主题色高亮（选中文本可回写摘抄） */
 .rl-reader-annotate.on {
     background: var(--interactive-accent);
     border-color: var(--interactive-accent);
     color: var(--text-on-accent);
     font-weight: 600;
+}
+/* 右侧栏（用户 2026-09-16）：正文 + 底栏同处一栏；.rl-reader-body 仍是横向 flex，
+   目录栏因此占满 body 全高（独立成一整列），底栏只在右侧栏内、不再横跨到目录下方。 */
+/* 阅读器正文区滚动条：按阅读主题重画（颜色轻、轨道透明），覆盖 Obsidian 默认那套 */
+.rl-reader .rl-reader-scroll,
+.rl-reader .rl-pdf-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--rl-scroll-thumb) transparent;
+}
+.rl-reader .rl-reader-scroll::-webkit-scrollbar,
+.rl-reader .rl-pdf-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+    background: transparent;
+}
+.rl-reader .rl-reader-scroll::-webkit-scrollbar-track,
+.rl-reader .rl-pdf-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+.rl-reader .rl-reader-scroll::-webkit-scrollbar-thumb,
+.rl-reader .rl-pdf-scroll::-webkit-scrollbar-thumb {
+    background: var(--rl-scroll-thumb);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+.rl-reader .rl-reader-scroll::-webkit-scrollbar-thumb:hover,
+.rl-reader .rl-pdf-scroll::-webkit-scrollbar-thumb:hover {
+    background: var(--rl-scroll-thumb-hover);
+    background-clip: padding-box;
+}
+.rl-reader-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    /* 定位上下文（用户 2026-09-16 十一轮）：沉浸模式把底栏改成 absolute + left/right:0 ——
+       不在此建立上下文的话，会以 .rl-reader-body（整行、含目录栏）为基准 → 底栏横跨并盖住目录栏。 */
+    position: relative;
 }
 .rl-reader-body {
     display: flex;
@@ -854,27 +1300,65 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 }
 /* 左侧目录列：220px，可折叠 */
 .rl-reader-toc {
-    width: 220px;
+    /* 🔴 宽度走 CSS 变量（拖宽时行内只写 `--rl-toc-w`）—— ⛔ 绝不写行内 `style.width`：
+       行内 width 优先级高于类选择器，会把折叠态的 width: 0 顶死 ⇒ 目录侧栏会**收不起来**（#339）。
+       ⚠️ 本注释不得出现花括号字符（产物断言按块扫描，注释里的花括号会截断匹配 ⇒ 假红）。 */
+    width: var(--rl-toc-w, 220px);
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
-    border-right: 1px solid var(--background-modifier-border);
-    background: var(--background-secondary);
+    /* 与顶栏同色且同为毛玻璃（方案 B：顶=目录、底栏深一档）—— 顶部 + 左侧连成一个「框」 */
+    position: relative;
+    border-right: none;
+    background: color-mix(in srgb, var(--rl-chrome-head) 62%, transparent);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
     min-height: 0;
     transition: width 0.15s;
 }
 .rl-reader-toc.collapsed { width: 0; border-right: none; overflow: hidden; }
+/* 折叠后侧栏宽 0：手柄必须一起消失（否则它 `right: -4px` 仍会伸进正文左缘接住指针） */
+.rl-reader-toc.collapsed .rl-reader-toc-resizer { display: none; }
 .rl-reader-toc-list {
     flex: 1;
     overflow-y: auto;
-    padding: 2px 6px 10px;
+    /* 左右承载内边距必须归零：水平栅格只由 pane（--rl-side-pad）与列表项 padding 两层决定，
+       本层再加一层就会叠出「目录项比标注项多缩进一档」的第三条基线（#345 的起因）。 */
+    padding: 2px 0 10px;
 }
-.rl-reader-toc-item {
-    display: block;
+/* 目录侧栏滚动条始终隐藏（用户 2026-09-16 指示）：滚动能力保留（overflow-y:auto），只是不绘制滚动条。
+   作用于整个侧栏（目录 / 书签 / 摘抄三 pane 及其后代），不影响「隐藏插件内滚动条」设置对其它区域的作用。 */
+.rl-reader .rl-reader-toc,
+.rl-reader .rl-reader-toc * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.rl-reader .rl-reader-toc::-webkit-scrollbar,
+.rl-reader .rl-reader-toc *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+}
+/* 三条「chrome ↔ 正文」接缝改渐变线（用户 2026-09-16 十一轮）：两端淡出，不再是一条生硬的 1px 实线 */
+.rl-reader .rl-reader-toc::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 1px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--background-modifier-border) 12%, var(--background-modifier-border) 88%, transparent);
+}
+.rl-reader .rl-reader-toc-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
     width: 100%;
     text-align: left;
     border: none;
-    background: none;
+    background: transparent;
+    box-shadow: none;
     padding: 5px 8px;
     margin: 1px 0;
     border-radius: 4px;
@@ -883,51 +1367,105 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     color: var(--text-muted);
     cursor: pointer;
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
     font-family: inherit;
 }
-.rl-reader-toc-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
-.rl-reader-toc-item.active { background: var(--interactive-accent); color: var(--text-on-accent); }
+/* 目录项两段式（#338）：章节名（可截断）+ 右对齐字数（等宽数字、更小更淡） */
+.rl-reader .rl-reader-toc-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-reader .rl-reader-toc-chars {
+    flex: none;
+    margin-left: auto;
+    padding-left: 8px;
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    font-variant-numeric: tabular-nums;
+}
+/* 目录侧栏拖宽手柄（#338）：右缘 9px 热区；拖动期间挂 .rl-toc-resizing 关掉 width 过渡 */
+.rl-reader-toc-resizer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: -4px;
+    width: 9px;
+    cursor: col-resize;
+    z-index: 6;
+}
+.rl-reader-toc.rl-toc-resizing { transition: none !important; }
+.rl-reader .rl-reader-toc-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.rl-reader .rl-reader-toc-item.active { background: var(--interactive-accent); color: var(--text-on-accent); }
 /* 目录/书签双 tab */
+/* 侧栏页签移到底部（用户 2026-09-16，参考图口径）：用 flex order 把 tab 行排到 pane 之后 ——
+   纯 CSS 不动 DOM；边框由下改上（原下边框是「顶部页签」的语义）。tab 行是侧栏内的独立一条，
+   宽度即侧栏宽度、固定在侧栏底部，不会被正文区的底栏覆盖。 */
+.rl-reader-toc > *:not(.rl-reader-toc-tabs) { order: 1; }
 .rl-reader-toc-tabs {
+    order: 2;
     display: flex;
+    /* 🔴 显式 stretch：让页签（`height: auto`）铺满行高 ⇒ 图标在行内垂直居中，与正文底栏的内容对齐一致 */
+    align-items: stretch;
     gap: 2px;
     flex-shrink: 0;
-    border-bottom: 1px solid var(--background-modifier-border);
+    /* 与正文底栏严格等高（同一变量；按钮靠 flex 拉伸铺满，故按钮自身 padding 归零）。
+       🔴 #359：该变量已由 38 → **46**（正文底栏的真实高度）⇒ 这一行因此长高 8px，与底栏齐平。 */
+    min-height: var(--rl-chrome-bar-h);
+    box-sizing: border-box;
+    border-bottom: none;
+    border-top: 1px solid var(--background-modifier-border);
 }
-.rl-reader-toc-tab {
+.rl-reader .rl-reader-toc-tab {
     flex: 1;
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 7px 0;
+    /* 高度由所在行拉伸决定（见下 `align-items: stretch` + `height: auto`），不再用 padding 撑高。
+       🔴 #359 实测：只写 `padding: 0` **不管用** —— 核心给 button 的 `height: var(--input-height)`（约 30px）
+         是**确定高度**，会让 flex 的 stretch **不生效**（stretch 只作用于 `height: auto` 的项）
+         ⇒ 按钮停在 30px、并在 46px 的行里**顶对齐**（图标因此比行中心高 7px，与底栏内容居中对不上）。
+       ⇒ 必须显式 `height: auto; min-height: 0` 才能真的铺满整行（顺带把点击热区也放大到整行高）。
+       ⚠️ 本注释**不得出现花括号**（JSON 式写法也不行）—— 产物断言按 CSS 块扫描，花括号会截断匹配 ⇒ 假红。 */
+    height: auto;
+    min-height: 0;
+    padding: 0;
     font-size: var(--font-ui-small);
     font-weight: 500;
     color: var(--text-muted);
-    background: none;
+    background: transparent;
+    box-shadow: none;
     border: none;
     cursor: pointer;
     font-family: inherit;
 }
-.rl-reader-toc-tab:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
-.rl-reader-toc-tab.active {
+.rl-reader .rl-reader-toc-tab:hover { color: var(--text-normal); background: transparent; }
+/* 激活态（用户 2026-09-18 裁定）：**无块无线，仅主题色 + 加粗** —— 撤掉此前的 `inset 0 -2px` 底部
+   下划线竖条（页签行本身已有 border-top 分隔线，再挂指示条会与分隔线撞在一起）。 */
+.rl-reader .rl-reader-toc-tab.active {
     color: var(--interactive-accent);
-    font-weight: 600;
-    box-shadow: inset 0 -2px 0 var(--interactive-accent);
+    font-weight: 700;
+    background: transparent;
+    box-shadow: none;
 }
-.rl-reader-toc-pane { flex: 1; overflow-y: auto; padding: 2px 6px 10px; display: flex; flex-direction: column; }
+.rl-reader-toc-pane { flex: 1; overflow-y: auto; padding: 2px var(--rl-side-pad, 8px) 10px; display: flex; flex-direction: column; }
 .rl-reader-toc-pane.hidden { display: none; }
 .rl-reader-ex-list { overflow-y: auto; padding: 2px 0 10px; }
 .rl-reader-ex-empty {
     padding: 8px 8px;
     font-size: var(--font-ui-small);
     color: var(--text-faint);
+    text-align: center; /* 空态居中（用户 2026-09-17；与书签/高亮三区统一） */
 }
-.rl-reader-ex-item {
+.rl-reader .rl-reader-ex-item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
+    background: transparent;
+    box-shadow: none;
+    /* 左 8 = 16(文本线) − 8(pane 安全边距)；右 8 让「定位文字」右缘落在 W−16（#345 栅格） */
     padding: 5px 8px;
     margin: 1px 0;
     border-radius: 4px;
@@ -935,7 +1473,20 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     color: var(--text-muted);
     cursor: pointer;
 }
-.rl-reader-ex-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+/* 摘抄前缀条 = 蓝（与书签绿 / 高亮黄同一套类型标识，用户 2026-09-17） */
+.rl-reader .rl-reader-ex-item::before {
+    content: '';
+    position: absolute;
+    /* 指示条槽位（#345）：left 归零 → 落在 pane 安全边距 8px 处，占 8–13px，与文本线(16)留 3px 间隙 */
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: var(--rl-side-bar-w, 5px);
+    height: 14px;
+    border-radius: 2px;
+    background: var(--rl-badge-archived, #4a7dd0);
+}
+.rl-reader .rl-reader-ex-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 .rl-reader-ex-quote {
     flex: 1;
     min-width: 0;
@@ -958,6 +1509,10 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     gap: 6px;
     padding-right: 8px;
     border-bottom: 1px solid var(--background-modifier-border);
+    /* #345：选择模式下头部有 3 个操作按钮，侧栏拖到最窄（180px）时放不下 → 整组换行，
+       ⛔ 不压缩按钮（热区优先），也不把「删除所选」挤成看不见。 */
+    flex-wrap: wrap;
+    row-gap: 2px;
 }
 .rl-reader-ex-hlcount {
     flex: 1;
@@ -967,7 +1522,13 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     color: var(--text-muted);
     margin-bottom: 4px;
 }
-.rl-reader-hl-head .rl-hl-clearall {
+/* 分区头操作组（#345）：常态只露「选择」；进入选择模式后换成 全选 / 删除所选 / 取消。
+   原「清除全部」按钮已按用户要求撤除（不可逆的一键清空 → 改为可勾选的选择模式）。 */
+.rl-reader-hl-head .rl-anno-actions { display: flex; align-items: center; gap: 4px; }
+.rl-reader-hl-head .rl-anno-actions .rl-anno-only { display: none; }
+.rl-reader-hl-head.rl-anno-sel .rl-anno-actions .rl-anno-normal { display: none; }
+.rl-reader-hl-head.rl-anno-sel .rl-anno-actions .rl-anno-only { display: inline-flex; }
+.rl-reader-hl-head .rl-anno-btn {
     padding: 2px 8px;
     font-size: var(--font-ui-smaller);
     color: var(--text-muted);
@@ -975,20 +1536,31 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     border-radius: 4px;
     margin-bottom: 4px;
 }
-.rl-reader-hl-head .rl-hl-clearall:hover { color: var(--text-error); border-color: var(--text-error); }
-.rl-hl-clearall-busy { opacity: 0.5; pointer-events: none; }
+.rl-reader-hl-head .rl-anno-btn:hover:not(:disabled) { color: var(--text-normal); border-color: var(--text-muted); }
+/* 「删除所选」＝危险操作：红边红字 → hover 红底白字（与项目危险按钮口径一致）；无勾选时禁用 */
+.rl-reader-hl-head .rl-anno-btn.rl-anno-danger { color: var(--text-error); border-color: var(--text-error); }
+.rl-reader-hl-head .rl-anno-btn.rl-anno-danger:hover:not(:disabled) {
+    background: var(--text-error);
+    color: var(--text-on-accent);
+}
+.rl-reader-hl-head .rl-anno-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 摘抄区头（2026-09-17 用户：摘抄 / 高亮隔分栏）：与高亮头同款，另加上分隔线 → 两块各成一栏；
+   头部自身滚动时随列表滚走（不做 sticky，避免与目录 tab 条打架） */
+.rl-reader-ex-head { margin-top: 6px; border-top: 1px solid var(--background-modifier-border); }
 .rl-reader-hl-list { padding: 0 0 6px; }
 .rl-reader-hl-empty {
-    padding: 4px 8px;
+    padding: 8px 8px;
     font-size: var(--font-ui-small);
     color: var(--text-faint);
+    text-align: center; /* 空态居中（用户 2026-09-17；padding 与另两区统一为 8px） */
 }
 .rl-reader-hl-item {
     position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 8px 5px 16px;
+    /* 左 8 = 16(文本线) − 8(pane 安全边距)；右 8 让「定位文字」右缘落在 W−16（#345 栅格） */
+    padding: 5px 8px;
     margin: 1px 0;
     border-radius: 4px;
     font-size: var(--font-ui-small);
@@ -998,10 +1570,11 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 .rl-reader-hl-item::before {
     content: '';
     position: absolute;
-    left: 6px;
+    /* 指示条槽位（#345）：left 归零 → 落在 pane 安全边距 8px 处，占 8–13px，与文本线(16)留 3px 间隙 */
+    left: 0;
     top: 50%;
     transform: translateY(-50%);
-    width: 5px;
+    width: var(--rl-side-bar-w, 5px);
     height: 14px;
     border-radius: 2px;
     background: var(--text-highlight-bg, #f2cc60);
@@ -1027,20 +1600,158 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     border-radius: 2px;
 }
 /* 页内持久高亮 mark（一键即黄即记；随系统明暗的半透明黄，覆盖正文而非文本） */
+/* 高亮三样式 × 四色（用户 2026-09-16 十四轮）：样式由 data-style 驱动、颜色由 data-color 决定线/底色。
+   旧数据（无 data-* 或落回默认档）＝黄色底色高亮。 */
+.rl-hl-persist[data-color="red"] { --rl-hl-c: #e8665a; }
+.rl-hl-persist[data-color="yellow"] { --rl-hl-c: #e8b93f; }
+.rl-hl-persist[data-color="green"] { --rl-hl-c: #58c072; }
+.rl-hl-persist[data-color="blue"] { --rl-hl-c: #5aa2e8; }
+.rl-hl-persist[data-color="purple"] { --rl-hl-c: #9a7ae0; }
 .rl-hl-persist {
-    background: color-mix(in srgb, var(--text-highlight-bg, #f2cc60) 55%, transparent);
+    /* 🔴 必须显式声明文字色（2026-09-18 实证）：<mark> 的 UA 默认色是 `MarkText`（纯黑），而 Obsidian 核心
+       只对 `.markdown-rendered mark` 覆写 `color: var(--text-normal)` —— 阅读器正文不在那个作用域里，
+       于是三种样式全都落到黑字：色块有 42% 黄底托着勉强能看，**划线 / 波浪没有底色遮挡 → 深色主题下
+       黑字压在深底上直接看不见**（用户报障）。高亮的语义是「只加底色 / 划线，不改文字颜色」→ 取 inherit
+       （跟随段落，六档阅读主题与 EPUB iframe 都自然成立），⛔ 不要写死某个具体色值。 */
+    color: inherit;
+    background: color-mix(in srgb, var(--rl-hl-c, #e8b93f) 42%, transparent);
+    border-radius: 2px;
+    /* 🔴 禁止给 mark 加 padding / border / margin：`<mark>` 是**行内盒**，盒模型会参与行内布局 ——
+       加了 `padding:0 1px` 后，被高亮那行「mark 之后的文字」整体右移 2px，接近折行边缘时还会挤掉
+       一个字换行，观感就是「高亮后正文稍微位移」（用户 2026-09-18 报障；无头 Chrome 实测：
+       mark 之后首字 x 由 457 → 459，去掉 padding 即回到 457）。
+       需要「外扩 / 描边」观感只能用不占布局的属性：background / text-decoration / border-radius。 */
+}
+.rl-hl-persist[data-style="underline"] {
+    background: transparent;
+    border-radius: 0;
+    /* 划线用 text-decoration 而非 border-bottom —— 后者会给行内盒加下边框、参与行内布局 */
+    text-decoration-line: underline;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--rl-hl-c, #e8b93f);
+    text-underline-offset: 3px;
+}
+.rl-hl-persist[data-style="wavy"] {
+    background: transparent;
+    border-radius: 0;
+    text-decoration: underline wavy var(--rl-hl-c, #e8b93f);
+    text-underline-offset: 3px;
+}
+
+/* 样式选择器浮层（动作条上方，用户 2026-09-16 十五轮按参考图重做）：
+   左 = 三个「A」样式预览按钮（A 直接按该样式渲染），右 = 一行五个颜色圆点（当前档打 ✓），
+   最右 = 垃圾桶（仅当选区命中已有高亮/摘抄时可删）。 */
+.rl-hl-picker {
+    position: absolute;
+    z-index: 51;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    border-radius: var(--rl-t-radius-lg, 8px);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: 0 4px 16px var(--background-modifier-box-shadow);
+}
+.rl-hl-picker[data-color="red"] { --rl-hl-c: #e8665a; }
+.rl-hl-picker[data-color="yellow"] { --rl-hl-c: #e8b93f; }
+.rl-hl-picker[data-color="green"] { --rl-hl-c: #58c072; }
+.rl-hl-picker[data-color="blue"] { --rl-hl-c: #5aa2e8; }
+.rl-hl-picker[data-color="purple"] { --rl-hl-c: #9a7ae0; }
+.rl-hl-picker.hidden { display: none; }
+.rl-hl-picker { flex-direction: row; align-items: center; gap: 6px; }
+/* 样式：字母 A 按样式预览；选中档加强调色外圈环 */
+.rl-hl-styles { display: flex; align-items: center; gap: 4px; padding-right: 6px; border-right: 1px solid var(--background-modifier-border); }
+/* ⚠️ 必须带 .rl-hl-picker 前缀（0,2,0）：单类会被核心 button:not(.clickable-icon)（0,1,1）的
+   background-color 压过 → 圆点/A 按钮全变成淡灰主题色（用户 2026-09-16 实测「看不清」）。 */
+.rl-hl-picker .rl-hl-style {
+    width: 30px;
+    height: 30px;
+    min-height: 0;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-normal);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+}
+.rl-hl-picker .rl-hl-style:hover { background: var(--background-modifier-hover); }
+.rl-hl-picker .rl-hl-style.is-on { border-color: var(--interactive-accent); border-width: 2px; }
+.rl-hl-picker .rl-hl-style[data-style="hl"] .rl-hl-a {
+    background: color-mix(in srgb, var(--rl-hl-c, #e8b93f) 45%, transparent);
     border-radius: 2px;
     padding: 0 1px;
 }
+.rl-hl-picker .rl-hl-style[data-style="underline"] .rl-hl-a { border-bottom: 2px solid var(--rl-hl-c, #e8b93f); }
+.rl-hl-picker .rl-hl-style[data-style="hl"] .rl-hl-a { font-weight: 600; }
+.rl-hl-picker .rl-hl-style[data-style="wavy"] .rl-hl-a {
+    text-decoration: underline wavy var(--rl-hl-c, #e8b93f);
+    text-underline-offset: 3px;
+}
+/* 颜色：一行圆点，当前色打 ✓ */
+.rl-hl-colors { display: flex; align-items: center; gap: 5px; }
+.rl-hl-picker .rl-hl-color {
+    position: relative;
+    width: 22px;
+    height: 22px;
+    min-height: 0;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.16);
+    background-color: var(--rl-hl-c, #e8b93f);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-hl-picker .rl-hl-color[data-color="red"] { --rl-hl-c: #e8665a; }
+.rl-hl-picker .rl-hl-color[data-color="yellow"] { --rl-hl-c: #e8b93f; }
+.rl-hl-picker .rl-hl-color[data-color="green"] { --rl-hl-c: #58c072; }
+.rl-hl-picker .rl-hl-color[data-color="blue"] { --rl-hl-c: #5aa2e8; }
+.rl-hl-picker .rl-hl-color[data-color="purple"] { --rl-hl-c: #9a7ae0; }
+.rl-hl-picker .rl-hl-color.is-on { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+.rl-hl-picker .rl-hl-color.is-on::after {
+    content: "✓";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 13px;
+    line-height: 1;
+    text-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
+}
+.rl-hl-picker .rl-hl-trash {
+    width: 28px;
+    height: 28px;
+    min-height: 0;
+    padding: 0;
+    margin-left: 2px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.rl-hl-picker .rl-hl-trash:hover { background: var(--background-modifier-hover); color: var(--rl-danger, #d9534f); }
+.rl-hl-picker .rl-hl-trash.hidden { display: none; }
+.rl-hl-picker .rl-hl-trash svg { width: 16px; height: 16px; }
 /* 右侧正文滚动区 */
 .rl-reader-scroll {
     flex: 1;
     min-width: 0;
+    /* 现为纵向 flex 子项（在 .rl-reader-main 内）→ 需 min-height:0 才能被压住并自身滚动 */
+    min-height: 0;
     overflow-y: auto;
     padding: 20px 24px 40vh;
     background: var(--background-primary);
 }
 .rl-reader-chapter-title {
+    /* 章节标题跟随 Obsidian 正文字体（--font-text），与正文保持一致 */
+    font-family: var(--font-text);
     font-size: 1.35em;
     font-weight: 700;
     line-height: 1.5;
@@ -1048,9 +1759,11 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     color: var(--text-normal);
     text-align: center;
 }
-/* 正文：max-width 680px 居中，行距 1.8，段距 1em，跟随 --font-text */
+/* 正文版心（用户 2026-09-16 指示「版心随窗口宽度自适应」）：上限 74ch —— 按「每行多少字」算，
+   字号调大版心同步变宽（每行字数不变），观感接近原 680px；再压 92% 上限 → 侧栏展开 / 窄窗口
+   时自动收窄，不再像 680px 硬宽那样把正文挤出横向滚动。行距 1.8，段距 1em，跟随 --font-text */
 .rl-reader-text {
-    max-width: 680px;
+    max-width: min(74ch, 92%);
     margin: 0 auto;
     font-family: var(--font-text);
     line-height: 1.8;
@@ -1058,6 +1771,8 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 }
 .rl-reader-text p { margin: 0 0 1em; color: var(--text-normal); }
 .rl-reader-text p:last-child { margin-bottom: 0; }
+/* 段落首行缩进（阅读设置开关，默认关；由 applyIndent 挂 .rl-indent 类驱动） */
+.rl-reader-text.rl-indent p { text-indent: 2em; }
 /* 翻页模式（D4b，方案 v3）：scrollEl 自身作为 CSS 多列容器 + JS scrollLeft 程序化翻页。
    依据 Readium/zotero/epub.js/foliate-js：整章内容(title+段落)作为一列流，column-width=可视内容宽、
    column-fill:auto 让 CSS 自然按视口高分列，列向右侧排开 → 翻页=JS scrollLeft 跳到对应页。
@@ -1084,6 +1799,8 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 .rl-reader-frame {
     flex: 1;
     min-width: 0;
+    /* 同上：纵向 flex 子项需 min-height:0 */
+    min-height: 0;
     display: flex;
     background: var(--background-primary);
 }
@@ -1115,10 +1832,14 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     color: var(--text-faint);
     text-align: center;
 }
-.rl-reader-bm-item {
+.rl-reader .rl-reader-bm-item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
+    background: transparent;
+    box-shadow: none;
+    /* 左 8 = 16(文本线) − 8(pane 安全边距)；右 8 让「定位文字」右缘落在 W−16（#345 栅格） */
     padding: 5px 8px;
     margin: 1px 0;
     border-radius: 4px;
@@ -1126,7 +1847,21 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     color: var(--text-muted);
     cursor: pointer;
 }
-.rl-reader-bm-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+/* 类型前缀条（用户 2026-09-17）：书签=绿 / 高亮=黄（.rl-reader-hl-item::before）/ 摘抄=蓝 ——
+   三区列表统一靠这条竖色块区分类型，项目内不再用文字前缀「书签」占位。 */
+.rl-reader .rl-reader-bm-item::before {
+    content: '';
+    position: absolute;
+    /* 指示条槽位（#345）：left 归零 → 落在 pane 安全边距 8px 处，占 8–13px，与文本线(16)留 3px 间隙 */
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: var(--rl-side-bar-w, 5px);
+    height: 14px;
+    border-radius: 2px;
+    background: var(--rl-good-bar, #4d9b52);
+}
+.rl-reader .rl-reader-bm-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 .rl-reader-bm-quote {
     flex: 1;
     min-width: 0;
@@ -1136,13 +1871,74 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 }
 .rl-reader-bm-loc {
     flex-shrink: 0;
+    /* 定位行带章节名后可能较长（用户 2026-09-17）→ 限宽截断，避免把左侧引用挤没 */
+    max-width: 58%;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-size: var(--font-ui-smaller);
     color: var(--interactive-accent);
     white-space: nowrap;
 }
 .rl-reader-bm-loc.none { color: var(--text-faint); }
+/* 纯位置书签（无引用文本，挂 .no-quote）：章节标签就是这一行的「标题」→ 左对齐到文本线（#346 用户报「书签标题不对齐」）。
+   不加这两条时，空的 .rl-reader-bm-quote（flex:1）会把标签顶到最右边，观感是「一行空白 + 文字飘在右侧」。 */
+.rl-reader-bm-item.no-quote .rl-reader-bm-quote { display: none; }
+.rl-reader-bm-item.no-quote .rl-reader-bm-loc { max-width: 100%; }
+
+/* ── 标注分区多选勾选框（#345）──
+   仅在选择模式显示：`.rl-anno-sel` 同时挂在**分区头**与**列表容器**上（头管按钮显隐，列表管勾选框）。
+   🔴 占位策略：勾选框**接管类型指示条那一列**（左起 8px），并把正文整体右移 ——
+      16px 方框塞不进原来 5px 的槽位，不动 padding 就会把正文顶出行宽。指示条在模式内隐藏
+      （类型已由所在分区表达）。右移本身也是「已进入选择模式」的强视觉信号。 */
+.rl-anno-check {
+    display: none;
+    flex: none;
+    box-sizing: border-box;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--background-modifier-border-hover);
+    border-radius: 4px;
+}
+.rl-anno-sel .rl-reader-bm-item,
+.rl-anno-sel .rl-reader-hl-item,
+.rl-anno-sel .rl-reader-ex-item { padding-left: 28px; }
+.rl-anno-sel .rl-reader-bm-item::before,
+.rl-anno-sel .rl-reader-hl-item::before,
+.rl-anno-sel .rl-reader-ex-item::before { display: none; }
+.rl-anno-sel .rl-anno-check {
+    display: inline-block;
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+.rl-anno-sel .rl-anno-check.is-on {
+    background: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+}
+/* 勾形：复用自绘 checkbox 的 mask（`--rl-check-mask` 定义在 .rl-reader 上，几何已校准居中） */
+.rl-anno-sel .rl-anno-check.is-on::after {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 100%;
+    background-color: var(--text-on-accent);
+    mask: var(--rl-check-mask) center / 12px 12px no-repeat;
+    -webkit-mask: var(--rl-check-mask) center / 12px 12px no-repeat;
+}
 
 /* 底部工具条：半透明底栏，章节标签 + 阅读进度 + 百分比 + 翻页按钮 */
+/* 底栏上沿渐变线（同口径） */
+.rl-reader .rl-reader-footer::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(to right, transparent, var(--background-modifier-border) 12%, var(--background-modifier-border) 88%, transparent);
+}
 .rl-reader-footer {
     position: relative;
     display: flex;
@@ -1150,9 +1946,19 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     justify-content: space-between;
     gap: 10px;
     padding: 8px 14px;
+    /* 与目录页签行严格等高（共享 --rl-chrome-bar-h）。
+       ⚠️ #359 实测：本行的**真实高度由内容撑出**（高频四钮走核心 button 的 ~30px + 此处 8px 上下内距 ≈ 46px），
+          `min-height` 只是下限 ⇒ 共用变量的值必须与这个"撑出来的高度"一致，否则两侧又会分叉（见变量定义处注释）。 */
+    min-height: var(--rl-chrome-bar-h);
+    box-sizing: border-box;
     border-top: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
+    /* 毛玻璃底栏（用户 2026-09-16 十轮）：比顶/目录深一档，半透明 + 背景模糊（比实色轻） */
+    background: color-mix(in srgb, var(--rl-chrome-foot) 68%, transparent);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
     flex-shrink: 0;
+    /* 沉浸模式收起/展开过渡（用户 2026-09-15：200ms）；写在基础规则上，进/出沉浸两个方向都有动画 */
+    transition: transform 200ms ease, opacity 200ms ease;
 }
 .rl-reader-fch {
     min-width: 0;
@@ -1176,15 +1982,28 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     border-radius: 2px;
     background: var(--interactive-accent);
 }
+/* 底栏微型分页器「‹ 42% ›」（用户 2026-09-16 指示精简底栏）：翻页按钮由「‹ 上一页 / 下一页 ›」
+   两个文字按钮改纯图标，中间显示当前进度（连续=章内%；翻页=页码 N/M），悬停说明给出「章内 X% · 全书 Y%」。
+   整组宽度从约 140px 压到约 72px，多余宽度交给进度条（flex:1）。 */
+.rl-reader-fnav { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+/* 底栏分页器按钮必须显式定高：Obsidian 核心给 button 的固定高度（约 30px）会参与撑高，
+   把底栏顶到 46~52px，与目录页签行（38px）对不齐（2026-09-16 十三轮补：用户截图实测 左 683 / 右 670，差 13px）。 */
+.rl-reader .rl-reader-fnav .rl-reader-btn {
+    height: 22px;
+    min-height: 0;
+    padding: 2px 5px;
+    line-height: 1;
+}
+.rl-reader-fnav svg { width: 14px; height: 14px; }
 .rl-reader-fpct {
+    min-width: 42px;
+    text-align: center;
     flex-shrink: 0;
     font-size: var(--font-ui-small);
     color: var(--text-faint);
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
-.rl-reader-fnav { display: flex; gap: 4px; flex-shrink: 0; }
-.rl-reader-fnav .rl-reader-btn { padding: 2px 8px; font-size: var(--font-ui-smaller); }
-.rl-reader-fnav svg { width: 14px; height: 14px; }
 
 /* 设置下拉菜单（≡ 按钮下方，T6）：绝对定位于 .rl-reader-ops 右下，Obsidian 卡片外观 */
 .rl-reader-menu {
@@ -1219,8 +2038,76 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     color: var(--text-normal);
     font-variant-numeric: tabular-nums;
 }
-/* 字号/行距 −/+ 小按钮（rl-btn 收窄） */
-.rl-reader-menu-btn { padding: 1px 8px; line-height: 1.6; }
+
+/* 菜单滑条（字号 / 行距 / PDF 缩放）：用户 2026-09-16 指示「把字号和间距改成滑条选择」，替代原 −/＋ 按钮。
+   自绘轨道 + 圆形滑块（Chromium 走 -webkit- 前缀，Electron 同源）；命中区高 14px 便于拖动；
+   键盘 ←/→ 原生可微调，焦点环用强调色描边。 */
+.rl-reader .rl-reader-menu-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    min-width: 0;
+    height: 14px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-reader .rl-reader-menu-slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--background-modifier-border);
+}
+.rl-reader .rl-reader-menu-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    /* 归位核心：Obsidian 给 18px 大滑块用 top:var(--slider-thumb-y)(-6/-9px) 定位，我们 12px 小滑块必须显式 top:0 复位，
+       否则核心的 top 叠加到 margin-top 上，滑块整体浮到轨道上方（2026-09-16 像素量测实锤，偏差 -8px）。 */
+    position: relative;
+    top: 0;
+    margin-top: -4px;
+    border: none;
+    border-radius: 50%;
+    background: var(--interactive-accent);
+    box-shadow: none;
+}
+/* hover/active/focus：必须压过核心 input[type='range']:not(:disabled)::-webkit-slider-thumb:*（0,3,1）
+   与 body:not(.is-mobile) input[type=range]:focus*（0,3,2）—— 用 .rl-reader .rl-reader-menu-slider:not(:disabled) 凑到 (0,4,0)。 */
+.rl-reader .rl-reader-menu-slider:not(:disabled)::-webkit-slider-thumb:hover,
+.rl-reader .rl-reader-menu-slider:not(:disabled)::-webkit-slider-thumb:active {
+    width: 12px;
+    height: 12px;
+    top: 0;
+    margin-top: -4px;
+    opacity: 1;
+    background: var(--interactive-accent-hover);
+    box-shadow: none;
+}
+.rl-reader .rl-reader-menu-slider:not(:disabled)::-webkit-slider-thumb:focus {
+    box-shadow: none;
+}
+.rl-reader .rl-reader-menu-slider:not(:disabled)::-webkit-slider-thumb:focus-visible {
+    box-shadow: 0 0 0 2px var(--interactive-accent-hover);
+}
+/* 字号/行距 −/+ 小按钮：同工具条口径（透明无框无阴影，悬停只变色） */
+.rl-reader .rl-reader-menu-btn {
+    padding: 1px 8px;
+    line-height: 1.6;
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+}
+.rl-reader .rl-reader-menu-btn:hover {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    color: var(--interactive-accent);
+}
 /* 滚动模式：原生复选框 label 行（连续滚动=当前可用 / 翻页式=后续版本占位移灰） */
 .rl-reader-menu-check {
     display: inline-flex;
@@ -1229,10 +2116,101 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     margin-left: 4px;
     font-size: var(--font-ui-small);
     color: var(--text-normal);
-    cursor: default;
+    cursor: pointer;
 }
-.rl-reader-menu-check input[type="checkbox"] {
+/* 模式 / 行宽勾选框：自绘（外观与 Obsidian 原生勾选框一致，尺寸 14px + 圆角 3px）——
+   勾选态由 .is-on 类**直接驱动**，不再依赖原生 checkbox 的 checked 伪类与浏览器默认激发行为
+   （2026-09-16 修：点击后数据已切换但勾选视觉不刷新，须重开阅读器才显示）。
+   `pointer-events: none` 让点击一律落在 label 上：命中路径唯一，杜绝「浏览器自行翻转 checked」。 */
+.rl-reader .rl-reader-menu-check input[type="checkbox"] {
+    -webkit-appearance: none;
+    appearance: none;
+    position: relative;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
     margin: 0;
+    padding: 0;
+    border: 1px solid var(--text-faint);
+    border-radius: 3px;
+    background: transparent;
+    box-shadow: none;
+    pointer-events: none;
+}
+.rl-reader .rl-reader-menu-check.is-on input[type="checkbox"] {
+    border-color: var(--interactive-accent);
+    background: var(--interactive-accent);
+}
+.rl-reader .rl-reader-menu-check.is-on input[type="checkbox"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    /* ⚠️ 显式压掉 Obsidian 的两条声明（app.css，2026-09-16 离线复现页实测）：
+       ⑴ `width/height: var(--checkbox-size)`（默认 16px，我们的框 14px）→ 不覆盖则伪元素比框大 2px，
+          勾心落在伪元素中心、比框心偏右下（这就是「勾还是不在框中」的根因：after 实测 16×16 / input 14×14）；
+       ⑵ `inset-inline-start: -1px` 是**逻辑属性**，与 inset 展开的物理 left 不是同名属性，必须单独显式覆盖。
+       width/height 用 100%（百分数相对包含块的 padding box = 12×12）→ 伪元素与框精确重合。 */
+    width: 100%;
+    height: 100%;
+    inset-inline-start: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    display: block;
+    box-shadow: none;
+    background: var(--text-on-accent);
+    background-image: none;
+    -webkit-mask: var(--rl-check-mask) center / 72% 72% no-repeat;
+    mask: var(--rl-check-mask) center / 72% 72% no-repeat;
+}
+/* 主题色卡行（用户 2026-09-16）：六档色点并排，点击即换肤；当前档加强调色外圈环（悬停只加深描边，不铺底） */
+.rl-reader-menu-row.rl-reader-theme-row {
+    gap: 6px;
+}
+.rl-reader .rl-reader-menu-row .rl-reader-theme-swatch {
+    position: relative;
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 50%;
+    background: transparent;
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-reader .rl-reader-menu-row .rl-reader-theme-swatch:hover:not(.is-on) {
+    border-color: var(--text-muted);
+}
+.rl-reader .rl-reader-menu-row .rl-reader-theme-swatch.is-on {
+    box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+/* 跟随档：半明半暗斜分色（表示「随 Obsidian 主题」） */
+.rl-reader .rl-reader-menu-row .rl-reader-theme-swatch[data-theme="follow"] {
+    background: linear-gradient(135deg, var(--background-primary) 0 50%, var(--text-faint) 50% 100%);
+    border-color: var(--text-muted);
+}
+.rl-reader .rl-reader-menu-row .rl-reader-theme-swatch[data-theme="light"] {
+    background: #ffffff;
+    border-color: #d5d8dc;
+}
+.rl-reader .rl-reader-menu-row .rl-reader-theme-swatch[data-theme="dark"] {
+    background: #16181c;
+    border-color: #34383f;
+}
+.rl-reader .rl-reader-menu-row .rl-reader-theme-swatch[data-theme="green"] {
+    background: #c7edcc;
+    border-color: #9fcda7;
+}
+.rl-reader .rl-reader-menu-row .rl-reader-theme-swatch[data-theme="gray"] {
+    background: #2e3238;
+    border-color: #4a515a;
+}
+.rl-reader .rl-reader-menu-row .rl-reader-theme-swatch[data-theme="sepia"] {
+    background: #f6eedd;
+    border-color: #d9c9a9;
 }
 /* 全屏行：整行按钮，与上部菜单分隔 */
 .rl-reader-menu-row.rl-reader-menu-fs {
@@ -1249,6 +2227,238 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 }
 .rl-reader-menu-row.rl-reader-menu-fs:hover:not(:disabled) { background: var(--background-modifier-hover); }
 .rl-reader-menu-row.rl-reader-menu-fs:disabled { opacity: 0.5; cursor: not-allowed; }
+/* 视图三按钮（用户 2026-09-15）：全屏 / 沉浸 / 自动，两字并排；点击即高亮（is-on）、再点退出；悬停只变色不铺底 */
+.rl-reader-menu-view {
+    display: flex;
+    gap: 4px;
+    margin-top: 2px;
+    padding: 6px 8px;
+    border-top: 1px solid var(--background-modifier-border);
+    /* 朗读右键菜单挂在本行上（绝对定位的参照系）；relative 不改变自身布局 */
+    position: relative;
+}
+/* 视图按钮的右键弹窗（#340 朗读的「语速 / 语音」→ #341 通用化为**朗读 + 自动**两个按钮共用）——
+   与设置下拉同款浮层，贴按钮行下方、右对齐；弹窗内的滑条行直接复用 `.rl-reader-menu-row/-slider/-val`。 */
+.rl-reader-pop {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 8px;
+    z-index: 110;
+    min-width: 190px;
+    max-height: 40vh;
+    overflow-y: auto;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-lg, 8px);
+    box-shadow: 0 4px 16px var(--background-modifier-box-shadow);
+}
+/* 弹窗内的值文本比设置下拉的「16px」长（`150 px/s` / `5 秒/页`）⇒ 单独放宽；🔴 不折行且不参与压缩
+   （让它去挤滑条，而不是自己被压成两行）；min-width 需落在 `.rl-reader-menu` 内容宽（212−12）之内 */
+.rl-reader-pop .rl-reader-menu-val {
+    min-width: 62px;
+    text-align: left;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.rl-reader-pop-title {
+    padding: 2px 6px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+}
+/* 🔴 #351e 用户口径「朗读右键设置把音源和音色选择都改成下拉选择器」——
+   原来两套控件样式**整体退场**：语音列表项（`.rl-reader-pop-item` / `-name`）与音源 chips
+   （`.rl-reader-pop-chips` / `-chip`）对应的 DOM 已不再产出 ⇒ ⛔ 不留死规则。
+   分组信息改用 `<optgroup>` 的原生分组标题，`.rl-reader-pop-group` 一并退场。 */
+.rl-reader-pop-select {
+    width: 100%;
+    min-width: 0;
+    height: 26px;
+    padding: 0 4px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+}
+/* 语音 / 音色行：下拉 + 右侧一个「试听」（原「每项一个 ▶」收成一个按钮，读**当前选中**那个） */
+.rl-reader-pop-select-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 2px;
+}
+.rl-reader-pop-select-row .rl-reader-pop-select { flex: 1 1 auto; }
+.rl-reader-pop-try {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.rl-reader-pop-try:hover { color: var(--interactive-accent); background: transparent; }
+.rl-reader-pop-try .svg-icon { width: 14px; height: 14px; }
+/* 朗读当前句（#340，TXT 侧；EPUB 正文在 iframe ⇒ 同款规则注入 `buildFrameCss`）。
+   🔴 灰色底随主题（只写一次，靠 --text-normal 跟着换档）；**无 padding / 无 border**（一有就会挤动
+   整段排版，朗读时会看到文字在跳）；**color: inherit**（#318 教训：写死色值会在深色模式下看不见）。 */
+.rl-reader-text .rl-tts-cur {
+    background: color-mix(in srgb, var(--text-normal) 14%, transparent);
+    color: inherit;
+    padding: 0;
+    border: none;
+    border-radius: 2px;
+}
+.rl-reader .rl-reader-menu-view .rl-reader-menu-mode {
+    flex: 1;
+    justify-content: center;
+    padding: 4px 0;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-normal);
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    line-height: 1.4;
+    cursor: pointer;
+}
+/* 未选中：悬停只变色不铺底（UI-GUIDE 口径）；⚠️ 必须排除 .is-on，否则亮起后悬停会把文字染成强调色，
+   与同色实底重合 → 文字看不见（用户 2026-09-15 实测反馈） */
+.rl-reader .rl-reader-menu-view .rl-reader-menu-mode:not(.is-on):hover:not(:disabled) {
+    color: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+}
+.rl-reader .rl-reader-menu-view .rl-reader-menu-mode.is-on {
+    background: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+/* 已亮起：实底保持，悬停仅「小反色」（底色/描边加深一档，文字仍为对比色）——用户 2026-09-15 裁定 */
+.rl-reader .rl-reader-menu-view .rl-reader-menu-mode.is-on:hover:not(:disabled) {
+    background: var(--interactive-accent-hover, var(--interactive-accent));
+    border-color: var(--interactive-accent-hover, var(--interactive-accent));
+    color: var(--text-on-accent);
+}
+.rl-reader .rl-reader-menu-view .rl-reader-menu-mode:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ══════ 纯字变色切换（#351 建为「胶囊容器 + 描边」；#351b 按用户口径改成**纯字变色**）══════
+   用途：设置面板里所有「二选一」的排版项（阅读模式 / 行宽 / 缩进 / 字重）。
+   🔴 两条口径，都是踩过的坑：
+   ⑴ **只变字色**，⛔ 不铺底、不描边 —— 并排切换类铺底色后几个按钮会连成一条色带，还会与「当前选中」
+      的强调色互相干扰（用户 2026-09-14 取向）；#351 的胶囊版被用户判为「厚重感」。
+   ⑵ 规则**必须带 `.rl-reader ` 前缀**（≥0,2,0）—— `.rl-seg-item` 是 `<button>`，单类（0,1,0）会被
+      Obsidian 核心 `button:not(.clickable-icon)`（0,1,1）压成灰底 + `--input-shadow` 内阴影
+      （§3 v15 老坑；#351 那版「厚重感」有一半来自这里，另一半来自分组标题的灰条）。
+   ⑶ 悬停必须排除 `.is-on`，否则亮起态悬停会把强调色字再染成 `--text-normal`（同 `.rl-reader-menu-mode` 的教训）。 */
+.rl-reader .rl-seg {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 1 auto;
+    min-width: 0;
+}
+/* 纯字形态：靠**间距**分组，不靠容器底
+   · `margin-left: auto` 把它推到行右缘 —— 与「字号 / 行距 / 字距」右侧的读数对齐（栏右缘同一条线）；
+   · 字号用 `--font-ui-small`（与行内读数、行标签一致），⛔ 不要用更小号 —— 纯文字没有底色衬托，
+     再小一档就「飘」了（胶囊版有底，小一号没问题）。 */
+.rl-reader .rl-seg-text { gap: 14px; margin-left: auto; }
+.rl-reader .rl-seg-text .rl-seg-item {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    line-height: 1.5;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.rl-reader .rl-seg-text .rl-seg-item:not(.is-on):hover:not(:disabled) { color: var(--text-normal); }
+.rl-reader .rl-seg-text .rl-seg-item.is-on { color: var(--interactive-accent); font-weight: 600; }
+.rl-reader .rl-seg-text .rl-seg-item:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 🔴 原「字体下拉」样式（`.rl-reader-menu-select`）已随 #351e 字体改纯字变色切换整体退场；
+   浮层里的下拉是另一套（`.rl-reader-pop-select`，尺寸/上下文都不同，别合并）。 */
+
+/* 快捷键小字（#351 建为「面板 + 两个浮层」共用；🔴 #351b 用户口径「删除排版下面的小字」⇒ 面板那份撤除，
+   只剩**自动 / 朗读两个浮层**）——灰色、比正文再小一号，不抢视线。
+   ⚠️ 撤面板那份不损失可达性：浮层那两处才是「按下这个键时眼睛正好在的地方」。 */
+.rl-reader .rl-reader-pop-hint {
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px solid var(--background-modifier-border);
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+}
+
+/* 设置面板分组标题（#351 建为「▼ 可折叠灰条」；#351b 按用户口径「删除收起展示功能」＋撤除第二个分组）
+   🔴 分组**常显、不可折叠**，标题只是**一行小字**（淡色 + 半粗）。
+   🔴 它必须是 `<div>` 而**不是** `<button>`：核心 `button:not(.clickable-icon)`（0,1,1）会把
+      `<button>` 压成整行灰底 + 内阴影 —— 用户报的「厚重感」主要就是那两条灰条。
+   ⚠️ 原「第二组起给细分隔线」的 `.rl-reader-menu-group + .rl-reader-menu-sec` 已随
+      #351b「阅读 / 行宽 / 缩进并进显示组」整体退场 —— **只剩一个分组**，那条选择器永远不匹配（死规则不留）。 */
+.rl-reader .rl-reader-menu-sec {
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+/* 底栏图标组（#351：全屏 / 沉浸 / 自动 / 朗读 —— 从设置面板搬到高频操作处）
+   🔴 `position: relative` 是**右键浮层的定位锚**（见下一条 `.rl-reader-pop-up`），别删。 */
+.rl-reader-fops { position: relative; display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+/* 🔴 #351b 修「自动 / 朗读 右键没反应」：底栏是容器的**最后一行**，浮层照旧向下开
+   （`top: calc(100% + 4px)`，包含块是 `.rl-reader-footer`）会落到容器外 ⇒ 用户看不见任何东西。
+   底栏这一处必须**向上**开。选择器带修饰类 ⇒ 只影响底栏，设置面板里的浮层行为不变。 */
+.rl-reader .rl-reader-pop.rl-reader-pop-up {
+    top: auto;
+    bottom: calc(100% + 6px);
+    right: 0;
+}
+.rl-reader-fops .rl-reader-btn { padding: 3px 6px; }
+.rl-reader-fops svg { width: 15px; height: 15px; }
+/* 亮起态：强调色实底（被底栏的「扁平化」规则排除在外，见 .rl-reader-footer .rl-reader-btn:not(.is-on)） */
+.rl-reader .rl-reader-footer .rl-reader-btn.is-on {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+.rl-reader .rl-reader-footer .rl-reader-btn.is-on:hover { background: var(--interactive-accent-hover, var(--interactive-accent)); }
+
+/* 沉浸模式（用户 2026-09-15）：隐藏上下边栏——顶栏上移出视野（复用 .hidden），底栏改浮层下滑收起
+   （浮层不占位 → 正文铺满）；鼠标靠近上下边缘临时唤出（rl-foot-show） */
+.rl-reader-focus .rl-reader-body { padding-top: 0; }
+.rl-reader-focus .rl-reader-footer {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    transform: translateY(105%);
+    opacity: 0;
+    pointer-events: none;
+    box-shadow: 0 -2px 10px var(--background-modifier-box-shadow);
+}
+.rl-reader-focus .rl-reader-footer.rl-foot-show {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+}
 
 /* 选中文本浮动操作条（正文选区上方绝对定位） */
 .rl-selbar {
@@ -1265,8 +2475,12 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 }
 .rl-selbar.hidden { display: none; }
 .rl-selbar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     font-size: 12px;
-    padding: 2px 8px;
+    /* 用户 2026-09-16 十三轮：划词动作条按钮放大（更好点） */
+    padding: 6px 10px;
     border-radius: var(--rl-t-radius-md, 6px);
     border: 1px solid transparent;
     background: transparent;
@@ -1274,9 +2488,23 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     cursor: pointer;
     font-family: inherit;
 }
+.rl-selbar button svg { width: 20px; height: 20px; }
 .rl-selbar button:hover { background: var(--background-modifier-hover); }
 .rl-selbar button.rl-selbar-disabled { color: var(--text-faint); cursor: default; opacity: 0.7; }
 .rl-selbar button.rl-selbar-disabled:hover { background: transparent; }
+
+/* 🔴 动作条按钮的隐藏必须自带规则：本插件**没有全局 `.hidden`**（每个组件各自一条 `X.hidden{display:none}`），
+   而 `.rl-selbar button` 上的 `display: inline-flex` 会把浏览器默认隐藏盖掉 →
+   条件按钮（如垃圾桶）若不加这条，`addClass('hidden')` 完全不生效、**永远常显**。
+   （2026-09-18 事故：动作条垃圾桶常显，用户实测「选普通文字还是有垃圾桶」；通用守卫见 assert-symbols。） */
+.rl-selbar button.hidden,
+.rl-selbar button.rl-selbar-trash.hidden { display: none; }
+
+/* 同类漏网（2026-09-18 审计发现）：三个区的「清除全部」按钮（书签 / 高亮 / 摘抄）按代码本意是
+   「仅该区非空时显示」（`toggleClass('hidden', list.length === 0)`），但它们同样没有 `.hidden` 规则 →
+   一直常显，空区里点它也没反应。这里按「阅读器按钮基类」统一给规则，覆盖 6 处（TXT + EPUB × 三区）。 */
+.rl-btn.hidden,
+.rl-reader-btn.hidden { display: none; }
 
 /* 译文就地浮层卡片（划词翻译结果；挂 .rl-reader-body，absolute，z-index 低于动作条） */
 .rl-translate-card {
@@ -1305,16 +2533,17 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     color: var(--text-muted);
     letter-spacing: 0.02em;
 }
-.rl-translate-card-close {
+.rl-reader .rl-translate-card-close {
     padding: 0 4px;
     font-size: var(--font-ui-small);
     color: var(--text-muted);
-    background: none;
+    background: transparent;
+    box-shadow: none;
     border: none;
     cursor: pointer;
     border-radius: 4px;
 }
-.rl-translate-card-close:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.rl-reader .rl-translate-card-close:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
 .rl-translate-card-body {
     padding: 8px 10px 10px;
     line-height: 1.7;
@@ -1326,6 +2555,328 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 }
 .rl-translate-card-body.rl-translate-loading { color: var(--text-faint); }
 .rl-translate-card-body.rl-translate-error { color: var(--text-error); }
+
+/* ── 搜索卡片（划词后点动作条 / 顶栏「搜索」就地浮出；用户 2026-09-17 裁定方案 A）──
+   与译文浮层同款定位（挂 .rl-reader-body，absolute）。两条通道：
+   ① 网络搜索 = 引擎 chip → 系统浏览器打开结果页（不抓取列表：免 Key 的通用搜索 API 已不存在）；
+   ② AI 搜索 = 卡内出答案（复用翻译通道的端点与模型）。
+   ⚠️ 卡片内按钮规则一律带 `.rl-reader .rl-search-card-*`（0,2,0），否则被核心
+   `button:not(.clickable-icon)`（0,1,1）染成灰底 + 内阴影。 */
+.rl-search-card {
+    position: absolute;
+    z-index: 45;
+    width: 340px;
+    max-width: 86%;
+    border-radius: var(--rl-t-radius-lg, 8px);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: 0 2px 12px var(--background-modifier-box-shadow);
+    font-size: var(--font-ui-small);
+}
+.rl-search-card.hidden { display: none; }
+.rl-search-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.rl-search-card-title {
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+}
+.rl-reader .rl-search-card-close {
+    padding: 0 4px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    background: transparent;
+    box-shadow: none;
+    border: none;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.rl-reader .rl-search-card-close:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.rl-search-card-sec { padding: 8px 10px 0; }
+.rl-search-card-query { width: 100%; font-size: var(--font-ui-small); }
+/* AI 卡两态切换（用户 2026-09-18）：「解读选段」/「自定义提问」。并排切换类 → 悬停只变色不铺底；
+   亮起态用 .is-on，且 hover 必须加 :not(.is-on) 限定（否则 :hover 的特异性会盖掉亮起态）。 */
+.rl-search-card-modes { display: flex; align-items: center; gap: 4px; padding: 8px 10px 0; }
+.rl-reader .rl-search-card-mode {
+    flex: 1;
+    padding: 3px 8px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-reader .rl-search-card-mode:not(.is-on):hover { color: var(--interactive-accent); background: transparent; }
+.rl-reader .rl-search-card-mode.is-on {
+    color: var(--text-on-accent);
+    background: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    font-weight: 600;
+}
+.rl-reader .rl-search-card-mode.is-on:hover { background: var(--interactive-accent-hover); color: var(--text-on-accent); }
+/* 「自定义提问」态的选段预览（只读一行半，超出裁掉） */
+.rl-search-card-quote {
+    margin-bottom: 6px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    max-height: 3.2em;
+    overflow: hidden;
+}
+/* 两态输入区互斥显隐（.hidden 各元素单独声明，Obsidian 无通用 .hidden 语义可依赖） */
+.rl-search-card-sec.hidden { display: none; }
+.rl-search-card-body {
+    margin: 8px 10px 0;
+    padding: 7px 9px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-secondary);
+    line-height: 1.7;
+    color: var(--text-normal);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 40vh;
+    min-height: 3.4em;
+    overflow-y: auto;
+}
+.rl-search-card-body.rl-search-loading { color: var(--text-faint); }
+.rl-search-card-body.rl-search-error { color: var(--text-error); }
+.rl-search-card-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 8px 10px 10px;
+}
+.rl-reader .rl-search-card-copy {
+    padding: 2px 10px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-reader .rl-search-card-copy:hover {
+    color: var(--text-normal);
+    border-color: var(--background-modifier-border-hover);
+    background: transparent;
+}
+
+/* ── 「网络搜索」浮层（用户 2026-09-18：搜索拆成网络 / AI 两个独立入口，原「二选一」浮层撤销）──
+   25 个引擎按 5 类分组、**纯图标方钮**（用户 2026-09-19 裁定：14 个品牌 logo 走 simple-icons 的官方色、
+   11 个无 logo 的回退内置图标，悬停提示给引擎名 → 见 `.rl-search-net-engine` 一段）；
+   **竖排展示**（同日追加：每组一列、五组横向并排 → 见 `.rl-search-net-list` 一段），
+   超高时浮层内部滚动。挂 .rl-reader-body（absolute），贴选区 / 动作条定位。
+   🔴 按钮 mousedown 需 preventDefault：否则焦点转移会让浏览器选区消失 —— 用户要求「选中保持高亮」。 */
+.rl-search-net {
+    position: absolute;
+    z-index: 46;
+    width: 300px;
+    max-width: 92%;
+    display: flex;
+    flex-direction: column;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-lg, 8px);
+    box-shadow: 0 2px 12px var(--background-modifier-box-shadow);
+}
+.rl-search-net.hidden { display: none; }
+.rl-search-net-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px 6px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.rl-search-net-title {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--font-ui-small);
+    font-weight: 600;
+    color: var(--text-normal);
+}
+.rl-reader .rl-search-net-close {
+    padding: 2px 6px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-reader .rl-search-net-close:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.rl-search-net-quote {
+    padding: 6px 10px 2px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    max-height: 2.6em;
+    overflow: hidden;
+}
+/* 布局（用户 2026-09-19 追加：图标**竖排**；稍晚「每组统一 5 个」后列高全部拉平）：
+   list（横排，5 组并排） → col（竖排，一组一列） → group 标题在上 ／ row 图标往下排（竖向）
+   5 列落在 300px 面板内；**5 组 × 5 个 → 五列等高 177px、连顶栏一起面板 302×256**（`_geo_net.cjs` 实测 1280×900）。
+   ⚠️ 列高由**当组引擎个数**决定 → 引擎数量是纯数据改动也会改面板高度，改完要重测。
+   改前（3/9/4/3/5）是 302×389、列高参差；现在最局 256px < max-height 420px → **不滚动**。 */
+.rl-search-net-list {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px 8px 8px;
+    max-height: min(52vh, 420px);
+    overflow-y: auto;
+}
+.rl-search-net-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.rl-search-net-group {
+    /* 组名居中在各列顶端（不再用 margin 做「段间分隔」——现在它属于所在列） */
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+    color: var(--text-faint);
+    white-space: nowrap;
+}
+.rl-search-net-row { display: flex; flex-direction: column; gap: 4px; }
+/* 引擎 chip = **纯图标方钮**（用户 2026-09-19 裁定：纯图标 + 悬停提示 + 品牌官方色）。
+   28×28 方钮承载 16px 图标；悬停只点亮边框 + 图标转常色（并排切换类不铺底色 —— 项目长期取向）。
+   🔴 两类图标混排，必须靠类名分开管 fill：
+     · `.rl-eng-brand`（品牌 logo，simple-icons 单路径**填充式**）→ `fill: var(--rl-eng-c)`
+     · 无品牌 logo 的引擎走 Obsidian 内置图标（**描边式**，类是 `.svg-icon`）→ 保持 `fill:none; stroke:currentColor`。
+   ⛔ 千万别写「无差别」的 `.rl-search-net-icon path { fill: … }` —— 那会把 Lucide 路径**填实**成一团墨块。 */
+.rl-reader .rl-search-net-engine {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-reader .rl-search-net-engine:hover { color: var(--text-normal); border-color: var(--interactive-accent); background: transparent; }
+.rl-search-net-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; }
+.rl-search-net-icon svg { width: 16px; height: 16px; }
+/* 品牌官方色（色值唯一真源 = pure/searchIcons 的 hex，TS 侧写成 CSS 变量，样式侧不出现字面色值）。
+   深底（夜间黑 / 深灰 / 跟随主题且 Obsidian 为深色）才换用 hexDark —— 只有纯黑标（X / TikTok）给了它，
+   其余品牌沿用官方色。⚠️ `:not()` 链是为了让「Obsidian 深色 + 阅读器浅色主题」时不误换色。 */
+.rl-search-net-icon svg.rl-eng-brand { fill: var(--rl-eng-c, currentColor); }
+.rl-reader.rl-rt-dark .rl-search-net-icon svg.rl-eng-brand,
+.rl-reader.rl-rt-gray .rl-search-net-icon svg.rl-eng-brand,
+.theme-dark .rl-reader:not(.rl-rt-light):not(.rl-rt-green):not(.rl-rt-sepia) .rl-search-net-icon svg.rl-eng-brand {
+    fill: var(--rl-eng-c-dark, var(--rl-eng-c, currentColor));
+}
+
+/* ── 摘抄就地卡片（划词后就地写摘抄；用户 2026-09-17 裁定 C 方案）──
+   与译文浮层同款定位（挂 .rl-reader-body，absolute），但不打断阅读：Enter 保存、Shift+Enter 换行、
+   Esc / 点正文其他区域取消。收起/展开由 .rl-excard-quote 的 max-height 承担（状态类 is-open）。 */
+.rl-excard {
+    position: absolute;
+    z-index: 46;
+    width: 320px;
+    max-width: 92%;
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--rl-t-radius-lg, 8px);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: 0 4px 16px var(--background-modifier-box-shadow);
+    font-size: var(--font-ui-small);
+}
+.rl-excard.hidden { display: none; }
+.rl-excard-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px 7px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.rl-excard-title { font-weight: 600; color: var(--text-normal); }
+.rl-excard-loc { font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.rl-excard-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; }
+.rl-excard-label { font-size: var(--font-ui-smaller); color: var(--text-muted); }
+/* 引用：默认收起（约两行），点「展开」看全文 */
+.rl-excard-quote {
+    margin: 0;
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+    color: var(--text-muted);
+    background: var(--background-secondary);
+    border-radius: var(--rl-t-radius-md, 6px);
+    padding: 6px 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 3.2em;
+    overflow: hidden;
+}
+.rl-excard-quote.is-open { max-height: 30vh; overflow-y: auto; }
+/* 「展开 / 收起」：纯文字按钮，常态无底无框、悬停只变色（工具条拍平口径） */
+.rl-excard .rl-excard-more {
+    align-self: flex-start;
+    padding: 0;
+    min-height: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-accent);
+    font-size: var(--font-ui-smaller);
+    font-family: inherit;
+    cursor: pointer;
+}
+.rl-excard .rl-excard-more:hover { background: transparent; color: var(--interactive-accent-hover); text-decoration: underline; }
+.rl-excard .rl-excard-more.hidden { display: none; }
+.rl-excard .rl-excard-note {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 3.9em;
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    line-height: 1.5;
+    color: var(--text-normal);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    padding: 6px 8px;
+}
+.rl-excard .rl-excard-note:focus { border-color: var(--interactive-accent); outline: none; }
+.rl-excard .rl-excard-note::placeholder { color: var(--text-faint); opacity: 1; }
+.rl-excard-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 0 10px 10px;
+}
+/* ⚠️ 必须带 .rl-excard 前缀（0,2,0）：单类会被核心 button:not(.clickable-icon)（0,1,1）染成灰底 + 内阴影 */
+.rl-excard .rl-excard-btn {
+    padding: 5px 12px;
+    min-height: 0;
+    font-size: var(--font-ui-smaller);
+    font-family: inherit;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-excard .rl-excard-btn:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.rl-excard .rl-excard-btn.rl-excard-save {
+    color: var(--text-on-accent);
+    background: var(--interactive-accent);
+    border-color: transparent;
+}
+.rl-excard .rl-excard-btn.rl-excard-save:hover { color: var(--text-on-accent); background: var(--interactive-accent-hover); }
+.rl-excard .rl-excard-btn:disabled { opacity: 0.6; cursor: default; }
 
 
 /* ── AI 翻译与总结：提示词（默认提示词作 placeholder 灰字，不可编辑；点进框为空框，写入即覆盖，清空恢复默认） ── */
@@ -1427,16 +2978,22 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
 .rl-res-source { font-size: 10px; color: var(--text-faint); flex: none; cursor: pointer; white-space: nowrap; font-weight: 500; user-select: none; padding: 2px 6px; border: 1px solid var(--background-modifier-border); border-radius: 4px; line-height: 1.5; }
 .rl-res-source:hover, .rl-res-source:focus-visible { color: var(--interactive-accent); outline: none; }
 
-/* ── 影视本地视频内嵌播放器（VideoPlayerModal）──
-   .rl-vp 加在 Modal modalEl 上：近全屏，黑底沉浸，video 等比居中，顶部控制条悬浮 */
-.modal.rl-vp {
-    border-radius: 10px;
+/* ── 影视本地视频内置播放器（VideoPlayerView：工作区新标签页，Media Extended 式）──
+   容器 = ItemView 的 .view-content（脚本给它打上 .rl-vp）；该视图不需要页头，整块交给播放器。
+   🔴 控件样式一律以 .rl-vp-root 打头（特异性 0,2,0）：单类 .rl-vp-btn（0,1,0）会被
+      Obsidian 核心 button:not(.clickable-icon)（0,1,1，设背景/字色）与插件自己的
+      .modal-content button.rl-btn（0,2,1，设 padding:4px 14px）压过 —— 实测后果：按钮变主题
+      浅灰底 + 左右各吃 14px 内距，30px 宽的图标按钮内容盒被压成 0px，<svg> 作为可收缩的
+      flex 子项宽度归零 → 图标整片消失（用户看到的「按钮空白」）。改样式勿退回单类写法。 */
+.rl-vp-view .view-header { display: none; }
+.view-content.rl-vp {
     padding: 0;
+    overflow: hidden;
+    /* Obsidian 核心给 .view-content 写的是 height: calc(100% - var(--header-height))：
+       本视图页头已隐藏，但该变量仍在 → 不显式铺满会在底部留一条背景色白带。 */
+    height: 100%;
+    min-height: 0;
 }
-.modal.rl-vp .modal-title,
-.modal.rl-vp .modal-close { display: none; }
-.modal.rl-vp .modal-content,
-.modal.rl-vp .modal-body { padding: 0; height: 100%; overflow: hidden; }
 .rl-vp-root {
     display: flex;
     flex-direction: column;
@@ -1444,7 +3001,17 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     background: #000;
     position: relative;
 }
-/* 顶部控制条：绝对悬浮于视频上方（视频上缘/下缘 hover 不变，常驻半透明黑底） */
+/* 视图被 Obsidian 恢复布局、但当前没有播放内容时的占位 */
+.rl-vp-empty {
+    margin: auto;
+    padding: 28px 32px;
+    text-align: center;
+    color: rgba(255,255,255,.72);
+}
+.rl-vp-empty-title { font-size: 16px; font-weight: 600; color: #fff; margin-bottom: 8px; }
+.rl-vp-empty-hint { font-size: 13px; line-height: 1.6; }
+/* 顶栏：2026-09-18 按 B 站口径瘦身为**只剩片名**（原「上一集/下一集/字幕/↗」全部下移到控制条与设置齿轮），
+   仍是绝对悬浮于视频上方、随闲置一起淡出的浮层（视频上缘/下缘 hover 不变，常驻半透明黑底）。 */
 .rl-vp-bar {
     position: absolute;
     top: 0; left: 0; right: 0;
@@ -1457,6 +3024,10 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     background: linear-gradient(to bottom, rgba(0,0,0,.78), rgba(0,0,0,0));
 }
 .rl-vp-title-wrap { min-width: 0; overflow: hidden; }
+/* #326：顶栏右上角的「插入时间戳 / 截取当前帧」（用户 2026-09-19 指定放右上角）。
+   顶栏是 `justify-content: space-between` 的两端布局，本容器作为第二个子元素自然靠右。
+   按钮复用 `.rl-vp-root .rl-vp-btn`（透明底 + 白图标 —— 顶栏同样压在视频上）。 */
+.rl-vp-tools { display: flex; align-items: center; gap: 4px; }
 .rl-vp-title {
     font-size: 14px;
     font-weight: 600;
@@ -1465,30 +3036,495 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.rl-vp-ops { display: flex; align-items: center; gap: 6px; flex: none; }
-.rl-vp-btn {
-    background: rgba(255,255,255,.12);
-    border: 1px solid rgba(255,255,255,.25);
-    color: #fff;
+/* 🔴 幽灵按钮（2026-09-18 按 B 站口径）：**常态无底、无边框**（只留白色图标），hover 才浮出一层淡底。
+   旧写法是常态 `rgba(255,255,255,.12)` 底 + `.25` 边框 —— 一排按钮连着排会像一串药丸。
+   与用户既有审美同向：并排按钮的 hover 只提亮自己，不铺强调色。
+   🔴 is-on（已亮起）与 hover 的关系：hover 规则必须带 `:not(.is-on)` —— 两条都是 (0,4,0) 时按顺序定胜负，
+   而「已亮起」的强调色实底一旦被 hover 的淡白底盖掉，同色文字就整片看不见（项目既有踩坑，勿回退）。 */
+.rl-vp-root .rl-vp-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: rgba(255,255,255,.95);
+    box-shadow: none;
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    transition: background .12s ease, color .12s ease;
 }
-.rl-vp-btn:hover { background: rgba(255,255,255,.24); color: #fff; }
-.rl-vp-btn:disabled { opacity: .35; cursor: not-allowed; }
-/* 视频区：撑满，黑底，flex 让 video 等比缩放居中 */
+.rl-vp-root .rl-vp-btn:not(.is-on):hover { background: rgba(255,255,255,.16); color: #fff; }
+.rl-vp-root .rl-vp-btn:disabled { opacity: .35; cursor: not-allowed; }
+.rl-vp-root .rl-vp-btn.is-on:hover { background: var(--interactive-accent-hover); border-color: var(--interactive-accent-hover); color: var(--text-on-accent); }
+
+/* 视频区：撑满；flex 让 video 等比缩放居中。
+   🔴 底色 = **白**（用户 2026-09-18 二次裁定：留白不要高斯模糊、也不要镜像 video）——
+     主 video 是 `object-fit: contain` + `background: transparent`，
+     没被画面盖住的上下左右留白自然露出这层白底。 */
 .rl-vp-stage {
     flex: 1;
     min-height: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #000;
+    background: #fff;
 }
 .rl-vp-stage video {
+    /* 撑满内容区宽度 + 保持原始宽高比（contain → 不拉伸、不裁切）。
+       旧写法是 width/height:auto 居中，宽屏容器下画面两侧留大片黑边（用户 2026-09-17 指示消除）。
+       作用域限定在 .rl-vp-stage 内，不影响其他笔记元素。
+       🔴 background 必须是 transparent：留白（画面没盖住的部分）交给舞台的白底，
+       保留 #000 会让留白还是黑的 —— 白色留白靠「舞台白底 + video 透明底」两层配合。 */
+    width: 100%;
+    height: 100%;
     max-width: 100%;
     max-height: 100%;
-    width: auto;
-    height: auto;
-    background: #000;
+    object-fit: contain;
+    background: transparent;
     outline: none;
+}
+/* ── 内置播放器自绘控件（用户 2026-09-15：不用原生 controls）─────────────────
+   顶栏 + 控制条是一组「播放中自动淡出、动鼠标即浮出」的浮层（.rl-vp-idle 由脚本切换）；
+   进度条 = 缓冲段 / 已播段 / 拖动柄 / 悬停时间预览气泡（.rl-vp-tip）。 */
+.rl-vp-stage {
+    position: relative;
+}
+.rl-vp-bar,
+.rl-vp-controls {
+    transition: opacity .2s ease;
+}
+.rl-vp-idle .rl-vp-bar,
+.rl-vp-idle .rl-vp-controls {
+    opacity: 0;
+    pointer-events: none;
+}
+/* 控制条（2026-09-18 按 B 站口径改**单行**）：内容只有一行 —— 左控件组 / 中进度段 / 右功能组
+   （与字节 xgplayer 的 left-center-right 三段式同构）。浮层是它的**绝对定位子元素**（不参与流布局，
+   定位基准就是这里），故这里同时是 menuAnchor 的坐标系原点。 */
+.rl-vp-controls {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 8px 14px 10px;
+    background: linear-gradient(to top, rgba(0,0,0,.82), rgba(0,0,0,0));
+    color: #fff;
+}
+.rl-vp-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+.rl-vp-left,
+.rl-vp-right { display: flex; align-items: center; gap: 4px; flex: none; }
+/* 🔴 中段吃剩余宽度：`flex: 1` + `min-width: 0` 缺一不可 —— 少了 min-width，
+   flex 子项的自动最小尺寸会把进度条顶住不肯缩，窄窗口下右组会被挤出可视区。 */
+.rl-vp-mid { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.rl-vp-mid .rl-vp-progress { flex: 1; min-width: 0; }
+.rl-vp-time {
+    flex: none;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: rgba(255,255,255,.86);
+    white-space: nowrap;
+}
+/* 图标按钮：方形、图标居中；「亮起」= 强调色实底（静音中 / 字幕已挂载） */
+.rl-vp-root .rl-vp-iconbtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 28px;
+    padding: 0;
+    flex: none;
+}
+/* 图标尺寸显式给足，并 flex:none —— 只要内容盒还有宽度，图标就不会被压成 0 宽 */
+.rl-vp-root .rl-vp-iconbtn svg {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+    flex: none;
+}
+.rl-vp-root .rl-vp-btn.is-on {
+    background: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+.rl-vp-root .rl-vp-speed {
+    min-width: 48px;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+/* 「选集」等文字入口：与倍速同款尺寸（一排按钮高矮不齐比配色更刺眼） */
+.rl-vp-root .rl-vp-textbtn {
+    min-width: 44px;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+/* 音量浮层（2026-09-18 第三次指示：照参考图自绘）—— **顶部数值 + 竖向细轨 + 大圆滑块**。
+   结构：`.rl-vp-volpop` > （`.rl-vp-vol-val` 数值 ＋ `.rl-vp-vol-wrap` > `input.rl-vp-vol-range`）。
+   拖动仍走原生 range（键盘可达、拖动逻辑免费），只把外观整体盖掉：
+     · 轨道 4px 圆角细条；**已填充段**靠 `linear-gradient` + 元素上的 `--rl-vol-p` 表达
+       （Chromium 的 range 没有 progress 伪元素 —— 那是 Firefox 的 `::-moz-range-progress`）；
+     · 滑块 14px 实心圆，取强调色；
+     · 整体 `rotate(-90deg)`（range 天生是横的）→ 转完 100% 落在**顶端**，`to right` 也即「向上」。
+   容器按**旋转后**的视觉尺寸定宽高（wrap 22×96），input 写「旋转前」的长边（96×22），两者都居中才不歪。
+   ⚠️ 类名一律 `.rl-vp-root` 打头：产物断言有一条「控件类不得裸用」，前缀相同的行会被误命中（假红）。 */
+.rl-vp-root .rl-vp-volpop {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+.rl-vp-root .rl-vp-vol-val {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+}
+.rl-vp-root .rl-vp-vol-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 96px;
+}
+.rl-vp-root .rl-vp-vol-range {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 96px;
+    height: 22px;
+    margin: 0;
+    background: transparent;
+    transform: rotate(-90deg);
+    transform-origin: center center;
+    outline: none;
+}
+.rl-vp-root .rl-vp-vol-range::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(to right, var(--interactive-accent) 0 var(--rl-vol-p, 0%), rgba(255,255,255,.22) var(--rl-vol-p, 0%) 100%);
+}
+/* 🔴 Obsidian 核心给 range 的 thumb 设了 `position: relative` + `top`（为 18px 大滑块对中），
+   不复位的话旋转后会整体偏移 → 显式 `position: static` 让 top 失效，用 margin-top 自己对中（(4-14)/2）。 */
+.rl-vp-root .rl-vp-vol-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    position: static;
+    top: 0;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border: none;
+    border-radius: 50%;
+    background: var(--interactive-accent);
+    box-shadow: none;
+}
+/* 进度条：加粗（用户 2026-09-18「加粗！」：底 4→6px、悬停 6→9px、拖动柄 12→14px）；
+   命中区一并加高，免得「条粗了但边缘点不到」；拖动柄在 hover/拖动时出现 */
+.rl-vp-progress {
+    position: relative;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    touch-action: none;
+}
+.rl-vp-progress::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255,255,255,.26);
+    transition: height .12s ease;
+}
+.rl-vp-progress:hover::before { height: 9px; }
+.rl-vp-progress-buffered,
+.rl-vp-progress-played {
+    position: absolute;
+    left: 0;
+    height: 6px;
+    border-radius: 3px;
+    transition: height .12s ease;
+}
+.rl-vp-progress-buffered { background: rgba(255,255,255,.42); }
+.rl-vp-progress-played {
+    background: var(--interactive-accent);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+.rl-vp-progress:hover .rl-vp-progress-buffered,
+.rl-vp-progress:hover .rl-vp-progress-played { height: 9px; }
+.rl-vp-progress-thumb {
+    width: 14px;
+    height: 14px;
+    margin-right: -7px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--interactive-accent);
+    box-shadow: 0 0 0 2px rgba(0,0,0,.45);
+    opacity: 0;
+    transition: opacity .12s ease;
+}
+.rl-vp-progress:hover .rl-vp-progress-thumb { opacity: 1; }
+/* 悬停时间预览气泡：`落点 / 总长`（用户 2026-09-18） */
+.rl-vp-tip {
+    position: absolute;
+    bottom: 22px;
+    transform: translateX(-50%);
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(0,0,0,.82);
+    color: #fff;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+}
+.rl-vp-tip.hidden { display: none; }
+/* 进度条标记（#333）：`#333` 圆点 + 悬停卡片。
+   🔴 三层摆放顺序是**有意**的：标记层画在 `played`/`thumb` **之后**（否则已播区间是实心强调色底、
+   圆点会被吞掉），但在 `.rl-vp-tip` **之前**（卡片必须压在最上面）。
+   🔴 `pointer-events: none`：命中判定走进度条自己的 pointermove/pointerdown（不做逐点监听），
+   所以圆点**不吃拖拽**。⚠️ 进度条三段高度 6/9/14px 不许改（圆点是叠上去的，不占条高）。 */
+.rl-vp-marks {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+.rl-vp-mark {
+    position: absolute;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    margin: -3.5px 0 0 -3.5px;
+    border-radius: 50%;
+    background: var(--interactive-accent);
+    box-shadow: 0 0 0 1.5px var(--background-primary);
+}
+/* 点多时的降级（D-5 Ⓐ）：缩小 + 变淡 —— 保持「这里有打点」的信息，但不变成一条花边 */
+.rl-vp-marks-dense .rl-vp-mark {
+    width: 5px;
+    height: 5px;
+    margin: -2.5px 0 0 -2.5px;
+    opacity: .65;
+}
+/* 悬停在标记上时的卡片（替换「落点 / 总长」气泡）：可换行、竖排内容 */
+.rl-vp-tip-mark {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    max-width: 220px;
+    padding: 6px 8px;
+    white-space: normal;
+    text-align: left;
+}
+.rl-vp-mark-head {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+.rl-vp-mark-text { font-size: 12px; }
+.rl-vp-mark-img {
+    max-width: 200px;
+    max-height: 112px;
+    border-radius: 4px;
+    display: block;
+}
+/* 打开方式提示（2026-09-19 用户改判：**悬停出卡片 → 右键打开**；卡片里**不再放按钮**）。
+   🔴 为什么去掉按钮：卡片本体是 `pointer-events: none`（悬停时间气泡要跟着鼠标走、不能吃指针），
+   要在卡片里放可点元素就得再补一条 `pointer-events: auto` —— 那条路连着踩了三轮「点不动」
+   （每次重建 / pointerleave 收卡片 / 1 秒空闲隐藏）。右键走 **root 上的 `contextmenu`**，
+   不依赖卡片内的命中层（实测：卡片空白处的命中目标是底层 video）。 */
+.rl-vp-mark-hint {
+    color: rgba(255,255,255,.62);
+    font-size: 11px;
+}
+/* 画面中央的播放按钮（用户 2026-09-18 二次裁定）：**只在暂停时显示**，满不透明、
+   悬停不再额外出现、也不再有呼吸细环微动效（上一版「悬停浮出 + 暂停淡显」已撤）。
+   居中靠 flex 静态位置（stage 是 flex 容器且 justify/align 居中，绝对定位子项的静态位置即居中点）。
+   `pointer-events: none`：点击一律落到主 video（与「点画面任意位置切播放/暂停」同一条通道），
+   自己接 click 会与冒泡到 video 的那次切换互相抵消。 */
+.rl-vp-centerplay {
+    position: absolute;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,.45);
+    color: #fff;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .16s ease;
+}
+.rl-vp-centerplay svg { width: 22px; height: 22px; flex: none; }
+.rl-vp-paused .rl-vp-centerplay { opacity: 1; }
+/* 操作反馈 toast（快进 / 音量 / 字幕挂载 / 续播提示） */
+.rl-vp-toast {
+    position: absolute;
+    left: 50%;
+    top: 64px;
+    transform: translateX(-50%);
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(0,0,0,.72);
+    color: #fff;
+    font-size: 12px;
+    pointer-events: none;
+}
+.rl-vp-toast.hidden { display: none; }
+/* ── 控制条浮层（选集 / 倍速 / 设置，2026-09-18 B 站口径）─────────────────
+   三类内容**共用一个容器**：位置由纯函数 `menuAnchor` 每次打开时算（left / bottom 相对 `.rl-vp-controls`），
+   内容由 `fillMenu` 按 kind 重建。浮层是控制条的绝对定位子元素 → 控制条闲置淡出时它一起淡出（观感一致）。 */
+.rl-vp-menu {
+    position: absolute;
+    z-index: 40;
+    min-width: 116px;
+    max-width: 280px;
+    max-height: 46vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    border-radius: 8px;
+    background: rgba(0,0,0,.9);
+    box-shadow: 0 6px 20px rgba(0,0,0,.45);
+}
+/* 🔴 本插件没有全局 `.hidden` —— 凡会 addClass('hidden') 的元素都必须自带这一条（2026-09-18 事故后立的规矩） */
+.rl-vp-menu.hidden { display: none; }
+.rl-vp-root .rl-vp-menu-item {
+    display: block;
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    box-shadow: none;
+    color: rgba(255,255,255,.9);
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.rl-vp-root .rl-vp-menu-item:hover { background: rgba(255,255,255,.16); color: #fff; }
+/* 当前集 / 当前倍速：学 B 站用「强调色文字 + 加粗」而不是实底块（实底会把整列压得喘不过气）。
+   规则写在 :hover 之后、同特异性 —— 高亮项 hover 时保住强调色文字，只多出一层淡底。 */
+.rl-vp-root .rl-vp-menu-item.is-on { color: var(--interactive-accent); font-weight: 600; }
+/* 设置框（#337：三个开关改判为「点高亮、关则不亮」的框 —— 「后台播放」一个开关框 +
+   「播完这一集」三选一框组（切下一集 / 循环本集 / 暂停）。互斥选项用单选，
+   「自动切集 × 单集循环」的行为冲突从根上消失；「暂停」= 停在片尾，补齐第三个正式选项）。
+   亮 = 强调色底 + 反白字；不亮 = 透明底 + 暗字。
+   🔴 hover 只给「不亮」的框加淡底（亮起项 hover 带 :not(.is-on) 的老规矩）。 */
+.rl-vp-root .rl-vp-menu-group-label {
+    padding: 2px 0;
+    color: rgba(255,255,255,.5);
+    font-size: 12px;
+}
+.rl-vp-root .rl-vp-menu-box-row { display: flex; gap: 6px; }
+.rl-vp-root .rl-vp-menu-box {
+    flex: 1;
+    padding: 5px 4px;
+    border: 1px solid rgba(255,255,255,.24);
+    border-radius: var(--rl-t-radius-md, 6px);
+    background: transparent;
+    box-shadow: none;
+    color: rgba(255,255,255,.55);
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.4;
+    text-align: center;
+    cursor: pointer;
+}
+.rl-vp-root .rl-vp-menu-box:not(.is-on):hover { background: rgba(255,255,255,.14); color: #fff; }
+.rl-vp-root .rl-vp-menu-box.is-on {
+    background: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+}
+/* 音量滑条浮层：唯一的**窄浮层** → 去掉列表菜单的最小宽度与列表内距（否则竖条两侧会空出一大片）。
+   🔴 必须写在 `.rl-vp-menu` 之后：两者同为 (0,1,0)，同特异性靠顺序覆盖 min-width / padding。 */
+.rl-vp-menu-volume { min-width: 0; padding: 8px 10px 12px; }
+/* 连播面板：本集播完浮出（倒计时 + 立即播放 / 取消）。与浮层占同一片区域（控制条上方右侧），
+   由脚本保证互斥；bottom 跟随单行控制条高度（46px + 间距）。 */
+.rl-vp-next {
+    position: absolute;
+    right: 18px;
+    bottom: 58px;
+    z-index: 40;
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: var(--rl-t-radius-lg, 8px);
+    background: rgba(0,0,0,.86);
+    color: #fff;
+}
+.rl-vp-next.hidden { display: none; }
+.rl-vp-next-label { font-size: 12px; color: rgba(255,255,255,.72); }
+.rl-vp-next-title { font-size: 13px; font-weight: 600; }
+.rl-vp-next-ops { display: flex; gap: 6px; }
+/* 字幕渲染（::cue 只认固定值，不认主题变量） */
+.rl-vp-stage video::cue {
+    font-size: 1.05em;
+    line-height: 1.35;
+    background: rgba(0,0,0,.62);
+    color: #fff;
+}
+/* 字幕选择弹窗（对齐「选剧集」的轻量列表形态） */
+.rl-sub-title { margin-bottom: 8px; }
+.rl-sub-empty {
+    padding: 6px 2px 10px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+.rl-sub-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+.rl-sub-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    text-align: left;
+    cursor: pointer;
+}
+.rl-sub-row:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
+.rl-sub-row.is-on {
+    background: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+.rl-sub-lang { flex: none; font-weight: 500; }
+.rl-sub-file {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: .82;
 }
 
 /* ── 1.0.3 现代主题：弹窗骨架（Obsidian 原生 .modal 为宿主类，靠 body 主题前缀获得特异性）──
@@ -1499,10 +3535,97 @@ body:has(.rl-reader-immersive) .modal-bg { background: transparent; }
     box-shadow: var(--rl-t-shadow-modal, none);
     border: none;
 }
-/* 阅读器/播放器沉浸态维持现状（圆角 0 / 无阴影 / 无边框）：显式排除，不受现代骨架影响。
-   注：.modal.rl-reader-immersive（0,2,0）本来就能压过 .rl-theme-modern .modal（0,2,0）——后者靠
-   「晚出现」取胜，故本排除规则必须排在骨架之后，且顺序一旦颠倒阅读器会被套上圆角。 */
-.rl-theme-modern .modal.rl-reader-immersive {
-    border-radius: 0;
+/* 阅读器三件与内嵌播放器都已改为工作区标签页视图（不再是 Modal）→ 本区块原有的「modern 骨架排除」
+   规则随之删除：视图没有弹窗骨架，圆角/阴影天然不存在，无需再与骨架比特异性。 */
+/* 内嵌播放器已改为工作区标签页视图（不再是 Modal）→ 旧的 modern 骨架排除规则删除；
+   它的「无边框沉浸」现在由 .view-content.rl-vp 去内距 + 隐藏视图页头实现（见播放器区块）。 */
+/* ── 1.0.4 批次A：悬停反色 / 按下反馈（语义类） ──────────────────────────
+   约定：清单内按钮 hover 时「底色填 accent + 字色取 on-accent」（即反色），
+   :active 轻微内缩。**保留不反色**的三类：常驻 accent 的主按钮（＋添加）、
+   下划线语义的页签、原生渲染的 select。选中态（.on）规则写在 hover 之后 → 选中项悬停保持选中外观，不被反色淹没。 */
+.rl-invert:hover {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+}
+.rl-invert:active { transform: scale(.96); }
+.rl-invert-danger:hover {
+    background: var(--rl-danger-strong);
+    color: #fff;
+    border-color: var(--rl-danger-strong);
+}
+.rl-invert-danger:active { transform: scale(.96); }
+
+/* ── 1.0.4 批次A：加载指示器 Spinner ─────────────────────────────────────
+   功能性动画（非装饰）——UI-GUIDE §6 豁免清单已登记。
+   .rl-spinner   内联小尺寸（搜索进度、行内「检测中」）
+   .rl-btn-loading 按钮内置加载态：DOM API 侧只需 toggle 类，无需插节点
+   prefers-reduced-motion 下停转（保留形状，仍能看出「正忙」） */
+@keyframes rl-spin { to { transform: rotate(360deg); } }
+.rl-spinner {
+    display: inline-block; flex: none;
+    width: 12px; height: 12px;
+    border: 2px solid var(--background-modifier-border);
+    border-top-color: var(--interactive-accent);
+    border-radius: 50%;
+    animation: rl-spin .7s linear infinite;
+    vertical-align: -1px;
+}
+.rl-spinner-lg { width: 16px; height: 16px; }
+.rl-btn-loading { position: relative; color: transparent !important; }
+.rl-btn-loading::after {
+    content: ''; position: absolute; left: 50%; top: 50%;
+    width: 11px; height: 11px; margin: -6px 0 0 -6px;
+    border: 2px solid var(--background-modifier-border);
+    border-top-color: var(--interactive-accent);
+    border-radius: 50%;
+    animation: rl-spin .7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+    .rl-spinner, .rl-btn-loading::after { animation: none; }
+}
+
+/* ── 阅读器工具条「拍平」（用户 2026-09-15 裁定「全拍平」）───────────────────────
+   🔴 根因（离线复现页实测，拼 Obsidian 真身 app.css + Minimal 主题）：`.rl-btn` 是单类选择器（0,1,0），
+   会被 Obsidian 核心 `button:not(.clickable-icon)`（0,1,1）压过 —— 背景取主题 --interactive-normal（浅灰）
+   并带上 --input-shadow 内阴影，于是顶栏 6 个 + 底栏翻页按钮全排成「灰底小方块」（实测 bg=rgb(230,230,230)）。
+   本组规则一律带 `.rl-reader` 前缀（0,3,0）稳压主题，并显式清掉 background / box-shadow / border。
+   口径（沿用用户悬停规范）：常态透明无框、图标与文字取 --text-muted；悬停只变色（转强调色）、不铺底；
+   ⚠️ 亮起态必须排除在悬停规则之外 —— `:hover` 特异性 (0,4,0) 会盖过 `.rl-quick-active` (0,3,0)，
+   导致文字被同色实底吞掉（本仓已踩过一次）。 */
+.rl-reader .rl-reader-head .rl-reader-btn:not(.active):not(.rl-quick-active):not(.is-on),
+.rl-reader .rl-reader-footer .rl-reader-btn:not(.active):not(.is-on) {
+    background: transparent;
+    border-color: transparent;
     box-shadow: none;
+    color: var(--text-muted);
+}
+.rl-reader .rl-reader-head .rl-reader-btn:not(.active):not(.rl-quick-active):not(.is-on):hover,
+.rl-reader .rl-reader-footer .rl-reader-btn:not(.active):not(.is-on):hover {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    color: var(--interactive-accent);
+}
+/* 亮起态悬停只做「小反色」（底色深一档、字色仍是对比色）：与播放器控件、阅读设置里的口径一致 */
+.rl-reader .rl-reader-head .rl-reader-btn.rl-quick-active:hover,
+.rl-reader .rl-reader-head .rl-reader-btn.active:hover {
+    background: var(--interactive-accent-hover, var(--interactive-accent));
+    color: var(--text-on-accent);
+}
+/* 底栏去掉上边框：标签页里那道光看着像「白带压在正文下沿」（用户 2026-09-15） */
+.rl-reader .rl-reader-footer { border-top: none; }
+
+/* 侧栏「清除全部」高亮按钮：不在顶/底栏里，单独按同口径拍平 */
+.rl-reader .rl-hl-clearall {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+}
+.rl-reader .rl-hl-clearall:hover {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    color: var(--interactive-accent);
 }

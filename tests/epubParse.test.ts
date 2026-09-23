@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { containerRootfile, resolveEpubPath, parseOpf, parseTocNav, xhtmlToText, extractChapterLabel, chapterTextLength } from 'pure/epubParse';
+import { containerRootfile, resolveEpubPath, parseOpf, parseTocNav, xhtmlToText, extractChapterLabel, chapterTextLength, epubTocCharCounts, isTocAmbiguous, rebuildTocFromSpine, type EpubFileMap } from 'pure/epubParse';
+import { countReadingUnits } from 'pure/readingUnits';
 
 describe('EPUB 解析', () => {
     describe('containerRootfile', () => {
@@ -187,5 +188,151 @@ describe('EPUB 解析', () => {
         it('空字符串 → undefined', () => {
             expect(extractChapterLabel('', '书名')).toBeUndefined();
         });
+    });
+
+    // ── 目录错位（Calibre「先写 NCX、后重切文件」的残留）→ 不可信则按内容文件重建 ──
+    // 用户 2026-09-19 报障：百年孤独 EPUB 目录里第 6~10 章同时高亮 —— 20 个目录项全落在前 4 个文件上，
+    // 且锚点大段重复（#calibre_pb_5 用了 3 次），目录在数据上根本区分不开这些章。
+    describe('isTocAmbiguous：目录能否区分自己的条目', () => {
+        const e = (href: string, label = href) => ({ label, href });
+        it('每文件各一项（正常 1:1 目录）→ false', () => {
+            expect(isTocAmbiguous([e('a.html'), e('b.html'), e('c.html')])).toBe(false);
+        });
+        it('🔴 一个文件含多章、但锚点各不相同（合法结构）→ false（绝不误判，误判会把好目录退化成文件粒度）', () => {
+            expect(isTocAmbiguous([e('a.html#ch1'), e('a.html#ch2'), e('a.html#ch3')])).toBe(false);
+        });
+        it('同一文件 + 同一锚点出现两次 → true', () => {
+            expect(isTocAmbiguous([e('a.html'), e('a.html#pb3'), e('a.html#pb3')])).toBe(true);
+        });
+        it('同一文件 + 都无锚点出现两次 → true（本条即百年孤独的形态：5 项裸指同一文件）', () => {
+            expect(isTocAmbiguous([e('a.html'), e('a.html'), e('a.html')])).toBe(true);
+        });
+        it('不同文件用同名锚点 → false（不跨文件判重）', () => {
+            expect(isTocAmbiguous([e('a.html#x'), e('b.html#x')])).toBe(false);
+        });
+        it('空目录 → false', () => {
+            expect(isTocAmbiguous([])).toBe(false);
+        });
+    });
+
+    describe('rebuildTocFromSpine：按内容文件重建目录', () => {
+        const body = (n: number) => `<html><body><p>${'字'.repeat(n)}</p></body></html>`;
+        // spine：封面/版权页（短）+ 3 个正文文件（长）；原目录 4 项全裸指 c1（错位形态）
+        const chapters = ['cover.xhtml', 'copy.xhtml', 'text/c1.html', 'text/c2.html', 'text/c3.html'];
+        const map: EpubFileMap = {
+            'cover.xhtml': body(30),
+            'copy.xhtml': body(200),
+            'text/c1.html': body(5000),
+            'text/c2.html': body(5000),
+            'text/c3.html': body(5000),
+        };
+        const badToc = [
+            { label: '第1章', href: 'text/c1.html' },
+            { label: '第2章', href: 'text/c1.html' },
+            { label: '第3章', href: 'text/c1.html' },
+            { label: '第4章', href: 'text/c1.html' },
+        ];
+
+        it('跳过短前置页（封面 / 版权页不进目录）', () => {
+            const out = rebuildTocFromSpine(chapters, map, badToc);
+            expect(out.map((t) => t.href)).toEqual(['text/c1.html', 'text/c2.html', 'text/c3.html']);
+        });
+        it('章节编号按内容文件序号（跳过的前置页不占编号）', () => {
+            const out = rebuildTocFromSpine(chapters, map, badToc);
+            expect(out.map((t) => t.label)).toEqual(['第 1 章', '第 2 章', '第 3 章']);
+        });
+        it('原目录里唯一指向某文件的条目 → 保住它原来的章名（不乱改成 第 N 章）', () => {
+            const toc = [{ label: '楔子', href: 'text/c1.html' }, { label: '第一章', href: 'text/c1.html' }, { label: '尾声', href: 'text/c3.html' }];
+            const out = rebuildTocFromSpine(chapters, map, toc);
+            // c1 被 2 项指向 → 不可信 → 回退 第 N 章；c3 唯一指向 → 保留
+            expect(out.map((t) => t.label)).toEqual(['第 1 章', '第 2 章', '尾声']);
+        });
+        it('正文有 <h1> 时优先用 h1（比「第 N 章」有信息量）', () => {
+            const m2: EpubFileMap = { ...map, 'text/c2.html': '<html><body><h1>风起</h1><p>' + '字'.repeat(5000) + '</p></body></html>' };
+            const out = rebuildTocFromSpine(chapters, m2, badToc);
+            expect(out[1].label).toBe('风起');
+        });
+        it('🔴 章节 <title> 写成书名（带后缀，躲得过「等于书名」守卫）→ 不得拿它当章名，回退「第 N 章」', () => {
+            // 真实案例：百年孤独.epub 的 20 个章节文件 <title> 全是「百年孤独（范晔 译本）」且无 h1
+            const m3: EpubFileMap = { ...map, 'text/c1.html': '<html><head><title>百年孤独（范晔 译本）</title></head><body><p>' + '字'.repeat(5000) + '</p></body></html>' };
+            const out = rebuildTocFromSpine(chapters, m3, badToc);
+            expect(out[0].label).toBe('第 1 章');
+        });
+        it('被原目录收录过的短文件要保留（短章节也是真章节，不受阈值约束）', () => {
+            const toc = [{ label: '短章', href: 'copy.xhtml' }];
+            const out = rebuildTocFromSpine(chapters, map, toc);
+            expect(out.map((t) => t.href)).toContain('copy.xhtml');
+            expect(out.find((t) => t.href === 'copy.xhtml')?.label).toBe('短章');
+        });
+        it('href 与 spine 顺序一致（目录点击与「当前章」比对全靠它）', () => {
+            const out = rebuildTocFromSpine(chapters, map, badToc);
+            const spineOrder = chapters.filter((h) => out.some((t) => t.href === h));
+            expect(out.map((t) => t.href)).toEqual(spineOrder);
+        });
+        it('空 spine → 空数组（调用方据此不改动原目录）', () => {
+            expect(rebuildTocFromSpine([], map, badToc)).toEqual([]);
+        });
+        it('复刻百年孤独形态：20 个内容文件 + 4 项错位目录 → 20 项 第 1~20 章', () => {
+            const chs = ['text/part0002.html', ...Array.from({ length: 20 }, (_, i) => `text/part${String(i + 3).padStart(4, '0')}.html`)];
+            const fm: EpubFileMap = { 'text/part0002.html': body(452) };
+            for (let i = 0; i < 20; i++) fm[chs[i + 1]] = body(10500);
+            const bad = [
+                { label: '第1章', href: 'text/part0003.html' },
+                { label: '第5章', href: 'text/part0003.html' },
+                { label: '第6章', href: 'text/part0004.html' },
+                { label: '第10章', href: 'text/part0004.html' },
+                { label: '第11章', href: 'text/part0005.html' },
+                { label: '第20章', href: 'text/part0006.html' },
+            ];
+            expect(isTocAmbiguous(bad)).toBe(true);
+            const out = rebuildTocFromSpine(chs, fm, bad);
+            expect(out).toHaveLength(20);
+            expect(out[0]).toEqual({ label: '第 1 章', href: 'text/part0003.html' });
+            expect(out[19]).toEqual({ label: '第 20 章', href: 'text/part0022.html' });
+            // 重建后：每个文件只对应一个条目 → 目录不可能再「连章」
+            expect(isTocAmbiguous(out)).toBe(false);
+        });
+    });
+});
+
+describe('epubTocCharCounts（#338 目录每条的字数）', () => {
+    const book = {
+        chapters: ['c1.xhtml', 'c2.xhtml'],
+        toc: [
+            { label: '第一章', href: 'c1.xhtml' },
+            { label: '第二章', href: 'c2.xhtml#a' },
+            { label: '第三章', href: 'c2.xhtml#b' },
+            { label: '缺文件', href: 'missing.xhtml' },
+            { label: '锚点不存在', href: 'c1.xhtml#nope' },
+        ],
+    };
+    const fileMap: EpubFileMap = {
+        'c1.xhtml': '<html><body><h1>第一章</h1><p>你好世界</p></body></html>',
+        'c2.xhtml': '<p id="a">甲乙丙</p><p>丁</p><p id="b">戊己</p><p>庚</p>',
+    };
+    it('无锚点 → 所指文件的正文字数（复用 chapterTextLength 口径）', () => {
+        const out = epubTocCharCounts(book, fileMap);
+        expect(out[0]).toBe(chapterTextLength(fileMap['c1.xhtml']));
+    });
+    it('有锚点 → 同文件内按锚点先后分段计数', () => {
+        const out = epubTocCharCounts(book, fileMap);
+        expect(out[1]).toBe(chapterTextLength('<p>甲乙丙</p><p>丁</p>'));
+        expect(out[2]).toBe(chapterTextLength('<p>戊己</p><p>庚</p>'));
+    });
+    it('文件缺失 / 锚点找不到 → undefined（不显示，不猜）', () => {
+        const out = epubTocCharCounts(book, fileMap);
+        expect(out[3]).toBeUndefined();
+        expect(out[4]).toBeUndefined();
+    });
+
+    it('🔴 第三个参数可换计数口径（#345：目录显示传「阅读量单位」；默认仍是进度口径 chapterTextLength）', () => {
+        const units = epubTocCharCounts(book, fileMap, (html) => countReadingUnits(xhtmlToText(html)));
+        // c1：正文「第一章你好世界」= 8 字（标签不占）；默认口径（字符长度）也是 8，故另用英文样本区分
+        expect(units[0]).toBe(countReadingUnits(xhtmlToText(fileMap['c1.xhtml'])));
+        const enMap: EpubFileMap = { 'e.xhtml': '<p>hello world</p>' };
+        const enBook = { chapters: ['e.xhtml'], toc: [{ label: 'Ch 1', href: 'e.xhtml' }] };
+        // 旧口径：'hello world' 去标签后 11 个字符；新口径：2 个词
+        expect(epubTocCharCounts(enBook, enMap)[0]).toBe(11);
+        expect(epubTocCharCounts(enBook, enMap, (html) => countReadingUnits(xhtmlToText(html)))[0]).toBe(2);
     });
 });

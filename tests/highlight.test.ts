@@ -7,9 +7,14 @@ import {
     renderHighlightBlock,
     findQuoteSegment,
     findSameHighlight,
+    markParagraphHtml,
     decideHighlightToggle,
     normText,
     HIGHLIGHT_SECTION,
+    HL_MIRROR_NOTICE,
+    renderHighlightMirror,
+    hlMarkTargetOf,
+    type ReaderHighlight,
 } from 'pure/highlight';
 import { appendExcerptToNote, extractExcerptSection, removeExcerptBlock } from 'pure/excerpt';
 
@@ -96,12 +101,15 @@ describe('pure/highlight chapterHighlights', () => {
 });
 
 describe('pure/highlight renderHighlightBlock + 追加/删除到「## 高亮」区', () => {
-    it('renderHighlightBlock 生成 blockquote + 定位 + ^hl 块 id（不含 ^ 存 id）', () => {
-        const md = renderHighlightBlock('高亮内容', { chapter: 2, pct: 45 });
+    it('renderHighlightBlock 生成 callout 头行 + ^hl 块 id（不含 ^ 存 id）', () => {
+        const md = renderHighlightBlock('高亮内容', { chapter: 2, pct: 45 }, undefined, undefined, { refLink: '书籍/活着.txt', id: 'hl0a1b2c3' });
+        expect(md).toContain('> [!quote|yellow] [[书籍/活着.txt#^hl0a1b2c3|第 2 章 · 45%]]');
         expect(md).toContain('> 高亮内容');
-        expect(md).toContain('定位：2:45');
-        expect(md).toMatch(/\^hl[a-z0-9]+$/);
-        expect(md).toMatch(/\^hl[a-z0-9]+$/);
+        expect(md).not.toContain('定位：2:45');
+        // 无 refLink（库外/无文件）→ 头行只写标签 + 块尾补 ^id 兜底
+        const fallback = renderHighlightBlock('兜底', { chapter: 1, pct: 0 }, undefined, undefined, { id: 'hlZZZ' });
+        expect(fallback).toContain('> [!quote|yellow] 第 1 章');
+        expect(fallback).toMatch(/\n\^hlZZZ$/);
     });
     it('空引用 → 空串（不该追加）', () => {
         expect(renderHighlightBlock('   ', { chapter: 1, pct: 0 })).toBe('');
@@ -109,12 +117,12 @@ describe('pure/highlight renderHighlightBlock + 追加/删除到「## 高亮」�
 
     it('追加高亮到尚无高亮区的笔记 → 新建「## 高亮」区（不碰摘抄区）', () => {
         const note = '# 书\n\n正文\n\n## 摘抄\n\n> 摘\n^bk1';
-        const hlMd = renderHighlightBlock('新高亮', { chapter: 1, pct: 50 });
+        const hlMd = renderHighlightBlock('新高亮', { chapter: 1, pct: 50 }, undefined, undefined, { refLink: '书籍/活着.txt' });
         const final = appendExcerptToNote(note, hlMd, SECT);
         // 高亮区出现、含新块；摘抄区仍在
         const sec = extractExcerptSection(final, SECT);
         expect(sec).toContain('新高亮');
-        expect(sec).toContain('定位：1:50');
+        expect(sec).toContain('第 1 章 · 50%');
         expect(final).toContain('## 摘抄');
         expect(final).toContain('^bk1');
     });
@@ -209,5 +217,144 @@ describe('pure/highlight annotate toggle', () => {
         const r = decideHighlightToggle(base, '全新段落', { chapter: 1, pct: 30 });
         expect(r.action).toBe('add');
         if (r.action === 'add') expect(r.add.quote).toBe('全新段落');
+    });
+    it('decideHighlightToggle 命中同文本但缺块 id（老数据/手写笔记）→ blocked，不得退化成重复新增', () => {
+        const mdNoId = ['## ' + SECT, '', '> 第一段 文字内容', '', '定位：1:20'].join('\n');
+        const list = parseHighlightBlocks(mdNoId);
+        expect(list).toHaveLength(1);
+        expect(list[0].id).toBeUndefined();
+        const r = decideHighlightToggle(list, '第一段 文字内容', { chapter: 1, pct: 20 });
+        expect(r.action).toBe('blocked');
+    });
+});
+
+describe('pure/highlight markParagraphHtml（段落重绘：TXT 与 EPUB 共用）', () => {
+    const hl = (quote: string, extra: Partial<ReaderHighlight> = {}): ReaderHighlight => ({ quote, ...extra });
+    const para = '他抬头看了看天。天色渐晚，风也凉了下来。';
+
+    it('命中 → 生成带 data-hl-id / 样式 / 颜色的 <mark>，区间外文字原样保留', () => {
+        const html = markParagraphHtml(para, [hl('天色渐晚', { id: 'hlA', style: 'wavy', color: 'blue' })], false);
+        expect(html).toBe(
+            '他抬头看了看天。' +
+                '<mark class="rl-hl-persist" data-hl-id="hlA" data-style="wavy" data-color="blue">天色渐晚</mark>' +
+                '，风也凉了下来。',
+        );
+    });
+
+    it('未给样式/颜色 → 落默认档（hl / yellow）；缺 id → 不写 data-hl-id', () => {
+        const html = markParagraphHtml(para, [hl('天色渐晚')], false);
+        expect(html).toContain('data-style="hl" data-color="yellow"');
+        expect(html).not.toContain('data-hl-id');
+    });
+
+    it('同段两条命中 → 两个 mark（按原文顺序，不嵌套）', () => {
+        const html = markParagraphHtml(para, [hl('风也凉了下来', { id: 'hlB' }), hl('他抬头', { id: 'hlA' })], false)!;
+        expect((html.match(/<mark /g) || []).length).toBe(2);
+        expect(html.indexOf('hlA')).toBeLessThan(html.indexOf('hlB'));
+    });
+
+    it('HTML 特殊字符按文本转义（不把段落里的尖括号当标签）', () => {
+        const html = markParagraphHtml('a < b & c > d', [hl('b & c')], false)!;
+        expect(html).toBe('a &lt; <mark class="rl-hl-persist" data-style="hl" data-color="yellow">b &amp; c</mark> &gt; d');
+    });
+
+    it('无命中 + 段内没有旧 mark → null（调用方不动该段，避免无谓重排）', () => {
+        expect(markParagraphHtml(para, [hl('并不存在的一句')], false)).toBe(null);
+        expect(markParagraphHtml(para, [], false)).toBe(null);
+    });
+
+    it('🔴 无命中 + 段内有旧 mark → 摊平回纯文本（删掉的高亮不得留在屏幕上）', () => {
+        expect(markParagraphHtml(para, [hl('并不存在的一句')], true)).toBe(para);
+        expect(markParagraphHtml(para, [], true)).toBe(para);
+        // 删空本章（hls 为空）与「本段不再命中」必须同口径
+        expect(markParagraphHtml(para, [], true)).toBe(markParagraphHtml(para, [], true));
+    });
+
+    it('段落已被转义的内容也会被摊平（残留 mark 里含实体时不能越摊越乱）', () => {
+        const withMark = 'a &lt; <mark class="rl-hl-persist" data-hl-id="hlZ">b</mark> &gt; c';
+        expect(markParagraphHtml('a < b > c', [], true)).toBe('a &lt; b &gt; c');
+        expect(withMark).toContain('<mark'); // 调用方据此判 hasStaleMark
+    });
+});
+
+describe('pure/highlight hlMarkTargetOf（选段是否落在高亮 mark 上 → 动作条垃圾桶显隐）', () => {
+    const mkMark = (id: string | null, text = '被高亮的句子') => ({
+        getAttribute: (n: string) => (n === 'data-hl-id' ? id : null),
+        textContent: text,
+    });
+    type Host = ReturnType<typeof mkMark>;
+    const el = (mk: Host | null) => ({ nodeType: 1, closest: (sel: string) => (sel === 'mark.rl-hl-persist' ? mk : null) });
+    const txt = (parent: unknown) => ({ nodeType: 3, parentElement: parent });
+    const asNode = (x: unknown) => x as Node;
+
+    it('起点落在 mark 上 → 取到块 id 与引用文本', () => {
+        expect(hlMarkTargetOf(asNode(el(mkMark('hlA'))))).toEqual({ id: 'hlA', quote: '被高亮的句子' });
+    });
+
+    it('起点不在、终点在 → 仍算命中（选区跨到 mark 里）', () => {
+        const t = hlMarkTargetOf(asNode(el(null)), asNode(el(mkMark('hlB'))));
+        expect(t).toEqual({ id: 'hlB', quote: '被高亮的句子' });
+    });
+
+    it('🔴 两端都不在 mark 上 → null（= 选中的文字没有高亮样式，垃圾桶不得出现）', () => {
+        expect(hlMarkTargetOf(asNode(el(null)), asNode(el(null)))).toBe(null);
+        expect(hlMarkTargetOf(asNode(txt(el(null))))).toBe(null);
+    });
+
+    it('mark 缺 data-hl-id → id 为空串（调用方据 quote 兜底删，不能当成「没样式」）', () => {
+        expect(hlMarkTargetOf(asNode(el(mkMark(null))))).toEqual({ id: '', quote: '被高亮的句子' });
+    });
+
+    it('文本节点走 parentElement；两端各在一条 mark 上时取先给的（起点侧）', () => {
+        expect(hlMarkTargetOf(asNode(txt(el(mkMark('hlTxt')))))).toEqual({ id: 'hlTxt', quote: '被高亮的句子' });
+        const both = hlMarkTargetOf(asNode(el(mkMark('hlA'))), asNode(el(mkMark('hlB'))));
+        expect(both?.id).toBe('hlA');
+    });
+
+    it('null / undefined 入参安全；mark 文本两端空白被去掉', () => {
+        expect(hlMarkTargetOf(null, undefined)).toBe(null);
+        expect(hlMarkTargetOf(asNode(el(mkMark('hlC', '  句子  '))))?.quote).toBe('句子');
+    });
+});
+
+describe('renderHighlightMirror 只读镜像（2026-09-18：高亮真源移到 JSON 后，笔记里那份由 JSON 单向生成）', () => {
+    it('无高亮 → 空串（调用方据此把整区删掉，不留空标题）', () => {
+        expect(renderHighlightMirror([])).toBe('');
+        expect(renderHighlightMirror([{ quote: '   ' }])).toBe('');
+    });
+
+    it('首行是自动生成提示（%% 注释），其后逐条 callout 块', () => {
+        const md = renderHighlightMirror([{ quote: '应无所住而生其心', id: 'hlAAA', loc: { chapter: 1, pct: 3 } }]);
+        expect(md.split('\n')[0]).toBe(HL_MIRROR_NOTICE);
+        expect(md).toContain('> [!quote|yellow] ');
+        expect(md).toContain('应无所住而生其心');
+        expect(md.trimEnd().endsWith('^hlAAA') || md.includes('#^hlAAA')).toBe(true);
+    });
+
+    it('🔴 镜像 ↔ 解析往返：条数不丢不增（提示行不得被当成一条高亮）', () => {
+        const src: ReaderHighlight[] = [
+            { quote: '甲', id: 'hlA', loc: { chapter: 1, pct: 10 }, style: 'wavy', color: 'green' },
+            { quote: '乙', id: 'hlB', loc: { chapter: 2, pct: 0 } },
+        ];
+        const md = ['## ' + HIGHLIGHT_SECTION, '', renderHighlightMirror(src)].join('\n');
+        const back = parseHighlightBlocks(md);
+        expect(back.map((x) => x.id)).toEqual(['hlA', 'hlB']);
+        expect(back.map((x) => x.quote)).toEqual(['甲', '乙']);
+        expect(back[0].loc).toEqual({ chapter: 1, pct: 10 });
+        expect(back[0].style).toBe('wavy');
+        expect(back[0].color).toBe('green');
+        expect(back[1].style).toBe('hl'); // 缺省档位由解析端补
+        expect(back[1].color).toBe('yellow');
+    });
+
+    it('手改/脏 JSON 来的无 loc 高亮：标签只写「高亮」，不编造「第 1 章」', () => {
+        const md = renderHighlightMirror([{ quote: '没有定位的一句', id: 'hlNoLoc' }]);
+        expect(md).toContain('没有定位的一句');
+        expect(md).not.toContain('第 1 章');
+        expect(md.split('\n')[2]).toBe('> [!quote|yellow] 高亮'); // 无 refLink 时头行只写标签
+    });
+
+    it('提示行本身不被迁移解析当成高亮（否则「删 JSON 再迁移」会把它搬进去）', () => {
+        expect(parseHighlightBlocks(['## ' + HIGHLIGHT_SECTION, '', HL_MIRROR_NOTICE].join('\n'))).toEqual([]);
     });
 });

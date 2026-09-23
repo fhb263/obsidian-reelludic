@@ -2,9 +2,10 @@
 // 责任：①按 日/周/月/年 算日历范围；②把多个数据源（状态翻转日志 / 新增条目 / 追更 / 计划 / 游玩 / 完成日期）
 //   归并成同一条时间轴并按范围过滤、去重、倒序；③按范围给出行首时间文案。
 // 口径：范围一律**本地时区日历口径**（周 = 周一起算，月 = 当月，年 = 当年），与「今年动态」既有语义一致。
+// 文案：跨类型时间轴**统一用通用状态名**（想看 / 在看 / 已看 / 存档，即 pure/status 的 STATUS_LABELS），
+//   不按类型分化（用户 2026-09-15 裁定：动态里不要「已读 / 想读 / 想听 / 通关」混着出现）。
 import type { ActivityEvent, EntryType, MediaEntry } from 'data/types';
-import type { MediaStatus } from 'pure/status';
-import { statusLabel } from 'pure/labels';
+import { STATUS_LABELS, type MediaStatus } from 'pure/status';
 import { formatPlaytime } from 'pure/playtime';
 import { JOURNAL_HEADING_PREFIX, localDateOf, localTimeOf } from 'pure/dailyLog';
 
@@ -118,7 +119,7 @@ export function collectFeed(entries: MediaEntry[], log: ActivityEvent[] | undefi
             kind: 'status',
             date,
             time: localTimeOf(ev.at),
-            text: statusLabel(e.type, ev.status),
+            text: STATUS_LABELS[ev.status] ?? '状态更新',
             status: ev.status,
         });
     }
@@ -149,7 +150,7 @@ export function collectFeed(entries: MediaEntry[], log: ActivityEvent[] | undefi
             const key = `plan|${e.id}|${planned}`;
             if (!seen.has(key)) {
                 seen.add(key);
-                items.push({ id: e.id, title: titleOf(e), type: e.type, kind: 'plan', date: planned, text: '计划观看' });
+                items.push({ id: e.id, title: titleOf(e), type: e.type, kind: 'plan', date: planned, text: '加入计划' });
             }
         }
         // 5) 完成日期（与同日状态变更去重）
@@ -158,7 +159,7 @@ export function collectFeed(entries: MediaEntry[], log: ActivityEvent[] | undefi
             const key = `watch|${e.id}|${watched}`;
             if (!seen.has(key)) {
                 seen.add(key);
-                items.push({ id: e.id, title: titleOf(e), type: e.type, kind: 'watch', date: watched, text: statusLabel(e.type, 'watched') });
+                items.push({ id: e.id, title: titleOf(e), type: e.type, kind: 'watch', date: watched, text: STATUS_LABELS.watched });
             }
         }
         // 6) 游玩记录

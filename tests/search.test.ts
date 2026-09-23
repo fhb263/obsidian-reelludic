@@ -215,4 +215,64 @@ describe('filterAndSort 综合筛选 + 排序', () => {
         filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'title-asc' });
         expect(data.map((d) => d.id)).toEqual(before);
     });
+
+    // 题材维度（视图级题材筛选，用户 2026-09-22）：新增可选选项，缺省/空选必须完全不过滤（老调用零影响）
+    it('题材缺省 / 空选 → 不过滤（老调用行为不变）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', genres: ['科幻'] }),
+            e({ id: 'b', genres: [] }),
+            e({ id: 'c', genres: ['推理', '悬疑'] }),
+        ];
+        const base = { status: 'all' as const, type: 'all' as const, query: '', sortBy: 'title-asc' as const };
+        expect(filterAndSort(g, base).map((x) => x.id)).toEqual(['a', 'b', 'c']);
+        expect(filterAndSort(g, { ...base, genres: [] }).map((x) => x.id)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('题材多选是 OR（命中任一已选题材即保留）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', genres: ['科幻'] }),
+            e({ id: 'b', genres: ['历史'] }),
+            e({ id: 'c', genres: ['推理', '悬疑'] }),
+        ];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'title-asc', genres: ['推理', '科幻'] });
+        expect(out.map((x) => x.id)).toEqual(['a', 'c']);
+    });
+
+    it('题材与状态 / 类型 / 关键词是 AND 关系（叠加生效）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', title: '沙丘', type: 'movie', status: 'watched', genres: ['科幻'] }),
+            e({ id: 'b', title: '沙丘2', type: 'book', status: 'watched', genres: ['科幻'] }),
+            e({ id: 'c', title: '沙丘3', type: 'movie', status: 'want', genres: ['科幻'] }),
+        ];
+        const out = filterAndSort(g, {
+            status: 'watched',
+            type: 'movie',
+            query: '沙丘',
+            sortBy: 'title-asc',
+            genres: ['科幻'],
+        });
+        expect(out.map((x) => x.id)).toEqual(['a']);
+    });
+
+    it('题材筛选与 bookKind 叠加（阅读子视图内再按题材收窄）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', type: 'book', bookKind: 'book', genres: ['科幻'] }),
+            e({ id: 'b', type: 'book', bookKind: 'novel', genres: ['科幻'] }),
+        ];
+        const out = filterAndSort(g, {
+            status: 'all',
+            type: 'book',
+            query: '',
+            sortBy: 'title-asc',
+            bookKind: 'novel',
+            genres: ['科幻'],
+        });
+        expect(out.map((x) => x.id)).toEqual(['b']);
+    });
+
+    it('题材值 trim 后比对（笔记里带空格的题材照常命中）', () => {
+        const g: MediaEntry[] = [e({ id: 'a', genres: [' 科幻 '] }), e({ id: 'b', genres: ['科幻 '] })];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'title-asc', genres: ['科幻'] });
+        expect(out.map((x) => x.id)).toEqual(['a', 'b']);
+    });
 });

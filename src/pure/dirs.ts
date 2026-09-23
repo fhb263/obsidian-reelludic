@@ -15,6 +15,10 @@ export const DIR_COVERS = '封面';
 export const DIR_BACKUPS = '备份';
 /** 年度总结报告目录（原 reports/） */
 export const DIR_REPORTS = '报告';
+/** 阅读存档目录（书签 / 高亮 / 进度三者同放，见 `pure/readerStore`）。
+ *  🔴 目录名**只此一处**：它是**红线路径**（`{lib}/阅读进度/{书名}-阅读-{id}.json`），
+ *     ⛔ 别再在别处硬编码「阅读进度」（2026-09-23 #381 把 `readerStore` 那处收敛到这里）。 */
+export const DIR_READING = '阅读进度';
 
 /** 类型 → 笔记子目录英文名（movie/teleplay/animation/book/game/music） */
 export function typeDir(type: EntryType): string {

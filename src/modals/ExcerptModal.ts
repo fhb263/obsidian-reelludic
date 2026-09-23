@@ -35,13 +35,13 @@ export class ExcerptModal extends Modal {
             attr: { rows: '3', placeholder: '粘贴摘抄的原文片段…' },
         });
 
-        // 页码 + 心得
+        // 页码 + 想法（页码 → 头行标签「第 N 页」；想法 → callout 内 `---div---` 之后的正文）
         const metaRow = contentEl.createDiv({ cls: 'rl-ex-row' });
         const pageField = metaRow.createDiv({ cls: 'rl-ex-field' });
         pageField.createEl('label', { cls: 'rl-ex-label', text: '页码（可选）' });
         const pageEl = pageField.createEl('input', { cls: 'rl-ex-input', type: 'number', attr: { min: '0', placeholder: '如 128' } });
         const noteField = metaRow.createDiv({ cls: 'rl-ex-field rl-ex-grow' });
-        noteField.createEl('label', { cls: 'rl-ex-label', text: '心得（可选，支持 [[双链]]）' });
+        noteField.createEl('label', { cls: 'rl-ex-label', text: '想法（可选，支持 [[双链]]）' });
         const noteEl = noteField.createEl('input', { cls: 'rl-ex-input', placeholder: '写下此刻的想法…' });
 
         // 挂载书目：命令入口需搜索选择；从书籍表单/右键菜单进入时固定绑定（隐藏搜索区）
@@ -109,7 +109,10 @@ export class ExcerptModal extends Modal {
                 return;
             }
             const page = pageEl.value ? parseInt(pageEl.value, 10) : undefined;
-            const md = renderExcerptBlock({ quote, page, note: noteEl.value.trim() || undefined });
+            const md = renderExcerptBlock(
+                { quote, page, note: noteEl.value.trim() || undefined },
+                { callout: true, refLink: this.plugin.excerptRefLink(this.selected), entryId: this.selected.id },
+            );
             previewEl.removeClass('rl-ex-preview-muted');
             previewEl.empty();
             const lbl = previewEl.createDiv({ cls: 'rl-ex-preview-lbl', text: `将追加到《${this.selected.title}》摘抄区` });

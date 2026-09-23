@@ -12,7 +12,7 @@ export const AI_SUMMARY_TIMEOUT_MS = 20000;
 export interface AiSummaryConfig {
     provider: TranslateProvider;
     key: string;
-    /** 自定义服务提示词（设置页「AI 翻译与总结 → 服务提示词」）；空/缺省 → 用默认提示词 */
+    /** 自定义服务提示词（设置页「AI 翻译 / 总结 / 搜索 → 服务提示词」）；空/缺省 → 用默认提示词 */
     prompt?: string;
 }
 
@@ -49,7 +49,7 @@ export class AiSummaryService {
         if (!body) return null; // 无标题：信息量为零，调用方已拦
         const label = provider === 'zhipu' ? '智谱' : 'DeepSeek';
         if (!key) {
-            this.deps.notify(`未配置 ${label} API Key，请先到 设置 → 服务集成 → AI 翻译与总结 填写（总结与翻译共用 Key）`, 5000);
+            this.deps.notify(`未配置 ${label} API Key，请先到 设置 → AI集成 · API凭据 填写（总结与翻译共用 Key）`, 5000);
             return null;
         }
         const url = translateChatUrl(provider);

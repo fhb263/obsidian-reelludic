@@ -65,11 +65,11 @@ describe('pure/activityFeed collectFeed 归并与去重', () => {
         expect(collectFeed([e], log, span)).toEqual([]);
     });
 
-    it('状态变更 + 新增：带精确时刻，文案为类型化状态标签', () => {
+    it('状态变更 + 新增：带精确时刻，文案为统一状态名（想看 / 在看 / 已看）', () => {
         const e = entry({ id: 'a', type: 'book', title: '百年孤独', status: 'watched', createdAt: iso(2026, 9, 10, 9, 5) });
         const log: ActivityEvent[] = [{ at: iso(2026, 9, 10, 20, 36), id: 'a', status: 'watched' }];
         const feed = collectFeed([e], log, span);
-        expect(feed.map((f) => `${f.kind}|${f.time}|${f.text}`)).toEqual(['status|20:36|已读', 'created|09:05|新增']);
+        expect(feed.map((f) => `${f.kind}|${f.time}|${f.text}`)).toEqual(['status|20:36|已看', 'created|09:05|新增']);
         expect(feed[0].title).toBe('百年孤独');
         expect(feed[0].status).toBe('watched');
     });
@@ -86,7 +86,7 @@ describe('pure/activityFeed collectFeed 归并与去重', () => {
         const e = entry({ id: 'a', type: 'book', title: '熊出没', status: 'watched', watchedDate: '2026-09-10' });
         const feed = collectFeed([e], undefined, span);
         expect(feed).toHaveLength(1);
-        expect(feed[0]).toMatchObject({ kind: 'watch', date: '2026-09-10', text: '已读' });
+        expect(feed[0]).toMatchObject({ kind: 'watch', date: '2026-09-10', text: '已看' });
         expect(feed[0].time).toBeUndefined();
     });
 
@@ -166,8 +166,7 @@ describe('pure/activityFeed groupFeed 周期汇总（周/月/年）', () => {
         expect(groups[0].total).toBe(5);
         expect(groups[0].rows.map((r) => `${r.label}(${r.items.map((i) => i.title).join(',')})`)).toEqual([
             '在看(沙丘)',
-            '已读(活着,百年孤独)',
-            '已看(咒)',
+            '已看(咒,活着,百年孤独)', // 状态名统一后，「已读」行与「已看」行同标签归并为一行
             '追更(剧名)',
         ]);
     });
@@ -249,7 +248,7 @@ describe('pure/activityFeed 周期打卡区块（记录到日记跟随范围）'
             '> - 已看《咒》',
             '> - 追更《剧名》 S1E2',
             '> **9月8日**（1 条）',
-            '> - 已读《百年孤独》',
+            '> - 已看《百年孤独》',
         ]);
         expect(renderPeriodBlock('week', weekSpan, [])).toBeNull();
     });

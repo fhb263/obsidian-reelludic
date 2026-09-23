@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { parseCatalog, serializeCatalog, CatalogStore, DEFAULT_CATALOG, normalizeEntry } from 'data/catalog';
+import { describe, it, expect, vi } from 'vitest';
+import { parseCatalog, serializeCatalog, CatalogStore, DEFAULT_CATALOG, normalizeEntry, isCatalogTextConsistent } from 'data/catalog';
 import type { VaultIO } from 'data/catalog';
 import type { Catalog, MediaEntry } from 'data/types';
+import { BACKUP_FILE, BACKUP_KEEP, parseBackupFile } from 'pure/catalogBackup';
 
 function memIO(initial?: Record<string, string>): VaultIO & { files: Record<string, string> } {
     const files: Record<string, string> = { ...(initial || {}) };
@@ -16,6 +17,12 @@ function memIO(initial?: Record<string, string>): VaultIO & { files: Record<stri
         },
         async deleteFile(path: string) {
             delete files[path];
+        },
+        async listFiles(folder: string) {
+            const prefix = folder.endsWith('/') ? folder : folder + '/';
+            return Object.keys(files)
+                .filter((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes('/'))
+                .map((p) => p.slice(prefix.length));
         },
     };
 }
@@ -285,5 +292,115 @@ describe('parseCatalog / serializeCatalog 活动日志（今日记录数据源�
         const io = memIO({ 'ReelLudic/catalog.json': text });
         const c = await new CatalogStore(io, 'ReelLudic/catalog.json').load();
         expect(c.activityLog).toEqual([...log]);
+    });
+});
+
+describe('CatalogStore 写前备份与自检（数据安全 · 单文件备份）', () => {
+    const PATH = 'ReelLudic/catalog.json';
+    const BACKUP_PATH = `ReelLudic/${BACKUP_FILE}`;
+    /** 单文件备份里的快照数（文件不存在 = 0） */
+    const snapshotCount = (io: { files: Record<string, string> }) =>
+        io.files[BACKUP_PATH] ? parseBackupFile(io.files[BACKUP_PATH]).snapshots.length : 0;
+    const snapshots = (io: { files: Record<string, string> }) => parseBackupFile(io.files[BACKUP_PATH]).snapshots;
+
+    it('首次写入不产生备份（没有可备份的旧数据）', async () => {
+        const io = memIO();
+        await new CatalogStore(io, PATH).save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A' })] });
+        expect(io.files[BACKUP_PATH]).toBeUndefined();
+        expect(io.files[PATH]).toBeTruthy();
+    });
+
+    it('覆盖已有文件时先留一份**旧**内容备份（单文件内，新的在前）', async () => {
+        const io = memIO();
+        const store = new CatalogStore(io, PATH);
+        await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A' })] });
+        const first = io.files[PATH];
+        await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'B' })] });
+        expect(snapshotCount(io)).toBe(1);
+        expect(snapshots(io)[0].text).toBe(first);
+        expect(io.files[PATH]).not.toBe(first);
+    });
+
+    it('内容无变化时不重复备份（避免反复切状态刷一堆同内容快照）', async () => {
+        const io = memIO();
+        const store = new CatalogStore(io, PATH);
+        const c: Catalog = { version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A', status: 'watched', rating: 5 })] };
+        await store.save(c);
+        await store.save(c);
+        await store.save({ version: 1, entries: c.entries.map((e) => ({ ...e })) });
+        expect(snapshotCount(io)).toBe(0);
+        expect(io.files[BACKUP_PATH]).toBeUndefined();
+    });
+
+    it('备份只落在一个文件里：8 次改动 → 仍是 1 个备份文件、内含最新 5 版（最旧被挤掉）', async () => {
+        vi.useFakeTimers();
+        try {
+            const io = memIO();
+            const store = new CatalogStore(io, PATH);
+            for (let i = 0; i < 8; i++) {
+                vi.setSystemTime(new Date(2026, 8, 14, 20, 15, i));
+                await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: `T${i}` })] });
+            }
+            // 用户诉求：文件数要少 → 备份相关文件恒为 1 个（不再是 5 个）
+            expect(Object.keys(io.files).filter((p) => p.includes('backup') || p.includes('.backups'))).toEqual([BACKUP_PATH]);
+            expect(snapshotCount(io)).toBe(BACKUP_KEEP);
+            expect(snapshots(io).map((s) => JSON.parse(s.text).entries[0].title)).toEqual(['T6', 'T5', 'T4', 'T3', 'T2']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('适配层未实现 listFiles：单文件备份照常轮转（不再依赖列目录）', async () => {
+        vi.useFakeTimers();
+        try {
+            const base = memIO();
+            const io = { ...base, listFiles: undefined } as unknown as VaultIO & { files: Record<string, string> };
+            const store = new CatalogStore(io, PATH);
+            for (let i = 0; i < 7; i++) {
+                vi.setSystemTime(new Date(2026, 8, 14, 20, 15, i));
+                await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: `T${i}` })] });
+            }
+            expect(snapshotCount(io)).toBe(BACKUP_KEEP);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('备份文件与 catalog.json 同级（自定义路径亦然）', async () => {
+        const io = memIO();
+        const store = new CatalogStore(io, 'MyLib/data/catalog.json');
+        await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A' })] });
+        await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'B' })] });
+        expect(io.files['MyLib/data/catalog-backups.json']).toBeTruthy();
+    });
+
+    it('旧 .backups/ 多文件备份：一次性并入单文件，回读校验通过后清理旧文件', async () => {
+        const old1 = serializeCatalog({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'OLD1' })] });
+        const old2 = serializeCatalog({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'OLD2' })] });
+        const base = serializeCatalog({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'BASE' })] });
+        const io = memIO({
+            [PATH]: base,
+            'ReelLudic/.backups/catalog-20260914-201500.json': old1,
+            'ReelLudic/.backups/catalog-20260914-201530.json': old2,
+            'ReelLudic/.backups/别的文件.txt': 'x',
+        });
+        await new CatalogStore(io, PATH).save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'NEW' })] });
+        const texts = snapshots(io).map((s) => s.text);
+        expect(texts).toContain(old1);
+        expect(texts).toContain(old2);
+        expect(texts).toContain(base);
+        // 旧文件（规范命名）已清理；非本插件命名的文件**不导入也不删**
+        expect(io.files['ReelLudic/.backups/catalog-20260914-201500.json']).toBeUndefined();
+        expect(io.files['ReelLudic/.backups/catalog-20260914-201530.json']).toBeUndefined();
+        expect(io.files['ReelLudic/.backups/别的文件.txt']).toBe('x');
+    });
+
+    it('写前自检：条目数一致才通过（回读不通 → 拦截）', () => {
+        const text = serializeCatalog({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A' })] });
+        expect(isCatalogTextConsistent(text, 1)).toBe(true);
+        expect(isCatalogTextConsistent(text, 2)).toBe(false); // 数量不符
+        expect(isCatalogTextConsistent('not json', 0)).toBe(false); // 无法回读
+        expect(isCatalogTextConsistent('{"version":1}', 0)).toBe(false); // entries 缺失
+        expect(isCatalogTextConsistent('[]', 0)).toBe(false); // 非对象
     });
 });

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { EntryService } from 'services/EntryService';
 import type { VaultIO } from 'data/catalog';
 import { ACTIVITY_LOG_LIMIT } from 'data/types';
+import { countExcerpts } from 'pure/excerpt';
+import { parseHighlightBlocks, HL_MIRROR_NOTICE } from 'pure/highlight';
 
 function memIO(): VaultIO & { files: Record<string, string> } {
     const files: Record<string, string> = {};
@@ -328,10 +330,58 @@ describe('EntryService addExcerpt 摘抄追加', () => {
         expect(r.count).toBe(1);
         const cur = await svc.get(e.id);
         const note = io.files[cur!.notePath!];
-        expect(note).toContain('> 引用一');
-        expect(note).toContain('**p.128**');
+        // 有心得 → 原文仅加粗（用户 2026-09-19）
+        expect(note).toContain('> **引用一**');
+        expect(note).toContain('> [!quote] 第 128 页');
+        expect(note).toContain('> ***');
+        expect(note).toContain('> 心得x');
         expect(note).toContain('^bk');
         expect(note).toContain('## 摘抄');
+        // 头行尾追加「回到原文」深链（同日方案 A）：entryId 由 addExcerpt 注入，block 与块内 id **同源**
+        // ⚠️ 提取正则跟着 D-3 的文案走（`[↩ 回到原文]`）—— 只写 `[↩]` 会匹配不到
+        const deepBlock = /\[↩[^\]]*\]\([^)]*block=([\w-]+)\)/.exec(note)?.[1] ?? '';
+        expect(deepBlock.startsWith('bk')).toBe(true);
+        expect(note).toContain(`[↩ 回到原文](obsidian://reelludic?action=jump&book=${e.id}&block=${deepBlock})`);
+        // 本条无 bookFile → 无 wikilink，块 id 落在块尾 `^bk…`；断言深链里的 id 与它是同一个
+        expect(new RegExp(`\\n\\^${deepBlock}\\b`).test(note)).toBe(true);
+    });
+
+    // #326：视频侧写入（时间戳 / 截图）走**泛型区段追加** —— 与摘抄共用建区段机制，但不维护摘抄计数
+    it('appendNoteSection：无区段则创建、有则追加；两个区段互不干扰', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+
+        await svc.appendNoteSection(e.id, '![[沙丘 0-03.png]]\n[0:03](沙丘.mp4#t=3)', '截图');
+        const p = (await svc.get(e.id))!.notePath!;
+        let note = io.files[p];
+        expect(note).toContain('## 截图');
+        expect(note).toContain('![[沙丘 0-03.png]]');
+        expect(note).toContain('[0:03](沙丘.mp4#t=3)');
+
+        // 再追加一条 → 仍只有一个「## 截图」标题，两条内容都在
+        await svc.appendNoteSection(e.id, '![[沙丘 1-20.png]]', '截图');
+        note = io.files[p];
+        expect(note.match(/^## 截图$/gm)?.length).toBe(1);
+        expect(note).toContain('![[沙丘 0-03.png]]');
+        expect(note).toContain('![[沙丘 1-20.png]]');
+
+        // 另一个区段独立存在，且不动截图区；同时**返回起始行号**（供宿主把视图滚到插入处）
+        const { line } = await svc.appendNoteSection(e.id, '[1:00](沙丘.mp4#t=60)', '时间戳');
+        note = io.files[p];
+        expect(note.match(/^## 时间戳$/gm)?.length).toBe(1);
+        expect(note).toContain('[1:00](沙丘.mp4#t=60)');
+        expect(note.match(/^## 截图$/gm)?.length).toBe(1);
+        expect(note.split('\n')[line]).toContain('[1:00](沙丘.mp4#t=60)');
+    });
+
+    it('appendNoteSection：空内容直接返回（不建区段、不写盘）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        const before = Object.keys(io.files).length;
+        await svc.appendNoteSection(e.id, '   ', '截图');
+        expect(Object.keys(io.files).length).toBe(before);
     });
 
     it('再次追加保留原有摘抄（id 唯一性）', async () => {
@@ -468,5 +518,164 @@ describe('EntryService 活动日志（今日记录数据源）', () => {
         expect(log).toHaveLength(ACTIVITY_LOG_LIMIT);
         expect(log[0].at).toBe(old[1].at); // 最旧一条被挤掉
         expect(log[log.length - 1].status).toBe('watching');
+    });
+});
+
+describe('笔记重写保留标注区（2026-09-18 修：此前只搬摘抄 → 「## 高亮」整区被吞）', () => {
+    it('writeNote 后高亮镜像与摘抄块都在（块 id 不变）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'book', title: '金刚经' });
+        await svc.writeNote(e.id); // 2026-09-18 起高亮不再顺带造笔记：本用例先显式建笔记
+        await svc.syncHighlightMirror(e.id, [{ quote: '应无所住而生其心', id: 'hlAAA', loc: { chapter: 1, pct: 3 } }]);
+        await svc.addExcerpt(e.id, { quote: '凡所有相，皆是虚妄', note: '想法', loc: { chapter: 1, pct: 4 } });
+        const notePath = (await svc.get(e.id))!.notePath!;
+        await svc.writeNote(e.id);
+        const after = io.files[notePath];
+        expect(after).toContain('hlAAA');
+        expect(parseHighlightBlocks(after).map((x) => x.id)).toEqual(['hlAAA']);
+        expect(countExcerpts(after)).toBe(1);
+        expect(after).toContain('## 高亮');
+        expect(after).toContain('## 摘抄');
+    });
+
+    it('writeNote 幂等：连写两次仍各只有一份', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'book', title: '心经' });
+        await svc.writeNote(e.id);
+        await svc.syncHighlightMirror(e.id, [{ quote: '照见五蕴皆空', id: 'hlBBB', loc: { chapter: 2, pct: 8 } }]);
+        const notePath = (await svc.get(e.id))!.notePath!;
+        await svc.writeNote(e.id);
+        await svc.writeNote(e.id);
+        expect(parseHighlightBlocks(io.files[notePath])).toHaveLength(1);
+        expect(io.files[notePath].match(/^## 高亮$/gm)).toHaveLength(1);
+    });
+});
+
+describe('syncHighlightMirror 只读镜像（2026-09-18 存储重构：高亮真源移到 JSON，笔记那份由 JSON 单向生成）', () => {
+    it('🔴 无笔记 → 跳过且**不凭空生成笔记**（旧 addHighlight 会顺手 writeNote 造一本）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'book', title: '坛经' });
+        expect((await svc.get(e.id))!.notePath).toBeUndefined();
+        const r = await svc.syncHighlightMirror(e.id, [{ quote: '菩提本无树', id: 'hlCCC' }]);
+        expect(r.count).toBe(1); // 真源（JSON）里就是 1 条
+        expect((await svc.get(e.id))!.notePath).toBeUndefined(); // 笔记仍然没有
+        expect(Object.keys(io.files).some((p) => p.includes('笔记'))).toBe(false);
+    });
+
+    it('首次同步：写入「## 高亮」区（含提示行与块 id）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'book', title: '六祖坛经' });
+        await svc.writeNote(e.id);
+        await svc.syncHighlightMirror(e.id, [{ quote: '本来无一物', id: 'hlDDD', loc: { chapter: 3, pct: 12 } }], {
+            refLink: '书籍/坛经.txt',
+        });
+        const notePath = (await svc.get(e.id))!.notePath!;
+        expect(io.files[notePath]).toContain('## 高亮');
+        expect(io.files[notePath]).toContain(HL_MIRROR_NOTICE);
+        expect(io.files[notePath]).toContain('[[书籍/坛经.txt#^hlDDD|');
+        // 高亮镜像**不写**「回到原文」深链（用户 2026-09-19 裁定「只新块」）
+        expect(io.files[notePath]).not.toContain('[↩');
+    });
+
+    it('高亮清空 → 整区删除（不留空标题）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'book', title: '楞严经' });
+        await svc.writeNote(e.id);
+        await svc.syncHighlightMirror(e.id, [{ quote: '一切众生从无始来', id: 'hlEEE' }]);
+        await svc.syncHighlightMirror(e.id, []);
+        const notePath = (await svc.get(e.id))!.notePath!;
+        expect(io.files[notePath]).not.toContain('## 高亮');
+        expect(io.files[notePath]).not.toContain('hlEEE');
+        expect(io.files[notePath]).toContain('> [!bookinfo]+ **《楞严经》**'); // 模板其余部分不动
+        expect(io.files[notePath]).toContain('## 相关链接');
+    });
+
+    it('内容无变化 → 不写盘、指纹不刷新（幂等：不是每次打开都改笔记）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'book', title: '圆觉经' });
+        await svc.writeNote(e.id);
+        const list = [{ quote: '知幻即离', id: 'hlFFF', loc: { chapter: 1, pct: 2 } }];
+        await svc.syncHighlightMirror(e.id, list);
+        const notePath = (await svc.get(e.id))!.notePath!;
+        const fp1 = (await svc.get(e.id))!.noteFingerprint;
+        // 只数**笔记文件**的写入（`update()` 刷指纹时会顺带写 catalog + 备份，与镜像无关）
+        let noteWrites = 0;
+        const orig = io.writeText.bind(io);
+        io.writeText = async (p: string, c: string) => {
+            if (p === notePath) noteWrites++;
+            await orig(p, c);
+        };
+        await svc.syncHighlightMirror(e.id, list);
+        expect(noteWrites).toBe(0);
+        expect((await svc.get(e.id))!.noteFingerprint).toBe(fp1);
+        // 变更后确实会写（反证：上面的 0 不是「永远不写」）
+        await svc.syncHighlightMirror(e.id, [...list, { quote: '第二条', id: 'hlGGG' }]);
+        expect(noteWrites).toBe(1);
+        expect((await svc.get(e.id))!.noteFingerprint).not.toBe(fp1); // 指纹跟着刷新（防误报外部修改）
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🔴 用户 2026-09-21 报：「为什么总会有笔记已被外部修改的提示」
+//    真因：**插件自己**的三条写笔记路径（加摘抄 / 追加区段 / 删摘抄）只写了文件、**没刷新指纹**
+//    ⇒ 下次保存该条目必然被 `noteWasExternallyModified()` 判成「外部修改」并弹二选一框
+//    （与 `syncHighlightMirror` 注释里早已写明的「同类 bug」一模一样）。
+//    这一组同时守住**反方向**：真·外部手改仍必须检出（⛔ 不能为了消警报把保护削掉）。
+// ══════════════════════════════════════════════════════════════════════════
+describe('写笔记后指纹必须同步刷新（防「笔记已被外部修改」误报）', () => {
+    /** 造一本已写笔记的书，返回 [io, svc, id] */
+    async function setup() {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'book', title: '指纹基线' });
+        await svc.writeNote(e.id);
+        return { io, svc, id: e.id };
+    }
+
+    it('🔴 addExcerpt（加摘抄）之后不得判为外部修改', async () => {
+        const { svc, id } = await setup();
+        await svc.addExcerpt(id, { quote: '一切有为法', note: '心得' });
+        expect(await svc.noteWasExternallyModified(id)).toBe(false);
+    });
+
+    it('🔴 appendNoteSection（视频时间戳/截图）之后不得判为外部修改', async () => {
+        const { svc, id } = await setup();
+        await svc.appendNoteSection(id, '[0:03](x.mp4#t=3)', '时间戳');
+        expect(await svc.noteWasExternallyModified(id)).toBe(false);
+    });
+
+    it('🔴 deleteExcerpt（删摘抄）之后不得判为外部修改', async () => {
+        const { io, svc, id } = await setup();
+        await svc.addExcerpt(id, { quote: '引用一' });
+        const notePath = (await svc.get(id))!.notePath!;
+        const blockId = /\^bk([\w-]+)/.exec(io.files[notePath])?.[0].slice(1) ?? '';
+        expect(blockId).not.toBe('');
+        await svc.deleteExcerpt(id, blockId);
+        expect(await svc.noteWasExternallyModified(id)).toBe(false);
+    });
+
+    it('🔴 保护没有削弱：真·外部手改仍要检出', async () => {
+        const { io, svc, id } = await setup();
+        const notePath = (await svc.get(id))!.notePath!;
+        io.files[notePath] += '\n\n我手动加的一行\n';
+        expect(await svc.noteWasExternallyModified(id)).toBe(true);
+    });
+
+    it('🔴 采纳当前笔记为基线（用户选「保留笔记改动」）后不再重复提示，且基线跟着手改内容走', async () => {
+        const { io, svc, id } = await setup();
+        const notePath = (await svc.get(id))!.notePath!;
+        io.files[notePath] += '\n\n我手动加的一行\n';
+        expect(await svc.noteWasExternallyModified(id)).toBe(true);
+        await svc.adoptNoteAsBaseline(id); // ← 用户选「保留」时调用
+        expect(await svc.noteWasExternallyModified(id)).toBe(false);
+        // 再手改一次 → 仍要能检出（不是把保护关掉，而是「每次外改只问一次」）
+        io.files[notePath] += '\n再来一行\n';
+        expect(await svc.noteWasExternallyModified(id)).toBe(true);
     });
 });

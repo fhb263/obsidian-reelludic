@@ -30,20 +30,12 @@ export function bookmarksFilePath(entryId: string, title: string, libraryDir: st
 }
 
 /**
- * 解析书签 JSON 文本：undefined/空/坏 JSON/顶层非数组 → []。
- * 逐项校验：非对象、chapter 非整数或 <1、pct 非有限数值或超出 [0,100] → 跳过；
+ * 归一化书签数组（**单一真源**：旧书签文件解析与「三合一」存档都走这里，不另写一套校验）。
+ * 非数组/非对象 → 跳过；逐项校验：非对象、chapter 非整数或 <1、pct 非有限数值或超出 [0,100] → 跳过；
  * id/createdAt 类型匹配（string/number）才透传，否则缺省；quote/note 仅字符串保留（空串 quote 省略）。
  */
-export function parseBookmarks(text: string | undefined): ReaderBookmark[] {
-    if (text === undefined || text === '') return [];
-    let raw: unknown;
-    try {
-        raw = JSON.parse(text);
-    } catch {
-        return [];
-    }
+export function normalizeBookmarks(raw: unknown): ReaderBookmark[] {
     if (!Array.isArray(raw)) return [];
-
     const out: ReaderBookmark[] = [];
     for (const item of raw) {
         const o = typeof item === 'object' && item !== null ? (item as Record<string, unknown>) : null;
@@ -60,6 +52,20 @@ export function parseBookmarks(text: string | undefined): ReaderBookmark[] {
         out.push(bm);
     }
     return out;
+}
+
+/**
+ * 解析书签 JSON 文本：undefined/空/坏 JSON/顶层非数组 → []（逐项校验见 normalizeBookmarks）。
+ */
+export function parseBookmarks(text: string | undefined): ReaderBookmark[] {
+    if (text === undefined || text === '') return [];
+    let raw: unknown;
+    try {
+        raw = JSON.parse(text);
+    } catch {
+        return [];
+    }
+    return normalizeBookmarks(raw);
 }
 
 /** 序列化为 JSON 文本（落盘用） */

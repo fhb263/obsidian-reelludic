@@ -71,6 +71,13 @@ const context = await esbuild.context({
     ],
     format: 'cjs',
     target: 'es2018',
+    // 构建标识（#334）：把**打包时刻**注入 `__REEL_BUILD__`，插件启动时打印一行。
+    // 专治「重载了没有」这个反复出现的排查盲区 —— 磁盘上的 main.js 是新的、而 Obsidian 内存里
+    // 跑的仍是旧代码时，症状会表现成「刚修的问题又出现了」，此前只能靠反推代码里的字符串来判断。
+    // ⚠️ tsc 侧声明见 `src/types/build-stamp.d.ts`（`tsc -noEmit` 在前，缺声明会挡构建）。
+    define: {
+        __REEL_BUILD__: JSON.stringify(new Date().toISOString()),
+    },
     logLevel: 'info',
     sourcemap: prod ? false : 'inline',
     treeShaking: true,

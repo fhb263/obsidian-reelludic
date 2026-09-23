@@ -151,6 +151,17 @@ export function chapterTextLength(html: string): number {
     return xhtmlToText(html).length;
 }
 
+/** 剥 inline 标签 + 去注释 + 折叠空白（`extractChapterLabel` / `extractH1Label` 共用） */
+function stripInline(raw: string): string {
+    return raw
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<[^>]+>/g, '') // 行内标签直接拼接，不插空格（与 xhtmlToText 一致，h1 拆解「第一章」正确）
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 /**
  * 章节 fallback 标题提取（nav.xhtml/ncx 都缺时使用）：按 <h1> > <title> 优先级，
  *  去 XML/HTML 注释 + 剥 inline 标签 + 折叠空白。**排除**等于书名的 title（常见扉页
@@ -159,23 +170,150 @@ export function chapterTextLength(html: string): number {
  */
 export function extractChapterLabel(html: string, bookTitle: string): string | undefined {
     if (!html) return undefined;
-    const strip = (raw: string): string =>
-        raw
-            .replace(/<!--[\s\S]*?-->/g, '')
-            .replace(/<[^>]+>/g, '') // 行内标签直接拼接，不插空格（与 xhtmlToText 一致，h1 拆解「第一章」正确）
-            .replace(/&nbsp;/g, ' ')
-            .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-            .replace(/\s+/g, ' ')
-            .trim();
     const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
     if (h1) {
-        const t = strip(h1[1]);
+        const t = stripInline(h1[1]);
         if (t) return t;
     }
     const title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
     if (title) {
-        const t = strip(title[1]);
+        const t = stripInline(title[1]);
         if (t && t !== bookTitle) return t;
     }
     return undefined;
+}
+
+/**
+ * **只**取 `<h1>` 文本（重建目录用）。为什么重建时不用 `<title>`：
+ *  Calibre 转换的 EPUB 里章节文件的 `<title>` 常写成**书名**（且可能带「（某某译本）」等后缀，
+ *  躲得过 `extractChapterLabel` 的「等于书名」守卫）或文件名 —— 拿它当章名会让整本目录变成同一个词。
+ *  实测 `百年孤独.epub`：20 个章节文件 `<title>` 全是「百年孤独（范晔 译本）」，而 `<h1>` 一个都没有
+ *  → 重建必须落到「第 N 章」这一档，否则目录会显示 20 个一模一样的书名。
+ */
+export function extractH1Label(html: string): string | undefined {
+    if (!html) return undefined;
+    const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+    const t = h1 ? stripInline(h1[1]) : '';
+    return t || undefined;
+}
+
+// ── 目录可信度与重建（用户 2026-09-19 报障「目录连章显示」） ─────────────────────────
+//
+// 现象：某类 EPUB（典型是 Calibre **先写 NCX、后重新切分文件** 的产物）目录里好几章同时高亮，
+// 顶栏章名还与正文对不上。实测 `百年孤独.epub`：spine 里 20 个正文文件各装一章（`part0003`=第1章…），
+// 而 toc.ncx 的 20 个条目**全落在前 4 个文件上**（`part0004.html` 一个文件被第 6~10 章共用），
+// 锚点还大段重复（`#calibre_pb_5` 用了 3 次）—— 目录在数据上**根本区分不开**这些章。
+// 阅读器按「href 去 fragment = 当前文件」比对 → 一次命中 5 项 → 连章。
+//
+// 处理：目录「区分不开自己的条目」时**按 spine 内容文件 1:1 重建目录** ——
+// 每个内容文件恰好一个条目，于是「一项一高亮」天然成立，且目录点击、顶栏章名、「当前章」判定全都对上。
+
+/** 重建目录时的「内容文件」最小正文长度（跳过封面 / 版权页 / 目录页这类短文件）。
+ *  ⚠️ 启发式阈值：本机实证 `百年孤独.epub` 前置页最长 452 字、正文最短 10204 字。
+ *  **被原目录显式收录过的文件不受本阈值约束**（短章节也是真章节）。 */
+export const TOC_REBUILD_MIN_CHARS = 1000;
+
+/** 拆目录目标：路径 + 锚点（无锚点为 ''） */
+function splitTocTarget(href: string): { path: string; frag: string } {
+    const i = href.indexOf('#');
+    return i < 0 ? { path: href, frag: '' } : { path: href.slice(0, i), frag: href.slice(i + 1) };
+}
+
+/**
+ * 目录是否「区分不开自己的条目」—— 存在**重复的（文件 + 锚点）目标**。
+ * 为真说明多个目录项指向**完全相同的位置**（Calibre 重切遗留），href 已不可用于定位章节。
+ *
+ * 🔴 判据只认「**重复**」，绝不认「多对一」：一个文件里装多章、**各章锚点互不相同**是完全合法的
+ *    EPUB 结构（阅读器本就该按锚点翻章）—— 误判会把好目录退化成文件粒度，是实打实的回归。
+ */
+export function isTocAmbiguous(toc: { label: string; href: string }[]): boolean {
+    const seen = new Set<string>();
+    for (const e of toc) {
+        const { path, frag } = splitTocTarget(e.href);
+        const key = `${path}\u0000${frag}`;
+        if (seen.has(key)) return true;
+        seen.add(key);
+    }
+    return false;
+}
+
+/**
+ * 按 spine 内容文件 1:1 重建目录（**仅在 `isTocAmbiguous` 为真时调用**；返回空数组表示无从重建，调用方保持原目录）。
+ *
+ * label 优先级：① 原目录里**唯一**指向该文件的条目的 label（保住真实章名）
+ *              → ② 正文的 `<h1>`（**不看 `<title>`** —— 见 `extractH1Label` 的说明，Calibre 书里它常是书名）
+ *              → ③ `第 N 章`（**N 为内容文件序号**，与阅读顺序一致；跳过的前置页不占编号）。
+ * 内容文件 = 正文长度 ≥ `TOC_REBUILD_MIN_CHARS` **或** 被原目录收录过的 spine 项。
+ */
+export function rebuildTocFromSpine(
+    chapters: string[],
+    fileMap: EpubFileMap,
+    oldToc: { label: string; href: string }[],
+): { label: string; href: string }[] {
+    const hits = new Map<string, number>();
+    const firstLabel = new Map<string, string>();
+    for (const e of oldToc) {
+        const { path } = splitTocTarget(e.href);
+        hits.set(path, (hits.get(path) ?? 0) + 1);
+        if (!firstLabel.has(path)) firstLabel.set(path, e.label);
+    }
+    const kept = chapters.filter((href) => hits.has(href) || chapterTextLength(fileMap[href] ?? '') >= TOC_REBUILD_MIN_CHARS);
+    return kept.map((href, i) => {
+        const keptLabel = hits.get(href) === 1 ? firstLabel.get(href) : undefined;
+        const label = keptLabel ?? extractH1Label(fileMap[href] ?? '') ?? `第 ${i + 1} 章`;
+        return { label, href };
+    });
+}
+
+/** 在原始 html 里找锚点（id="frag" / id='frag'）所在标签**闭合之后**的位置；找不到 → -1
+ *  （🔴 切片必须从标签之后开始 —— 从属性处切片会把半个标签当文字计入） */
+function anchorOffset(html: string, frag: string): number {
+    for (const pat of ['id="' + frag + '"', "id='" + frag + "'"]) {
+        const k = html.indexOf(pat);
+        if (k >= 0) {
+            const close = html.indexOf('>', k);
+            return close >= 0 ? close + 1 : k;
+        }
+    }
+    return -1;
+}
+
+/**
+ * 每条目录的字数：
+ *  · href **无锚点** → 所指文件的正文字数（默认复用 `chapterTextLength` 口径）；
+ *  · href **有锚点** → 同文件内按锚点在原始 html 中的先后位置分段计数（到下一个锚点 / 文件尾）；
+ *  · 文件缺失 / 锚点找不到 → undefined（**不显示、不猜** —— 宁缺勿错）。
+ *  ⚠️ 无锚点条目与锚点条目混在同文件时，无锚点按位置 0 处理（取文件头一段）。
+ *  `count` 可替换计数口径（#345 目录显示改传「阅读量单位」计数器）；
+ *  🔴 默认值仍是 `chapterTextLength` —— 那是**进度加权**口径，⛔ 不要改它的实现。
+ */
+export function epubTocCharCounts(
+    book: { toc: { label: string; href: string }[] },
+    fileMap: Record<string, string>,
+    count: (html: string) => number = chapterTextLength,
+): (number | undefined)[] {
+    const byFile = new Map<string, { idx: number; frag?: string }[]>();
+    book.toc.forEach((t, idx) => {
+        const hashAt = t.href.indexOf('#');
+        const file = hashAt < 0 ? t.href : t.href.slice(0, hashAt);
+        const frag = hashAt < 0 ? undefined : t.href.slice(hashAt + 1);
+        const list = byFile.get(file) ?? [];
+        list.push({ idx, frag });
+        byFile.set(file, list);
+    });
+    const out: (number | undefined)[] = new Array(book.toc.length).fill(undefined);
+    for (const [file, list] of byFile) {
+        const html = fileMap[file];
+        if (html === undefined) continue;
+        const located = list
+            .map((e) => ({ ...e, at: e.frag === undefined ? 0 : anchorOffset(html, e.frag) }))
+            .filter((e) => e.at >= 0)
+            .sort((a, b) => a.at - b.at);
+        for (let i = 0; i < located.length; i++) {
+            const start = located[i].at;
+            const end = i + 1 < located.length ? located[i + 1].at : html.length;
+            out[located[i].idx] = count(html.slice(start, end));
+        }
+    }
+    return out;
 }

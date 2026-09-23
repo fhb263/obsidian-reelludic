@@ -4,6 +4,7 @@ import type { EntryType, MediaEntry, BookKind } from 'data/types';
 import type { MediaStatus } from 'pure/status';
 import { MEDIA_STATUSES } from 'pure/status';
 import { matchesBookKind } from 'pure/bookKind';
+import { matchesGenres } from 'pure/genreFilter';
 
 /** 状态排序基准（想看 0 < 在看 1 < 已看 2 < 存档 3） */
 const STATUS_RANK: Record<MediaStatus, number> = Object.fromEntries(MEDIA_STATUSES.map((s, i) => [s, i])) as Record<MediaStatus, number>;
@@ -49,12 +50,16 @@ export function filterAndSort(
         /** 书籍子分类（1.0.3）：仅阅读页签传入（'all' = 不过滤）；缺省/undefined 不过滤（聚合页签与旧调用不受影响）。
          *  音乐子分类维度已于 1.0.3.1 下线（用户 2026-09-13 裁定），不再有此过滤项。 */
         bookKind?: 'all' | BookKind;
+        /** 题材（视图级题材筛选，用户 2026-09-22）：已选题材值数组（含「未分类」保留键）；缺省/空数组不过滤。
+         *  多选内部是 OR；与状态/类型/分类/关键词是 AND。判定见 pure/genreFilter.matchesGenres */
+        genres?: readonly string[];
     },
 ): MediaEntry[] {
     return entries
         .filter((e) => matchesStatus(e, opts.status))
         .filter((e) => matchesType(e, opts.type))
         .filter((e) => matchesBookKind(e, opts.bookKind ?? 'all'))
+        .filter((e) => matchesGenres(e, opts.genres ?? []))
         .filter((e) => matchesSearch(e, opts.query))
         .slice()
         .sort((a, b) => {

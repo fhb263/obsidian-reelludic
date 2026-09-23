@@ -148,8 +148,15 @@ function sourceLinkText(e: MediaEntry): string {
     return '';
 }
 
-/** 生成详情笔记 Markdown 全文（bookinfo callout + 属性表格 + 评语 + 链接） */
-export function generateNoteMarkdown(e: MediaEntry, libraryDir: string = 'ReelLudic'): string {
+/** 生成详情笔记 Markdown 全文（bookinfo callout + 属性表格 + 评语 + 链接）
+ *  - `opts.table === false`（设置页「笔记表格」关）→ **不渲染属性表格**，其余章节照旧。
+ *    影响面：`pure/noteEditable` 的「来源」行解析拿不到值 → 编辑回填回退 catalog 既有值（不丢数据，
+ *    但笔记里看不到来源链接）；`banner` 等 frontmatter 字段不受影响。 */
+export function generateNoteMarkdown(
+    e: MediaEntry,
+    libraryDir: string = 'ReelLudic',
+    opts: { table?: boolean } = {},
+): string {
     const s: string[] = [];
     // 顶部 bookinfo callout：书名 + 封面（默认展开）。封面用 posterEmbed：豆瓣 URL → HTML img（防盗链），
     // 其余 → markdown 图片；本地路径 → wikilink
@@ -213,16 +220,21 @@ export function generateNoteMarkdown(e: MediaEntry, libraryDir: string = 'ReelLu
             rows.push(['进度', p.totalEpisodes ? `S${p.season}E${p.episode}/${p.totalEpisodes}` : `S${p.season}E${p.episode}`]);
         }
     }
-    s.push('| 属性 | 内容 |');
-    s.push('|:-----|:-----|');
-    if (e.type === 'music') {
-        // 音乐四行按 key 显示宽度补空格对齐（发行年 3 全角最宽）
-        const target = Math.max(...rows.map(([k]) => displayWidth(k))) + 1;
-        for (const [k, v] of rows) s.push(`| ${k}${' '.repeat(Math.max(0, target - displayWidth(k)))}| ${v} |`);
-    } else {
-        for (const [k, v] of rows) s.push(`| ${k} | ${v} |`);
+    // 属性表格（设置页「笔记表格」开关可整块关掉；关掉时 rows 仍照算——上面的字段收集与下面表格
+    // 输出同源，避免开关另开一条分支）
+    const withTable = opts.table !== false;
+    if (withTable) {
+        s.push('| 属性 | 内容 |');
+        s.push('|:-----|:-----|');
+        if (e.type === 'music') {
+            // 音乐四行按 key 显示宽度补空格对齐（发行年 3 全角最宽）
+            const target = Math.max(...rows.map(([k]) => displayWidth(k))) + 1;
+            for (const [k, v] of rows) s.push(`| ${k}${' '.repeat(Math.max(0, target - displayWidth(k)))}| ${v} |`);
+        } else {
+            for (const [k, v] of rows) s.push(`| ${k} | ${v} |`);
+        }
+        s.push('');
     }
-    s.push('');
 
     // 简介（作品客观描述，搜索回填自动记录；与「个人评语」主观感想区分开；图书用「内容简介」标题）
     if (e.summary?.trim()) {
