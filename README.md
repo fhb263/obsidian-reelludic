@@ -17,7 +17,13 @@
 
 ReelLudic是一个 Obsidian 插件，把六类收藏（电影 / 电视剧 / 动画 / 书籍 / 游戏 / 音乐）变成库中可管理、可追踪、可双链的结构化资产，并内置阅读器与播放器，让收藏真正可看、可读。
 
-<img width="1143" height="949" alt="image" src="https://github.com/user-attachments/assets/507061bd-d148-4c15-8254-efab39403594" />
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/49d0bcfc-0a28-4633-9f12-35151ed54850" width="18%">
+  <img src="https://github.com/user-attachments/assets/92377dae-a392-46ee-a192-f236b5ea1763" width="18%">
+  <img src="https://github.com/user-attachments/assets/495f79f3-fc63-45cc-83e7-5342c2cd3b0b" width="18%">
+  <img src="https://github.com/user-attachments/assets/6cb6c429-ac40-451b-8350-9f0207c59558" width="18%">
+  <img src="https://github.com/user-attachments/assets/abf09310-bec2-49e5-9dce-911229905899" width="18%">
+</p>
 
 
 **核心理念：一切收藏都以 Markdown + JSON 落盘，原生融入双链笔记生态。**
@@ -247,13 +253,6 @@ npm run version    # 版本号同步
 **关于第三方服务**
 - 划词翻译、AI 总结与朗读云端音色会调用智谱 / DeepSeek 等第三方 API（也可填任意 OpenAI 兼容端点）：需你自行在设置页填入 API Key，请求与响应经网络传输并由服务商处理，请遵守对应服务商条款。
 - 各数据源 API Key / Cookie 仅保存在你的本地设置中，不会上传到插件侧服务器。
-
-**关于参考与致谢**
-- 元数据抓取参考：[douban](https://github.com/Wanxp/obsidian-douban)（GPLv3）、[media-db](https://github.com/mprojectscode/obsidian-media-db-plugin)（GPLv3）
-- 追番表蓝本：[Bangumi-Bridge](https://github.com/Yasikap/Bangumi-Bridge-Obsidian)（MIT）
-- 阅读数据存档格式参考：[KOReader](https://github.com/koreader/koreader)（AGPLv3）
-- 第三方库：[pdf.js](https://github.com/mozilla/pdf.js)（Apache-2.0）、[JSZip](https://github.com/Stuk/jszip)（MIT）、[Svelte](https://github.com/sveltejs/svelte)（MIT）
-- 上述项目版权归各自作者所有；涉及实现参考的部分均在源码注释中逐处标注出处。
 
 **关于参考与致谢**
 - 元数据抓取：[obsidian-douban](https://github.com/Wanxp/obsidian-douban)（GPL-3.0）、[obsidian-media-db](https://github.com/mprojectscode/obsidian-media-db-plugin)（GPL-3.0）
