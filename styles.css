@@ -1622,6 +1622,118 @@
    浮层那侧有 `.rl-ep-edit-ops` 提供 `display:flex`，弹窗那侧什么都没有 ⇒ 自己带上 `display:flex`。 */
 .rl-bili-parts-ops { display: flex; justify-content: flex-end; margin-top: 6px; }
 
+/* ── #519 批量搜索未填集（确认表）────────────────────────────────────────
+   一项 = 一个未填集：`☑ 第 12 集 | 封面 + 标题/UP + 分P 胶囊 | 链接 | 换一条`，
+   展开时下方缩进着它的候选列表。⚠️ 与分P 勾选表同一个理由：几十行要在 `max-height` 里滚得动
+   ⇒ 行高保持紧凑、标题/链接一律单行省略（⛔ 别让长标题把浮层撑宽）。 */
+.rl-bili-batch-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.rl-bili-batch-note {
+    min-width: 0; flex: 1; font-size: 11.5px; color: var(--text-muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rl-bili-batch-note.is-error { color: var(--text-error); }
+.rl-bili-batch-list {
+    display: flex; flex-direction: column; gap: 2px;
+    max-height: min(360px, 48vh); overflow-y: auto; margin-top: 4px;
+}
+/* 一行 + 它展开的候选列表 = 一个纵向单元（⛔ 候选列表别用绝对定位，那会脱离滚动容器） */
+.rl-bili-batch-item { display: flex; flex-direction: column; }
+.rl-bili-batch-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 6px; border-radius: var(--rl-t-radius-md, 6px);
+}
+.rl-bili-batch-row:hover { background: var(--background-modifier-hover); }
+/* 集号 = 定宽列（与分P 勾选表同款 58px：两个表扫下来列位一致） */
+.rl-bili-batch-ep { flex: none; width: 58px; font-size: 12px; color: var(--text-normal); }
+.rl-bili-batch-hit { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
+.rl-bili-batch-hit .rl-bili-cover { width: 36px; height: 24px; }
+/* 🔴 #520：标题**完整展示**（用户：「要把视频标题完整展示不展示链接」）⇒ 允许换行、⛔ 不再省略号。
+   ⚠️ 随之把 `.rl-bili-batch-url`（原来放链接那一列）**整条删掉** —— 那是它唯一的消费者，
+      留着就是孤儿规则（#501 的同一条纪律）。链接改走命中区的 `data-tip`。 */
+.rl-bili-batch-name { font-size: 12px; color: var(--text-normal); white-space: normal; word-break: break-word; }
+/* 展开的候选列表行多 ⇒ 标题压一档，整块不至于过高 */
+.rl-bili-batch-cand .rl-bili-batch-name { font-size: 11.5px; }
+/* 标题不含作品名的行：一枚告示 —— 它**不会**被自动勾上，但可以手勾（#520 用户裁定） */
+.rl-bili-batch-warn { flex: none; font-size: 11px; color: var(--text-warn, var(--text-error)); }
+/* 集数区间行（#520）：两个数字框 + 一颗「搜索」；🔴 进卡**不自动跑**，选了区间点「搜索」才跑 */
+.rl-bili-batch-range { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+/* 🔴🔴 #522 区间数字框的宽度：**选择器至少要 3 个类**才压得住表单侧的 scoped 规则。
+   实证：Svelte 编译后的那条规则是**双 hash** —— `.rl-input.svelte-xxxx.svelte-xxxx` = **(0,3,0)**、
+   里面带 `width: 100%` ⇒ #521 写的 `.rl-bili-batch-range input.rl-input`（(0,2,1)）**照样被它盖掉**，
+   实机就是「两个框撑满整行、把「–」「搜索」顶出卡片」（用户连报两张截图）。
+   ⇒ 现在 `body` + 2 个类 + `input` + 1 个类 = **(0,3,2) > (0,3,0)**，赢。
+   ⛔ 别"简化"成 2 个类（那是这个 bug 的原样）；⚠️ 它**只在表单侧出现** ——
+   弹窗侧没有 scoped 规则，看着一直是好的，所以别指望在弹窗里复现。 */
+body .rl-bili-batch-range input.rl-input.rl-bili-batch-num {
+    width: 56px; flex: 0 0 56px; min-width: 0;
+    text-align: center; padding: 4px 4px;
+    background: var(--background-secondary); border-color: transparent;
+}
+body .rl-bili-batch-range input.rl-input.rl-bili-batch-num:focus { border-color: var(--interactive-accent); }
+.rl-bili-batch-range-sep { flex: none; font-size: 12px; color: var(--text-faint); }
+.rl-bili-batch-range-hint { flex: none; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+/* 「搜索」靠右：区间三件套贴左、动作钮贴右（与卡底那颗主按钮同一条视觉轴） */
+.rl-bili-batch-range .rl-bili-batch-btn { margin-left: auto; }
+.rl-bili-batch-toggle {
+    flex: none; padding: 2px 8px; border: none; border-radius: 6px; box-shadow: none;
+    background: transparent; font-family: inherit; font-size: 11px; color: var(--text-muted);
+    cursor: var(--cursor); transition: background .12s ease, color .12s ease;
+}
+.rl-bili-batch-toggle:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+/* ── #521 确认表**专用**按钮（用户：「这个浮窗按钮太丑了参考主流软件审美重构」）──────────────
+   🔴 作用域 = **只有这一张确认表**（用户在三档里挑的「只重做这张确认表」）—— ⛔ 不动全局 `.rl-btn`。
+   口径（主流桌面软件那套）：**去掉 1px 硬边框**（改 `transparent` 占位、不破盒模型）、浅填充、
+   圆角 8、字重 500、hover 加深、按下微缩；主按钮用 accent 实心。
+   ⚠️ 用 `--interactive-normal/-hover` 这两个 Obsidian 标准交互变量（自绘主题不至于掉色）。 */
+.rl-bili-batch-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    font-family: inherit; font-size: 12px; font-weight: 500; line-height: 1.2;
+    padding: 5px 14px; border: 1px solid transparent; border-radius: 8px;
+    background: var(--interactive-normal); color: var(--text-normal); cursor: pointer;
+    transition: background .12s ease, color .12s ease, transform .06s ease;
+}
+.rl-bili-batch-btn:hover { background: var(--interactive-hover); }
+.rl-bili-batch-btn:active { transform: scale(.97); }
+.rl-bili-batch-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+/* 主按钮（「填入勾中的 N 集」「搜索」）：accent 实心 + 一点点投影，是这页唯一的重心 */
+.rl-bili-batch-btn.is-primary {
+    background: var(--interactive-accent); color: var(--text-on-accent);
+    box-shadow: var(--rl-t-shadow-cta, 0 1px 2px rgba(0, 0, 0, .12));
+}
+.rl-bili-batch-btn.is-primary:hover { background: var(--interactive-accent-hover, var(--interactive-accent)); }
+/* 幽灵按钮（「停止」「继续」）：平时只有灰字，hover 才浮出一层浅底 */
+.rl-bili-batch-btn.is-ghost { background: transparent; color: var(--text-muted); padding: 5px 10px; }
+.rl-bili-batch-btn.is-ghost:hover { background: var(--interactive-hover); color: var(--text-normal); }
+/* 「换一条」：与幽灵按钮同一套语言，再小一档（它是行尾的次级操作） */
+.rl-bili-batch-toggle {
+    display: inline-flex; align-items: center; flex: none;
+    font-family: inherit; font-size: 11px; font-weight: 500;
+    padding: 3px 9px; border: 1px solid transparent; border-radius: 6px;
+    background: transparent; color: var(--text-muted); cursor: pointer;
+    transition: background .12s ease, color .12s ease;
+}
+.rl-bili-batch-toggle:hover { background: var(--interactive-hover); color: var(--text-normal); }
+.rl-bili-batch-toggle:active { transform: scale(.97); }
+/* 🔴 #526「展开分P」（只有**多P 合集**的行才有这枚）：它那一行**默认没被勾选**（填 P1 会指向第 1 集），
+   所以它得比旁边那两枚次级钮**重一档**、别被当成可忽略的小字 —— 浅填充 + 正常字色，hover 再深一档。
+   ⛔ 只做这一枚的修饰类，不动 `.rl-bili-batch-toggle` 本体（另外两枚「单集」「换一条」仍是幽灵钮）。 */
+.rl-bili-batch-toggle.is-parts { background: var(--interactive-normal); color: var(--text-normal); }
+.rl-bili-batch-toggle.is-parts:hover { background: var(--interactive-hover); }
+/* 分P 胶囊：`1P` = 单集投稿、`52P` = 整季合集 —— 等宽、压一档（它是「这条是不是合集」的判据，不该抢眼） */
+.rl-bili-batch-parts { flex: none; font-size: 11px; color: var(--text-muted); font-family: var(--font-monospace); }
+/* 展开的候选列表：缩进到集号列右边，与上面那行在视觉上从属（⛔ 不另起一层卡片） */
+.rl-bili-batch-cands { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 3px 64px; }
+.rl-bili-batch-cand {
+    display: flex; align-items: center; gap: 6px; text-align: left;
+    padding: 3px 5px; border-radius: var(--rl-t-radius-md, 6px);
+    background: transparent; border: none; box-shadow: none; cursor: var(--cursor);
+}
+.rl-bili-batch-cand:hover { background: var(--background-modifier-hover); }
+.rl-bili-batch-cand.is-cur { background: var(--background-modifier-hover); }
+/* 没候选 / 搜失败的行：压暗（⛔ 别删行 —— 用户要知道「这一集没搜到」） */
+.rl-bili-batch-off { opacity: .55; }
+.rl-bili-batch-ops { display: flex; justify-content: flex-end; margin-top: 6px; }
+
 
 /* ── 全局统一 hover 提示（data-tip 自绘气泡，UI-GUIDE 规范：禁用 title 原生黄条）：
      深色 tooltip 风小气泡，pointer-events:none 不拦截鼠标（防移入气泡触发 mouseout 闪烁） */

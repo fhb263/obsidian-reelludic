@@ -10,7 +10,6 @@
     import { episodeTitleFromName } from 'pure/episodeScan';
     import { cleanPastedText, readClipboardText } from 'services/clipboard';
     import { normalizeBookKind, BOOK_KIND_LABELS } from 'pure/bookKind';
-    import type { SourceKind } from 'pure/sourceRule';
 import { toSearchTypeSel, applySearchTypeSel, type SearchTypeSel } from 'pure/searchTypeSel';
     import { normalizeMusicKind } from 'pure/musicKind';
     import { placeMenu } from 'pure/menuPlacement';
@@ -33,14 +32,42 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     // #500③ 集编辑浮层的「B站」按钮复用**音乐下载那条 B 站搜索链**（同一个 `pure` 解析 + 同一个服务）
     import {
         biliCheckedRows,
+        biliEpisodeQuery,
         biliSelectableRows,
         buildBiliFillRows,
         buildBiliPartUrl,
         formatBiliPlay,
+        urlUsedByOtherEp,
         type BiliFillRow,
         type BiliPart,
         type BiliVideo,
     } from 'pure/dl/bilibili';
+    // 🔴 #519：批量搜索未填集（确认表）—— 循环/限速/遇错即停/行模型全在纯模块，
+    //    ⛔ 组件里只留「画」与状态，别自己维护游标与进度（与快捷关联弹窗**同一份**）。
+    import {
+        BATCH_PARTS_ANCHOR,
+        batchCheckedRows,
+        batchProgressText,
+        batchSleep,
+        batchStopText,
+        buildBatchTargets,
+        canExpandParts,
+        canFillBatch,
+        candidatesToMark,
+        epRangeOf,
+        filterTargetsByRange,
+        makeBatchRows,
+        normalizeEpRange,
+        partCountLabel,
+        pickedCandidate,
+        pickedUrl,
+        runBatchSearch,
+        withChecked,
+        withPartCount,
+        withPicked,
+        type BatchRow,
+        type BatchTarget,
+    } from 'pure/biliBatch';
     import { formatDuration } from 'pure/dl/utils';
     import { pickLibraryAudio, type LibraryAudioFile } from 'pure/libraryAudio';
     import { audioExtOf, audioStemOf } from 'pure/renameAudio';
@@ -199,49 +226,11 @@ export let initialBookKind: BookKind | undefined = undefined;
      * ⚠️ 由 `EntryModal` 按当前设置传入 —— ⛔ 别在组件里读 settings（组件不认识 plugin）。
      */
     export let canDownload = false;
-    /**
-     * 🔴 #414：是否显示书籍表单里的「下载」小按钮（真源 = **桌面端**；书籍下载走 Node http，
-     *    移动端放进来必然一次失败 ⇒ 由宿主按 `Platform.isDesktopApp` 传入，⛔ 组件不认识 plugin）。
-     *    ⚠️ 与音乐那枚（`canDownload` = 桌面端 + 「启用内置音乐播放器」）**不是同一个门控** ——
-     *    书籍下载没有对应的功能开关，只受平台限制。
-     */
-    export let canDownloadBook = false;
-    /**
-     * #414：打开「下载书籍」弹窗（书名 / 作者只用来**预填落盘文件名**）。
-     * `onPicked(relPath, tocText)` = 下载成功后的库内相对路径 + **章节名清单**（P1-C）；
-     * 表单据此填「书籍文件」/「目录」并提示保存。
-     */
-    export let onOpenBookDownloader: (
-        onPicked: (relPath: string, tocText?: string) => void,
-        /** #422：条目分类（文学 / 网文）—— 决定弹窗优先用哪一类书源 */
-        kind: SourceKind,
-    ) => void = () => {};
-    /**
-     * #414：下载成功后**直接写回条目**（编辑态写 catalog；新增态由宿主静默返回）。
-     * P1-C：第二参 = 章节名清单（**仅文学**传得到，网文为 `undefined`）。
-     */
-    export let onApplyBook: (relPath: string, tocText?: string) => Promise<void> | void = () => {};
-    /**
-     * 书籍编辑表单「下载」（#414；#419 加书源检索；**#422 续四 删掉直链**）：打开弹窗，
-     * 下载成功后：**编辑态直接写回条目**（与音乐面「下载成功 = 自动关联」同一口径）+ 同步表单框。
-     * 🔴 #422：连**分类**一起传 —— 弹窗据此优先用同类书源（本类为空会回退，见弹窗的 `shown`）。
-     * ⛔ 书名 / 作者不再传：那是直链时代用来预填文件名的（书源路的文件名取自书源返回的书名）。
-     */
-    function openBookDownloader(): void {
-        onOpenBookDownloader((relPath, tocText) => {
-            bookFileVal = relPath;
-            /**
-             * 🔴 P1-C 建立 → **#431 翻面**：章节名写回「目录」**不再按分类拦**。
-             *    2026-09-13 那条「网文不带出版目录」要防的是**一整份 2000+ 章的出版目录**；
-             *    用户 2026-09-29 裁定「文学类和网文的 toc 目录回填**只显示前 10 章加个 `....`**」之后，
-             *    写回来的是 10 行预览 ⇒ 网文也能有。⚠️ 裁断在**宿主**（`novelTocPreview`），
-             *    这里只负责把它交给「目录」框 + 写回条目，⛔ 别在这里再截一次。
-             */
-            const tocForEntry = tocText;
-            if (tocForEntry) toc = tocForEntry;
-            void onApplyBook(relPath, tocForEntry);
-        }, bookKind === 'novel' ? 'novel' : 'book');
-    }
+    /* 🔴 #523：书籍那枚「下载」小按钮**整对撤除**（连它要的两个 prop 一起删）—— 用户 2026-10-04 裁定
+       「下载只保留音乐」⇒ 书籍「路径」旁只留「检索本地书籍」那一枚。
+       ⚠️ 下载**实现本体**（`BookDownload.svelte` / 宿主那支 open…Downloader 方法 / 书源服务）与两条
+       命令面板入口原样保留，`pure/featureGate` 的门控清单已同步改写。
+       ⚠️ 这里**刻意不写**被删那两个 prop 的全名：本仓注释会进产物，抄了就会撞红自己的反向守卫（老坑）。 */
     /**
      * ⑤-c：打开「下载歌曲」弹窗。`onPicked` 回传下载好的**库内相对路径**，
      * 组件据此把「本地音频」指过去（仍走正常的保存流程落库，⛔ 不在这里直接写 catalog）。
@@ -273,7 +262,18 @@ export let initialBookKind: BookKind | undefined = undefined;
         newStem: string,
     ) => Promise<{ ok: boolean; message: string; path?: string }> = async () => ({ ok: false, message: '' });
     /**
-     * #417：**库内书籍文件**清单（「书籍文件」浮层里那枚「检索同名书籍」小按钮用）。
+     * 🔴 #524：**选目录**（系统 openDirectory）—— 「检索本地书籍」**先让用户挑一个文件夹**
+     * （用户：「书籍检索文件目录给我先弹出系统文件选择器让我选择目录」）。
+     * 🔴 **三态返回值**（⛔ 别拿 `!dir` 一把抓）：`string` = 选中；`null` = **用户取消**（⇒ 什么都不做）；
+     *    `undefined` = **本环境没有系统对话框**（非桌面端）⇒ 回落到下面的「库内书籍文件」清单。
+     */
+    export let onPickBookDir: () => Promise<string | null | undefined> = async () => undefined;
+    /** 🔴 #524：列出**刚挑的那个目录**里的可关联书籍文件（宿主走 fs；库内转相对、库外保留绝对） */
+    export let onListBookFilesInDir: (dir: string) => Promise<LibraryBookFile[]> = async () => [];
+    /**
+     * #417：**库内书籍文件**清单（= 设置里那个「书籍文件目录」）。
+     * ⚠️ 🔴 #524 起它的角色**降级成「非桌面端的回落路径」**（原来那枚「检索同名书籍」小按钮已按 #523 撤除，
+     *    现在挂了「检索本地书籍」这条先选目录的新链）。
      * 宿主注入（`main.listLibraryBookFiles`：扫**全库**、按书籍扩展名白名单筛）——
      * ⛔ 组件不碰 vault；匹配与排序在纯模块 `pure/libraryBooks`。
      */
@@ -593,8 +593,6 @@ export let initialBookKind: BookKind | undefined = undefined;
     /** 本地音频右键编辑浮层开关 + 编辑缓冲值（保存才写回 audioPath） */
     let audioEditOpen = false;
     let audioPathVal = '';
-    /** 「本地音频」浮层里那次「检索库内同名音频」的结果提示（#404；空 = 没提示） */
-    let audioFindHint = '';
     /**
      * #497 改名：输入框里的**新主名** + 失败原因提示 + 进行中标记。
      * 🔴 输入框只放主名，扩展名以静态后缀渲染（`audioExtOf`）—— 扩展名一改，这个文件就不再是音频了，
@@ -603,8 +601,6 @@ export let initialBookKind: BookKind | undefined = undefined;
     let audioNameVal = '';
     let audioRenameHint = '';
     let audioRenaming = false;
-    /** 「书籍文件」浮层里那次「检索库内同名书籍」的结果提示（#417；空 = 没提示） */
-    let bookFindHint = '';
     /**
      * 块内 LRC 歌词正文（#396）：**住在笔记的 ` ```lrc ` 块里，不落 catalog**。
      * 初始值由弹窗侧从笔记读回（`initialLrc`）；保存时随 `input.lrc` 交给弹窗写回笔记。
@@ -1602,7 +1598,8 @@ export let initialBookKind: BookKind | undefined = undefined;
     let epBiliBusy = false;
     let epBiliErr = '';
     // ── #505 分P 勾选表（入口 C）──
-    /** 浮层当前视图：`search` = 候选列表；`parts` = 选中那条的分P 勾选表 */
+    /** 浮层当前视图：`search` = 候选列表；`parts` = 选中那条的分P 勾选表
+     *  （⚠️ #520 起**没有 `batch`** —— 批量确认表已独立成卡，见 `batchOpen`） */
     let epBiliView: 'search' | 'parts' = 'search';
     /** 勾选表的行（真源 = `buildBiliFillRows`，组件只负责改 `checked`） */
     let epBiliRows: BiliFillRow[] = [];
@@ -1611,17 +1608,63 @@ export let initialBookKind: BookKind | undefined = undefined;
     let epBiliPickBvid = '';
     /** 正在读分P（点候选后的一次往返；防连点） */
     let epBiliPartsBusy = false;
+    // ── #519 批量搜索未填集（确认表）／#520 改成独立卡片 + 集数区间 ──
+    /** 确认表是否开着（🔴 #520：**独立一张卡**，不再寄生在集编辑浮层里） */
+    let batchOpen = false;
+    /** 用户填的集数区间两端（1 起；默认 = 未填集的第一个 ~ 最后一个） */
+    let batchFrom = 0;
+    let batchTo = 0;
+    /** 全部未填集的目标（区间只筛它，⛔ 不重新算一遍） */
+    let batchAllTargets: BatchTarget[] = [];
+    /** 每行 = 一个**未填**的集（已填的集根本不进表 ⇒ 不会跨集覆盖） */
+    let batchRows: BatchRow[] = [];
+    let batchRunning = false;
+    /** 「继续」从哪个下标接着跑（= 纯模块返回的 `nextIndex`） */
+    let batchCursor = 0;
+    let batchDone = 0;
+    let batchTotal = 0;
+    /** 正在搜的那一集的集号（0 = 没在搜） */
+    let batchEpNo = 0;
+    let batchLastEpNo = 0;
+    let batchReason = '';
+    /** 是否**正常跑完**（false = 遇错停 / 用户停 ⇒ 显示「继续」） */
+    let batchFinished = false;
+    /** 用户点「停止」/ 浮层被关 ⇒ 让 `shouldContinue()` 返回 false */
+    let batchCancel = false;
+    /** 展开了候选列表的行下标（-1 = 都没展开） */
+    let batchOpenRow = -1;
+    /** 「填入」按钮的文案与禁用态（真源 = 纯函数） */
+    $: batchPickedCount = batchCheckedRows(batchRows).length;
+    $: batchCanFill = canFillBatch(batchRows);
 
-    /** 检索词的初值：作品标题 + 集标题（两者都为空 ⇒ 空串，宿主那侧会给「需要关键词」的提示） */
+    /**
+     * 检索词的初值：作品标题 + 集标题；**集标题为空时用「第N集」补位**（#517 用户裁定）。
+     * 🔴 口径本体在 `pure/dl/bilibili.biliEpisodeQuery`（快捷关联弹窗用的是**同一份**，⛔ 别各写一套）。
+     *    电影态传 0 ⇒ 不做集号补位（电影没有「第几集」这回事）；两者都为空 ⇒ 空串，
+     *    宿主那侧照样会给「需要关键词」的提示。
+     */
     function epBiliDefaultQuery(): string {
-        const parts = [title.trim(), editTitle.trim()].filter((s) => !!s);
-        return parts.join(' ');
+        const epNo = type === 'movie' || editEp === null ? 0 : editEp + 1;
+        return biliEpisodeQuery(title, epNo, editTitle);
     }
-    /** 打开候选浮层并立即搜一次（沿用音乐下载那条链的交互：点开就有结果，不必先点「搜索」） */
+    /**
+     * #517：**单P 直填**前的一句重复提示后缀 —— 这条链接若已被别的集占用，回「（注意：这条链接第 N 集已在用）」。
+     * 🔴 2026-10-04 用户裁定：**只提示、不拦截**（与快捷关联弹窗同一个口径，⛔ 别只改一处）。
+     */
+    function epBiliDupNote(url: string): string {
+        const dup = editEp === null ? 0 : urlUsedByOtherEp(episodeUrls, url, editEp);
+        return dup ? `（注意：这条链接第 ${dup} 集已在用）` : '';
+    }
+    /**
+     * 打开候选浮层并立即搜一次（沿用音乐下载那条链的交互：点开就有结果，不必先点「搜索」）。
+     * 🔴 #517：检索词**每次打开都按当前集重算**（⛔ 别退回 `if (!epBiliQuery.trim())` 那种「空才算」——
+     *    它会让「编辑第 2 集」沿用「编辑第 1 集」时那份检索词；用户报障原话：
+     *    「点第2集搜索不映射为第2集，还是这个：熊出没」）。
+     */
     async function openEpBiliPicker() {
         epBiliOpen = true;
         epBiliView = 'search';
-        if (!epBiliQuery.trim()) epBiliQuery = epBiliDefaultQuery();
+        epBiliQuery = epBiliDefaultQuery();
         await runEpBiliSearch();
     }
     /** 搜一次（浮层里那颗「搜索」按钮；也供打开时自动跑） */
@@ -1631,7 +1674,7 @@ export let initialBookKind: BookKind | undefined = undefined;
         epBiliVideos = [];
         epBiliErr = '';
         if (!kw) {
-            epBiliErr = '先填检索词（默认取作品标题 + 集标题）';
+            epBiliErr = '先填检索词（默认取作品标题 + 集标题，缺则补第N集）';
             return;
         }
         epBiliBusy = true;
@@ -1656,37 +1699,62 @@ export let initialBookKind: BookKind | undefined = undefined;
      * 点一条候选（🔴 **#505 入口 C**：不再直接填入，而是先**展开它的分P 让用户勾**）。
      *
      * 🔴 为什么每条都要多一次往返：搜索接口**不返回分P 数**（实测），「单P / 52P」点开才知道。
-     * ⚠️ **能力回落**（⛔ 别把老路堵死）：读不到分P（请求失败 / `parts` 为空）⇒
-     *    直接按老行为填**这一条**的链接并关浮层，同时说明原因 —— 用户至少能拿到一条链接，
-     *    而不是卡在一个空表前面（本仓 #499D 那条纪律：工具失败不抛、能力回落）。
+     * ⚠️ **能力回落**（⛔ 别把老路堵死）：读不到分P（请求失败 / `parts` 为空）**或只有 1 个分P**
+     *    （= 单集投稿，B 站 `view` 也会给一条 `pages`）⇒ 直接按老行为填**这一条**的链接并关浮层，
+     *    同时说明原因 —— 用户至少能拿到一条链接，而不是卡在一张只有「第 1 集」一行的表前面
+     *    （本仓 #499D 那条纪律：工具失败不抛、能力回落；🔴 #518 才把判据从 `=== 0` 修成 `<= 1`）。
      */
-    async function pickEpBiliUrl(v: BiliVideo) {
+    /**
+     * 取这一条候选的分P 并**打开分P 勾选表** —— 🔴 两个入口**共用的唯一实现**：
+     *   ① 单集检索点候选（`anchor` = **当前编辑的那一集**，#518 用户裁定「一律锚当前集」）；
+     *   ② 批量卡那枚「展开分P」（`anchor` = `BATCH_PARTS_ANCHOR` = **0**，整季合集口径，见 #526）。
+     * ⚠️ **能力回落**（⛔ 别把老路堵死）：读不到分P（请求失败 / `parts` 为空）**或只有 1 个分P**
+     *    （= 单集投稿，B 站 `view` 也会给一条 `pages`）⇒ 按 `fallbackEp` 分流：
+     *    · 数字 ⇒ 直接填**那一集**并关浮层（老行为，用户至少拿到一条链接）；
+     *    · `null` ⇒ **只提示不填** —— 批量那枚「展开分P」的对象是「整季」，填哪一集都不对
+     *      （那种情况用户回去直接勾上那一行即可）。
+     *    （本仓 #499D 那条纪律：工具失败不抛、能力回落；🔴 #518 才把判据从 `=== 0` 修成 `<= 1`。）
+     */
+    async function openEpBiliParts(v: BiliVideo, anchor: number, fallbackEp: number | null) {
         if (epBiliPartsBusy) return;
         epBiliPartsBusy = true;
         epBiliErr = '';
         try {
             const out = await onBiliParts(v.bvid);
             const parts: BiliPart[] = out.parts ?? [];
-            if (out.error || parts.length === 0) {
+            if (out.error || parts.length <= 1) {
+                if (fallbackEp === null) {
+                    new Notice(out.error
+                        ? `读取分P失败（${out.error}），这条没法展开 —— 单集投稿直接勾上那一行即可`
+                        : '这条没有可勾的分P（单集投稿），直接勾上那一行即可');
+                    return;
+                }
+                const dup = epBiliDupNote(v.webUrl);
                 editUrl = v.webUrl;
                 epBiliOpen = false;
                 backToEpBiliSearch();
                 new Notice(
-                    out.error
+                    (out.error
                         ? `读取分P失败（${out.error}），已直接填入这条链接`
-                        : '这条没有分P，已直接填入这条链接',
+                        : '这条没有可勾的分P，已直接填入本集') + dup,
                 );
                 return;
             }
             epBiliPickTitle = out.title || v.title;
             epBiliPickBvid = v.bvid;
-            epBiliRows = buildBiliFillRows(parts, episodeUrls);
+            // 集数**按本条目总集数**传（⛔ 别用数组长度 —— #518 的教训）。
+            epBiliRows = buildBiliFillRows(parts, episodeUrls, anchor, Number(totalEpisodes) || undefined);
             epBiliView = 'parts';
         } catch (e) {
             epBiliErr = `读取分P出错：${e instanceof Error ? e.message : String(e)}`;
         } finally {
             epBiliPartsBusy = false;
         }
+    }
+
+    /** 单集检索：点一条候选（锚当前集；能力回落 = 直接填本集） */
+    async function pickEpBiliUrl(v: BiliVideo) {
+        await openEpBiliParts(v, editEp ?? 0, editEp ?? 0);
     }
     /** 勾 / 取消勾一行（⚠️ Svelte 4 不能对数组下标 `bind:` ⇒ 只能整数组换新，见本仓既有纪律） */
     function toggleEpBiliRow(epIndex: number, checked: boolean) {
@@ -1725,12 +1793,229 @@ export let initialBookKind: BookKind | undefined = undefined;
         closeEpEditor();
         new Notice(`已把 ${byIndex.size} 条链接填进对应集（点「保存」生效）`);
     }
+    // ────────────────────── #519 批量搜索未填集（确认表）──────────────────────
+    //
+    //  🔴 与「在 B 站搜索这一集」那枚的分工：那枚 = **单集、交互式**（点候选 → 分P 勾选表）；
+    //     本视图 = **批量、表格式**（把未填集全搜一遍 → 逐行确认 → 一次填入）。
+    //  🔴 循环 / 限速 / 遇错即停 / 行模型**全在 `pure/biliBatch`**（与快捷关联弹窗共用同一份）。
+
+    /**
+     * 打开批量确认表（🔴 #520：**只开卡、不自动跑** —— 用户裁定「选了才跑」）。
+     * 先算「全部未填集」并把区间默认成它的第一个 ~ 最后一个；一个未填集都没有就直接提示。
+     */
+    function openBiliBatch() {
+        resizeEpisodeFiles();
+        const all = buildBatchTargets(title, episodeUrls, Number(totalEpisodes) || 0, episodeTitles, type === 'movie');
+        if (all.length === 0) {
+            new Notice('本条目没有未填的集');
+            return;
+        }
+        batchAllTargets = all;
+        const d = epRangeOf(all);
+        batchFrom = d.from;
+        batchTo = d.to;
+        batchRows = [];
+        batchRunning = false;
+        batchCancel = false;
+        batchOpenRow = -1;
+        batchDone = 0;
+        batchTotal = 0;
+        batchEpNo = 0;
+        batchLastEpNo = 0;
+        batchReason = '';
+        batchFinished = false;
+        batchOpen = true;
+    }
+
+    /** 收起批量确认表 —— 🔴 一并把正在跑的那轮停掉（⛔ 别在后台接着打请求） */
+    function closeBiliBatch() {
+        batchCancel = true;
+        batchOpen = false;
+        batchRows = [];
+        batchOpenRow = -1;
+    }
+
+    /**
+     * 🔴 #523：**单集检索**的入口 —— 批量卡某一行的「单集」按钮 ⇒ 关卡片 + 打开这一集的编辑浮层 + 直接开搜。
+     * 用户原话：「[集编辑浮层里那枚 B站 图标] 撤掉，把功能合并到编辑表单路径旁小图标按钮功能里」
+     *   ⇒ 浮层自己不再挂图标（「这些关联浮窗内小图标按钮都不再显示」），入口挂到
+     *     「路径 → 检索网络（批量卡）→ 单集」这条链上；搜索本体（`epBili*` + 分P 勾选表）一字未动。
+     * ⚠️ 顺序不能反：**先关卡片再开浮层** —— 两张卡的 z 层级相同、批量卡在 DOM 里更靠后，
+     *    叠着开会被批量卡盖住；顺带 `closeBiliBatch()` 也会把还在跑的批停下。
+     */
+    async function openEpBiliFromBatch(idx: number): Promise<void> {
+        const r = batchRows[idx];
+        if (!r) return;
+        closeBiliBatch();
+        openEpEditor(r.epIndex);
+        await openEpBiliPicker();
+    }
+
+    /**
+     * 🔴🔴 #526：批量卡某一行那枚**「展开分P」** —— 这一行选中的是**整季合集**（多P），
+     *   直接把它的分P 勾选表开出来，一次把整季填完。
+     *
+     * 由来（用户 2026-10-04，附确认表截图）：「批量网络检索只能适合单集的，有很多分52p的怎么办」——
+     * 批量「填入」写的是 `pickedUrl(row)` = 候选的 `webUrl`，而那个链接**恒定 P1**（不带 `?p=`）
+     * ⇒ 选中 52P 合集的行（截图里的第 2 / 第 4 集）会被写进**同一条 P1 链接** = **第 1 集的内容**，
+     * 而用户看不出来。⇒ 多P 候选**默认不自动勾**（`withPartCount` 落地）+ 这里给一枚显式入口。
+     *
+     * 🔴 **锚 = `BATCH_PARTS_ANCHOR`（0）**，与单集检索那条「锚当前集」**有意不同**：
+     *    能被展开的是整季合集，它的 P1 就是第 1 集；锚在批量行那一集（比如第 50 集）
+     *    会把 P1 填到第 50 集、整季全部错位。
+     * ⚠️ 顺序不能反：**先关批量卡、再开浮层 + 勾选表**（两张卡同 z 层级、批量卡在 DOM 里更靠后）。
+     */
+    async function expandBatchCandParts(idx: number): Promise<void> {
+        const r = batchRows[idx];
+        const v = r ? pickedCandidate(r) : undefined;
+        if (!r || !v) return;
+        closeBiliBatch();
+        openEpEditor(r.epIndex);
+        // ⚠️ 分P 勾选表住在 `{#if epBiliOpen}` 里 ⇒ 得先把那个浮层打开
+        epBiliOpen = true;
+        epBiliView = 'search';
+        // `fallbackEp = null`：单集投稿不该从这枚入口填（那条路是「直接勾上这一行」）
+        await openEpBiliParts(v, BATCH_PARTS_ANCHOR, null);
+    }
+
+    /** 按当前区间**重开一轮**（用户点了「搜索」）：整表重来，游标归零 */
+    async function startBiliBatch() {
+        const range = normalizeEpRange(batchFrom, batchTo, batchAllTargets[0]?.epNo ?? 0, batchAllTargets[batchAllTargets.length - 1]?.epNo ?? 0);
+        batchFrom = range.from;
+        batchTo = range.to;
+        const picked = filterTargetsByRange(batchAllTargets, range);
+        if (picked.length === 0) {
+            new Notice('这个区间里没有未填的集');
+            return;
+        }
+        batchRows = makeBatchRows(picked, title);
+        batchCursor = 0;
+        batchDone = 0;
+        batchTotal = picked.length;
+        batchEpNo = 0;
+        batchLastEpNo = 0;
+        batchReason = '';
+        batchFinished = false;
+        batchCancel = false;
+        batchOpenRow = -1;
+        await runEpBiliBatch();
+    }
+
+    /** 「继续」：从上次停下的那一集接着跑（⛔ 不重建表，已搜到的保留） */
+    async function continueBiliBatch() {
+        if (batchRows.length === 0) return startBiliBatch();
+        await runEpBiliBatch();
+    }
+
+    /** 跑（或「继续」跑）：全部逻辑在 `runBatchSearch`，这里只注入回调 */
+    async function runEpBiliBatch() {
+        if (batchRunning) return;
+        batchRunning = true;
+        batchCancel = false;
+        batchReason = '';
+        try {
+            const out = await runBatchSearch(
+                batchRows,
+                {
+                    search: (kw) => onBiliSearch(kw),
+                    parts: (bvid) => onBiliParts(bvid),
+                    // ⚠️ 必须 `.slice()` 换**新数组引用**：纯模块是就地改同一个数组，
+                    //    直接赋同一个引用 Svelte 认不出变化（⚠️ Svelte 4 的响应式按引用比）。
+                    onUpdate: (rows, done, total, epNo) => {
+                        batchRows = rows.slice();
+                        batchDone = done;
+                        batchTotal = total;
+                        batchEpNo = epNo;
+                    },
+                    // 用户点「停止」/ 卡被关 ⇒ 立刻收手（⛔ 别在后台接着打请求）
+                    shouldContinue: () => !batchCancel && batchOpen,
+                },
+                batchCursor,
+            );
+            batchRows = out.rows;
+            batchCursor = out.nextIndex;
+            batchLastEpNo = out.lastEpNo;
+            batchReason = out.reason;
+            batchFinished = out.done;
+        } finally {
+            batchRunning = false;
+            batchEpNo = 0;
+        }
+    }
+
+    /** 展开某一行的候选列表（收起再点 = 只收起，不重复打请求） */
+    async function toggleEpBiliBatchCands(idx: number) {
+        if (batchOpenRow === idx) {
+            batchOpenRow = -1;
+            return;
+        }
+        batchOpenRow = idx;
+        await markEpBiliBatchCands(idx);
+    }
+
+    /** 展开时给**前几条**候选补标分P 数（串行 + 限速；⛔ 用户收起/关浮层就立刻收手） */
+    async function markEpBiliBatchCands(idx: number) {
+        for (const v of candidatesToMark(batchRows[idx])) {
+            await markEpBiliCandPart(idx, v.bvid);
+            if (batchOpenRow !== idx || !epBiliOpen) return;
+            await batchSleep();
+        }
+    }
+
+    /**
+     * 取一条候选的分P 数并记进行里。
+     * 🔴 取不到（失败 / 没有 `pages`）⇒ **什么都不写**（胶囊留空）—— 链接照常可用，
+     *    ⛔ 别把「标不出分P」当成失败（与 `runBatchSearch` 同一条纪律）。
+     */
+    async function markEpBiliCandPart(idx: number, bvid: string) {
+        const out = await onBiliParts(bvid);
+        const n = Array.isArray(out?.parts) ? out.parts.length : 0;
+        if (n > 0) batchRows = batchRows.map((r, i) => (i === idx ? withPartCount(r, bvid, n) : r));
+    }
+
+    /** 换成第 `ci` 条候选（顺手把它没标过的分P 数补上） */
+    async function pickEpBiliBatchCand(idx: number, ci: number) {
+        batchRows = batchRows.map((r, i) => (i === idx ? withPicked(r, ci) : r));
+        batchOpenRow = -1;
+        const v = pickedCandidate(batchRows[idx]);
+        if (v && !batchRows[idx].partCounts[v.bvid]) await markEpBiliCandPart(idx, v.bvid);
+    }
+
+    /** 勾 / 取消勾一行 */
+    function toggleEpBiliBatchRow(idx: number, checked: boolean) {
+        batchRows = batchRows.map((r, i) => (i === idx ? withChecked(r, checked) : r));
+    }
+
+    /**
+     * 把勾中的行写进**本表单的集链接数组**（`episodeUrls`）。
+     * 🔴 只写表单状态，**仍要点表单的「保存」才落库** —— 与「粘贴」/ 分P 勾选表同一条纪律。
+     * 🔴 写入按 `r.epIndex`（未填集的真实下标），**已填的集根本不在表里** ⇒ 不会跨集覆盖。
+     */
+    function applyEpBiliBatchFill() {
+        const picked = batchCheckedRows(batchRows);
+        if (picked.length === 0) return;
+        const byIndex = new Map<number, string>();
+        for (const r of picked) {
+            const url = pickedUrl(r);
+            if (url) byIndex.set(r.epIndex, url);
+        }
+        if (byIndex.size === 0) return;
+        episodeUrls = episodeUrls.map((v, idx) => (byIndex.has(idx) ? byIndex.get(idx) : v));
+        const n = byIndex.size;
+        closeBiliBatch();
+        new Notice(`已把 ${n} 集的链接填进对应集（点「保存」生效）`);
+    }
+
     /** 集编辑浮层收尾（三处出口：保存 / 清除 / 取消 / 点遮罩）时把候选浮层一起收起 —— 否则会留一层孤儿 */
     function closeEpEditor() {
         editEp = null;
         epBiliOpen = false;
         epBiliView = 'search';
         epBiliRows = [];
+        // #517：检索词一并清掉 ⇒ 下次无论编辑哪一集都必然按那一集重算（⛔ 别留着上一集的词）
+        epBiliQuery = '';
+        // ⚠️ #520：批量确认表已**独立成卡**（不再寄生在本浮层里）⇒ 这里不再动它的状态，
+        //    它的停批归 `closeBiliBatch()`。
     }
     /** 编辑弹窗「浏览」：系统文件选择器（Electron remote.dialog 绝对路径），填入编辑框，保存时写回 */
     async function browseLocalVideo(ev?: MouseEvent) {
@@ -1782,13 +2067,11 @@ export let initialBookKind: BookKind | undefined = undefined;
     }
     /** 书籍「▶ 观看」右键：弹编辑浮层（浏览/手动输入路径） */
     function openBookEditor() {
-        bookFindHint = '';
         bookEditOpen = true;
     }
     /** 书籍编辑浮层保存：路径写回 bookFileVal（保存条目时入库） */
     function saveBookEditor() {
         bookEditOpen = false;
-        bookFindHint = '';
         new Notice('书籍文件已更新，点「保存」生效');
         void autoLinkBookProgress(bookFileVal.trim());
     }
@@ -1796,30 +2079,42 @@ export let initialBookKind: BookKind | undefined = undefined;
     function clearBookEditor() {
         bookFileVal = '';
         bookEditOpen = false;
-        bookFindHint = '';
         new Notice('书籍文件关联已清除');
     }
     /**
-     * #417「检索库内同名书籍文件」（浮层标题旁那枚 🔍）。
-     * 🔴 只把路径**填进输入框**（与「浏览」同款），仍要点「保存」才生效 —— 检索结果不该直接落库。
+     * #417「检索库内同名书籍文件」—— 🔴 #523 起挂在**表单「路径」标签旁**（用户：「这些关联浮窗内
+     * 小图标按钮都不再显示」+「浮层小标题一起改成『路径』」）⇒ 反馈从浮层内的提示行改为 `Notice`
+     * （与「浏览」那条同款：填进框里、仍要点「保存」才落库 ⇒ 文案必须说清这一点）。
      * 🔴 匹配逻辑在纯模块 `pure/libraryBooks`（与下载排序共用同一把相似度尺），组件只负责取数与提示。
      */
-    function findLibraryBook(): void {
+    async function findLibraryBook(): Promise<void> {
         const t = title.trim();
         if (!t) {
-            bookFindHint = '标题为空，先填标题再检索';
+            new Notice('标题为空，先填标题再检索');
             return;
         }
-        const files = onListLibraryBooks();
+        // 🔴 #524：**先弹系统目录选择器**（用户：「书籍检索文件目录给我先弹出系统文件选择器让我选择目录」）
+        const dir = await onPickBookDir();
+        if (dir === null) {
+            // 用户主动取消 ⇒ 什么都不做（⛔ 别静默拿配置目录顶上 —— 那是另一个目录，结果会让人意外）
+            new Notice('未选择目录，已取消检索');
+            return;
+        }
+        const fallback = dir === undefined;   // 非桌面端：没有系统对话框 ⇒ 能力回落到设置里的配置目录
+        const files = fallback ? onListLibraryBooks() : await onListBookFilesInDir(dir);
+        // 提示里**说清搜的是哪个目录**（两种情况结果可能完全不同，不说清用户会以为程序找错地方）
+        const where = fallback ? '设置里的「书籍文件目录」' : dir;
+        if (files.length === 0) {
+            new Notice(`${where} 里没有可关联的书籍文件（epub / pdf / txt…）`, 5000);
+            return;
+        }
         const { best, ranked } = pickLibraryBook(files, t, author.trim());
         if (!best) {
-            bookFindHint = files.length === 0
-                ? '书籍文件目录里还没有可关联的文件（epub / pdf / txt…）'
-                : `书籍文件目录里没找到与「${t}」同名的书籍文件`;
+            new Notice(`${where} 里没找到与「${t}」同名的书籍文件`, 5000);
             return;
         }
         bookFileVal = best.path;
-        bookFindHint = ranked.length > 1 ? `命中 ${ranked.length} 个，已填入「${best.name}」` : `已填入「${best.name}」`;
+        new Notice(`${ranked.length > 1 ? `命中 ${ranked.length} 个，已` : '已'}填入「${best.name}」，点「保存」生效`);
     }
     /** 书籍编辑浮层「浏览」：系统文件选择器选 TXT/EPUB/PDF，回填 bookFileVal */
     async function browseBookFile(ev?: MouseEvent) {
@@ -1948,7 +2243,6 @@ export let initialBookKind: BookKind | undefined = undefined;
 
     function openAudioEditor() {
         audioPathVal = audioPath;
-        audioFindHint = '';
         syncAudioName();
         audioEditOpen = true;
     }
@@ -1991,38 +2285,43 @@ export let initialBookKind: BookKind | undefined = undefined;
     }
     /**
      * #404：在**库内音乐目录**里找回同名音频（用户：「优先检索库内音乐目录下同名音频文件进行关联」）。
-     * 🔴 只把路径**填进输入框**（与「浏览」同款），仍要点「保存」才生效 —— 检索结果不该直接落库。
+     * 🔴 只把路径**填进框里**（与「浏览」同款），仍要点「保存」才生效 —— 检索结果不该直接落库。
      * 🔴 匹配逻辑在纯模块 `pure/libraryAudio`（与下载排序共用同一把相似度尺），组件只负责取数与提示。
+     * 🔴 #523：入口从音频浮层标题旁搬到**表单「路径」标签旁** ⇒ 反馈改走 `Notice`，且必须**同时**写
+     *    `audioPath`（表单值）与 `audioPathVal`（浮层缓冲）—— 只写后者时，用户在浮层关闭状态下点它
+     *    会「看着填了、保存却没带上」。
      */
     function findLibraryAudio(): void {
         const t = title.trim();
         if (!t) {
-            audioFindHint = '标题为空，先填标题再检索';
+            new Notice('标题为空，先填标题再检索');
             return;
         }
         const files = onListLibraryAudio();
         const { best, ranked } = pickLibraryAudio(files, t, author.trim());
         if (!best) {
-            audioFindHint = files.length === 0
-                ? '音频文件目录里还没有音频文件'
-                : `音频文件目录里没找到与「${t}」同名的音频`;
+            new Notice(
+                files.length === 0
+                    ? '音频文件目录里还没有音频文件'
+                    : `音频文件目录里没找到与「${t}」同名的音频`,
+                5000,
+            );
             return;
         }
+        audioPath = best.path;
         audioPathVal = best.path;
         syncAudioName();
-        audioFindHint = ranked.length > 1 ? `命中 ${ranked.length} 个，已填入「${best.name}」` : `已填入「${best.name}」`;
+        new Notice(`${ranked.length > 1 ? `命中 ${ranked.length} 个，已` : '已'}填入「${best.name}」，点「保存」生效`);
     }
     /** 音乐编辑浮层保存：路径写回 audioPath（保存条目时入库） */
     function saveAudioEditor() {
         audioPath = audioPathVal.trim();
-        audioFindHint = '';
         audioEditOpen = false;
         new Notice('本地音频已更新，点「保存」生效');
     }
     /** 音乐编辑浮层清除：清空关联 */
     function clearAudioEditor() {
         audioPath = '';
-        audioFindHint = '';
         audioEditOpen = false;
         new Notice('本地音频关联已清除');
     }
@@ -3000,7 +3299,9 @@ export let initialBookKind: BookKind | undefined = undefined;
                     <div><label class="rl-lbl">游玩时长（小时）</label><input class="rl-input" type="number" min="0" step="0.1" bind:value={playtimeHours} placeholder="如 12" /></div>
                 </div>
                 <div>
-                    <label class="rl-lbl">启动快捷方式</label>
+                    <!-- 🔴 #523：标签统一「路径」（原「启动快捷方式」）。🔴 游戏类**不配**小图标按钮
+                         （用户：「游戏类不配」）—— 所以这里只有标签，⛔ 别再往这一行加 `.rl-ai-btn`。 -->
+                    <label class="rl-lbl">启动路径</label>
                     <div class="rl-ep-row">
                         <span class="rl-ep-wrap" class:linked={!!gameLaunchPath.trim()}>
                             <button
@@ -3015,7 +3316,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                             <!-- 启动快捷方式编辑浮层（参照书籍文件浮层）：浏览选择/手动输入路径 -->
                             <div class="rl-ep-edit-mask" on:click={() => (gameEditOpen = false)}></div>
                             <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-game">
-                                <div class="rl-ep-edit-title" id="rl-ep-title-game">启动快捷方式（.lnk）</div>
+                                <div class="rl-ep-edit-title" id="rl-ep-title-game">启动路径（.lnk）</div>
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
                                     <input class="rl-input rl-ep-edit-input" value={gameLaunchVal} on:input={(ev) => (gameLaunchVal = inputVal(ev))} placeholder="库内路径，或系统绝对路径（.lnk）" />
@@ -3092,12 +3393,19 @@ export let initialBookKind: BookKind | undefined = undefined;
             {/if}
             {#if type === 'music'}
                 <div>
-                    <!-- #399-C 用户口径（附截图）：「本地音频」的下载小按钮要放在**标题旁边** ——
-                         与「LRC歌词」「总结摘要」两行完全同款同位置（`.rl-lbl-row` + `.rl-ai-btn`）。
-                         ⛔ 别再把它塞进下面「▶ 播放」那一排（那个容器类名见下一条 div，本注释不写它的全名，
-                            否则「按钮前 800 字符内不得出现它」的反向守卫会被自己的注释撞红）。 -->
+                    <!-- 🔴 #523：标签统一叫「路径」（用户：「所有类型条目下的右键编辑条目的播放标题统一改成
+                         『路径』标题」）。旁边按类型挂小图标按钮 —— 音乐 = 「检索本地」+「下载」；
+                      🔴 那个「本地音频」浮层**标题旁**的 🔍 已撤（用户：「这些关联浮窗内小图标按钮都不再显示」）
+                         ⇒ 检索移到这里（`findLibraryAudio` 改为直接回填表单值 + Notice 反馈）。 -->
                     <div class="rl-lbl-row">
-                        <label class="rl-lbl">本地音频</label>
+                        <label class="rl-lbl">启动路径</label>
+                        <button
+                            class="rl-ai-btn"
+                            on:click={findLibraryAudio}
+                            data-tip="检索本地：按标题在音频文件目录里找同名音频">
+                            <span class="rl-sr">检索本地音频</span>
+                            <Icon icon="search" size={13} />
+                        </button>
                         {#if canDownload}
                             <button
                                 class="rl-ai-btn"
@@ -3122,26 +3430,15 @@ export let initialBookKind: BookKind | undefined = undefined;
                             <!-- 本地音频编辑浮层（参照书籍文件浮层）：浏览选择/手动输入路径 -->
                             <div class="rl-ep-edit-mask" on:click={() => (audioEditOpen = false)}></div>
                             <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-audio">
-                                <!-- 🔴 #404：标题旁那枚小按钮 = **与「总结摘要 / 获取歌词 / 下载歌曲」同款**的
-                                     `.rl-ai-btn`（用户：「在音乐类型条目编辑条目下的播放按钮右键时在其弹窗本地音频旁
-                                     加个总结摘要同款小按钮」）；作用 = 在**库内音乐目录**里找同名音频并填入。
-                                     ⛔ 别把它做成 `浏览` 那种带文字按钮（同款小图标按钮才有统一手感）。 -->
-                                <div class="rl-ep-edit-head">
-                                    <span class="rl-ep-edit-title" id="rl-ep-title-audio">本地音频</span>
-                                    <button
-                                        class="rl-ai-btn"
-                                        on:click={findLibraryAudio}
-                                        data-tip="在音频文件目录里检索同名音频">
-                                        <span class="rl-sr">检索库内同名音频</span>
-                                        <Icon icon="search" size={13} />
-                                    </button>
-                                </div>
+                                <!-- 🔴 #523：这枚 🔍（#404 加的「检索库内同名音频」）已按用户裁定
+                                     「这些关联浮窗内小图标按钮都不再显示」**撤除**，功能搬到表单「路径」标签旁
+                                     （`findLibraryAudio`，见那边注释）。标题也统一成「路径」。 -->
+                                <div class="rl-ep-edit-title" id="rl-ep-title-audio">启动路径</div>
                                 <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
                                     <input class="rl-input rl-ep-edit-input" value={audioPathVal} on:input={(ev) => { audioPathVal = inputVal(ev); syncAudioName(); }} placeholder="库内路径，或系统绝对路径（mp3/flac/m4a…）" />
                                     <button class="rl-btn rl-link-act" on:click={(ev) => browseAudio(ev)} data-tip="选择音频文件">浏览</button>
                                 </div>
-                                {#if audioFindHint}<div class="rl-hint">{audioFindHint}</div>{/if}
                                 <!-- 🔴 #497 改名（用户：「再添加在音乐条目上修改关联的音频文件名称的功能」）：
                                      只改**主名**，扩展名以静态后缀显示 —— 扩展名一改这文件就不是音频了，
                                      而它是用户的文件，改坏了找不回来。真动磁盘的逻辑在宿主（库内 `vault.rename`
@@ -3166,20 +3463,21 @@ export let initialBookKind: BookKind | undefined = undefined;
 
             {#if type === 'book'}
                 <div>
-                    <!-- 🔴 #414：书籍「下载」小按钮与音乐那枚**同款同位**（`.rl-lbl-row` + `.rl-ai-btn`，
-                         见 #404/#409 的小按钮摆放口径）—— 图标沿用已核实存在的 `download`，
-                         ⛔ 别改用没核实过的图标名（`setIcon` 遇未知名静默失败 = 空白按钮）。 -->
+                    <!-- 🔴 #523：标签统一「路径」。旁边按用户裁定**只挂「检索本地」那一枚**
+                         （「下载只保留音乐」⇒ 书籍那枚 `download` 与它要的两个 prop 一并撤除；⚠️ 下载实现本体
+                         与两条命令面板入口保留 —— 门控真源 `pure/featureGate` 里那条清单已同步改写）。
+                         ⚠️ 被删那两个 prop 的全名**刻意不写**：注释会进产物，抄了会撞红反向守卫（老坑）。
+                     原「检索库内同名书籍」🔍 住在书籍文件浮层标题行，已按「关联浮窗内小图标按钮都不再显示」
+                         搬到这里。 -->
                     <div class="rl-lbl-row">
-                        <label class="rl-lbl">书籍文件</label>
-                        {#if canDownloadBook}
-                            <button
-                                class="rl-ai-btn"
-                                on:click={openBookDownloader}
-                                data-tip={bookKind === 'novel' ? '按网文书源搜书并下载并填入' : '按文学书源搜书并下载（书源由你自备），完成后自动填入这里'}>
-                                <span class="rl-sr">{bookKind === 'novel' ? '下载网文' : '下载文学'}</span>
-                                <Icon icon="download" size={13} />
-                            </button>
-                        {/if}
+                        <label class="rl-lbl">启动路径</label>
+                        <button
+                            class="rl-ai-btn"
+                            on:click={findLibraryBook}
+                            data-tip="检索本地：先选一个文件夹，再按标题在里面找同名书籍（epub / pdf / txt…）">
+                            <span class="rl-sr">检索本地书籍</span>
+                            <Icon icon="search" size={13} />
+                        </button>
                     </div>
                     <div class="rl-ep-row">
                         <span class="rl-ep-wrap" class:linked={!!bookFileVal.trim()}>
@@ -3195,27 +3493,16 @@ export let initialBookKind: BookKind | undefined = undefined;
                             <!-- 书籍文件编辑浮层（参照集按钮浮层）：浏览选择/手动输入路径 -->
                             <div class="rl-ep-edit-mask" on:click={() => (bookEditOpen = false)}></div>
                             <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-book">
-                                <div class="rl-ep-edit-head">
-                                    <span class="rl-ep-edit-title" id="rl-ep-title-book">书籍文件（TXT/EPUB/PDF）</span>
-                                </div>
-                                <!-- 🔴 #500⑥：那枚「检索库内同名书籍」小按钮从**标题行**挪到「文件路径」标签**旁边**
-                                     （用户：「将『检索书籍』按钮移动到文件路径标题旁边」）——
-                                     它作用的对象就是下面那个路径框，贴着标签比挂在标题行更好找。 -->
-                                <div class="rl-edit-lblrow">
-                                    <label class="rl-lbl-inline">文件路径</label>
-                                    <button
-                                        class="rl-ai-btn"
-                                        on:click={findLibraryBook}
-                                        data-tip="检索同名书籍文件">
-                                        <span class="rl-sr">检索库内同名书籍</span>
-                                        <Icon icon="search" size={13} />
-                                    </button>
-                                </div>
+                                <!-- 🔴 #523：标题统一「路径（…）」（括号里的格式说明保留）。
+                                     那枚「检索库内同名书籍」🔍（#500⑥ 挪到「文件路径」标签旁的）已按用户裁定
+                                     「关联浮窗内小图标按钮都不再显示」**撤除**，功能搬到表单「路径」标签旁
+                                     （`findLibraryBook`）。 -->
+                                <div class="rl-ep-edit-title" id="rl-ep-title-book">启动路径（TXT/EPUB/PDF）</div>
+                                <label class="rl-lbl-inline">文件路径</label>
                                 <div class="rl-ep-edit-row">
                                     <input class="rl-input rl-ep-edit-input" value={bookFileVal} on:input={(ev) => (bookFileVal = inputVal(ev))} placeholder="库内路径，如 书籍/书名.txt（TXT/EPUB/PDF）" />
                                     <button class="rl-btn rl-link-act" on:click={(ev) => browseBookFile(ev)} data-tip="选择书籍文件">浏览</button>
                                 </div>
-                                {#if bookFindHint}<div class="rl-hint">{bookFindHint}</div>{/if}
                                 <div class="rl-ep-edit-ops">
                                     <button class="rl-btn" on:click={saveBookEditor} data-tip="保存">保存</button>
                                     <button class="rl-btn" on:click={clearBookEditor} data-tip="清除">清除</button>
@@ -3232,14 +3519,21 @@ export let initialBookKind: BookKind | undefined = undefined;
             {#if type === 'movie' || type === 'tv' || type === 'anime'}
                 <div>
                     <div class="rl-lbl-row">
-                        <label class="rl-lbl">观看链接</label>
-                        {#if type !== 'movie'}
-                            <!-- 批量检索（动画/电视剧）图标：选文件夹 → 识别文件名集号自动填入未关联集本地路径（已填跳过） -->
-                            <button
-                                class="rl-ai-btn"
-                                data-tip={'选文件夹批量填集（按文件名认集号补标题）\n已填的不覆盖'}
-                                on:click={() => void batchScanLocalEps()}><Icon icon="folder-search" size={13} /><span class="rl-sr">从文件夹检索剧集</span></button>
-                        {/if}
+                        <!-- 🔴 #523：标签统一「路径」（原「观看链接」）；两枚小图标 = 检索本地 + 检索网络。 -->
+                        <label class="rl-lbl">启动路径</label>
+                        <!-- 🔴 #521：**电影也挂这两枚**（用户：「电影条目观看链接也把这两个按钮移上来」
+                             ——⛔ 原来这两枚被 `type !== 'movie'` 挡掉了）。两枚都是「批量填集」，所以并排。 -->
+                        <!-- 批量检索图标：选文件夹 → 识别文件名集号自动填入未关联集本地路径（已填跳过） -->
+                        <button
+                            class="rl-ai-btn"
+                            data-tip={'选文件夹批量填集（按文件名认集号补标题）\n已填的不覆盖'}
+                            on:click={() => void batchScanLocalEps()}><Icon icon="folder-search" size={13} /><span class="rl-sr">从文件夹检索剧集</span></button>
+                        <!-- 🔴 #520：批量搜 B站 **紧挨着「从文件夹检索剧集」**（用户：「小图标按钮是放在观看
+                             链接的检索本地剧集图标按钮的旁边」）。 -->
+                        <button
+                            class="rl-ai-btn"
+                            data-tip="批量搜索未填的集（可选集数区间，搜完给一张确认表）"
+                            on:click={openBiliBatch}><Icon icon="list-video" size={13} /><span class="rl-sr">批量搜索未填集</span></button>
                     </div>
                     {#if type === 'movie' || Number(totalEpisodes) > 0}
                         <div class="rl-ep-grid">
@@ -3285,10 +3579,21 @@ export let initialBookKind: BookKind | undefined = undefined;
                              「从文件夹检索剧集」**同款同位同手感**。
                              ⛔ 别在下面那行再留一枚（同款入口两处 = 用户会以为两个功能）；
                              ⛔ 也别写成带文字按钮（本仓小图标统一的形态就是这个）。
-                             · 检索词初值 = 作品标题 + 集标题（可改）；
+                             · 检索词初值 = 作品标题 + 集标题；**集标题为空时补「第N集」**（#517；每次打开都按
+                               当前集重算，⛔ 别缓存成「空才算」）；
                              · **点一条把链接填进下面那个框**（与「粘贴」同一条纪律：仍要点「保存」才写回条目）；
                              · ⛔ 浮层内**一条滚动条**：本体沿用 `.rl-ep-edit`（fixed 居中卡片，自身不带滚动），
                                只有列表那块内部滚动。 -->
+                        <!-- 🔴 #525（用户 2026-10-04 二轮裁定）：这枚「在 B 站搜这一集」小图标**恢复**。
+                             #523 曾按「关联浮窗内小图标按钮都不再显示」把它撤掉、把单集检索合并到
+                             批量卡行内那枚「单集」；但批量卡的待搜目标只认**未填集**
+                             （`buildBatchTargets` → `unfilledEpIndexes`）⇒ **已填链接的集压根搜不了** ——
+                             用户原话：「这个按钮只能批量不能单集当前集检索怎么办」。
+                             ⇒ 恢复成**编辑这一集时的直接入口**，调用的就是批量卡那枚用的**同一个**
+                               `openEpBiliPicker`（⛔ 搜索本体一份，别在这里另写检索逻辑）。
+                             形态沿用 #501②：`.rl-edit-lblrow` + `.rl-ai-btn` + `.rl-sr`，与
+                             「从文件夹检索剧集」「批量搜索未填集」同款同位同手感。
+                             ⛔ 别在下面输入框行再留一枚（同款入口两处 = 用户会以为两个功能）。 -->
                         <div class="rl-edit-lblrow">
                             <label class="rl-lbl-inline">网络地址</label>
                             <button
@@ -3318,7 +3623,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                                             value={epBiliQuery}
                                             on:input={(ev) => (epBiliQuery = inputVal(ev))}
                                             on:keydown={(ev) => { if (ev.key === 'Enter') void runEpBiliSearch(); }}
-                                            placeholder="检索词（默认 作品标题 + 集标题）" />
+                                            placeholder="检索词（作品标题 + 集标题，缺则补第N集）" />
                                         <button class="rl-btn rl-link-act" disabled={epBiliBusy || epBiliPartsBusy} on:click={() => void runEpBiliSearch()}>
                                             {epBiliBusy ? '搜索中…' : '搜索'}
                                         </button>
@@ -3413,6 +3718,189 @@ export let initialBookKind: BookKind | undefined = undefined;
                         </div>
                     </div>
                 {/if}
+            {/if}
+            {#if batchOpen}
+                <!-- 🔴 #520：批量确认表 = **独立一张卡**（不再寄生在集编辑浮层里）。
+                     🔴 入口挪到「观看链接」标签行那枚图标上（与「从文件夹检索剧集」并排）——
+                        用户：「小图标按钮是放在观看链接的检索本地剧集图标按钮的旁边」。
+                     🔴 进卡**不自动跑**：先选集数区间（用户裁定「选了才跑」），点了「搜索」才开始。
+                     ⚠️ 关卡片 ⇒ 立刻停批（见 `closeBiliBatch`，⛔ 别让它在后台接着打几十个请求）。 -->
+                <!-- ⚠️ 遮罩是**装饰性**的「点外面关闭」，不是可交互控件（与集编辑浮层那层同款）。
+                     这里必须就地 `svelte-ignore`：多一层同样的遮罩会**多两条 a11y 警告**，
+                     而那会打破「构建 89 warnings = 基线」这条门禁（⛔ 不是省事，是守住基线）。 -->
+                <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+                <div class="rl-ep-edit-mask" on:click={closeBiliBatch}></div>
+                <div class="rl-ep-edit rl-bili-pop" role="dialog" aria-labelledby="rl-bili-batch-title">
+                    <div class="rl-lrc-pop-head">
+                        <span class="rl-ep-edit-title" id="rl-bili-batch-title">批量搜索未填集</span>
+                        <button class="rl-lrc-pop-close" on:click={closeBiliBatch} data-tip="关闭">✕</button>
+                    </div>
+                    <!-- 集数区间：默认 = 未填集的第一个 ~ 最后一个；⛔ 不自动开跑。
+                         🔴 #522：两个框挂 `rl-bili-batch-num`（那颗类名是宽度裁判的必需件 ——
+                         光靠 `input.rl-input`(0,2,1) 压不住 scoped 的双 hash (0,3,0)，详见 styles.css）。 -->
+                    <div class="rl-bili-batch-range">
+                        <span class="rl-bili-batch-range-hint">集数区间</span>
+                        <input class="rl-input rl-bili-batch-num" type="number" min="1" bind:value={batchFrom} />
+                        <span class="rl-bili-batch-range-sep">–</span>
+                        <input class="rl-input rl-bili-batch-num" type="number" min="1" bind:value={batchTo} />
+                        <button
+                            class="rl-bili-batch-btn is-primary"
+                            disabled={batchRunning}
+                            on:click={() => void startBiliBatch()}
+                            data-tip="按这个区间搜**未填**的集（整表重来）">搜索</button>
+                    </div>
+                    <div class="rl-bili-batch-bar">
+                        {#if batchRunning}
+                            <div class="rl-bili-batch-note">{batchProgressText(batchDone, batchTotal, batchEpNo)}</div>
+                            <button
+                                class="rl-bili-batch-btn is-ghost"
+                                data-tip="停下（已搜到的保留，可再点「继续」）"
+                                on:click={() => (batchCancel = true)}>停止</button>
+                        {:else if batchFinished}
+                            <div class="rl-bili-batch-note">已搜完 {batchTotal} 集 · 勾选 {batchPickedCount} 集</div>
+                        {:else if batchRows.length > 0}
+                            <div class="rl-bili-batch-note" class:is-error={!!batchReason}>
+                                {batchStopText(batchLastEpNo, batchReason)}
+                            </div>
+                            <button
+                                class="rl-bili-batch-btn is-ghost"
+                                data-tip={`从第 ${batchLastEpNo + 1} 集接着搜`}
+                                on:click={() => void continueBiliBatch()}>继续</button>
+                        {:else}
+                            <div class="rl-bili-batch-note">
+                                选好区间后点「搜索」——只会搜**还没关联**的集（共 {batchAllTargets.length} 个）
+                            </div>
+                        {/if}
+                    </div>
+                    <div class="rl-bili-batch-list">
+                        {#each batchRows as r, idx (r.epIndex)}
+                            {@const v = pickedCandidate(r)}
+                            {@const url = pickedUrl(r)}
+                            <div class="rl-bili-batch-item">
+                                <div class="rl-bili-batch-row" class:rl-bili-batch-off={!v}>
+                                    <input
+                                        type="checkbox"
+                                        checked={r.checked}
+                                        disabled={!url}
+                                        data-tip={url
+                                            ? (canExpandParts(r)
+                                                ? '整季合集：直接勾上只会填第 1 集 —— 建议用「展开分P」'
+                                                : '参与「填入」')
+                                            : '这一集没有可填的链接'}
+                                        on:change={(ev) => toggleEpBiliBatchRow(idx, ev.currentTarget.checked)} />
+                                    <span class="rl-bili-batch-ep">第 {r.epNo} 集</span>
+                                    <div class="rl-bili-batch-hit">
+                                        {#if v}
+                                            {#if v.coverUrl}
+                                                <img
+                                                    class="rl-bili-cover"
+                                                    src={v.coverUrl}
+                                                    alt=""
+                                                    loading="lazy"
+                                                    referrerpolicy="no-referrer" />
+                                            {:else}
+                                                <span class="rl-bili-cover rl-bili-cover-ph">
+                                                    <Icon icon="video" size={14} />
+                                                </span>
+                                            {/if}
+                                            <span class="rl-bili-main">
+                                                <span class="rl-bili-batch-name">{v.title}</span>
+                                                <span class="rl-bili-artist">{v.author || '未知 UP 主'}</span>
+                                            </span>
+                                            {#if partCountLabel(r.partCounts[v.bvid] ?? 0)}
+                                                <span
+                                                    class="rl-bili-batch-parts"
+                                                    data-tip={(r.partCounts[v.bvid] ?? 0) === 1
+                                                        ? '单集投稿（只有 1 个分P）'
+                                                        : `整季合集（${r.partCounts[v.bvid]} 个分P）`}>
+                                                    {partCountLabel(r.partCounts[v.bvid] ?? 0)}
+                                                </span>
+                                            {/if}
+                                            <!-- 🔴 #520：标题不含作品名 ⇒ 不自动勾，并明说为什么 -->
+                                            {#if !r.matched}
+                                                <span class="rl-bili-batch-warn" data-tip="标题里没有本条目作品名，所以没替你勾上">
+                                                    标题不含作品名
+                                                </span>
+                                            {/if}
+                                        {:else}
+                                            <div class="rl-bili-batch-note">
+                                                {r.error || (batchRunning ? '…' : '未搜到')}
+                                            </div>
+                                        {/if}
+                                    </div>
+                                    {#if v}
+                                        <!-- 🔴 #523：**单集检索**入口 —— 原「集编辑浮层 · 网络地址旁」那枚
+                                             B站 图标按用户裁定撤除后，功能合并到这里（打开这一集的编辑浮层并直接开搜，
+                                             在那里还能展开分P 勾选表一次填多集）。 -->
+                                        <button
+                                            class="rl-bili-batch-toggle"
+                                            data-tip="打开这一集的编辑浮层并搜 B站（可选分P 一次填多集）"
+                                            on:click={() => void openEpBiliFromBatch(idx)}>单集</button>
+                                    {/if}
+                                    {#if canExpandParts(r)}
+                                        <!-- 🔴 #526：**整季合集专用** —— 直接把这条候选的分P 勾选表开出来
+                                             （锚 = 第 1 集）。批量「填入」对多P 候选只会写 P1（= 第 1 集），
+                                             所以多P 行**默认不勾**，要走这枚入口一次填整季。 -->
+                                        <button
+                                            class="rl-bili-batch-toggle is-parts"
+                                            data-tip="这条是整季合集：展开分P 勾选表，一次填多集（分P i ↔ 第 i 集）"
+                                            on:click={() => void expandBatchCandParts(idx)}>展开分P</button>
+                                    {/if}
+                                    {#if r.videos.length > 1}
+                                        <button
+                                            class="rl-bili-batch-toggle"
+                                            data-tip={`这一集搜到 ${r.videos.length} 条候选`}
+                                            on:click={() => void toggleEpBiliBatchCands(idx)}>
+                                            {batchOpenRow === idx ? '收起' : '换一条'}
+                                        </button>
+                                    {/if}
+                                </div>
+                                {#if batchOpenRow === idx}
+                                    <div class="rl-bili-batch-cands">
+                                        {#each r.videos as cv, ci (cv.bvid)}
+                                            <button
+                                                class="rl-bili-batch-cand"
+                                                class:is-cur={ci === r.picked}
+                                                data-tip={ci === r.picked ? '当前选中' : '换成这一条'}
+                                                on:click={() => void pickEpBiliBatchCand(idx, ci)}>
+                                                {#if cv.coverUrl}
+                                                    <img
+                                                        class="rl-bili-cover"
+                                                        src={cv.coverUrl}
+                                                        alt=""
+                                                        loading="lazy"
+                                                        referrerpolicy="no-referrer" />
+                                                {:else}
+                                                    <span class="rl-bili-cover rl-bili-cover-ph">
+                                                        <Icon icon="video" size={14} />
+                                                    </span>
+                                                {/if}
+                                                <span class="rl-bili-main">
+                                                    <span class="rl-bili-batch-name">{cv.title}</span>
+                                                    <span class="rl-bili-artist">{cv.author || '未知 UP 主'}</span>
+                                                </span>
+                                                {#if partCountLabel(r.partCounts[cv.bvid] ?? 0)}
+                                                    <span class="rl-bili-batch-parts">
+                                                        {partCountLabel(r.partCounts[cv.bvid] ?? 0)}
+                                                    </span>
+                                                {/if}
+                                            </button>
+                                        {/each}
+                                    </div>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
+                    <div class="rl-ep-edit-ops rl-bili-batch-ops">
+                        <button
+                            class="rl-bili-batch-btn is-primary"
+                            disabled={!batchCanFill}
+                            on:click={applyEpBiliBatchFill}
+                            data-tip="只填进本表单的集链接（仍要点表单的「保存」才落库）">
+                            填入勾中的 {batchPickedCount} 集
+                        </button>
+                    </div>
+                </div>
             {/if}
             <!-- 个人状态与评价——标题左移对齐"作品基础信息"首字（弹窗最左）；内容仍与"简介"label 同列 -->
             <div class="rl-section rl-section-left">个人状态与评价</div>
@@ -3794,12 +4282,11 @@ export let initialBookKind: BookKind | undefined = undefined;
     }
     .rl-ep-edit-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
     /* #404：浮层标题行 = 标题 + 同款小按钮（`.rl-ai-btn`）；标题自带的 10px 下边距收进这一行 */
-    .rl-ep-edit-head { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
-    .rl-ep-edit-head .rl-ep-edit-title { margin-bottom: 0; }
     .rl-ep-edit-row { display: flex; gap: 6px; margin-bottom: 6px; }
-    /* 🔴 #500⑥「标签 + 贴着它的小按钮」一行：某些浮层里那枚按钮作用的对象就是下面那个框
-       （书籍「文件路径」旁的「检索同名书籍」），挂在标签旁比挂在标题行更好找。
-       ⚠️ `.rl-lbl-inline` 平时是块级独占一行（下面直接跟一个框），进到这一行里必须收成 inline。 */
+    /* 🔴 #500⑥「标签 + 贴着它的小按钮」一行：那枚按钮作用的对象就是下面那个框
+       （#525 起用于集编辑浮层「网络地址」旁的「在 B 站搜索这一集」），挂在标签旁比挂在标题行更好找。
+       ⚠️ `.rl-lbl-inline` 平时是块级独占一行（下面直接跟一个框），进到这一行里必须收成 inline。
+       ⚠️ #523 撤掉的两个壳样式中，本次只恢复了**这一个**（标题行那个仍未回归）。 */
     .rl-edit-lblrow { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
     .rl-edit-lblrow .rl-lbl-inline { margin-bottom: 0; }
     .rl-ep-edit-input { flex: 1; min-width: 0; }

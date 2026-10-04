@@ -189,6 +189,54 @@ export function biliSearchError(parse: { code: number; message: string }): strin
     return `B 站搜索失败（code ${code}）`;
 }
 
+// ────────────── 检索词与重复链接（#517：点「第 N 集」要搜到第 N 集）──────────────
+//
+// 🔴 用户报障原话（2026-10-04）：「点第2集搜索不映射为第2集，还是这个：熊出没，而且搜索回来的
+//    填入后还是第1集已有链接的这个」——两个独立的毛病：
+//    ① 检索词**不随集切换重算**（两个入口都写成「空才算一次」）⇒ 用着上一集那份词；
+//    ② 检索词里**没有任何「第几集」信息**（集标题没填就退化成光秃秃的作品名）⇒ 搜出来还是整部剧。
+//    修完 ① 之后，② 由本函数兜底：**集标题为空时拿「第N集」补位**，让搜索直接指向当前集。
+//    ⚠️ 有集标题时**不追加集号**（`熊出没 新邻居` 比 `熊出没 第2集 新邻居` 更接近用户手打的词）——
+//       这是 2026-10-04 用户在三选一里挑的口径（另两档：一律带集号 / 不改检索词）。
+
+/**
+ * B站 检索词初值 = **作品标题 + 集标题**；集标题为空时用 **「第N集」** 补位。
+ * @param workTitle 作品标题（条目 title）
+ * @param epNo      当前集号（1 起）；**电影态传 0** ⇒ 不做集号补位（电影没有「第几集」这回事）
+ * @param epTitle   当前集标题（可为空）
+ * 🔴 **每次打开候选浮层都要重算**（⛔ 别缓存成「空才算」——那正是 ① 那个 bug）。
+ */
+export function biliEpisodeQuery(workTitle: string, epNo: number, epTitle: string): string {
+    const w = String(workTitle ?? '').trim();
+    const t = String(epTitle ?? '').trim();
+    const n = Number(epNo);
+    const no = Number.isFinite(n) && Math.floor(n) >= 1 ? Math.floor(n) : 0;
+    const parts = [w, t].filter((s) => !!s);
+    // 集标题缺位（且有作品名可依托、又确实是剧集态）⇒ 用集号补位，搜索才瞄得准当前集
+    if (w && !t && no > 0) parts.push(`第${no}集`);
+    return parts.join(' ');
+}
+
+/**
+ * 这条链接是否已被**别的集**占用 ⇒ 返回那个集的**集号**（1 起）；没有 ⇒ 0。
+ * 用于「单P 直填」那一步的提示：用户报障第 ② 条的典型形态就是**把第 1 集的链接又填进第 2 集**。
+ * 🔴 2026-10-04 用户裁定：**提示但仍照填**（⛔ 不是拦截 —— 用户可能就是要复用同一条链接）。
+ * @param selfIndex 当前集下标（**跳过它自己**；否则刚填进去的那条会被当成「别人在用」）
+ */
+export function urlUsedByOtherEp(
+    episodeUrls: readonly (string | undefined)[],
+    url: string,
+    selfIndex: number,
+): number {
+    const u = String(url ?? '').trim();
+    if (!u || !Array.isArray(episodeUrls)) return 0;
+    for (let i = 0; i < episodeUrls.length; i++) {
+        if (i === selfIndex) continue;
+        if (String(episodeUrls[i] ?? '').trim() === u) return i + 1;
+    }
+    return 0;
+}
+
 // ────────────────────── 分P（#505：把「一个 52 集的长篇」一次填完）──────────────────────
 //
 // 🔴 为什么需要它：搜索接口**不返回分P 数**（实测：20 条里没有任何字段能一眼认出 52 集）
@@ -298,11 +346,11 @@ export interface BiliFillRow {
     /** 分P 标题 */
     part: string;
     durationSec: number;
-    /** 目标集下标（**= 分P 在列表里的位置**；本仓铁律「数组下标 i = 第 i+1 集」） */
+    /** 目标集下标（= `anchor + 分P 在列表里的位置`；本仓铁律「数组下标 i = 第 i+1 集」） */
     epIndex: number;
     /** 目标集号（1 起，给人看的那个数） */
     epNo: number;
-    /** 目标集**不存在**（分P 比集数多）⇒ 该行禁用、不参与填入 */
+    /** 目标集**超出本条目集数** ⇒ 该行禁用、不参与填入 */
     outOfRange: boolean;
     /** 目标集**已经有链接**了 */
     hasUrl: boolean;
@@ -313,30 +361,49 @@ export interface BiliFillRow {
 /**
  * 分P 列表 + 当前条目的集链接数组 → 勾选表。
  *
- * 🔴 **对齐口径 = 按位置**（第 i 个分P ↔ 第 i 集），⛔ 不做「从分P 标题里抠集号」那种启发式：
- *    标题格式各家不同（`01赏花大会` / `第01集　　消失的记忆 上` / `03 植树英雄`），抠错了会
- *    **静默填错集**且用户难以发现；按位置至少和「合集从头开始」这个主流用法一致，且表里
- *    每行都标了目标集号，错位一眼可见（⚠️ 已知局限：`第41-52集` 这种「不从 1 开始」的分P
- *    会落到第 1~12 集 —— 用户可在表里逐行取消，见 UI-GUIDE §16.30）。
+ * 🔴 **对齐口径 = 按位置，且锚在「当前正在关联的那一集」**（`anchor`）：第 i 个分P ↔ 第 `anchor + i` 集。
+ *    2026-10-04 #518 用户裁定（原话：「返回的数据被错误地覆盖到了第1集，导致第1集的链接被替换成
+ *    第2集的链接，而第2集本身却是空的……第2集的数据写入第2集、第1集的数据保持不变，不得发生跨集覆盖」）：
+ *    三选一挑了**「一律锚当前集」**。理由 = **搜索词已经按当前集收敛**（#517：在第 2 集搜的是
+ *    「熊出没 第2集」）⇒ 拿回来的那条视频，它的 **P1 就是第 2 集本身**；旧口径写死 `anchor = 0`
+ *    （`epIndex = i`），于是 P1 被对齐到**第 1 集** ⇒ 一填入就**跨集覆盖**第 1 集、而第 2 集原地不动。
+ *    ⚠️ 锚在当前集 ⇒ **在第 1 集上行为逐字不变**（`anchor = 0`），「整季 52 集一次填完」那条主路径
+ *    只要从第 1 集进就完全不受影响。
+ *
+ * 🔴 ⛔ **仍不做「从分P 标题里抠集号」那种启发式**：标题格式各家不同（`01赏花大会` /
+ *    `第01集　　消失的记忆 上` / `03 植树英雄`），抠错了会**静默填错集**且用户难以发现；
+ *    按位置 + 每行都写出目标集号，错位一眼可见（见 UI-GUIDE §16.30）。
  *
  * 🔴 **已填过链接的集默认不勾**（用户 2026-10-03 裁定：「弹勾选让我选」）——
  *    ⇒ 既不静默跳过、也不静默覆盖，把决定权交给用户；勾上 = 覆盖。
+ *
+ * @param anchor        起始集下标（0 起）＝「当前正在关联的那一集」；缺省 0（= 从第 1 集起，兼容旧口径）
+ * @param totalEpisodes 本条目**总集数**（超出它的行判 `outOfRange`）；缺省 = `episodeUrls.length`
+ *                      🔴 #518：**别拿数组长度当集数** —— 条目存盘的数组是**瘦**的（只到最后一个已关联的集），
+ *                      而 `QuickAssociateModal` 从不补齐 ⇒ 旧写法把 P2~P52 全判成「超出集数」并禁用，
+ *                      第 2 集根本填不进去（用户报障的另一半）。集数一律由调用方**按本条目总集数**传进来。
  */
 export function buildBiliFillRows(
     parts: readonly BiliPart[],
     episodeUrls: readonly (string | undefined)[],
+    anchor = 0,
+    totalEpisodes?: number,
 ): BiliFillRow[] {
-    const total = Array.isArray(episodeUrls) ? episodeUrls.length : 0;
+    const list = Array.isArray(episodeUrls) ? episodeUrls : [];
+    const a = typeof anchor === 'number' && Number.isFinite(anchor) ? Math.max(0, Math.floor(anchor)) : 0;
+    const total = typeof totalEpisodes === 'number' && Number.isFinite(totalEpisodes)
+        ? Math.max(0, Math.floor(totalEpisodes))
+        : list.length;
     return (parts ?? []).map((p, i) => {
-        const epIndex = i;
-        const outOfRange = i >= total;
-        const hasUrl = !outOfRange && !!String(episodeUrls[i] ?? '').trim();
+        const epIndex = a + i;
+        const outOfRange = epIndex >= total;
+        const hasUrl = !outOfRange && !!String(list[epIndex] ?? '').trim();
         return {
             page: Number(p?.page) || i + 1,
             part: String(p?.title ?? ''),
             durationSec: Number(p?.durationSec) > 0 ? Math.round(Number(p.durationSec)) : 0,
             epIndex,
-            epNo: i + 1,
+            epNo: epIndex + 1,
             outOfRange,
             hasUrl,
             checked: !outOfRange && !hasUrl,

@@ -1865,20 +1865,11 @@ export default class ReelLudicPlugin extends Plugin {
             probeBook: (path) => this.probeBookPages(path),
             pickVideoDir: () => this.pickVideoDirPath(),
             scanEpisodeDir: (dir) => this.scanEpisodeDir(dir),
-            // 🔴 #406：音乐条目的「下载」「检索」两枚小按钮（与条目编辑表单同款同作用）——
-            //    两个能力都复用**既有单点实现**（下载弹窗 / 库内音频清单），⛔ 别另写一套。
-            openMusicDownloader: (t: string, a: string, onPicked: (relPath: string) => void) =>
-                this.openMusicDownloader(t, a, onPicked),
-            listLibraryAudio: () => this.listLibraryAudioFiles(),
-            // 🔴 #454：书籍条目的「下载」小按钮 —— 复用**同一个** `openBookDownloader`（书源通道；
-            //    文学 / 网文各开各的窗口由它内部按 kind 决定）。⛔ 别在这里或弹窗里另写第二套下载实现。
-            // 🔴 #468 封禁：门控为 false 时**不注入这个回调** —— `QuickAssociateModal.buildBookQuickButton`
-            //    见回调缺失就不画那枚按钮（它本来就是「可选回调 ⇒ 不画一个点了没反应的按钮」的写法）。
-            //    ⛔ 别改成注入空函数：那会画出一枚点了没反应的按钮。
-            openBookDownloader: BOOK_DOWNLOAD_ENABLED
-                ? (onPicked: (relPath: string) => void) =>
-                      this.openBookDownloader(onPicked, entry.bookKind === 'novel' ? 'novel' : 'book')
-                : undefined,
+            // 🔴 #521 撤除：本弹窗**不再挂**「下载 / 检索」小图标（#406 / #454 那两套回调随之删除）——
+            //    用户：「右键观看按钮浮窗网络链接按钮删除掉，干脆统一一下，书籍类游戏音乐也一样」。
+            //    这两件事在**编辑表单的标签行**上都有（同一份实现）⇒ ⛔ 不在两处重复提供。
+            //    ⚠️ 主程序那三个方法（`openMusicDownloader` / `listLibraryAudioFiles` / `openBookDownloader`）
+            //    **原样保留** —— `EntryModal`（完整编辑表单）那侧还在用，⛔ 别顺手删。
             // 🔴 #506：影视条目「网络地址」标签旁的 **B站 搜索小按钮**（用户报障：这个入口原先没有它）。
             //    复用**同一条链**：`main.dlBiliSearch` / `main.dlBiliView`（两步请求 + `buvid3` 缓存 +
             //    `Platform.isDesktopApp` 门控都在它们里面，⛔ 这里不再判平台、也 ⛔ 别另写一份请求）。
@@ -2460,8 +2451,16 @@ export default class ReelLudicPlugin extends Plugin {
         });
     }
 
-    /** 选视频文件夹（「从文件夹检索剧集」目录选择器）：系统 openDirectory；同样接续上次浏览目录 */
-    pickVideoDirPath(): Promise<string | undefined> {
+    /**
+     * 选**目录**（系统 `openDirectory`）—— 两个调用方共用这一份：
+     *   · 「从文件夹检索剧集」（视频批量填集）；
+     *   · 🔴 #524「检索本地书籍」（用户：「书籍检索文件目录给我**先弹出系统文件选择器让我选择目录**」）。
+     * 🔴 三态返回值（调用方要据此分流，⛔ 别拿 `!dir` 一把抓）：
+     *   `string` = 选中；`null` = **用户取消**；`undefined` = **本环境没有系统对话框**（非桌面端）——
+     *   后者要「能力回落」到别的检索范围，取消则应当**什么都不做**。
+     * ⚠️ 冷启动落点 = 上次浏览过的目录，其次 `fallbackDir`（调用方给该类的下载目录），最后系统默认。
+     */
+    pickDirPath(fallbackDir?: string): Promise<string | null | undefined> {
         if (!Platform.isDesktopApp) return Promise.resolve(undefined);
         return new Promise((resolve) => {
             try {
@@ -2476,10 +2475,10 @@ export default class ReelLudicPlugin extends Plugin {
                 void dialog
                     .showOpenDialog({
                         properties: ['openDirectory'],
-                        defaultPath: this.lastSystemDir || undefined,
+                        defaultPath: this.lastSystemDir || fallbackDir || undefined,
                     })
                     .then((res) => {
-                        const d = !res.canceled && res.filePaths[0] ? res.filePaths[0] : undefined;
+                        const d = !res.canceled && res.filePaths[0] ? res.filePaths[0] : null;
                         if (d) this.lastSystemDir = d;
                         resolve(d);
                     });
@@ -2487,6 +2486,51 @@ export default class ReelLudicPlugin extends Plugin {
                 resolve(undefined);
             }
         });
+    }
+
+    /** 选视频文件夹（「从文件夹检索剧集」）：⚠️ 只认「选中」与「没选」两态（取消 / 无对话框都当没选） */
+    async pickVideoDirPath(): Promise<string | undefined> {
+        const d = await this.pickDirPath();
+        return d || undefined;
+    }
+
+    /** 🔴 #524：选书籍目录（编辑表单「检索本地书籍」）—— 冷启动锚点 = 设置里的「书籍文件目录」 */
+    pickBookDirPath(): Promise<string | null | undefined> {
+        return this.pickDirPath(this.downloadDirSystemPath(this.settings.bookDownloadDir, 'book'));
+    }
+
+    /**
+     * 🔴 #524：列出**用户刚挑的那个目录**里的可关联书籍文件（支持子目录，深度 ≤ 4；忽略隐藏目录）。
+     *
+     * 用户：「书籍检索文件目录给我先弹出系统文件选择器让我选择目录」——原来只扫设置里那个
+     *   「书籍文件目录」（`listLibraryBookFiles`），书放在别处就找不到。
+     * ⚠️ 与 `listLibraryBookFiles()` 的分工：那条**读设置**（配置目录；也是非桌面端的回落路径）；
+     *   这条**只认传进来的目录**（库内、库外都行）。
+     * 返回的 `path` 与「浏览」同口径：库内 → 库内相对路径；库外 → 系统绝对路径（`toVaultRelPath` 认得出才转）。
+     * 目录不存在 / 不可读 / 非桌面 ⇒ `[]`（调用方提示，⛔ 不抛）。
+     */
+    async listBookFilesInDir(dir: string): Promise<LibraryBookFile[]> {
+        const d = String(dir ?? '').trim();
+        if (!d || !Platform.isDesktopApp) return [];
+        const out: LibraryBookFile[] = [];
+        try {
+            const fsMod = require('fs') as { readdirSync(p: string, o: { withFileTypes: true }): { name: string; isDirectory(): boolean }[] };
+            const sep = d.includes('/') ? '/' : '\\';
+            const walk = (abs: string, depth: number): void => {
+                if (depth > 4) return;
+                for (const ent of fsMod.readdirSync(abs, { withFileTypes: true })) {
+                    if (ent.name.startsWith('.')) continue;
+                    const child = `${abs.replace(/[\\/]+$/, '')}${sep}${ent.name}`;
+                    if (ent.isDirectory()) walk(child, depth + 1);
+                    else if (isAssociableBookPath(ent.name)) out.push({ path: this.toVaultRelPath(child), name: ent.name });
+                }
+            };
+            walk(d, 0);
+            out.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+        } catch {
+            return [];
+        }
+        return out;
     }
 
     /** 读视频文件夹内可识别集号的视频文件（快捷关联弹窗/编辑表单批量检索用）：过滤可关联容器扩展名 →

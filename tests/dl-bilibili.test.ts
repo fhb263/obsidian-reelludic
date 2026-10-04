@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     biliCheckedRows,
+    biliEpisodeQuery,
     biliSelectableRows,
     biliViewError,
     buildBiliFillRows,
@@ -19,6 +20,7 @@ import {
     parseBiliBuvid3,
     parseBiliDuration,
     parseBiliSearch,
+    urlUsedByOtherEp,
 } from 'pure/dl/bilibili';
 
 /** 真响应里抽出来的一条（含 `<em class="keyword">` 高亮、`&quot;` 实体、协议相对封面） */
@@ -351,7 +353,7 @@ describe('buildBiliFillRows（勾选表口径）', () => {
     const parts = (n: number) =>
         Array.from({ length: n }, (_, i) => ({ page: i + 1, title: `第 ${i + 1} 集`, durationSec: 100 }));
 
-    it('按位置对齐：第 i 个分P ↔ 第 i 集（epIndex = i、epNo = i + 1）', () => {
+    it('按位置对齐（**缺省锚 = 0**）：第 i 个分P ↔ 第 i 集（epIndex = i、epNo = i + 1）', () => {
         const rows = buildBiliFillRows(parts(3), [undefined, undefined, undefined]);
         expect(rows.map((r) => [r.epIndex, r.epNo, r.page])).toEqual([
             [0, 1, 1],
@@ -411,5 +413,137 @@ describe('buildBiliFillRows（勾选表口径）', () => {
         const rows = buildBiliFillRows([{ page: 1, title: '', durationSec: 0 }], [undefined]);
         expect(rows[0].part).toBe('');
         expect(rows[0].durationSec).toBe(0);
+    });
+});
+
+// #517（2026-10-04 用户报障）：「点第2集搜索不映射为第2集，还是这个：熊出没，而且搜索回来的
+// 填入后还是第1集已有链接的这个」——检索词要带当前集、单P 直填要认得出重复。
+describe('biliEpisodeQuery（#517 检索词初值）', () => {
+    it('有集标题 ⇒ 作品标题 + 集标题（**⛔ 不追加集号**，用户三选一挑的口径）', () => {
+        expect(biliEpisodeQuery('熊出没', 2, '新邻居')).toBe('熊出没 新邻居');
+        expect(biliEpisodeQuery('熊出没', 1, '开始')).toBe('熊出没 开始');
+    });
+
+    it('🔴 集标题为空 ⇒ 用「第N集」补位（这就是「映射为第2集」）', () => {
+        expect(biliEpisodeQuery('熊出没', 2, '')).toBe('熊出没 第2集');
+        expect(biliEpisodeQuery('熊出没', 11, '   ')).toBe('熊出没 第11集');
+    });
+
+    it('电影态（epNo = 0）⇒ 不做集号补位（电影没有「第几集」这回事）', () => {
+        expect(biliEpisodeQuery('让子弹飞', 0, '')).toBe('让子弹飞');
+    });
+
+    it('集标题有值 + epNo 非法 ⇒ 照旧只拼已有字段（⛔ 不编集号）', () => {
+        expect(biliEpisodeQuery('熊出没', 0, '新邻居')).toBe('熊出没 新邻居');
+        expect(biliEpisodeQuery('熊出没', Number.NaN, '新邻居')).toBe('熊出没 新邻居');
+    });
+
+    it('作品标题为空 ⇒ 空串（宿主那侧照样给「先填检索词」的提示，⛔ 别只搜「第2集」）', () => {
+        expect(biliEpisodeQuery('', 2, '')).toBe('');
+        expect(biliEpisodeQuery('   ', 2, '')).toBe('');
+    });
+
+    it('只有集标题（作品标题空）⇒ 就它自己（与旧口径一致）', () => {
+        expect(biliEpisodeQuery('', 2, '新邻居')).toBe('新邻居');
+    });
+
+    it('两侧多余空白被归一（结果可直接当检索词用）', () => {
+        expect(biliEpisodeQuery('  熊出没  ', 2, '  ')).toBe('熊出没 第2集');
+    });
+});
+
+describe('urlUsedByOtherEp（#517 单P 直填的重复提示）', () => {
+    const U1 = 'https://www.bilibili.com/video/BV1';
+    const U2 = 'https://www.bilibili.com/video/BV2';
+
+    it('🔴 别的集占着同一条 ⇒ 回那个集的集号（1 起）', () => {
+        expect(urlUsedByOtherEp([U1, undefined, undefined], U1, 1)).toBe(1);
+        expect(urlUsedByOtherEp([U1, undefined, U2], U2, 1)).toBe(3);
+    });
+
+    it('🔴 **跳过自己**（刚填进去的那条不算「别人在用」）', () => {
+        expect(urlUsedByOtherEp([U1, U1], U1, 1)).toBe(1); // 第 1 集在用 ⇒ 报 1
+        expect(urlUsedByOtherEp([undefined, U1], U1, 1)).toBe(0); // 只有自己在用 ⇒ 不报
+    });
+
+    it('没人用 / 链接为空 / 数组不是数组 ⇒ 0', () => {
+        expect(urlUsedByOtherEp([U1, undefined], U2, 0)).toBe(0);
+        expect(urlUsedByOtherEp([U1], '', 0)).toBe(0);
+        expect(urlUsedByOtherEp([U1], '   ', 0)).toBe(0);
+        expect(urlUsedByOtherEp(undefined as unknown as string[], U1, 0)).toBe(0);
+    });
+
+    it('空白串不算占用（与「trim 后才算填过」同口径）', () => {
+        expect(urlUsedByOtherEp(['  ', undefined], U1, 1)).toBe(0);
+    });
+});
+
+// #518（2026-10-04 用户报障）：「搜索『熊出没 第2集』时……返回的数据被错误地覆盖到了第1集，
+// 导致第1集的链接被替换成第2集的链接，而第2集本身却是空的」——锚点必须跟着**当前集**走，
+// 且集数必须按**本条目总集数**算（⛔ 不是瘦数组的长度）。
+describe('buildBiliFillRows 的锚点与集数（#518 跨集覆盖修复）', () => {
+    const parts = (n: number) =>
+        Array.from({ length: n }, (_, i) => ({ page: i + 1, title: `第 ${i + 1} 集`, durationSec: 100 }));
+
+    it('🔴 锚在当前集：在第 2 集（anchor = 1）选的视频，P1 落到**第 2 集**', () => {
+        const rows = buildBiliFillRows(parts(2), [undefined, undefined, undefined], 1, 3);
+        expect(rows.map((r) => [r.epIndex, r.epNo, r.page])).toEqual([
+            [1, 2, 1],
+            [2, 3, 2],
+        ]);
+    });
+
+    it('🔴 在第 2 集关联时，⛔ **不许碰第 1 集**（第 1 集已有链接 → 一行都不指向它）', () => {
+        const rows = buildBiliFillRows(parts(2), ['https://ep1', undefined, undefined], 1, 3);
+        expect(rows.some((r) => r.epIndex === 0)).toBe(false);
+        expect(rows.map((r) => r.hasUrl)).toEqual([false, false]);
+    });
+
+    it('🔴 anchor = 0 时与旧口径**逐字一致**（第 1 集那条「整季一次填完」主路径不受影响）', () => {
+        const rows = buildBiliFillRows(parts(3), [undefined, undefined, undefined]);
+        expect(rows.map((r) => [r.epIndex, r.epNo])).toEqual([
+            [0, 1],
+            [1, 2],
+            [2, 3],
+        ]);
+    });
+
+    it('🔴 集数按**本条目总集数**算，⛔ 不是数组长度：瘦数组（只关联了第 1 集）不再把 P2/P3 判成超出集数',
+        () => {
+            const rows = buildBiliFillRows(parts(3), ['https://ep1'], 0, 3);
+            expect(rows.map((r) => r.outOfRange)).toEqual([false, false, false]);
+            expect(rows.map((r) => r.hasUrl)).toEqual([true, false, false]);
+            expect(rows.map((r) => r.checked)).toEqual([false, true, true]);
+        });
+
+    it('⚠️ 不给集数（旧 2 参调用）仍回落到数组长度（向后兼容）', () => {
+        const rows = buildBiliFillRows(parts(3), ['https://ep1']);
+        expect(rows.map((r) => r.outOfRange)).toEqual([false, true, true]);
+    });
+
+    it('锚点 + 分P 数越过本条目集数 ⇒ 后面的行 outOfRange（禁用、不勾、不进填入）', () => {
+        const rows = buildBiliFillRows(parts(4), [undefined, undefined, undefined], 1, 3);
+        expect(rows.map((r) => r.epIndex)).toEqual([1, 2, 3, 4]);
+        expect(rows.map((r) => r.outOfRange)).toEqual([false, false, true, true]);
+        expect(biliCheckedRows(rows)).toHaveLength(2);
+        expect(biliSelectableRows(rows)).toHaveLength(2);
+    });
+
+    it('锚点非法（负数 / NaN / 非数字）⇒ 归 0（⛔ 不产生负下标）', () => {
+        expect(buildBiliFillRows(parts(1), [undefined], -3)[0].epIndex).toBe(0);
+        expect(buildBiliFillRows(parts(1), [undefined], Number.NaN)[0].epIndex).toBe(0);
+        expect(buildBiliFillRows(parts(1), [undefined], undefined as unknown as number)[0].epIndex).toBe(0);
+    });
+
+    it('总集数非法（NaN / 负数）⇒ 回落到数组长度（⛔ 不产生「全禁用」的空表）', () => {
+        expect(buildBiliFillRows(parts(1), [undefined], 0, Number.NaN).map((r) => r.outOfRange)).toEqual([false]);
+        expect(buildBiliFillRows(parts(1), [undefined], 0, -5).map((r) => r.outOfRange)).toEqual([true]);
+    });
+
+    it('🔴 「已填过链接的目标集默认不勾」这条口径**跟着锚点走**（不是只认第 1 集）', () => {
+        const rows = buildBiliFillRows(parts(2), ['https://ep1', 'https://ep2', undefined], 1, 3);
+        expect(rows[0].hasUrl).toBe(true);
+        expect(rows[0].checked).toBe(false);
+        expect(rows[1].checked).toBe(true);
     });
 });

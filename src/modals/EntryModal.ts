@@ -1,5 +1,5 @@
 // 添加/编辑条目弹窗（Douban/TMDB/Bangumi 搜索回填 + 手动覆盖）
-import { App, Modal, Notice, Platform, TFile, normalizePath } from 'obsidian';
+import { App, Modal, Notice, TFile, normalizePath } from 'obsidian';
 import EntryForm from 'views/components/EntryForm.svelte';
 import type ReelLudicPlugin from '../../main';
 import type { TmdbSearchResult } from 'services/tmdb';
@@ -17,8 +17,6 @@ import type { BookKind } from 'data/types';
 import type { AiSummaryInput } from 'pure/aiSummary';
 import type { AiPrefillInput } from 'pure/aiPrefill';
 import type { LyricSourceId } from 'pure/lyricOnline';
-import type { SourceKind } from 'pure/sourceRule';
-import { BOOK_DOWNLOAD_ENABLED } from 'pure/featureGate';
 
 export class EntryModal extends Modal {
     private form: EntryForm | null = null;
@@ -234,6 +232,9 @@ export class EntryModal extends Modal {
                 /** 编辑表单书籍「浏览」：系统文件选择器选 TXT/EPUB，返回 vault 相对路径 */
                 onPickBookFile: () => this.plugin.pickBookFilePath(),
                 onPickVideoDir: () => this.plugin.pickVideoDirPath(),
+                /** 🔴 #524 编辑表单「检索本地书籍」：**先弹系统目录选择器**，再在选中的目录里找同名书籍 */
+                onPickBookDir: () => this.plugin.pickBookDirPath(),
+                onListBookFilesInDir: (dir: string) => this.plugin.listBookFilesInDir(dir),
                 onScanEpisodeDir: (dir: string) => this.plugin.scanEpisodeDir(dir),
                 /** 书籍「进度页数」自动关联：探针本地书籍文件基准（PDF → numPages；TXT → 按章节解析 totalChapters；EPUB/失败 → undefined） */
                 onProbeBookPages: (path: string) => this.plugin.probeBookPages(path),
@@ -293,47 +294,11 @@ export class EntryModal extends Modal {
                 canDownload: this.plugin.canUseAudioDownload(),
                 onOpenDownloader: (t: string, a: string, onPicked: (relPath: string) => void) =>
                     this.plugin.openMusicDownloader(t, a, onPicked),
-                /**
-                 * 🔴 #414 书籍下载：门控**只有桌面端**（书籍面没有对应的功能开关；与音乐那枚不同，
-                 *    ⛔ 别把 `audioInlinePlayer` 套过来，那是音乐面的开关）。
-                 * 🔴 #468 封禁：门控真源上移到 `pure/featureGate.BOOK_DOWNLOAD_ENABLED`（用户 2026-10-01
-                 *    「把下载网文和文学类的入口都封禁掉…规划到未来再解禁」）⇒ 表单那枚
-                 *    「下载网文 / 下载文学」按钮不再渲染。解禁 = 翻那一个布尔值，⛔ 别在这里另写条件。
-                 *    ⚠️ 桌面端判据**保留在右侧**（两件同时成立才给按钮）。
-                 */
-                canDownloadBook: BOOK_DOWNLOAD_ENABLED && Platform.isDesktopApp,
-                /** #422：`kind` 由表单按当前 `bookKind` 给出（文学 / 网文），决定弹窗优先用哪一类书源
-                 *  ⛔ #422 续四：`title` / `author` 两个参数已随「粘贴直链」删除（那只为直链预填文件名） */
-                onOpenBookDownloader: (onPicked: (relPath: string, tocText?: string) => void, kind: SourceKind) =>
-                    this.plugin.openBookDownloader(onPicked, kind),
-                /**
-                 * 🔴 #414 下载后**自动关联到条目**（与上面 `onApplyAudio` 同一口径）：
-                 *    编辑态写回 catalog 的 `bookFile`（按字段合并，不会冲掉表单里未提交的改动）；
-                 *    新增态还没有条目 ⇒ 静默返回（仍走「保存」提交，表单框已由 `onPicked` 填好）。
-                 *    ⚠️ 笔记被外部改过时**不重写**（与 `onSubmit` 的冲突口径一致）。
-                 * 🔴 P1-C 追加 `tocText`：章节名清单 —— **只在文学条目**给得到（网文按 09-13 裁定不带
-                 *    出版目录，表单连框都不渲染、保存时还会清空）。⚠️ 没给就**不碰这个字段**：
-                 *    `update` 是按字段合并，写 `undefined` 等于把存量 `toc` 清掉。
-                 */
-                onApplyBook: async (relPath: string, tocText?: string) => {
-                    const target = this.entry;
-                    if (!target) return;
-                    try {
-                        await this.plugin.service.update(
-                            target.id,
-                            tocText ? { bookFile: relPath, toc: tocText } : { bookFile: relPath },
-                        );
-                        target.bookFile = relPath;
-                        if (tocText) target.toc = tocText;
-                        if (target.notePath && !(await this.plugin.service.noteWasExternallyModified(target.id))) {
-                            await this.plugin.service.writeNote(target.id);
-                        }
-                        await this.plugin.refreshViews();
-                        new Notice(`已关联到「书籍文件」：${relPath}`, 4000);
-                    } catch (e) {
-                        new Notice(`书籍已下载，但写回条目失败：${e instanceof Error ? e.message : String(e)}`, 5000);
-                    }
-                },
+                /* 🔴 #523：书籍下载那一套接线（两个门控 prop + 一个写回回调）按用户 2026-10-04 裁定
+                   「下载只保留音乐」**整块撤除** —— 书籍「路径」旁不再有下载按钮（门控真源 `pure/featureGate`
+                   的封禁清单已同步改写）。⚠️ 下载实现本体（`BookDownload.svelte` / 插件那支 open…Downloader
+                   方法 / 书源服务）与两条命令面板入口原样保留；「库内同名书籍检索」照旧注入。
+                   ⚠️ 被删那三处标识符的全名**刻意不写**：注释会进产物，抄了会撞红反向守卫（本仓老坑）。 */
                 /**
                  * #404：**库内音乐目录**下的音频清单（「本地音频」浮层里那枚「检索同名音频」按钮用）。
                  * 🔴 目录与扩展名真源都在宿主（`listLibraryAudioFiles`）—— 组件只拿去和条目标题比对，
