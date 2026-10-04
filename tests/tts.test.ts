@@ -180,7 +180,8 @@ describe('buildTtsMenu（#344 对象参数：音源下拉恒在；系统=音调+
         const off = buildTtsMenu(mk({ engine: 'system', cloudReady: false }));
         const cloudItem = off[0].select?.find((c) => c.value === 'cloud');
         expect(cloudItem?.disabled).toBe(true);
-        expect(cloudItem?.hint).toContain('API凭据');
+        // 🔴 #483：AI 集成那组改名（API凭据 → 模型服务）⇒ 提示里的路径必须跟着改，⛔ 不能指向不存在的入口
+        expect(cloudItem?.hint).toContain('模型服务');
 
         const ready = buildTtsMenu(mk({ engine: 'cloud', cloudReady: true, cloudVoices: [{ key: 'male', label: '男声', items: [] }] }));
         expect(ready[0].select?.find((c) => c.value === 'cloud')?.disabled).toBe(false);

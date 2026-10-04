@@ -39,9 +39,9 @@ export interface SegOption<T> {
 /** 字体（#351 新增设置）：`default` = 跟随宿主/主题，不写 font-family */
 export const FONT_FAMILY_OPTIONS: readonly SegOption<ReaderFontFamily>[] = [
     // #351e 用户口径：标签由「系统默认」收成「默认」（这一行改成纯字变色切换后，四项要能在一行里排下）
-    { value: 'default', label: '默认', tip: '跟随 Obsidian 当前字体' },
+    { value: 'default', label: '默认', tip: '跟随 Obsidian 字体' },
     { value: 'sans', label: '无衬线', tip: '黑体类，屏幕阅读更利落' },
-    { value: 'serif', label: '衬线', tip: '宋体/Georgia 类，长文更省力' },
+    { value: 'serif', label: '衬线', tip: '衬线体（长文省力）' },
     { value: 'mono', label: '等宽', tip: '等宽字体，对齐感强' },
 ];
 

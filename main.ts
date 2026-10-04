@@ -1,7 +1,8 @@
 // ReelLudic 插件入口：命令/视图/设置注册 + 服务编排
-import { Plugin, WorkspaceLeaf, MarkdownView, requestUrl, TFile, TFolder, normalizePath, parseLinktext, Notice, Platform, moment, type FileSystemAdapter } from 'obsidian';
+import { Plugin, WorkspaceLeaf, MarkdownView, MarkdownRenderChild, requestUrl, TFile, TFolder, normalizePath, parseLinktext, Notice, Platform, moment, type FileSystemAdapter, type MarkdownPostProcessorContext } from 'obsidian';
 import { DEFAULT_SETTINGS, ReelLudicSettingTab } from 'Settings';
 import type { ReelLudicSettings, SourceTestResult } from 'Settings';
+import { BOOK_DOWNLOAD_ENABLED } from 'pure/featureGate';
 import { measure, withTimeout, TimedError, TIMEOUT_MS, retry } from 'pure/timing';
 import { CLOUD_VOICE_DEFAULT, buildSpeechBody, classifySpeechError, speechEndpointUrl } from 'pure/ttsCloud';
 import { createSearchCache } from 'pure/searchCache';
@@ -9,7 +10,16 @@ import { normalizeUiTheme, THEME_CLASS } from 'pure/themeTokens';
 import { checkAnimeUpdate, isBlockedPage, type UpdateCheckResult } from 'pure/updateCheck';
 import { EntryService } from 'services/EntryService';
 import { AiSummaryService } from 'services/aiSummary';
+import { LrcBilingualService } from 'services/lrcBilingual';
 import type { AiSummaryInput, AiSummaryResult } from 'pure/aiSummary';
+import type { LrcBilingualMerge } from 'pure/lrcBilingual';
+// #499 AI 条目预填（新增条目「手动填写」界面标题行 ✨）
+import { AiPrefillService } from 'services/aiPrefill';
+import type { AiPrefillOutcome } from 'services/aiPrefill';
+import type { AiPrefillInput } from 'pure/aiPrefill';
+import { PREFILL_SYNOPSIS_PREFIX, PREFILL_TOOL_METADATA, PREFILL_TOOL_WEB_SEARCH } from 'pure/aiPrefill';
+import { BING_SEARCH_UA, bingResultsToText, buildBingRssUrl, parseBingRss } from 'pure/bingSearch';
+import { describeSearchResult, synopsisOf } from 'pure/searchDisplay';
 import { createVaultIO } from 'services/vaultIO';
 import { TmdbClient, type TmdbDetail, type TmdbSearchResult } from 'services/tmdb';
 import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
@@ -17,6 +27,7 @@ import { BangumiClient, type BangumiSearchResult } from 'services/bangumi';
 import { DoubanClient, DoubanCookieError, toTmdbResult, toBookResult, toGameResult, toMusicResult, toBangumiResult, toEntryDetailFields, type DoubanSubject } from 'services/douban';
 import { OpenLibraryClient } from 'services/openLibrary';
 import { GoogleBooksClient, buildSearchUrl } from 'services/googleBooks';
+import { MangaDexClient } from 'services/mangadex';
 import { SteamClient } from 'services/steam';
 import { MusicBrainzClient } from 'services/musicbrainz';
 import { ItunesClient } from 'services/itunes';
@@ -30,9 +41,82 @@ import {
 } from 'pure/activityFeed';
 import type { ActivityEvent } from 'data/types';
 import { nodeHttpGet, nodeHttpPost, nodeHttpGetBuffer } from 'services/nodeHttp';
+import { fetchLyric, searchLyrics, type LyricFetchOutcome, type LyricSearchOutcome } from 'services/lyricSearch';
+// 四平台下载面（#399-D 移植批）：搜索 / 歌单 / 下载 / 连通性测试全在 `services/dl`
+import {
+    DL_SEARCH_ORDER,
+    dlDownloadSong,
+    dlPlaylistSongs,
+    dlPreviewAudio,
+    dlRecommendedPlaylists,
+    dlSearch,
+    neteaseCoversByIds,
+    dlTestConnection,
+    type DlPreviewResult,
+    type DlTransport,
+    type DownloadProgressCallback,
+    type DownloadSong,
+    type PlaylistSource,
+    type RecommendedPlaylist,
+} from 'services/dl';
+import { MusicDownloadModal } from 'modals/MusicDownloadModal';
+// #496 B 站：搜索两步请求在 `services/dl/bilibili`，起 yt-dlp 进程在 `services/ytdlp`
+// 🔴 两者都不在 `services/dl` 里 —— 那边是**四平台音乐**（直连音频流），这边是**视频站 + 外部进程**，
+//    混进去会让「四平台」这条链路的职责说不清。
+import { dlBiliSearch, dlBiliView } from 'services/dl/bilibili';
+import { defaultYtDlpDeps, fetchBiliAudioWithYtDlp } from 'services/ytdlp';
+import type { BiliPart, BiliVideo } from 'pure/dl/bilibili';
+import { buildSongFilename } from 'pure/dl/utils';
+// #414 书籍下载（**#417 起 = 用户自备来源**；**#422 续四 起只剩「书源」一条通道** —— 「粘贴直链」已撤）
+// 🔴 #433：文学 / 网文**各一个窗口**（薄壳共用一个基类）
+import { BookDownloadModal, LiteratureDownloadModal, NovelDownloadModal } from 'modals/BookDownloadModal';
+// #419 网文书源（**SoNovel 格式，书源由用户自备** —— 用户 2026-09-28 裁定「按参考软件做」）
+import { groupSourcesByKind, mergeSources, moveAllSourcesToKind, parseSourceJson, sourceKey, sourceKindOf, sourceSummary, type NovelSource, novelFailText, type SourceKind } from 'pure/sourceRule';
+// #432 甲：源生命周期（订阅 / 粘贴 / 体检）—— 清单解析、拉取、体检汇总三处真源
+import { parseSourcePack, type SourcePackSkipped } from 'pure/sourcePack';
+import { fetchSourceText, fetchSourceTexts } from 'services/sourceFetch';
+import { SOURCE_HEALTH_KEYWORD, sourceCheckWorkers, type SourceCheckResult } from 'pure/sourceCheck';
+// 🔴 #431：`novelTocPreview` = 章节名写回「目录」时的**裁断唯一出口**（前 10 章 + `....`）
+import { buildNovelTxt, failedChaptersText, novelBookFilename, novelTocPreview } from 'pure/novelPack';
+// 🔴 #428 取消令牌：抓章那一路的可中断等待（真源 `pure/cancel`）—— 「点了取消没反应」的解法
+import { CancelledError, createCancelToken, raceCancel, type CancelToken } from 'pure/cancel';
+// 🔴 P1-C 断点续传：存档的 schema / 容错解析 / 命名与路径全在 `pure/chapterPlan`（宿主只管读写 + append 一行一章）
+import {
+    chaptersFingerprint,
+    parseResume,
+    resumeChapterLine,
+    resumeDir,
+    resumeFileName,
+    resumeMatches,
+    resumeMetaLine,
+    resumePath,
+    type ResumeChapter,
+    type ResumeMeta,
+} from 'pure/chapterPlan';
+// #420 P1-B：EPUB 合成（纯逻辑出文件清单 + 服务层打 zip，mimetype 首条且 STORED 有字节级自检）
+import { epubFileList, isoUtc } from 'pure/epubPack';
+import { zipEpub } from 'services/epubWriter';
+// #421 书源导入的**唯一**文件选择实现（设置页与下载弹窗共用）
+// #425：文件选择搬去了调用方（设置页 `services/filePick` / 弹窗 Svelte 模板）——
+// 宿主那条「自己弹文件框」的方法随之退场（文件框必须挂调用方自己的 DOM），import 也一并去掉。
+// ⚠️ 说明里**不写那个方法的名字**：产物不剥注释，而反向守卫正拿它核「有没有长回来」（本仓老坑）。
+import {
+    NOVEL_SOURCE_HEADERS,
+    fetchNovelChapters,
+    fetchNovelTocOrWhole,
+    searchNovelSource,
+    searchNovelSources,
+    type NovelFetch,
+    type NovelSearchHit,
+    type NovelSourceSearchResult,
+    type NovelTocItem,
+} from 'services/novelSource';
+import type { LyricSourceId } from 'pure/lyricOnline';
 import { HomeView, HOME_VIEW_TYPE } from 'views/HomeView';
 import type { HomeTab } from 'views/tab';
 import { EntryModal } from 'modals/EntryModal';
+import { SeriesPickerModal } from 'modals/SeriesPickerModal';
+import type { SeriesGroup } from 'pure/seriesGroup';
 import { ConfirmModal } from 'modals/ConfirmModal';
 import { LinkPickerModal } from 'modals/LinkPickerModal';
 import { EpisodePickerModal } from 'modals/EpisodePickerModal';
@@ -70,7 +154,7 @@ import {
     withProgress,
     type ReaderStore,
 } from 'pure/readerStore';
-import { buildTranslateBody, buildTranslatePingBody, parseTranslateResponse, translateChatUrl, normalizeProvider, normalizeAiChoice, AI_PROVIDER_OFF, type AiProviderChoice, type TranslateProvider, type TranslateRequestBody } from 'pure/translate';
+import { buildTranslateBody, buildTranslatePingBody, pickPingModel, parseAiReply, aiHttpIssue, providerLabel, resolveModel, translateChatUrl, modelsUrl, parseModelList, normalizeProvider, normalizeAiChoice, aiKeyField, AI_PROVIDER_OFF, type AiProviderChoice, type TranslateProvider, type TranslateRequestBody, type ModelFetched } from 'pure/translate';
 import { buildSearchBody, buildSearchQuestionBody } from 'pure/readerSearch';
 import { parseTxtBook } from 'pure/txtParse';
 import { decodeTxtBytes } from 'pure/txtEncoding';
@@ -91,13 +175,38 @@ import { sanitizePosterTitle } from 'pure/posterFile';
 import { buildOrphanAssets, entryAssetPlan, type OrphanAsset } from 'pure/orphanAssets';
 import { imageSizeFromBytes } from 'pure/imageSize';
 import { toFileUrl } from 'pure/mediaFileUrl';
-import { isEmbeddableVideoPath, VIDEO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
+import { isEmbeddableVideoPath, isAssociableAudioPath, VIDEO_ASSOCIABLE_EXTENSIONS, AUDIO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
+import type { MediaInfo } from 'pure/mediaInfo';
+// #404「库内音乐目录里找回同名音频」：目录真源 `downloadDir` + 匹配纯模块
+import { downloadDir, downloadDirAbsPath, downloadRelPath, downloadSizeIssue, migrateLegacyDownloadDir, type DownloadKind } from 'pure/downloadPlan';
+import type { LibraryAudioFile } from 'pure/libraryAudio';
+// #497「改名关联的音频文件」：路径拆分 / 校验 / 目标 .lrc 路径的唯一真源
+import { planAudioRename } from 'pure/renameAudio';
+// #498「从网络搜索封面」：请求地址 / 解析 / 缩略图回退链 / 下载 Referer 的唯一真源
+import { posterReferer, type PosterCandidate } from 'pure/posterSearch';
+import { searchPosterImages, POSTER_UA } from 'services/posterSearch';
+// #509：封面来源（网络搜索 + 四大音乐平台）与「平台封面→大图」的实测规则
+import { platformCandidates, type PosterSource } from 'pure/posterSources';
+// #417「库内找回同名书籍文件」：白名单真源走 `downloadPlan`，匹配纯模块是 `libraryBooks`
+import { isAssociableBookPath, type LibraryBookFile } from 'pure/libraryBooks';
+// #464 在线曲库：四平台搜歌结果 → 音乐结果卡片（纯映射；请求复用 `dlSearchSongs`）
+import { songLibraryResults, SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
 import { dirOfPath, fileNameOfPath, pickSubtitleCandidates, srtToVtt, type SubtitleCandidate } from 'pure/subtitle';
 import { scanEpisodeNumbers } from 'pure/episodeScan';
 import { initGlobalTooltip } from 'services/globalTooltip';
 import { VideoPlayerView, VIDEO_PLAYER_VIEW_TYPE, type EmbedVideoItem, type VideoPlayerOptions } from 'views/VideoPlayerView';
+// ④-4 内置音频播放器：视图 + 可复用装配层（笔记内 ` ```lrc ` 块共用同一套 DOM）
+import { AudioPlayerView, AUDIO_PLAYER_VIEW_TYPE, type AudioPlayerOptions } from 'views/AudioPlayerView';
+import { AudioInlineBlock, type AudioPlayerTrack } from 'views/audioPlayerMount';
+// ④ 歌词：四路来源优先级与 ` ```lrc ` 块围栏口径的唯一真源（生成侧 noteGenerator 与消费侧播放器共用）
+import { extractLrcBlock, parseLrcBlock, parseLrcRef, pickLyrics, siblingLrcPath, type LrcBlock, type LrcLyricsOrigin } from 'pure/lrcSource';
+import { readEmbeddedLyrics } from 'pure/embeddedLyrics';
+import { normalizeAudioPlayMode, playersToPause, type PlayerKind } from 'pure/audioQueue';
+import { clampAudioVolume } from 'pure/audioVolume';
+import { fileDisplayName } from 'pure/libraryDir';
 import { mergeBySource, sortByRelevance } from 'pure/searchMerge';
-import { PROVIDER_META, resolveSourceChain, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
+import { PROVIDER_META, resolveSourceChain, sourceGroupForBookKind, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
+import { audioSubtitle } from 'pure/cardMeta';
 import type { BookKind } from 'data/types';
 import { DIR_NOTES, DIR_COVERS, DIR_BACKUPS, DIR_REPORTS, typeDir, LEGACY_TYPE_DIR_ZH, relocateLegacyNotePath } from 'pure/dirs';
 import { migrateNovelNotes } from 'services/novelMigration';
@@ -166,6 +275,13 @@ interface ReaderStoreMem {
 /** 进度落盘的合并窗口（ms）：滚动期间最多 1 写/秒（KOReader 式内存态 + 合并落盘，压住写放大） */
 const READER_STORE_FLUSH_MS = 1000;
 
+/**
+ * LyricFlux 的插件 ID（④-4「笔记内 lrc 块」让位判定用）。
+ * 它也注册同名 `lrc` 代码块处理器（`LyricsMarkdownRender`）⇒ 两边同时接管会画出两个播放器。
+ * 取自其 `manifest.json` 的 `id`（⛔ 不是显示名「LyricFlux」）。
+ */
+const LYRICFLUX_PLUGIN_ID = 'obsidian-lyricflux';
+
 export default class ReelLudicPlugin extends Plugin {
     settings: ReelLudicSettings = DEFAULT_SETTINGS;
     service!: EntryService;
@@ -173,6 +289,8 @@ export default class ReelLudicPlugin extends Plugin {
     private bangumi!: BangumiClient;
     private openLibrary!: OpenLibraryClient;
     private googleBooks!: GoogleBooksClient;
+    /** 漫画源（2026-09-30 接入，用户裁定）：MangaDex 免 Key，走 comic 组的第三源 */
+    private mangadex!: MangaDexClient;
     private steam!: SteamClient;
     private musicbrainz!: MusicBrainzClient;
     private itunes!: ItunesClient;
@@ -184,8 +302,13 @@ export default class ReelLudicPlugin extends Plugin {
     private readonly searchCache = createSearchCache<unknown>({ ttlMs: 30 * 60 * 1000, maxSize: 200 });
     /** sourceChains 上次持久化基线（JSON 串）：链配置变更时清搜索/更新检测缓存（见 saveSettings）。onload 时以磁盘加载值初始化 */
     private sourceChainBaselineJson = '';
-    /** 系统文件/目录选择器上次选中目录（会话级记忆）：逐集「浏览…」/批量检索接续上次位置（defaultPath） */
+    /** 系统文件/目录选择器上次选中目录（会话级记忆）：逐集「浏览」/批量检索接续上次位置（defaultPath） */
     private lastSystemDir = '';
+    /** #462 本地音频「体积 + 时长」探测缓存（按路径）：hover 是高频动作，同一文件只探一次
+     *  （⚠️ 会话内不失效 —— 文件被替换后数字会旧；探一次的成本远低于每次重探，且旧数字不影响使用） */
+    private readonly audioInfoCache = new Map<string, MediaInfo>();
+    /** ④-4 音频播放器：上一次播放的条目（命令面板「在标签页/侧边栏打开」用它重建队列） */
+    private lastAudioEntry: MediaEntry | null = null;
     /** 笔记内块锚点链接 → 该书阅读器 leaf（M1 双向溯源：同一本书不重复开标签，D-4）；用前按 getLeavesOfType 校验存活 */
     private readonly readerLeaves = new Map<string, WorkspaceLeaf>();
     /**
@@ -242,10 +365,25 @@ export default class ReelLudicPlugin extends Plugin {
         await this.migrateProgressFileNames();
         this.rebuildClients();
 
+        // 🔴 #459 下载目录**一次性**迁移（与「填了『下载/音乐』却多出『下载/音乐/音乐』」同一批）。
+        //   本批起「音频文件目录 / 书籍文件目录」的值 = **目录本身**（`downloadDir` 不再拼子目录），
+        //   而存量值里有一批是**旧缺省 `下载`**（那时它是「下载根」，实际落盘 = `下载/音乐`）
+        //   ⇒ 不迁就会把新文件落到 `下载/`，与已下好的 `下载/音乐/**` 分家、且「检索同名音频」扫的是
+        //     同一份目录（`listLibraryAudioFiles`）⇒ 用户看到「以前下的歌全搜不到了」。
+        //   ⚠️ **只跑一次**（标记位）：用户完全可能**故意**填 `下载`（就想都放一处），
+        //      每次载入都改 = 用户改不回去。
+        if (!this.settings.downloadDirMigrated) {
+            this.settings.musicDownloadDir = migrateLegacyDownloadDir(this.settings.musicDownloadDir, 'music');
+            this.settings.bookDownloadDir = migrateLegacyDownloadDir(this.settings.bookDownloadDir, 'book');
+            this.settings.downloadDirMigrated = true;
+            await this.saveSettings();
+        }
+
         this.applyUiTheme();
 
         this.registerView(HOME_VIEW_TYPE, (leaf) => new HomeView(leaf, this));
         this.registerView(VIDEO_PLAYER_VIEW_TYPE, (leaf) => new VideoPlayerView(leaf));
+        this.registerView(AUDIO_PLAYER_VIEW_TYPE, (leaf) => new AudioPlayerView(leaf));
         // 阅读器三件（TXT / EPUB / PDF）：工作区新标签页打开（Modal 宿主于本批整体撤除）
         this.registerView(TXT_READER_VIEW_TYPE, (leaf) => new TxtReaderView(leaf));
         this.registerView(EPUB_READER_VIEW_TYPE, (leaf) => new EpubReaderView(leaf));
@@ -336,7 +474,53 @@ export default class ReelLudicPlugin extends Plugin {
             name: '附件清理：清理未引用的封面 / 阅读存档',
             callback: () => void this.openAssetCleanup(),
         });
+        // ④-4 音频播放器两条命令入口（D-9(a)）。都作用于「上一次播放的音乐条目」：
+        // 命令面板没有「当前条目」这个概念，而队列来源是库内音乐条目（设计文档 §5.5 待裁定 A 方案）。
+        this.addCommand({
+            id: 'audio-player-open-tab',
+            name: '音频播放器：在标签页打开',
+            callback: () => void this.openAudioPlayer('tab'),
+        });
+        this.addCommand({
+            id: 'audio-player-open-sidebar',
+            name: '音频播放器：在右侧边栏打开',
+            callback: () => void this.openAudioPlayer('sidebar'),
+        });
+        /**
+         * #414 书籍下载（#422 续四 起**只有书源一条通道**：用户裁定删掉「粘贴直链」）。
+         * 命令面板里**没有「当前条目」** ⇒ 分类只能由命令名给（这条是「文学」）；下载成功后只落盘到
+         * 「下载/书籍」（没有条目可关联 ⇒ 提示里给出路径，不假装关联成功）。
+         *
+         * 🔴 #468 封禁（用户 2026-10-01：「把下载网文和文学类的入口都封禁掉…这类搞不定规划到未来再解禁」）：
+         *    这两条命令**整块不再注册** ⇒ 命令面板里搜「下载书籍」一条都搜不到。
+         *    ⛔ 别在这里改条件：解禁 = 翻 `pure/featureGate.BOOK_DOWNLOAD_ENABLED` 那一个布尔值。
+         *    ⚠️ 实现（`openBookDownloader` / `BookDownload.svelte` / 书源服务）**原样保留**，封的只是入口。
+         */
+        if (BOOK_DOWNLOAD_ENABLED) {
+            this.addCommand({
+                id: 'book-download-open',
+                name: '下载书籍：按书源搜索文学并入库',
+                callback: () =>
+                    this.openBookDownloader((relPath) => {
+                        new Notice(`已下载到「${relPath}」`, 4000);
+                    }, 'book'),
+            });
+            /**
+             * #419 网文下载（**书源由用户自备**）：与上面那条走**同一个弹窗**，只是分类给「网文」
+             *   ⇒ 优先用「网络文学源」那一批（本类为空时会回退到全部，见 `BookDownload.svelte` 的 `shown`）。
+             * ⚠️ 没导入任何书源时会由弹窗自己提示「先去设置里导入」。
+             */
+            this.addCommand({
+                id: 'novel-download-open',
+                name: '下载书籍：按书源搜索网文并入库',
+                callback: () =>
+                    this.openBookDownloader((relPath) => {
+                        new Notice(`已下载到「${relPath}」`, 4000);
+                    }, 'novel'),
+            });
+        }
 
+        this.registerLrcBlockProcessor();
         this.addSettingTab(new ReelLudicSettingTab(this.app, this));
     }
 
@@ -610,6 +794,16 @@ export default class ReelLudicPlugin extends Plugin {
             },
             () => this.settings.googleBooksApiKey || undefined,
         );
+        // MangaDex（免 Key 公开端点，2026-09-30 接入）：漫画源链第三源。
+        // 🔴 必须带可标识 User-Agent（`MANGADEX_UA`，官方 Acceptable Usage Policy）⇒ 这里把 headers 透传给 requestUrl。
+        // ⚠️ 429 = 触发全局限流（约 5 req/s）→ 与其它 aux 同路：runAuxSource catch → failed，不弹 Notice、不阻断整组。
+        this.mangadex = new MangaDexClient(
+            async (url, headers) => {
+                const res = await retry(() => requestUrl({ url, headers }));
+                if (res.status === 200) return res.text;
+                throw new Error(`MangaDex 请求失败（HTTP ${res.status}）`);
+            },
+        );
         // Steam（免 Key 公开端点）：storesearch 免 Key 检索（#165 T6 校准：suggest 端点实测返回热门 HTML 非检索 JSON，
         // 故用 https://store.steampowered.com/api/storesearch/?term=&cc=US&l=english）；游戏第二源，搜索级字段直接可回填
         this.steam = new SteamClient(
@@ -684,8 +878,13 @@ export default class ReelLudicPlugin extends Plugin {
         // T3：辅助源 runner 注册（新源接入在此追加一行；未注册的链内源由 runAuxSource 静默跳过）
         this.auxRunners = {
             tmdb: (query, type) => this.tmdb.search(query, type as 'movie' | 'tv'),
-            // bangumi 仅服务 anime 组（1.0.3.1 起书籍类目搜索随漫画子视图下线，无需再按组类型分流）
-            bangumi: (query) => this.bangumi.search(query),
+            // bangumi 服务 **动画 + 漫画** 两组（2026-09-30 漫画加回）：按调用方给的 type 分流 ——
+            // 'book'（漫画走 searchBookFresh，传的恒是 'book'）→ 书籍类目 type=1；其余（anime 组）→ 动画搜索。
+            // ⚠️ 这与 1.0.3.1 删掉的那条分流**不同形**（旧的写法是「冒号紧接 bangumi 的 searchBooks 调用」），
+            //    ⛔ 本条注释里**不许**照抄那个形态 —— 注释会进产物，抄了就会撞上断言里那条反向守卫（本轮真踩过）。
+            bangumi: (query, type) => (type === 'book' ? this.bangumi.searchBooks(query) : this.bangumi.search(query)),
+            // mangadex 只服务 comic 组（免 Key；带上官方要求的 User-Agent 由客户端负责）
+            mangadex: (query) => this.mangadex.search(query),
             openLibrary: (query) => this.openLibrary.search(query),
             // googleBooks 默认链不含 → 仅用户自选后参与（book 组）；key 未配时 providerConfigured 对可选 Key 源放行
             googleBooks: (query) => this.googleBooks.search(query),
@@ -772,8 +971,12 @@ export default class ReelLudicPlugin extends Plugin {
     /** 某条目类型本次搜索「实际会发起」的源集合（链序）：链内 aux 需已配置（免 Key 源恒 true），douban 恒参与。
      *  供搜索结果区固定占栏——栏数与源成败无关，只取决于源链配置。
      *  1.0.3.1：漫画源组已下线（用户 2026-09-13 裁定），书籍类目回归单链，故不再需要按子分类分流。 */
-    sourcesForType(type: EntryType): ProviderId[] {
-        const group: SourceGroup = sourceGroupForType(type);
+    /** 某类型本次**实际会发起的源**（表单头部「数据源」文案 + 搜索结果固定栏位）。
+     *  🔴 2026-09-30：加可选 `kind` —— 漫画独立成组后**必须**按子分类问组，
+     *     否则漫画态会告诉用户「数据源：Douban / Open Library」（2 栏），而实际只搜豆瓣（1 源）⇒ 栏位数也跟着错。
+     *  ⚠️ 非书籍类型忽略 kind（只有 book 有子分类）。 */
+    sourcesForType(type: EntryType, kind?: BookKind): ProviderId[] {
+        const group: SourceGroup = type === 'book' ? sourceGroupForBookKind(kind) : sourceGroupForType(type);
         const chain = resolveSourceChain(this.settings.sourceChains, group);
         return chain.filter((id) => id === 'douban' || this.providerConfigured(id));
     }
@@ -952,8 +1155,12 @@ export default class ReelLudicPlugin extends Plugin {
 
     private async searchBookFresh(query: string, kind?: BookKind, onProgress?: SearchProgressCb): Promise<BookSearchResult[]> {
         // T3/T4：组内 runner 集合执行——book 组：douban 主源（不限时）+ aux openLibrary（5s 超时）。
-        // 1.0.3.1：原 comic 组（Bangumi 主源）随漫画子视图下线（用户 2026-09-13 裁定），书籍类目回归单链
-        const group: SourceGroup = 'book';
+        // 🔴 2026-09-30 用户裁定：漫画**独立成组** ⇒ 组按子分类选 —— comic → comic 组（默认链 = 豆瓣单源），
+        //    文学 / 网文 / 未指定 → book 组。判组走纯函数 `sourceGroupForBookKind`（可单测），
+        //    ⛔ 别在这里内联 `kind === 'comic' ? 'comic' : 'book'` —— 那条三元是 1.0.3.1 删漫画时的历史形态，
+        //      断言里按「已删」锚着；加回改用纯函数后断言也换成了锚 if 形态。
+        // ⚠️ 两个组给豆瓣 runner 的 type 都是 `'book'`：豆瓣没有「漫画」这个 cat，漫画走图书检索（cat=1001）。
+        const group = sourceGroupForBookKind(kind);
         const run = await this.collectGroupSources<BookSearchResult>(group, 'book', query, toBookResult, createSearchProgress(onProgress));
         const merged = this.mergeGroupResults(run, query);
         if (merged.length === 0) {
@@ -991,7 +1198,15 @@ export default class ReelLudicPlugin extends Plugin {
         return merged;
     }
 
-    /** 音乐搜索（Douban 单源；结果缓存 30min） */
+    /**
+     * 音乐搜索（Douban 单源 + **在线曲库**；结果缓存 30min）。
+     *
+     * 🔴 #464：音乐这一路要多带一份**在线曲库**结果（`SONG_LIB_ID` 那一栏）—— 起因是用户
+     *    「豆瓣源搜作者，为什么不出现对应的音乐」：豆瓣音乐搜索**只按专辑名匹配**，搜歌手名基本搜不到
+     *    他的歌；而「下载歌曲」窗口那条四平台链搜的就是「歌名 + 歌手」，搜 `BEYOND` 直接出
+     *    《海阔天空》《光辉岁月》…。曲库**不是数据源**（不进注册表/不进源链），由表单按「音乐态 + 可下载」
+     *    挂栏，这里只负责把结果并进来（栏位口径见 `EntryForm` 的 `songLibOn`）。
+     */
     async searchMusic(query: string, onProgress?: SearchProgressCb): Promise<MusicSearchResult[]> {
         const q = query.trim();
         if (!q) return [];
@@ -1000,8 +1215,13 @@ export default class ReelLudicPlugin extends Plugin {
 
     private async searchMusicFresh(query: string, onProgress?: SearchProgressCb): Promise<MusicSearchResult[]> {
         // T8：music 默认链 douban→musicbrainz→itunes 三源 runner 全注册；musicbrainz 参与后 iTunes 并行补齐中文曲库
-        const run = await this.collectGroupSources<MusicSearchResult>('music', 'music', query, toMusicResult, createSearchProgress(onProgress));
-        const merged = this.mergeGroupResults(run, query);
+        const prog = createSearchProgress(onProgress);
+        // 曲库检索与元数据搜索**并行**（曲库不阻塞豆瓣；它自己也受 5s 上限，慢也不拖住整体）
+        const [run, lib] = await Promise.all([
+            this.collectGroupSources<MusicSearchResult>('music', 'music', query, toMusicResult, prog),
+            this.songLibrarySearch(query, prog),
+        ]);
+        const merged = this.mergeGroupResults(run, query).concat(lib);
         if (merged.length === 0) {
             const err = deriveGroupSearchError({
                 group: 'music',
@@ -1012,6 +1232,37 @@ export default class ReelLudicPlugin extends Plugin {
             if (err) throw new Error(err);
         }
         return merged;
+    }
+
+    /**
+     * 在线曲库检索（#464）：与「下载歌曲」窗口**同一个函数**（`dlSearchSongs` ⇒ 同一平台顺序、同一份结果），
+     * ⛔ 别在这里另拼一份四平台请求。
+     *
+     * 门控与表单那枚「下载歌曲」按钮同源（`canUseAudioDownload`）—— 移动端没有 Node http，放进来必然失败。
+     * 失败/超时静默降级（只上报该栏状态，不打扰）：曲库拿不到不该让整次音乐搜索报错，
+     * 豆瓣那栏该出的照出（与 aux 源同口径）。
+     */
+    private async songLibrarySearch(query: string, prog: SearchProgressReporter): Promise<MusicSearchResult[]> {
+        if (!this.canUseAudioDownload()) return [];
+        try {
+            const { songs } = await withTimeout(this.dlSearchSongs(query), AUX_SEARCH_TIMEOUT, `${SONG_LIB_LABEL} 搜索`);
+            const items = songLibraryResults(songs);
+            prog.source({ id: SONG_LIB_ID, state: items.length > 0 ? 'ok' : 'empty', count: items.length });
+            return items;
+        } catch {
+            prog.source({ id: SONG_LIB_ID, state: 'failed' });
+            return [];
+        }
+    }
+
+    /**
+     * 音乐「下载 / 曲库检索」门控：**桌面端 + 「启用内置音乐播放器」开启**。
+     * 🔴 单一真源 —— 表单的 `canDownload`（下载按钮 + 在线曲库栏）与宿主侧的曲库检索都从这里取，
+     *    ⛔ 别在两处各写一遍 `Platform.isDesktopApp && settings.audioInlinePlayer`（那正是「按钮亮着但搜不到」
+     *    这类不一致的来源）。
+     */
+    canUseAudioDownload(): boolean {
+        return Platform.isDesktopApp && this.settings.audioInlinePlayer === true;
     }
 
     /** 动画搜索（Bangumi + 豆瓣并行）：按相似度排序合并；无 Token 且 Douban 不可用时给出准确提示（结果缓存 30min） */
@@ -1317,6 +1568,31 @@ export default class ReelLudicPlugin extends Plugin {
         await this.activateView(HOME_VIEW_TYPE);
     }
 
+    /**
+     * 类型化主操作（阅读 / 观看 / 启动 / 播放）—— **四类统一入口**。
+     *
+     * 🔴 #444c：这段分流原来写在 `HomeView.ts` 的 `onWatch` 箭头函数里；系列选择弹窗改成
+     *    应用级 `Modal` 之后，弹窗**不再长在插件视图里**（拿不到那个 prop），而它同样要执行「点某一部就播」。
+     *    ⇒ 下沉到这个单一入口，`HomeView` 与 `SeriesPickerModal` 都调它，⛔ 别两处各写一套分流
+     *    （两套必然漂移：从墙上点 vs 从弹窗点，行为不一样）。
+     */
+    runEntryAction(e: MediaEntry): void {
+        if (e.type === 'book') void this.openBookReader(e);
+        else if (e.type === 'game') void this.launchGame(e);
+        else if (e.type === 'music') void this.playAudioEntry(e);
+        else void this.openWatchLinkPicker(e);
+    }
+
+    /**
+     * 打开系列「季列表」弹窗（#444c）。
+     * 🔴 应用级 `Modal`（挂 `document.body`）—— ⛔ 不再由视图自己造遮罩 + 绝对定位居中：
+     *    那条路不管怎么调都受插件**正文区**宽度限制（用户窗口下最多 4 列），
+     *    而 Modal 的宽度按整个窗口算（同一窗口能给到 6 列）。
+     */
+    openSeriesPicker(group: SeriesGroup): void {
+        new SeriesPickerModal(this.app, this, group).open();
+    }
+
     /** 当前打开的添加/编辑弹窗（防重复打开叠加：新开前先关闭旧的，避免遮罩堆叠导致新弹窗无法交互/无法输入搜索） */
     entryModal: EntryModal | null = null;
 
@@ -1589,6 +1865,26 @@ export default class ReelLudicPlugin extends Plugin {
             probeBook: (path) => this.probeBookPages(path),
             pickVideoDir: () => this.pickVideoDirPath(),
             scanEpisodeDir: (dir) => this.scanEpisodeDir(dir),
+            // 🔴 #406：音乐条目的「下载」「检索」两枚小按钮（与条目编辑表单同款同作用）——
+            //    两个能力都复用**既有单点实现**（下载弹窗 / 库内音频清单），⛔ 别另写一套。
+            openMusicDownloader: (t: string, a: string, onPicked: (relPath: string) => void) =>
+                this.openMusicDownloader(t, a, onPicked),
+            listLibraryAudio: () => this.listLibraryAudioFiles(),
+            // 🔴 #454：书籍条目的「下载」小按钮 —— 复用**同一个** `openBookDownloader`（书源通道；
+            //    文学 / 网文各开各的窗口由它内部按 kind 决定）。⛔ 别在这里或弹窗里另写第二套下载实现。
+            // 🔴 #468 封禁：门控为 false 时**不注入这个回调** —— `QuickAssociateModal.buildBookQuickButton`
+            //    见回调缺失就不画那枚按钮（它本来就是「可选回调 ⇒ 不画一个点了没反应的按钮」的写法）。
+            //    ⛔ 别改成注入空函数：那会画出一枚点了没反应的按钮。
+            openBookDownloader: BOOK_DOWNLOAD_ENABLED
+                ? (onPicked: (relPath: string) => void) =>
+                      this.openBookDownloader(onPicked, entry.bookKind === 'novel' ? 'novel' : 'book')
+                : undefined,
+            // 🔴 #506：影视条目「网络地址」标签旁的 **B站 搜索小按钮**（用户报障：这个入口原先没有它）。
+            //    复用**同一条链**：`main.dlBiliSearch` / `main.dlBiliView`（两步请求 + `buvid3` 缓存 +
+            //    `Platform.isDesktopApp` 门控都在它们里面，⛔ 这里不再判平台、也 ⛔ 别另写一份请求）。
+            //    `biliParts` 缺了就会回落成「只填当前这一集」；两个都缺 ⇒ 弹窗里不画那枚按钮。
+            biliSearch: (kw: string) => this.dlBiliSearch(kw),
+            biliParts: (bvid: string) => this.dlBiliView(bvid),
             save: (r) => this.saveQuickAssociate(entry, r),
         }).open();
     }
@@ -1835,6 +2131,8 @@ export default class ReelLudicPlugin extends Plugin {
         if (view instanceof VideoPlayerView) {
             view.openWith(opts);
         }
+        // 播放器互斥（④-4）：视频起播 ⇒ 让内置音频播放器停声（真源 pure/audioQueue.playersToPause）
+        this.pauseOtherPlayers('video');
     }
 
     /** 播放器三个开关 → 视图选项（两处 openVideoPlayer 共用一份，免得缺省口径各写一遍漂掉）。
@@ -1906,6 +2204,80 @@ export default class ReelLudicPlugin extends Plugin {
         } catch {
             new Notice('无法打开本地播放器');
         }
+    }
+
+    /**
+     * #462：探「本地音频」的**体积 + 时长**（音乐条目编辑表单那颗「播放」按钮的悬停提示用）。
+     *
+     * 用户原话：「给音乐类型关联到的音频文件鼠标hover提示音频文件时长：如04:25,和体积大小3MB」。
+     *
+     * 🔴 两条实现口径：
+     *  ⑴ **时长靠 Chromium 解码探**（`<audio>` 的 `loadedmetadata` → `duration`），**不自己写容器解析**
+     *     —— 与内置播放器走的是**同一条解码路径**（免白名单里的 mp3/flac/m4a/ogg/wav/aac 都能认），
+     *     且 URL 复用 `resolveEmbedUrl`（库内 `getResourcePath` / 库外 `app://`），⛔ 别另拼一份。
+     *  ⑵ **体积靠 `fs.statSync`**（桌面端；与「库内/库外」无关，走 `absoluteMediaPath` 取系统绝对路径）。
+     *
+     * ⚠️ 任一失败 ⇒ 该项 `undefined`（**拿不到就不显示那一段**，⛔ 不编造、不写「未知」）；
+     *    结果按**路径**缓存（同一文件只探一次；hover 是高频动作，绝不每次重探）。
+     */
+    async probeAudioInfo(path: string): Promise<MediaInfo> {
+        const p = String(path ?? '').trim();
+        if (!p) return {};
+        const hit = this.audioInfoCache.get(p);
+        if (hit) return hit;
+        let size: number | undefined;
+        try {
+            if (Platform.isDesktopApp) {
+                const abs = this.absoluteMediaPath(p);
+                if (abs) {
+                    const fsMod = require('fs') as { statSync(q: string): { size: number } };
+                    size = fsMod.statSync(abs).size;
+                }
+            }
+        } catch {
+            size = undefined; // 文件不在 / 无权限 ⇒ 只显示时长那一半
+        }
+        const duration = await this.probeAudioDuration(p);
+        const info: MediaInfo = { size, duration };
+        this.audioInfoCache.set(p, info);
+        return info;
+    }
+
+    /** 本地路径 → **系统绝对路径**（vault 内走 `adapter.getFullPath`；库外原样返回）。取不到 ⇒ undefined */
+    private absoluteMediaPath(path: string): string | undefined {
+        const p = String(path ?? '').trim();
+        if (!p) return undefined;
+        try {
+            const rel = this.toVaultRelPath(p);
+            const f = this.app.vault.getAbstractFileByPath(rel);
+            if (f instanceof TFile) return (this.app.vault.adapter as FileSystemAdapter).getFullPath(f.path);
+        } catch { /* 库外 / 取不到 ⇒ 当绝对路径用 */ }
+        return p;
+    }
+
+    /** 探音频时长（秒）：Chromium `<audio>` 解码一次，拿不到（不可解码 / 超时 4s / 非渲染进程）⇒ undefined */
+    private probeAudioDuration(path: string): Promise<number | undefined> {
+        const url = this.resolveEmbedUrl(path);
+        if (!url || typeof document === 'undefined') return Promise.resolve(undefined);
+        return new Promise((resolve) => {
+            let settled = false;
+            const el = document.createElement('audio');
+            const finish = (v?: number): void => {
+                if (settled) return;
+                settled = true;
+                window.clearTimeout(timer);
+                try { el.removeAttribute('src'); el.load(); } catch { /* 忽略 */ }
+                resolve(v);
+            };
+            const timer = window.setTimeout(() => finish(undefined), 4000);
+            el.addEventListener('loadedmetadata', () => {
+                const d = el.duration;
+                finish(Number.isFinite(d) && d > 0 ? d : undefined);
+            });
+            el.addEventListener('error', () => finish(undefined));
+            el.preload = 'metadata';
+            el.src = url;
+        });
     }
 
     /** 解析某本地路径为 <video> 可播 URL：
@@ -2055,8 +2427,13 @@ export default class ReelLudicPlugin extends Plugin {
 
     /** 系统文件选择器统一实现（Electron remote.dialog 返回绝对路径；toRel=true 转 vault 相对路径，库外保留绝对路径；input file 的 File.path 在 Obsidian 环境不可用）。
      *  会话内记忆上次选中目录（defaultPath 续接：第 1 集选了文件夹，第 2 集浏览仍从该目录弹起）。
-     *  注：不再弹「从库中选择 / 从系统浏览」二选一——点「浏览…」直接唤起系统文件管理器，少一步点击。 */
-    private pickSystemFile(exts: string[], name: string, toRel: boolean): Promise<string | undefined> {
+     *  注：不再弹「从库中选择 / 从系统浏览」二选一——点「浏览」直接唤起系统文件管理器，少一步点击。
+     *
+     *  🔴 #460：新增 `fallbackDir` —— 「音频 / 书籍」这两类**目标目录固定**的字段（就是插件自己下载的去处），
+     *     冷启动（首次打开 / 插件重载后 `lastSystemDir` 为空）此前一律落**系统默认**（Windows = 「下载」），
+     *     用户看到的是「浏览本地音频怎么每次都在系统下载」。现在冷启动落到**设置里填的那个目录**；
+     *     ⚠️ 一旦用户本次会话选过文件，仍**续接上次位置**（既有口径，逐集浏览那种场景要用）。 */
+    private pickSystemFile(exts: string[], name: string, toRel: boolean, fallbackDir?: string): Promise<string | undefined> {
         if (!Platform.isDesktopApp) return Promise.resolve(undefined);
         return new Promise((resolve) => {
             try {
@@ -2069,7 +2446,7 @@ export default class ReelLudicPlugin extends Plugin {
                         .showOpenDialog({
                             filters: [{ name, extensions: exts }],
                             properties: ['openFile'],
-                            defaultPath: this.lastSystemDir || undefined,
+                            defaultPath: this.lastSystemDir || fallbackDir || undefined,
                         })
                         .then((res) => {
                             const p = !res.canceled && res.filePaths[0] ? res.filePaths[0] : undefined;
@@ -2137,19 +2514,49 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
+    /**
+     * #460：某类下载目录在**系统里的绝对路径**（系统选择器 `defaultPath` 锚点）。拿不到 / 目录还不存在 ⇒ undefined
+     * （退回系统默认，⛔ 别硬编路径）。
+     * ⚠️ 路径拼接走纯函数 `pure/downloadPlan.downloadDirAbsPath`（与落盘 / 检索同一个 `downloadDir`）——
+     *    ⛔ 别在这里另拼一份，否则设置页改完目录这里会指到旧地方。
+     */
+    private downloadDirSystemPath(root: string | undefined, kind: DownloadKind): string | undefined {
+        try {
+            const adapter = this.app.vault.adapter as FileSystemAdapter;
+            const base = typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
+            const abs = downloadDirAbsPath(base, root, kind);
+            if (!abs) return undefined;
+            const fsMod = require('fs') as { existsSync(p: string): boolean };
+            return fsMod.existsSync(abs) ? abs : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
     /** 选本地视频：系统播放器需绝对路径，不转相对（可关联格式统一见 pure/mediaExtensions.VIDEO_ASSOCIABLE_EXTENSIONS） */
     async pickLocalVideoPath(): Promise<string | undefined> {
         return this.pickSystemFile([...VIDEO_ASSOCIABLE_EXTENSIONS], '视频', false);
     }
 
-    /** 选本地音频（音乐条目） */
+    /** 选本地音频（音乐条目）：可关联格式统一见 `pure/mediaExtensions.AUDIO_ASSOCIABLE_EXTENSIONS`（④ 收进真源，原先在此硬编码）。
+     *  🔴 #460：冷启动锚点 = 设置页「音频文件目录」的绝对路径（⛔ 别让它再落系统「下载」）。 */
     async pickLocalAudioPath(): Promise<string | undefined> {
-        return this.pickSystemFile(['mp3', 'flac', 'm4a', 'ogg', 'wav', 'aac'], '音频', true);
+        return this.pickSystemFile(
+            [...AUDIO_ASSOCIABLE_EXTENSIONS],
+            '音频',
+            true,
+            this.downloadDirSystemPath(this.settings.musicDownloadDir, 'music'),
+        );
     }
 
-    /** 选书籍文件（TXT/EPUB/PDF） */
+    /** 选书籍文件（TXT/EPUB/PDF）｜🔴 #460：冷启动锚点 = 「书籍文件目录」的绝对路径（同音频那枚） */
     async pickBookFilePath(): Promise<string | undefined> {
-        return this.pickSystemFile(['txt', 'epub', 'pdf'], '电子书', true);
+        return this.pickSystemFile(
+            ['txt', 'epub', 'pdf'],
+            '电子书',
+            true,
+            this.downloadDirSystemPath(this.settings.bookDownloadDir, 'book'),
+        );
     }
 
     /** 选游戏启动快捷方式（.lnk） */
@@ -2179,17 +2586,42 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
-    /** 播放音乐条目音频（「▶ 播放」）：audioPath vault 相对 → Obsidian 媒体视图（配合 LyricFlux 增强）；库外绝对路径 → 先尝试 Media Extended 播放器，失败回退系统播放器 */
+    /**
+     * 播放音乐条目音频（卡片「▶ 播放」）—— ④-4 起改为打开**内置音频播放器**（标签页）：
+     * 歌词（笔记 lrc 块 / 同名 .lrc / 内嵌）与音频统一呈现，这是用户「统一 LRC 笔记和音频文件共存」的落点。
+     * 解析不出可播 URL 时按老链路兜底（库内 → Obsidian 原生音频视图；库外 → Media Extended → 系统播放器），
+     * ⛔ 不要因为新面而让原来能播的文件反而播不了。
+     */
     async playAudioEntry(entry: MediaEntry): Promise<void> {
         if (!entry.audioPath) {
             new Notice('未关联本地音频 — 编辑条目选择文件', 4000);
             return;
         }
+        const opts = await this.buildAudioPlayerOptions(entry);
+        if (opts) {
+            this.lastAudioEntry = entry;
+            // 🔴 #474（用户 2026-10-01）：「侧边栏有歌曲正播放时，点海报墙的播放按钮」= **就地切歌**，
+            //    复用侧边栏里那个播放器实例，⛔ 不再另开一个标签页（否则同一首歌会在两处各起一个）。
+            const side = this.findSidebarAudioPlayer();
+            if (side) {
+                this.pauseOtherAudioInstances(side.leaf);   // 其它音频实例让出声道（防两路同响）
+                // 侧边栏被折叠时展开（否则用户只听见声音、找不到播放器）；
+                // ⚠️ **已经展开就⛔ 别 reveal** —— reveal 会激活那个 leaf，把焦点从用户手上的笔记抢走。
+                const rightSplit = this.app.workspace.rightSplit as unknown as { collapsed?: boolean } | null;
+                if (rightSplit?.collapsed) this.app.workspace.revealLeaf(side.leaf);
+                side.view.openWith(opts);
+                return;
+            }
+            await this.openAudioPlayer('tab', opts);
+            return;
+        }
+        // 兜底 1：库内音频至少还能用 Obsidian 原生音频视图播
         const f = this.app.vault.getAbstractFileByPath(entry.audioPath);
         if (f instanceof TFile) {
             await this.app.workspace.getLeaf('tab').openFile(f);
             return;
         }
+        // 兜底 2：库外绝对路径 → Media Extended → 系统播放器
         if (!Platform.isDesktopApp) {
             new Notice('库外音频播放仅桌面端可用');
             return;
@@ -2201,6 +2633,1219 @@ export default class ReelLudicPlugin extends Plugin {
             if (err) new Notice(`无法播放音频：${err}`, 4000);
         } catch {
             new Notice('无法打开播放器');
+        }
+    }
+
+    /**
+     * 🔴 #474（用户 2026-10-01）：找出**侧边栏里已经存在**的内置音频播放器实例（没有则 null）。
+     *
+     * 判据走 `AudioPlayerView.isInSidebar()`（= #410「打开笔记按钮只在标签页显示」的**同一份**口径），
+     * ⛔ 别在宿主侧另写一份「是不是侧边栏」—— 两处必然漂。
+     *
+     * ⚠️ 也别图省事用 `getRightLeaf(false)`「顺手拿一个」：它返回的是侧边栏里**第一个** leaf，
+     *    很可能挂着别的视图，随后的 `setViewState` 会把它顶掉（用户的侧边栏布局被静默改掉）。
+     */
+    private findSidebarAudioPlayer(): { leaf: WorkspaceLeaf; view: AudioPlayerView } | null {
+        for (const leaf of this.app.workspace.getLeavesOfType(AUDIO_PLAYER_VIEW_TYPE)) {
+            const view = leaf.view;
+            if (view instanceof AudioPlayerView && view.isInSidebar()) return { leaf, view };
+        }
+        return null;
+    }
+
+    /**
+     * 🔴 #474：除 `keep` 之外的**音频播放器实例**一律让出声道。
+     *
+     * 为什么需要单独一个：真源 `pure/audioQueue.playersToPause` 是按**通路**分的（音频 ↔ 视频），
+     * 它管不到「同一条通路上开了两个实例」（标签页一个 + 侧边栏一个）——
+     * 而本批的场景（侧边栏在放 A、点卡片要放 B）恰好会同时存在两个实例 ⇒ 不处理就是**两路同时响**。
+     * ⚠️ 这里**只排除 `keep`**（既不越权暂停用户自己点起来的那个实例，也不动别的通路 —— 那是 `pauseOtherPlayers` 的事）。
+     */
+    private pauseOtherAudioInstances(keep: WorkspaceLeaf | null): void {
+        for (const leaf of this.app.workspace.getLeavesOfType(AUDIO_PLAYER_VIEW_TYPE)) {
+            if (leaf === keep) continue;
+            const view = leaf.view;
+            if (view instanceof AudioPlayerView) view.pausePlayback();
+        }
+    }
+
+    /**
+     * 打开内置音频播放器。`where` 决定落在哪：标签页 / 右侧边栏
+     * —— **同一个视图类型**，差别只是可用宽度（三档自适应由 `pure/audioLayout` 判定），
+     * 所以「在侧边栏」不需要另一套 UI。
+     * `opts` 缺省（命令面板入口）时用「上一次播放的音乐条目」重建队列。
+     */
+    private async openAudioPlayer(where: 'tab' | 'sidebar', opts?: AudioPlayerOptions): Promise<void> {
+        const options = opts ?? (await this.buildAudioPlayerOptions(this.lastAudioEntry));
+        if (!options) {
+            new Notice('还没有可播放的音乐 — 先在音乐条目上点「播放」', 4000);
+            return;
+        }
+        const workspace = this.app.workspace;
+        let leaf: WorkspaceLeaf | null;
+        if (where === 'sidebar') {
+            leaf = workspace.getRightLeaf(false);
+            if (!leaf) {
+                new Notice('右侧边栏不可用', 3000);
+                return;
+            }
+        } else {
+            // 当前活动页已是播放器 → 直接换条目复用（与 openVideoPlayer 同口径）
+            const active = workspace.activeLeaf;
+            leaf = active && active.view instanceof AudioPlayerView ? active : workspace.getLeaf('tab');
+        }
+        if (!(leaf.view instanceof AudioPlayerView)) {
+            await leaf.setViewState({ type: AUDIO_PLAYER_VIEW_TYPE, active: where === 'tab' });
+        }
+        const view = leaf.view;
+        if (view instanceof AudioPlayerView) {
+            this.pauseOtherAudioInstances(leaf);   // 🔴 #474：起播前让**其它音频实例**让出声道（见 helper 注释）
+            view.openWith(options);
+        }
+    }
+
+    /**
+     * 组装一次播放请求：队列 + 歌词读取 + 音量/模式设置。
+     *
+     * **队列来源（④-4 取设计文档 §5.5 的 A 方案）**：库内**全部带 `audioPath` 的音乐条目**，
+     * 按库内顺序；起始曲 = 传入条目，不在队列里则从 0 开始。
+     * 🔴 这里**不按扩展名再筛一遍**（`pure/audioQueue.normalizeAudioQueue` 的口径：会静默丢 `.opus`/`.ape`）；
+     *    扩展名白名单只用于系统文件选择器。
+     * ⚠️ 解析不出可播 URL 的曲目**不进队列** —— 否则用户切到它时只有一片安静、还以为播放器坏了。
+     */
+    private async buildAudioPlayerOptions(entry: MediaEntry | null): Promise<AudioPlayerOptions | null> {
+        const all = await this.service.list();
+        const tracks: AudioPlayerTrack[] = [];
+        for (const e of all) {
+            if (e.type !== 'music' || !e.audioPath) continue;
+            const url = this.resolveEmbedUrl(e.audioPath);
+            if (!url) continue;
+            tracks.push({
+                entryId: e.id,
+                title: e.title,
+                // 标签页标题要显示**笔记名**（用户 2026-09-27）：真源 `pure/libraryDir.fileDisplayName`
+                // （叶子段去扩展名；⛔ 别在这里 `split('/')` —— 分隔符 / 扩展名大小写 / 带点目录名都是坑）
+                noteName: fileDisplayName(e.notePath ?? ''),
+                subtitle: audioSubtitle(e),
+                path: e.audioPath,
+                // 🔴 #408：笔记路径（「打开笔记」按钮）与左栏两块信息的展示文本
+                notePath: e.notePath,
+                url,
+                coverUrl: this.resolvePoster(e) ?? null,
+            });
+        }
+        if (!tracks.length) return null;
+        const idx = entry ? tracks.findIndex((t) => t.entryId === entry.id) : 0;
+        return {
+            items: tracks,
+            startIndex: idx >= 0 ? idx : 0,
+            // 🔴 #406：**打开即自动播放**（用户：「海报墙点击播放按钮后…改为点击即自动播放」）。
+            //    这里是标签页 / 侧边栏 / 命令面板三条入口共用的选项构造 —— 三处都是「用户主动点开」
+            //    ⇒ 一律自动起播；⚠️ 笔记内联块走另一条构造（`audioOptionsForNote`），那里**不传**。
+            autoplay: true,
+            wordHighlight: this.settings.lyricsWordHighlight !== false,
+            loadLyrics: (t) => this.loadEntryLyrics(t),
+            initialMode: normalizeAudioPlayMode(this.settings.audioPlayMode),
+            initialVolume: clampAudioVolume(this.settings.audioVolume ?? 1),
+            onSaveMode: (mode) => void this.persistAudioSetting('mode', mode),
+            onSaveVolume: (volume) => void this.persistAudioSetting('volume', volume),
+            onPlayStart: (kind) => this.pauseOtherPlayers(kind),
+            /** 🔴 #408：右上角「打开笔记」按钮 ⇒ 复用既有单点实现（无笔记时它自己会提示）。
+             *  ⚠️ 只有**标签页 / 侧边栏**这条构造传它；内联块（笔记里的小卡片）**不传** ——
+             *  那段笔记就在眼前，没必要再放一个「打开笔记」按钮（不传 ⇒ 按钮自动禁用）。 */
+            onOpenNote: (track) => void this.openEntryNote(track.entryId),
+        };
+    }
+
+    /**
+     * 取某条目音频的歌词 —— 四路优先级真源 = `pure/lrcSource.pickLyrics`：
+     * `lyrics 指令 > 块内正文 > 同名 .lrc > 音频内嵌标签`。
+     * ⚠️ 第 4 路（ID3 / FLAC / M4A 内嵌标签）本轮**未实现** ⇒ 不传，`pickLyrics` 自然跳过；
+     *    将来补一个读取器塞进 `pickLyricsFor` 即可，判定顺序不用动。
+     */
+    private async loadEntryLyrics(track: AudioPlayerTrack): Promise<{ text: string; origin: LrcLyricsOrigin } | null> {
+        const note = await this.service.readNoteText(track.entryId);
+        const block = parseLrcBlock(extractLrcBlock(note ?? '') ?? '');
+        return this.pickLyricsFor(block, track.path);
+    }
+
+    /**
+     * 四路歌词源的**读取侧**（笔记内 ` ```lrc ` 块与播放器视图共用，⛔ 别各写一份优先级）。
+     *
+     * 🔴 **第 4 路（音频内嵌）单独一轮、且放在最后**：#391 起才接上（此前只留了槽位），
+     *    而它要**整块读音频字节**（动辄 8–12MB）⇒ 若和前三路一起算，用户库里有 `.lrc` 时也白读一遍；
+     *    切歌一次读一次，代价会累积。所以先只看「文本三路」，命中就直接返回。
+     * ⚠️ 两轮都仍走 `pickLyrics`（真源）——它自己判「空白不算有」，⛔ 别在这里另抄一遍空值判定。
+     */
+    private async pickLyricsFor(
+        block: LrcBlock,
+        audioPath: string,
+    ): Promise<{ text: string; origin: LrcLyricsOrigin } | null> {
+        const directiveFile = await this.readLyricsRef(block.lyrics);
+        const sibling = await this.readLyricsRef(siblingLrcPath(audioPath) ?? undefined);
+        const fromText = pickLyrics({
+            directiveFile: directiveFile ?? undefined,
+            inline: block.inline,
+            sibling: sibling ?? undefined,
+        });
+        if (fromText) return fromText;
+        const bytes = await this.readBookBytes(audioPath);
+        return pickLyrics({ embedded: readEmbeddedLyrics(bytes) ?? undefined });
+    }
+
+    /**
+     * 读一路歌词文件。参数形态（wiki 链接 / 库内相对 / 库外绝对）统一走 `pure/lrcSource.parseLrcRef` 判定，
+     * 于是生成侧（`noteGenerator` 写 `source` 行）与这里用的是**同一套分类** —— 分叉的后果是
+     * 「笔记写着 A、播放器去读 B」，且两边都不报错。
+     * 🔴 读文件走 `readBookText`（内部先读二进制再嗅探编码，红线 11）—— 歌词文件同样常见 GBK。
+     * 读不到 ⇒ `null`，让 `pickLyrics` 落到下一档。
+     */
+    private async readLyricsRef(raw: string | undefined): Promise<string | null> {
+        const ref = parseLrcRef(raw ?? '');
+        if (!ref) return null;
+        return this.readBookText(ref.value);
+    }
+
+    /**
+     * 在线歌词检索（#396，条目表单「获取歌词」）—— 四源并行搜索（#400 起含酷狗）。
+     * 纯逻辑在 `pure/lyricOnline`、请求与降级在 `services/lyricSearch`，本方法只做**平台门控 + 接线真源**。
+     * 🔴 **仅桌面端**：`nodeHttp` 依赖 Node 内置 `https`，移动端没有 ⇒ 直接返回空档（表单侧按钮也不出现，
+     *    这里是第二道闸 —— 门控只写一边的话，将来别处调用会静默走 `requestUrl` 拿不到同款反爬头）。
+     */
+    async searchOnlineLyrics(title: string, author: string): Promise<LyricSearchOutcome> {
+        if (!Platform.isDesktopApp) return { query: null, results: [] };
+        return searchLyrics((url, headers) => nodeHttpGet(url, headers), title, author);
+    }
+
+    /** 取某源某条候选的歌词正文（#396；桌面端门控同上）。失败 ⇒ 由服务层收成 `error`，⛔ 不抛到这里 */
+    async fetchOnlineLyric(source: LyricSourceId, id: string): Promise<LyricFetchOutcome> {
+        if (!Platform.isDesktopApp) return { text: null, error: '仅桌面端支持' };
+        return fetchLyric((url, headers) => nodeHttpGet(url, headers), source, id);
+    }
+
+    // ────────────────────────── ⑤-c 音乐下载（网易云免费通道）──────────────────────────
+
+    /**
+     * 打开「下载歌曲」弹窗。
+     * 🔴 按钮的显隐由 `EntryForm` 按设置决定（`canDownload` = 桌面端 + 「启用内置音乐播放器」开，
+     *    见 `modals/EntryModal`）；这里**再挡一次** —— 移动端没有 Node http，真放进来必然是一次失败。
+     */
+    openMusicDownloader(title: string, author: string, onPicked: (relPath: string) => void): void {
+        if (!Platform.isDesktopApp) {
+            new Notice('下载功能仅支持桌面端', 3000);
+            return;
+        }
+        new MusicDownloadModal(
+            this.app,
+            {
+                search: (keyword, onPartial, onEmpty) => this.dlSearchSongs(keyword, onPartial, onEmpty),
+                loadPlaylists: (source, limit) => this.dlRecommendedPlaylists(source, limit),
+                loadPlaylist: (source, id) => this.dlPlaylistSongs(source, id),
+                download: (song, onProgress) => this.dlDownloadSong(song, onProgress),
+                preview: (song, onProgress) => this.dlPreviewAudio(song, onProgress),
+                biliSearch: (keyword) => this.dlBiliSearch(keyword),
+                biliDownload: (video, onProgress) => this.dlBiliDownload(video, onProgress),
+            },
+            { title, author, onPicked },
+        ).open();
+    }
+
+    /**
+     * #419 建立 / **#428 换成 `CancelToken`**：当前网文下载的取消令牌。
+     * 🔴 旧形态是 `{ stop: boolean }`、只被「下一章开头」读一次 ⇒ 用户在飞的请求上点取消
+     *    **几十秒毫无反应**（实测「取消按钮点击无反应」）。令牌多了 `wait()`，在飞的等待由
+     *    `raceCancel` 立刻唤醒（`pure/cancel` 文件头有完整起因）。
+     */
+    private novelCancel: CancelToken | null = null;
+
+    /**
+     * 打开「下载书籍」弹窗（#414 建立；#417 加「粘贴直链」；#419 加「书源检索」；
+     * **#422 续四 删掉「粘贴直链」** —— 只剩书源这一条通道）。
+     *
+     * 🔴 网络与落盘全部收在这一处（弹窗与组件都是纯壳，便于替换 / 单测）：
+     *  · 书源 → `searchNovelSources` / `fetchNovelToc` / `fetchNovelChapters`（**并发池 50**，#428 起；旧口径「串行 + 间隔」已推翻）+ TXT/EPUB 落盘。
+     * 🔴 **红线 D-24(a)**：本插件**不内置任何书源**，只吃用户自己导入的 `.json`；
+     *    `@js:` 脚本一律不执行；⛔ 别在这里接任何站点接口 —— 撤掉的东西有反向守卫钉着。
+     * ⚠️ 移动端没有 Node http ⇒ 提前挡掉（与音乐下载同一口径）。
+     * 🔴 #422：`kind` = **当前条目的书源分类**（网文 / 经典文学），决定这个弹窗**看得到哪些书源**、
+     *    搜的时候用哪些源、以及就地导入导进哪一类 —— 它跟着入口走（表单按 `entry.bookKind`，
+     *    命令面板按那条命令的名字），⛔ 不让用户在弹窗里再选一次（选完还要重搜，纯负担）。
+     *    ⚠️ 刻意**不给默认值**：漏传 ⇒ 编译期就红，免得某个入口静默落到「网文」那一类。
+     * 🔴 P1-C：`onPicked` 第二参 = 抓到的**章节名清单**（一行一章），消费端只对**文学**条目写回 `toc`
+     *    （网文按用户 2026-09-13 裁定不带出版目录 ⇒ 判定放在表单侧，宿主不猜分类）。
+     */
+    /**
+     * 🔴 #433：按类开**各自的窗口**（`NovelDownloadModal` / `LiteratureDownloadModal`）——
+     *    用户：「和网文源窗口独立开，做独立文学类下载按钮和窗口」。
+     *    ⛔ 别退回「一个窗口按 kind 变脸」：两个窗口同时开着时标题一样，用户分不清。
+     */
+    openBookDownloader(onPicked: (relPath: string, tocText?: string) => void, kind: SourceKind): void {
+        if (!Platform.isDesktopApp) {
+            new Notice('书籍下载仅支持桌面端', 3000);
+            return;
+        }
+        // 🔴 #433：按类选**各自的**窗口壳 —— 标题与空态各说各的类，⛔ 不再一个窗口按 kind 变脸
+        const DownloadModal = kind === 'novel' ? NovelDownloadModal : LiteratureDownloadModal;
+        new DownloadModal(
+            this.app,
+            {
+                // ⛔ #422 续四：原来这里还有一条 `download:`（把用户粘的直链交给服务层下载）——
+                //    **整条直链通道已随用户裁定删除**（「粘贴直链功能删除掉」），⛔ 别只把它注释掉：
+                //    通道、服务层、纯逻辑里的直链函数与它的断言都一起退了场（见断言脚本 `Y 反向守卫`）。
+                // 🔴 红线 D-24(a) 不变：插件不内置任何内容源、不绕登录与付费 —— 现在只剩「书源」这一条
+                //    **用户自备来源**的通道。
+                // ── #419 网文面（全部经注入；组件不碰网络、不读 settings）──
+                // 🔴 #422 续二 改口：`novelSources` **给全量**（每条带 `kind`），由组件自己按 `kind` 算本类。
+                // 🔴 #439：组件侧口径跟着搜索侧一起**翻面** —— 不再是「本类为空 ⇒ 回退全部」，
+                //    而是「本类为空 ⇒ 空态 + 一键把另一类搬过来」（见 `BookDownload.svelte` 的 `shown`）。
+                //    ⛔ 别只改一侧：两处口径不一致就会出现「看得见搜不到」或反之。
+                novelSources: () => (this.settings.novelSources ?? []).map(sourceSummary),
+                novelSearch: (keyword, k, onPartial) => this.searchNovel(keyword, k, onPartial),
+                novelToc: (hit) => this.loadNovelToc(hit),
+                novelDownload: (req) => this.downloadNovelBook(req),
+                // 🔴 #428：置位后**当帧**生效（在飞的请求由 `raceCancel` 立刻放行）——
+                //    ⛔ 别改回「只改一个布尔、等下一章开头才发现」。
+                novelCancel: () => this.novelCancel?.stop(),
+                // #421：就地导入书源（与设置页共用同一实现；结果由面板显示，故 `notice: false`）
+                // #425：组件自己读文件（`<label>`+`<input>` 必须挂调用方 DOM），宿主只负责解析合并
+                novelImport: (text, k) => this.importNovelSources(text, k),
+                // 🔴 #455：`novelMoveAll` 的注入**已撤** —— 弹窗只谈本类源（两类互不相通）。
+                //    搬分类的能力留在设置页（`moveAllNovelSources` 仍被 `Settings.ts` 调用）。
+            },
+            { onPicked, kind },
+        ).open();
+    }
+
+    /** 某一分类下的书源（⛔ 别到处直读 `settings.novelSources` 再自己判 —— 缺省口径在 `sourceKindOf` 里） */
+    novelSourcesOf(kind: SourceKind): NovelSource[] {
+        return (this.settings.novelSources ?? []).filter((s) => sourceKindOf(s) === kind);
+    }
+
+    /** 两个分类各有多少条（设置页小节徽标用；一次遍历出两数，⛔ 别分成两次 filter） */
+    novelSourceCounts(): Record<SourceKind, number> {
+        const g = groupSourcesByKind(this.settings.novelSources ?? []);
+        return { novel: g.novel.length, book: g.book.length };
+    }
+
+    // ─────────────────────── #419 网文书源（书源由用户自备） ───────────────────────
+
+    /**
+     * 源站传输层（与其它下载面同一形状）。
+     * ⚠️ 基础头（浏览器 UA）在这里叠；书源自己声明的 Cookie 由服务层叠（见 `withSourceHeaders`）。
+     */
+    private novelFetch(): NovelFetch {
+        return async (req) => {
+            const headers = { ...NOVEL_SOURCE_HEADERS, ...(req.headers ?? {}) };
+            return req.method === 'POST'
+                ? nodeHttpPost(req.url, req.body ?? '', headers)
+                : nodeHttpGet(req.url, headers);
+        };
+    }
+
+    /**
+     * 导入用户自备的书源 `.json`（设置页调用）。
+     * 🔴 同站点算**更新**（反复导入不会堆出一串同名源），且**保留用户自己的启用/停用选择**。
+     * ⚠️ 被跳过的条目**逐条说原因**（⛔ 不静默丢 —— 否则用户会以为「我导了 11 条怎么只有 8 条」）。
+     */
+    /**
+     * 书源导入的**落点**（#421 建立；**#425 起只收文本**）：解析 SoNovel 规则 → 合并 → 存设置 → 回报。
+     *
+     * 🔴 三个入口共用它：设置页「书籍源凭据」组里的**两个小节**（网络文学源 / 经典文学源）
+     *    与**下载弹窗**书源面板里的导入按钮。
+     * 🔴 #425 **挑文件那一步搬去了调用方**（设置页用 `services/filePick.mountFilePickLabel`，
+     *    弹窗在 Svelte 模板里写 `<label>` + `<input type="file">`）——
+     *    文件框必须挂在**调用方自己的 DOM 上**，宿主拿不到那个 DOM。
+     *    在此之前是宿主自己弹框（JS 建 input → 挂进文档 → 用代码触发），而那条路在真实 Electron 里
+     *    **点了没反应**（两轮都没根治）⇒ 整个方法随之退场。⛔ 说明里不写它俩的名字（注释会进产物）。
+     * 🔴 #422：`kind` = 这批源归哪一类（按钮 / 弹窗当前分类给），一路传到 `mergeSources`。
+     */
+    importNovelSources(text: string, kind?: SourceKind): { ok: boolean; message: string } {
+        try {
+            const parsed = parseSourceJson(text);
+            if (!parsed.sources.length && !parsed.rejected.length) return { ok: false, message: '这个文件里没有书源（要 SoNovel 格式的 .json）' };
+            return this.mergeNovelSources(parsed.sources, kind, parsed.rejected.map((r) => `${r.name || `第 ${r.index} 条`}：${r.reason}`));
+        } catch (e) {
+            return { ok: false, message: e instanceof Error ? e.message : String(e) };
+        }
+    }
+
+    /**
+     * 把一批**已校验通过**的源并进设置（#432 甲：导入 / 订阅 / 粘贴三条路**共用这一处落库**）。
+     *
+     * 🔴 抽出来的理由：三条路的「怎么把源弄到手」各不相同，但「并进去」的语义必须**只有一个** ——
+     *    各写一遍必然漂移（本仓「多个入口各写一套」栽过多次）。⛔ 别在调用方直接改 `settings.novelSources`。
+     */
+    mergeNovelSources(sources: readonly NovelSource[], kind?: SourceKind, skipReasons: readonly string[] = []): { ok: boolean; message: string } {
+        if (!sources.length && !skipReasons.length) return { ok: false, message: '里面没有可用的书源' };
+        const merged = mergeSources(this.settings.novelSources ?? [], sources, kind);
+        this.settings.novelSources = merged.sources;
+        void this.saveSettings();
+        const bits = [`新增 ${merged.added} 条`, `更新 ${merged.updated} 条`];
+        if (skipReasons.length) bits.push(`跳过 ${skipReasons.length} 条（${skipReasons[0]}）`);
+        return { ok: true, message: `已导入：${bits.join('，')}` };
+    }
+
+    /**
+     * #432 甲：把「**一段文本** 或 **一个地址**」变成「一批可用的源 + 跳过清单」。
+     *
+     * 两条入口共用（弹窗里粘什么都走这里）：
+     *   · 看起来是 `http(s)://…` ⇒ 先**拉回来**再解析（订阅）；
+     *   · 否则当**粘贴的 JSON 文本**（很多人是从网页上整段拷下来的）。
+     *
+     * 🔴 仓库清单（`form === 'manifest'`）要**第二步**：逐个拉清单里的源文件再解析 ——
+     *    故这里可能出现两轮网络。⚠️ 全程可取消（`cancel` 一路传下去，取消**不算失败**，原样抛哨兵）。
+     * ⚠️ 返回的 `skipped` 是**给人看的原因**（含 `.js` 踩红线、JSON 坏了、源体检不过），
+     *    ⛔ 绝不静默丢 —— 用户必须知道「为什么订了 30 条却只进来 3 条」。
+     */
+    async resolveSourceInput(
+        input: string,
+        opts: { cancel?: CancelToken; onProgress?: (label: string) => void } = {},
+    ): Promise<{ sources: NovelSource[]; skipped: SourcePackSkipped[]; packName: string }> {
+        const raw = String(input ?? '').trim();
+        if (!raw) return { sources: [], skipped: [], packName: '' };
+        let text = raw;
+        if (/^https?:\/\//i.test(raw)) {
+            opts.onProgress?.('正在拉取清单…');
+            const got = await fetchSourceText(raw, { cancel: opts.cancel });
+            if (!got.ok) return { sources: [], skipped: [{ name: raw, reason: got.error ?? '拉取失败' }], packName: '' };
+            text = got.text;
+        }
+        const pack = parseSourcePack(text);
+        const sources: NovelSource[] = [...pack.sources];
+        const skipped: SourcePackSkipped[] = [...pack.skipped];
+        if (pack.form === 'manifest' && pack.entries.length) {
+            opts.onProgress?.(`正在拉取 ${pack.entries.length} 个源文件…`);
+            const texts = await fetchSourceTexts(
+                pack.entries.map((e) => e.downloadUrl),
+                { cancel: opts.cancel },
+            );
+            texts.forEach((r, i) => {
+                const entry = pack.entries[i];
+                if (!r.ok) {
+                    skipped.push({ name: entry.name || entry.downloadUrl, reason: r.error ?? '拉取失败' });
+                    return;
+                }
+                try {
+                    const one = parseSourceJson(r.text);
+                    if (!one.sources.length) {
+                        skipped.push({ name: entry.name || entry.downloadUrl, reason: one.rejected[0]?.reason ?? '文件里没有可用的书源' });
+                        return;
+                    }
+                    sources.push(...one.sources);
+                } catch (e) {
+                    skipped.push({ name: entry.name || entry.downloadUrl, reason: e instanceof Error ? e.message : String(e) });
+                }
+            });
+        }
+        return { sources, skipped, packName: pack.packName };
+    }
+
+    /**
+     * #432 甲 · **一键体检**（决策 D-35(b)：每源**真搜一次**探针词）。
+     *
+     * 🔴 两条口径（都在 `pure/sourceCheck` 里钉着，此处只做接线）：
+     *   · **「搜到 0 条」不算失败**（探针词不一定命中该书库）⇒ 请求成功即判可用；
+     *   · 失败原因**先折人话**（`novelFailText`），原文留给 tooltip。
+     * ⚠️ 只体检**本类**里**启用中**的源（按钮长在哪个小节就体检哪一类）—— ⛔ 别「顺手把另一类也体检了」。
+     * ⚠️ 可取消：`raceCancel` 包住单源检索（掐不断 socket，但不再等它 —— 本仓 #428 口径）。
+     */
+    async checkNovelSources(
+        kind: SourceKind,
+        onOne?: (r: SourceCheckResult) => void,
+        cancel?: CancelToken,
+    ): Promise<SourceCheckResult[]> {
+        if (!Platform.isDesktopApp) return [];
+        const list = this.novelSourcesOf(kind).filter((s) => s.disabled !== true);
+        if (!list.length) return [];
+        const fetch = this.novelFetch();
+        const out: SourceCheckResult[] = new Array(list.length);
+        let cursor = 0;
+        const worker = async (): Promise<void> => {
+            for (;;) {
+                if (cancel?.stopped) return;
+                const i = cursor < list.length ? cursor++ : -1;
+                if (i < 0) return;
+                const src = list[i];
+                const t0 = Date.now();
+                let r: SourceCheckResult;
+                try {
+                    const res = await raceCancel(searchNovelSource(fetch, src, SOURCE_HEALTH_KEYWORD), cancel);
+                    const err = 'error' in res ? res.error : undefined;
+                    r = {
+                        key: sourceKey(src),
+                        name: String(src.name ?? '').trim() || '未命名书源',
+                        kind,
+                        ok: !err,
+                        ms: Date.now() - t0,
+                        count: res.hits?.length ?? 0,
+                        ...(err ? { error: novelFailText(err), raw: err } : {}),
+                    };
+                } catch (e) {
+                    if (e instanceof CancelledError) throw e;
+                    const rawErr = e instanceof Error ? e.message : String(e);
+                    r = { key: sourceKey(src), name: String(src.name ?? '').trim() || '未命名书源', kind, ok: false, ms: Date.now() - t0, count: 0, error: novelFailText(rawErr), raw: rawErr };
+                }
+                out[i] = r;
+                onOne?.(r);
+            }
+        };
+        await Promise.all(Array.from({ length: sourceCheckWorkers(list.length) }, () => worker()));
+        return out;
+    }
+
+    /** 启用 / 停用一条书源（按站点键定位 —— 与导入合并用同一把钥匙） */
+    setNovelSourceEnabled(key: string, enabled: boolean): void {
+        const hit = (this.settings.novelSources ?? []).find((s) => sourceKey(s) === key);
+        if (!hit) return;
+        hit.disabled = !enabled;
+        void this.saveSettings();
+    }
+
+    /**
+     * 改一条书源的分类（#422：源行里那个「移到另一组」按钮）。
+     * ⚠️ 按 `sourceKey` 定位（同名源时按名字会改错条）。
+     */
+    setNovelSourceKind(key: string, kind: SourceKind): void {
+        const hit = (this.settings.novelSources ?? []).find((s) => sourceKey(s) === key);
+        if (!hit || sourceKindOf(hit) === kind) return;
+        hit.kind = kind;
+        void this.saveSettings();
+    }
+
+    /**
+     * 把某一类的书源**整批**改归另一类（#439）—— 源行那枚是单条，这条是整组。
+     *
+     * 缘起：`kind` 是**本地状态**、无法从内容反推，而一次误点的整批改分类写进 `data.json` 后
+     * 只能逐条点回来（11 条 = 11 次）；更糟的是「本类为空」时那一组里**根本没有源行可点**
+     * （用户当时看到的就是「换到网文条目里一条书源都看不见」）。
+     *
+     * ⚠️ 口径与 `setNovelSourceKind` 严格一致：**只动 `kind`**，`disabled` 等本地状态原样保留。
+     * @returns 实际移动的条数；`0` = 那一类本来是空的（⛔ 调用方别报「已移动 0 条」这种假回执）
+     */
+    moveAllNovelSources(from: SourceKind, to: SourceKind): number {
+        const moved = this.novelSourcesOf(from).length;
+        if (moved === 0 || from === to) return 0;
+        this.settings.novelSources = moveAllSourcesToKind(this.settings.novelSources ?? [], from, to);
+        void this.saveSettings();
+        return moved;
+    }
+
+    /** 删除一条书源 */
+    removeNovelSource(key: string): void {
+        const list = this.settings.novelSources ?? [];
+        this.settings.novelSources = list.filter((s) => sourceKey(s) !== key);
+        void this.saveSettings();
+    }
+
+    /**
+     * 🔴 #457 C′：**就地改一条书源的 Cookie**（设置页源行下面那一行输入框）。
+     *
+     * ⚠️ 这是**用户自己填的凭据**（他自己登录之后复制来的），插件**不做登录流程、不存密码、
+     *   不碰任何站点** —— 与导入书源时文件里自带的 `search.cookies` 是**同一个字段**
+     *   （`services/novelSource.withSourceHeaders` 只是「按书源带上」）。
+     * ⚠️ 清空 ⇒ 把字段**删掉**（而不是留空串），与「没填」严格等价。
+     */
+    setNovelSourceCookie(key: string, cookies: string): void {
+        const hit = (this.settings.novelSources ?? []).find((s) => sourceKey(s) === key);
+        if (!hit?.search) return; // 没写搜索段 ⇒ 无从挂 Cookie
+        const v = cookies.trim();
+        if (v) hit.search.cookies = v;
+        else delete hit.search.cookies;
+        void this.saveSettings();
+    }
+
+    // ⛔ 2026-09-29：「清空全部书源」的宿主方法 `clearNovelSources()` **已随设置页那个按钮一起删除**
+    //    （用户：「太丑了，把清空全部按钮删除掉」）。⛔ 别只把它加回来当工具方法 —— 没有 UI 入口的写操作
+    //    就是一条能被未来某个地方误调的空转通路；要恢复请连同设置页入口一起恢复。
+    //    清空能力仍在：源行各自带删除（`removeNovelSource`，带二次确认）。
+
+    /**
+     * 多源搜索（渐进上报；只搜索用中的源）。
+     * 🔴 #422：`kind` 决定**只**用哪一类的源。
+     * 🔴🔴 #439 **翻面**：原来这里是「本类为空 ⇒ 回退到全部」（#422 续二的兜底），**已撤销**。
+     *    那个兜底把「分类标错了」从**看不见**升级成**错着用** —— 用户实测：下文学时冒出 11 条网文源，
+     *    而搜索结果是**不带任何提示**的（面板那行小字只在静态列表上有）⇒ 看起来就是「文学窗口在用网文源」。
+     *    ✅ 现在本类为空就**返回空**，面板走**空态**（说清本类 0 条 / 你有 N 条在另一类 + 一键搬过来）。
+     *    ⚠️ 兜底当年的初衷（「别让面板看着像书源全丢了」）由空态那段文字接手，⛔ 不是删掉了事。
+     *    ⚠️ 组件侧 `BookDownload.svelte` 的 `shown` **同口径**（两处缺一即「看得见搜不到」或反之）。
+     */
+    async searchNovel(
+        keyword: string,
+        kind: SourceKind,
+        onPartial?: (results: NovelSourceSearchResult[]) => void,
+    ): Promise<NovelSourceSearchResult[]> {
+        if (!Platform.isDesktopApp) return [];
+        const sources = this.novelSourcesOf(kind);
+        if (!sources.length) return [];
+        return searchNovelSources(this.novelFetch(), sources, keyword, { onPartial });
+    }
+
+    /**
+     * 取一本书的目录（弹窗选完结果后调）。
+     * 🔴 #457 **文学源适配**：目录解析不出来时回退成「**整页一章**」（`fetchNovelTocOrWhole`），
+     *    并把原失败原因放在 `note` ⇒ 弹窗要说清「没解析出目录、按整页下」，⛔ 不静默。
+     */
+    async loadNovelToc(hit: NovelSearchHit): Promise<{ items: NovelTocItem[]; error?: string; wholePage?: boolean; note?: string }> {
+        const src = this.novelSourceByKey(hit.sourceUrl);
+        if (!src) return { items: [], error: '这条书源已被删除或停用，请重新搜索' };
+        return fetchNovelTocOrWhole(this.novelFetch(), src, hit);
+    }
+
+    /**
+     * 按站点键定位书源。
+     * 🔴 必须按 **`sourceKey`（站点地址）** 找，⛔ 别按名称 —— 两个源同名时就会下到另一个源的书。
+     */
+    private novelSourceByKey(key: string) {
+        return (this.settings.novelSources ?? []).find((s) => sourceKey(s) === key);
+    }
+
+    /**
+     * EPUB 的 identifier 用真 uuid（有就取，没有就给空串让 `pure/epubPack` 走「书名+作者」派生）。
+     * ⚠️ 只在能拿到时用真值：派生那个**不保证全局唯一**，但同一本书稳定 ⇒ 重复下载不会产出
+     *    「同一本书两个 identifier」的怪情况。
+     */
+    private novelUuid(): string {
+        const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+        return c && typeof c.randomUUID === 'function' ? c.randomUUID() : '';
+    }
+
+    /**
+     * 按书源抓完整本并落成 **TXT**（P1-A 只做 TXT，EPUB 排在 P1-B）。
+     *
+     * 🔴 三条：
+     *  ⑴ 目录 → 截取用户选的章节区间 → **并发池**抓章（`NOVEL_CHAPTER_CONCURRENCY`，⚠️ #428 推翻了旧的「串行 + 间隔」）；
+     *  ② 单章失败**不中断**：成品里跳过那一章，并在回执里点名（⛔ 不假装成功）；
+     *  ③ 落盘经 `downloadRelPath`（**重名去重**，与其它下载面同一份口径）+ `writeBinaryFile`。
+     * 🔴 **P1-C 断点续传（自动，无新 UI）**：同一本书 / 同一格式 / **同一份目录**再次下载时，
+     *    上次抓到的章直接从存档复用（`{libraryDir}/下载续传/*.ndjson`），只补没抓到的；
+     *    全部抓完即删档。目录变了（书源改版）⇒ 存档作废、从头下，并在回执里**明说**。
+     * 🔴🔴 **#428 取消 = 不落盘**（用户实测：「取消点不动、我点了叉才退出但能保存」）：
+     *    取消 ⇒ 抓章层抛 `CancelledError` ⇒ 这里**直接返回、⛔ 不合成也不写文件**；
+     *    ⚠️ 但**续传档一律留着**（已抓到的章是用户的心血，下次自动接着下 —— 取消不是「白抓」）。
+     */
+    async downloadNovelBook(req: {
+        hit: NovelSearchHit;
+        /** 1 起的章节序号（含） */
+        from: number;
+        /** 1 起的章节序号（含） */
+        to: number;
+        /** 成品格式（#420 P1-B 起支持 EPUB） */
+        format: 'txt' | 'epub';
+        onProgress: (done: number, total: number, failed: number) => void;
+    }): Promise<{ ok: boolean; message: string; relPath?: string; tocText?: string; cancelled?: boolean }> {
+        const src = this.novelSourceByKey(req.hit.sourceUrl);
+        if (!src) return { ok: false, message: '这条书源已被删除或停用，请重新搜索' };
+        const token = createCancelToken();
+        this.novelCancel = token;
+        // 取消收尾要用到的两件（都在 try 里赋值 ⇒ 必须先声明在 try 外）：
+        //  · `appendChain`：**必须 await 完**再返回，否则最后几章还在往存档写的路上就被丢下了；
+        //  · `keptChapters`：回执里告诉用户「留住了几章」，⛔ 别只说一句「已取消」让他以为白抓。
+        let appendChain: Promise<void> = Promise.resolve();
+        let keptChapters = 0;
+        try {
+            // 🔴 #457：与「取目录」**同一个回退**（整页一章）—— 否则会出现「目录面板看得见、下载却报错」
+            const toc = await fetchNovelTocOrWhole(this.novelFetch(), src, req.hit);
+            if (toc.error) return { ok: false, message: toc.error };
+            const from = Math.max(1, Math.min(Math.floor(req.from) || 1, toc.items.length));
+            const to = Math.max(from, Math.min(Math.floor(req.to) || toc.items.length, toc.items.length));
+            const slice = toc.items.slice(from - 1, to);
+
+            // ── 续传存档：先看上次下到哪（⛔ 目录对不上就不认，见 pure/chapterPlan 文件头）──
+            const plan = { sourceKey: sourceKey(src), bookUrl: req.hit.bookUrl, format: req.format, tocKey: chaptersFingerprint(toc.items) };
+            const planPath = resumePath(this.settings.libraryDir, resumeFileName({
+                title: req.hit.title,
+                sourceKey: plan.sourceKey,
+                bookUrl: plan.bookUrl,
+                format: plan.format,
+            }));
+            const prev = await this.readResumePlan(planPath);
+            let resumeFrom: ResumeChapter[] = [];
+            let staleNote = '';
+            if (prev.meta && resumeMatches(prev.meta, plan)) {
+                resumeFrom = prev.chapters;
+            } else if (prev.meta || prev.chapters.length) {
+                // 目录变了 / 站点或书名对不上 / 只有章没有元信息（坏档）⇒ 一律丢弃，⛔ 绝不混拼
+                if (prev.chapters.length) staleNote = `上次的续传存档与这次的目录对不上（${prev.chapters.length} 章），已丢弃并从头下载。`;
+                await this.dropResumePlan(planPath);
+            }
+            await this.startResumePlan(planPath, { ...plan, title: req.hit.title, author: req.hit.author, updatedAt: new Date().toISOString() });
+            // 已落档的章号：续传复用过来的先记上，避免 onCheckpoint 把它们再 append 一遍
+            const appended = new Set<number>(resumeFrom.map((c) => c.no));
+            keptChapters = appended.size;
+
+            let reused = 0;
+            const tasks = await fetchNovelChapters(this.novelFetch(), src, slice, {
+                onProgress: req.onProgress,
+                // 🔴 #428：令牌取代了旧的 `shouldStop`（旧形态只能「下一章开头问一句」⇒ 点了没反应）
+                cancel: token,
+                resume: resumeFrom,
+                onResume: (n) => (reused = n),
+                // 抓完一章 append 一行；**串起来写**（并发 append 会让行序错乱，续传时章序就乱了）
+                onCheckpoint: (all) => {
+                    const fresh = all.filter((t) => t.state === 'done' && String(t.text ?? '').trim() && !appended.has(t.no));
+                    if (!fresh.length) return;
+                    for (const t of fresh) appended.add(t.no);
+                    keptChapters = appended.size;
+                    appendChain = appendChain
+                        .then(async () => {
+                            for (const t of fresh) await this.appendResumeChapter(planPath, { no: t.no, title: t.title, text: t.text ?? '' });
+                        })
+                        .catch(() => { /* 落档失败不阻断下载：那一章下次重抓，不是丢数据 */ });
+                },
+            });
+            await appendChain;
+
+            const doneCount = tasks.filter((t) => t.state === 'done').length;
+            // 全抓完 ⇒ 存档使命完成（留着只会占地方）；一章都没抓到 ⇒ 也别留个空档
+            if (doneCount === tasks.length || doneCount === 0) await this.dropResumePlan(planPath);
+
+            const meta = { title: req.hit.title, author: req.hit.author, sourceName: src.name };
+            const chapters = tasks.map((t) => ({ no: t.no, title: t.title, text: t.text ?? '' }));
+            // EPUB 走 jszip（`mimetype` 首条且 STORED 由 `epubFileList` 定序、`zipEpub` 打完自检）；TXT 直接编码
+            const bytes =
+                req.format === 'epub'
+                    ? await zipEpub(epubFileList(meta, chapters, { modified: isoUtc(new Date()), uuid: this.novelUuid() }))
+                    : new TextEncoder().encode(buildNovelTxt(meta, chapters));
+            const sizeIssue = downloadSizeIssue(bytes.byteLength);
+            if (sizeIssue) return { ok: false, message: staleNote + sizeIssue };
+            const taken = new Set(this.app.vault.getFiles().map((f) => f.path));
+            const relPath = downloadRelPath({
+                kind: 'book',
+                filename: novelBookFilename(meta, req.format),
+                // 🔴 #425：书籍走**自己的**目录（在此之前是复用 `musicDownloadDir` —— 两类文件挤一个根下）
+                root: this.settings.bookDownloadDir,
+                taken,
+            });
+            await this.writeBinaryFile(relPath, bytes);
+            const failedText = failedChaptersText(tasks);
+            const resumeText = reused > 0 ? `，其中 ${reused} 章是上次续传复用` : '';
+            const head = `已下载到「${relPath}」（${doneCount} / ${slice.length} 章，${req.format.toUpperCase()}${resumeText}）`;
+            // 🔴 章节名回传（`tocText`）：宿主**不判分类**（写不写回由表单侧决定 —— 它才知道 `bookKind`）。
+            // 🔴 #431：**只回传前 10 章 + `....`**（用户：「只显示前 10 章加个 `....` 来显示」）——
+            //    长篇 2000+ 章全塞进条目用户不会看，还会被原样渲染进笔记的 `## 目录` 小节。
+            //    裁断的真源在 `pure/novelPack.novelTocPreview`，⛔ 别在这里内联 slice。
+            const tocText = novelTocPreview(tasks.filter((t) => t.state === 'done').map((t) => t.title));
+            return {
+                ok: true,
+                message: `${staleNote}${failedText ? `${head}。${failedText}` : head}`,
+                relPath,
+                tocText: tocText || undefined,
+            };
+        } catch (e) {
+            // 🔴 #428 取消：**什么都不落盘**（这是「取消」的全部意义）—— 但续传档留着，
+            //    已抓到的章下次自动复用 ⇒ 取消不等于白抓。
+            if (e instanceof CancelledError) {
+                await appendChain; // 等最后几章写完再回话，⛔ 别让它们落在用户看不到的身后
+                return {
+                    ok: false,
+                    cancelled: true,
+                    message: keptChapters > 0
+                        ? `已取消（未保存文件）。已抓到的 ${keptChapters} 章留在续传存档里 —— 再次下载同一本书会接着下。`
+                        : '已取消（未保存文件）。这次没抓到任何一章。',
+                };
+            }
+            // ⚠️ 这里**故意不删续传档**：抛错也可能发生在「章都抓完了、合成或自检才失败」之后
+            //    （EPUB 字节自检不达标就是一条）—— 那批章是用户几十分钟的成果，删了就得整本重下。
+            //    真下完 / 一章都没抓到这两种收场由上面那处显式删档负责。
+            return { ok: false, message: e instanceof Error ? e.message : String(e) };
+        } finally {
+            this.novelCancel = null;
+        }
+    }
+
+    // ── 续传存档的读写（IO 薄层；schema / 容错全在 `pure/chapterPlan`）──────────────────────────
+    // 🔴 **一条铁律：续传档只许「首行元信息 + 逐章 append」，⛔ 不许整档重写** ——
+    //    重写要先把十几 MB 的正文全序列化一遍（长书下每秒一次卡顿），而且崩在写一半就整档废了。
+
+    /** 读续传档（文件不存在 / 读不出来 ⇒ 当没有；⛔ 不抛） */
+    private async readResumePlan(path: string): Promise<{ meta: ResumeMeta | null; chapters: ResumeChapter[] }> {
+        try {
+            return parseResume(await this.app.vault.adapter.read(normalizePath(path)));
+        } catch {
+            return { meta: null, chapters: [] };
+        }
+    }
+
+    /**
+     * 建续传档（**已经有了就一个字节都不动** —— 覆盖 = 把用户上次抓的章全抹掉）。
+     * ⚠️ 落档失败**不阻断下载**：续传是「锦上添花」，不能因为它挂了就下不了书。
+     */
+    private async startResumePlan(path: string, meta: Omit<ResumeMeta, 'v' | 'kind'>): Promise<void> {
+        const p = normalizePath(path);
+        try {
+            // 🔴 判据用 **adapter.exists 而不是 vault 索引** —— 索引没跟上（刚建 / 外部同步进来）时
+            //    `getAbstractFileByPath` 会回 null，那时写下去就是把用户上次抓的章**整档抹掉**。
+            if (await this.app.vault.adapter.exists(p)) return;
+            await this.ensureFolder(resumeDir(this.settings.libraryDir));
+            await this.app.vault.adapter.write(p, resumeMetaLine(meta));
+        } catch { /* 见上：不阻断下载 */ }
+    }
+
+    /** 追加一章（调用方已保证「先建档」且**串行**调用） */
+    private async appendResumeChapter(path: string, ch: ResumeChapter): Promise<void> {
+        try {
+            await this.app.vault.adapter.append(normalizePath(path), resumeChapterLine(ch));
+        } catch { /* 见上：不阻断下载 */ }
+    }
+
+    /** 删续传档（下完 / 全废 / 目录变了；不存在也算成功） */
+    private async dropResumePlan(path: string): Promise<void> {
+        try {
+            const p = normalizePath(path);
+            const f = this.app.vault.getAbstractFileByPath(p);
+            if (f instanceof TFile) await this.app.vault.delete(f);
+        } catch { /* 删不掉就留着，下次仍会被目录指纹拦下 */ }
+    }
+
+    /**
+     * 下载面传输层（#399-D）：四平台全部经 `services/nodeHttp`（Node 原生 https，能过平台反爬）。
+     * 🔴 只在桌面端可用；移动端由各门面提前返回（见下面的 `Platform.isDesktopApp` 守卫）。
+     */
+    private dlTransport(): DlTransport {
+        return {
+            get: (url, headers) => nodeHttpGet(url, headers),
+            post: (url, body, headers) => nodeHttpPost(url, body, headers),
+            getBuffer: (url, headers) => nodeHttpGetBuffer(url, headers),
+        };
+    }
+
+    /**
+     * 四平台搜索（#399-D）：任一平台先回来就先回调（渐进渲染），全部失败时 `onEmpty(true)`。
+     * ⛔ 只桌面端 —— 移动端没有 Node http，真放进来必然是一次失败。
+     */
+    async dlSearchSongs(
+        keyword: string,
+        onPartial?: (songs: DownloadSong[]) => void,
+        onEmpty?: (networkError: boolean) => void,
+    ): Promise<{ songs: DownloadSong[]; failedSources: PlaylistSource[] }> {
+        if (!Platform.isDesktopApp) return { songs: [], failedSources: [] };
+        // 🔴 #405：搜索结果的平台顺序用 **`DL_SEARCH_ORDER`（酷我优先）**，⛔ 不是 `DL_PLATFORMS`
+        //    （后者是胶囊 / 设置页的平台清单顺序，用户没要求改那个）。
+        return dlSearch(this.dlTransport(), keyword, { onPartial, onEmpty, order: [...DL_SEARCH_ORDER] });
+    }
+
+    /** 四平台推荐歌单（网易云复用本仓既有免密端点；QQ/酷狗/酷我走各自公开接口） */
+    async dlRecommendedPlaylists(
+        source: PlaylistSource,
+        limit?: number,
+    ): Promise<{ playlists: RecommendedPlaylist[]; error?: string }> {
+        if (!Platform.isDesktopApp) return { playlists: [], error: '仅桌面端支持' };
+        return dlRecommendedPlaylists(this.dlTransport(), source, limit);
+    }
+
+    /** 四平台歌单曲目 */
+    async dlPlaylistSongs(
+        source: PlaylistSource,
+        id: string,
+    ): Promise<{ songs: DownloadSong[]; error?: string }> {
+        if (!Platform.isDesktopApp) return { songs: [], error: '仅桌面端支持' };
+        return dlPlaylistSongs(this.dlTransport(), source, id);
+    }
+
+    /**
+     * 四平台下载一首歌到库内（含网易云 VIP / QQ Cookie 链路）。
+     * 🔴 `taken` = **当前库内全部相对路径**（`pure/downloadPlan` 的重名去重依据）—— 下载是低频操作，现取即可。
+     * ⛔ **不内嵌任何音频标签**（用户 2026-09-28 明确不做那套）。
+     */
+    async dlDownloadSong(
+        song: DownloadSong,
+        onProgress?: DownloadProgressCallback,
+    ): Promise<{ ok: boolean; message: string; relPath?: string }> {
+        if (!Platform.isDesktopApp) return { ok: false, message: '下载功能仅支持桌面端' };
+        const taken = new Set(this.app.vault.getFiles().map((f) => f.path));
+        return dlDownloadSong(
+            this.dlTransport(),
+            song,
+            {
+                cookies: this.settings.musicDlCookies ?? {},
+                target: {
+                    root: this.settings.musicDownloadDir,
+                    taken,
+                    write: (relPath, data) => this.writeBinaryFile(relPath, data),
+                },
+            },
+            onProgress,
+        );
+    }
+
+    /**
+     * 试听某首曲目（2026-09-28 #400）：取**标准档**音频字节（不写盘），由弹窗转 Blob 播放。
+     * 链路顺序与下载完全一致（同一处 `resolveAudio`）⇒ 「能下不能听」不会出现。
+     * 🔴 缓存**仅本会话有效**（服务层模块内 Map，重启即清）：用户明确「不做设置页试听缓存删除」
+     *    ⇒ ⛔ 别为它加设置项 / 清缓存按钮 / 磁盘缓存。
+     */
+    async dlPreviewAudio(
+        song: DownloadSong,
+        onProgress?: DownloadProgressCallback,
+    ): Promise<DlPreviewResult> {
+        if (!Platform.isDesktopApp) return { ok: false, message: '试听功能仅支持桌面端' };
+        return dlPreviewAudio(this.dlTransport(), song, { cookies: this.settings.musicDlCookies ?? {} }, onProgress);
+    }
+
+    /** 平台连通性测试（设置页「测试连接」四态文案；`source` 传平台 id 字符串） */
+    async dlTestConnection(source: string, cookie: string): Promise<{ ok: boolean; message: string }> {
+        if (!Platform.isDesktopApp) return { ok: false, message: '仅桌面端支持' };
+        return dlTestConnection(this.dlTransport(), source, cookie);
+    }
+
+    /**
+     * B 站视频搜索（#496）：两步请求（先取 `buvid3` 再搜），形态与失败文案全在
+     * `services/dl/bilibili` + `pure/dl/bilibili`。⛔ 只桌面端（移动端没有 Node http）。
+     */
+    async dlBiliSearch(keyword: string): Promise<{ videos: BiliVideo[]; error?: string }> {
+        if (!Platform.isDesktopApp) return { videos: [], error: '仅桌面端支持' };
+        return dlBiliSearch(this.dlTransport(), keyword);
+    }
+
+    /**
+     * B 站取**分P 列表**（#505：把「一个 52 集的长篇」一次填完的前提）。
+     * 🔴 与 `dlBiliSearch` 同一条纪律：只桌面端、共用 `buvid3` 缓存、失败重取一次再报原因；
+     *    ⛔ 只**取列表**，不下载（下载是音乐下载弹窗那条路的职责）。
+     */
+    async dlBiliView(bvid: string): Promise<{ title: string; parts: BiliPart[]; error?: string }> {
+        if (!Platform.isDesktopApp) return { title: '', parts: [], error: '仅桌面端支持' };
+        return dlBiliView(this.dlTransport(), bvid);
+    }
+
+    /**
+     * B站视频 → 音频（mp3）下载并落库（#496）。
+     * 🔴 落盘口径与四平台**完全一致**：`downloadRelPath`（命名 / 净化 / 重名 `(2)(3)`）+ `writeBinaryFile`。
+     *    区别只在「字节从哪来」—— 这里是 yt-dlp 抓到 `os.tmpdir()` 的临时目录里再读回来
+     *    （临时目录由 `services/ytdlp` 自己清理，⛔ 不会在库里留半截文件）。
+     * ⚠️ `ytdlpPath` **留空是合法值**（= 走系统 PATH），⛔ 别在这里兜底成 `'yt-dlp'`
+     *    —— 候选名按平台生成，见 `pure/ytdlp.ytdlpExeCandidates`。
+     */
+    async dlBiliDownload(
+        video: BiliVideo,
+        onProgress?: DownloadProgressCallback,
+    ): Promise<{ ok: boolean; message: string; relPath?: string }> {
+        if (!Platform.isDesktopApp) return { ok: false, message: '下载功能仅支持桌面端' };
+        const r = await fetchBiliAudioWithYtDlp(defaultYtDlpDeps(), {
+            exe: this.settings.ytdlpPath ?? '',
+            url: video?.webUrl ?? '',
+            onProgress,
+        });
+        if (!r.ok || !r.data) return { ok: false, message: r.message };
+        const sizeIssue = downloadSizeIssue(r.data.byteLength);
+        if (sizeIssue) return { ok: false, message: sizeIssue };
+        try {
+            const taken = new Set(this.app.vault.getFiles().map((f) => f.path));
+            const ext = r.ext || 'mp3';
+            const relPath = downloadRelPath({
+                kind: 'music',
+                filename: buildSongFilename(video.author, video.title, ext),
+                root: this.settings.musicDownloadDir,
+                taken,
+            });
+            await this.writeBinaryFile(relPath, r.data);
+            const mb = (r.data.byteLength / 1024 / 1024).toFixed(2);
+            return { ok: true, message: `已下载 ${mb}MB：${relPath}（B站 · ${ext}）`, relPath };
+        } catch (e) {
+            return { ok: false, message: `写入失败：${e instanceof Error ? e.message : String(e)}` };
+        }
+    }
+
+    /**
+     * 列出**库内可关联的书籍文件**（#417：书籍「书籍文件」浮层那枚 🔍 的数据源）。
+     *
+     * 🔴 扩展名白名单真源 = `pure/downloadPlan.DOWNLOAD_EXT_WHITELIST.book`（经 `isAssociableBookPath`）
+     *    —— 与「书籍文件」字段能接受的文件同源，⛔ 不另列一份名单。
+     * 🔴 **#426 起只扫「书籍文件目录」**（用户原话：「检索限定到新目录」）—— 与音频那侧同款：
+     *    目录真源 = `downloadDir(settings.bookDownloadDir, 'book')`，与**落盘用的是同一个函数**
+     *    ⇒ ⛔ 别在这里另拼一份路径（否则用户改完「书籍文件目录」，这里立刻找不到东西）。
+     * ⚠️ 此前是**全库扫**（旧口径「用户可能把书放自己建的文件夹里」）—— 已被用户推翻，⛔ 别改回去。
+     */
+    listLibraryBookFiles(): LibraryBookFile[] {
+        const prefix = `${downloadDir(this.settings.bookDownloadDir, 'book')}/`;
+        return this.app.vault
+            .getFiles()
+            .filter((f) => f.path.startsWith(prefix) && isAssociableBookPath(f.path))
+            .map((f) => ({ path: f.path, name: f.name }));
+    }
+
+    /**
+     * 列出**库内音乐目录**下的音频文件（#404：本地音频浮层那枚「检索同名音频」小按钮的数据源）。
+     *
+     * 🔴 目录真源 = `pure/downloadPlan.downloadDir(settings.musicDownloadDir, 'music')`
+     *    （默认 `下载/音乐`；与下载落盘用的是**同一个函数** ⇒ ⛔ 别在这里另拼一份路径，
+     *    否则用户改了「音乐下载路径目录」后这里就找不到东西了）。
+     * 🔴 扩展名按 `isAssociableAudioPath`（= `AUDIO_ASSOCIABLE_EXTENSIONS`）过滤 ——
+     *    与「本地音频」字段能接受的文件同源，⛔ 不另列一份白名单。
+     * ⚠️ 只扫**该目录下**（含子目录）：库内别处的音频不算「音乐目录里的」。
+     */
+    listLibraryAudioFiles(): LibraryAudioFile[] {
+        const prefix = `${downloadDir(this.settings.musicDownloadDir, 'music')}/`;
+        return this.app.vault
+            .getFiles()
+            .filter((f) => f.path.startsWith(prefix) && isAssociableAudioPath(f.path))
+            .map((f) => ({ path: f.path, name: f.name }));
+    }
+
+    /**
+     * #497 音乐条目「改关联的音频文件的名字」（用户：「再添加在音乐条目上修改关联的音频文件名称的功能」）。
+     *
+     * 纯逻辑（拆分 / 校验 / 目标 `.lrc` 路径）全在 `pure/renameAudio.planAudioRename`，本方法只做**它碰不到的事**：
+     *  ⑴ **库内 / 库外分流**（判定与 `resolveEmbedUrl` / `absoluteMediaPath` 同源：先按库内相对试，不成当绝对）
+     *  ⑵ 物理改名 —— 库内 `vault.rename`（顺带把**全库指向它的 wikilink 一起更新**，这是白捡的：
+     *     笔记 ` ```lrc ` 块的 `source [[…]]` 正好是 wikilink）；库外 `fs.rename`（**桌面端门控**）
+     *  ⑶ **同名 `.lrc` 一起改** —— 「同名 .lrc」是四路歌词来源之一，音频改名而歌词不改 ⇒ 歌词**静默失效**
+     *  ⑷ 回写 catalog 的 `audioPath`（含**其它共用同一文件的条目**）+ 未被外部改过时重生成笔记
+     *
+     * 🔴 **重名即拒**（不覆盖、不自动加 `(2)`）：改名是用户主动指定名字，静默改写成别的名字比失败更糟；
+     *    而覆盖已存在文件 = **直接毁掉用户另一个文件**。
+     * 🔴 **物理改名在前、写库在后**：反过来的话，写库成功而改名失败会留下一个指向不存在文件的条目
+     *    （播放按钮点了没反应，是最难查的那种）；现在最坏只是「文件改了名、条目还指旧路径」，
+     *    用户重选一次即可，文件本身没丢。
+     *
+     * @param entryId 编辑态条目 id（新增态传 `null` —— 那时还没有条目可写，只改文件与表单）
+     * @param currentPath 表单「文件路径」里的当前值（可能尚未保存，所以**不能**拿 catalog 的值代替）
+     * @param newStem 新主名（扩展名由纯模块锁死，⛔ 不接受整名）
+     */
+    async renameEntryAudio(
+        entryId: string | null,
+        currentPath: string,
+        newStem: string,
+    ): Promise<{ ok: boolean; message: string; path?: string }> {
+        const planned = planAudioRename(currentPath, newStem);
+        if ('issue' in planned) return { ok: false, message: planned.issue };
+        const plan = planned.plan;
+
+        const fromFile = this.vaultFileOf(plan.from);
+        let lrcNote = '';
+        if (fromFile) {
+            const target = normalizePath(plan.to);
+            if (this.app.vault.getAbstractFileByPath(target)) {
+                return { ok: false, message: `「${plan.toName}」已经存在，换个名字` };
+            }
+            await this.app.vault.rename(fromFile, target);
+            lrcNote = await this.renameSiblingLrc(plan.lrcFrom, plan.lrcTo);
+        } else {
+            if (!Platform.isDesktopApp) return { ok: false, message: '库外文件改名仅桌面端支持' };
+            try {
+                const fs = require('fs/promises') as typeof import('fs/promises');
+                if (!(await this.pathExists(plan.from))) {
+                    return { ok: false, message: `找不到这个文件：${plan.from}（路径可能已变，或它不在本机）` };
+                }
+                if (await this.pathExists(plan.to)) {
+                    return { ok: false, message: `「${plan.toName}」已经存在，换个名字` };
+                }
+                await fs.rename(plan.from, plan.to);
+            } catch (e) {
+                return { ok: false, message: `改名失败：${e instanceof Error ? e.message : String(e)}` };
+            }
+            lrcNote = await this.renameSiblingLrc(plan.lrcFrom, plan.lrcTo);
+        }
+
+        // ④ 回写条目（含**共用同一文件的其它条目** —— 漏掉它们 = 那条的播放按钮静默失效）
+        //    ⚠️ 新增态（`entryId` 为 null）同样要跑这一段：表单上的路径可能正是**别的条目**在用的文件。
+        let touched = 0;
+        try {
+            const all = await this.service.list();
+            const ids = all.filter((e) => e.audioPath === plan.from).map((e) => e.id);
+            if (entryId && !ids.includes(entryId)) ids.push(entryId);
+            for (const id of ids) {
+                await this.service.update(id, { audioPath: plan.to });
+                // 笔记里 `source` 行是按 audioPath 生成的 ⇒ 未被外部改过时重生成
+                //（库内那支的 wikilink 已被 `vault.rename` 顺手更新，这里既是兜底、也是库外路径的唯一出路）
+                if (!(await this.service.noteWasExternallyModified(id))) await this.service.writeNote(id);
+                touched++;
+            }
+        } catch (e) {
+            new Notice(`文件已改名为「${plan.toName}」，但写回条目失败：${e instanceof Error ? e.message : String(e)}`, 6000);
+            await this.refreshViews();
+            return { ok: true, message: `已改名为「${plan.toName}」`, path: plan.to };
+        }
+        await this.refreshViews();
+        const extra = touched > 1 ? `（同时更新了 ${touched} 个条目）` : '';
+        return { ok: true, message: `已改名为「${plan.toName}」${extra}${lrcNote}`, path: plan.to };
+    }
+
+    /** 该路径对应的**库内**文件（不是库内文件 ⇒ `null`）。判定与 `resolveEmbedUrl` 同源，⛔ 别用盘符前缀猜 */
+    private vaultFileOf(path: string): TFile | null {
+        try {
+            const f = this.app.vault.getAbstractFileByPath(this.toVaultRelPath(String(path ?? '').trim()));
+            return f instanceof TFile ? f : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** 库外绝对路径是否存在（桌面端；模块加载失败 / 无权限 ⇒ `false`） */
+    private async pathExists(p: string): Promise<boolean> {
+        if (!Platform.isDesktopApp) return false;
+        try {
+            const fs = require('fs/promises') as typeof import('fs/promises');
+            await fs.stat(p);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * 把与音频同名的 `.lrc` 一起改名（#497）。返回**追加到回执后面的一句话**（无歌词文件 ⇒ 空串）。
+     * 🔴 目标已存在 ⇒ **只跳过 lrc、不改音频的结论** —— 覆盖会把用户另一个歌词文件毁掉。
+     * ⚠️ 路径真源是 `pure/lrcSource.siblingLrcPath`（由纯模块算好传进来），⛔ 不在这里手拼 `.lrc`。
+     */
+    private async renameSiblingLrc(from: string | null, to: string | null): Promise<string> {
+        if (!from || !to || from === to) return '';
+        const f = this.vaultFileOf(from);
+        if (f) {
+            const target = normalizePath(to);
+            if (this.app.vault.getAbstractFileByPath(target)) return '；同名歌词文件已存在，未改动';
+            try {
+                await this.app.vault.rename(f, target);
+                return '；同名歌词文件已一起改名';
+            } catch {
+                return '；同名歌词文件未能改名';
+            }
+        }
+        if (!(await this.pathExists(from))) return ''; // 没有同名歌词文件：什么都不说
+        if (await this.pathExists(to)) return '；同名歌词文件已存在，未改动';
+        try {
+            const fs = require('fs/promises') as typeof import('fs/promises');
+            await fs.rename(from, to);
+            return '；同名歌词文件已一起改名';
+        } catch {
+            return '；同名歌词文件未能改名';
+        }
+    }
+
+    /**
+     * 写库内二进制文件（⑤-c）。🔴 两个坑：
+     *  ⑴ Obsidian 的 `vault.create*` **都不自动建父目录** ⇒ 逐层补
+     *     （`services/vaultIO` 里那段同名逻辑只服务**文本**写，⛔ 别指望它）；
+     *  ⑵ `Uint8Array.buffer` 可能只是底层 `ArrayBuffer` 的一个**视图**（`byteOffset ≠ 0`）——
+     *     直接用 `.buffer` 会把**整个底层缓冲**写进去（文件莫名变大、尾部混进别的数据）
+     *     ⇒ 必须按 `byteOffset / byteLength` 切出真正属于这段数据的区间。
+     */
+    private async writeBinaryFile(relPath: string, data: Uint8Array): Promise<void> {
+        const p = normalizePath(relPath);
+        const segments = p.split('/');
+        let cur = '';
+        for (const seg of segments.slice(0, -1)) {
+            cur = cur ? `${cur}/${seg}` : seg;
+            if (!this.app.vault.getAbstractFileByPath(cur)) await this.app.vault.createFolder(cur);
+        }
+        const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+        const existing = this.app.vault.getAbstractFileByPath(p);
+        if (existing instanceof TFile) await this.app.vault.modifyBinary(existing, buf);
+        else await this.app.vault.createBinary(p, buf);
+    }
+
+    /** 音频播放器的模式 / 音量写回设置（append-only 字段；落盘失败静默 —— 本次会话已生效） */
+    private async persistAudioSetting(key: 'mode' | 'volume', value: number | string): Promise<void> {
+        if (key === 'mode') this.settings.audioPlayMode = normalizeAudioPlayMode(value);
+        // 🔴 音量标度是 0–2（200%，>1 走增益）：⛔ 别用 `clampVolume`（0..1）—— 那会把 150% 静默压回 100%
+        else this.settings.audioVolume = clampAudioVolume(value);
+        try {
+            await this.saveSettings();
+        } catch {
+            /* 落盘失败不影响本次会话已生效的值 */
+        }
+    }
+
+    /**
+     * 播放器互斥：某一路起播 ⇒ 暂停**其余**路（真源 `pure/audioQueue.playersToPause`）。
+     * 🔴两路都要在这里处理（音频 ↔ 视频是**双向**的）：只写一侧的后果，是另一侧起播时
+     * 这一路**继续响** —— 而 UI-GUIDE **§15.5 F** 的口径是「同一时刻只允许一路在响」。
+     * 新增第三路时**只改这一处**，⛔ 别在音频与视频两侧各写一遍「另一个是谁」——那样两边会漂。
+     */
+    private pauseOtherPlayers(starting: PlayerKind): void {
+        const others = playersToPause(starting);
+        if (others.includes('video')) {
+            for (const leaf of this.app.workspace.getLeavesOfType(VIDEO_PLAYER_VIEW_TYPE)) {
+                const view = leaf.view;
+                if (view instanceof VideoPlayerView) view.pauseForOtherPlayer();
+            }
+        }
+        if (others.includes('audio')) {
+            for (const leaf of this.app.workspace.getLeavesOfType(AUDIO_PLAYER_VIEW_TYPE)) {
+                const view = leaf.view;
+                if (view instanceof AudioPlayerView) view.pausePlayback();
+            }
+        }
+    }
+
+    /**
+     * 笔记内 ` ```lrc ` 块 → 内联播放器（④-4 / D-8(c)：**接管但默认关**）。
+     * 开关 = 「启用内置音乐播放器」（`settings.audioInlinePlayer`，基本设置 · 实验性功能）。
+     * 🔴 2026-09-27 #399：它同时是**歌曲下载按钮**的门控（用户：「开启后始终有 LRC 显示播放器、
+     *    下载歌曲功能，关闭后不显示下载按钮」）⇒ ⛔ 别再拆出第二个开关。
+     * 两层让位：⑴ 设置关（缺省）⇒ 不接管，笔记外观与升级前完全一致；
+     *          ⑵ 检测到 LyricFlux 启用 ⇒ 仍不接管（它也注册同名块处理器，两边都画就是两个播放器叠在一起）。
+     *
+     * 🔴 **第 ⑵ 层让位必须判在 `registerMarkdownCodeBlockProcessor(...)` **之前**，
+     *  ⛔ 不能只写在回调里** —— Obsidian 的语言表是 **全局静态** 的（`AW.codeBlockPostProcessors`，
+     *  见 `registerCodeBlockPostProcessor`：`if (n.hasOwnProperty(e)) throw new Error(...)`），
+     *  同一语言 **重复注册直接抛错**，而调用点就在 `onload` ⇒ **整个插件加载失败**（#390 实测：
+     *  `Error: Code block postprocessor for language lrc is already registered`）。
+     *  ⚠️ 回调里那层只能防「两个播放器叠着画」，**防不住「插件起不来」**；两处都要有，但顺序不能反。
+     */
+    private registerLrcBlockProcessor(): void {
+        if (this.isLyricFluxEnabled()) return;
+        try {
+            this.registerMarkdownCodeBlockProcessor('lrc', (source, el, ctx) => {
+                if (this.settings.audioInlinePlayer !== true) return;
+                ctx.addChild(
+                    new AudioInlineBlock(el, () => this.audioOptionsForNote(ctx.sourcePath, source)),
+                );
+            });
+        } catch (e) {
+            // 兜底：占住 `lrc` 的**不止 LyricFlux**（`lyricflow` / `lyricflux` 等同族插件都可能）
+            // ⇒ 让位，⛔ 绝不把 `onload` 带崩（那等于整个插件不可用）。
+            console.warn('[ReelLudic] lrc 代码块已被其它插件接管，内置内联播放器让位：', e);
+        }
+    }
+
+    /**
+     * 笔记内 lrc 块的播放选项：队列**只有这一首**（笔记里的块指向一个音频）。
+     * 音频解析不出来时不抛错，而是回一个空队列 —— 装配层会用空态说明原因（⛔ 不静默吞掉整块）。
+     */
+    private async audioOptionsForNote(notePath: string, source: string): Promise<AudioPlayerOptions> {
+        const block = parseLrcBlock(source);
+        const ref = parseLrcRef(block.audio ?? '');
+        const path = ref?.value ?? '';
+        const url = path ? this.resolveEmbedUrl(path) : null;
+        const entry = (await this.service.list()).find((e) => e.notePath === notePath) ?? null;
+        if (!path || !url) {
+            return { items: [], startIndex: 0, inline: true, loadLyrics: async () => null };
+        }
+        const track: AudioPlayerTrack = {
+            entryId: entry?.id ?? '',
+            title: entry?.title ?? (fileNameOfPath(path) || '音频'),
+            subtitle: entry ? audioSubtitle(entry) : '',
+            path,
+            url,
+            coverUrl: entry ? this.resolvePoster(entry) ?? null : null,
+        };
+        return {
+            items: [track],
+            startIndex: 0,
+            inline: true,
+            // ⚠️ 内联块**不传那个「打开即播」的开关**（打开笔记就出声很吵，那次也没人点播放键）；
+            //    逐字高亮与标签页共用同一个开关（同一个播放器、同一个设置）。
+            wordHighlight: this.settings.lyricsWordHighlight !== false,
+            loadLyrics: () => this.pickLyricsFor(block, path),
+            initialMode: normalizeAudioPlayMode(this.settings.audioPlayMode),
+            initialVolume: clampAudioVolume(this.settings.audioVolume ?? 1),
+            onSaveMode: (mode) => void this.persistAudioSetting('mode', mode),
+            onSaveVolume: (volume) => void this.persistAudioSetting('volume', volume),
+            onPlayStart: (kind) => this.pauseOtherPlayers(kind),
+        };
+    }
+
+    /**
+     * LyricFlux 是否已启用（④-4 块处理器让位判定）。
+     * ⚠️ `app.plugins` **不在** `obsidian.d.ts` 的公开类型里 ⇒ 经 `unknown` 收窄 + try/catch；
+     *    探测失败按「未启用」处理（宁可自己画，也别因为探测不到就整块不渲染）。
+     */
+    private isLyricFluxEnabled(): boolean {
+        try {
+            const plugins = (this.app as unknown as { plugins?: { enabledPlugins?: Set<string> } }).plugins;
+            return !!plugins?.enabledPlugins?.has(LYRICFLUX_PLUGIN_ID);
+        } catch {
+            return false;
         }
     }
 
@@ -2304,6 +3949,33 @@ export default class ReelLudicPlugin extends Plugin {
                 const fs = require('fs/promises') as typeof import('fs/promises');
                 const buf = await fs.readFile(path);
                 return decodeTxtBytes(new Uint8Array(buf));
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 读取**原始字节**（音频内嵌歌词解析用）。
+     * 🔴 与 `readBookText` 的区别：那个是「先读字节、嗅探编码、再整体解码」——适合纯文本；
+     *    **音频绝不能被整体解码**（编码信息在帧内部，ID3 每帧自己带编码字节）⇒ 只能原样取字节，
+     *    由 `pure/embeddedLyrics` 在帧内按自己的编码字节解。
+     * 路径形态与 `readBookText` 一致：vault 相对 → `vault.readBinary`；库外绝对 → `fs`。失败回 `null`。
+     */
+    async readBookBytes(path: string): Promise<Uint8Array | null> {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) {
+            try {
+                return new Uint8Array(await this.app.vault.readBinary(file));
+            } catch {
+                return null;
+            }
+        }
+        if (Platform.isDesktopApp) {
+            try {
+                const fs = require('fs/promises') as typeof import('fs/promises');
+                return new Uint8Array(await fs.readFile(path));
             } catch {
                 return null;
             }
@@ -2598,46 +4270,121 @@ export default class ReelLudicPlugin extends Plugin {
      */
     private aiOffBlocked(choice: AiProviderChoice, label: string): boolean {
         if (choice !== AI_PROVIDER_OFF) return false;
-        new Notice(`${label}已在设置中关闭（设置 → AI集成 · AI服务 可改为服务商重新启用）`, 4000);
+        new Notice(`${label}已在设置中关闭（设置 → AI集成 · 用途 可改为服务商重新启用）`, 4000);
         return true;
+    }
+
+    /**
+     * 🔴 #478：解析「某处服务这次该用哪个端点 / Key / 模型」—— **唯一入口**。
+     *
+     * 为什么要抽出来：加了第三家（`'custom'` 自定义端点）之后，原来散在各处的
+     * 「按内置两家二分挑 Key 字段」与「按内置两家二分挑显示名」的写法会**把自定义端点错当成 DeepSeek**
+     * （改一处漏一处）。现在这两件事各自只有一个出口：`resolveAiAccess` 与 `pure/translate.providerLabel`。
+     *
+     * 三处服务（翻译 / 总结 / 搜索）各自把**自己的模型字段**传进来（`pickedModel`）；凭据与端点共用。
+     * `issue` 非空 ⇒ **不要发请求**（缺 Key / 缺端点地址 / 缺模型名）。
+     */
+    private resolveAiAccess(
+        provider: TranslateProvider,
+        pickedModel?: string,
+    ): { url: string; key: string; model: string; label: string; issue?: string } {
+        const label = providerLabel(provider);
+        const model = resolveModel(provider, pickedModel);
+        if (provider === 'custom') {
+            const url = translateChatUrl('custom', this.settings.readerCustomBaseUrl);
+            const key = this.aiKeyText('custom');
+            const where = '设置 → AI集成 › 模型服务 · 自定义端点';
+            if (!url) return { url, key, model, label, issue: `未配置自定义端点地址，请先到 ${where} 填写` };
+            if (!key) return { url, key, model, label, issue: `未配置自定义端点的 API Key，请先到 ${where} 填写` };
+            if (!model) {
+                return { url, key, model, label, issue: '自定义端点需要填模型名（设置 → AI集成 · 用途 的「模型」栏）' };
+            }
+            return { url, key, model, label };
+        }
+        const key = this.aiKeyText(provider);
+        const url = translateChatUrl(provider);
+        if (!key) {
+            return { url, key, model, label, issue: `未配置 ${label} API Key，请先到 设置 → AI集成 · 模型服务 填写` };
+        }
+        return { url, key, model, label };
+    }
+
+    /**
+     * 🔴 #479：服务商 → **凭据字段名**（唯一真源）。`resolveAiAccess` 与「获取模型」共用它 ——
+     * ⛔ 别在第二处再写一遍 `provider === 'zhipu' ? … : …`（加第四家必漏一处，本仓栽过）。
+     * 🔴 #480：`siliconflow` 与「朗读云合成」**共用同一把 Key**（同一账号）⇒ 复用 `readerSiliconflowKey`，
+     *    不新开字段（否则用户要在同一页填两遍同一个 Key）。
+     */
+    /** 按 `pure/translate.aiKeyField` 取该服务商的 Key（trim；非字符串 → 空串） */
+    private aiKeyText(provider: TranslateProvider): string {
+        const v = (this.settings as unknown as Record<string, unknown>)[aiKeyField(provider)];
+        return typeof v === 'string' ? v.trim() : '';
+    }
+
+    /**
+     * 拉取服务商的**模型列表**（设置页「AI服务 › 模型 · 获取模型」，#479）。
+     * 🔴 端点由 `pure/translate.modelsUrl` 从 chat 端点**派生**，解析走 `parseModelList` ——
+     *    ⛔ 别在这里另写一份字面量 / 另写一套解析。
+     * 🔴 凭据与 chat **同一份**（`aiKeyField`）—— 不新开凭据通道，也不要求先选好模型。
+     * ⚠️ 失败时 `message` 面向用户直接可用（含 `aiHttpIssue` 的 401/402/403/404/429 可读文案）。
+     */
+    async listAiModels(provider: TranslateProvider): Promise<{ ok: boolean; models: ModelFetched[]; message?: string }> {
+        const label = providerLabel(provider);
+        const url = modelsUrl(provider, this.settings.readerCustomBaseUrl);
+        const key = this.aiKeyText(provider);
+        if (!url) return { ok: false, models: [], message: `未配置自定义端点地址，请先到 设置 → AI集成 › 模型服务 · 自定义端点 填写` };
+        if (!key) return { ok: false, models: [], message: `未配置 ${label} API Key，请先到 设置 → AI集成 · 模型服务 填写` };
+        try {
+            const res = await withTimeout(
+                requestUrl({ url, method: 'GET', headers: { Authorization: `Bearer ${key}` } }),
+                15000,
+            );
+            if (res.status !== 200) {
+                return { ok: false, models: [], message: aiHttpIssue(res.status, label) ?? `${label} 返回 HTTP ${res.status}` };
+            }
+            const models = parseModelList(res.json);
+            if (!models.length) return { ok: false, models: [], message: `${label} 没有返回可用模型` };
+            return { ok: true, models };
+        } catch (e) {
+            return { ok: false, models: [], message: '获取模型失败：' + (e instanceof Error ? e.message : String(e)) };
+        }
     }
 
     private async chatCompletion(input: {
         text: string;
         provider: TranslateProvider;
         prompt?: string;
+        /** 该服务在设置页选的模型（#478；空/缺省 ⇒ 该家默认模型） */
+        model?: string;
         /** 用途名，进错误文案（「翻译失败：…」/「搜索失败：…」） */
         label: string;
-        build: (text: string, provider: TranslateProvider, prompt?: string) => TranslateRequestBody | null;
+        build: (text: string, provider: TranslateProvider, prompt?: string, model?: string) => TranslateRequestBody | null;
     }): Promise<string | null> {
-        const { text, provider, prompt, label, build } = input;
-        const keyField = provider === 'zhipu' ? 'readerZhipuKey' : 'readerDeepseekKey';
-        const key = ((this.settings as unknown as Record<string, unknown>)[keyField] as string | undefined ?? '').trim();
-        const url = translateChatUrl(provider);
-        if (!key) {
-            new Notice(`未配置 ${provider === 'zhipu' ? '智谱' : 'DeepSeek'} API Key，请先到 设置 → AI集成 · API凭据 填写`, 4000);
+        const { text, provider, prompt, model, label, build } = input;
+        const access = this.resolveAiAccess(provider, model);
+        if (access.issue) {
+            new Notice(access.issue, 5000);
             return null;
         }
-        const body = build(text, provider, prompt); // 提示词可在设置页改；空文本返回 null → 不发请求
+        const body = build(text, provider, prompt, access.model); // 提示词可在设置页改；空文本返回 null → 不发请求
         if (!body) return null;
         try {
             // 15s 超时（远程推理需给足时间）
             const res = await withTimeout(
                 requestUrl({
-                    url,
+                    url: access.url,
                     method: 'POST',
                     contentType: 'application/json',
-                    headers: { Authorization: `Bearer ${key}` },
+                    headers: { Authorization: `Bearer ${access.key}` },
                     body: JSON.stringify(body),
                 }),
                 15000,
             );
-            if (res.status === 401) {
-                new Notice(`${label}失败：${provider === 'zhipu' ? '智谱' : 'DeepSeek'} API Key 无效（HTTP 401），请检查设置`, 5000);
-                return null;
-            }
-            if (res.status === 429) {
-                new Notice(`${label}失败：请求过于频繁或额度不足（HTTP 429）`, 5000);
+            // #478：401/402/403/404/429 一律给出**可读原因**（原来只特判 401/429 ⇒ 402 余额不足
+            //   会被笼统报成「失败（HTTP 402）」，用户看不出是账户没钱）
+            const httpIssue = aiHttpIssue(res.status, access.label);
+            if (httpIssue) {
+                new Notice(`${label}失败：${httpIssue}`, 5000);
                 return null;
             }
             if (res.status !== 200) {
@@ -2651,15 +4398,21 @@ export default class ReelLudicPlugin extends Plugin {
                 new Notice(`${label}失败（响应非 JSON）`, 4000);
                 return null;
             }
-            const out = parseTranslateResponse(json);
-            if (!out) {
-                new Notice(`${label}失败（模型未返回内容）`, 4000);
+            const reply = parseAiReply(json);
+            if (!reply.ok) {
+                // 🔴 推理模型只吐了思维链（`reasoning_content`）没给答案 ⇒ 明说，⛔ 别把思维链当结果
+                new Notice(
+                    reply.reason === 'reasoning-only'
+                        ? `${label}失败：该模型只返回了思考过程、没给答案\n请在 设置 → AI集成 · 用途 换一个非推理模型`
+                        : `${label}失败（模型未返回内容）`,
+                    reply.reason === 'reasoning-only' ? 6000 : 4000,
+                );
                 return null;
             }
-            return out;
+            return reply.text;
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            new Notice(`${label}失败：${msg || `无法连接 ${provider === 'zhipu' ? '智谱' : 'DeepSeek'}`}\n请检查网络或 API Key（${url}）`, 5000);
+            new Notice(`${label}失败：${msg || `无法连接 ${access.label}`}\n请检查网络或 API Key（${access.url}）`, 5000);
             return null;
         }
     }
@@ -2674,6 +4427,7 @@ export default class ReelLudicPlugin extends Plugin {
             text,
             provider: normalizeProvider(choice),
             prompt: this.settings.readerTranslatePrompt, // 提示词可在设置页改
+            model: this.settings.readerTranslateModel, // #478：设置页选的模型（空 ⇒ 该家默认）
             label: '翻译',
             build: buildTranslateBody,
         });
@@ -2690,6 +4444,7 @@ export default class ReelLudicPlugin extends Plugin {
             text,
             provider: normalizeProvider(choice),
             prompt: this.settings.readerSearchPrompt,
+            model: this.settings.readerSearchModel, // #478
             label: '搜索',
             build: buildSearchBody,
         });
@@ -2706,8 +4461,9 @@ export default class ReelLudicPlugin extends Plugin {
             text,
             provider: normalizeProvider(choice),
             prompt: undefined, // 显式不传：build 走内置提问提示词
+            model: this.settings.readerSearchModel, // #478：与「解读选段」共用搜索服务那一栏的模型
             label: '提问',
-            build: (_t, provider) => buildSearchQuestionBody(text, question, provider),
+            build: (_t, provider, _p, model) => buildSearchQuestionBody(text, question, provider, model),
         });
     }
 
@@ -2720,10 +4476,11 @@ export default class ReelLudicPlugin extends Plugin {
             this.aiSummaryService = new AiSummaryService({
                 getConfig: () => {
                     // 总结服务商独立于翻译服务商（设置页「AI 翻译 / 总结 / 搜索」内两项各自可调），但共用同一组 Key
+                    // #478：模型 / 端点解析**与 chatCompletion 走同一个入口**（resolveAiAccess）——
+                    //   否则「换到自定义端点」时总结这一路会偷偷还在用内置端点（两处真源必漂）。
                     const provider = normalizeProvider(this.settings.readerSummaryProvider);
-                    const keyField = provider === 'zhipu' ? 'readerZhipuKey' : 'readerDeepseekKey';
-                    const key = (((this.settings as unknown as Record<string, unknown>)[keyField] as string | undefined) ?? '').trim();
-                    return { provider, key, prompt: this.settings.readerSummaryPrompt };
+                    const access = this.resolveAiAccess(provider, this.settings.readerSummaryModel);
+                    return { provider, key: access.key, model: access.model, url: access.url, issue: access.issue, prompt: this.settings.readerSummaryPrompt };
                 },
                 notify: (msg, ms) => new Notice(msg, ms ?? 4000),
                 http: (opts) => requestUrl(opts), // RequestUrlResponse 结构上即 { status, text }
@@ -2740,36 +4497,223 @@ export default class ReelLudicPlugin extends Plugin {
         return this.getAiSummaryService().generate(input);
     }
 
+    // ──────────── #507 LRC 双语歌词（音乐编辑条目「获取歌词」旁那枚小按钮）────────────
+    private lrcBilingualService: LrcBilingualService | null = null;
+
+    /**
+     * 双语歌词服务（惰性构造）。
+     * 🔴 **复用「阅读翻译」的服务商与 Key**（`readerTranslateProvider` / `readerTranslateModel`）——
+     *    ⛔ 不为它单开一套凭据（本仓既有纪律：同一件事的 Key 只配一处，与摘要/预填同款）。
+     * ⚠️ 提示词走纯模块里那份**内置**的（逐行对齐是格式契约），⛔ 不接设置页可改的「服务提示词」。
+     */
+    private getLrcBilingualService(): LrcBilingualService {
+        if (!this.lrcBilingualService) {
+            this.lrcBilingualService = new LrcBilingualService({
+                getConfig: () => {
+                    const provider = normalizeProvider(this.settings.readerTranslateProvider);
+                    const access = this.resolveAiAccess(provider, this.settings.readerTranslateModel);
+                    return { provider, key: access.key, model: access.model, url: access.url, issue: access.issue };
+                },
+                notify: (msg, ms) => new Notice(msg, ms ?? 4000),
+                http: (opts) => requestUrl(opts), // RequestUrlResponse 结构上即 { status, text }
+                withTimeout,
+            });
+        }
+        return this.lrcBilingualService;
+    }
+
+    /**
+     * AI 生成**双语歌词**（`[00:15.16]hello | 你好`）：失败返回 null（服务内部已 Notice）。
+     * ⚠️ 返回的是**合并后的整份 LRC**（时间标签原样保留）+ `applied / missing` 计数；
+     *    写回表单/落库由组件那侧负责（与「获取歌词」同一条纪律：只填框，仍要点保存）。
+     */
+    aiBilingualLyrics(lrc: string, meta?: { title?: string; artist?: string }): Promise<LrcBilingualMerge | null> {
+        const choice = normalizeAiChoice(this.settings.readerTranslateProvider);
+        if (this.aiOffBlocked(choice, '翻译')) return Promise.resolve(null);
+        return this.getLrcBilingualService().generate(lrc, meta);
+    }
+
+    // ──────────── AI 预填（新增条目「手动填写」界面标题行 ✨）────────────
+    private aiPrefillService: AiPrefillService | null = null;
+
+    /** AI 预填服务（惰性构造）：复用「AI集成」的服务商与 Key，只为预填单开一个提示词（#499） */
+    private getAiPrefillService(): AiPrefillService {
+        if (!this.aiPrefillService) {
+            this.aiPrefillService = new AiPrefillService({
+                getConfig: () => {
+                    const provider = normalizeProvider(this.settings.readerPrefillProvider);
+                    // 模型 / 端点解析与 chatCompletion 走同一个入口（resolveAiAccess）——
+                    // 否则「换到自定义端点」时预填这一路会偷偷还在用内置端点（两处真源必漂）
+                    const access = this.resolveAiAccess(provider, this.settings.readerPrefillModel);
+                    return { provider, key: access.key, model: access.model, url: access.url, issue: access.issue, prompt: this.settings.readerPrefillPrompt };
+                },
+                notify: (msg, ms) => new Notice(msg, ms ?? 4000),
+                http: (opts) => requestUrl(opts), // RequestUrlResponse 结构上即 { status, text }
+                withTimeout,
+                // 🔴 #499D agent 工具回路（宿主注入 ⇒ 不接线 / 移动端时整条回路自动关闭）
+                runTool: (name, args) => this.runPrefillTool(name, args),
+                onStep: (label) => this.prefillStepCb?.(label),
+            });
+        }
+        return this.aiPrefillService;
+    }
+
+    /** #499D：本次预填的「工具进度」回调（服务是单例 ⇒ 每次调用前挂上、结束即清；按钮忙时不会再发第二次） */
+    private prefillStepCb: ((label: string) => void) | null = null;
+
+    /**
+     * AI 预填条目字段（新增条目 · 手动填写界面的 ✨）：失败返回 null（服务内部已 Notice）。
+     * ⚠️ 与 `aiSummarizeEntry` 是**两条独立的服务行**（各自的 provider / model / prompt），
+     *    只共用凭据（`resolveAiAccess` 的 Key 与端点）。
+     * 🔴 #499D：带 `onStep` ⇒ 工具回路里每次调用都给界面回一行进度（如「搜索网络：…」）。
+     */
+    aiPrefillEntry(input: AiPrefillInput, onStep?: (label: string) => void): Promise<AiPrefillOutcome | null> {
+        const choice = normalizeAiChoice(this.settings.readerPrefillProvider);
+        if (this.aiOffBlocked(choice, '预填')) return Promise.resolve(null);
+        this.prefillStepCb = onStep ?? null;
+        return this.getAiPrefillService()
+            .generate(input)
+            .finally(() => {
+                this.prefillStepCb = null;
+            });
+    }
+
+    /**
+     * 🔴 #499D：AI 预填的**工具执行器**（agent 回路的「本地那一半」）。
+     *
+     * · `lookup_metadata` ⇒ 复用**插件自己的**类型搜索链（各源客户端早就在跑，⛔ 不另写一份 HTTP）
+     * · `web_search` ⇒ **必应 RSS**（`pure/bingSearch`；实测 200 + 10 条结构化结果、免费无需 Key）
+     *
+     * ⚠️ 返回的是**给模型看的短文本**（不是给界面用的对象）：工具输出越短越准，
+     *    这里每条只留「标题 / 年份 / 来源 / 评分 / 类型」这一档信息。
+     * ⚠️ 工具**失败不抛** —— 交回一句人话让模型自己决定「换个词再搜」还是「凭记忆答」
+     *    （抛出去会把整条回路打断，用户拿到的是「失败」而不是「一个差一点的答案」）。
+     */
+    private async runPrefillTool(name: string, args: Record<string, unknown>): Promise<string> {
+        const str = (k: string): string => (typeof args[k] === 'string' ? (args[k] as string).trim() : '');
+
+        if (name === PREFILL_TOOL_WEB_SEARCH) {
+            const query = str('query');
+            const url = buildBingRssUrl(query);
+            if (!url) return '（没给搜索词）';
+            const res = await requestUrl({
+                url,
+                headers: { 'User-Agent': BING_SEARCH_UA, 'Accept-Language': 'zh-CN,zh;q=0.9' },
+            });
+            if (res.status !== 200) return `（搜索失败：HTTP ${res.status}）`;
+            const items = parseBingRss(res.text);
+            if (!items.length) return '（没有搜到结果，换个关键词再试）';
+            return `搜索「${query}」的前 ${items.length} 条结果：\n${bingResultsToText(items)}`;
+        }
+
+        if (name === PREFILL_TOOL_METADATA) {
+            const title = str('title');
+            if (!title) return '（没给标题）';
+            const kind = this.normalizePrefillKind(str('type'));
+            const hits = await this.searchForPrefill(title, kind);
+            if (!hits.length) return `（本地元数据源没有查到「${title}」）`;
+            const lines = hits.slice(0, 3).map((r, i) => {
+                const d = describeSearchResult(r as never);
+                const bits = [d.year, d.source, d.rating != null ? `★${d.rating}` : '', d.sub].filter(Boolean);
+                return `${i + 1}. ${d.title}${bits.length ? ` — ${bits.join(' · ')}` : ''}`;
+            });
+            const head = `命中 ${hits.length} 条：\n${lines.join('\n')}`;
+            // 🔴 #499E：把**最佳命中的简介原文**一并交出去（用户 2026-10-03：「简介要搜索照搬真正作品的简介」）。
+            //    服务层会照搬它去覆盖模型自己写的那一版 ⇒ 这段**必须带标记、且放在文本末尾**
+            //    （标记与提取器是 `pure/aiPrefill` 的同一对常量，⛔ 别在这儿手写一遍字符串）。
+            // ⚠️ 取 `hits[0]`（各源的排序已是相关性序）；查不到原文就**不加这一行**，让模型凭记忆兜底。
+            const synopsis = synopsisOf(hits[0]);
+            return synopsis ? `${head}\n\n${PREFILL_SYNOPSIS_PREFIX}${synopsis}` : head;
+        }
+
+        return `（未知工具：${name}）`;
+    }
+
+    /**
+     * 工具参数里的类型归一：模型**可能给中文**（实测 DeepSeek 传过 `"type":"电影"`）⇒ 认几个常见写法，
+     * 认不出的一律按电影走（宁可搜错一类，也别把整次工具调用判死）。
+     */
+    private normalizePrefillKind(raw: string): 'movie' | 'tv' | 'anime' | 'book' | 'game' | 'music' {
+        const s = raw.toLowerCase();
+        if (/^(tv|series|剧|电视剧|连续剧)/.test(s)) return 'tv';
+        if (/^(anime|番|动画)/.test(s)) return 'anime';
+        if (/^(book|novel|comic|书|文学|网文|漫画)/.test(s)) return 'book';
+        if (/^(game|游|游戏)/.test(s)) return 'game';
+        if (/^(music|音|音乐|歌)/.test(s)) return 'music';
+        return 'movie';
+    }
+
+    /** 按类型挑**已有的**那条搜索链（⛔ 不新开 HTTP 通道，全走现成门面） */
+    private async searchForPrefill(
+        title: string,
+        kind: 'movie' | 'tv' | 'anime' | 'book' | 'game' | 'music',
+    ): Promise<unknown[]> {
+        try {
+            if (kind === 'movie' || kind === 'tv') return await this.searchWithFallback(title, kind);
+            if (kind === 'anime') return await this.searchAnime(title);
+            if (kind === 'book') return await this.searchBook(title);
+            if (kind === 'game') return await this.searchGame(title);
+            return await this.searchMusic(title);
+        } catch {
+            return []; // 工具层失败 ⇒ 空结果（上面会把它写成一句「没查到」，模型自己决定下一步）
+        }
+    }
+
     /** 测试 AI 翻译连接（设置页按钮）：按服务商向端点发最小 ping；401=Key 无效、200=有效、429=限流等细分 */
-    async testTranslateConnection(provider: TranslateProvider): Promise<SourceTestResult> {
-        const label = provider === 'zhipu' ? '智谱 AI 翻译' : 'DeepSeek AI 翻译';
-        const keyField = provider === 'zhipu' ? 'readerZhipuKey' : 'readerDeepseekKey';
-        const key = ((this.settings as unknown as Record<string, unknown>)[keyField] as string | undefined ?? '').trim();
-        return this.runTest(label, async () => {
-            if (!key) return { ok: false, message: '未配置 API Key' };
-            const url = translateChatUrl(provider);
-            const body = buildTranslatePingBody(provider);
+    async testTranslateConnection(provider: TranslateProvider, pickedModel?: string): Promise<SourceTestResult> {
+        const label = providerLabel(provider);
+        return this.runTest(`${label} AI`, async () => {
+            // 🔴🔴 #486：**测哪家就用哪家的模型**。
+            //    原实现里自定义端点传的是「翻译服务」的模型（实测：翻译服务选了 `GLM-4-Flash`，
+            //    拿它去打 91hub ⇒ 503 `No available channel for model GLM-4-Flash`）
+            //    —— 而那条端点 `/models` 能返回 361 个，用户自然困惑「能列模型却测不过」。
+            //    ⇒ 自定义端点没有「默认模型」（`DEFAULT_MODELS.custom` 是空串），
+            //      所以这里**先问这条端点自己有什么**，再用 `pickPingModel` 挑一个像文本对话的。
+            // ⚠️ 内置三家**不改**：实测智谱列表里的 `glm-4.5` / `glm-5` 是 429（余额不足），
+            //    反而是默认那档 `GLM-4-Flash` 能用 ⇒ 用真实列表第一个会让「本来能过」的测试变红。
+            let model = pickedModel;
+            if (provider === 'custom' && !model?.trim()) {
+                const list = await this.listAiModels('custom');
+                if (!list.ok) return { ok: false, message: `连接失败：${list.message ?? '拿不到模型列表'}` };
+                model = pickPingModel(list.models.map((m) => m.value));
+                if (!model) return { ok: false, message: '连接失败：这条端点没有返回任何模型' };
+            }
+            // #478：三态统一走 resolveAiAccess（含 `'custom'` 自定义端点）；错误文案走 aiHttpIssue
+            //   ⇒ 402 会明说「账户余额不足」而不是笼统的「HTTP 402」
+            const access = this.resolveAiAccess(provider, model);
+            if (access.issue) return { ok: false, message: access.issue };
+            const body = buildTranslatePingBody(provider, access.model);
             try {
                 const res = await requestUrl({
-                    url,
+                    url: access.url,
                     method: 'POST',
                     contentType: 'application/json',
-                    headers: { Authorization: `Bearer ${key}` },
+                    headers: { Authorization: `Bearer ${access.key}` },
                     body: JSON.stringify(body),
                 });
-                if (res.status === 200) return { ok: true, message: '连接成功：API Key 有效' };
-                if (res.status === 401) return { ok: false, message: '连接失败：API Key 无效（HTTP 401）' };
-                if (res.status === 429) return { ok: false, message: '连接失败：请求过于频繁或额度不足（HTTP 429）' };
-                return { ok: false, message: `连接失败：HTTP ${res.status}` };
+                if (res.status === 200) {
+                    return { ok: true, message: `连接成功：${access.label} 可用（模型 ${access.model}）` };
+                }
+                // ⚠️ 失败也要带上模型名 —— 否则用户不知道「测的到底是谁」（#486 那次困惑的一半就来自这个）
+                return {
+                    ok: false,
+                    message: `连接失败：${aiHttpIssue(res.status, access.label) ?? `HTTP ${res.status}`}（模型 ${access.model}）`,
+                };
             } catch (e) {
-                return { ok: false, message: '连接失败：' + (e instanceof Error ? e.message : String(e)) };
+                return {
+                    ok: false,
+                    message:
+                        '连接失败：' +
+                        (e instanceof Error ? e.message : String(e)) +
+                        `（模型 ${access.model}）`,
+                };
             }
         });
     }
 
 
     /**
-     * 测试云合成连接（设置页「AI集成 › API凭据 · 硅基流动 › 测试连接」，#344 方案 C）。
+     * 测试云合成连接（设置页「AI集成 › 模型服务 · 硅基流动 › 测试连接」，#344 方案 C）。
      * 🔴 真打一次 `/audio/speech`（最短文本）而**不是**只查 Key ——
      *    「Key 有效」不等于「能出声」，只有拿到**音频二进制**才算通。代价 = 一句两个字的合成额度。
      * ⚠️ 返回体是二进制 ⇒ 必须 `responseType: 'arraybuffer'`（同磁盘图床下载那条先例），
@@ -3600,6 +5544,25 @@ export default class ReelLudicPlugin extends Plugin {
         for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
             await (leaf.view as HomeView).refresh();
         }
+        // 🔴 #408：条目数据变了 ⇒ 顺带把**打开的播放器**叫醒（新队列 / 新歌词）。
+        //    用户报的 bug 正是「播放中识别不到新条目与更新后的歌词」—— 挂在 `refreshViews` 上
+        //    就与「保存 / 删除 / 关联」这些入口天然同步，⛔ 不必每个调用点各写一遍（会漏）。
+        await this.refreshAudioPlayers();
+    }
+
+    /**
+     * 🔴 #408：把**最新的曲目队列**推给所有打开的音频播放器（标签页 / 侧边栏）。
+     * 语义（认人 / 不打断播放）全在装配层的 `updateQueue` 里，本方法只负责「谁在场 + 给什么数据」。
+     * ⚠️ 没人开着播放器时**立刻返回**（不读 catalog、零开销）—— 所以挂在 `refreshViews` 上是安全的。
+     */
+    async refreshAudioPlayers(): Promise<void> {
+        const leaves = this.app.workspace.getLeavesOfType(AUDIO_PLAYER_VIEW_TYPE);
+        if (!leaves.length) return;
+        const opts = await this.buildAudioPlayerOptions(null);
+        if (!opts) return;
+        for (const leaf of leaves) {
+            (leaf.view as AudioPlayerView).refreshTracks(opts.items);
+        }
     }
 
     /**
@@ -3684,7 +5647,7 @@ export default class ReelLudicPlugin extends Plugin {
 
     /** 下载 URL 图片为 ArrayBuffer：豆瓣图床（doubanio.com）防盗链要求 Referer 为 douban.com，
      *  桌面端用 Node 传输层 + 显式 Referer 下载；其余图床无严格防盗链，沿用 requestUrl。 */
-    private async fetchImageBuffer(url: string): Promise<ArrayBuffer> {
+    private async fetchImageBuffer(url: string, referer?: string): Promise<ArrayBuffer> {
         if (/doubanio\.com/.test(url) && Platform.isDesktopApp) {
             const res = await nodeHttpGetBuffer(url, {
                 Referer: 'https://www.douban.com/',
@@ -3695,13 +5658,39 @@ export default class ReelLudicPlugin extends Plugin {
             const b = res.buffer;
             return this.toArrayBuffer(b);
         }
+        /**
+         * #498：**搜索结果里的图**（来自各家图站）改用 Node 通道 + **来源站自己的 `Referer`**。
+         * 🔴 为什么不能只靠下面那条 `requestUrl`：这类站多数按 Referer 防盗链，
+         *    而 `requestUrl` 送不出「看起来像从那个站点的网页上点的」请求 ⇒ 常见 403。
+         * ⚠️ 只带**来源站自己**的 Referer（`posterReferer` 从来源页取 origin），⛔ 别带 bing 的（对方认得出来）。
+         * ⚠️ 失败**回落到 `requestUrl`**（与既有本地化同一条路）：两条都试才不至于「换个源就下不动」。
+         */
+        let firstErr = '';
+        if (referer && Platform.isDesktopApp) {
+            try {
+                const res = await nodeHttpGetBuffer(url, {
+                    Referer: referer,
+                    'User-Agent': POSTER_UA,
+                    Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                });
+                if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+                return this.toArrayBuffer(res.buffer);
+            } catch (e) {
+                firstErr = e instanceof Error ? e.message : String(e);
+            }
+        }
         const res = await requestUrl({ url, method: 'GET', responseType: 'arraybuffer' } as unknown as Parameters<typeof requestUrl>[0]);
-        if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+        if (res.status !== 200) {
+            throw new Error(firstErr ? `${firstErr}；备用通道也失败：HTTP ${res.status}` : `HTTP ${res.status}`);
+        }
         return (res as unknown as { arrayBuffer: ArrayBuffer }).arrayBuffer;
     }
 
-    /** 下载 URL 图片到 封面/ 目录（命名 封面/{标题}.jpg，同标题重名追加 -2/-3 防覆盖），返回相对路径 */
-    async downloadPosterToLocal(url: string, title: string): Promise<string> {
+    /**
+     * 下载 URL 图片到 封面/ 目录（命名 封面/{标题}.jpg，同标题重名追加 -2/-3 防覆盖），返回相对路径。
+     * `referer`（#498，append-only 可选参）= 下载源站图片时带的来源页 —— 见 `fetchImageBuffer` 的说明。
+     */
+    async downloadPosterToLocal(url: string, title: string, referer?: string): Promise<string> {
         const base = sanitizePosterTitle(title) || 'poster';
         const dir = normalizePath(`${this.settings.libraryDir}/${DIR_COVERS}`);
         if (!(this.app.vault.getAbstractFileByPath(dir) instanceof TFolder)) {
@@ -3715,9 +5704,93 @@ export default class ReelLudicPlugin extends Plugin {
             full = normalizePath(`${this.settings.libraryDir}/${target}`);
             n++;
         }
-        const buf = await this.fetchImageBuffer(url);
+        const buf = await this.fetchImageBuffer(url, referer);
         await this.app.vault.createBinary(full, buf);
         return target;
+    }
+
+    /**
+     * #498 封面图片搜索（仅桌面端：走 `nodeHttpGet`，与其它反爬链路同一个网络栈）。
+     * 用户原话：「再添加在所有编辑条目的封面右键加个从网络上搜索下载封面图片的功能」。
+     * 🔴 平台门控在**这一层**（`searchPosterImages` 本身不判平台）—— 与 `searchOnlineLyrics` 同口径。
+     */
+    async searchPosterCandidates(
+        query: string,
+        page: number,
+    ): Promise<{ candidates: PosterCandidate[]; error?: string }> {
+        if (!Platform.isDesktopApp) return { candidates: [], error: '仅桌面端支持' };
+        return searchPosterImages(
+            { get: (url: string, headers?: Record<string, string>) => nodeHttpGet(url, headers) },
+            query,
+            page,        );
+    }
+
+    /**
+     * #509 **按来源搜封面**（用户：「继续增强获取音乐类型条目封面的能力，网络搜索 / 四大音乐平台搜索封面」）。
+     *
+     * · `bing`（默认）= 既有的图片搜索（#498，全类型可用）；
+     * · 四个音乐平台 = 走**既有的四平台搜索链**（`dlSearchSongs`，与「下载歌曲」窗口同一个函数，
+     *   ⛔ 不另写请求），把结果里的封面按 `pure/posterSources` 的**实测规则**换成大图。
+     *   - 网易云：搜索响应**不带封面** ⇒ 补一次 `song/detail`（`neteaseCoversByIds`，免 Cookie 实测可用）；
+     *   - 酷我：用**专辑图**字段（`coverUrl` 那张是 MV 横图，用了会得到一张压扁的横图）。
+     * 🔴 平台门控与必应那条**同口径**（仅桌面端）。
+     * 🔴 **空结果不算失败**：平台搜到 0 条 ⇒ `{ candidates: [] }` 不带 `error`（由界面说「没搜到」）。
+     */
+    async searchPosterCandidatesBySource(
+        source: PosterSource,
+        query: string,
+        page: number,
+    ): Promise<{ candidates: PosterCandidate[]; error?: string }> {
+        if (!Platform.isDesktopApp) return { candidates: [], error: '仅桌面端支持' };
+        if (source === 'bing') return this.searchPosterCandidates(query, page);
+        const q = String(query ?? '').trim();
+        if (!q) return { candidates: [], error: '先填搜索词（默认用条目标题 + 作者，可以改）' };
+        try {
+            // 与「下载歌曲」窗口**同一个搜索函数**（平台顺序、去重、VIP 标注口径都一致）
+            const { songs } = await this.dlSearchSongs(q);
+            const mine = songs.filter((s) => s.source === source);
+            if (!mine.length) return { candidates: [] };
+            if (source === 'netease') {
+                // 🔴 网易云搜索不给封面 ⇒ 补一跳详情（失败只让这条路为空，⛔ 不报错）
+                const covers = await neteaseCoversByIds(this.dlTransport(), mine.map((s) => s.neteaseId));
+                return {
+                    candidates: platformCandidates(
+                        'netease',
+                        mine.map((s) => ({
+                            name: s.name,
+                            artist: s.artist,
+                            album: s.album,
+                            coverUrl: covers.get(Number(s.neteaseId)) ?? '',
+                            pageUrl: s.webUrl,
+                        })),
+                    ),
+                };
+            }
+            return { candidates: platformCandidates(source, mine) };
+        } catch (e) {
+            return { candidates: [], error: `平台搜索失败：${e instanceof Error ? e.message : String(e)}` };
+        }
+    }
+
+    /**
+     * #498 把搜到的封面下载并本地化到 `封面/`（与既有封面本地化**同一条**命名 / 重名去重口径）。
+     * 🔴 带**来源站自己**的 `Referer`（`pure/posterSearch.posterReferer` 从来源页取 origin）——
+     *    这类图站多数按 Referer 防盗链，不带就常见 403（`fetchImageBuffer` 里有回落说明）。
+     * ⚠️ 失败只回 `{ok:false, message}`：**由候选弹窗就地显示**，⛔ 不在这里弹 Notice
+     *    （用户正在挑图，弹窗被打断反而更烦；而且这条链路失败是常态：图挂了 / 站挂了）。
+     */
+    async downloadSearchedPoster(
+        candidate: PosterCandidate,
+        title: string,
+    ): Promise<{ ok: boolean; message: string; path?: string }> {
+        const url = String(candidate?.murl ?? '').trim();
+        if (!url) return { ok: false, message: '这张没有原图地址，换一张试试' };
+        try {
+            const path = await this.downloadPosterToLocal(url, title, posterReferer(candidate.page));
+            return { ok: true, message: '封面已下载并设为封面', path };
+        } catch (e) {
+            return { ok: false, message: `这张下载失败：${e instanceof Error ? e.message : String(e)}（换一张试试）` };
+        }
     }
 
     /** 单条目封面本地化：URL 封面下载到 封面/{标题}.jpg → poster 改相对路径；成功返回 {entry}，失败返回 {error}（原因供结果弹窗展示） */

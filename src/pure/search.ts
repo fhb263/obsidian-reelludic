@@ -5,6 +5,9 @@ import type { MediaStatus } from 'pure/status';
 import { MEDIA_STATUSES } from 'pure/status';
 import { matchesBookKind } from 'pure/bookKind';
 import { matchesGenres } from 'pure/genreFilter';
+// 🔴 #441：系列序号排序档（series-asc / series-desc）的比较逻辑借 `seriesGroup` 那份**单一真源**。
+//    ⚠️ 依赖方向是单向的（seriesGroup 不反过来依赖 search），不会成环。
+import { compareSeriesIndex, compareSeriesIndexDesc } from 'pure/seriesGroup';
 
 /** 状态排序基准（想看 0 < 在看 1 < 已看 2 < 存档 3） */
 const STATUS_RANK: Record<MediaStatus, number> = Object.fromEntries(MEDIA_STATUSES.map((s, i) => [s, i])) as Record<MediaStatus, number>;
@@ -36,8 +39,10 @@ export function matchesStatus(e: MediaEntry, statusFilter: MediaStatus | 'all'):
  *  release-desc=发布日期新→旧 / release-asc=旧→新 /
  *  score-desc=大众评分高→低 / score-asc=低→高 / title-desc=标题 Z-A / title-asc=A-Z /
  *  myrating-desc=个人评分 5★→1★ / myrating-asc=1★→5★ /
- *  status-asc=状态 想看→在看→已看→存档 / status-desc=反之 */
-export type SortBy = 'recent' | 'recent-asc' | 'release-desc' | 'release-asc' | 'score-desc' | 'score-asc' | 'title-desc' | 'title-asc' | 'myrating-desc' | 'myrating-asc' | 'status-asc' | 'status-desc';
+ *  status-asc=状态 想看→在看→已看→存档 / status-desc=反之
+ *  🔴 #441 追加 series-asc=系列序号 小→大（**没填序号的置后**）/ series-desc=反之 ——
+ *     比较逻辑的单一真源是 `pure/seriesGroup.compareSeriesIndex`，⛔ 别在这里另写一份。 */
+export type SortBy = 'recent' | 'recent-asc' | 'release-desc' | 'release-asc' | 'score-desc' | 'score-asc' | 'title-desc' | 'title-asc' | 'myrating-desc' | 'myrating-asc' | 'status-asc' | 'status-desc' | 'series-asc' | 'series-desc';
 
 /** 综合筛 + 排序：filter → sort；保持原数组不被外部 mutate */
 export function filterAndSort(
@@ -84,6 +89,12 @@ export function filterAndSort(
                     return STATUS_RANK[a.status] - STATUS_RANK[b.status];
                 case 'status-desc':
                     return STATUS_RANK[b.status] - STATUS_RANK[a.status];
+                // 🔴 #441 系列序号：比较逻辑走 `pure/seriesGroup.compareSeriesIndex`（**单一真源**），
+                //    ⛔ 别在这里复述一遍「序号 → 年份 → 标题、无序号置后」。
+                case 'series-asc':
+                    return compareSeriesIndex(a, b);
+                case 'series-desc':
+                    return compareSeriesIndexDesc(a, b);
                 case 'recent':
                 default:
                     return b.updatedAt.localeCompare(a.updatedAt);

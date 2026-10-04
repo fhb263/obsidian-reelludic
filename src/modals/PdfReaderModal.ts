@@ -352,8 +352,8 @@ export class PdfReaderPanel {
         this.fsBtnEl = mkFop('maximize', '全屏显示', () => this.toggleFullscreen());
         // ⚠️ 这一行与 TXT/EPUB **逐字同形、且必须单行** —— 既有断言按 `mkFop("eye"` 这种**连续形态**计数；
         //    写成跨行箭头（`() =>\n  this.setImmersive(…)`）会让 esbuild 把调用拆行 ⇒ 锚点断掉、计数掉到 2（#382 实测）。
-        this.immersiveBtnEl = mkFop('eye', '沉浸模式：隐藏上下边栏（点击正文空白可收起 / 展开）', () => this.setImmersive(!this.immersive));
-        this.autoBtnEl = mkFop('timer', '自动滚动 / 自动翻屏（再点停止，手动滚动即停；右键调速）', () => this.setAuto(!this.autoOn));
+        this.immersiveBtnEl = mkFop('eye', '沉浸模式（点空白收起）', () => this.setImmersive(!this.immersive));
+        this.autoBtnEl = mkFop('timer', '自动滚动（再点停 · 右键调速）', () => this.setAuto(!this.autoOn));
         this.autoBtnEl.addEventListener('contextmenu', (ev) => this.openAutoMenu(ev));
         if (!document.fullscreenEnabled) {
             this.fsBtnEl.disabled = true;
@@ -402,7 +402,7 @@ export class PdfReaderPanel {
         //   ⇒ **一键存当前位置**，少一步、也不需要选区。容器沿用 `.rl-reader-quick`（样式同款）。
         //   🔴 放在 `ops` 内、≡ 之前 —— 与 TXT/EPUB 的快捷入口同一位置（#345 起的位置契约）。
         const quick = ops.createDiv({ cls: 'rl-reader-quick' });
-        this.bmBtnEl = quick.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '存书签（当前位置）' } });
+        this.bmBtnEl = quick.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '存书签' } });
         safeSetIcon(this.bmBtnEl, 'bookmark');
         this.bmBtnEl.addEventListener('mousedown', (ev) => ev.stopPropagation());
         this.bmBtnEl.addEventListener('click', () => this.addBookmark());
@@ -597,7 +597,7 @@ export class PdfReaderPanel {
                 max: String(AUTO_SCROLL_MAX),
                 step: String(AUTO_SCROLL_STEP),
                 value: String(this.autoScrollPx),
-                'data-tip': '拖动调整自动滚动速度（键盘 ←/→ 微调）',
+                'data-tip': '拖动调整滚动速度',
             },
         });
         const val = line.createSpan({ cls: 'rl-reader-menu-val', text: autoSpeedLabel(this.autoScrollPx) });
@@ -1059,7 +1059,7 @@ export class PdfReaderPanel {
         if (!list) return;
         list.empty();
         const n = this.bookmarks.length;
-        this.bmBtnEl?.setAttribute('data-tip', n ? `存书签（当前位置）· 已有 ${n} 个` : '存书签（当前位置）');
+        this.bmBtnEl?.setAttribute('data-tip', n ? `存书签· 已有 ${n} 个` : '存书签');
         if (n === 0) {
             list.createDiv({ cls: 'rl-reader-ex-empty', text: '暂无书签（点顶栏书签按钮存当前位置）' });
             return;

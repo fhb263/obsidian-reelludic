@@ -100,3 +100,49 @@ describe('describeFilters · 题材回显', () => {
         expect(describeFilters({ poolCount: 1, filteredCount: 0, typeLabel: '电影', statusLabel: '在看' })).toBe('类型：电影 · 状态：在看');
     });
 });
+
+// ⚠️ #435 的「系列筛选」已整块退场（用户：「删除这个筛选系列框」）⇒ 空态不再有 `seriesLabel` 这一维，
+//    对应用例一并删除；「⛔ 不许长回来」的守卫在产物断言脚本里。
+
+describe('resolveEmptyState · 视图池措辞（#444f poolKey）', () => {
+    it('阅读子分类为空 ⇒ 各有各的措辞（⛔ 不再落到「书架还是空的」）', () => {
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: 'book', poolKey: 'book:book' }).title).toContain('文学书架还是空的');
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: 'book', poolKey: 'book:novel' }).title).toContain('网文架还是空的');
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: 'book', poolKey: 'book:comic' }).title).toContain('漫画架还是空的');
+    });
+
+    it('🔴 漫画子分类为空 ⇒ **no-data + action=add**（用户报的那条：原来会走 no-match「没有匹配的条目 + 清除筛选」）', () => {
+        const r = must({ poolCount: 0, filteredCount: 0, lockType: 'book', poolKey: 'book:comic', kindLabel: '漫画' });
+        expect(r.kind).toBe('no-data');
+        expect(r.action).toBe('add');
+        expect(r.hint).toBeUndefined(); // no-data 不回显条件（回显只在筛选没命中时才有意义）
+    });
+
+    it('影视聚合页签：空的类型各有专属措辞（⛔ 不再说「库还是空的」—— 库里可能有别的类型）', () => {
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: null, poolKey: 'movieTv' }).title).toContain('影视库还是空的');
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: null, poolKey: 'movieTv:movie' }).title).toContain('还没有电影');
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: null, poolKey: 'movieTv:tv' }).title).toContain('还没有电视剧');
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: null, poolKey: 'movieTv:anime' }).title).toContain('还没有动画');
+    });
+
+    it('poolKey 与 lockType 同时给出 ⇒ **poolKey 优先**', () => {
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: 'book', poolKey: 'book:comic' }).title).toContain('漫画架还是空的');
+    });
+
+    it('⛔ 缺 poolKey 时回退按 lockType 查（老调用逐字不变）', () => {
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: 'book' }).title).toContain('书架还是空的');
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: 'music' }).title).toContain('歌单还是空的');
+    });
+
+    it('两个键都认不出 → 通用兜底（真·未知视图）', () => {
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: 'weird', poolKey: 'weird:x' }).title)
+            .toBe('库还是空的 — 点「＋ 添加」录入第一条条目');
+    });
+
+    it('池子非空时 poolKey **不参与**（no-match 走的是筛选回显那条路）', () => {
+        const r = must({ poolCount: 5, filteredCount: 0, lockType: 'book', poolKey: 'book:comic', kindLabel: '漫画' });
+        expect(r.kind).toBe('no-match');
+        expect(r.action).toBe('clear');
+        expect(r.hint).toBe('分类：漫画');
+    });
+});

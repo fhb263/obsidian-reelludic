@@ -2,7 +2,7 @@
 // 卡片网格同列依赖 subtitle/creator 两行高度一致，数据缺失返回「—」占位
 // 保持行占位，避免同列卡片错位。
 import { describe, it, expect } from 'vitest';
-import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres } from 'pure/cardMeta';
+import { audioSubtitle, cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres } from 'pure/cardMeta';
 import type { MediaEntry } from 'data/types';
 
 /** 最小化构造器：测试只关心参与分支的字段，其余走 default 填充 */
@@ -135,5 +135,27 @@ describe('hasCardGenres 题材行是否为真实内容', () => {
 
     it('题材为空 → false', () => {
         expect(hasCardGenres(entry({ type: 'anime' }))).toBe(false);
+    });
+});
+
+describe('audioSubtitle（④-4 音频播放器副行）', () => {
+    it('作者 · 专辑 · 年份 三段齐全', () => {
+        expect(audioSubtitle(entry({ type: 'music', author: 'A', album: 'B', year: 2024 }))).toBe('A · B · 2024');
+    });
+
+    it('缺项自动跳过（年份是数字字段，缺了不能变成空串占位）', () => {
+        expect(audioSubtitle(entry({ type: 'music', author: 'A', album: 'B' }))).toBe('A · B');
+        expect(audioSubtitle(entry({ type: 'music', author: 'A', year: 2024 }))).toBe('A · 2024');
+        expect(audioSubtitle(entry({ type: 'music', album: 'B' }))).toBe('B');
+    });
+
+    it('全缺 → 空串（视图据此不渲染这一行），⛔ 不返回卡片那种「—」占位', () => {
+        expect(audioSubtitle(entry({ type: 'music' }))).toBe('');
+    });
+
+    it('🔴 与 cardSubtitle 口径不同：播放器副行含作者，卡片副行只到「专辑 · 年份」', () => {
+        const e = entry({ type: 'music', author: 'A', album: 'B', year: 2024 });
+        expect(cardSubtitle(e)).toBe('B · 2024');
+        expect(audioSubtitle(e)).toBe('A · B · 2024');
     });
 });

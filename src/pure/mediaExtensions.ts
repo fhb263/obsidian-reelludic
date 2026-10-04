@@ -1,9 +1,10 @@
 /**
- * 本地视频文件扩展名统一真源（可单测，无 obsidian 依赖）
+ * 本地媒体（视频 / 音频）扩展名统一真源（可单测，无 obsidian 依赖）
  *
- * 统一两处散落的硬编码，避免改一处漏另一处：
- *  - 文件选择器「可关联的本地视频格式」（VIDEO_ASSOCIABLE_EXTENSIONS）
- *  - Chromium <video> 可内嵌解码的子集（CHROMIUM_VIDEO_EXTENSIONS）
+ * 统一各处散落的硬编码，避免改一处漏另一处：
+ *  - 视频：文件选择器「可关联的本地视频格式」（VIDEO_ASSOCIABLE_EXTENSIONS）
+ *          + Chromium <video> 可内嵌解码的子集（CHROMIUM_VIDEO_EXTENSIONS）
+ *  - 音频：文件选择器「可关联的本地音频格式」（AUDIO_ASSOCIABLE_EXTENSIONS，④ 并入播放器时收进来）
  *
  * 背景：Obsidian 的 <video> 是 Chromium 内核，解码能力有限——只稳定支持
  * MP4(H.264/AAC)、WebM(VP8/VP9)、Ogg/Theora。mkv/avi/flv/wmv/ts/m4v 等容器
@@ -12,6 +13,9 @@
  * 因此「可关联」≠「可内嵌」：用户可在文件选择器关联任意外部播放器能播的容器，
  * 但只有可内嵌子集才值得进 Obsidian 内嵌播放器（其余由 <video> error / 扩展名
  * 预判自动转系统播放器兜底，见 VideoPlayerView / main 层）。
+ *
+ * ⚠️ 音频侧暂**不**再分「可关联 / 可内嵌」两份名单：下述六种 Chromium `<audio>` 全都能解，
+ *    ⛔ 别为对称而造一张空子集表。真需要收紧（如加入 `.ape`/`.wma`）时再拆。
  */
 
 /** 文件选择器可选关联的本地视频容器扩展名（小写，无点；含 Chromium 可内嵌 + 需外部播放器的） */
@@ -21,6 +25,12 @@ export const VIDEO_ASSOCIABLE_EXTENSIONS: readonly string[] = [
 
 /** Chromium <video> 可稳定内嵌解码的视频容器扩展名（小写，无点；恒为 VIDEO_ASSOCIABLE_EXTENSIONS 的子集） */
 export const CHROMIUM_VIDEO_EXTENSIONS: readonly string[] = ['mp4', 'webm', 'mov', 'ogv'];
+
+/**
+ * 文件选择器可选关联的本地音频扩展名（小写，无点）。
+ * ④（内置音频播放器）之前这六个散在 `main.pickLocalAudioPath` 里硬编码，现统一到这里。
+ */
+export const AUDIO_ASSOCIABLE_EXTENSIONS: readonly string[] = ['mp3', 'flac', 'm4a', 'ogg', 'wav', 'aac'];
 
 /** 取路径扩展名（小写，去 #? 参数；无扩展名/空/以分隔符结尾 → ''） */
 export function videoExt(path: string): string {
@@ -35,6 +45,11 @@ export function videoExt(path: string): string {
 /** 是否为「可关联的本地视频容器」（文件选择器用它筛选可选文件） */
 export function isAssociableVideoPath(path: string): boolean {
     return VIDEO_ASSOCIABLE_EXTENSIONS.includes(videoExt(path));
+}
+
+/** 是否为「可关联的本地音频」——与视频同一套扩展名口径（`videoExt` 是通用实现，名字沿袭历史） */
+export function isAssociableAudioPath(path: string): boolean {
+    return AUDIO_ASSOCIABLE_EXTENSIONS.includes(videoExt(path));
 }
 
 /**

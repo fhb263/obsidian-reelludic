@@ -26,6 +26,19 @@ export function hasCardSubtitle(e: MediaEntry): boolean {
     return !!e.year;
 }
 
+/**
+ * 音频播放器副行（④-4）：「作者 · 专辑 · 年份」，缺项自动跳过（全缺 → 空串 ⇒ 视图不渲染这一行）。
+ *
+ * ⚠️ 与 `cardSubtitle` **故意不同**：卡片副行只有「专辑 · 年份」（作者由 `cardCreator` 单独占一行），
+ *    而播放器标题下只有一行位置 ⇒ 作者并进来。
+ * ⛔ 别为「统一」把两者合成一个函数：合并后要么卡片丢掉作者行、要么播放器多出一行。
+ */
+export function audioSubtitle(e: MediaEntry): string {
+    return [e.author, e.album, e.year ? String(e.year) : '']
+        .filter((x): x is string => !!x)
+        .join(' · ');
+}
+
 /** 卡片创作者行（导演 / 作者 / 开发商槽）：
  *  - 优先级：导演 → 作者 → 开发商
  *  - 全无：「—」占位（海报墙防错位核心场景） */

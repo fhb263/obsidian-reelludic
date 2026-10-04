@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { safeFilename, entryFrontmatter, generateNoteMarkdown, entryNotePath, posterEmbed, hashNoteContent } from 'data/noteGenerator';
+import { safeFilename, entryFrontmatter, generateNoteMarkdown, entryNotePath, posterEmbed, hashNoteContent, episodeWatchLines } from 'data/noteGenerator';
 import type { MediaEntry } from 'data/types';
 
 function baseEntry(partial: Partial<MediaEntry> = {}): MediaEntry {
@@ -116,14 +116,54 @@ describe('entryFrontmatter', () => {
     });
 });
 
-describe('generateNoteMarkdown', () => {
-    it('生成 bookinfo callout + 属性表格 + 章节结构', () => {
+describe('#434 系列 / 系列序号', () => {
+    it('frontmatter 的 series_index：`series` 与 `seriesIndex` **都有值**才写；孤立序号不写（防「有 index 没 series」的脏数据）', () => {
+        expect(entryFrontmatter(baseEntry({ type: 'movie', series: '某系列', seriesIndex: 3 }))).toContain('series_index: 3');
+        // 🔴 #443 翻面（2026-09-30）：序号锁定整数 ⇒ 2.5 落笔为 **3**（⛔ 别再期望 `series_index: 2.5`）
+        expect(entryFrontmatter(baseEntry({ type: 'movie', series: '某系列', seriesIndex: 2.5 }))).toContain('series_index: 3');
+        expect(entryFrontmatter(baseEntry({ type: 'movie', series: '某系列' }))).not.toContain('series_index');
+        expect(entryFrontmatter(baseEntry({ type: 'movie', seriesIndex: 3 }))).not.toContain('series_index');
+        // 类型不门控：frontmatter 是机器读的，海报墙的系列分组对全部 6 类型生效
+        expect(entryFrontmatter(baseEntry({ type: 'game', series: '某系列', seriesIndex: 1 }))).toContain('series_index: 1');
+    });
+
+    it('🔴 属性表系列行：**所有类型都有**，且序号并进同一行（#435 二轮修掉「填了却更新不了笔记」的两个覆盖缺口）', () => {
+        // 非书籍：有 seriesIndex 时并进同一行
+        expect(generateNoteMarkdown(baseEntry({ type: 'movie', series: '某系列', seriesIndex: 3 }), 'ReelLudic', { table: true }))
+            .toContain('| 系列 | 某系列 · 第 3 部 |');
+        expect(generateNoteMarkdown(baseEntry({ type: 'game', series: '某系列' }), 'ReelLudic', { table: true }))
+            .toContain('| 系列 | 某系列 |');
+        // 书籍（文学）：沿用「丛书」这个已定稿的标签，**但现在带上序号**（原实现裸写 e.series ⇒ 序号在笔记里看不见）
+        const bk = generateNoteMarkdown(baseEntry({ type: 'book', bookKind: 'book', series: '某丛书', seriesIndex: 2 }), 'ReelLudic', { table: true });
+        expect(bk).toContain('| 丛书 | 某丛书 · 第 2 部 |');
+        expect(bk).not.toContain('| 系列 |');
+        // 🔴 网文：**必须有这一行**（原来一行都没有 —— 用户报「根本更新不了笔记条目」的真因之一）。
+        //    「丛书」那条 2026-09-13 裁定仍不渲染（出版侧字段），但 `series` 自 #434 起是**通用系列**，
+        //    斗罗大陆 / 龙族 这类网文恰恰最需要 ⇒ 走「系列」这个词。
+        const nv = generateNoteMarkdown(baseEntry({ type: 'book', bookKind: 'novel', series: '某网文系列', seriesIndex: 5 }), 'ReelLudic', { table: true });
+        expect(nv).toContain('| 系列 | 某网文系列 · 第 5 部 |');
+        expect(nv).not.toContain('| 丛书 |');
+        // 无序号 ⇒ 只有名字，⛔ 不许写出「· 第 undefined 部」
+        const noIdx = generateNoteMarkdown(baseEntry({ type: 'movie', series: '某系列' }), 'ReelLudic', { table: true });
+        expect(noIdx).toContain('| 系列 | 某系列 |');
+        expect(noIdx).not.toContain('第 undefined 部');
+        // 没填系列 ⇒ 一行都不出（⛔ 不出空行）
+        const none = generateNoteMarkdown(baseEntry({ type: 'movie' }), 'ReelLudic', { table: true });
+        expect(none).not.toContain('| 系列 |');
+        expect(none).not.toContain('| 丛书 |');
+    });
+});
+
+describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性表格 + 章节结构', () => {
         const md = generateNoteMarkdown(baseEntry());
         expect(md).toContain('> [!bookinfo]+ **《进击的巨人 最终季》**');
         expect(md).toContain('| 属性 | 内容 |');
         expect(md).toContain('## 个人评语');
         expect(md).toContain('## 观看链接');
-        expect(md).toContain('[[双链]]');
+        // 🔴 #453 **翻面**：这条原先靠**评语占位行**里的「支持 [[双链]]」满足 —— 占位行去掉该短语后，
+        //   改为断言新占位行本体，并反过来钉「笔记正文里不再出现『双链』」
+        expect(md).toContain('（在这里写下你的感想）');
+        expect(md).not.toContain('双链');
         // 无封面时不输出封面行，callout 仅标题 + 结束符
         expect(md).not.toContain('![封面](');
     });
@@ -136,6 +176,25 @@ describe('generateNoteMarkdown', () => {
         expect(withSummary.indexOf('## 简介')).toBeLessThan(withSummary.indexOf('## 个人评语'));
         // 无简介不生成该章节
         expect(generateNoteMarkdown(baseEntry())).not.toContain('## 简介');
+    });
+
+    it('🔴 #404 歌词小节：`## 歌词` + lrc 围栏放在**笔记开头**（属性表格之后、简介之前）', () => {
+        const music = baseEntry({ type: 'music', title: '夜曲', summary: '简介内容', progress: undefined, audioPath: '下载/音乐/周杰伦 - 夜曲.mp3' });
+        const md = generateNoteMarkdown(music, 'ReelLudic', { table: true });
+        expect(md).toContain('## 歌词');
+        expect(md).toContain('```lrc');
+        expect(md).toContain('source [[下载/音乐/周杰伦 - 夜曲.mp3]]');
+        // 顺序：callout → 属性表格 → ## 歌词 → ## 简介 → 个人评语
+        expect(md.indexOf('## 歌词')).toBeGreaterThan(md.indexOf('| 属性 | 内容 |'));
+        expect(md.indexOf('## 歌词')).toBeLessThan(md.indexOf('## 简介'));
+        expect(md.indexOf('## 歌词')).toBeLessThan(md.indexOf('# 个人评语'));
+        // 无 audioPath ⇒ 整节不生成（⛔ 不留一个空标题）
+        const noAudio = generateNoteMarkdown(baseEntry({ type: 'music', title: '夜曲', progress: undefined }), 'ReelLudic', { table: true });
+        expect(noAudio).not.toContain('## 歌词');
+        expect(noAudio).not.toContain('```lrc');
+        // 非音乐类型永不生成（即使字段被误填）
+        const tv = generateNoteMarkdown(baseEntry({ type: 'tv', audioPath: '下载/音乐/x.mp3', progress: undefined }), 'ReelLudic', { table: true });
+        expect(tv).not.toContain('## 歌词');
     });
 
     it('图书笔记：内容简介/作者简介/目录 独立小标题（豆瓣回填字段），无值不输出', () => {
@@ -169,7 +228,12 @@ describe('generateNoteMarkdown', () => {
         expect(off).not.toContain('| 属性 | 内容 |');
         expect(off).not.toContain('|:-----|:-----|');
         expect(off).not.toContain('| 类型 |'); // 表格行不得残留
-        expect(off).toContain('> [!bookinfo]+ **《进击的巨人 最终季》**');
+        // 1.1.1（用户 2026-09-27 ③）：关表后**顶部 callout 外壳也一并去掉**——旧实现只关了属性表格，
+        // 于是笔记里留一条「> [!bookinfo]+ 《标题》 + > 封面」的残留。
+        expect(off).not.toContain('> [!bookinfo]+');
+        // 🔴 #404 翻面：关表后**标题与封面嵌入都不再写进正文**（用户：「笔记内开头不写入《标题>图片嵌入，
+        // 只在Yaml属性写入」）—— 旧口径「降级为普通加粗行 / 普通图片嵌入」已作废。
+        expect(off).not.toContain('**《进击的巨人 最终季》**');
         expect(off).toContain('## 简介');
         expect(off).toContain('## 个人评语');
         expect(off).toContain('## 观看链接');
@@ -187,6 +251,39 @@ describe('generateNoteMarkdown', () => {
         const musicOff = generateNoteMarkdown(music, 'ReelLudic', { table: false });
         expect(musicOff).not.toContain('| 属性 | 内容 |');
         expect(musicOff).toContain('# 个人评语'); // 音乐一级标题不受影响
+    });
+
+    it('🔴 #404 笔记表格关闭：正文里**标题与封面都不写**（只在 YAML 属性里），且不留任何 `> ` 残留', () => {
+        const e = baseEntry({ poster: '封面/e_123.jpg' });
+        const on = generateNoteMarkdown(e, 'ReelLudic', { table: true });
+        expect(on).toContain('> [!bookinfo]+ **《进击的巨人 最终季》**');
+        expect(on).toContain('> ![[ReelLudic/封面/e_123.jpg]]');
+
+        const off = generateNoteMarkdown(e, 'ReelLudic', { table: false });
+        // callout 块不得留下**任何** `> ` 行（引号块空行 `>` 也算残留）
+        expect(off).not.toContain('> [!bookinfo]');
+        expect(off.split('\n').some((l) => l.startsWith('>'))).toBe(false);
+        // 🔴 标题与封面**正文里都不出现**（用户：「笔记内开头不写入《标题>图片嵌入，只在Yaml属性写入」）
+        expect(off).not.toContain('**《进击的巨人 最终季》**');
+        expect(off).not.toContain('![[ReelLudic/封面/e_123.jpg]]');
+        expect(off).not.toContain('![');
+        // 但 YAML 属性里两样都在（信息不丢）
+        expect(entryFrontmatter(e)).toContain('title: "进击的巨人 最终季"');
+        expect(entryFrontmatter(e)).toContain('banner: "ReelLudic/封面/e_123.jpg"');
+    });
+
+    it('🔴 #404 关表后的正文起点：第一个章节直接顶到最前（不再有标题 / 封面占位、不留空行）', () => {
+        // 非音乐（无歌词小节）⇒ 正文第一行就是 `## 简介`
+        const tv = generateNoteMarkdown(baseEntry({ type: 'tv', summary: '简介内容', poster: '封面/x.jpg' }), 'ReelLudic', { table: false });
+        expect(tv.startsWith('## 简介')).toBe(true);
+        // 音乐 + 有本地音频 ⇒ 正文第一行是 `## 歌词`（#404 把歌词小节移到笔记开头）
+        const music = generateNoteMarkdown(
+            baseEntry({ type: 'music', title: '夜曲', poster: '封面/m.jpg', progress: undefined, audioPath: '下载/音乐/周杰伦 - 夜曲.mp3', summary: '简介内容' }),
+            'ReelLudic',
+            { table: false },
+        );
+        expect(music.startsWith('## 歌词')).toBe(true);
+        expect(music).not.toContain('**《 夜曲 》**');
     });
 
     it('封面 banner：frontmatter 输出 banner，正文标题前嵌入封面（URL 直用/本地 wikilink）', () => {
@@ -222,7 +319,9 @@ describe('generateNoteMarkdown', () => {
         expect(withNotes).toContain('第二段感想。');
         expect(withNotes).not.toContain('（在这里写下你的感想');
         const empty = generateNoteMarkdown(baseEntry({ notes: '' }));
-        expect(empty).toContain('（在这里写下你的感想，支持 [[双链]]）');
+        // 🔴 #453：占位行去掉「，支持 [[双链]]」（取 noteEditable.NOTES_PLACEHOLDER 唯一真源）
+        expect(empty).toContain('（在这里写下你的感想）');
+        expect(empty).not.toContain('双链');
     });
 
     it('评分/进度渲染进表格', () => {
@@ -238,6 +337,64 @@ describe('generateNoteMarkdown', () => {
         expect(md).toContain('[B站](https://www.bilibili.com/bangumi/123)');
     });
 
+    // 🔴 #448：集网络链接要落进笔记（用户：「怎么我在编辑条目保存集网络链接怎么不写回笔记内，
+    //    比如 [第1集 新邻居](网络链接) 格式到 ## 观看链接 下呢」）—— 以前这一节只读 `e.links`，
+    //    而影视的链接已迁到 `episodeUrls`（提交时 links 清空）⇒ 集链接一条都看不到。
+    describe('episodeWatchLines 影视逐集网络链接（#448）', () => {
+        it('剧集：`- [第 N 集 集标题](url)`；保位（index i = 第 i+1 集），只输出有网址的集', () => {
+            const lines = episodeWatchLines(
+                baseEntry({
+                    links: [],
+                    episodeUrls: [undefined as never, 'https://a.com/2', undefined as never, 'https://a.com/4'],
+                    episodeTitles: ['新邻居', undefined as never, '熊熊的歌声', undefined as never],
+                }),
+            );
+            // 下标 1 = 第 2 集（标题空 ⇒ 只「第 2 集」）；下标 3 = 第 4 集（空位不占位、也不前移）
+            expect(lines).toEqual(['- [第 2 集](https://a.com/2)', '- [第 4 集](https://a.com/4)']);
+        });
+
+        it('集标题进标签；电影不出「第 N 集」（缺标题回退片名）', () => {
+            expect(
+                episodeWatchLines(
+                    baseEntry({ type: 'anime', links: [], episodeUrls: ['https://a.com/1'], episodeTitles: ['新邻居'] }),
+                ),
+            ).toEqual(['- [第 1 集 新邻居](https://a.com/1)']);
+            const movie = baseEntry({ type: 'movie', title: '沙丘', links: [], episodeUrls: ['https://a.com/x'] });
+            expect(episodeWatchLines(movie)).toEqual(['- [沙丘](https://a.com/x)']);
+        });
+
+        it('多资源电影用「文件 N」措辞（避免同一片名重复多行）', () => {
+            const movie = baseEntry({ type: 'movie', title: '沙丘', links: [], episodeUrls: ['https://a.com/1', 'https://a.com/2'] });
+            expect(episodeWatchLines(movie)).toEqual(['- [文件 1](https://a.com/1)', '- [文件 2](https://a.com/2)']);
+        });
+
+        it('转义：标题里的 `[`/`]` 不破链接；网址含空格 → 尖括号包裹', () => {
+            expect(
+                episodeWatchLines(
+                    baseEntry({ links: [], episodeUrls: ['https://a.com/1'], episodeTitles: ['[前篇]'] }),
+                ),
+            ).toEqual(['- [第 1 集 \\[前篇\\]](https://a.com/1)']);
+            expect(episodeWatchLines(baseEntry({ links: [], episodeUrls: ['https://a.com/a b'] }))).toEqual([
+                '- [第 1 集](<https://a.com/a b>)',
+            ]);
+        });
+
+        it('非影视类型不计；整段空 → 该节仍走原逻辑（（暂无链接））', () => {
+            expect(episodeWatchLines(baseEntry({ type: 'book' }))).toEqual([]);
+            const md = generateNoteMarkdown(baseEntry({ links: [], episodeUrls: [] }));
+            expect(md).toContain('## 观看链接');
+            expect(md).toContain('（暂无链接）');
+        });
+
+        it('节点整体渲染：## 观看链接 下出现逐集条目（且不吞掉旧 links 行）', () => {
+            const md = generateNoteMarkdown(
+                baseEntry({ episodeUrls: ['https://a.com/1'], episodeTitles: ['新邻居'] }),
+            );
+            expect(md).toContain('- [第 1 集 新邻居](https://a.com/1)');
+            expect(md).toContain('- [B站](https://www.bilibili.com/bangumi/123)');
+        });
+    });
+
     it('来源行跟随数据源自动链接：优先 sourceUrl，回退手动链接', () => {
         // 豆瓣兜底：来源 = 豆瓣官方页
         const douban = generateNoteMarkdown(
@@ -250,8 +407,10 @@ describe('generateNoteMarkdown', () => {
             baseEntry({ type: 'movie', source: 'tmdb', sourceUrl: 'https://www.themoviedb.org/movie/438631' }),
         );
         expect(tmdb).toContain('| 来源 | [TMDB](https://www.themoviedb.org/movie/438631) |');
+        // 🔴 #449：夹具原来写的是**老键** `google`（真源是 `googleBooks`）—— 旧手抄表认它、注册表不认，
+        //    走真源后那种键会退化成原样吐 id；夹具改回真键（这条断言正是「来源行是真源翻出来的」的守卫）
         const google = generateNoteMarkdown(
-            baseEntry({ type: 'book', source: 'google', sourceUrl: 'https://books.google.com/books?id=abc' }),
+            baseEntry({ type: 'book', source: 'googleBooks', sourceUrl: 'https://books.google.com/books?id=abc' }),
         );
         expect(google).toContain('| 来源 | [Google Books](https://books.google.com/books?id=abc) |');
 
@@ -404,14 +563,34 @@ describe('generateNoteMarkdown', () => {
         expect(md).toContain('```lrc');
         expect(md).toContain('source [[ReelLudic/music/不再犹豫.mp3]]');
         expect(md).toContain('# 个人评语');
-        // 顺序：lrc 块在简介与个人评语之后；音乐无观看链接章节
-        expect(md.indexOf('```lrc')).toBeGreaterThan(md.indexOf('# 个人评语'));
-        expect(md.indexOf('# 个人评语')).toBeGreaterThan(md.indexOf('## 简介'));
+        // 🔴 #404 翻面：lrc 块随「## 歌词」小节**移到笔记开头**（表格之后、简介之前）——
+        //    旧口径是「置于简介 / 个人评语之后」。
+        expect(md.indexOf('## 歌词')).toBeGreaterThan(md.indexOf('| 评分   |'));
+        expect(md.indexOf('```lrc')).toBeGreaterThan(md.indexOf('## 歌词'));
+        expect(md.indexOf('```lrc')).toBeLessThan(md.indexOf('# 个人评语'));
+        expect(md.indexOf('# 个人评语')).toBeGreaterThan(md.indexOf('| 评分   |'));
         expect(md).not.toContain('## 观看链接');
         expect(md).not.toContain('## 相关链接');
-        // 无音频不生成 lrc 块
+        // 无音频不生成 lrc 块（连带 `## 歌词` 标题也不生成）
         const md2 = generateNoteMarkdown({ ...e, audioPath: undefined });
         expect(md2).not.toContain('```lrc');
+        expect(md2).not.toContain('## 歌词');
+    });
+
+    it('🔴 库外绝对音频 ⇒ `source` 行**裸写**（⛔ 不包 `[[ ]]` —— 那是库内路径的写法，包了 vault API 找不到）', () => {
+        const base: MediaEntry = {
+            id: 'e_2', type: 'music', title: '夜曲', status: 'want', rating: 0,
+            audioPath: 'C:\\Music\\夜曲.mp3',
+            genres: [], cast: [], links: [], notes: '', tags: [], createdAt: '', updatedAt: '',
+        };
+        expect(generateNoteMarkdown(base)).toContain('source C:\\Music\\夜曲.mp3');
+        const posix = generateNoteMarkdown({ ...base, audioPath: '/Users/x/夜曲.mp3' });
+        expect(posix).toContain('source /Users/x/夜曲.mp3');
+        const unc = generateNoteMarkdown({ ...base, audioPath: '\\\\nas\\share\\夜曲.mp3' });
+        expect(unc).toContain('source \\\\nas\\share\\夜曲.mp3');
+        // UNC 的正斜杠写法（跨平台粘贴常见）同样裸写 —— 只认反斜杠 ⇒ 这里会变成 `source [[//nas/…]]` 断链
+        const uncFwd = generateNoteMarkdown({ ...base, audioPath: '//nas/share/夜曲.mp3' });
+        expect(uncFwd).toContain('source //nas/share/夜曲.mp3');
     });
 });
 
@@ -436,10 +615,28 @@ describe('entryNotePath', () => {
         expect(entryNotePath(baseEntry({ type: 'movie' }))).toBe('ReelLudic/笔记/movie/进击的巨人 最终季.md');
         expect(entryNotePath(baseEntry({ type: 'book' }))).toBe('ReelLudic/笔记/book/进击的巨人 最终季.md');
     });
-    it('书籍按子分类分目录（1.0.3.1）：文学 book/、网文 novel/（缺省与已下线 comic 归 book/）', () => {
+    it('🔴 #444g 画师（漫画）：frontmatter 写独立 `artist` 键 + 属性表出「画师」行（与「作者」分开）', () => {
+        const comic = baseEntry({ type: 'book', bookKind: 'comic', author: '原作君', artist: '作画君' });
+        // ⚠️ frontmatter 的字符串值都走 `q()` 加引号 ⇒ 断言要带引号
+        expect(entryFrontmatter(comic)).toContain('artist: "作画君"');
+        // ⛔ 不许把画师拼进 author（Dataview 查不出来，也丢人）
+        expect(entryFrontmatter(comic)).not.toContain('author: 原作君 / 作画君');
+        const md = generateNoteMarkdown(comic);
+        expect(md).toContain('画师');
+        expect(md).toContain('作画君');
+    });
+
+    it('非漫画不写 `artist` 键（该字段只有漫画会落库）', () => {
+        expect(entryFrontmatter(baseEntry({ type: 'book', author: '某作者' }))).not.toContain('artist:');
+        expect(entryFrontmatter(baseEntry({ type: 'movie', director: '某导演' }))).not.toContain('artist:');
+    });
+
+    it('书籍按子分类分目录：文学 book/、网文 novel/、漫画 comic/（缺省归 book/）', () => {
         expect(entryNotePath(baseEntry({ type: 'book', bookKind: 'book' }))).toBe('ReelLudic/笔记/book/进击的巨人 最终季.md');
         expect(entryNotePath(baseEntry({ type: 'book', bookKind: 'novel' }))).toBe('ReelLudic/笔记/novel/进击的巨人 最终季.md');
-        expect(entryNotePath(baseEntry({ type: 'book', bookKind: 'comic' as never }))).toBe('ReelLudic/笔记/book/进击的巨人 最终季.md');
+        // 🔴 2026-09-30 翻面：comic 加回 ⇒ 有自己的目录（曾是「已下线值 → 归 book/」）
+        expect(entryNotePath(baseEntry({ type: 'book', bookKind: 'comic' }))).toBe('ReelLudic/笔记/comic/进击的巨人 最终季.md');
+        expect(entryNotePath(baseEntry({ type: 'book' }))).toBe('ReelLudic/笔记/book/进击的巨人 最终季.md');
     });
     it('自定义库目录同样带子分类段', () => {
         expect(entryNotePath(baseEntry({ type: 'book', bookKind: 'novel' }), '媒体库/笔记')).toBe('媒体库/笔记/novel/进击的巨人 最终季.md');
@@ -569,9 +766,13 @@ describe('generateNoteMarkdown · 网文（novel）口径', () => {
         }
     });
 
-    it('网文：即使有 toc 也不渲染「## 目录」小节（作者简介保留）', () => {
-        const md = generateNoteMarkdown(baseEntry({ type: 'book', bookKind: 'novel', authorIntro: '唐家三少介绍', toc: '第一章 觉醒' }));
-        expect(md).not.toContain('## 目录');
+    // 🔴 #431 **翻面**：这条原本钉「网文即使有 toc 也不渲染 ## 目录」（2026-09-13 裁定）。
+    //    用户 2026-09-29 裁定「文学类和网文的 toc 目录回填只显示前 10 章加个 `....`」⇒ 网文也渲染。
+    //    ⚠️ 当年那条裁定要防的是**一整份 2000+ 章的出版目录**，裁到 10 行之后这个顾虑不成立了。
+    it('网文：有 toc **也**渲染「## 目录」小节（#431 翻面；作者简介照旧保留）', () => {
+        const md = generateNoteMarkdown(baseEntry({ type: 'book', bookKind: 'novel', authorIntro: '示例作者简介', toc: '第一章 觉醒' }));
+        expect(md).toContain('## 目录');
+        expect(md).toContain('第一章 觉醒');
         expect(md).toContain('## 作者简介');
     });
 
@@ -598,4 +799,13 @@ describe('generateNoteMarkdown · 网文（novel）口径', () => {
         expect(entryFrontmatter(bookish('novel'))).toContain('page_count: 1200');
         expect(entryFrontmatter(bookish('book'))).toContain('page_count: 1200');
     });
+
+    it('🔴 #445 漫画：元数据按「话数」呈现（不是「页数」也不是「章数」），frontmatter 键名仍是 page_count', () => {
+        const md = generateNoteMarkdown(baseEntry({ type: 'book', bookKind: 'comic', pageCount: 139 }));
+        expect(md).toContain('| 话数 | 139 |');
+        expect(md).not.toContain('| 页数 |');
+        expect(md).not.toContain('| 章数 |');
+        expect(entryFrontmatter(baseEntry({ type: 'book', bookKind: 'comic', pageCount: 139 }))).toContain('page_count: 139');
+    });
 });
+

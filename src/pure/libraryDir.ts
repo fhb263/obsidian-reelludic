@@ -52,3 +52,38 @@ export function libraryDirIssue(raw: string): string | null {
 export function sameLibraryDir(a: string, b: string): boolean {
     return normalizeLibraryDirInput(a) === normalizeLibraryDirInput(b);
 }
+
+/**
+ * 库目录的**显示名** = 归一化后的**最后一段**（用户 2026-09-27 ①）。
+ *
+ * 背景：视图标签直接拿 `settings.libraryDir` 显示 ⇒ 用户把它设成 `3-资源 Resource/媒体库`
+ * 后，标签页/侧边栏标题就变成了整条路径，既长又没信息量。
+ * 显示与存储**必须分开** —— 这里只负责「叫什么」，⛔ 别拿它去拼路径（拼路径一律用归一化原值）。
+ */
+export function libraryDisplayName(raw: string): string {
+    const last = normalizeLibraryDirInput(raw).split('/').filter(Boolean).pop();
+    return last || DEFAULT_LIBRARY_DIR;
+}
+
+/**
+ * 库内**文件**路径 → 显示名（叶子段 + 去掉扩展名）—— 与 {@link libraryDisplayName} 同族
+ * （都是「显示名取叶子段」，只是这里连扩展名一起去掉）。
+ *
+ * 用途（2026-09-27 用户指令）：内置音频播放器**标签页标题**要显示「其播放关联的笔记名」，
+ * 而不是「音频播放器」或音频文件名。笔记路径形如 `媒体库/笔记/music/七里香.md` ⇒ 显示 `七里香`。
+ *
+ * 🔴 为什么必须收敛成一处：手写 `split('/').pop().replace(/\.md$/)` 会踩四类坑 ——
+ *   ① 分隔符两种（`\` / `/`）；② 扩展名大小写（`.MD`）；③ **带点的目录名不参与**（`1.0 计划/曲.md`
+ *   的叶子是 `曲.md`，⛔ 不能从整条路径 `lastIndexOf('.')` 切）；④ 尾随分隔符 / 空白。
+ * ⚠️ 只去**最后一段**的扩展名：`A.B/曲名.mp3` 的显示名是 `曲名`（⛔ 不是 `A`）。
+ */
+export function fileDisplayName(path: string): string {
+    const norm = String(path ?? '')
+        .trim()
+        .replace(/\\/g, '/');
+    const leaf = norm.split('/').filter(Boolean).pop() ?? '';
+    if (!leaf) return '';
+    const dot = leaf.lastIndexOf('.');
+    // `dot <= 0`：无扩展名，或以点开头（`.gitignore` 这类视为整体名，⛔ 别切成空串）
+    return dot > 0 ? leaf.slice(0, dot) : leaf;
+}

@@ -1140,6 +1140,15 @@ export class VideoPlayerView extends ItemView {
         this.renderMarks();
     }
 
+    /**
+     * 让出声道（④-4 播放器互斥）：内置音频播放器起播时由宿主调用。
+     * 🔴 只做「暂停」不做别的（不落盘位置、不关标签页）—— 用户切回来看时应当还停在原处。
+     * 互斥方向由 `pure/audioQueue.playersToPause` 决定，⛔ 这里别硬编码「音频播放器」是谁。
+     */
+    pauseForOtherPlayer(): void {
+        if (!this.videoEl.paused) this.videoEl.pause();
+    }
+
     /** 播放/暂停按钮与中央按钮同步；`rl-vp-paused` 落给 CSS（中央按钮只在暂停时显示） */
     private syncPlayState(): void {
         const paused = this.videoEl?.paused ?? true;

@@ -1,15 +1,18 @@
 // 搜索框类型下拉展示值派生（pure/searchTypeSel）单测
-// 「网文」下拉选项 = 书籍类目子类（bookKind novel）的快捷态：搜索框下拉是书籍分类的唯一入口
+// 「网文」「漫画」下拉选项 = 书籍类目子类（bookKind novel / comic）的快捷态：搜索框下拉是书籍分类的唯一入口
 // （表单内「书籍分类」chips 已移除）：
 //  - toSearchTypeSel：真实 (type, bookKind) → 下拉展示值（书籍态显示子类本名，非书籍恒类型本名）；
 //  - applySearchTypeSel：下拉选择 → 真实 (type, bookKind)——选「书籍」无条件复位文学（下拉即分类，切换即明确意图）。
-// 1.0.3.1：原「漫画」（bookKind comic）快捷态随漫画子视图下线（用户 2026-09-13 裁定）。
+// 🔴 2026-09-30：漫画快捷态**加回**（1.0.3.1 曾随漫画子视图下线，2026-09-13 裁定），与网文**各自一条 if**。
 import { describe, it, expect } from 'vitest';
 import { toSearchTypeSel, applySearchTypeSel } from 'pure/searchTypeSel';
 
 describe('toSearchTypeSel — 真实类型 → 下拉展示值', () => {
     it('书籍 + 网文分类 → 「网文」', () => {
         expect(toSearchTypeSel('book', 'novel')).toBe('novel');
+    });
+    it('书籍 + 漫画分类 → 「漫画」（2026-09-30 加回）', () => {
+        expect(toSearchTypeSel('book', 'comic')).toBe('comic');
     });
     it('书籍 + 文学分类 → 「书籍」', () => {
         expect(toSearchTypeSel('book', 'book')).toBe('book');
@@ -25,8 +28,14 @@ describe('applySearchTypeSel — 下拉选择 → 真实类型派生', () => {
         expect(applySearchTypeSel('novel', 'book')).toEqual({ type: 'book', bookKind: 'novel' });
         expect(applySearchTypeSel('novel', 'novel')).toEqual({ type: 'book', bookKind: 'novel' });
     });
+    it('选「漫画」→ 书籍 + 漫画分类（走 **comic 链**豆瓣主源；与网文互不影响）', () => {
+        expect(applySearchTypeSel('comic', 'book')).toEqual({ type: 'book', bookKind: 'comic' });
+        expect(applySearchTypeSel('comic', 'novel')).toEqual({ type: 'book', bookKind: 'comic' });
+        expect(applySearchTypeSel('comic', 'comic')).toEqual({ type: 'book', bookKind: 'comic' });
+    });
     it('选「书籍」→ 无条件复位文学（下拉是分类唯一入口，切换即明确意图；添加/编辑一致）', () => {
         expect(applySearchTypeSel('book', 'novel')).toEqual({ type: 'book', bookKind: 'book' });
+        expect(applySearchTypeSel('book', 'comic')).toEqual({ type: 'book', bookKind: 'book' });
         expect(applySearchTypeSel('book', 'book')).toEqual({ type: 'book', bookKind: 'book' });
     });
     it('切到非书籍类型 → bookKind 原样保留（非书籍态不显示不落库，切回书籍时选「书籍」复位）', () => {

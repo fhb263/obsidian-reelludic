@@ -679,3 +679,149 @@ describe('写笔记后指纹必须同步刷新（防「笔记已被外部修改�
         expect(await svc.noteWasExternallyModified(id)).toBe(true);
     });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 块内歌词（#396）：` ```lrc ` 块里的歌词正文归用户所有（表单填写 / 在线获取）。
+// 🔴 本组最重要的一条是「模板重写不得吞掉歌词」—— 它是**静默丢数据**，用户只有在打开播放器
+//    发现歌词没了、或再打开表单看到框空了的时候才会察觉。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('EntryService 块内歌词（readNoteLrc / setNoteLrc / 模板重写保留区）', () => {
+    /** 造一个带 audioPath 的音乐条目并写出笔记；额外返回写盘计数器 */
+    async function music() {
+        const base = memIO();
+        let writes = 0;
+        const io: VaultIO & { files: Record<string, string> } = {
+            ...base,
+            files: base.files,
+            async readText(p: string) {
+                return base.readText(p);
+            },
+            async writeText(p: string, c: string) {
+                writes++;
+                return base.writeText(p, c);
+            },
+            async deleteFile(p: string) {
+                return base.deleteFile(p);
+            },
+        };
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'music', title: '夜曲', audioPath: 'ReelLudic/music/夜曲.mp3' });
+        await svc.writeNote(e.id);
+        const notePath = (await svc.get(e.id))!.notePath!;
+        return { io, svc, id: e.id, notePath, writes: () => writes };
+    }
+
+    const LRC = '[00:01.00]一群嗜血的蚂蚁\n[00:05.00]被腐肉所吸引';
+
+    it('生成的笔记含 ```lrc 块与 source 指令行（模板侧不变）', async () => {
+        const { io, notePath } = await music();
+        expect(io.files[notePath]).toContain('```lrc\nsource [[ReelLudic/music/夜曲.mp3]]\n```');
+    });
+
+    it('无笔记 / 无歌词 / 只有指令行 ⇒ readNoteLrc 返回空串（不是 null）', async () => {
+        const { svc, id } = await music();
+        expect(await svc.readNoteLrc(id)).toBe('');
+        expect(await svc.readNoteLrc('nope')).toBe('');
+    });
+
+    it('setNoteLrc 写进笔记并能原样读回；返回 true', async () => {
+        const { io, svc, id, notePath } = await music();
+        expect(await svc.setNoteLrc(id, LRC)).toBe(true);
+        expect(io.files[notePath]).toContain(LRC);
+        expect(await svc.readNoteLrc(id)).toBe(LRC);
+    });
+
+    it('🔴 写歌词后**指纹必须同步刷新**（否则下次编辑条目会误报「笔记被外部修改」）', async () => {
+        const { svc, id } = await music();
+        await svc.setNoteLrc(id, LRC);
+        expect(await svc.noteWasExternallyModified(id)).toBe(false);
+    });
+
+    it('🔴 内容无变化 ⇒ 不写盘（返回 false；逐字比对，别每次保存都白写一遍）', async () => {
+        const { svc, id, writes } = await music();
+        await svc.setNoteLrc(id, LRC);
+        const before = writes();
+        expect(await svc.setNoteLrc(id, LRC)).toBe(false);
+        expect(await svc.setNoteLrc(id, `  ${LRC}  `)).toBe(false); // 首尾空白视作同一份
+        expect(writes()).toBe(before);
+    });
+
+    it('🔴 笔记里的块是**手写形态**（指令行后多留空行）且歌词内容一致 ⇒ 仍不写盘'
+        + '（判据是「歌词一样」，⛔ 不是「重建后的整篇字符串一样」—— 否则每次保存都会顺手把用户的排版规整一遍）', async () => {
+        const { io, svc, id, notePath, writes } = await music();
+        io.files[notePath] = io.files[notePath].replace(
+            '```lrc\nsource [[ReelLudic/music/夜曲.mp3]]\n```',
+            '```lrc\nsource [[ReelLudic/music/夜曲.mp3]]\n\n\n[00:01.00]一群嗜血的蚂蚁\n[00:05.00]被腐肉所吸引\n\n```',
+        );
+        expect(await svc.readNoteLrc(id)).toBe(LRC); // 手写形态读出来仍是同一份歌词
+        const before = writes();
+        expect(await svc.setNoteLrc(id, LRC)).toBe(false);
+        expect(writes()).toBe(before);
+        expect(io.files[notePath]).toContain('夜曲.mp3]]\n\n\n[00:01.00]'); // 排版一字未动
+    });
+
+    it('传空串 ⇒ 清空歌词并写盘（「清了框还能生效」的实现）', async () => {
+        const { io, svc, id, notePath } = await music();
+        await svc.setNoteLrc(id, LRC);
+        expect(await svc.setNoteLrc(id, '')).toBe(true);
+        expect(await svc.readNoteLrc(id)).toBe('');
+        expect(io.files[notePath]).toContain('```lrc\nsource [[ReelLudic/music/夜曲.mp3]]\n```');
+    });
+
+    it('无笔记条目的条目 ⇒ false（不凭空造笔记：歌词是笔记里的一段）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'music', title: '夜曲' }); // 未 writeNote ⇒ 无 notePath
+        expect(await svc.setNoteLrc(e.id, LRC)).toBe(false);
+    });
+
+    it('🔴🔴 模板重写**不得吞掉歌词**（writeNote 的第三处保留区）', async () => {
+        const { io, svc, id, notePath } = await music();
+        await svc.setNoteLrc(id, LRC);
+        await svc.update(id, { rating: 5 });
+        await svc.writeNote(id); // ← 整篇模板重写
+        const final = io.files[notePath];
+        expect(final).toContain('[00:01.00]一群嗜血的蚂蚁');
+        expect(final).toContain('[00:05.00]被腐肉所吸引');
+        expect(final).toContain('rating: 5');
+        // 指令行仍由模板按 audioPath 决定（歌词正文不会把指令行顶掉）
+        expect(final).toContain('source [[ReelLudic/music/夜曲.mp3]]');
+        expect(await svc.readNoteLrc(id)).toBe(LRC);
+    });
+
+    it('🔴 `audioPath` 改了 ⇒ 指令行跟着改，歌词正文照旧保留（分工不混）', async () => {
+        const { io, svc, id, notePath } = await music();
+        await svc.setNoteLrc(id, LRC);
+        await svc.update(id, { audioPath: 'ReelLudic/music/新路径.mp3' });
+        await svc.writeNote(id);
+        expect(io.files[notePath]).toContain('source [[ReelLudic/music/新路径.mp3]]');
+        expect(io.files[notePath]).not.toContain('source [[ReelLudic/music/夜曲.mp3]]');
+        expect(io.files[notePath]).toContain('[00:01.00]一群嗜血的蚂蚁');
+    });
+
+    it('🔴 歌词与摘抄区互不干扰（两处保留区同一次重写里都搬回）', async () => {
+        const base = memIO();
+        const svc = new EntryService(base);
+        const e = await svc.create({ type: 'book', title: '置身事内' });
+        await svc.writeNote(e.id);
+        const p = (await svc.get(e.id))!.notePath!;
+        base.files[p] = base.files[p].replace('## 相关链接', '## 摘抄\n\n> 所谓「比较优势」\n\n**p.128** · 心得：x\n^bk001a\n\n## 相关链接');
+        await svc.update(e.id, { rating: 4 });
+        await svc.writeNote(e.id);
+        const final = base.files[p];
+        expect(final).toContain('^bk001a');
+        expect(final).toContain('## 摘抄');
+        expect(final).not.toContain('```lrc'); // 非音乐条目：不会被歌词逻辑塞进一个块
+    });
+
+    it('非音乐条目：`writeNote` 不会因为歌词逻辑而改动笔记（无 lrc 块 ⇒ 两个纯函数都原样返回）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        const path = await svc.writeNote(e.id);
+        const first = io.files[path];
+        await svc.writeNote(e.id);
+        // 两次重写结果逐字相同 ⇒ 保留区没有引入任何多余改动
+        expect(io.files[path]).toBe(first);
+    });
+});

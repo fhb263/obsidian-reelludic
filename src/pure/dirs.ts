@@ -19,16 +19,23 @@ export const DIR_REPORTS = '报告';
  *  🔴 目录名**只此一处**：它是**红线路径**（`{lib}/阅读进度/{书名}-阅读-{id}.json`），
  *     ⛔ 别再在别处硬编码「阅读进度」（2026-09-23 #381 把 `readerStore` 那处收敛到这里）。 */
 export const DIR_READING = '阅读进度';
+/** 书籍下载**续传存档**目录（P1-C）：`{lib}/下载续传/{书名}-续传-{格式}-{hash8}.ndjson`。
+ *  🔴 与「下载」目录**分开放**：存档是 `.ndjson` 的**中间态**（抓完即删），
+ *     混进 `下载/书籍` 会被「库内找回同名书」当成一本书扫进来。目录名只此一处（`pure/chapterPlan` 引用）。 */
+export const DIR_DOWNLOAD_RESUME = '下载续传';
 
 /** 类型 → 笔记子目录英文名（movie/teleplay/animation/book/game/music） */
 export function typeDir(type: EntryType): string {
     return ENTRY_TYPE_DIRS[type];
 }
 
-/** 书籍子分类 → 笔记子目录名（1.0.3.1 网文独立目录，用户 2026-09-13 指定；文学沿用 book/） */
+/** 书籍子分类 → 笔记子目录名（1.0.3.1 网文独立目录，用户 2026-09-13 指定；文学沿用 book/。
+ *  🔴 2026-09-30 加回漫画（用户裁定）：独立 comic/ 子目录，与 book/、novel/ 同构。
+ *     ⚠️ 用户实测库里没有存量 comic 条目 ⇒ 这次加目录**不触发任何存量迁移**（若有，migrateDirectories 会按本表搬）。 */
 export const BOOK_KIND_DIRS: Record<BookKind, string> = {
     book: 'book',
     novel: 'novel',
+    comic: 'comic',
 };
 
 /** 条目 → 笔记子目录名：书籍按子分类分（文学 book/、网文 novel/），其余类型 = 类型目录。

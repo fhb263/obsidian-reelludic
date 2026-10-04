@@ -138,7 +138,7 @@ export function classifySpeechError(status: number, body = ''): { kind: SpeechEr
     if (s === 200) return { kind: 'ok', message: '' };
     if (s === 0) return { kind: 'network', message: '无法连接音色服务，请检查网络后重试' };
     if (s === 401 || s === 403) {
-        return { kind: 'auth', message: '音色服务 Key 无效或未授权（HTTP 401），请到 设置 → AI集成 › API凭据 · 硅基流动 检查' };
+        return { kind: 'auth', message: '音色服务 Key 无效或未授权（HTTP 401），请到 设置 → AI集成 › 模型服务 · 硅基流动 检查' };
     }
     const text = typeof body === 'string' ? body.toLowerCase() : '';
     if (s === 429 || /balance|余额|quota|insufficient|充值|欠费/.test(text)) {

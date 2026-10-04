@@ -140,7 +140,7 @@ export class CloudSpeechEngine implements SpeechEngine {
     private async synth(text: string, opts: SpeechOpts): Promise<Blob | null> {
         const key = this.keyOf();
         if (!key) {
-            this.opts.notice?.('未配置音色服务 Key（设置 → AI集成 › API凭据 · 硅基流动）');
+            this.opts.notice?.('未配置音色服务 Key（设置 → AI集成 › 模型服务 · 硅基流动）');
             return null;
         }
         // 🔴 防御性归一：万一传进来的是**系统语音 id**（两个音源之间串味），也把它落回缺省云音色 ——

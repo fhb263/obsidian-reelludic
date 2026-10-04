@@ -123,14 +123,14 @@ export function buildAnnoHead(parent: HTMLElement, o: AnnoHeadOptions): AnnoHead
     const actions = head.createDiv({ cls: 'rl-anno-actions' });
     // 常态按钮
     const selectBtn = actions.createEl('button', { cls: 'rl-btn rl-reader-btn rl-anno-btn rl-anno-normal', text: '选择' });
-    selectBtn.setAttribute('data-tip', '进入选择模式：勾选单条或多条后删除');
+    selectBtn.setAttribute('data-tip', '多选模式');
     // 模式内按钮
     const selAllBtn = actions.createEl('button', { cls: 'rl-btn rl-reader-btn rl-anno-btn rl-anno-only', text: '全选' });
-    selAllBtn.setAttribute('data-tip', '勾选本区全部条目');
+    selAllBtn.setAttribute('data-tip', '全选本区');
     const delBtn = actions.createEl('button', { cls: 'rl-btn rl-reader-btn rl-anno-btn rl-anno-only rl-anno-danger', text: '删除所选' });
-    delBtn.setAttribute('data-tip', '删除已勾选的条目（会先确认一次）');
+    delBtn.setAttribute('data-tip', '删除选中');
     const cancelBtn = actions.createEl('button', { cls: 'rl-btn rl-reader-btn rl-anno-btn rl-anno-only', text: '取消' });
-    cancelBtn.setAttribute('data-tip', '退出选择模式（不删除任何条目）');
+    cancelBtn.setAttribute('data-tip', '退出多选');
     // 列表容器紧跟头部（顺序即「头 → 列表」，⛔ 不要调换）
     const listEl = parent.createDiv({ cls: o.listCls });
 

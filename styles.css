@@ -26,6 +26,10 @@
     --rl-good-bar: #4d9b52;       /* 读完 / 通用填充（3.43 ✓ · 4.86 ✓） */
     --rl-good-soft: #5a9e7d;      /* 70-99% 接近完成（3.17 ✓ · 5.26 ✓） */
     --rl-danger-soft: #e85a4f;    /* <30% 起步（3.50 ✓ · 4.77 ✓） */
+    /* 当前进度所在集的**黄环**（#447；图形，门槛 3:1；两主题均达标 → 无需覆盖）。
+       ⚠️ 与 `--rl-score` 同为金色系但**故意分成两个变量**：一个说「评分/星星」，一个说「你看到这一集」，
+          将来任一侧要调色时不必拆；取值也是按**图形 3:1** 反算的（原色 #d99a2b 白底只有 2.44 ✗）。 */
+    --rl-progress-now: #b8860b;   /* 当前进度集标记（3.25 ✓ · 5.12 ✓） */
     /* 状态徽标四色（灰/橙/绿/蓝，色相区分状态；9px 粗体白字，按正文 4.5 计） */
     --rl-badge-want: #8a8a86;     /* 白字 3.47 ✗ · 4.64 ✓ */
     --rl-badge-watching: #d99a2b; /* 白字 2.44 ✗ · 2.90 ✗ */
@@ -112,6 +116,568 @@
 }
 /* #380：媒体库目录输入框的即时提示复用上面的排版，出错时转红（走语义变量，六档主题/明暗都自动适配） */
 .rl-hint-note.is-error { color: var(--text-error); }
+/* ══════════════════════════════════════════════════════════════════════════
+   #479 AI集成页整页重排（用户 2026-10-02）· **#480 六条修正** · **#481 第三轮三条**（用户 2026-10-02）
+
+   #480 四件事：① 服务商 = 「不启用」时**不再亮着模型名**（合并后连模型段都不显示）
+                ② 服务商 + 模型 = **一个**拣选控件（点开是「左服务商 / 右模型」的大面板）
+                ③ 提示词入口改**笔形图标**挪进控件区；标题与副标题拉开 4px
+                ④ 朗读音源 = **音源 + 音色 + 试听**三件（与其它服务行同款观感）
+                ⑤ API凭据：徽标前加绿实心点、箭头更细小更浅
+                （⑥「去掉默认边框」用户裁定**不做** —— 保持与全仓控件一致）
+
+   #481 三条（用户第三轮反馈）：
+     ① **撤回** 480-③ 的笔形图标 ⇒ 提示词回到**名称行尾的文字按钮「提示词 ›」**
+     ② 拣选控件宽度**固定** `--rl-ai-ctl-w`（上下几行对齐）+ 超长省略号 + `data-tip` 全称
+     ③ 图标波形 → **喇叭**；边框 / 圆角与拣选控件**同一条规则**
+        （⚠️ ③ 里的「音源 + 音色合并成一格」已被 **#482 撤回** ⇒ 拆回两格，改走「窄 + 宽」分工）
+
+   #482 四步（用户「高级感爆改」，弹窗 `AiPickerModal` 整节重做）：
+     ① 弹窗内边距 24px + 标题 16px/600 + 关闭钮圆形浅灰底（⛔ scoped 到 `.rl-pick-modal`，不改全局）
+     ② 左栏铺极浅灰底 + 圆角、**去掉垂直分割线**；左栏项 padding 12/16 + 悬停底 + 选中「浅底 + 竖线指示器」
+     ③ 列表项**卡片化**：删蓝色 API 签 ⇒ 名字 + 小字（`modelNote`，**只写真信息**）+ 灰小签 + 选中 ✓；圆角 8px / 行高 ≥48px
+     ④ 搜索框浅灰底无边框（聚焦才出主题色边 + 轻阴影）；两颗动作降级成**灰色文字按钮**
+     🔴 色值全部走主题变量（用户给的 hex 已映射到 `--text-normal` / `--background-secondary` /
+        `--background-modifier-hover` / `--text-muted`）
+
+   🔴 **配色只有两条通道**（用户裁定「主题色 + 已配置那个绿」）：
+      图标 / 选中 / 强调 = `--interactive-accent`；「已配置」徽标 = `--color-green`（见 `.rl-key-badge-on`）。
+      ⛔ 别再引入第三种颜色（品牌标也不上品牌色 —— 源 SVG 本就是 `currentColor` 单色）。
+   🔴 **图标 fill 分治**：品牌标是**填充式**（靠 `currentColor`），内置标是**描边式**
+      （靠 `.svg-icon { fill: none; stroke: currentColor }`）⇒ ⛔ 别写无差别的 `path { fill: … }`，
+      那会把内置标**填成墨块**（本仓在「网络搜索浮层」已栽过一次）。
+   🔴 **`<button>` 规则一律两级前缀**：宿主核心 `button:not(.clickable-icon)` 是 (0,1,1)，
+      单类 (0,1,0) **压不过它**（宿主那条还把 `height` 写死成 `var(--input-height)`）
+      ⇒ 本节的按钮规则一律写 `.父容器 .rl-xxx-btn`（0,2,0）；带 `.clickable-icon` 的交给宿主那套。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 服务商图标（四处共用：拣选按钮 / 下拉项 / API凭据行头 / 朗读音源） ── */
+.rl-ai-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    color: var(--interactive-accent);
+}
+.rl-ai-icon svg { width: 14px; height: 14px; display: block; }
+
+/* ── ③ 标题与副标题拉开 4px（用户：「靠得太近了」） ──
+   ⚠️ 只加**下边距**、⛔ 不动字号 —— 用户写「保持在 16px 粗体」，但设置页的字号阶梯是宿主定的
+   （标题 13px/600、副标题 12px），单独把一页放大成 16px 会与数据源页 / 基本设置页明显割裂。
+   该口径已与用户确认（「保持 13px，只拉开间距」）。 */
+.rl-ai-svc .setting-item-description { margin-top: 4px; }
+
+/* ── ③ 提示词入口 = 名称行尾的「提示词 ›」**文字按钮**（#481 撤回 #480 的笔形图标） ──
+   🔴 用户 2026-10-02：「提示词改成笔形图标挪到下拉框左边这条命令代码撤回改回原『提示词 ›』」。
+   为什么图标那版不行：它挤进控件区、与「选择模型」那颗主控件并列 ⇒ 一眼分不清谁是主控件。
+   ⚠️ 它挂在 `.setting-item-name` 里 ⇒ 依旧受宿主那条「裸 button」规则（(0,1,1)，`height: var(--input-height)`）
+      支配；这里用**两级前缀**压过它，但**必须自己写 `height: auto`** —— 不写就是个 30px 高的方块。
+   ⚠️ 悬停**只变文字色**（用户在并排切换类按钮上定过这条口径：铺底色会连成色带、还与选中色打架）。 */
+.rl-ai-name-row .rl-ai-prompt-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    width: auto;
+    height: auto;
+    margin: 0 0 0 6px;
+    padding: 1px 5px;
+    font-size: var(--font-ui-smaller);
+    font-weight: 400;
+    line-height: 1.2;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: var(--rl-t-radius-sm, 4px);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-ai-name-row .rl-ai-prompt-btn:hover { color: var(--text-normal); }
+.rl-ai-name-row .rl-ai-prompt-btn.is-set,
+.rl-ai-name-row .rl-ai-prompt-btn.rl-open { color: var(--interactive-accent); }
+.rl-ai-name-row .rl-ai-prompt-btn .rl-ai-caret { font-size: 10px; line-height: 1; }
+
+/* ── 提示词块：默认收起（`.rl-open` 才展开）；收起只走 CSS，⛔ 不用内联 display:none ── */
+.rl-prompt-row.rl-ai-prompt-block { display: none; }
+.rl-prompt-row.rl-ai-prompt-block.rl-open { display: block; }
+
+/* ── ② 行骨架：「**左标签定宽 + 控件区左对齐、等宽**」——**#493**（用户 2026-10-03 附截图）──
+   用户原话：「把设置页-AI集成的用途的左标签定宽（比如 120px），右侧控件区采用 Flex 布局 flex: 1，
+   但设置 max-width（比如 300px），所有下拉框宽度一致，整体居左对齐」。
+
+   🔴 **改前的病**（截图里能直接量到；真实 app.css 逐条核过）：宿主的 `.setting-item-info` 与
+     `.setting-item-control` **都是 `flex: 1 1 auto`**（两栏各吃一半），而控件又靠
+     `justify-content: flex-end` **贴右** ⇒ 翻译 / 总结 / 搜索三行的拣选控件左缘 ≈819px，
+     而「朗读音源」那行的下拉从标签后就跟上来（左缘 ≈368px）—— 四行控件**两种左缘**，看着像两块不相干的区域。
+   改法：① 标签列**定宽不收缩** `--rl-ai-label-w`；② 控件区 `flex: 1 1 auto` 且
+     `max-width: var(--rl-ai-ctl-w)` + **`justify-content: flex-start`** ⇒ 四行的控件**左缘对齐、宽度一致**。
+   ⚠️ 两个变量**只在这里声明一次**（`--rl-ai-ctl-w` 原先声明在 `.rl-ai-pick` / `.rl-ai-tts` 上；
+     现上移到行上 —— 那两处都在本行内 ⇒ 改一处即可，⛔ 别留两份数字）。
+   ⚠️ 两格都写 `min-width: 0`：不写的话 flex 子项按**内容**撑开，窄面板下会横向溢出。
+   🔴🔴 **#495 翻面：控件区改「右对齐 + 不设上限」**（用户 2026-10-03 附截图第三条需求：「下拉框需与所在行
+     **右对齐**，不要占据整行宽度」）。理由：#493/#494 的「左对齐 + `max-width: 300px`」在 700px 的设置组里
+     右侧空出 **234px**，看着像控件没排完 ⇒ 改回**贴右**（宿主默认就是 `flex-end`，我们不再覆盖它），
+     并**去掉** `max-width`（控件自身已有固定宽 + `max-width: 100%`，不需要再截住整格）。
+     ⚠️ 标签列**仍是定宽** `--rl-ai-label-w`（左缘对齐要留着，那是 #493 想要的），只把控件挪到右边。
+   🔴 **标签列 120 → 132px（#494 修正）**：仿真实测「四字标签 + 行尾的『提示词 ›』」在 120px 下只剩
+     **5.4px 余量**，而宿主给 `.setting-item-name` 的是 `overflow: hidden` ⇒ 字体度量稍变（Obsidian 自带
+     Inter，仿真页用的是回退字体）就**把提示词按钮裁掉一截**。定列宽之前必须量「末控件右缘 vs 行右缘」，
+     ⛔ 别拿「没被裁」当余量充足。 */
+.rl-ai-svc { --rl-ai-ctl-w: 200px; --rl-ai-label-w: 132px; }
+.rl-ai-svc > .setting-item-info { flex: 0 0 var(--rl-ai-label-w); min-width: 0; }
+.rl-ai-svc > .setting-item-control {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+    justify-content: flex-end;
+}
+
+/* ── ② 控件格外观：**拣选控件（服务商 + 模型）与「选择音色」共用同一条规则** ──
+   🔴 #481 ②（用户：「模型名 BAAI/bge-large-en-v1.5 非常长，把右侧空间撑满了；上下几行的下拉框宽度不一致，
+   看起来稍显松散」）⇒ 宽度**固定** `--rl-ai-ctl-w`：三行（翻译 / 总结 / 搜索）左右都对齐；
+   超长文本走省略号，完整名称走 `data-tip` 悬停气泡（见 `renderAiServiceRow`）。
+   🔴🔴 **#494 修「控件区被挤窄时 picker 不缩」**（真 bug，仿真实测：设置组宽 ≲460px 时控件区缩到 252，
+      而 picker 仍硬 300 ⇒ **凸出控件区 48px**，与第四行右缘错开 48px —— 用户截图里的现象）：
+      根因是按钮那句 `max-width: 100%` 的**包含块是 `.rl-ai-pick` 自己**（它 `display:inline-flex; width:auto`
+      ⇒ 100% = 内容宽，等于没写）。⇒ 上限必须加在**包装层** `.rl-ai-pick` 上。
+   ⚠️ 固定宽度仍须配 `max-width: 100%`：窄窗 / 移动端把 `.setting-item` 折成上下两段时不许横向溢出。
+   🔴 用户 ③ 还要求「圆角和边框颜色与上方模型选择器完全一致」⇒ 两者写成**同一条规则的两个选择器**，
+      ⛔ 不许各写一份（两份外观 = 迟早分叉，本仓在「同一个数字两份真源」上栽过）。 */
+.rl-ai-pick { display: inline-flex; max-width: 100%; min-width: 0; }
+.rl-ai-pick .rl-ai-pick-btn,
+.rl-ai-tts .rl-ai-dd-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: var(--rl-ai-ctl-w);
+    max-width: 100%;
+    height: var(--input-height);
+    padding: 0 8px;
+    margin: 0;
+    font-size: var(--font-ui-smaller);
+    font-weight: 400;
+    color: var(--text-normal);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-ai-pick .rl-ai-pick-btn:hover,
+.rl-ai-tts .rl-ai-dd-btn:hover { background: var(--background-modifier-hover); }
+/* 文本一律省略号：固定宽 + 长名字的必然结果；全称靠 `data-tip` */
+.rl-ai-pick .rl-ai-pick-text,
+.rl-ai-tts .rl-ai-dd-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 「不启用」：整格弱化（模型段根本不渲染，见 `pure/translate.aiPickText`） */
+.rl-ai-pick .rl-ai-pick-btn.is-off { color: var(--text-muted); }
+.rl-ai-pick .rl-ai-pick-btn.is-off .rl-ai-icon { color: var(--text-muted); }
+/* 当前模型不在该家预置表里（手填 / 从 API 拉的）⇒ 段落走主题色，一眼看出「不是本仓写死的那几个」 */
+/* ⛔ #485 用户裁定**删掉**「非预置模型 ⇒ 整格文字变主题色」（旧 `.is-custom` 那条）：
+   它让同一列三行颜色不一致（「一个蓝一个黑的不同」）—— 文字一律 `--text-normal`。
+   ⛔ 别再加回来：要表达「这不是本仓写死的候选」，请用弹窗里的小字（`modelNote` 已写明来源）。 */
+
+/* ── ④ 朗读音源：**一格**「选择音色」+ 试听（#481 ③ 把「音源 / 音色」两个下拉合并了） ──
+   用户原话：「两个下拉框挤在一起，且 Microsoft Huihui… 被截断」⇒
+    ⑴ 合并成一格：段标题（「系统语音 · 中文」/「硅基流动 · 女声」）承担「这句是谁念的」；
+    ⑵ 原来两格共 380px、现在一格 300px + 试听按钮，总宽**更窄**，反而给长音色名留出了更多字位；
+    ⑶ 外观（边框 / 圆角 / 固定宽度）与上方拣选控件**同一条规则**（见 ②）。
+   图标：系统语音 = 喇叭 `volume-2`（#481 从波形 `audio-lines` 改过来 —— 用户：波形标与试听 ▶ 长得像）。 */
+.rl-ai-tts { display: flex; align-items: center; gap: 6px; width: auto; max-width: 100%; }
+.rl-ai-dd { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
+.rl-ai-dd .rl-ai-dd-btn.rl-open { border-color: var(--interactive-accent); }
+/* 🔴🔴 #495：音色格与**拣选控件完全同款**的盒模型 —— 固定宽写在**按钮**上（② 那条共享规则里），
+   包装层 `.rl-ai-dd` 只负责「可缩 + 上限」。
+   ⚠️⚠️ **踩过的坑（仿真实测）**：先前写成「按钮 `width: 100%` + 包装层 `flex: 0 1 var(--rl-ai-ctl-w)`」，
+   结果音色格只拿到 **82px**（= 内容宽）而不是 200px ——
+   原因是 `.rl-ai-tts` 自己是 `width: auto` 的 flex item，它的 max-content 宽按**各子项的内容宽**求和
+   （30 + 82 + 30 + 间距），容器先被定成 154px，里面的 `flex-basis: 200px` 随即**被 shrink** 掉。
+   ⇒ 定宽必须落在**按钮**上（与 `.rl-ai-pick-btn` 同一条规则），包装层只留 `min-width: 0`（可缩）+ `max-width`（上限）。 */
+.rl-ai-tts .rl-ai-dd { flex: 0 1 auto; min-width: 0; max-width: var(--rl-ai-ctl-w); }
+
+/* ── ④b 音源 = **一枚图标钮**（#494 造、**#495 挪进控件区**，排在下拉框之前）────
+   🔴 为什么能塞进 132px 的标签列：图标钮 30px + 间隙 6px（**不再需要**给标签文字留位置）。
+   🔴 **图标本身就是状态**：喇叭 `volume-2` = 系统语音、硅基流动品牌标 = 云合成（`AI_PROVIDER_ICON.siliconflow`）
+   ⇒ 不用再写文字；两个选项 ⇒ **点击 = 切到另一个**（`data-tip` 写当前值 + 「点击切换」）。
+   ⚠️ 悬停**铺底色**（与同排的试听钮同款）；⛔ 不跟「提示词 ›」那样只变文字色 —— 那个是文字钮，这个是图标钮。
+   🔴🔴 **选择器必须是行级**（`.rl-ai-svc .rl-ai-engine-btn`）：#495 把它从**名称行**挪进了**控件区**，
+      原两级前缀（`.rl-ai-name-row …`）**完全不命中** ⇒ 它退回宿主裸 button 的盒模型，
+      仿真实测宽成 **38px**（本仓第 6 次「CSS 靠位置命中」教训）。 */
+.rl-ai-svc .rl-ai-engine-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: var(--input-height);
+    height: var(--input-height);
+    margin: 0;
+    padding: 0;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: var(--rl-t-radius-sm, 4px);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-ai-svc .rl-ai-engine-btn:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+
+.rl-ai-dd-panel {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: var(--layer-menu, 30);
+    min-width: 100%;
+    max-height: 280px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    box-shadow: var(--shadow-s, 0 2px 8px rgb(0 0 0 / 18%));
+}
+.rl-ai-dd-group {
+    padding: 6px 8px 2px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-faint);
+    letter-spacing: .3px;
+    user-select: none;
+}
+.rl-ai-dd-panel .rl-ai-dd-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: auto;
+    padding: 5px 8px;
+    margin: 0;
+    font-size: var(--font-ui-smaller);
+    font-weight: 400;
+    color: var(--text-normal);
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: var(--rl-t-radius-sm, 4px);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-ai-dd-panel .rl-ai-dd-item:hover { background: var(--background-modifier-hover); }
+.rl-ai-dd-panel .rl-ai-dd-item.is-on { color: var(--interactive-accent); font-weight: 600; }
+.rl-ai-dd-item-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 试听按钮：外观交宿主 `.clickable-icon`，这里只管**与同排两格等高**（28 → 30px；仿真实测差 2px）
+   ⚠️ #493：`flex: 0 0 auto` 必须写 —— 父级改成 flex 平分后，不写它会被两个 `flex:1 1 0` 的格子压扁。 */
+.rl-ai-tts .rl-ai-tts-play {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: var(--input-height);
+    height: var(--input-height);
+    padding: 0;
+}
+
+/* ── ② 拣选弹窗（AiPickerModal）：**顶部服务商 chip + 全宽模型列表**（#482「高级感」建立 / **#484 重做**）──
+
+   #484 重做（用户 2026-10-02：「太丑了，而且不能实时点击反馈是怎么回事」）：
+     ① **布局**：左栏（吃掉 200px、长模型名只能截断）⇒ **顶部横向 chip 行**，列表吃满宽度。
+     ② **就地反馈**：`.rl-pick-status` 承载 loading / 报错 / 空态说明（⛔ 不再「关弹窗 → 只剩一行 Notice」）。
+     ③ **选中可见**：`.is-picking`（点中先亮一瞬再关）；`.is-active`（键盘 ↑↓ 高亮）。
+     ④ **收口 97 个模型**：`.rl-pick-fchip` 能力筛选 + ⭐ 置顶段（判定在 `pure/aiPick`，⛔ 这里不判）。
+     ⑤ **弹窗加宽**：列表全宽才放得下 `Qwen/Qwen3-235B-A22B-Instruct-2507`（实测 271px）。
+
+   🔴 **色值一律主题变量**（本仓 UI 规范 §2：⛔ 不硬编码 hex）。
+   🔴 **标题与关闭钮是宿主元素**（`.modal-title` / `.modal-close-button`，已用 `_probe_modal_cls.cjs` 在 app.js 核实）
+     ⇒ 只 scoped 到 `.rl-pick-modal`，⛔ 不许改全局那两条（会影响全仓所有弹窗）。 */
+
+/* 弹窗加宽：列表要吃满宽度才放得下长模型名 */
+.modal.rl-pick-modal { width: min(760px, 92vw); }
+.rl-pick-modal .modal-content { padding: 24px; }
+.rl-pick-modal .rl-pick-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-normal);
+}
+/* 关闭钮：圆形 + 浅灰底（宿主默认是个裸的 × 图标按钮，没有任何底） */
+.rl-pick-modal .modal-close-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    color: var(--text-muted);
+    background: var(--background-secondary);
+    border-radius: 50%;
+}
+.rl-pick-modal .modal-close-button:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+
+.rl-pick { display: flex; flex-direction: column; gap: 12px; }
+
+/* ① 服务商 chip 行：横向排开，一眼看全五家（⛔ 不再是吃掉 200px 的左栏） */
+.rl-pick-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rl-pick-chips .rl-pick-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    height: auto;
+    padding: 6px 12px;
+    margin: 0;
+    font-size: var(--font-ui-smaller);
+    font-weight: 400;
+    color: var(--text-muted);
+    background: var(--background-secondary);
+    border: 1px solid transparent;
+    border-radius: var(--rl-t-radius-pill, 999px);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-pick-chips .rl-pick-chip:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+.rl-pick-chips .rl-pick-chip.is-on {
+    color: var(--interactive-accent);
+    font-weight: 600;
+    background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+    border-color: var(--interactive-accent);
+}
+/* 品牌标**跟随 chip 的文字色**（选中 = 主题色、未选 = 弱灰）⇒ 仍是「主题色 + 绿」两通道，⛔ 不引第三色 */
+.rl-pick-chips .rl-pick-chip .rl-ai-icon { color: inherit; }
+.rl-pick-chips .rl-pick-chip .rl-ai-icon svg { width: 14px; height: 14px; }
+
+/* ② 搜索（右端带计数） */
+.rl-pick-searchrow { display: flex; align-items: center; gap: 8px; }
+.rl-pick-searchrow .rl-pick-search {
+    flex: 1 1 auto;
+    background: var(--background-modifier-hover);
+    border: 1px solid transparent;
+    box-shadow: none;
+}
+.rl-pick-searchrow .rl-pick-search::placeholder { color: var(--text-faint); }
+.rl-pick-searchrow .rl-pick-search:focus,
+.rl-pick-searchrow .rl-pick-search:focus-visible {
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+    outline: none;
+}
+.rl-pick-count {
+    flex: 0 0 auto;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ③ 能力筛选 chip + 右侧两个次要动作 */
+.rl-pick-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rl-pick-filters.is-hidden { display: none; }
+.rl-pick-filters .rl-pick-fchip {
+    width: auto;
+    height: auto;
+    padding: 3px 10px;
+    margin: 0;
+    font-size: var(--font-ui-smaller);
+    font-weight: 400;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-pill, 999px);
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-pick-filters .rl-pick-fchip:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+.rl-pick-filters .rl-pick-fchip.is-on {
+    color: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+}
+/* 两个次要动作（#482 ③ 口径：灰色文字按钮，⛔ 不铺底、不用 mod-cta） */
+.rl-pick-acts { display: flex; gap: 12px; margin-left: auto; }
+.rl-pick-filters .rl-pick-action,
+.rl-pick-status .rl-pick-action {
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    font-size: var(--font-ui-smaller);
+    font-weight: 400;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-pick-filters .rl-pick-action:hover,
+.rl-pick-status .rl-pick-action:hover { color: var(--text-normal); }
+
+/* ④ 就地状态条（loading / 报错 / 空态说明）—— 🔴 #484 ② 的核心：反馈留在**弹窗内** */
+.rl-pick-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 48px;
+    padding: 12px 2px;
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+.rl-pick-status.is-hidden { display: none; }
+.rl-pick-status.is-bad { color: var(--color-red); }
+.rl-pick-status .rl-pick-action { color: var(--interactive-accent); }
+
+/* ⑤ 列表：段标题 + 卡片式列表项 */
+.rl-pick-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: 380px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 2px;
+}
+.rl-pick-list.is-hidden { display: none; }
+.rl-pick-sep {
+    padding: 10px 4px 4px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+}
+/* 卡片式列表项：圆角 8px + **行高 ≥48px**（鼠标好点） */
+.rl-pick-list .rl-pick-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 48px;
+    height: auto;
+    padding: 8px 12px;
+    margin: 0;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    box-shadow: none;
+    cursor: pointer;
+}
+.rl-pick-list .rl-pick-item:hover { background: var(--background-modifier-hover); }
+/* 键盘 ↑↓ 高亮（与 hover 同一档底色，避免两套观感） */
+.rl-pick-list .rl-pick-item.is-active { background: var(--background-modifier-hover); }
+/* 🔴 #484 ③：点中先亮一瞬再关 —— 用户得看见自己选了谁（原来瞬间 close，等于没反馈） */
+.rl-pick-list .rl-pick-item.is-picking {
+    background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
+    border-color: var(--interactive-accent);
+}
+.rl-pick-item-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rl-pick-item-name {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-normal);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-pick-item-note {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-pick-list .rl-pick-item.is-on .rl-pick-item-name { color: var(--interactive-accent); font-weight: 600; }
+.rl-pick-item-tags { flex: 0 0 auto; display: flex; gap: 4px; }
+.rl-pick-tag {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    background: var(--background-secondary);
+    border-radius: var(--rl-t-radius-sm, 4px);
+    padding: 1px 6px;
+}
+/* ⭐ 置顶：默认不显示（97 行全是星星更吵）⇒ 悬停 / 聚焦 / 已置顶才出现 */
+.rl-pick-list .rl-pick-star {
+    flex: 0 0 auto;
+    width: auto;
+    height: auto;
+    padding: 0 2px;
+    margin: 0;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--text-faint);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    cursor: pointer;
+    opacity: 0;
+}
+.rl-pick-list .rl-pick-item:hover .rl-pick-star,
+.rl-pick-list .rl-pick-star:focus-visible { opacity: 1; }
+.rl-pick-list .rl-pick-star:hover { color: var(--text-normal); }
+.rl-pick-list .rl-pick-star.is-on { color: var(--interactive-accent); opacity: 1; }
+/* 选中行的 ✓（装饰；读屏名走 aria-selected） */
+.rl-pick-check { flex: 0 0 auto; color: var(--interactive-accent); font-size: var(--font-ui-smaller); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   #483 AI集成页「以卡片组织」（用户 2026-10-02：「重构当前 AI 集成 UI 页面，太丑了，
+        参考市面上 AI 软件或中转站是怎么做接入多 AI 的」）
+
+   对照结论（已核对 Cherry Studio / New API · one-api 的做法，见 UI-GUIDE §11.7）：
+     · 客户端（Cherry Studio）：设置 → **模型服务** = 提供商**卡片列表**，点进去配 Key / 拉模型 / 测试；
+     · 中转站（New API / one-api）：以「**渠道**」为单位 = 类型 + Key + Base URL + 模型 + **状态灯 / 一键测试**。
+     ⇒ 共同手法只有一条：**服务商是一等公民（卡片 / 渠道），不是某个下拉里的一个选项**。
+
+   本批据此改两件事：
+     ⑴ 凭据四行 → **四张服务商卡片**（`.rl-prov-card`），整组提到页面最上、改名「模型服务」；
+     ⑵ 用途四行 → 收进**一张卡**（`.rl-ai-card`），行间发丝线 —— 消灭「四条行摊在白底上」的记事本感。
+
+    🔴 **#488 起卡片语汇全仓共用**：`.rl-prov-list` / `.rl-prov-card` 不只服务本页 ——
+      数据源页的「元数据源凭据」与「音乐源凭据」两组也走这一套（用户 2026-10-02：「元数据源凭据界面
+      也改成 AI 集成的样式」）。⛔ 所以这两条规则**不许写死本页专属的东西**（页级前缀、AI 专用变量）。
+      ⚠️ `.rl-key-row` 那套**基础样式一字未改** —— 书籍源那两个小节、各种 `.rl-key-row` 折叠行观感照旧；
+      卡片只是「多挂一个变体类」。
+   🔴 ⛔ 两处都**不要 `overflow: hidden`**：用途卡里有朗读音源的下拉面板（`position: absolute`），
+      会被裁掉（与 #354「设置页内容区 `overflow-y:auto`」同族，#480 已栽过一次）。
+   🔴 色值一律主题变量（⛔ 无裸 hex）。 */
+
+/* ── 凭据卡片列表（AI 页「模型服务」/「用途」，数据源页「元数据源凭据」/「音乐源凭据」四处共用）── */
+.rl-prov-list { display: flex; flex-direction: column; gap: 8px; }
+/* 🔴 必须写成**两级**（`.rl-key-row.rl-prov-card`）：基础 `.rl-key-row { border: transparent; margin: 2px 0 }`
+   在本文件里排在**后面**，同特异性(0,1,0)时会由它胜出 ⇒ 卡片外框被抹掉、间距从 8 变 12（仿真实测抓到）。
+   丙级(0,2,0)与文件顺序无关，且「这是 key-row 的一个变体」也更自明。 */
+.rl-key-row.rl-prov-card {
+    margin: 0;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+}
+.rl-prov-card .rl-key-head { padding: 10px 12px; }
+.rl-prov-card .rl-key-body { padding: 0 12px 12px; }
+/* 🔴🔴 #485 用户裁定：**「测试」搬回折叠体内**（「把测试按钮放在折叠项下，像其他 cookie 测试那样」）
+   ⇒ 行头不再有按钮，那一套 `.rl-prov-test` 样式与「把箭头 auto 摘掉」的补丁**一并删除**：
+     尾元素重新只剩箭头 ⇒ 宿主 `.rl-key-caret { margin-left: auto }` 就是它要的（⛔ 别再摘）。
+   按钮与结果现在走**全仓通用的** `.rl-key-actions` + `mod-cta`（与 Cookie 那处逐字同款）。 */
+
+/* ── 「用途」：四行**各自成卡**（#487 用户裁定「各个服务之间空开间距」；#483 的「一张卡 + 发丝线」已作废）──
+   容器复用「模型服务」那套 `.rl-prov-list`（flex column + gap 8px）⇒ 上下两组的卡间距与观感一致。 */
+.rl-ai-svc-card {
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+}
+/* 卡内那行：压平宿主 `.setting-item` 的默认外边距与**上边框**（宿主会给相邻设置行加 border-top） */
+.rl-ai-svc-card > .setting-item { padding: 10px 14px; margin: 0; border-top: none; }
+/* 展开的提示词块属于**它所在的那张卡**（#487：块就建在卡内，DOM 顺序 行 → 块） */
+.rl-ai-svc-card > .rl-prompt-row { margin: 0; padding: 0 14px 12px; }
+
+/* ── 手动输入模型名弹窗（AiModelNameModal） ── */
+.rl-ai-modelname { display: flex; flex-direction: column; gap: 8px; }
+.rl-ai-modelname .rl-input { width: 100%; }
+
+
 /* API 管理：单源配置行（头点击内联展开） */
 .rl-key-row {
     border: 1px solid transparent;
@@ -141,9 +707,15 @@
     user-select: none;
 }
 /* #352：子分组**不再折叠**（内容常显）⇒ 标题是**静态标签**，去掉 cursor: pointer 与悬停底色
-   —— 留着会让用户以为还能点。折叠能力已上移给「左栏导航 / 窄屏手风琴标题」。 */
+   —— 留着会让用户以为还能点。折叠能力已上移给「左栏导航 / 窄屏手风琴标题」。
+   ⚠️ #422 例外：书籍源那**两个小节**（网络文学源 / 经典文学源）是可折叠的，但它们走的是
+      `.rl-key-row` 这一套（见下方），**不是**这里 —— 本节这套仍然保持「不折叠」。 */
 .rl-svc-group-icon { display: flex; align-items: center; flex: 0 0 auto; color: var(--text-faint); }
 .rl-svc-group-icon svg { width: 1em; height: 1em; }
+/* ⛔ #490：这里原来有一条给「实验性功能」组标题用的灰小字规则（#477 加的那句风险提示）——
+   用户 2026-10-02 点名删除，**规则整体删掉**（连带 `createGroupSection` 的可选第 4 参一起退场：
+   只有一个使用者 = 死码）。⛔ 别加回来；本页的偏好是「少字」（#422 书源那组两行灰字也被嫌丑删过）。
+   ⚠️ 注释里**不写那条规则的选择器全称** —— 本批的反向守卫锚的就是它的规则体，写了会自撞红（本仓 #422 的既定做法）。 */
 .rl-svc-group-body {
     display: flex;
     flex-direction: column;
@@ -356,6 +928,9 @@
 .rl-key-head:hover { background: var(--background-modifier-hover); }
 .rl-key-name { font-weight: 500; }
 .rl-key-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     font-size: var(--font-ui-smaller);
     color: var(--text-muted);
     background: var(--background-secondary-alt);
@@ -364,9 +939,24 @@
     padding: 0 8px;
     line-height: 18px;
 }
-.rl-key-badge-on { color: var(--color-green); border-color: var(--color-green); }
-/* 免 Key 源徽标：中性蓝绿，与「已配置」区分，表达「无需配置」 */
-.rl-key-badge-free { color: var(--interactive-accent); border-color: var(--interactive-accent); }
+/* 🔴 #480 ⑤：已配置 = 绿字绿框 + 一层极淡绿底 + 前面一颗**绿实心点**
+   （用户：「在『已配置』前面加一个微小的绿色实心圆点，更能体现在线/正常的感觉」）。
+   ⚠️ 点用 `::before` + `currentColor` 画（与文字色**同源**都是 `--color-green`，⛔ 不写死 hex）；
+      底色走 `color-mix`（同样只用主题变量，深色下自动跟着走）。 */
+.rl-key-badge-on {
+    color: var(--color-green);
+    border-color: var(--color-green);
+    background: color-mix(in srgb, var(--color-green) 12%, transparent);
+}
+.rl-key-badge-on::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+}
+/* ⛔ 2026-09-29：`.rl-key-badge-free`（「免 Key」徽标）已随那批只读行一起删除 —— 用户要求
+   「元数据源凭据里免 Key 的那些也删除掉，不显示这类凭据」。⛔ 别留着这条死样式（会诱导下轮再用）。 */
 /* ① API 管理内部分组标题（需 Key / 免 Key 之间的细分隔） */
 .rl-key-group-sep {
     font-size: var(--font-ui-smaller);
@@ -376,7 +966,15 @@
     user-select: none;
     letter-spacing: .3px;
 }
-.rl-key-caret { color: var(--text-faint); margin-left: auto; }
+/* 🔴 #480 ⑤：折叠箭头更细小、更浅（用户：「右侧的 > 箭头可以做得更细小、颜色更浅」）。
+   ⚠️ 这是**共享**类（API凭据 + 数据源配置的折叠行同款）⇒ 两页一起变浅，观感反而更统一。 */
+.rl-key-caret {
+    color: var(--text-faint);
+    opacity: .65;
+    font-size: 10px;
+    line-height: 1;
+    margin-left: auto;
+}
 .rl-key-row.rl-key-open > .rl-key-head > .rl-key-caret { transform: rotate(90deg); }
 .rl-key-body {
     display: none;
@@ -386,6 +984,49 @@
 }
 .rl-key-row.rl-key-open > .rl-key-body { display: flex; }
 .rl-key-body .rl-hint-note { padding-bottom: 0; }
+
+/* ── #422 书籍源小节（「网络文学源 / 经典文学源」）────────────────────────────
+   行头 = 名称 + 条数徽标 + **操作组**（订阅… / 体检 / 导入…）+ ▸。三个入口全**放行头**
+   （折叠着也点得到 —— #421 的教训：入口被折叠藏起来，用户就以为「根本不能导入」）。
+   🔴 用双类名 `.rl-btn.rl-src-import`（不是单类）：`.rl-btn` 定义在本文件更靠后的位置，
+      单类会被它的 `padding` 盖回去（同特异性看先后）。
+   ⛔ 别给这几枚按钮加主色底 / 加重描边 —— 每页六枚，做成主按钮会抢走整页视觉重心。 */
+/* 🔴 #432 甲：三个入口**包一层**再靠右 —— `margin-left: auto` 挂在**这一层**上。
+   ⛔ 别让每个按钮各带一个 auto：flex 会把剩余空间**平分**成几段空白
+   （#422 首版就是这样：按钮停在中间、离右边 caret 一大段空白，用户上手第一句「太丑了」）。 */
+.rl-src-tools { margin-left: auto; flex: none; display: flex; align-items: center; gap: 6px; }
+.rl-btn.rl-src-import { padding: 2px 10px; }
+/* 🔴 操作组之后那个 caret **必须把 `margin-left: auto` 收掉**：`.rl-key-caret` 自带一个 auto，
+   两个 auto 会在「操作组」与 caret 之间**平分**剩余空间 ⇒ 整组停在中间。
+   ⚠️ 选择器随 DOM 变化从 `.rl-src-import + .rl-key-caret` 改过来（直接前一个兄弟现在是这一层）；
+      用相邻兄弟选择器（0,2,0）压过 `.rl-key-caret`（0,1,0），与书写顺序无关。 */
+.rl-src-tools + .rl-key-caret { margin-left: 0; }
+
+/* ── #425 文件选择按钮：`<label>` 内嵌一个**铺满的透明 input** ──────────────────
+   点 label 由浏览器内部把激活转发给 input；而 input 又 `inset:0` 铺满整块
+   ⇒ 用户其实是**直接点在 input 上**（连"转发"都不依赖）。两条路径同时成立。
+   ⛔ **别改成 `display: none` + JS `input.click()`** —— 那正是 #421/#422 两轮
+      「点了没反应」的形态（detached / 不可见元素的 `click()` 在某些 Electron 版本下静默不生效）。
+   元素保持"真实可见、可交互"是本方案成立的前提。 */
+.rl-file-label {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+.rl-file-pick {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    cursor: pointer;
+    font-size: 0;
+}
 
 .rl-key-actions {
     display: flex;
@@ -430,16 +1071,27 @@
     font-family: inherit;
 }
 .rl-secret-eye:hover { color: var(--text-normal); border-color: var(--interactive-accent); }
-/* 数据源启用：五分类行（每组一行内并排 checkbox，链序沿用注册表） */
+/* 数据源启用：六分类行。🔴 **#489（用户 2026-10-02：「元数据源启用：把勾选项与标题并排」）**：
+   由「组名一行 + 勾选项另起一行」改成**并排**（组名在左、勾选项紧跟其右），整组高度因此 ≈ 减半
+   —— 六行叠起来以前是一堵墙。
+   ⚠️ 并排靠 `display: flex` 挂在**组容器**上（不是把 head 与 list 硬塞进同一行）：
+      组名那格 `flex: 0 0 auto` 不收缩（2 字分类名恒 36px 起，六行勾选框左缘因此对齐），
+      勾选列表 `flex: 1 1 auto` 吃掉剩余宽度、自己内部换行。
+   ⚠️ **两侧都带 `flex-wrap`**：窄面板 / 移动端下，勾选列表会**整段落到第二行**（而不是横向溢出）；
+      ⛔ 别把 `flex-wrap` 收掉 —— 那是这版唯一的重排兜底。 */
 .rl-srcchk-group {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 10px;
     border: 1px solid var(--background-modifier-border);
     border-radius: var(--rl-t-radius-md, 6px);
-    padding: 8px 10px;
+    padding: 6px 10px;
     margin: 2px 0;
 }
-.rl-srcchk-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.rl-srcchk-head { display: flex; align-items: baseline; gap: 10px; flex: 0 0 auto; }
 .rl-srcchk-gname { font-weight: 600; min-width: 36px; }
-.rl-srcchk-list { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px 14px; }
+.rl-srcchk-list { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px 14px; flex: 1 1 auto; }
 .rl-srcchk-line { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
 .rl-srcchk-line input[type='checkbox'] { margin: 0; }
 .rl-srcchk-name { font-size: var(--font-ui-small); }
@@ -753,6 +1405,23 @@
 .rl-import-check { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: var(--font-ui-small); }
 .rl-import-check input { margin: 0; }
 .rl-import-status { min-height: 18px; font-size: var(--font-ui-smaller); color: var(--interactive-accent); margin: 10px 0 4px; }
+/* ── #432 甲 「订阅 / 粘贴书源」弹窗（与 `.rl-import-*` 同族：DOM API 渲染，样式在此）─────
+   形态：说明一行 → 多行输入框 → [解析][导入] → 阶段文字 → 预览（摘要 + 跳过清单）。
+   🔴 「导入」是**主按钮**（mod-cta）但**初始禁用**：先解析、后导入 —— 用户得先看见「可用几条 / 跳过几条」。
+   ⛔ 别把解析与导入合成一个按钮：那会变成「一按就落库」，用户看不到中途的取舍（本仓「不静默丢」口径）。 */
+.rl-sub-modal h2 { font-size: 15px; margin: 0 0 8px; }
+.rl-sub-hint { font-size: var(--font-ui-smaller); color: var(--text-muted); line-height: 1.7; margin-bottom: 10px; }
+.rl-sub-input { width: 100%; min-height: 96px; resize: vertical; font-family: var(--font-monospace); font-size: 12px; }
+.rl-sub-actions { display: flex; gap: 8px; margin: 10px 0 2px; }
+.rl-sub-status { min-height: 18px; font-size: var(--font-ui-smaller); color: var(--interactive-accent); margin: 6px 0 4px; }
+/* 跳过清单：每条一行（名字 + 原因），超过 8 条时由 JS 折成一句计数 */
+.rl-sub-preview { margin-top: 4px; }
+.rl-sub-skip-title { font-size: var(--font-ui-smaller); color: var(--text-muted); margin: 6px 0 4px; }
+.rl-sub-skip-list { display: flex; flex-direction: column; gap: 2px; max-height: 168px; overflow-y: auto; }
+.rl-sub-skip-row { display: flex; gap: 8px; align-items: baseline; font-size: var(--font-ui-smaller); }
+.rl-sub-skip-name { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-sub-skip-why { color: var(--text-muted); }
+.rl-sub-skip-more { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-top: 4px; }
 .rl-import-ops { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 /* ── 统一按钮体系（rl-btn 唯一基准，紧凑 Obsidian 尺寸）：rl-ex-btn/rl-day-btn 等历史别名并入；danger 危险操作统一红边红字 → hover 红底白字 ── */
 .rl-btn, .rl-ex-btn, .rl-day-btn {
@@ -801,6 +1470,16 @@
 /* ── 本地剧集集数选择弹窗（EpisodePickerModal） ── */
 .rl-eps-title { font-weight: 600; color: var(--text-normal); }
 .rl-eps-grid { display: flex; flex-wrap: wrap; gap: 8px; max-height: 320px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 12px; margin-bottom: 14px; }
+/* 🔴 #447「选择集数」弹窗（EpisodePickerModal）专用：**框里不滚动 + 按钮与框对齐**（用户：「把滑动条移除掉，剧集按钮对齐框」）。
+   ① `max-height: none; overflow: visible` 覆盖基础类那条 320px 内滚 —— 集数列全，真的超高时由**宿主 `.modal`** 自己滚
+      （它本就有 `max-height: var(--dialog-max-height)` + `overflow: auto`），比在框里再滚一层好。
+   ② 改成 `grid + repeat(auto-fill, minmax(44px, 1fr))`：每行铺满框内宽度、左右留白相等；
+      基础类的 `flex-wrap` 会把余量全堆在右边（再叠上滚动条占位）= 用户截图里「按钮没跟框对齐」的样子。
+   ⛔ 快捷关联弹窗（`.rl-eps-grid.rl-qa-grid`）**不挂**这个类：它是窄框内滚，口径不同（别顺手合并成一条）。 */
+.rl-eps-grid-fill {
+    max-height: none; overflow: visible;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+}
 .rl-eps-btn {
     width: auto; min-width: 44px; padding: 0 10px; height: 34px; font-family: inherit; font-size: var(--font-ui-small);
     border: 1px solid var(--background-modifier-border); background: var(--background-primary);
@@ -815,6 +1494,12 @@
 .rl-qa { font-family: var(--font-text); }
 .rl-qa-title { font-weight: 600; color: var(--text-normal); }
 .rl-qa-lbl { display: block; font-size: var(--font-ui-smaller); color: var(--text-muted); margin: 10px 0 4px; }
+/* 🔴 #454：标签与小图标按钮**同行**（「本地文件路径」+ 下载 / 检索）—— 与编辑表单 `.rl-lbl-row` 同款口径
+   （flex 横排 + 标签自身下边距清零；行容器接管原来那条 `margin: 10px 0 4px`）。
+   ⚠️ 表单那份是 Svelte scoped，弹窗走 DOM API 拿不到哈希类名 ⇒ 这里必须有一份全局的（同 `.rl-ai-btn` 的理由）。
+   ⛔ 别把按钮塞回 `.rl-qa-row`（输入框那行）—— 那正是用户要改掉的旧位置。 */
+.rl-qa-lbl-row { display: flex; align-items: center; gap: 4px; margin: 10px 0 4px; }
+.rl-qa-lbl-row .rl-qa-lbl { margin: 0; }
 .rl-qa-lbl-inline { font-size: var(--font-ui-small); color: var(--text-muted); margin-right: 8px; }
 .rl-qa-hint { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-top: 6px; word-break: break-all; }
 .rl-qa-input {
@@ -826,24 +1511,116 @@
 .rl-qa-input:focus { outline: none; border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
 .rl-qa-input::placeholder { color: var(--text-faint); }
 .rl-qa-row { display: flex; gap: 6px; align-items: center; }
-.rl-qa-total { display: flex; align-items: center; margin: 2px 0 10px; }
-.rl-qa-total-input { width: 76px; flex: none; }
-/* 「总集数」行右侧批量检索小图标（动画/电视剧）：hover 提示出说明 */
-.rl-qa-batch-btn {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 20px; height: 18px; padding: 0; margin-left: 4px;
-    border: none; background: transparent; color: var(--text-muted);
-    border-radius: 4px; cursor: pointer;
+/* 「总结摘要 / 获取歌词 / 下载歌曲 / 检索同名音频」共用的小图标按钮
+   （20×18 命中区 / 13px 图标 / 无可见文字，读屏名走 `.rl-sr`）。
+   🔴 #406：**本组规则从 `EntryForm.svelte` 的 scoped 样式上移到这里** —— 快捷关联弹窗
+   （`QuickAssociateModal`）是 DOM-API 组件、拿不到 Svelte 的哈希类名，必须走全局。
+   ⛔ 别在组件里再复制一份（两份必然漂）。 */
+.rl-ai-btn {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 18px; padding: 0; border: none; background: transparent;
+    color: var(--text-muted); border-radius: 4px; cursor: pointer;
     transition: color .12s ease, background .12s ease;
 }
-.rl-qa-batch-btn:hover { color: var(--interactive-accent); background: var(--background-modifier-hover); }
-.rl-qa-batch-btn :global(svg) { width: 13px; height: 13px; }
+.rl-ai-btn:hover { color: var(--interactive-accent); background: var(--background-modifier-hover); }
+.rl-ai-btn:disabled { opacity: .45; cursor: not-allowed; }
+.rl-ai-btn:disabled:hover { color: var(--text-muted); background: transparent; }
+.rl-qa-total { display: flex; align-items: center; gap: 6px; margin: 2px 0 10px; }
+.rl-qa-total-input { width: 76px; flex: none; }
+/* 「总集数」行右侧批量检索小图标（动画/电视剧）：hover 提示出说明 */
 .rl-qa-grid { max-height: 160px; margin-bottom: 12px; }
 .rl-eps-btn.cur { outline: 2px solid var(--interactive-accent); outline-offset: -1px; }
 .rl-eps-btn.linked.cur { outline-color: var(--text-on-accent); }
 .rl-qa-cur { border-top: 1px solid var(--background-modifier-border); padding-top: 6px; }
 .rl-qa-cur-t { font-size: var(--font-ui-small); font-weight: 600; color: var(--text-normal); margin: 4px 0 2px; }
 .rl-qa-ops { margin-top: 14px; }
+
+/* ── #506 B站 候选 / 分P 勾选表（**两个入口共用的一份全局样式**）──────────────────────────
+   🔴 为什么上移：这套件原先只在 `EntryForm.svelte` 的 scoped 样式里，而「右键 → 动词 · 去关联」
+      那张 `QuickAssociateModal` 是 **DOM-API 组件、拿不到 Svelte 哈希类名** ⇒
+      那个入口的「网络地址」旁**长不出这枚 B站 按钮**（#506 用户报的正是它）。
+      与上面 `.rl-ai-btn` 组（#406）**同一个理由、同一套做法**：⛔ 别在组件里再复制一份（两份必然漂）。
+   ⚠️ 两个入口的**外壳**不同、内部件相同：
+      · 集编辑浮层 = `.rl-ep-edit.rl-bili-pop`（scoped；宽度要压过 `.rl-ep-edit` 的 420px ⇒ 那条留在组件里）；
+      · 快捷关联弹窗 = `.rl-bili-card`（下面这条，全局）。
+      列表 / 候选行 / 胶囊 / 分P 勾选表**只有这一份**。 */
+.rl-bili-card {
+    position: fixed; z-index: 1000; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(520px, 92vw); box-sizing: border-box; background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px);
+    padding: 16px; box-shadow: 0 8px 30px rgba(0, 0, 0, .22);
+    font-family: var(--font-text);
+}
+.rl-bili-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.rl-bili-card-title { font-size: var(--font-ui-small); font-weight: 600; color: var(--text-normal); }
+.rl-bili-close {
+    flex: none; padding: 0 4px; border: none; background: transparent; box-shadow: none;
+    color: var(--text-muted); font-size: 12px; cursor: pointer;
+}
+.rl-bili-close:hover { color: var(--text-normal); background: transparent; }
+/* 搜索行（检索词框 + 「搜索」按钮）—— 与 `.rl-qa-row` 同款横排；下边距对齐候选列表的上边距 */
+.rl-bili-searchrow { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+/* 「‹ 候选 / 全选」那种行：只用它做**横排容器**（⚠️ **不给 gap** —— 间距归 `.rl-bili-parts-bar`，
+   否则两个入口会一个 6px 一个 8px） */
+.rl-bili-row-bar { display: flex; margin-bottom: 6px; }
+
+/* ⚠️ #501②：原来的 `.rl-bili-act`（带文字「B站」那枚）已撤 —— 入口收成 `.rl-ai-btn` 纯图标、
+   挪到「网络地址」标签行 ⇒ 这条样式**没有再挂着的元素**（⛔ 别留着当孤儿规则）。 */
+.rl-bili-list {
+    display: flex; flex-direction: column; gap: 2px;
+    max-height: min(300px, 44vh); overflow-y: auto; margin-top: 4px;
+}
+/* 候选行 = 缩略图 + 标题/UP主 + 时长（与音乐下载弹窗的 B 站行同款信息密度，⛔ 不搬那儿的下载按钮） */
+.rl-bili-row {
+    display: flex; align-items: center; gap: 8px; text-align: left;
+    padding: 5px 6px; border-radius: var(--rl-t-radius-md, 6px);
+    background: transparent; border: none; box-shadow: none; cursor: var(--cursor);
+}
+.rl-bili-row:hover { background: var(--background-modifier-hover); }
+.rl-bili-cover { width: 44px; height: 30px; object-fit: cover; border-radius: 4px; flex: none; background: var(--background-secondary); }
+.rl-bili-cover-ph { display: inline-flex; align-items: center; justify-content: center; color: var(--text-muted); }
+.rl-bili-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.rl-bili-name { font-size: 12px; color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl-bili-artist { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl-bili-pill { flex: none; font-size: 11px; color: var(--text-muted); font-family: var(--font-monospace); }
+/* ── #505 分P 勾选表（入口 C）────────────────────────────────────────────
+   ⚠️ 表头的候选标题那行：`‹ 候选` 按钮 + 视频标题（**单行省略**，长标题不许把浮层撑宽）。
+   ⚠️ 行高保持紧凑：52 行要在 `max-height` 里滚得动，一行约 26px ⇒ 一屏能看到十来行。 */
+.rl-bili-parts-bar { align-items: center; gap: 8px; }
+.rl-bili-parts-src {
+    min-width: 0; flex: 1; font-size: 12px; color: var(--text-muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rl-bili-all {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--text-muted); cursor: var(--cursor); flex: none;
+}
+.rl-bili-parts-sum { min-width: 0; flex: 1; font-size: 11.5px; color: var(--text-muted); text-align: right; }
+.rl-bili-parts-sum b { color: var(--text-normal); }
+.rl-bili-parts-list {
+    display: flex; flex-direction: column; gap: 1px;
+    max-height: min(320px, 46vh); overflow-y: auto; margin-top: 4px;
+}
+.rl-bili-part-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 6px; border-radius: var(--rl-t-radius-md, 6px); cursor: var(--cursor);
+}
+.rl-bili-part-row:hover { background: var(--background-modifier-hover); }
+/* 目标集号 = 定宽列（行与行左右对齐，扫下来才知道「填到第几集」） */
+.rl-bili-part-ep { flex: none; width: 58px; font-size: 12px; color: var(--text-normal); }
+.rl-bili-part-name {
+    min-width: 0; flex: 1; font-size: 12px; color: var(--text-muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* `P{号}` 用等宽字体、压一档 —— 它是「第几个分P」这个技术细节，不该比集标题抢眼 */
+.rl-bili-part-no { font-family: var(--font-monospace); font-size: 11px; color: var(--text-faint); margin-right: 5px; }
+/* 目标集不存在的行（分P 比集数多）：**禁用 + 压暗**（⛔ 别删行 —— 用户要能看见「这条视频有 52 个分P」） */
+.rl-bili-part-off { opacity: .55; }
+.rl-bili-pill-warn { color: var(--text-warn, var(--text-error)); }
+/* 「填入」那颗按钮单独一行、靠右（52 行的表里它得离列表远一点，别被误点） */
+/* 「填入」那颗按钮那一行：⛔ 别只写 `justify-content` —— 这条现在两个入口共用，
+   浮层那侧有 `.rl-ep-edit-ops` 提供 `display:flex`，弹窗那侧什么都没有 ⇒ 自己带上 `display:flex`。 */
+.rl-bili-parts-ops { display: flex; justify-content: flex-end; margin-top: 6px; }
 
 
 /* ── 全局统一 hover 提示（data-tip 自绘气泡，UI-GUIDE 规范：禁用 title 原生黄条）：
@@ -888,12 +1665,17 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-pc-hint { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-bottom: 8px; }
 .rl-pc-foot { display: flex; justify-content: flex-end; gap: 8px; }
 
-/* ── 支持作者（样式参考 LyricFlux about 区） ── */
+/* ── 关于页「信息卡 / 支持作者」（样式参考 LyricFlux about 区） ──
+   🔴 #490：本页由一块变两块（**信息卡**在上、**支持作者**在下），**共用同一套 `.rl-about` 外观**（左文右钮）——
+      ⛔ 别为信息卡另造一套容器/按钮样式。新增的只有两枚文字层级：`.rl-about-ver`（版本号，主题色小字）
+      与 `.rl-about-meta`（作者 · 许可证，比简介再淡一档）。 */
 .rl-about {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    /* #490：信息卡右侧有三枚按钮 ⇒ 窄面板下让它**整块换行**，⛔ 不挤压左侧那几行字 */
+    flex-wrap: wrap;
     background: var(--background-secondary);
     border-radius: var(--rl-t-radius-md, 6px);
     padding: 12px 14px;
@@ -901,8 +1683,12 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 }
 .rl-about-text { min-width: 0; }
 .rl-about-title { font-weight: 400; }
+/* #490：版本号紧随插件名（同一行），主题色小字 —— 比名字次要、但比简介重要 */
+.rl-about-ver { margin-left: 6px; font-size: var(--font-ui-smaller); color: var(--text-accent); }
 .rl-about-desc { color: var(--text-muted); font-size: var(--font-ui-small); margin-top: 2px; }
-.rl-about-buttons { display: flex; gap: 8px; flex-shrink: 0; }
+/* #490：作者 · 许可证那一行（再淡一档，与简介拉开层级） */
+.rl-about-meta { color: var(--text-faint); font-size: var(--font-ui-smaller); margin-top: 2px; }
+.rl-about-buttons { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
 .rl-about-btn {
     padding: 6px 12px;
     border-radius: var(--rl-t-radius-md, 6px);
@@ -924,6 +1710,60 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     background: var(--text-accent-hover) !important;
     color: var(--text-on-accent) !important;
 }
+
+/* ── 「下载歌曲」弹窗：**只留一条滚动条**（#496 追加，2026-10-03）────────────────────
+   用户：「还有下载歌曲窗口**外页**怎么也有个滚动条没用给我去掉」。
+   **由来（app.css 实测，不是猜的）**：宿主 `.modal` 自带 `overflow: auto` +
+   `max-height: var(--dialog-max-height)`（= **85vh**）⇒ 一旦内容超过 85vh，**弹窗外层会自己再出一条
+   滚动条**；而里面那块结果区 `.rl-dl-body` 本来就有独立的一条 ⇒ 两条并存，外层那条纯属碍事。
+   ⇒ 外层 `overflow: hidden`；**可伸缩这件事交给结果区**（组件侧 `.rl-dl` 与 `.rl-dl-body` 都补了
+     `min-height: 0` / `flex: 0 1 auto`）—— 空间不够时**缩结果区**，而不是让整个弹窗滚。
+   🔴 ⛔ 只写 `overflow: hidden` 是不够的：内容溢出时底部那两行「错误 / 成功提示」会被直接裁掉，
+      必须连 `.rl-dl` 一起做成可伸缩（本批就是这么配的）。
+   ⚠️ 只 scoped 到 `.rl-dl-modal-shell`（类由 `MusicDownloadModal.onOpen()` 挂在 `modalEl` 上）——
+      ⛔ 不许改全局 `.modal` / `.modal-content`（会影响全仓所有弹窗，含书籍下载与各设置类弹窗）。 */
+.rl-dl-modal-shell { overflow: hidden; }
+.rl-dl-modal-shell .modal-content { display: flex; flex-direction: column; min-height: 0; }
+
+/* ── 「更新日志」内置弹窗（#491）──────────────────────────────────────────────
+   用户 2026-10-03：「点击更新日志不跳转网页改成内置弹窗」—— 内容在**打包时嵌进产物**
+   （`pure/releaseNotes` 生成物），运行时**不发请求**（raw.githubusercontent 在国内常不可达）。
+   ⚠️ 只 scoped 到 `.rl-notes-modal`：⛔ 不许改全局 `.modal` / `.modal-content`（会影响全仓所有弹窗）。 */
+.modal.rl-notes-modal { width: min(720px, 92vw); }
+.rl-notes-modal .modal-content { padding: 20px 24px 16px; }
+/* 正文滚动区：长版本说明（1.2.0 那一节 ~660 行）必须有上限，否则弹窗比屏幕还高 */
+.rl-notes-body {
+    max-height: 62vh;
+    overflow-y: auto;
+    /* 右侧留出滚动条宽度，避免正文与滚动条贴死 */
+    padding-right: 6px;
+    font-size: var(--font-ui-small);
+    line-height: 1.65;
+    color: var(--text-normal);
+}
+/* 正文里的标题降一档：弹窗标题已经写着「更新日志 · vX」，正文再顶大标题会喧宾夺主 */
+.rl-notes-body h1 { font-size: 1.15em; margin: 0.6em 0 0.4em; }
+.rl-notes-body h2 { font-size: 1.05em; margin: 0.6em 0 0.4em; }
+.rl-notes-body h3 { font-size: 1em; margin: 0.5em 0 0.3em; }
+.rl-notes-body p { margin: 0 0 0.6em; }
+.rl-notes-body ul { margin: 0 0 0.6em; padding-left: 1.4em; }
+.rl-notes-body li { margin: 0.15em 0; }
+.rl-notes-body blockquote { margin: 0 0 0.8em; padding-left: 10px; border-left: 2px solid var(--background-modifier-border); color: var(--text-muted); }
+.rl-notes-body code { font-size: var(--font-ui-smaller); }
+.rl-notes-body table { font-size: var(--font-ui-smaller); }
+/* 底部一行：发布日期 + 完整历史链接（灰小字；⛔ 不做成主按钮 —— 用户要的是「别跳浏览器」） */
+.rl-notes-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--background-modifier-border);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+.rl-notes-link { color: var(--text-accent); cursor: pointer; text-decoration: none; }
+.rl-notes-link:hover { text-decoration: underline; }
 
 /* ── 书籍阅读器（rl-read-*，TXT 阅读器弹窗） ── */
 .rl-reader {
@@ -1769,7 +2609,12 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     line-height: 1.8;
     font-size: 16px;
 }
-.rl-reader-text p { margin: 0 0 1em; color: var(--text-normal); }
+/* 🔴 #426 **两端对齐**（用户：「每一句结尾处有个别字不能齐头」）——
+   `text-align:left` 下，行尾因标点挤压/换行位置不同而参差不齐（中文正文里最扎眼）。
+   ⚠️ EPUB 阅读器**一直**就写着 `text-align:justify`（见 `EpubReaderModal.buildFrameCss`），
+   只有 TXT 这边漏了 ⇒ 两侧口径不一，这里补齐（⛔ 别只改一侧）。
+   ⚠️ 末行不参与两端对齐（浏览器默认行为）⇒ 段末短行照旧左对齐，这是对的，不是 bug。 */
+.rl-reader-text p { margin: 0 0 1em; color: var(--text-normal); text-align: justify; }
 .rl-reader-text p:last-child { margin-bottom: 0; }
 /* 段落首行缩进（阅读设置开关，默认关；由 applyIndent 挂 .rl-indent 类驱动） */
 .rl-reader-text.rl-indent p { text-indent: 2em; }
@@ -3628,4 +4473,407 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     border-color: transparent;
     box-shadow: none;
     color: var(--interactive-accent);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   内置音频播放器（1.1.1 · ④-4，2026-09-27）
+   DOM 只有一套；三档只改 grid-template-areas —— 不做 DOM 搬迁、不写两套文案。
+   档位不是媒体查询：真源 = 容器 clientWidth + ResizeObserver（视图宽度 ≠ 窗口宽度），
+   判定函数 pure/audioLayout.resolveAudioLayout（720 / 420）。
+   🔴 控件样式一律以 .rl-ap-root 打头（0,2,0）：Obsidian 核心的 button:not(.clickable-icon)
+      是 (0,1,1)，单类写法会被压过 ⇒ 按钮变主题浅灰底且图标被内距压成 0 宽而「整片消失」
+      （同 VideoPlayerView 的实测踩坑，见该区块注释）。
+   ══════════════════════════════════════════════════════════════════════════ */
+.rl-ap-view .view-header { display: none; }
+.view-content.rl-ap {
+    padding: 0;
+    overflow: hidden;
+    /* Obsidian 核心给 .view-content 写的是 height: calc(100% - var(--header-height))：
+       本视图页头已隐藏，但该变量仍在 → 不显式铺满会在底部留一条背景色白带。 */
+    height: 100%;
+    min-height: 0;
+}
+.rl-ap-root {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-family: var(--font-interface, "Microsoft YaHei UI", sans-serif);
+}
+/* 播放内核不参与布局（自绘控制条才是 UI） */
+.rl-ap-audio { display: none; }
+
+/* —— 骨架：grid，三档只换 areas —— */
+.rl-ap-body { flex: 1 1 auto; min-height: 0; display: grid; }
+
+/* ═══ 宽档 ≥720px：左信息（封面/进度/控制）右歌词 ═══ */
+[data-tier="wide"] .rl-ap-body {
+    grid-template-columns: 222px minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-areas: "art right" "slider right" "ctl right";
+    padding: 18px 20px;
+}
+[data-tier="wide"] .rl-ap-art      { grid-area: art;    justify-self: start; align-self: start; }
+[data-tier="wide"] .rl-ap-slider   { grid-area: slider; align-self: start; padding-right: 22px; padding-top: 14px; }
+[data-tier="wide"] .rl-ap-controls { grid-area: ctl;    align-self: start; padding-right: 22px; padding-top: 12px; }
+/* 右栏整条左描边 ⇒ 竖分隔线**贯通全高**。
+   🔴 若把描边分别挂 meta / lyrics，两行之间会断一截（仿真对照图里那条 `│` 的关键）。 */
+[data-tier="wide"] .rl-ap-right {
+    grid-area: right;
+    display: flex; flex-direction: column; min-height: 0;
+    border-left: 1px solid var(--background-modifier-border);
+    padding-left: 22px;
+}
+[data-tier="wide"] .rl-ap-meta   { flex: none; padding-bottom: 10px; border-bottom: 1px solid var(--background-modifier-border); }
+[data-tier="wide"] .rl-ap-lyrics { flex: 1 1 auto; min-height: 0; padding-top: 8px; }
+
+/* ═══ 中档 420–719px：封面缩小与标题并排，控制行通栏，歌词在下 ═══ */
+[data-tier="medium"] .rl-ap-body {
+    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-areas: "art meta" "art slider" "ctl ctl" "lyrics lyrics";
+    padding: 12px 14px 0;
+    column-gap: 14px;
+}
+[data-tier="medium"] .rl-ap-art      { grid-area: art; align-self: start; }
+[data-tier="medium"] .rl-ap-meta     { grid-area: meta; }
+[data-tier="medium"] .rl-ap-slider   { grid-area: slider; padding-top: 8px; }
+[data-tier="medium"] .rl-ap-controls { grid-area: ctl; padding-top: 8px; }
+[data-tier="medium"] .rl-ap-lyrics   { grid-area: lyrics; min-height: 0; border-top: 1px solid var(--background-modifier-border); margin-top: 10px; padding-top: 6px; }
+/* 中/紧档：右栏包裹层退场 ⇒ meta 与 lyrics 各自成为网格项（可分别摆位） */
+[data-tier="medium"] .rl-ap-right { display: contents; }
+
+/* ═══ 紧档 <420px（典型 = 右侧边栏）：无封面，单列 ═══ */
+[data-tier="compact"] .rl-ap-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-areas: "meta" "slider" "ctl" "lyrics";
+    padding: 10px 12px 0;
+}
+[data-tier="compact"] .rl-ap-art      { display: none; }   /* 侧栏里 200px 封面会把控制条挤没 */
+[data-tier="compact"] .rl-ap-meta     { grid-area: meta; }
+[data-tier="compact"] .rl-ap-slider   { grid-area: slider; padding-top: 8px; }
+[data-tier="compact"] .rl-ap-controls { grid-area: ctl; padding-top: 6px; }
+[data-tier="compact"] .rl-ap-lyrics   { grid-area: lyrics; min-height: 0; border-top: 1px solid var(--background-modifier-border); margin-top: 10px; padding-top: 6px; }
+[data-tier="compact"] .rl-ap-right { display: contents; }
+[data-tier="compact"] .rl-ap-title { font-size: 14px; }
+[data-tier="compact"] .rl-ap-lyr-line { font-size: 13px; line-height: 1.85; }
+/* 紧档没有位置放状态位（标题已占满一行） */
+[data-tier="compact"] .rl-ap-status { display: none; }
+
+/* 🔴 #407（用户：「侧边栏显示把状态栏居中显示」）——窄档里两条横排**都居中**：
+   ⑴ 进度条 + 时间作为**一组**居中（并给宽度上限，免得中档 420–719px 拉得过长）；
+   ⑵ 控制按钮排居中（原先贴左、右侧空一大块）。
+   ⚠️ 只动 medium / compact 两档：**宽档是竖排**（bar 在上、时间在下），那套布局与本题无关，⛔ 别顺手改。 */
+[data-tier="medium"] .rl-ap-slider,
+[data-tier="compact"] .rl-ap-slider { justify-content: center; width: 100%; max-width: 420px; margin: 0 auto; }
+[data-tier="medium"] .rl-ap-controls,
+[data-tier="compact"] .rl-ap-controls { justify-content: center; }
+
+/* —— 封面 —— */
+.rl-ap-cover {
+    width: 200px;
+    aspect-ratio: 1 / 1;
+    border-radius: var(--radius-m, 6px);
+    border: 1px solid var(--background-modifier-border);
+    /* 🔴 #411（用户：「音乐标签页色度…统一主题色，不然一个灰色一个白色」）：
+       占位块**不填自己的底色**（`transparent`）⇒ 永远与所在面板同底；原来写的是
+       `--background-secondary`，浅色主题下与 `.rl-ap-root` 的 `--background-primary` 一灰一白，
+       看着像两块拼起来；内联卡片（`--background-primary-alt`）里也不会再出现第二种白。
+       ⛔ 别再给这块填 `secondary` / `primary` —— 也别假定 secondary 比页面亮（极性陷阱）。 */
+    background: transparent;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-faint);
+    overflow: hidden;
+}
+[data-tier="medium"] .rl-ap-cover { width: 88px; }
+.rl-ap-cover .rl-ap-ico { display: inline-flex; width: 40%; height: 40%; }
+.rl-ap-cover svg { width: 100%; height: 100%; }
+.rl-ap-cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* —— 标题区（单一数据源：不按档位造两套文案，窄了就省略号）—— */
+.rl-ap-meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; min-width: 0; }
+.rl-ap-meta-main { min-width: 0; }
+/* 🔴 #410：标题与「打开笔记」按钮**同排**（用户：「把打开笔记按钮移到标题旁边」）。
+   标题 `flex: 0 1 auto` + `min-width: 0` ⇒ 长了先省略号，按钮不被挤走。 */
+.rl-ap-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rl-ap-title-row .rl-ap-title { flex: 0 1 auto; min-width: 0; }
+/* 🔴 #410：**侧边栏实例整颗隐藏**这颗按钮（用户：「如果侧边栏打开（的播放器），不显示打开笔记按钮」）——
+   类由宿主按 leaf 归属挂在根上（见 `AudioPlayerView.isInSidebar` / `setOpenNoteHidden`）。
+   ⚠️ 隐藏的是**按钮本身**，右侧那个异常状态位不受影响。 */
+.rl-ap-no-note-btn .rl-ap-iconbtn { display: none; }
+.rl-ap-meta-right { flex: none; display: flex; align-items: center; gap: 6px; }
+.rl-ap-status.is-empty { display: none; }
+/* 🔴 #409：播放器右上角那颗按钮 = **阅读器 / 视频播放器同款**的图标按钮：
+   底色与描边直接走 .rl-btn（--background-primary / --text-normal），这里只补「纯图标」的尺寸。
+   ⚠️ 32×28 命中区 + 16px 图标与 `.rl-vp-root .rl-vp-iconbtn` 同口径，⛔ 别只改一处（改了就两种手感）。 */
+.rl-ap-iconbtn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 28px; padding: 0; flex: none;
+}
+.rl-ap-iconbtn svg { width: 16px; height: 16px; min-width: 16px; min-height: 16px; flex: none; }
+.rl-ap-title { font-size: 16px; font-weight: 600; line-height: 1.35; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-ap-sub { font-size: 12px; line-height: 1.5; color: var(--text-muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-ap-status { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-accent); padding-top: 2px; }
+.rl-ap-status .rl-ap-ico { display: inline-flex; }
+.rl-ap-status .rl-ap-ico svg { width: 13px; height: 13px; }
+
+/* —— 进度 —— */
+.rl-ap-slider { display: flex; align-items: center; gap: 10px; min-width: 0; }
+[data-tier="wide"] .rl-ap-slider { flex-direction: column; align-items: stretch; gap: 7px; }
+.rl-ap-progress { position: relative; height: 4px; border-radius: 2px; background: var(--background-modifier-border); cursor: pointer; flex: 1 1 auto; min-width: 0; }
+[data-tier="wide"] .rl-ap-progress { flex: none; }
+.rl-ap-progress-played { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 2px; background: var(--interactive-accent); }
+.rl-ap-progress-thumb {
+    position: absolute; top: 50%; width: 11px; height: 11px; border-radius: 50%;
+    background: var(--interactive-accent); transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 2px var(--background-primary);
+}
+.rl-ap-time { flex: none; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rl-ap-time-cur { color: var(--text-normal); }
+
+/* —— 控制条 ——
+   🔴 悬停**只变图标色、不铺底色**（用户既定取向：并排按钮铺底色会连成一条色带，
+      还会与「已亮起」的选中态互相干扰）。「已亮起」= 强调色图标 + 极淡强调色底。 */
+.rl-ap-controls { display: flex; align-items: center; gap: 2px; min-height: 32px; }
+.rl-ap-root .rl-ap-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+    font-family: inherit;
+    padding: 5px;
+    border-radius: var(--radius-s, 4px);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: color .12s ease, background .12s ease;
+}
+.rl-ap-root .rl-ap-btn svg { width: 16px; height: 16px; }
+.rl-ap-root .rl-ap-btn:not(.is-on):hover { color: var(--text-normal); background: transparent; }
+.rl-ap-root .rl-ap-btn:focus-visible { outline: 1px solid var(--interactive-accent); outline-offset: 1px; }
+.rl-ap-root .rl-ap-btn.is-on { color: var(--interactive-accent); background: color-mix(in srgb, var(--interactive-accent) 13%, transparent); }
+.rl-ap-root .rl-ap-btn.rl-ap-btn-play { color: var(--text-normal); }
+.rl-ap-root .rl-ap-btn.rl-ap-btn-play svg { width: 18px; height: 18px; }
+
+/* —— 歌词 —— */
+.rl-ap-lyrics { min-height: 0; overflow: hidden; }
+/* 🔴 #407：歌词区**不留滚动条**（用户：「去掉滑动条」）—— 仍可用滚轮 / 触控板滚动，
+   当前句照旧由 `centerCurLine()` 自动推到垂直正中。⛔ 别再退回 `scrollbar-width: thin`。 */
+.rl-ap-lyr-list { height: 100%; overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: none; }
+.rl-ap-lyr-list::-webkit-scrollbar { display: none; }
+.rl-ap-lyr-line {
+    position: relative;
+    flex: none;
+    font-size: 14px; line-height: 1.95;
+    color: var(--text-muted);
+    /* 🔴 #407：歌词**文本居中**（用户：「滚动歌词居中显示」）。
+       居中排版下不再需要给 `▸` 预留左侧 15px 的槽（标记改成**行内**，见下一条）。 */
+    text-align: center;
+    padding: 0 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color .12s ease;
+}
+.rl-ap-lyr-line:hover { color: var(--text-normal); }
+.rl-ap-lyr-line.is-cur { color: var(--text-accent); font-weight: 600; }
+/* 当前句的 ▸ 标记：**行内**跟着文字走（绝对定位贴左边缘在居中排版下会与文字脱节） */
+.rl-ap-lyr-line.is-cur::before { content: "\25B8"; margin-right: 4px; font-weight: 400; }
+/* 逐字高亮（#406）：当前行里**已唱到**的字点亮、未唱到的压暗。
+   开关在「设置页 › 外观与体验 › 歌词逐字高亮」；时间真源 `pure/lrc.wordIndexAt`。
+   ⚠️ 未拆词元的行（没开开关 / 该行无逐字时间）不含 `.rl-ap-lyr-w`，这两条规则自然不生效。 */
+.rl-ap-lyr-line.is-cur .rl-ap-lyr-w { color: var(--text-faint); }
+.rl-ap-lyr-line.is-cur .rl-ap-lyr-w.is-on { color: var(--text-accent); }
+/* 🔴 #508：双语译文**单独一行**（更小 + 更灰），⛔ **不参与逐字高亮**。
+   用户原话：「LRC双语歌词呈现渲染作两行（原文参与逐字高亮，译文作第二行变小变灰不参与逐字高亮）」。
+   ⚠️ 它之所以天然不参与高亮：词元 span 只覆盖**原文**（解析侧 `pure/lrc.splitAnnotation` 拆的），
+      译文根本不在 `wordSpans` 里 ⇒ ⛔ 别去给它加 `.rl-ap-lyr-w`。
+   ⚠️ `.is-cur`（当前行 = accent + 600）**不许**被译文继承 —— 那正是「变小变灰」的反面。 */
+.rl-ap-lyr-tr {
+    display: block;
+    margin-top: 1px;
+    font-size: .84em;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--text-faint);
+}
+.rl-ap-lyr-line:hover .rl-ap-lyr-tr { color: var(--text-muted); }
+.rl-ap-lyr-line.is-cur .rl-ap-lyr-tr { color: var(--text-muted); font-weight: 400; }
+/* 不是 LRC 的歌词（同名 .lrc 里其实是整篇文本）：只列出来，不高亮、不跳转。
+   ⚠️ #407 起**仍保持左对齐** —— 整篇文本居中会很难读（只有逐行歌词才居中对齐）。 */
+.rl-ap-lyr-line.is-plain { cursor: default; text-align: left; }
+.rl-ap-lyr-hint { color: var(--text-faint); font-size: 12.5px; line-height: 1.7; }
+
+/* —— 空态 —— */
+.rl-ap-empty { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 26px 30px; text-align: center; color: var(--text-muted); }
+.rl-ap-empty-title { font-size: 15px; font-weight: 600; color: var(--text-normal); margin-bottom: 7px; }
+.rl-ap-empty-hint { font-size: 12.5px; line-height: 1.7; }
+
+/* —— 笔记内 ` ```lrc ` 块（D-8(c)：接管但默认关）—— */
+.rl-ap-inline { height: 300px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m, 6px); background: var(--background-primary-alt); }
+.rl-ap-inline .rl-ap-body { padding: 12px 14px 0; }
+
+/* ── 控制条浮层：倍速档位滑条 / 音量滑条（2026-09-27 补；2026-09-27 细节优化改横向 + 0–200%）────
+   浮层是控制条的**绝对定位子元素** ⇒ `.rl-ap-controls` 必须自己是定位上下文；
+   位置每次打开由纯函数 `pure/playerMenu.menuAnchor` 算（`bottom = 容器高 + 间距` = **向上开**，
+   控制条在视图底部，向上开才不会被裁掉）。
+   🔴 控件样式一律以 `.rl-ap-root` 打头（0,2,0）：核心的 `button:not(.clickable-icon)` 是 (0,1,1)，
+      单类写法会被压过（同本段开头那条注释）。 */
+.rl-ap-controls { position: relative; }
+/* 「倍速」= **纯文字按钮**，文案就是当前倍速（如 `1.5×`）。
+   用户 2026-09-27 定稿：「倍速图标改成对应倍速的文字就行了」⇒ ⛔ 不加图标、⛔ 不再固定写「倍速」两个字。
+   文案由 `formatSpeed` 出（`0.5×` / `1.25×`；⛔ 别手拼 `${v}×`），并只在 `syncSpeedButton()` 一处写。 */
+.rl-ap-root .rl-ap-btn-speed {
+    width: auto;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 12px;
+    line-height: 1;
+    font-family: inherit;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+/* 非 1× ⇒ 强调色提示（⛔ 不复用 `is-on`：那个语义是「浮层开着」） */
+.rl-ap-root .rl-ap-btn-speed.is-var { color: var(--interactive-accent); font-weight: 600; }
+.rl-ap-pop {
+    position: absolute;
+    z-index: 40;
+    max-width: 320px;
+    max-height: 46vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border-radius: var(--radius-m, 6px);
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+}
+/* 🔴 本插件没有全局 `.hidden` —— 凡会 addClass('is-hidden') 的元素都必须自带这一条 */
+.rl-ap-pop.is-hidden { display: none; }
+/* —— 横向滑条（倍速档位 / 音量**共用这一套**）——
+   顶部读数 + 一条细轨；已填充段靠轨道 `linear-gradient` + 元素上的 `--rl-ap-range-p` 表达
+   （Chromium 的 range 没有 progress 伪元素，那是 Firefox 的 `::-moz-range-progress`）；
+   拖动仍走原生 range（键盘可达、拖动逻辑免费）。 */
+.rl-ap-root .rl-ap-rangebox {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    min-width: 152px;
+    padding: 2px 4px;
+}
+.rl-ap-root .rl-ap-range-val {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text-normal);
+    font-variant-numeric: tabular-nums;
+}
+.rl-ap-root .rl-ap-range {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 152px;
+    height: 18px;
+    margin: 0;
+    background: transparent;
+    outline: none;
+}
+/* 🔴 **当前色** `--rl-ap-range-cur` 是**两级混合**（用户 2026-09-27 第二轮改判：
+   「0% 时不显示段换色，**从 0 到 100% 过程逐渐变色**，不是一开始就固定色在那」）：
+     第一级「**淡 → 实**」：强调色按 `--rl-ap-vol-sat` 与页面底色混合（0% ⇒ 下限、100% ⇒ 满）；
+     第二级「**强调色 → 增益色**」：再按 `--rl-ap-vol-warm` 偏向橙色（≤100% 恒 100% ⇒ **一点不偏橙**）。
+   🔴 **这两个变量只由音量滑条设置**（`syncVolumePop`）⇒ ⛔ **倍速滑条取默认值**（100%/100%），
+      混出来就是纯强调色 ⇒ **不换色**（用户明示：倍速滑条没说换色）。
+   ⚠️ 0% 时「不显示换色」是靠**填充长度为 0**（`--rl-ap-range-p: 0%`）达成的，⛔ 不是把颜色调没
+      —— 滑块与轨道共用这个当前色，占比真给 0 会让滑块与轨道同色而「消失」。
+   拖动时颜色一路变 ⇒ 观感是「随数值渐变」，而不是「在固定位置摆一段异色」。 */
+.rl-ap-root .rl-ap-range {
+    --rl-ap-range-cur: color-mix(
+        in srgb,
+        color-mix(in srgb, var(--interactive-accent) var(--rl-ap-vol-sat, 100%), var(--background-primary))
+            var(--rl-ap-vol-warm, 100%),
+        var(--rl-ap-boost, var(--color-orange, #e8890c))
+    );
+}
+.rl-ap-root .rl-ap-range::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(
+        to right,
+        var(--rl-ap-range-cur) 0 var(--rl-ap-range-p, 0%),
+        var(--background-modifier-border) var(--rl-ap-range-p, 0%) 100%
+    );
+}
+/* 🔴 核心给 range 的 thumb 设了 `position: relative` + `top`（为 18px 大滑块对中）；
+   不复位的话滑块会整体偏移 ⇒ 显式 `position: static` 让 top 失效，用 margin-top 自己对中。 */
+.rl-ap-root .rl-ap-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    position: static;
+    top: 0;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border: none;
+    border-radius: 50%;
+    /* 滑块与填充段**同一个当前色** ⇒ 颜色就是「等级」（值越大越实、>100% 偏橙） */
+    background: var(--rl-ap-range-cur);
+    box-shadow: none;
+}
+
+/* ── 系列选择弹窗（#444c：改成**应用级 Modal**，与「编辑条目」「下载书籍」同构）──
+   🔴 用户原话：「直接改成全仓库，不局限于当前插件视图内了，**改成编辑条目弹出窗口这样**」。
+   壳的微调只有两件：清掉宿主自带的**标题文字**（改由内容里的「组名 + N 部」承担，两份并存会把头部挤下去）、
+   内容内距收紧一档。
+   🔴🔴 #444d：**关闭钮保留宿主的**（`.modal-close-button`，实测在 `.modal` 内、右上角）。
+   ⛔ 别再写 `display: none` 去藏它 —— 上一版一边想藏宿主那枚、一边在内容里自绘一枚，
+     结果那条 `display:none` 没生效 ⇒ 用户截图里**两个 ✕**；而它一旦生效就会变成**一个都没有**。
+     出口只留宿主这一个（Esc / 点遮罩外也走它）。
+   ⚠️ 宽度**不在这里写死**：由 `modals/SeriesPickerModal.onOpen()` 按窗口算好行内给
+   （见 `pure/seriesGroup.seriesPanelWidth`，⛔ 别在这儿再写一份算式）。 */
+.rl-series-modal .modal-title { display: none; }
+.rl-series-modal .modal-content { padding: 16px 18px 18px; }
+
+/* ── `.rl-input` 的基础外观**上移成全局**（🔴 #456）──────────────────────────────
+   根因：它的边框 / 圆角 / 内距 / 字号原先**只写在 `EntryForm` 的 scoped 样式里**，而
+   `BookDownload` / `MusicDownload` / `ImportBangumiModal` 同样写 `class="rl-input"` 却拿不到
+   ⇒ 这几处的输入框落回**宿主原生 input** 外观（另一种边框、另一种内距、另一种字号）
+   = 同一个插件里两套输入框（用户对下载弹窗的原话就是「这个界面太丑了」）。
+   这里补一份**全局**的，取值与 EntryForm 那份**逐字一致**。
+   ⚠️ 影响力：EntryForm 的 scoped 规则（`.rl-input.svelte-xxx`，(0,2,0)）特异性更高 ⇒ 不受影响（本就同款）。
+   ⛔ 不写 `width` / `height`：宽度与高度由各处的布局决定（本条只管「长什么样」）。
+   ⛔ 别再往里加组件专属内距（如搜索框的 `padding-left: 29px`）—— 那是各组件的活。 */
+body .rl-input {
+    font-family: inherit;
+    font-size: 12px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    border-radius: var(--rl-t-radius-md, 6px);
+    padding: 5px 9px;
+}
+body .rl-input:focus { outline: none; border-color: var(--interactive-accent); }
+
+/* ── #457 C′：书源行下面的 **Cookie 就地编辑**（改 Cookie 不用再重导整份 .json）──
+   形态 = 一行「Cookie 标签 + 输入框」，比在源行里再塞一枚图标按钮稳：
+   `cookie` / `lock` / `shield` 都不在本仓核实过的图标名单里，`setIcon` 遇未知名**静默失败** = 空白按钮。
+   ⚠️ 外观只在这里补「紧凑」那部分（字号 / 内距 / 占满余宽），边框圆角归全局那条 `body .rl-input`。 */
+.rl-src-cookie { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; }
+.rl-src-cookie-l { flex: none; font-size: 11px; color: var(--text-faint); }
+.rl-src-cookie .rl-input { flex: 1; min-width: 0; font-size: 11px; padding: 3px 7px; }
+
+/* ── 输入框占位符颜色统一（🔴 #445）─────────────────────────────────────────────
+   根因：宿主 app.css 的 `input[type=…]::placeholder` **只覆盖带 type 属性的输入**；
+   本插件三个组件（EntryForm / BookDownload / MusicDownload）的 `.rl-input` 大多**不写 type**
+   ⇒ 落回 UA 默认 `#757575`，既不跟 `--text-faint` 也不跟文字色，同一个表单里深一块浅一块。
+   这里用**足够特异性**的 `body .rl-input::placeholder`（(0,2,1)）压过 UA 默认，
+   并把颜色统一到 `--input-placeholder-color`（= --text-faint，跟宿主其余输入框同源）。
+   ⚠️ `.rl-search-input` / `.rl-summary`(textarea) 也归到这里 —— 它们同样不写 type。
+   ⛔ 别用 `.rl-input::placeholder` 单类（特异性不够压 UA 默认，量测页已实证）。 */
+body .rl-input::placeholder,
+body .rl-search-input::placeholder {
+    color: var(--input-placeholder-color, var(--text-faint));
+    opacity: 1;
 }

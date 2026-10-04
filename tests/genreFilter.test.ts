@@ -15,6 +15,8 @@ import {
     matchesGenres,
     resolveGenreScope,
     matchesGenreScope,
+    seriesGenreScope,
+    genreScopeKeyOf,
     genrePillLabel,
 } from 'pure/genreFilter';
 
@@ -157,8 +159,12 @@ describe('resolveGenreScope · 视图级可见性（用户 2026-09-22 指定）'
         expect(resolveGenreScope(null, 'all', 'book')).toBeNull();
     });
 
-    it('书籍脏子分类（已下线的 comic）归文学作用域，不产生第三个池', () => {
-        expect(resolveGenreScope('book', 'book', 'comic' as never)).toEqual({ key: 'book:book', type: 'book', bookKind: 'book' });
+    it('🔴 2026-09-30 翻面：comic **是合法子分类** ⇒ 有自己的作用域（漫画独立题材池，三个子类互不影响）', () => {
+        expect(resolveGenreScope('book', 'book', 'comic')).toEqual({ key: 'book:comic', type: 'book', bookKind: 'comic' });
+    });
+
+    it('仍然兜底：真·非法值（不在三值内）归文学作用域，不产生第四个池', () => {
+        expect(resolveGenreScope('book', 'book', 'comicx' as never)).toEqual({ key: 'book:book', type: 'book', bookKind: 'book' });
     });
 });
 
@@ -213,5 +219,54 @@ describe('genrePillLabel · 胶囊文案（未选=全部；1 项=名称；≥2 �
     it('已选项已不在池内（数据变动）时不崩、仍给出计数', () => {
         expect(genrePillLabel(options, ['已消失的题材'])).toBe('已消失的题材');
         expect(genrePillLabel(options, ['已消失的题材', '推理'])).toBe('推理+1');
+    });
+});
+
+// ── #444：系列视图的**独立题材池**（用户 2026-09-30：「每个系列视图拥有独立题材池，互不影响」）──
+describe('seriesGenreScope · 系列视图恒提供题材筛选，且按组键隔离', () => {
+    it('🔴 恒非 null —— 系列视图本身就是具体子集，从「影视-全部」进来也要能筛题材', () => {
+        expect(seriesGenreScope('anime\u0001海绵宝宝', 'anime')).not.toBeNull();
+    });
+
+    it('key 带**组键**（组键已含 type ⇒ 池天然不跨类型）', () => {
+        expect(seriesGenreScope('anime\u0001海绵宝宝', 'anime').key).toBe('series:anime\u0001海绵宝宝');
+    });
+
+    it('🔴 两个系列 ⇒ 两个不同的 key（切换时复位逻辑据此清空已选 ⇒ 互不影响）', () => {
+        const a = seriesGenreScope('anime\u0001海绵宝宝', 'anime');
+        const b = seriesGenreScope('movie\u0001海绵宝宝', 'movie');
+        const c = seriesGenreScope('anime\u0001熊出没', 'anime');
+        expect(a.key).not.toBe(b.key);
+        expect(a.key).not.toBe(c.key);
+    });
+
+    it('type 取组内类型（`matchesGenreScope` 仍能当池判定用）', () => {
+        const scope = seriesGenreScope('anime\u0001海绵宝宝', 'anime');
+        expect(matchesGenreScope({ type: 'anime' }, scope)).toBe(true);
+        expect(matchesGenreScope({ type: 'movie' }, scope)).toBe(false);
+    });
+});
+
+describe('genreScopeKeyOf · 复位键（与 genreScope.key 同口径，但不经 filtered）', () => {
+    it('有系列键 ⇒ 走 `series:<组键>`（与 seriesGenreScope 同口径）', () => {
+        expect(genreScopeKeyOf(null, 'all', 'all', 'anime\u0001海绵宝宝')).toBe('series:anime\u0001海绵宝宝');
+        // 系列视图**压过**底层的 lockType / 子分类（进去之后只有这一层作用域）
+        expect(genreScopeKeyOf('book', 'all', 'novel', 'book\u0001基地')).toBe('series:book\u0001基地');
+    });
+
+    it('没有系列键 ⇒ 逐字回落到 resolveGenreScope 的 key', () => {
+        expect(genreScopeKeyOf('book', 'all', 'novel', null)).toBe(resolveGenreScope('book', 'all', 'novel')?.key);
+        expect(genreScopeKeyOf(null, 'anime', 'all', null)).toBe(resolveGenreScope(null, 'anime', 'all')?.key);
+    });
+
+    it('🔴 底层「不提供题材筛选」的那几档 ⇒ 空串（不是 undefined，便于直接比对）', () => {
+        expect(genreScopeKeyOf(null, 'all', 'all', null)).toBe('');
+        expect(genreScopeKeyOf('book', 'all', 'all', null)).toBe('');
+        expect(genreScopeKeyOf(null, 'all', 'all', undefined)).toBe('');
+    });
+
+    it('🔴 系列键为空串 / undefined 都视为「不在系列视图」', () => {
+        expect(genreScopeKeyOf('game', 'all', 'all', '')).toBe('type:game');
+        expect(genreScopeKeyOf('game', 'all', 'all', undefined)).toBe('type:game');
     });
 });

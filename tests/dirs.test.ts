@@ -23,20 +23,20 @@ describe('typeDir 类型 → 笔记子目录英文名', () => {
 });
 
 describe('noteSubDir 笔记子目录裁决（书籍按子分类分，其余按类型）', () => {
-    it('书籍：文学 → book/、网文 → novel/（1.0.3.1 网文独立目录）', () => {
+    it('书籍：文学 → book/、网文 → novel/、漫画 → comic/（漫画 2026-09-30 加回）', () => {
         expect(noteSubDir({ type: 'book', bookKind: 'book' })).toBe('book');
         expect(noteSubDir({ type: 'book', bookKind: 'novel' })).toBe('novel');
+        expect(noteSubDir({ type: 'book', bookKind: 'comic' })).toBe('comic');
     });
-    it('书籍缺省 / 已下线 comic → book/（存量数据不落空目录）', () => {
+    it('书籍缺省 → book/（存量未标分类的书不落空目录）', () => {
         expect(noteSubDir({ type: 'book' })).toBe('book');
-        expect(noteSubDir({ type: 'book', bookKind: 'comic' as never })).toBe('book');
     });
     it('非书籍类型忽略 bookKind（分类残留不影响目录）', () => {
         expect(noteSubDir({ type: 'movie', bookKind: 'novel' })).toBe('movie');
         expect(noteSubDir({ type: 'music' })).toBe('music');
     });
     it('BOOK_KIND_DIRS 与 noteSubDir 一致（单一真相表）', () => {
-        expect(BOOK_KIND_DIRS).toEqual({ book: 'book', novel: 'novel' });
+        expect(BOOK_KIND_DIRS).toEqual({ book: 'book', novel: 'novel', comic: 'comic' });
     });
 });
 

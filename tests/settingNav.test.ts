@@ -1,7 +1,7 @@
 // 设置页导航真源（pure/settingNav）—— 这里守的是「改版后最容易静默出错」的四件事：
 //   ① 图标名写错：Obsidian 的 setIcon() 遇到不存在的名字**静默失败**（safeSetIcon 把异常吞掉）
 //      ⇒ 界面上是一个**空白图标、没有任何报错**（tests/searchIcons.test.ts 里已记录同一个坑）
-//   ② 标签被顺手改动：全仓有多处路径文案在引用「数据源配置 / AI集成」这两个名字
+//   ② 标签被顺手改动：全仓有多处路径文案在引用「元数据源配置 / AI集成」这两个名字
 //      （改标签不同步文案 ⇒ 提示会指向一个不存在的入口）
 //   ③ id 撞车 / 漏页：页的数量与顺序是导航契约
 //   ④ **#354**：4 页**全部**是平级 Tab（「关于」已从 #353 的"附属页 + 右上角小图标"回归 Tab 栏），
@@ -28,6 +28,8 @@ const ASAR_VERIFIED_ICONS = [
     'wand-2', 'list-tree', 'plug-zap', 'folder-tree', 'folder-open', 'file-text', 'scroll-text',
     'book-marked', 'library-big', 'book-open', 'book-copy', 'gamepad-2', 'disc-3', 'trash-2',
     'badge-info', 'circle-help', 'life-buoy', 'chevron-down', 'chevron-right',
+    // 🔴 #483：AI集成两组改名后的新图标（`_probe_lucide.cjs` 实测在 asar 内）
+    'server', 'target',
 ];
 
 describe('settingNav（#354 设置页导航真源：4 个平级 Tab）', () => {
@@ -36,9 +38,9 @@ describe('settingNav（#354 设置页导航真源：4 个平级 Tab）', () => {
         expect(new Set(SETTING_NAV_PAGES.map((p) => p.id)).size).toBe(SETTING_NAV_PAGES.length);
     });
 
-    it('🔴 标签 = 用户点名的 4 项（含两处改名：数据管理→基本设置、数据源管理→数据源配置）', () => {
+    it('🔴 标签 = 用户点名的 4 项（三次改名：数据管理→基本设置、数据源管理→数据源配置→**元数据源配置**）', () => {
         expect(SETTING_NAV_PAGES.map((p) => p.label)).toEqual([
-            '基本设置', '数据源配置', 'AI集成', '关于',
+            '基本设置', '元数据源配置', 'AI集成', '关于',
         ]);
     });
 
@@ -53,11 +55,26 @@ describe('settingNav（#354 设置页导航真源：4 个平级 Tab）', () => {
     });
 
     it('groupIcon：登记过的返回图标名，未登记返回 null（不抛错，只是缺个图标）', () => {
-        expect(groupIcon('数据源启用')).toBe('toggle-right');
-        expect(groupIcon('数据源凭据')).toBe('key-round');
+        // #422 改名：两组加「元」字 —— ⛔ 旧键（数据源启用 / 数据源凭据）必须**整体退场**，
+        //    留着就是永不命中的死配置（组名已经改了，没有任何地方会再拿旧名来查）
+        expect(groupIcon('元数据源启用')).toBe('toggle-right');
+        expect(groupIcon('元数据源凭据')).toBe('key-round');
+        expect(groupIcon('数据源启用')).toBeNull();
+        expect(groupIcon('数据源凭据')).toBeNull();
+        // 🔴 #422：音乐源凭据不再与「凭据」类共用钥匙图标（三组挨着排下来分不出谁是谁）
+        expect(groupIcon('音乐源凭据')).toBe('audio-lines');
+        // 🔴 #422：书源那组改名 + **首次挂图标**（原「网文书源」没有图标）
+        expect(groupIcon('书籍源凭据')).toBe('book-marked');
+        expect(groupIcon('网文书源')).toBeNull();
         // 🔴 #356：「语音合成」组已撤销（两行分别搬进 AI服务 / API凭据）⇒ 该 key 必须整体退场，
         //    ⛔ 留着就是一条永远不会命中的死配置
         expect(groupIcon('语音合成')).toBeNull();
+        // 🔴 #483：AI 页两组**改名 + 换序** —— `AI服务` → `用途`（target）/ `API凭据` → `模型服务`（server）
+        //    ⇒ ⛔ 旧键同样必须整体退场（与上面「语音合成」同一条口径）
+        expect(groupIcon('模型服务')).toBe('server');
+        expect(groupIcon('用途')).toBe('target');
+        expect(groupIcon('AI服务')).toBeNull();
+        expect(groupIcon('API凭据')).toBeNull();
         // #354 新增的 4 组
         expect(groupIcon('外观与体验')).toBe('sliders-horizontal');
         expect(groupIcon('实验性功能')).toBe('flask-conical');

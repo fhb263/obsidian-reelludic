@@ -2,6 +2,7 @@
 import type { ActivityEvent, BookKind, Catalog, MediaEntry, MusicKind, PlaySession, WatchLink } from 'data/types';
 import { ACTIVITY_LOG_LIMIT, createEntryId, ENTRY_TYPES } from 'data/types';
 import { isMediaStatus } from 'pure/status';
+import { storeEpisodeList } from 'pure/episodeAssoc';
 import { normalizeRating } from 'pure/rating';
 import { BOOK_KINDS } from 'pure/bookKind';
 import { MUSIC_KINDS } from 'pure/musicKind';
@@ -86,9 +87,10 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
             const v = Array.isArray(raw.aliases) ? raw.aliases.filter(isString) : [];
             return v.length ? v : undefined;
         })(),
-        bookKind: BOOK_KINDS.includes(raw.bookKind as BookKind) ? raw.bookKind : undefined, // 书籍子分类（合法值透传；非法/缺省/已下线 comic → undefined，读取端 normalizeBookKind 兜底归文学）——回归锁定：白名单曾缺此字段，搜索保存的网文被静默丢分类落错视图
+        bookKind: BOOK_KINDS.includes(raw.bookKind as BookKind) ? raw.bookKind : undefined, // 书籍子分类（合法三值透传，**含 comic**；非法/缺省 → undefined，读取端 normalizeBookKind 兜底归文学）——回归锁定：白名单曾缺此字段，搜索保存的网文被静默丢分类落错视图
         musicKind: MUSIC_KINDS.includes(raw.musicKind as MusicKind) ? raw.musicKind : undefined, // 音乐子分类（同上，缺省/已下线 other 读取端归 music）
         author: isString(raw.author) ? raw.author : undefined,
+        artist: isString(raw.artist) ? raw.artist : undefined, // 画师（漫画；#444g）——⚠️ 白名单漏了会被静默丢弃（历史踩坑：bookKind）
         translator: isString(raw.translator) ? raw.translator : undefined,
         publisher: isString(raw.publisher) ? raw.publisher : undefined,
         producer: isString(raw.producer) ? raw.producer : undefined,
@@ -96,6 +98,10 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
         binding: isString(raw.binding) ? raw.binding : undefined,
         price: isString(raw.price) ? raw.price : undefined,
         series: isString(raw.series) ? raw.series : undefined,
+        // 系列序号（#434）：必须是有限数才透传。🔴 #443 起锁定整数（用户裁定「只能填整数不能填小数」）——
+        // ⚠️ 这里**仍透传原始值**（不回写/不取整）：取整是 `seriesIndexValue` 的读时归一，本处只保证不落 NaN。
+        // 🔴 新增 schema 字段必须同步本白名单，否则读取端会静默丢弃（历史踩坑：bookKind）
+        seriesIndex: typeof raw.seriesIndex === 'number' && Number.isFinite(raw.seriesIndex) ? raw.seriesIndex : undefined,
         platform: isString(raw.platform) ? raw.platform : undefined,
         developer: isString(raw.developer) ? raw.developer : undefined,
         album: isString(raw.album) && raw.album.length > 0 ? raw.album : undefined, // 音乐专辑（豆瓣详情回填，过滤空串）
@@ -143,6 +149,8 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
                   }))
             : undefined,
         source: isString(raw.source) ? raw.source : undefined,
+        // #430 手填来源名：append-only 可选字段 ⇒ ⚠️ 必须进这张白名单，否则**静默丢**（本仓踩过多次）
+        sourceName: isString(raw.sourceName) ? raw.sourceName : undefined,
         sourceUrl: isString(raw.sourceUrl) ? raw.sourceUrl : undefined,
         communityScore: typeof raw.communityScore === 'number' ? raw.communityScore : undefined,
         summary: isString(raw.summary) ? raw.summary : undefined, // 简介（曾缺失导致笔记无简介，回归锁定）
@@ -156,9 +164,12 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
         authorIntro: isString(raw.authorIntro) ? raw.authorIntro : undefined,
         toc: isString(raw.toc) ? raw.toc : undefined,
         links: Array.isArray(raw.links) ? raw.links.filter(isLinkLike) : [],
-        episodeFiles: Array.isArray(raw.episodeFiles) ? raw.episodeFiles.filter((p) => isString(p) && p.length > 0) : undefined, // 本地剧集视频路径（表单集按钮关联，过滤空串）
-        episodeUrls: Array.isArray(raw.episodeUrls) ? raw.episodeUrls.filter((u) => isString(u) && u.length > 0) : undefined, // 剧集网络地址（每集与 episodeFiles 同下标）
-        episodeTitles: Array.isArray(raw.episodeTitles) ? raw.episodeTitles.filter((t) => isString(t) && t.length > 0) : undefined, // 集标题（hover 显示）
+        // 🔴 2026-10-01 #446 三个集数组一律走 `storeEpisodeList`：**保位**（index i 恒 = 第 i+1 集）
+        //    —— 以前是 `.filter(...)` **压缩**空位，与读侧（选集弹窗 / 集按钮全按下标配对）矛盾，
+        //    表现为「在第 2 集填的标题，保存后跑到第 1 集」（用户报障）。⛔ 别把 filter 那套请回来。
+        episodeFiles: storeEpisodeList(raw.episodeFiles), // 本地剧集视频路径（空位留 undefined = 该集未关联）
+        episodeUrls: storeEpisodeList(raw.episodeUrls), // 剧集网络地址（每集与 episodeFiles 同下标）
+        episodeTitles: storeEpisodeList(raw.episodeTitles), // 集标题（hover 显示）
         notes: isString(raw.notes) ? raw.notes : '',
         tags: Array.isArray(raw.tags) ? raw.tags.filter(isString) : [],
         notePath: isString(raw.notePath) ? raw.notePath : undefined,

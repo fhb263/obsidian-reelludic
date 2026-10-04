@@ -39,11 +39,11 @@ export class NoteConflictModal extends Modal {
         const ops = contentEl.createDiv({ cls: 'rl-nc-ops' });
         // 安全方向（不动笔记）：中性次按钮靠左
         const keep = ops.createEl('button', { cls: 'rl-btn', text: '保留笔记文件' });
-        keep.setAttribute('data-tip', '笔记文件原样不动，你手动写的内容保留，之后不再重复提示');
+        keep.setAttribute('data-tip', '保留你的笔记，不再提示');
         keep.onclick = () => this.finish('keep');
         // 危险动作（覆盖手改）：危险主按钮实心红靠右
         const overwrite = ops.createEl('button', { cls: 'rl-nc-danger', text: '用库数据重写笔记' });
-        overwrite.setAttribute('data-tip', '按库数据重新生成这篇笔记，你手动写进笔记的内容会丢失');
+        overwrite.setAttribute('data-tip', '重写笔记（你手写的会丢失）');
         overwrite.onclick = () => this.finish('overwrite');
     }
 

@@ -1,6 +1,6 @@
 // 设置页「媒体库目录」的两种文件夹选法（2026-09-23 #380）：
 //   ① 主路径 = 输入框**边打边提示**（`AbstractInputSuggest`，Obsidian 1.4.10+）
-//   ② 降级   = 「浏览…」按钮 + 模糊搜索弹层（`FuzzySuggestModal`，Obsidian 0.9.20+）
+//   ② 降级   = 「浏览」按钮 + 模糊搜索弹层（`FuzzySuggestModal`，Obsidian 0.9.20+）
 //
 // 🔴 ① 必须**运行时取基类**，⛔ 不能写静态的 `class X extends AbstractInputSuggest`：
 //    `AbstractInputSuggest` 是 1.4.10 才有的导出，而本插件 `minAppVersion` = **0.15.0**。

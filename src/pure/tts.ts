@@ -448,7 +448,7 @@ export function buildTtsMenu(input: TtsMenuInput): TtsMenuGroup[] {
                     label: '硅基流动',
                     on: engine === 'cloud',
                     disabled: !cloudReady,
-                    hint: cloudReady ? '' : '未配置 Key（设置 → AI集成 › API凭据 · 硅基流动）',
+                    hint: cloudReady ? '' : '未配置 Key（设置 → AI集成 › 模型服务 · 硅基流动）',
                 },
             ],
             items: [],

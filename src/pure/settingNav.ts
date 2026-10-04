@@ -43,7 +43,10 @@ export interface SettingNavPage {
  */
 export const SETTING_NAV_TABS: readonly SettingNavPage[] = [
     { id: 'basic', label: '基本设置', icon: 'sliders-horizontal' },
-    { id: 'sources', label: '数据源配置', icon: 'folder-tree' },
+    // #422 改名：原「数据源配置」。用户原话「数据源配置、凭据改成元数据源配置、凭据」——
+    // 本页里只有**前两组**是元数据源（后面还有音乐源凭据 / 书籍源凭据），统称「数据源」会把
+    // 「音乐、书籍也是数据源吗」这件事一直含混。
+    { id: 'sources', label: '元数据源配置', icon: 'folder-tree' },
     { id: 'ai', label: 'AI集成', icon: 'wand-2' },
     { id: 'about', label: '关于', icon: 'badge-info' },
 ];
@@ -115,12 +118,26 @@ export function tabStates(activeId: string): SettingTabState[] {
  *    外观与体验 / 实验性功能 / 数据与备份 / 封面与清理。
  * ⚠️ **#356 起 `语音合成` 这条已删除**：该组两行按用户指令分别搬进了「AI服务」（朗读音源）与
  *    「API凭据」（硅基流动 Key），组本身撤销 ⇒ 留着就是一条永远不会命中的死配置。
+ * 🔴 **#483**（用户：「重构 AI 集成 UI，参考市面上 AI 软件 / 中转站怎么做接入多 AI」）：AI 页两组
+ *    **改名 + 换序** —— `AI服务` → **`用途`**（图标 `target`）、`API凭据` → **`模型服务`**（图标 `server`），
+ *    且「模型服务」在上（接入顺序 = 先连服务商 → 再选它用在哪，与 Cherry Studio 一致）。
+ *    ⛔ 旧键**一律不留**（组名已改，留着只会变成永不命中的死配置 —— 与下面 #422 同一条口径）。
+ *    两个新图标名已用 `_probe_lucide.cjs` 在 asar 白名单内核实。
+ * ⚠️ **#422**：「数据源启用 / 数据源凭据」两键改名加「元」；「网文书源」→「书籍源凭据」并**首次挂图标**。
+ *    旧键**一律不留**（组名已改，留着只会变成永不命中的死配置）。
+ * 🔴 **音乐源凭据**图标从 `key-round` 换成 `audio-lines`：改版前它跟「元数据源凭据 / API凭据」
+ *    共用同一枚钥匙图标，三组挨着排下来**分不出哪个是哪个**（用户 2026-09-29：「把音乐源凭据图标改一下」）。
+ *    ⛔ 换名之前**先实测**是否在 asar 白名单内（`setIcon` 遇未知名会静默失败）。
+ * ⚠️ `网络文学源` / `经典文学源` 是**折叠小节**（渲染在 `.rl-key-row` 里，不走 `createGroupSection`）
+ *    ⇒ 这里**不登记**（登记了也没人查）。
  */
 export const SETTING_GROUP_ICONS: Readonly<Record<string, string>> = {
-    数据源启用: 'toggle-right',
-    数据源凭据: 'key-round',
-    AI服务: 'circuit-board',
-    API凭据: 'key-round',
+    元数据源启用: 'toggle-right',
+    元数据源凭据: 'key-round',
+    音乐源凭据: 'audio-lines',
+    书籍源凭据: 'book-marked',
+    模型服务: 'server',
+    用途: 'target',
     外观与体验: 'sliders-horizontal',
     实验性功能: 'flask-conical',
     数据与备份: 'hard-drive',

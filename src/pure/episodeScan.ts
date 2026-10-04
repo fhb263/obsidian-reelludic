@@ -49,6 +49,50 @@ export function parseEpisodeNumber(filename: string): number | undefined {
     return undefined;
 }
 
+/**
+ * 集号**片段**（与 RULES 同源的四类形态，只是这里要的是「匹配到什么」而不是「数字是几」）。
+ * 🔴 两处必须同源：改 RULES 的形态识别时，这里要一起改 —— 否则会出现「集号认出来了、标题却剥不干净」
+ *    （如文件名 `第05集 开始` 认得出第 5 集，却把「第05集」留在标题里）。
+ */
+const TOKEN_RULES: RegExp[] = [
+    /第\s*\d{1,3}\s*[集话話]/,
+    /[Ee][Pp]isode\s*\d{1,3}(?!\d)/,
+    /(?:^|[\s._[(-])(?:S\d{1,2})?[Ee]\d{1,3}(?!\d)/,
+    /(?:^|[\s._[(-])(\d{1,3})(?![0-9])/,
+];
+
+/**
+ * 从剧集文件名派生**集标题**（纯逻辑）：「从文件夹检索剧集」自动补集标题用。
+ *
+ * 口径 = 去掉扩展名 → 剥掉**集号片段**，取它**之后**的部分 → 分隔符（`.` `_` `-` 破折号）与括号折成空格、
+ *        压空白、去首尾标点；再排掉纯分辨率串（`1080p`）。取不到内容 → 空串（调用方**不填**，别写个空标题）。
+ *
+ * 例：`1.新邻居.mp4` → `新邻居`｜`第05集 开始.mp4` → `开始`｜`Show.S01E05.Pilot.mkv` → `Pilot`｜
+ *    `01.mp4` → ``｜`葬送のフリーレン - 05.mp4` → ``｜`Show.S01E05.1080p.mkv` → ``（只剩分辨率，当没有）
+ *
+ * ⚠️ 只取集号之后：`标题.01.mp4` 这类「标题在集号之前」的命名**派生不出**（宁可不填，也不把剧名当集标题）。
+ *    结果一律只是**预填**，用户随时可改 —— 别为了多认几种命名把规则堆成猜测器。
+ */
+export function episodeTitleFromName(name: string): string {
+    const base = name.replace(/\.[A-Za-z0-9]+$/, '');
+    let rest = base;
+    for (const re of TOKEN_RULES) {
+        const m = re.exec(base);
+        if (m) {
+            rest = base.slice(m.index + m[0].length);
+            break;
+        }
+    }
+    return rest
+        .replace(/[._\-–—]+/g, ' ')
+        .replace(/[[\]()（）【】{}]+/g, ' ')
+        .replace(/\b\d{3,4}[pPiI]\b/g, ' ') // 分辨率（1080p / 720P / 480i）
+        .replace(/\s+/g, ' ')
+        .replace(/^[\s:：·・,，、]+/, '')
+        .replace(/[\s:：·・,，、]+$/, '')
+        .trim();
+}
+
 export interface ScannedEpisode {
     ep: number;
     name: string;

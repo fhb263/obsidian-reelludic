@@ -6,14 +6,19 @@ import {
     SOURCE_GROUPS,
     GROUP_LABELS,
     sourceGroupForType,
+    sourceGroupForBookKind,
     normalizeSourceChain,
     resolveSourceChain,
     deriveGroupSearchError,
     sourceLabel,
+    sourceEnLabel,
+    providerFromUrl,
+    platformLabelFromUrl,
     DEFAULT_CHAINS,
     type ProviderId,
     type SourceGroup,
 } from 'pure/sourceRegistry';
+import { SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
 
 describe('sourceGroupForType 类型→组映射', () => {
     it('movie/tv 合并到 movieTv，其余类型即组', () => {
@@ -56,7 +61,7 @@ describe('注册表元数据', () => {
         }
     });
 
-    it('douban 适用于全部 5 组（1.0.3.1 起 comic 漫画子组已下线）且带 cookie 凭据字段', () => {
+    it('douban 适用于全部 6 组（2026-09-30 漫画组加回，主源豆瓣）且带 cookie 凭据字段', () => {
         for (const g of SOURCE_GROUPS) {
             expect(PROVIDER_META.douban.groups).toContain(g);
         }
@@ -66,18 +71,20 @@ describe('注册表元数据', () => {
     it('组标签齐全（UI 组头用）', () => {
         expect(GROUP_LABELS.movieTv).toBe('影视');
         expect(GROUP_LABELS.book).toBe('书籍');
-        expect(SOURCE_GROUPS).toEqual(['book', 'game', 'music', 'movieTv', 'anime']);
+        expect(GROUP_LABELS.comic).toBe('漫画');
+        expect(SOURCE_GROUPS).toEqual(['book', 'game', 'music', 'movieTv', 'anime', 'comic']);
     });
 });
 
 describe('候选源矩阵（T1：各组适用源全部 implemented → 候选 = 该组全部源，槽位 ≤3）', () => {
-    it('五组候选恰为各组合法源集合（bangumi 仅动画；openLibrary/googleBooks 仅书籍）', () => {
+    it('六组候选恰为各组合法源集合（bangumi 服务动画+漫画；openLibrary/googleBooks 仅书籍；comic 三源）', () => {
         const expectSet: Record<SourceGroup, ProviderId[]> = {
             book: ['douban', 'openLibrary', 'googleBooks'],
             game: ['douban', 'steam', 'igdb'],
             music: ['douban', 'musicbrainz', 'itunes'],
             movieTv: ['douban', 'tmdb', 'omdb'],
             anime: ['douban', 'bangumi', 'anilist'],
+            comic: ['douban', 'bangumi', 'mangadex'],
         };
         for (const g of SOURCE_GROUPS) {
             const cands = PROVIDERS.filter((p) => p.implemented && p.groups.includes(g)).map((p) => p.id);
@@ -88,12 +95,42 @@ describe('候选源矩阵（T1：各组适用源全部 implemented → 候选 = 
 });
 
 describe('默认链（T1 落上游 D2 表）', () => {
-    it('book=douban+openLibrary；game/music/movieTv/anime 不变（comic 组已随漫画子视图下线）', () => {
+    it('book=douban+openLibrary；game/music/movieTv/anime 不变；comic=豆瓣单源（2026-09-30 加回）', () => {
         expect(DEFAULT_CHAINS.book).toEqual(['douban', 'openLibrary']);
         expect(DEFAULT_CHAINS.game).toEqual(['douban', 'steam']);
         expect(DEFAULT_CHAINS.music).toEqual(['douban', 'musicbrainz', 'itunes']);
         expect(DEFAULT_CHAINS.movieTv).toEqual(['douban', 'tmdb']);
         expect(DEFAULT_CHAINS.anime).toEqual(['douban', 'bangumi']);
+        // 🔴 用户裁定「漫画源接豆瓣、Bangumi、MangaDex 三个源」（2026-09-30）：豆瓣为链首主源。
+        //    ⚠️ 与 1.0.3 的旧值 ['bangumi','douban'] 不同：那是 Bangumi 主源两源，且那份实现已被删除重建。
+        expect(DEFAULT_CHAINS.comic).toEqual(['douban', 'bangumi', 'mangadex']);
+    });
+});
+
+describe('书籍子分类 → 源链组（sourceGroupForBookKind）', () => {
+    it('comic 独立成组；文学 / 网文 / 未指定（undefined）沿用 book 组', () => {
+        expect(sourceGroupForBookKind('comic')).toBe('comic');
+        expect(sourceGroupForBookKind('book')).toBe('book');
+        expect(sourceGroupForBookKind('novel')).toBe('book');
+        expect(sourceGroupForBookKind(undefined)).toBe('book');
+    });
+
+    it('🔴 comic 三源都要在归一后存活 —— 每个源的 `groups` 必须含 comic（漏一个就被 normalizeSourceChain 静默滤掉）', () => {
+        const chain = normalizeSourceChain('comic', ['douban', 'bangumi', 'mangadex']);
+        expect(chain).toEqual(['douban', 'bangumi', 'mangadex']);
+        // 逐个点名，防「某个源的 groups 漏了 comic」这种只掉一个源的隐性回归
+        expect(PROVIDER_META.bangumi.groups).toContain('comic');
+        expect(PROVIDER_META.mangadex.groups).toContain('comic');
+        expect(PROVIDER_META.douban.groups).toContain('comic');
+    });
+
+    it('bangumi 同时服务动画与漫画两组（原来只有 anime）', () => {
+        expect(PROVIDER_META.bangumi.groups).toEqual(['anime', 'comic']);
+    });
+
+    it('mangadex 免 Key（官方只要求可标识 User-Agent）', () => {
+        expect(PROVIDER_META.mangadex.keyField).toBeNull();
+        expect(PROVIDER_META.mangadex.hosts).toContain('mangadex.org');
     });
 });
 
@@ -149,7 +186,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             group: 'book', chain: ['douban'],
             douban: { reachable: false, cookieInvalid: false }, aux: {},
         });
-        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 数据源配置 › 数据源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
+        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
         expect(err).toContain('Douban 兜底不可用');
     });
 
@@ -159,7 +196,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: false, cookieInvalid: true },
             aux: { tmdb: 'unconfigured' },
         });
-        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 数据源配置 › 数据源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
+        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 元数据源配置 › 元数据源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
         expect(err).toContain('豆瓣 Cookie 已失效或过期');
     });
 
@@ -247,7 +284,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             aux: { tmdb: 'unconfigured' },
         });
         expect(err).toContain('未配置凭据');
-        expect(err).toContain('设置 → 数据源配置 › 数据源凭据');
+        expect(err).toContain('设置 → 元数据源配置 › 元数据源凭据');
         expect(err).toContain('测试连接');
     });
 
@@ -288,7 +325,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: true, cookieInvalid: false },
             aux: { bangumi: 'unconfigured' },
         });
-        expect(err).toContain('设置 → 数据源配置 › 数据源凭据');
+        expect(err).toContain('设置 → 元数据源配置 › 元数据源凭据');
         expect(err).toContain('Bangumi Token');
     });
 });
@@ -311,7 +348,7 @@ describe('sourceLabel 数据源展示名（评分角标 / data-tip 共用）', (
     });
 
     it('与注册表 label 同源（单一真源：改 PROVIDERS 即改角标，不另维护手写表）', () => {
-        expect(PROVIDERS.length).toBe(11);
+        expect(PROVIDERS.length).toBe(12);
         for (const p of PROVIDERS) {
             expect(sourceLabel(p.id), p.id).toBe(p.label);
         }
@@ -326,6 +363,92 @@ describe('sourceLabel 数据源展示名（评分角标 / data-tip 共用）', (
     it('⛔ 不沿原型链取值（__proto__ / constructor / toString 不得被当成合法源）', () => {
         for (const k of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
             expect(sourceLabel(k), k).toBe('');
+        }
+    });
+});
+
+// #464 在线曲库（songlib）**不是元数据源** —— 它不进 PROVIDERS（因此不进设置页勾选、不进 sourceChains），
+//   但一样需要展示名：列头 / 结果徽标 / 头部「数据源：」列表 / 选中后自动回填的「来源」框都走这两个入口。
+describe('sourceLabel / sourceEnLabel：#464 在线曲库（非元数据源）', () => {
+    it('曲库 id 两个入口回**同一份**展示名（⛔ 别让头部/进度行显示 `songlib` 这种原始 id）', () => {
+        expect(sourceLabel(SONG_LIB_ID)).toBe(SONG_LIB_LABEL);
+        expect(sourceEnLabel(SONG_LIB_ID)).toBe(SONG_LIB_LABEL);
+    });
+
+    it('🔴 它**不进注册表**（进了就会变成设置页可勾选的「数据源」并混进源链 —— 曲库是检索，不是元数据源）', () => {
+        expect(PROVIDERS.some((p) => p.id === (SONG_LIB_ID as ProviderId))).toBe(false);
+    });
+
+    it('这次改动没有放宽未知 id 的老口径（未知仍回空串 / 原样）', () => {
+        expect(sourceLabel('rawg')).toBe('');
+        expect(sourceEnLabel('rawg' as ProviderId)).toBe('rawg');
+    });
+});
+
+// 2026-09-27 #385：手填「平台链接」→ 认数据源。
+//   用途 = 让海报墙封面角标对手填条目也显示平台名（豆瓣 8.4★），与搜索回填条目表现一致。
+//   真源 = 注册表 hosts（⛔ 不另写手写域名小表：#373 那张只覆盖 5 源、键名还写错）。
+describe('providerFromUrl 平台链接 → 数据源识别（#385 手填平台链接）', () => {
+    it('真实平台页（含子域 / www / 协议 / 端口 / 带路径查询）逐个认出', () => {
+        const cases: Array<[string, ProviderId]> = [
+            ['https://movie.douban.com/subject/1291546/', 'douban'],
+            ['http://www.douban.com/book/subject/1/', 'douban'],
+            ['https://douban.com/', 'douban'],
+            ['https://www.themoviedb.org/movie/550', 'tmdb'],
+            ['https://bangumi.tv/subject/1', 'bangumi'],
+            ['https://bgm.tv/subject/1', 'bangumi'],
+            ['https://openlibrary.org/works/OL1W', 'openLibrary'],
+            ['https://books.google.com/books?id=abc', 'googleBooks'],
+            ['https://store.steampowered.com/app/1/', 'steam'],
+            ['https://steamcommunity.com/app/1', 'steam'],
+            ['https://musicbrainz.org/release/abc', 'musicbrainz'],
+            ['https://music.apple.com/cn/album/1', 'itunes'],
+            ['https://itunes.apple.com/cn/album/1', 'itunes'],
+            ['https://www.imdb.com/title/tt0111161/', 'omdb'],
+            ['https://anilist.co/anime/1', 'anilist'],
+            ['https://www.igdb.com/games/xyz', 'igdb'],
+        ];
+        for (const [url, id] of cases) {
+            expect(providerFromUrl(url), url).toBe(id);
+        }
+    });
+
+    it('⛔ 不做子串匹配（含平台名的冒牌域名不得误判）', () => {
+        for (const bad of [
+            'https://notdouban.com/x',        // 前缀冒充
+            'https://douban.com.evil.io/x',   // 后缀冒充
+            'https://imdb.com.cn/x',
+            'https://xsteampowered.com/x',
+        ]) {
+            expect(providerFromUrl(bad), bad).toBeNull();
+        }
+    });
+
+    it('认不出 / 非法 / 空值一律回 null（角标退化为纯数值）', () => {
+        for (const bad of [
+            '', undefined, '   ',
+            'https://example.com/x',
+            'https://myanimelist.net/anime/1',
+            'movie.douban.com/subject/1/',   // 缺协议头
+            'douban.com',
+            'not a url',
+        ]) {
+            expect(providerFromUrl(bad as string | undefined), String(bad)).toBeNull();
+        }
+    });
+
+    it('大小写与 www 不敏感；平台名经 sourceLabel 取注册表真源', () => {
+        expect(providerFromUrl('HTTPS://WWW.DouBan.COM/subject/1/')).toBe('douban');
+        expect(platformLabelFromUrl('https://movie.douban.com/subject/1/')).toBe('豆瓣');
+        expect(platformLabelFromUrl('https://www.igdb.com/games/x')).toBe('IGDB');
+        expect(platformLabelFromUrl('https://example.com/x')).toBe('');
+    });
+
+    it('全 11 源都至少有一个可识别域名（新增源别忘填 hosts）', () => {
+        for (const p of PROVIDERS) {
+            expect(p.hosts.length, p.id).toBeGreaterThan(0);
+            const url = `https://${p.hosts[0]}/x`;
+            expect(providerFromUrl(url), `${p.id} ← ${url}`).toBe(p.id);
         }
     });
 });

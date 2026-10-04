@@ -1,7 +1,17 @@
 // Bangumi 数据源纯逻辑测试（Douban 数据源测试见 douban.test.ts；Google Books/RAWG/Open Library 已随源移除）
-// 1.0.3.1：书籍类目（含漫画）搜索已随漫画子视图下线（用户 2026-09-13 裁定），Bangumi 仅保留动画检索
+// 🔴 2026-09-30 用户裁定「漫画源接豆瓣、Bangumi、MangaDex 三个源」⇒ **书籍类目（type=1，含漫画）搜索加回**
+//    （1.0.3.1 曾随漫画子视图下线，2026-09-13 裁定）。本文件从「仅动画」扩到「动画 + 漫画两组」。
 import { describe, it, expect } from 'vitest';
-import { buildSearchBody, parseBangumiResults, parseBangumiCollections, parseBangumiPersons, BangumiClient, BANGUMI_SEARCH_LIMIT } from 'services/bangumi';
+import {
+    buildSearchBody,
+    parseBangumiResults,
+    parseBangumiBookResults,
+    parseBangumiCollections,
+    parseBangumiPersons,
+    BangumiClient,
+    BANGUMI_SEARCH_LIMIT,
+    BANGUMI_BOOK_SUBJECT_TYPE,
+} from 'services/bangumi';
 
 describe('Bangumi 解析', () => {
     it('buildSearchBody 生成搜索请求体（type=2 动画，limit=30 满足"至少 30 条"）', () => {
@@ -141,6 +151,100 @@ describe('Bangumi 解析', () => {
             [1, 'anime'],
             [2, 'movie'],
         ]);
+    });
+});
+
+describe('Bangumi 书籍类目搜索（type=1，含漫画 —— 2026-09-30 加回）', () => {
+    it('buildSearchBody 第三参给 subjectType：漫画用 type=1，缺省仍是 2 动画（⛔ 不回归）', () => {
+        expect(JSON.parse(buildSearchBody('海贼王', BANGUMI_SEARCH_LIMIT, BANGUMI_BOOK_SUBJECT_TYPE)).type).toBe(1);
+        expect(BANGUMI_BOOK_SUBJECT_TYPE).toBe(1);
+        expect(JSON.parse(buildSearchBody('葬送的芙莉莲')).type).toBe(2);
+    });
+
+    it('searchBooks 走 type=1（漫画源链第二源）', async () => {
+        const bodies: string[] = [];
+        const client = new BangumiClient(
+            'tok123',
+            async () => '{}',
+            async (_url, body) => {
+                bodies.push(body);
+                return '{"data":[],"total":0}';
+            },
+        );
+        await client.searchBooks('海贼王');
+        expect(JSON.parse(bodies[0]).type).toBe(1);
+        expect(JSON.parse(bodies[0]).keyword).toBe('海贼王');
+    });
+
+    it('解析书籍结果 → BookSearchResult：中文名优先 + 作者/出版社/ISBN 从 **infobox** 取（书籍条目没有顶层作者字段）', () => {
+        const text = JSON.stringify({
+            data: [
+                {
+                    id: 265,
+                    name: 'ONE PIECE',
+                    name_cn: '海贼王',
+                    date: '1997-12-24',
+                    score: 9.2,
+                    images: { large: 'https://lain.bgm.tv/pic/cover/l/op.jpg' },
+                    summary: '大秘宝',
+                    tags: [{ name: '漫画' }, { name: '冒险' }],
+                    infobox: [
+                        { key: '作者', value: '尾田荣一郎' },
+                        { key: '出版社', value: '集英社' },
+                        { key: 'ISBN', value: '9784088725093' },
+                    ],
+                },
+            ],
+        });
+        const r = parseBangumiBookResults(text);
+        expect(r).toHaveLength(1);
+        expect(r[0]).toMatchObject({
+            id: '265',
+            title: '海贼王',
+            author: '尾田荣一郎',
+            publisher: '集英社',
+            isbn: '9784088725093',
+            year: 1997,
+            rating: 9.2,
+            thumbnail: 'https://lain.bgm.tv/pic/cover/l/op.jpg',
+            genres: ['漫画', '冒险'],
+            source: 'bangumi',
+            sourceUrl: 'https://bgm.tv/subject/265',
+        });
+    });
+
+    it('infobox 结构值（{v:…}）也能取到作者；无 name_cn 回退 name', () => {
+        const text = JSON.stringify({ data: [{ id: 7, name: 'Only JP', infobox: [{ key: '作者', value: { v: '某某' } }] }] });
+        const r = parseBangumiBookResults(text);
+        expect(r[0].title).toBe('Only JP');
+        expect(r[0].author).toBe('某某');
+    });
+
+    it('🔴 #444g 画师：infobox「作画」→ `artist`（与「作者」分开的两栏 —— 漫画里常是两个人）', () => {
+        const text = JSON.stringify({
+            data: [{ id: 9, name: 'X', infobox: [{ key: '作者', value: '原作君' }, { key: '作画', value: '作画君' }] }],
+        });
+        const r = parseBangumiBookResults(text);
+        expect(r[0].author).toBe('原作君');
+        expect(r[0].artist).toBe('作画君');
+    });
+
+    it('🔴 #445 总话数：infobox「话数」→ `pageCount`（带单位也能解析；缺失 → undefined）', () => {
+        const text = JSON.stringify({
+            data: [{ id: 9, name: 'X', infobox: [{ key: '话数', value: '全 139 话' }] }],
+        });
+        expect(parseBangumiBookResults(text)[0].pageCount).toBe(139);
+        const none = JSON.stringify({ data: [{ id: 9, name: 'X' }] });
+        expect(parseBangumiBookResults(none)[0].pageCount).toBeUndefined();
+    });
+
+    it('坏响应 / 空结果 → 空数组（⛔ 不抛：源失败要能静默降级）', () => {
+        expect(parseBangumiBookResults('{"data":[]}')).toEqual([]);
+        expect(parseBangumiBookResults('<html>502</html>')).toEqual([]);
+    });
+
+    it('缺 id 或缺标题的条目被丢弃（结果栏里认不出的条目不该出现）', () => {
+        expect(parseBangumiBookResults(JSON.stringify({ data: [{ name: 'no-id' }, { id: 9, name_cn: '' }] }))).toEqual([]);
     });
 });
 

@@ -6,7 +6,7 @@
 // batch1 镜像（T7）：头部三键 + auto-hide 外壳、侧栏 书签/摘抄 三 pane、选中动作条（书签/摘抄）、设置下拉、底部工具条；
 // 正文为 iframe：选中/滚动/鼠标事件发生在 frame 内文档（不冒泡到宿主），监听在 onFrameLoad 内挂到 contentDocument。
 import { Notice, requestUrl, setIcon, type Scope } from 'obsidian';
-import { estimatePercent } from 'pure/readingProgress';
+import { estimatePercent, readerRatio } from 'pure/readingProgress';
 import { chapterTextLength, epubTocCharCounts, xhtmlToText } from 'pure/epubParse';
 import { attachTocResizer, formatCharCount } from 'pure/readerToc';
 import { attachHeadDensity } from 'pure/readerHead';
@@ -451,6 +451,13 @@ export class EpubReaderPanel {
     private switchTimer: number | null = null;
     /** 程序化滚动/恢复期间禁止自动翻章与保存（避免恢复进度时误触发） */
     private restoring = false;
+    /**
+     * 🔴 #469 最近一次算得出的章内比例（0-1）—— 取值真源 `pure/readingProgress.readerRatio`。
+     * iframe 随标签页一起被隐藏时，内部 `scrollHeight` 与外层 `frameEl.clientHeight` 双双为 0，
+     * 那一刻**必须沿用本值**，⛔ 不能把「读到章中间」当成「章头」写进存档
+     * （用户 2026-10-01：「上次看到章中间具体段落，现在打开还是到章头」）。
+     */
+    private lastRatio = 0;
     /** 首次渲染标记：仅第一次渲染恢复进度比例，切章后回顶部 */
     private firstRender = true;
     /** 章节加载后待恢复的滚动比例（0-1） */
@@ -968,7 +975,7 @@ export class EpubReaderPanel {
         if (!svc.available()) {
             new Notice(
                 svc.engineKind === "cloud"
-                    ? "云合成不可用：请到 设置 → AI集成 › API凭据 · 硅基流动 填写 Key，或右键「朗读」切回系统语音"
+                    ? "云合成不可用：请到 设置 → AI集成 › 模型服务 · 硅基流动 填写 Key，或右键「朗读」切回系统语音"
                     : "当前环境不支持系统语音；可右键「朗读」切到云合成",
                 6000,
             );
@@ -980,7 +987,7 @@ export class EpubReaderPanel {
     /** 同步按钮亮起态与提示（朗读中 = 亮 + 「停止朗读」） */
     private syncTtsBtn(on: boolean): void {
         this.ttsBtnEl?.toggleClass("is-on", on);
-        this.ttsBtnEl?.setAttribute("data-tip", on ? "停止朗读" : "从当前段落开始朗读（右键可改语速 / 音色 / 音源）");
+        this.ttsBtnEl?.setAttribute("data-tip", on ? "停止朗读" : "从本段开始朗读");
     }
 
     /**
@@ -993,7 +1000,7 @@ export class EpubReaderPanel {
         if (!btn) return;
         const anyOk = !!this.ttsSvc?.available() || ttsSupported() || !!this.cloudKey();
         btn.disabled = !anyOk;
-        if (!anyOk) btn.setAttribute("data-tip", "当前环境不支持语音朗读（设置 → AI集成 › API凭据 · 硅基流动 可配置云合成）");
+        if (!anyOk) btn.setAttribute("data-tip", "当前环境不支持语音朗读");
     }
 
     /**
@@ -1087,7 +1094,7 @@ export class EpubReaderPanel {
                 // 试听从「每项一个 ▶」收成一个按钮：读**当前选中**那个（#343 的试听能力保留）
                 const tryBtn = box.createEl("button", { cls: "rl-reader-pop-try", attr: { type: "button", "aria-label": "试听" } });
                 setIcon(tryBtn, "play");
-                tryBtn.setAttribute("data-tip", "试听当前音色");
+                tryBtn.setAttribute("data-tip", "试听");
                 tryBtn.addEventListener("click", (e) => {
                     e.stopPropagation();
                     svc.previewVoice(sel.value);
@@ -1119,7 +1126,7 @@ export class EpubReaderPanel {
             if (!svc.setEngineKind(kind)) {
                 new Notice(
                     kind === "cloud"
-                        ? "云合成不可用：请先到 设置 → AI集成 › API凭据 · 硅基流动 填写 Key"
+                        ? "云合成不可用：请先到 设置 → AI集成 › 模型服务 · 硅基流动 填写 Key"
                         : "当前环境不支持系统语音",
                     5000,
                 );
@@ -1183,7 +1190,7 @@ export class EpubReaderPanel {
             max: AUTO_TURN_MAX_MS,
             step: AUTO_TURN_STEP_MS,
             value: this.autoTurnMs,
-            tip: "拖动调整自动翻页间隔（键盘 ←/→ 微调；翻页模式使用）",
+            tip: "拖动调整翻页间隔",
             label: autoTurnLabel,
             apply: (v) => {
                 this.autoTurnMs = clampAutoTurnMs(v);
@@ -1197,7 +1204,7 @@ export class EpubReaderPanel {
             max: AUTO_SCROLL_MAX,
             step: AUTO_SCROLL_STEP,
             value: this.autoScrollPx,
-            tip: "拖动调整自动滚动速度（键盘 ←/→ 微调；滚动模式使用）",
+            tip: "拖动调整滚动速度",
             // 🔴 速度文案按**当前字号**换算成「字/分」（#351 用户口径）；字号变了字/分跟着变，但 px/s 真源不动
             label: (v) => autoSpeedLabel(v, this.currentFontPx()),
             apply: (v) => {
@@ -1367,7 +1374,7 @@ export class EpubReaderPanel {
             this.hlColorBtns[co.id] = d;
         }
         // 垃圾桶：仅当选区命中已有高亮/摘抄时可删（用户 2026-09-16 选定「搬进浮层」）
-        const trash = p.createEl('button', { cls: 'rl-hl-trash hidden', attr: { type: 'button', 'data-tip': '删除该段摘抄/高亮' } });
+        const trash = p.createEl('button', { cls: 'rl-hl-trash hidden', attr: { type: 'button', 'data-tip': '删除这段' } });
         safeSetIcon(trash, 'trash-2');
         trash.addEventListener('mousedown', (ev) => ev.stopPropagation());
         trash.addEventListener('click', () => void this.trashSelection());
@@ -1560,13 +1567,35 @@ export class EpubReaderPanel {
 
     /** iframe 内滚动元素（连续模式纵向；翻页模式体宽度超 frame，用其测总宽）——复用滚动节区既有 frameScroller() */
 
-    /** 章内前进比例（0-1）：连续=iframe 纵向滚动比例；翻页=页index/总页−1 */
+    /**
+     * 🔴 #469 记录「已知位置」缓存（0-1 钳制）：`lastRatio` 的**非测量更新点** ——
+     * 人为定位（恢复 / 重排 / 跳转）之后目标位置就是已知位置；**切章必须归零**（新章从章头起）。
+     * ⛔ 别在别处直接赋值 `lastRatio`：口径散开就会漂（与 TXT 面板同一份口径）。
+     */
+    private markRatio(ratio: number): void {
+        this.lastRatio = Number.isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) : 0;
+    }
+
+    /**
+     * 章内前进比例（0-1）：连续=iframe 纵向滚动比例；翻页=页index/总页−1。
+     *
+     * 🔴 #469：取值下沉到 `pure/readingProgress.readerRatio` —— **不可测量 ≠ 章头**。
+     * iframe 随标签页被隐藏时（display:none / leaf detach）内部 sh 与外层 frameEl.clientHeight
+     * 双双为 0，旧实现 `return 0` 会把「读到章中间」静默抹成「章头」并落库（关闭阅读器的
+     * `flushSave` 正是取这里）。⚠️ 本方法**带缓存副作用**（测量成功即刷新 `lastRatio`），
+     * 是全类唯一的刷新点；⛔ 别改成纯读取（那样 `lastRatio` 永不推进）。
+     */
     private currentRatio(): number {
         if (this.isPaged()) return pageToRatio(this.pageIndex, this.totalPages);
         const scroller = this.frameScroller();
-        if (!scroller) return 0;
-        const max = scroller.scrollHeight - this.frameEl.clientHeight;
-        return max > 0 ? scroller.scrollTop / max : 0;
+        const r = readerRatio(
+            scroller
+                ? { scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, clientHeight: this.frameEl.clientHeight }
+                : null,
+            this.lastRatio,
+        );
+        this.markRatio(r);
+        return r;
     }
 
     /** 翻页模式：让 iframe 的滚动元素(html)成为 CSS 多列容器，整章内容按可视宽/高一屏一列横向排开，
@@ -1956,10 +1985,10 @@ export class EpubReaderPanel {
             return b;
         };
         this.fsBtnEl = mkFop('maximize', '全屏显示', () => this.toggleFullscreen());
-        this.immersiveBtnEl = mkFop('eye', '沉浸模式：隐藏上下边栏（鼠标移到顶部/底部可临时唤出）', () => this.setImmersive(!this.immersive));
-        this.autoBtnEl = mkFop('timer', '自动滚动 / 自动翻页（按当前模式；再点停止，右键调速）', () => this.setAuto(!this.autoOn));
+        this.immersiveBtnEl = mkFop('eye', '沉浸模式（移到边缘唤出）', () => this.setImmersive(!this.immersive));
+        this.autoBtnEl = mkFop('timer', '自动滚动 / 翻页（右键调速）', () => this.setAuto(!this.autoOn));
         this.autoBtnEl.addEventListener('contextmenu', (ev) => this.openAutoMenu(ev));
-        this.ttsBtnEl = mkFop('volume-2', '从当前段落开始朗读（右键可改语速 / 音色 / 音源）', () => this.toggleTts());
+        this.ttsBtnEl = mkFop('volume-2', '从本段开始朗读', () => this.toggleTts());
         this.ttsBtnEl.addEventListener('contextmenu', (ev) => this.openTtsMenu(ev));
         this.initTts();
         this.syncTtsAvailability();
@@ -2022,7 +2051,7 @@ export class EpubReaderPanel {
         const tabs = this.tocEl.createDiv({ cls: 'rl-reader-toc-tabs' });
         const tocTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab active', attr: { 'data-tip': '章节目录' } });
         safeSetIcon(tocTab, 'list-tree');
-        const exTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab', attr: { 'data-tip': '书签 / 高亮 / 摘抄' } });
+        const exTab = tabs.createEl('button', { cls: 'rl-reader-toc-tab', attr: { 'data-tip': '书签 · 高亮 · 摘抄' } });
         safeSetIcon(exTab, 'quote');
         const tocPane = this.tocEl.createDiv({ cls: 'rl-reader-toc-pane' });
         this.tocListEl = tocPane.createDiv({ cls: 'rl-reader-toc-list' });
@@ -2347,7 +2376,7 @@ export class EpubReaderPanel {
         const foot = card.createDiv({ cls: 'rl-excard-foot' });
         const cancel = foot.createEl('button', { cls: 'rl-excard-btn', attr: { type: 'button' }, text: '取消' });
         cancel.addEventListener('click', () => this.hideExcerptCard());
-        const save = foot.createEl('button', { cls: 'rl-excard-btn rl-excard-save', attr: { type: 'button', 'data-tip': '保存摘抄（Ctrl / ⌘ + Enter）' }, text: '保存摘抄' });
+        const save = foot.createEl('button', { cls: 'rl-excard-btn rl-excard-save', attr: { type: 'button', 'data-tip': '保存（Ctrl/⌘+Enter）' }, text: '保存摘抄' });
         save.addEventListener('click', () => void this.submitExcerptCard());
         this.excerptSaveBtn = save;
         this.excerptCard = card;
@@ -2899,7 +2928,7 @@ export class EpubReaderPanel {
         const foot = card.createDiv({ cls: 'rl-search-card-foot' });
         const copy = foot.createEl('button', {
             cls: 'rl-btn rl-reader-btn rl-search-card-copy',
-            attr: { type: 'button', 'data-tip': '复制 AI 答案' },
+            attr: { type: 'button', 'data-tip': '复制' },
             text: '复制',
         });
         copy.addEventListener('mousedown', (ev) => ev.stopPropagation());
@@ -3247,6 +3276,8 @@ export class EpubReaderPanel {
             const max = scroller.scrollHeight - this.frameEl.clientHeight;
             const target = this.pendingRatio > 0 ? Math.min(max, Math.max(0, this.pendingRatio * max)) : 0;
             if (max > 0 && this.pendingRatio > 0) scroller.scrollTop = target;
+            // #469：恢复目标即「已知位置」—— 之后即便元素立刻被隐藏，落库也是这个比例而不是 0
+            this.markRatio(this.pendingRatio);
             this.pendingRatio = 0;
             // 章尾着陆（navPrev 落上一章章尾 jumpRatio=1 / 保存进度=1）：scrollTop 赋值的程序化 scroll 事件异步派发，
             // 单帧内即清 restoring 会让迟到的触底任务以 restoring=false 运行 → handleFrameScroll 误判自动翻章翻回刚离开的章。
@@ -3387,6 +3418,8 @@ ${highlightMarkCss()}`;
         this.resetAnnotate(); // 切章复位标注模式，防残留
         this.flushSave();
         this.chapterIndex = i;
+        // #469：换了章 ⇒ 「已知位置」归零（新章从章头开始），否则上一次的章内比例会被当成本章的位置
+        this.markRatio(0);
         this.renderChapter();
     }
 
@@ -3704,6 +3737,10 @@ ${highlightMarkCss()}`;
             this.scheduleSave(pageToRatio(cp, this.totalPages));
             return;
         }
+        // 🔴 #469：iframe 随标签页被隐藏时内部 sh 与外层 frameEl.clientHeight **同为 0** ——
+        // 那不是「内容不足一屏」，⛔ 既不能当成「触底」去自动翻章，也不能把 0 当进度存下去
+        // （与 TXT 面板同一份口径，见 `pure/readingProgress.readerRatio`）
+        if (this.frameEl.clientHeight <= 0) return;
         const max = scroller.scrollHeight - this.frameEl.clientHeight;
         const ratio = max > 0 ? scroller.scrollTop / max : 0;
         // 触底或内容不足一屏（max<=0 短章节/版权页）→ 自动翻章：先保存当前章进度，再延后切章（不在滚动帧内重建 iframe）

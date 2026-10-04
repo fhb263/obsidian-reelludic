@@ -6,6 +6,11 @@ import { normalizeBookKind } from 'pure/bookKind';
 import { starString } from 'pure/rating';
 import { formatPlaytime } from 'pure/playtime';
 import { localDateOf } from 'pure/dailyLog';
+import { formatLrcSourceDirective } from 'pure/lrcSource';
+import { seriesIndexValue } from 'pure/seriesGroup';
+import { episodeHintLabel } from 'pure/episodeAssoc';
+import { entrySourceLabel } from 'pure/sourceMeta';
+import { NOTES_PLACEHOLDER } from 'pure/noteEditable';
 
 /** 剔除文件名字非法字符，空则回退「未命名」 */
 export function safeFilename(title: string): string {
@@ -57,6 +62,9 @@ export function entryFrontmatter(e: MediaEntry, libraryDir: string = 'ReelLudic'
     if (e.durationMin) lines.push(`duration_min: ${e.durationMin}`);
     if (e.aliases?.length) lines.push(`aliases: [${e.aliases.map(q).join(', ')}]`);
     if (e.author) lines.push(`author: ${q(e.author)}`);
+    // 🔴 #444g 画师（漫画）：与 `author` **分开的独立键** —— 漫画里「原作」与「作画」常是两个人，
+    //    挤进同一个 author 会丢一个（⛔ 别写成 `author: ${author} / ${artist}` 那种拼接，Dataview 查不出来）。
+    if (e.artist) lines.push(`artist: ${q(e.artist)}`);
     if (e.translator) lines.push(`translator: ${q(e.translator)}`);
     if (e.publisher) lines.push(`publisher: ${q(e.publisher)}`);
     if (e.producer) lines.push(`producer: ${q(e.producer)}`);
@@ -64,6 +72,10 @@ export function entryFrontmatter(e: MediaEntry, libraryDir: string = 'ReelLudic'
     if (e.binding) lines.push(`binding: ${q(e.binding)}`);
     if (e.price) lines.push(`price: ${q(e.price)}`);
     if (e.series) lines.push(`series: ${q(e.series)}`);
+    // 系列序号（#434；append-only；🔴 #443 起锁定整数 —— 写盘时经 `seriesIndexValue` 已取整）：只在两者都有值时写 ——
+    // 孤立序号不参与任何分组，写进 frontmatter 只会制造「有 series_index 却没有 series」的脏数据。⚠️ 与 `series` 一样**不按类型门控**
+    // （frontmatter 是机器读的，海报墙的系列分组对全部 6 类型生效）。
+    if (e.series && seriesIndexValue(e) !== undefined) lines.push(`series_index: ${seriesIndexValue(e)}`);
     if (e.platform) lines.push(`platform: ${q(e.platform)}`);
     if (e.type === 'music' && e.album) lines.push(`album: ${q(e.album)}`);
     if (e.developer) lines.push(`developer: ${q(e.developer)}`);
@@ -129,44 +141,53 @@ function creatorOf(e: MediaEntry): string | undefined {
     return e.director;
 }
 
-/** 数据源标识 → 中文名（笔记「来源」行） */
-const SOURCE_LABELS: Record<string, string> = {
-    douban: '豆瓣',
-    tmdb: 'TMDB',
-    google: 'Google Books',
-    openlibrary: 'Open Library',
-    bangumi: 'Bangumi',
-};
-
-/** 来源行链接：优先数据源官方页（搜索回填自动记录），回退手动添加的第一个观看链接 */
+/**
+ * 来源行链接：优先数据源官方页（搜索回填自动记录），回退手动添加的第一个观看链接。
+ *
+ * 🔴 #449：这里的 `SOURCE_LABELS` 手抄表**已删**，改走 `pure/sourceMeta.entrySourceLabel`（唯一真源）。
+ *    旧表的键是**老的**（`google` / `openlibrary`，真源是 `googleBooks` / `openLibrary`）且**漏了 `mangadex`**
+ *    ⇒ 那几种源在笔记里会原样吐出数据源键（`googleBooks` / `mangadex`）。#430 立的规矩就是三处消费共用一份。
+ */
 function sourceLinkText(e: MediaEntry): string {
     if (e.sourceUrl) {
-        const label = SOURCE_LABELS[e.source ?? ''] ?? e.source ?? '来源';
+        const label = entrySourceLabel(e) || '来源';
         return `[${label}](${e.sourceUrl})`;
     }
     if (e.links.length > 0) return `[${e.links[0].label}](${e.links[0].url})`;
     return '';
 }
 
-/** 生成详情笔记 Markdown 全文（bookinfo callout + 属性表格 + 评语 + 链接）
- *  - `opts.table === false`（设置页「笔记表格」关）→ **不渲染属性表格**，其余章节照旧。
+
+/** 生成详情笔记 Markdown 全文（顶部块 + 属性表格 + 评语 + 链接）
+ *  - `opts.table === false`（设置页「笔记表格」关）→ **属性表格 + 顶部块（标题 / 封面嵌入）都不写**，
+ *    正文直接从第一个内容小节开始；标题与封面只在 **YAML 属性**（含 `banner`）里保留。
  *    影响面：`pure/noteEditable` 的「来源」行解析拿不到值 → 编辑回填回退 catalog 既有值（不丢数据，
- *    但笔记里看不到来源链接）；`banner` 等 frontmatter 字段不受影响。 */
+ *    但笔记里看不到来源链接）。 */
 export function generateNoteMarkdown(
     e: MediaEntry,
     libraryDir: string = 'ReelLudic',
     opts: { table?: boolean } = {},
 ): string {
     const s: string[] = [];
-    // 顶部 bookinfo callout：书名 + 封面（默认展开）。封面用 posterEmbed：豆瓣 URL → HTML img（防盗链），
-    // 其余 → markdown 图片；本地路径 → wikilink
-    s.push(`> [!bookinfo]+ ${e.type === 'music' ? `**《 ${e.title} 》**` : `**《${e.title}》**`}`);
+    const withTable = opts.table !== false;
+    // 顶部标题行（音乐书名号内带空格是历史形态，勿改）
+    const headTitle = e.type === 'music' ? `**《 ${e.title} 》**` : `**《${e.title}》**`;
+    // 封面嵌入走 posterEmbed：豆瓣 URL → HTML img（防盗链），其余 → markdown 图片；本地路径 → wikilink
     const embed = posterEmbed(e, libraryDir);
-    if (embed) {
+    // 顶部块随「笔记表格」开关二态：
+    //   表格开 → bookinfo callout（标题 + 封面，默认展开）；
+    //   🔴 表格关 → **正文一个字都不写**（标题与封面嵌入都不写）。
+    //    2026-09-28 #404 用户原话：「默认关闭笔记表格项笔记内开头不写入《标题>图片嵌入，只在Yaml属性写入」
+    //    ⇒ 推翻 2026-09-27 ③ 的「降级为普通标题 + 普通图片嵌入（都保留、只去外壳）」——那两样正是用户
+    //      现在要去掉的。标题在 frontmatter 的 `title`、封面在 `banner`（见 `entryFrontmatter`），信息不丢。
+    if (withTable) {
+        s.push(`> [!bookinfo]+ ${headTitle}`);
+        if (embed) {
+            s.push('>');
+            s.push(`> ${embed}`);
+        }
         s.push('>');
-        s.push(`> ${embed}`);
     }
-    s.push('>');
 
     // 属性表格：固定行 类型/作者/年份/来源/评分 + 有值附加行（保留豆瓣适配的完整字段）
     // 音乐四行（作者/发行年/来源/评分），不参与影视/书籍附加行
@@ -190,19 +211,23 @@ export function generateNoteMarkdown(
             ['个人评分', `${starString(e.rating)}（${e.rating}/5）`],
         ];
     if (e.type === 'book') {
+        // 🔴 #444g 漫画：**画师单列一行**（与「作者」行分开 —— 作者 = 原作 / 编剧，画师 = 作画）
+        if (e.artist) rows.push(['画师', e.artist]);
         if (!novel) {
             if (e.translator) rows.push(['译者', e.translator]);
             if (e.publisher) rows.push(['出版社', e.publisher]);
             if (e.producer) rows.push(['出品方', e.producer]);
             if (e.isbn) rows.push(['ISBN', e.isbn]);
         }
-        // 页数 = 元数据（豆瓣实体书）优先，旧数据回退进度基准 totalPage；网文同字段按「章数」呈现
+        // 页数 = 元数据（豆瓣实体书）优先，旧数据回退进度基准 totalPage；同一字段按子分类换名呈现：
+        //   文学 → 页数 ｜ 网文 → 章数 ｜ 漫画 → 话数（🔴 #445 加回「总话数」框后，漫画这条才有落库值）
+        const bookKind = normalizeBookKind(e.bookKind);
+        const pagesLabel = bookKind === 'comic' ? '话数' : (novel ? '章数' : '页数');
         const bookPages = e.pageCount ?? e.readingProgress?.totalPage;
-        if (bookPages) rows.push([novel ? '章数' : '页数', String(bookPages)]);
+        if (bookPages) rows.push([pagesLabel, String(bookPages)]);
         if (!novel) {
             if (e.binding) rows.push(['装帧', e.binding]);
             if (e.price) rows.push(['定价', e.price]);
-            if (e.series) rows.push(['丛书', e.series]);
         }
     } else if (e.type === 'game') {
         if (e.platform) rows.push(['平台', e.platform]);
@@ -220,9 +245,25 @@ export function generateNoteMarkdown(
             rows.push(['进度', p.totalEpisodes ? `S${p.season}E${p.episode}/${p.totalEpisodes}` : `S${p.season}E${p.episode}`]);
         }
     }
+    // ── 系列 / 系列序号（#434 建立 · #435 二轮修正）────────────────────────────
+    // 🔴 **所有类型都必须能在属性表里看到它，而且序号要并进同一行**。
+    //   用户原话：「条目里填写了系列名称和系列序号也**根本更新不了笔记条目**」——
+    //   全链（表单 → catalog → 生成 → 写盘）本来是通的，**断在属性表这两处覆盖缺口上**：
+    //   ① 🔴 **网文一行都没有** —— 原实现把系列整条按 2026-09-13 裁定归为「出版侧字段」（对网文不渲染），
+    //      而 `series` 自 #434 起**已不是「丛书」那个出版侧概念**：它是**通用系列**（海报墙靠它成组，
+    //      「斗罗大陆」「龙族」这类网文恰恰最需要）⇒ 网文补一行**「系列」**（⛔ 不改「丛书」那条裁定本身）。
+    //   ② 🔴 **书籍的序号丢了** —— 原书籍侧裸写 `e.series`，用户填的「系列序号」在笔记里根本看不见。
+    // ⚠️ 标签保留既有的不对称：**文学走「丛书」、其余（含网文）走「系列」**（#434 已记这是已知不对称）；
+    //   本批只补**覆盖 + 序号**，⛔ 不动已定稿的「丛书」文案。
+    // ⚠️ 序号 `undefined` ⇒ 只有名字（⛔ 不写「· 第 undefined 部」）；小数照原样（`第 1.5 部`）。
+    if (e.series) {
+        const idx = seriesIndexValue(e);
+        const seriesText = idx === undefined ? e.series : `${e.series} · 第 ${idx} 部`;
+        // ⛔ 只在这里出这一行，别在 book 分支里再补一次（两处各写一套必然漂移）
+        rows.push([e.type === 'book' && !novel ? '丛书' : '系列', seriesText]);
+    }
     // 属性表格（设置页「笔记表格」开关可整块关掉；关掉时 rows 仍照算——上面的字段收集与下面表格
     // 输出同源，避免开关另开一条分支）
-    const withTable = opts.table !== false;
     if (withTable) {
         s.push('| 属性 | 内容 |');
         s.push('|:-----|:-----|');
@@ -234,6 +275,24 @@ export function generateNoteMarkdown(
             for (const [k, v] of rows) s.push(`| ${k} | ${v} |`);
         }
         s.push('');
+    }
+
+    // 🔴 #404：音乐条目的**歌词小节移到笔记开头**（紧跟头部块 / 属性表格；关表时它就是正文第一行）——
+    //    用户：「把笔记内lrc歌词代码块放在笔记开头## 歌词，下」。
+    //    ⇒ 新增 `## 歌词` 小节标题，代码块挂在它下面（原先是一段**没有标题**的裸围栏、位置在「个人评语」之后）。
+    //    ⚠️ 位置变化不影响歌词搬运：`withLrcLyrics` / `lrcBlockLyrics` 按**第一个 lrc 围栏**定位，与位置无关。
+    //    🔴 `source` 行的形态（库内相对 ⇒ `[[…]]`、库外绝对 ⇒ 裸写）仍由 `pure/lrcSource.formatLrcSourceDirective`
+    //       单一真源决定 —— 播放器侧用 `parseLrcRef` 反解（`tests/lrcSource.test.ts` 往返用例钉住两端）。
+    if (e.type === 'music' && e.audioPath) {
+        const srcLine = formatLrcSourceDirective(e.audioPath);
+        if (srcLine) {
+            s.push('## 歌词');
+            s.push('');
+            s.push('```lrc');
+            s.push(srcLine);
+            s.push('```');
+            s.push('');
+        }
     }
 
     // 简介（作品客观描述，搜索回填自动记录；与「个人评语」主观感想区分开；图书用「内容简介」标题）
@@ -251,8 +310,11 @@ export function generateNoteMarkdown(
         s.push(e.authorIntro.trim());
         s.push('');
     }
-    // 目录：仅文学（网文无出版目录——1.0.3 表单已删该框，存量 toc 也不再渲染，用户 2026-09-13 裁定）
-    if (e.type === 'book' && !novel && e.toc?.trim()) {
+    // 目录：**文学与网文都渲染**（🔴 #431 翻面 —— 2026-09-13 的「网文无出版目录」针对的是那份 2000+ 章的
+    // 出版目录；用户 2026-09-29 裁定「toc 回填只显示前 10 章加个 `....`」之后，网文写回来的也只有 10 行预览）。
+    // ⚠️ 这里**不再按 `novel` 分叉**，⛔ 别只去掉一半（表单渲染、笔记不渲染 ⇒ 用户看得见条目里有目录、
+    //    笔记里却没有，会以为同步坏了）。
+    if (e.type === 'book' && e.toc?.trim()) {
         s.push('## 目录');
         s.push('');
         s.push(e.toc.trim());
@@ -277,21 +339,13 @@ export function generateNoteMarkdown(
 
     s.push(e.type === 'music' ? '# 个人评语' : '## 个人评语');
     s.push('');
-    // 表单提交的评语（e.notes）写入笔记正文；为空时保留占位符提示
-    s.push(e.notes.trim() ? e.notes : '（在这里写下你的感想，支持 [[双链]]）');
+    // 表单提交的评语（e.notes）写入笔记正文；为空时写占位行
+    // 🔴 #453：占位文本取 `noteEditable.NOTES_PLACEHOLDER` **唯一真源**（原先这里内联了一份，
+    //   改文案就得两处同步 —— 正是「两处真源必然漂移」的老坑）；该常量已去掉「，支持 [[双链]]」。
+    s.push(e.notes.trim() ? e.notes : NOTES_PLACEHOLDER);
     s.push('');
 
-    // 音乐 lrc 块（LyricFlux 播放器，置于简介/评语之后）：有 audioPath 才生成——
-    // vault 相对路径用 wiki 链接，库外绝对路径原样
-    if (e.type === 'music' && e.audioPath) {
-        const srcLine = /^[A-Za-z]:[\\/]|^\/\//.test(e.audioPath) || e.audioPath.startsWith('/')
-            ? `source ${e.audioPath}`
-            : `source [[${e.audioPath}]]`;
-        s.push('```lrc');
-        s.push(srcLine);
-        s.push('```');
-        s.push('');
-    }
+    // 音乐 lrc 块已上移到笔记开头（#404，见上方「## 歌词」小节）—— ⛔ 别在这里再写一份。
     // 游戏游玩记录（catalog 明细的展示副本，日期倒序；由模板生成，重写笔记时随模板更新）
     if (e.type === 'game' && e.playSessions?.length) {
         s.push('## 游玩记录');
@@ -305,7 +359,12 @@ export function generateNoteMarkdown(
     // 音乐无观看/相关链接章节（本地音频已在 lrc 块声明，网络地址随条目保存但不在笔记渲染）
     if (e.type !== 'music') {
         s.push(`## ${e.type === 'book' || e.type === 'game' ? '相关链接' : '观看链接'}`);
-        if (e.links.length) {
+        // 🔴 #448：影视的**逐集网络链接**也要落进来（形如 `- [第 1 集 新邻居](https://…)`）。
+        // 以前这里只读 `e.links`，而影视的链接已迁到 `episodeUrls`（提交时 `links` 清空）⇒ 集链接在笔记里
+        // **一条都看不到**（打开笔记只有「（暂无链接）」），用户报障原话：「集网络链接怎么不写回笔记内」。
+        const epLines = episodeWatchLines(e);
+        if (epLines.length || e.links.length) {
+            for (const line of epLines) s.push(line);
             e.links.forEach((l) => s.push(`- [${l.label}](${l.url})`));
         } else {
             s.push('（暂无链接）');
@@ -313,6 +372,44 @@ export function generateNoteMarkdown(
         s.push('');
     }
     return s.join('\n');
+}
+
+/** Markdown 链接**文本**转义：标题里的 `[` / `]` 会提前闭合链接（如集标题「第 5 集 [前篇]」） */
+function escapeLinkText(s: string): string {
+    return s.replace(/[[\]]/g, '\\$&');
+}
+/** Markdown 链接**地址**：含空白 / 括号时用 CommonMark 的尖括号形式包裹，否则链接会被拆断 */
+function escapeLinkUrl(u: string): string {
+    return /[\s()<>]/.test(u) ? `<${u.replace(/>/g, '%3E')}>` : u;
+}
+
+/**
+ * 影视条目「观看链接」章节里的**逐集条目**（#448 用户：「怎么我在编辑条目保存集网络链接怎么不写回笔记内，
+ * 比如 [第1集 新邻居](网络链接) 格式到 ## 观看链接 下呢」）。
+ *
+ * 口径：
+ *  - **只写集网络链接**（`episodeUrls`）—— 本地路径不进笔记：绝对路径又长又不可点，104 集足以把笔记灌满；
+ *  - 标签走 `pure/episodeAssoc.episodeHintLabel`（剧集/动画 = 「第 N 集 集标题」，未填标题只「第 N 集」；
+ *    电影 = 集标题，缺标题回退片名 —— 电影文案**不出「第 N 集」**，见 UI-GUIDE §3；多资源电影用「文件 N」措辞）；
+ *  - 只输出**有网址**的集：集数组是**保位**的（index i = 第 i+1 集，空位留洞），空位跳过、下标照旧。
+ *
+ * ⚠️ 与「集数选择 / 集按钮悬停」同一份文案真源 ⇒ ⛔ 别在这里另写一套拼接。
+ */
+export function episodeWatchLines(e: MediaEntry): string[] {
+    const t = e.type;
+    if (t !== 'movie' && t !== 'tv' && t !== 'anime') return [];
+    const urls = e.episodeUrls ?? [];
+    const single = t === 'movie';
+    const urlCount = urls.filter((u) => typeof u === 'string' && u.trim()).length;
+    const out: string[] = [];
+    for (let i = 0; i < urls.length; i++) {
+        const raw = urls[i];
+        const url = typeof raw === 'string' ? raw.trim() : '';
+        if (!url) continue;
+        const label = episodeHintLabel(i, e.episodeTitles?.[i], single) || (single && urlCount > 1 ? `文件 ${i + 1}` : e.title);
+        out.push(`- [${escapeLinkText(label)}](${escapeLinkUrl(url)})`);
+    }
+    return out;
 }
 
 /** 条目笔记在 vault 内的路径：按类型分子目录（笔记/movie/、笔记/teleplay/…，英文目录名），各类型互不混杂；

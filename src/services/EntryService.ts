@@ -16,6 +16,7 @@ import {
 } from 'pure/excerpt';
 import { parseNoteMarks, type VideoMark } from 'pure/videoMarks';
 import { HIGHLIGHT_SECTION, renderHighlightMirror, type ReaderHighlight } from 'pure/highlight';
+import { lrcBlockLyrics, withLrcLyrics } from 'pure/lrcSource';
 import { DIR_NOTES } from 'pure/dirs';
 
 function notFound(id: string): Error {
@@ -207,7 +208,10 @@ export class EntryService {
      *  （防覆写清空用户标注）。⚠️ 只搬「摘抄」会把「## 高亮」整区吞掉 —— 2026-09-18 实测：重写后
      *  高亮块全丢，正文里还显示着却删不掉、双向溯源断链；两区按旧笔记里的先后顺序搬回。
      *  （2026-09-18 存储重构后「## 高亮」是 JSON 单向生成的只读镜像，**仍然必须搬回** ——
-     *   吞掉它 = 用户在 Obsidian 里看到的高亮整片消失，直到下一次高亮变更才重新生成。） */
+     *   吞掉它 = 用户在 Obsidian 里看到的高亮整片消失，直到下一次高亮变更才重新生成。）
+     *  🔴 2026-09-27 增第三处：**` ```lrc ` 块内的歌词正文**（非指令行）。模板只按 `audioPath` 写出
+     *  `source` 指令行 ⇒ 不搬回就等于「用户填过 / 在线获取的歌词，保存一次全没了」（静默丢数据）。
+     *  指令行仍由模板决定（`formatLrcSourceDirective`），歌词正文归用户 —— 两者分工不能混。 */
     async writeNote(id: string): Promise<string> {
         const e = await this.get(id);
         if (!e) throw notFound(id);
@@ -222,6 +226,8 @@ export class EntryService {
                 for (const sec of extractAnnotationSections(old)) {
                     final = mergeExcerptSection(final, sec.body, sec.section);
                 }
+                // 歌词正文：整段搬回（`withLrcLyrics` 自己处理「无块 / 无歌词 / 无变化」三种情况）
+                final = withLrcLyrics(final, lrcBlockLyrics(old));
             } catch {
                 // 旧笔记不存在/不可读：跳过合并（首次写入或文件被外部移除）
             }
@@ -288,6 +294,58 @@ export class EntryService {
         const count = countExcerpts(final);
         await this.writeNoteRaw(id, notePath, final, { excerptCount: count });
         return { count };
+    }
+
+    /**
+     * 读条目笔记**正文**（④-4 音频播放器取歌词用）。
+     * **无笔记 / 读不到 → `null`**（不是错误：还没写过笔记的条目就是没有笔记）。
+     * 🔴 笔记只经 `EntryService` 读写（`io.readText` 走红线 11 的二进制 + 编码嗅探）⇒
+     *    消费方（播放器）⛔ 不要自己去 `vault.read`，否则「笔记被外部修改」的指纹判断会被绕过。
+     */
+    async readNoteText(id: string): Promise<string | null> {
+        const e = await this.get(id);
+        if (!e?.notePath) return null;
+        try {
+            return await this.io.readText(e.notePath);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * 读条目笔记 ` ```lrc ` 块里的**歌词正文**（#396：条目表单的 LRC 框用它回填）。
+     * **无笔记 / 无块 / 只有指令行 → `''`**（不是错误：没歌词就是没歌词，框里就该是空的）。
+     * 🔴 与播放器侧的读取**同源**：都走 `pure/lrcSource.lrcBlockLyrics` ⇒ 表单里看到的就是播放器唱的那份。
+     */
+    async readNoteLrc(id: string): Promise<string> {
+        return lrcBlockLyrics((await this.readNoteText(id)) ?? '');
+    }
+
+    /**
+     * 写条目笔记 ` ```lrc ` 块的歌词正文（#396）。返回**是否真的写了盘**。
+     *
+     * 🔴 必须经 `writeNoteRaw`（笔记 + 指纹的唯一出口）：否则下次编辑条目会被
+     *    `noteWasExternallyModified()` 判成「笔记被外部修改」，用户又要面对一次冲突弹窗。
+     * 🔴 语义是**整段替换**：传空串就是清空歌词（这是「清了框还能生效」的实现，
+     *    与 `writeNote` 的保留区配合才有意义 —— 保留区搬回的是**旧**歌词，本方法负责把它换成新的）。
+     * 无笔记 → `false`（不凭空造笔记：歌词是笔记里的一段，没有笔记就没有可写的块）。
+     * 内容无变化 → `false` 且**不写盘**（逐字比对，避免每次保存都白写一遍并刷指纹）。
+     */
+    async setNoteLrc(id: string, lyrics: string): Promise<boolean> {
+        const e = await this.get(id);
+        if (!e?.notePath) return false;
+        let old: string;
+        try {
+            old = await this.io.readText(e.notePath);
+        } catch {
+            return false;
+        }
+        const text = String(lyrics ?? '').trim();
+        if (lrcBlockLyrics(old) === text) return false;
+        const final = withLrcLyrics(old, text);
+        if (final === old) return false;
+        await this.writeNoteRaw(id, e.notePath, final);
+        return true;
     }
 
     /**

@@ -11,3 +11,10 @@ main.js
 
 # brainstorm visual companion session artifacts
 .superpowers/
+
+# 本地临时脚手架（断言/构建日志、中间转储、探针、突变器、仿真页产物、临时音频）
+# —— 一律以 `_` 打头、全不入库；自检：`git ls-files | grep '^_'` 恒为 0 才是对的
+_*
+
+# 旧依赖备份目录（node_modules 换版本时留下的快照）
+node_modules.bak-*/

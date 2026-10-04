@@ -22,7 +22,7 @@
         yearOverYear,
         type OverviewCategory,
     } from 'pure/statOverview';
-    import { FEED_RANGE_WORDS, collectFeed, feedSpan, formatFeedTime, groupFeed, type FeedRange } from 'pure/activityFeed';
+    import { FEED_KIND_LABELS, FEED_RANGE_WORDS, collectFeed, feedSpan, formatFeedTime, groupFeed, type FeedKind, type FeedRange } from 'pure/activityFeed';
     import Icon from './Icon.svelte';
 
     export let entries: MediaEntry[] = [];
@@ -122,16 +122,11 @@
     $: rangeWord = FEED_RANGE_WORDS[feedRange];
     /** 周/月/年为「周期汇总」视图（周按日 / 月按周 / 年按月分块，块内归并成行）；日视图保留逐条时间轴 */
     $: feedGroups = feedRange === 'day' ? [] : groupFeed(feed, feedRange);
-    $: feedSummary = ([
-        ['status', '状态变更'],
-        ['created', '新增'],
-        ['track', '追更'],
-        ['plan', '计划'],
-        ['watch', '完成'],
-        ['play', '游玩'],
-    ] as const)
-        .filter(([k]) => feedCounts[k])
-        .map(([k, label]) => `${label} ${feedCounts[k]}`)
+    // 🔴 #449：类目文案**唯一真源 = `pure/activityFeed.FEED_KIND_LABELS`**（行标签用的是同一张表）——
+    // 这里以前内联一份 `['watch','完成']`… 双份必然漂（同一条动态汇总叫「完成」、行里叫「已看」= 用户看到的两个「已看」）。
+    $: feedSummary = (Object.keys(FEED_KIND_LABELS) as FeedKind[])
+        .filter((k) => feedCounts[k])
+        .map((k) => `${FEED_KIND_LABELS[k]} ${feedCounts[k]}`)
         .join(' · ');
     const todayStr = `${yearStr}-${monthPrefix.slice(5)}-${pad(now.getDate())}`;
     function fmtDate(d: string): string {
@@ -282,7 +277,7 @@
                         <button class="rl-feed-tab" class:on={feedRange === r.value} on:click={() => (feedRange = r.value)}>{r.label}</button>
                     {/each}
                 </span>
-                <button class="rl-btn rl-today-rec" disabled={recording || feed.length === 0} data-tip={feed.length === 0 ? `${rangeWord}还没有观影/阅读动态` : `把${rangeWord}的动态写成打卡区块，写入当天日记（重复点击只更新该区块）`} on:click={() => void recordCurrent()}>
+                <button class="rl-btn rl-today-rec" disabled={recording || feed.length === 0} data-tip={feed.length === 0 ? `${rangeWord}还没有观影/阅读动态` : `写进当天日记（重复点击只更新该块）`} on:click={() => void recordCurrent()}>
                     {recording ? '记录中…' : `记录${rangeWord}`}
                 </button>
             </span>

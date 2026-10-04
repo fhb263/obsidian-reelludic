@@ -1,16 +1,24 @@
 // 添加/编辑条目弹窗（Douban/TMDB/Bangumi 搜索回填 + 手动覆盖）
-import { App, Modal, Notice, TFile, normalizePath } from 'obsidian';
+import { App, Modal, Notice, Platform, TFile, normalizePath } from 'obsidian';
 import EntryForm from 'views/components/EntryForm.svelte';
 import type ReelLudicPlugin from '../../main';
 import type { TmdbSearchResult } from 'services/tmdb';
 import type { EntryType, MediaEntry } from 'data/types';
 import { SOURCE_VIEW } from 'pure/searchDisplay';
 import { extractEditableFromNote, extractFrontmatterFromNote } from 'pure/noteEditable';
+import { lrcBlockLyrics } from 'pure/lrcSource';
 import { orphanedDownloadedPosters } from 'pure/posterFile';
 import { NoteConflictModal } from 'modals/NoteConflictModal';
+import { PosterSearchModal } from 'modals/PosterSearchModal';
+import type { PosterCandidate } from 'pure/posterSearch';
+import type { PosterSource } from 'pure/posterSources';
 import type { SearchProgressCb } from 'pure/searchProgress';
 import type { BookKind } from 'data/types';
 import type { AiSummaryInput } from 'pure/aiSummary';
+import type { AiPrefillInput } from 'pure/aiPrefill';
+import type { LyricSourceId } from 'pure/lyricOnline';
+import type { SourceKind } from 'pure/sourceRule';
+import { BOOK_DOWNLOAD_ENABLED } from 'pure/featureGate';
 
 export class EntryModal extends Modal {
     private form: EntryForm | null = null;
@@ -57,11 +65,14 @@ export class EntryModal extends Modal {
         // 「个人评语/观看·相关链接/简介/作者简介/目录」与顶部 frontmatter（评分/状态/年份/进度等）——
         // 打开表单时读笔记覆盖 catalog 值，避免内容"消失"（全类型通用）
         let effective = this.entry;
+        /** 打开音乐条目时从笔记 ` ```lrc ` 块读回的歌词正文（#396；表单 LRC 框初值） */
+        let initialLrc = '';
         if (this.entry?.notePath) {
             try {
                 const f = this.app.vault.getAbstractFileByPath(this.entry.notePath);
                 if (f instanceof TFile) {
                     const text = await this.app.vault.read(f);
+                    initialLrc = lrcBlockLyrics(text);
                     const ext = extractEditableFromNote(text);
                     const fm = extractFrontmatterFromNote(text);
                     if (ext.notes !== undefined || ext.links || ext.summary !== undefined || ext.authorIntro !== undefined || ext.toc !== undefined || ext.aiSummary !== undefined || ext.aiHighlights !== undefined || ext.sourceUrl !== undefined || Object.keys(fm).length > 0) {
@@ -106,8 +117,9 @@ export class EntryModal extends Modal {
                 canSearchGame: true, // 游戏仅 Douban 源，始终可搜
                 /** 结果栏数变化 → 动态宽度（仅三栏加宽） */
                 onResultCols: (cols: number) => this.applyResultCols(cols),
-                /** 该类型本次搜索实际会发起的源集合（固定占栏用） */
-                onSourcesForType: (type: EntryType) => this.plugin.sourcesForType(type),
+                /** 该类型本次搜索实际会发起的源集合（固定占栏用）—— 🔴 2026-09-30 起带 `kind`：
+                 *  漫画独立成组后，书籍态必须按子分类问（否则漫画态会多报一个源、栏位数跟着错）。 */
+                onSourcesForType: (type: EntryType, kind?: BookKind) => this.plugin.sourcesForType(type, kind),
                 onSearch: (q: string, t: 'movie' | 'tv', onProgress?: SearchProgressCb) => this.plugin.searchWithFallback(q, t, onProgress),
                 onSearchBook: (q: string, kind?: BookKind, onProgress?: SearchProgressCb) => this.plugin.searchBook(q, kind, onProgress),
                 onSearchGame: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchGame(q, onProgress),
@@ -122,12 +134,18 @@ export class EntryModal extends Modal {
                 onFetchOpenLibraryDetail: (key: string) => this.plugin.fetchOpenLibraryDetailForEntry(key),
                 // OMDb（IMDb）影视选中结果按需补全（i= 详情 → Plot/导演/演员/评分；失败 null 静默）
                 onFetchOmdbDetail: (imdbID: string) => this.plugin.fetchOmdbDetailForEntry(imdbID),
-                onSubmit: async (input: Record<string, unknown>) => {
+                onSubmit: async (raw: Record<string, unknown>) => {
                     // 数据保存成功才关弹窗；笔记生成失败不阻断（条目已落库，仍刷新视图）
+                    // 🔴 `lrc`（LRC 歌词正文）**不是 catalog 字段**：它住在笔记的 ` ```lrc ` 块里，
+                    //    必须从落库字段里剥掉，稍后经 `service.setNoteLrc` 单独写回笔记（#396）。
+                    const { lrc, ...input } = raw;
+                    let targetId = '';
+                    let noteWritten = false;
                     let saved = false;
                     try {
                         if (this.entry) {
                             const updated = await this.plugin.service.update(this.entry.id, input);
+                            targetId = updated.id;
                             // 封面本地化开关开启且封面是 URL → 下载到 covers/ 并更新引用（失败静默，不影响保存）
                             if (this.plugin.settings.localizePosters && updated.poster && /^https?:\/\//.test(updated.poster)) {
                                 await this.plugin.localizeEntryPoster(updated.id);
@@ -140,10 +158,15 @@ export class EntryModal extends Modal {
                                     //    （用户 2026-09-21 报「总会有外部修改提示」的真因之一）：
                                     //    「覆盖」= writeNote 用库数据重写（自带刷指纹）；
                                     //    「保留」= 认可当前笔记为新基线（旧实现这里什么也没做 ⇒ 永远问不完）。
-                                    if (choice === 'overwrite') await this.plugin.service.writeNote(updated.id);
-                                    else await this.plugin.service.adoptNoteAsBaseline(updated.id);
+                                    if (choice === 'overwrite') {
+                                        await this.plugin.service.writeNote(updated.id);
+                                        noteWritten = true;
+                                    } else {
+                                        await this.plugin.service.adoptNoteAsBaseline(updated.id);
+                                    }
                                 } else {
                                     await this.plugin.service.writeNote(updated.id);
+                                    noteWritten = true;
                                 }
                                 new Notice(`已更新：${updated.title}`);
                             } catch (e) {
@@ -151,15 +174,23 @@ export class EntryModal extends Modal {
                             }
                         } else {
                             const entry = await this.plugin.service.create(input);
+                            targetId = entry.id;
                             if (this.plugin.settings.localizePosters && entry.poster && /^https?:\/\//.test(entry.poster)) {
                                 await this.plugin.localizeEntryPoster(entry.id);
                             }
                             try {
                                 await this.plugin.service.writeNote(entry.id);
+                                noteWritten = true;
                                 new Notice(`已添加：${entry.title}`);
                             } catch (e) {
                                 new Notice(`已添加，但笔记生成失败：${e instanceof Error ? e.message : String(e)}`);
                             }
+                        }
+                        // LRC 歌词写回笔记（#396）：只在**本次真的写过笔记**时写 ——
+                        // 冲突弹窗选「保留笔记文件」= 用户要求保留笔记现状，此时连歌词框一起尊重（⛔ 别覆盖）。
+                        // `setNoteLrc` 自带「内容无变化不写盘 / 不刷无谓指纹」，所以未改歌词时空跑一次没有代价。
+                        if (noteWritten && targetId && lrc !== undefined) {
+                            await this.plugin.service.setNoteLrc(targetId, String(lrc));
                         }
                         // 保存成功：记录实际引用的封面（onClose 清理时保留它，只删本次会话的其他下载）
                         this.saved = true;
@@ -190,11 +221,17 @@ export class EntryModal extends Modal {
                 onPickLocalVideo: () => this.plugin.pickLocalVideoPath(),
                 /** 编辑表单「本地音频」：系统文件选择器选音频，返回 vault 相对路径（库外绝对路径） */
                 onPickLocalAudio: () => this.plugin.pickLocalAudioPath(),
+                /** #462 编辑表单「播放」按钮的悬停提示：探关联音频的**体积 + 时长**（拿不到的那项不显示） */
+                onProbeAudioInfo: (path: string) => this.plugin.probeAudioInfo(path),
                 /** 编辑表单「总结摘要」小标题右侧 ✨：AI 生成一句话总结 + 核心看点（复用阅读器翻译的服务商与 Key；失败返回 null 且已提示） */
                 onAiSummarize: (input: AiSummaryInput) => this.plugin.aiSummarizeEntry(input),
+                /** #499 新增条目标题行 ✨：AI 预填客观字段（返回字段表 + 工具来源；失败返回 null 且已提示）。⚠️ 只表字段，不落库 —— 预览确认后由表单回填
+                 *  #499D 第二参 `onStep`：agent 工具回路里每次调工具的进度回执（宿主执行工具，表单只显示） */
+                onAiPrefill: (input: AiPrefillInput, onStep?: (label: string) => void) =>
+                    this.plugin.aiPrefillEntry(input, onStep),
                 /** 编辑表单游戏「启动快捷方式」：系统文件选择器选 .lnk，返回 vault 相对路径（库外绝对路径） */
                 onPickGameLaunch: () => this.plugin.pickGameLaunchPath(),
-                /** 编辑表单书籍「浏览…」：系统文件选择器选 TXT/EPUB，返回 vault 相对路径 */
+                /** 编辑表单书籍「浏览」：系统文件选择器选 TXT/EPUB，返回 vault 相对路径 */
                 onPickBookFile: () => this.plugin.pickBookFilePath(),
                 onPickVideoDir: () => this.plugin.pickVideoDirPath(),
                 onScanEpisodeDir: (dir: string) => this.plugin.scanEpisodeDir(dir),
@@ -212,6 +249,136 @@ export class EntryModal extends Modal {
                     if (this.entry) void this.plugin.playAudioEntry(this.entry);
                     else new Notice('保存后可播放音频', 3000);
                 },
+                /** 编辑表单 LRC 框初值：从笔记 ` ```lrc ` 块读回（#396；真源 `pure/lrcSource`，与播放器同一份口径） */
+                initialLrc,
+                /** 编辑表单「获取歌词」：在线检索四个源（桌面端；移动端宿主返回空档） */
+                onSearchLyrics: (t: string, a: string) => this.plugin.searchOnlineLyrics(t, a),
+                /** 编辑表单候选「填入」：取该源该条的歌词正文 */
+                onLoadLyric: (source: LyricSourceId, id: string) => this.plugin.fetchOnlineLyric(source, id),
+                /**
+                 * 🔴 #507 LRC 双语歌词（用户：「为当前 LRC 歌词 AI 搜索并生成双语歌词
+                 * `[00:15.16]hello | 你好` 格式，入口排在**搜歌词图标按钮旁边**」）。
+                 * 走「AI集成 › 用途 · 翻译服务」的服务商与 Key（⛔ 不为它单开一套凭据）——
+                 * 与 `onAiSummarize` 同款：只把调用包一层传进组件，门控/提示都在宿主那侧。
+                 * ⚠️ 返回**合并后的整份 LRC**（时间标签原样保留）；写回表单由组件负责。
+                 */
+                onAiBilingualLrc: (lrc: string, meta?: { title?: string; artist?: string }) =>
+                    this.plugin.aiBilingualLyrics(lrc, meta),
+                /**
+                 * #500③ 集编辑浮层「网络地址」旁的「B站」：搜索候选（复用**音乐下载那条 B 站搜索链** ——
+                 * 同一个 `pure/dl/bilibili` 解析、同一个 `services/dl/bilibili` 两步请求与 `buvid3` 缓存）。
+                 * ⛔ 只取候选，**不下载**（下载是音乐下载弹窗那条路的职责）。
+                 * 🔴 门控在宿主那侧（`dlBiliSearch` 自己判 `Platform.isDesktopApp` 并给「仅桌面端支持」），
+                 *    组件里不重复判断。
+                 */
+                onBiliSearch: (keyword: string) => this.plugin.dlBiliSearch(keyword),
+                /**
+                 * #505 分P 勾选表：拿一条视频的**分P 列表**（用户 2026-10-03 选的是「入口 C」——
+                 * 点候选不是直接填，而是**展开它的分P 让用户勾**）。
+                 * 🔴 实测驱动：搜索接口**不返回分P 数** ⇒「这一条是单P 还是 52P」只能点开才知道；
+                 *    实测「熊出没」前 10 条里 6 条是多P（3 条正是 52P），所以这条路是真用得上的。
+                 * ⚠️ 读不到分P（失败 / 单P）时组件**回落到「直接填这一条」**，⛔ 不把能用的路堵死。
+                 */
+                onBiliParts: (bvid: string) => this.plugin.dlBiliView(bvid),
+                /**
+                 * ⑤-c 下载歌曲：**仅桌面端 + 「启用内置音乐播放器」开启时**才给按钮。
+                 * 移动端没有 Node http ⇒ 显示了也必然失败，不如不给（与「获取歌词」同口径）。
+                 * 🔴 #399 起门控真源由 `musicDownloadEnabled` 换成 `audioInlinePlayer` ——
+                 *    一个开关同时管「笔记内 lrc 播放器」与「下载按钮」，用户要求「关闭后不显示下载按钮」。
+                 * 🔴 #464：门控口径上移到宿主 `canUseAudioDownload()`（**单一真源**）——
+                 *    同一枚开关现在还管「在线曲库」结果栏（音乐搜索里的歌曲栏，走的正是下载那条四平台链），
+                 *    两处各写一遍 `Platform.isDesktopApp && settings.audioInlinePlayer` ⇒ 必然出现
+                 *    「按钮亮着、曲库栏却永远空」这类不一致。
+                 */
+                canDownload: this.plugin.canUseAudioDownload(),
+                onOpenDownloader: (t: string, a: string, onPicked: (relPath: string) => void) =>
+                    this.plugin.openMusicDownloader(t, a, onPicked),
+                /**
+                 * 🔴 #414 书籍下载：门控**只有桌面端**（书籍面没有对应的功能开关；与音乐那枚不同，
+                 *    ⛔ 别把 `audioInlinePlayer` 套过来，那是音乐面的开关）。
+                 * 🔴 #468 封禁：门控真源上移到 `pure/featureGate.BOOK_DOWNLOAD_ENABLED`（用户 2026-10-01
+                 *    「把下载网文和文学类的入口都封禁掉…规划到未来再解禁」）⇒ 表单那枚
+                 *    「下载网文 / 下载文学」按钮不再渲染。解禁 = 翻那一个布尔值，⛔ 别在这里另写条件。
+                 *    ⚠️ 桌面端判据**保留在右侧**（两件同时成立才给按钮）。
+                 */
+                canDownloadBook: BOOK_DOWNLOAD_ENABLED && Platform.isDesktopApp,
+                /** #422：`kind` 由表单按当前 `bookKind` 给出（文学 / 网文），决定弹窗优先用哪一类书源
+                 *  ⛔ #422 续四：`title` / `author` 两个参数已随「粘贴直链」删除（那只为直链预填文件名） */
+                onOpenBookDownloader: (onPicked: (relPath: string, tocText?: string) => void, kind: SourceKind) =>
+                    this.plugin.openBookDownloader(onPicked, kind),
+                /**
+                 * 🔴 #414 下载后**自动关联到条目**（与上面 `onApplyAudio` 同一口径）：
+                 *    编辑态写回 catalog 的 `bookFile`（按字段合并，不会冲掉表单里未提交的改动）；
+                 *    新增态还没有条目 ⇒ 静默返回（仍走「保存」提交，表单框已由 `onPicked` 填好）。
+                 *    ⚠️ 笔记被外部改过时**不重写**（与 `onSubmit` 的冲突口径一致）。
+                 * 🔴 P1-C 追加 `tocText`：章节名清单 —— **只在文学条目**给得到（网文按 09-13 裁定不带
+                 *    出版目录，表单连框都不渲染、保存时还会清空）。⚠️ 没给就**不碰这个字段**：
+                 *    `update` 是按字段合并，写 `undefined` 等于把存量 `toc` 清掉。
+                 */
+                onApplyBook: async (relPath: string, tocText?: string) => {
+                    const target = this.entry;
+                    if (!target) return;
+                    try {
+                        await this.plugin.service.update(
+                            target.id,
+                            tocText ? { bookFile: relPath, toc: tocText } : { bookFile: relPath },
+                        );
+                        target.bookFile = relPath;
+                        if (tocText) target.toc = tocText;
+                        if (target.notePath && !(await this.plugin.service.noteWasExternallyModified(target.id))) {
+                            await this.plugin.service.writeNote(target.id);
+                        }
+                        await this.plugin.refreshViews();
+                        new Notice(`已关联到「书籍文件」：${relPath}`, 4000);
+                    } catch (e) {
+                        new Notice(`书籍已下载，但写回条目失败：${e instanceof Error ? e.message : String(e)}`, 5000);
+                    }
+                },
+                /**
+                 * #404：**库内音乐目录**下的音频清单（「本地音频」浮层里那枚「检索同名音频」按钮用）。
+                 * 🔴 目录与扩展名真源都在宿主（`listLibraryAudioFiles`）—— 组件只拿去和条目标题比对，
+                 *    ⛔ 组件不碰 vault、也不自己拼目录。
+                 */
+                onListLibraryAudio: () => this.plugin.listLibraryAudioFiles(),
+                /**
+                 * #497 改关联音频文件的名字（用户：「再添加在音乐条目上修改关联的音频文件名称的功能」）。
+                 * 🔴 全部动作在宿主（`main.renameEntryAudio`：库内/库外分流 + 同名 `.lrc` 一起改 + 回写条目与笔记），
+                 *    这里只做两件**界面侧**的事：把当前条目 id 传下去（新增态传 `null`）、成功后把
+                 *    `this.entry.audioPath` 同步成新路径 —— 否则弹窗侧缓存的条目还指着旧路径，
+                 *    后续任何基于它的判断（外部改过没有 / 冲突比对）都拿的是过期的关联。
+                 */
+                onRenameAudio: async (currentPath: string, newStem: string) => {
+                    const r = await this.plugin.renameEntryAudio(this.entry?.id ?? null, currentPath, newStem);
+                    if (r.ok && r.path && this.entry) this.entry.audioPath = r.path;
+                    return r;
+                },
+                /**
+                 * #417：**库内书籍文件**清单（书籍「书籍文件」浮层那枚 🔍 用）。
+                 * 🔴 与上面那枚同族同位、同一套形态：宿主给清单、组件只拿去和条目书名比对。
+                 * ⚠️ 扫全库（不像音频那样限定目录）—— 用户可能把书放在自己建的文件夹里。
+                 */
+                onListLibraryBooks: () => this.plugin.listLibraryBookFiles(),
+                /**
+                 * 🔴 #402 下载后**自动关联到条目**（用户：「下载后的音频需能自动关联到对应的音乐类型条目」）。
+                 * 编辑态直接写回 catalog 的 `audioPath`；`service.update` 是**按字段合并**（`{...prev, ...patch}`），
+                 * 不会冲掉用户在表单里还没提交的其它改动。新增态还没有条目可写 ⇒ 静默返回（仍走「保存」提交）。
+                 * ⚠️ 笔记被外部改过时**不重写**（与 `onSubmit` 的冲突口径一致）—— 那只更新字段，别覆盖用户手改。
+                 */
+                onApplyAudio: async (relPath: string) => {
+                    const target = this.entry;
+                    if (!target) return;
+                    try {
+                        await this.plugin.service.update(target.id, { audioPath: relPath });
+                        target.audioPath = relPath;
+                        if (target.notePath && !(await this.plugin.service.noteWasExternallyModified(target.id))) {
+                            await this.plugin.service.writeNote(target.id);
+                        }
+                        await this.plugin.refreshViews();
+                        new Notice(`已关联到「本地音频」：${relPath}`, 4000);
+                    } catch (e) {
+                        new Notice(`音频已下载，但写回条目失败：${e instanceof Error ? e.message : String(e)}`, 5000);
+                    }
+                },
                 /** 拖入本地图片上传为封面：返回相对路径（covers/xxx） */
                 onUploadPoster: (file: File) => this.plugin.uploadPoster(file),
                 /** 解析封面字符串为可显示地址（http 直用 / 本地路径映射 vault 资源） */
@@ -221,6 +388,40 @@ export class EntryModal extends Modal {
                     const rel = await this.plugin.downloadPosterToLocal(url, title);
                     if (rel) this.downloadedPosters.add(rel);
                     return rel;
+                },
+                /**
+                 * #498「从网络搜索封面」（用户：「再添加在所有编辑条目的封面右键加个从网络上搜索下载封面图片的功能」）。
+                 * 🔴 两条纪律：
+                 *  ⑴ 下载下来的封面要进 `downloadedPosters` —— 与「豆瓣封面本地化」「更换本地图片」**同一本账**：
+                 *     用户最后**取消弹窗 / 换掉封面**时，`cleanupOrphanedPosters` 才会把它清掉，
+                 *     ⛔ 不记账 = 每次点一张就在 `封面/` 里留一个没人引用的文件。
+                 *  ⑵ `apply(relPath)` 是**表单侧传进来的写入口**（改 `poster` 字段），⛔ 弹窗不直接碰表单。
+                 */
+                onOpenPosterSearch: (
+                    query: string,
+                    title: string,
+                    apply: (relPath: string) => void,
+                    platformQuery?: string,
+                    sources?: PosterSource[],
+                ) => {
+                    new PosterSearchModal(
+                        this.app,
+                        {
+                            search: (source: PosterSource, q: string, page: number) =>
+                                this.plugin.searchPosterCandidatesBySource(source, q, page),
+                            download: (c: PosterCandidate) => this.plugin.downloadSearchedPoster(c, title),
+                        },
+                        {
+                            // 🔴 #509 两套默认词**分开给**：必应要「标题 + 类型词」、平台要「标题 + 作者」
+                            queries: { bing: query, netease: platformQuery, qq: platformQuery, kugou: platformQuery, kuwo: platformQuery },
+                            // 表单侧决定可用来源（音乐 = 五个；其它类型只有网络搜索）
+                            sources: sources?.length ? sources : ['bing'],
+                            onPicked: (relPath: string) => {
+                                this.downloadedPosters.add(relPath);
+                                apply(relPath);
+                            },
+                        },
+                    ).open();
                 },
             },
         });

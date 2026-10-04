@@ -52,7 +52,7 @@ export class SubtitlePickerModal extends Modal {
 
         const ops = contentEl.createDiv({ cls: 'rl-nc-ops' });
         const browse = ops.createEl('button', { cls: 'rl-btn', text: '从文件选择…' });
-        browse.setAttribute('data-tip', '从任意位置挑一个 .srt / .vtt 文件');
+        browse.setAttribute('data-tip', '选一个 .srt / .vtt');
         browse.addEventListener('click', () => this.finish({ kind: 'browse' }));
         const off = ops.createEl('button', { cls: 'rl-btn', text: '关闭字幕' });
         off.addEventListener('click', () => this.finish({ kind: 'off' }));

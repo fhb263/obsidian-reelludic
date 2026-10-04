@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildOrphanAssets, entryIdFromStoreFile, orphanStoreFiles } from 'pure/orphanAssets';
+import { buildOrphanAssets, entryAssetPlan, entryIdFromStoreFile, orphanStoreFiles } from 'pure/orphanAssets';
 
 // #349：把「清理孤儿封面」扩成「附件清理」——除了封面目录，还要能清**阅读进度目录**里
 // 已经没有对应条目的存档（用户报障：「无法有效清理或删除被遗弃的附件与封面」）。
@@ -77,5 +77,79 @@ describe('孤儿资产判定（#349）', () => {
             });
             expect(out.map((a) => a.path)).toEqual(['封面/用完就扔.jpg']);
         });
+    });
+});
+
+// #403：删除条目时要能**连带删掉这条的音频附件**（用户：「删除条目时，支持关联删除对应的附件音频文件」）。
+// 在此之前 `entryAssetPlan` 只收书文件与剧集文件 —— 音乐条目的「本地音频」（含下载来的歌）根本不在清单里，
+// 于是删条目时那个 mp3 会被遗弃在库里、且弹窗里也没有勾选项。
+describe('entryAssetPlan（删除条目的资产计划）', () => {
+    const base = { id: 'e_1', title: '示例条目' };
+    const none = () => false;
+
+    it('🔴 本地音频进「媒体文件」队（vault 相对路径 → 可勾选删除，risk=risky 默认不勾）', () => {
+        const out = entryAssetPlan({
+            entry: { ...base, audioPath: '下载/音乐/a.mp3' },
+            libraryDir: 'ReelLudic',
+            exists: (p) => p === '下载/音乐/a.mp3',
+        });
+        expect(out).toEqual([
+            { kind: 'media', path: '下载/音乐/a.mp3', name: 'a.mp3', risk: 'risky', deletable: true },
+        ]);
+    });
+
+    it('🔴 文件不存在 ⇒ 不进清单（宁可不删，也不留一条点了会失败的勾选项）', () => {
+        const out = entryAssetPlan({ entry: { ...base, audioPath: '下载/音乐/没了.mp3' }, libraryDir: 'ReelLudic', exists: none });
+        expect(out).toEqual([]);
+    });
+
+    it('🔴 库外音频（绝对路径）只展示、不可删（deletable:false + 提示，⛔ 本插件不碰库外文件）', () => {
+        const out = entryAssetPlan({ entry: { ...base, audioPath: 'D://Music//a.mp3' }, libraryDir: 'ReelLudic', exists: none });
+        expect(out).toHaveLength(1);
+        expect(out[0]).toMatchObject({
+            kind: 'media',
+            name: 'a.mp3',
+            risk: 'risky',
+            deletable: false,
+            hint: '库外文件，请在文件管理器中自行删除',
+        });
+    });
+
+    it('媒体队顺序固定 = 书 → 音频 → 剧集（弹窗逐项展示，顺序不能随字段来源漂）', () => {
+        const out = entryAssetPlan({
+            entry: {
+                ...base,
+                bookFile: '书/T.epub',
+                audioPath: '下载/音乐/T.mp3',
+                episodeFiles: ['影/T.S01E01.mp4', '影/T.S01E02.mp4'],
+            },
+            libraryDir: 'ReelLudic',
+            exists: () => true,
+        });
+        expect(out.filter((a) => a.kind === 'media').map((a) => a.path)).toEqual([
+            '书/T.epub',
+            '下载/音乐/T.mp3',
+            '影/T.S01E01.mp4',
+            '影/T.S01E02.mp4',
+        ]);
+    });
+
+    it('安全项顺序 = 笔记 → 封面 → 阅读存档 → 书签文件（安全项恒在媒体项之前）', () => {
+        const out = entryAssetPlan({
+            entry: { ...base, notePath: '笔记/示例条目.md', poster: '封面/示例条目.jpg', audioPath: '下载/音乐/T.mp3' },
+            libraryDir: 'ReelLudic',
+            exists: () => true,
+        });
+        const kinds = out.map((a) => a.kind);
+        expect(kinds.indexOf('note')).toBe(0);
+        expect(kinds.indexOf('cover')).toBe(1);
+        expect(kinds.indexOf('media')).toBe(kinds.length - 1);
+        expect(out[0].risk).toBe('safe');
+        expect(out[kinds.length - 1].risk).toBe('risky');
+    });
+
+    it('封面是**网络 URL** 时不算本地文件（⛔ 不把 URL 当路径去删）', () => {
+        const out = entryAssetPlan({ entry: { ...base, poster: 'https://example.com/a.jpg' }, libraryDir: 'ReelLudic', exists: () => true });
+        expect(out.some((a) => a.kind === 'cover')).toBe(false);
     });
 });

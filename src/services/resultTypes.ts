@@ -8,6 +8,8 @@ export interface BookSearchResult {
     id: string;
     title: string;
     author?: string;
+    /** 🔴 #444g **画师**（漫画的作画）——与 `author`（原作/编剧）分开的两栏；MangaDex / Bangumi 各按自己的口径给 */
+    artist?: string;
     /** 译者（豆瓣详情回填） */
     translator?: string;
     publisher?: string;

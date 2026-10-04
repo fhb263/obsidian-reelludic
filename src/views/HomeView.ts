@@ -8,8 +8,10 @@ import type ReelLudicPlugin from '../../main';
 import type { MediaStatus } from 'pure/status';
 import type { ActivityEvent, BookKind, EntryType, MediaEntry, UiTheme } from 'data/types';
 import type { HomeTab } from './tab';
+import type { SeriesGroup } from 'pure/seriesGroup';
 import { normalizeUiTheme } from 'pure/themeTokens';
 import { normalizePosterDensity, normalizePosterColumns } from 'pure/posterGrid';
+import { libraryDisplayName } from 'pure/libraryDir';
 import type { FeedRange } from 'pure/activityFeed';
 
 export const HOME_VIEW_TYPE = 'reelludic-home';
@@ -28,8 +30,10 @@ export class HomeView extends ItemView {
     }
 
     getDisplayText(): string {
-        // 顶部名称动态跟随「媒体库目录」设置（v0.4 持续优化）；空值回退默认名
-        return this.plugin.settings.libraryDir?.trim() || 'ReelLudic';
+        // 顶部名称动态跟随「媒体库目录」设置（v0.4 持续优化）；空值回退默认名。
+        // 1.1.1：只显示**叶子段**（`3-资源 Resource/媒体库` → `媒体库`）——显示名与存储路径解耦，
+        // 否则标签页标题会拖出整条路径（用户 2026-09-27 ①）。
+        return libraryDisplayName(this.plugin.settings.libraryDir ?? '');
     }
 
     getIcon(): string {
@@ -110,13 +114,12 @@ export class HomeView extends ItemView {
                 onEditEntry: (id: string) => void this.plugin.openEditModal(id),
                 onOpenEntry: (id: string) => this.plugin.openEntryNote(id),
                 onOpenLink: (url: string) => this.plugin.openExternalUrl(url),
-                /** 海报墙「观看/播放/启动」按钮：书籍 → 阅读器；游戏 → 启动 .lnk；音乐 → 播放音频；影视 → 单链接直接打开/多链接弹窗选择播放源 */
-                onWatch: (e: MediaEntry) => {
-                    if (e.type === 'book') void this.plugin.openBookReader(e);
-                    else if (e.type === 'game') void this.plugin.launchGame(e);
-                    else if (e.type === 'music') void this.plugin.playAudioEntry(e);
-                    else void this.plugin.openWatchLinkPicker(e);
-                },
+                /** 海报墙「观看/播放/启动」按钮：书籍 → 阅读器；游戏 → 启动 .lnk；音乐 → 播放音频；影视 → 单链接直接打开/多链接弹窗选择播放源
+                 *  🔴 #444c：分流**下沉到 `plugin.runEntryAction`**（系列选择弹窗也要执行同一件事 —— ⛔ 别两处各写一套分流） */
+                onWatch: (e: MediaEntry) => this.plugin.runEntryAction(e),
+                /** 折叠卡右下角那枚按钮：打开系列「季列表」弹窗
+                 *  🔴 #444c：改成**应用级 Modal**（宿主 `Modal`，与「编辑条目」同构）—— 不再由视图造遮罩 + 绝对定位居中 */
+                onOpenSeriesPicker: (g: SeriesGroup) => this.plugin.openSeriesPicker(g),
                 /** 右键「动词 · 去关联」直达：无入口 → 快捷关联弹窗（书/游戏/音乐路径；影视选集网络/本地源） */
                 onQuickAssociate: (e: MediaEntry) => this.plugin.quickAssociateEntry(e),
                 onDeleteEntry: (id: string) => this.plugin.deleteEntry(id),

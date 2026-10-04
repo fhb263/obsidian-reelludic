@@ -38,8 +38,25 @@ const SOURCE_LABEL_TO_ID: Record<string, string> = {
     IGDB: 'igdb',
 };
 
-/** 模板生成的评语占位符：与 noteGenerator 保持一致，视为"未写" */
-export const NOTES_PLACEHOLDER = '（在这里写下你的感想，支持 [[双链]]）';
+/**
+ * 模板生成的评语占位行（**唯一真源**：`noteGenerator` 从这里取，⛔ 别在那边内联第二份）—— 视为「未写」。
+ * 🔴 #453：正文里的「，支持 [[双链]]」已去掉（用户：「笔记里空评语不要显示『支持 [[双链]]』」）。
+ */
+export const NOTES_PLACEHOLDER = '（在这里写下你的感想）';
+
+/**
+ * 🔴 #453 **旧形态（带「，支持 [[双链]]」）必须继续认** —— 已存笔记里那行是旧文本；
+ * 不认它 ⇒ 用户一打开旧条目，那句占位符就会被当成「他亲手写的评语」回填进表单（幽灵内容）。
+ * ⚠️ 新写入的笔记一律用 `NOTES_PLACEHOLDER`（下次保存该条目时自动更替），这里只为**读**兼容。
+ * ⛔ 别删这条兼容分支。
+ */
+const LEGACY_NOTES_PLACEHOLDERS: readonly string[] = ['（在这里写下你的感想，支持 [[双链]]）'];
+
+/** 是否「模板写的空评语占位行」（**新旧形态都算未写**；判定只此一处） */
+export function isNotesPlaceholder(text: string): boolean {
+    const t = text.trim();
+    return t === NOTES_PLACEHOLDER || LEGACY_NOTES_PLACEHOLDERS.includes(t);
+}
 
 /** 纯文本章节（标题 → 字段）：内容取标题与下一个 ## 标题之间的文本，去首尾空白 */
 const TEXT_SECTIONS: Record<string, keyof NoteEditable> = {
@@ -97,7 +114,8 @@ export function extractEditableFromNote(text: string): NoteEditable {
     }
 
     const notes = notesLines.join('\n').trim();
-    if (notes && notes !== NOTES_PLACEHOLDER) out.notes = notes;
+    // 🔴 #453：判据走 `isNotesPlaceholder`（新旧占位形态都算未写），⛔ 别退回 `!== NOTES_PLACEHOLDER`
+    if (notes && !isNotesPlaceholder(notes)) out.notes = notes;
     if (links.length) out.links = links;
     if (highlights.length) out.aiHighlights = highlights;
     for (const key of ['summary', 'authorIntro', 'toc', 'aiSummary'] as const) {
@@ -165,6 +183,9 @@ export function extractFrontmatterFromNote(text: string): Partial<MediaEntry> {
         binding: (v, { str: s }) => { out.binding = s(v); },
         price: (v, { str: s }) => { out.price = s(v); },
         series: (v, { str: s }) => { out.series = s(v); },
+        // 系列序号（#434）：可空；🔴 #443 起锁定整数（见 pure/seriesGroup 的 `seriesIndexValue`）。
+        // ⚠️ 直接赋值（与 duration_min 同款）⇒ 清空即 `undefined`，不保留旧值（否则「删掉序号」在笔记里删不掉）。
+        series_index: (v, { num: n }) => { out.seriesIndex = n(v); },
         platform: (v, { str: s }) => { out.platform = s(v); },
         developer: (v, { str: s }) => { out.developer = s(v); },
         banner: (v, { str: s }) => { out.poster = s(v); },

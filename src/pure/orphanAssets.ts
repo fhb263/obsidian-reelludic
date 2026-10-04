@@ -116,6 +116,8 @@ export interface EntryAssetInput {
     notePath?: string;
     poster?: string;
     bookFile?: string;
+    /** 🔴 #403：音乐条目的「本地音频」（下载来的歌也在这里）—— 用户：「删除条目时，支持关联删除对应的附件音频文件」 */
+    audioPath?: string;
     episodeFiles?: string[];
 }
 
@@ -131,7 +133,8 @@ const trimDir = (d: string): string => d.replace(/\/+$/, '') || 'ReelLudic';
  * 🔴 三条口径：
  *  ⑴ **只有真实存在的文件才进清单**（`exists` 由宿主注入 vault 查询，本模块保持纯逻辑可测）；
  *  ⑵ 封面是**网络 URL** 时不算本地文件（⛔ 不把 URL 当路径去删）；
- *  ⑶ 媒体文件（书 / 影片）标 `risky` + 默认**不勾**；**库外**的再标 `deletable: false`（删它需要动 OS 回收站）。
+ *  ⑶ 媒体文件（书 / 影片 / **音乐条目的本地音频**）标 `risky` + 默认**不勾**；**库外**的再标 `deletable: false`
+ *     （删它需要动 OS 回收站、且本插件不碰库外文件）。
  */
 export function entryAssetPlan(input: { entry: EntryAssetInput; libraryDir: string; exists: (vaultPath: string) => boolean }): EntryAsset[] {
     const { entry, exists } = input;
@@ -153,7 +156,9 @@ export function entryAssetPlan(input: { entry: EntryAssetInput; libraryDir: stri
     const bm = bookmarksFilePath(entry.id, entry.title, lib);
     if (exists(bm)) push({ kind: 'bookmark', path: bm, name: baseName(bm), risk: 'safe', deletable: true });
 
-    const media = [entry.bookFile, ...(entry.episodeFiles ?? [])].filter((p): p is string => !!p);
+    // 🔴 #403 起音频也进这一队（顺序 = 书 → 音频 → 剧集）：三类都是「用户自己的媒体文件」，
+    //    共用 `media` 这个 kind 与徽章，⛔ 不为音频单开一种 kind（弹窗里看到的就是文件名，一眼能认）。
+    const media = [entry.bookFile, entry.audioPath, ...(entry.episodeFiles ?? [])].filter((p): p is string => !!p);
     for (const m of media) {
         if (isAbsolute(m)) {
             push({

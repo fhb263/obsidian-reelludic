@@ -1,7 +1,7 @@
 // AI 摘要生成服务（一句话总结 + 核心看点）
 // 复用「阅读器翻译」的 AI 服务商与 Key（同一套配置与端点，不为摘要单开一套凭据）；
 // 网络与提示均注入，便于单测。prompt 构造与响应解析在 pure/aiSummary.ts（纯函数）。
-import { parseTranslateResponse, translateChatUrl } from 'pure/translate';
+import { parseAiReply, aiHttpIssue, providerLabel, translateChatUrl } from 'pure/translate';
 import type { TranslateProvider } from 'pure/translate';
 import { buildAiSummaryBody, parseAiSummaryResult } from 'pure/aiSummary';
 import type { AiSummaryInput, AiSummaryResult } from 'pure/aiSummary';
@@ -14,6 +14,12 @@ export interface AiSummaryConfig {
     key: string;
     /** 自定义服务提示词（设置页「AI 翻译 / 总结 / 搜索 → 服务提示词」）；空/缺省 → 用默认提示词 */
     prompt?: string;
+    /** #478：设置页选的模型（空/缺省 ⇒ 该家默认模型） */
+    model?: string;
+    /** #478：请求端点（自定义端点由 main 解析好传进来；缺省 ⇒ 按 provider 取内置端点） */
+    url?: string;
+    /** #478：main 侧的配置校验结果（缺 Key / 缺端点 / 缺模型）；非空 ⇒ 不发请求 */
+    issue?: string;
 }
 
 export interface AiSummaryHttpOptions {
@@ -44,30 +50,34 @@ export class AiSummaryService {
 
     /** 生成摘要；任何失败路径都返回 null（内部已给用户提示，调用方只需静默处理） */
     async generate(input: AiSummaryInput): Promise<AiSummaryResult | null> {
-        const { provider, key, prompt } = this.deps.getConfig();
-        const body = buildAiSummaryBody(input, provider, prompt);
-        if (!body) return null; // 无标题：信息量为零，调用方已拦
-        const label = provider === 'zhipu' ? '智谱' : 'DeepSeek';
-        if (!key) {
-            this.deps.notify(`未配置 ${label} API Key，请先到 设置 → AI集成 · API凭据 填写（总结与翻译共用 Key）`, 5000);
+        // #478：config 由 main 的 `resolveAiAccess` 产出（含自定义端点的 url / 校验 issue / 模型名），
+        //   本服务只负责发请求与报错 —— ⛔ 别在这里再判一次 provider（两处真源必漂）
+        const { provider, key, prompt, model, url, issue } = this.deps.getConfig();
+        if (issue) {
+            this.deps.notify(issue, 5000);
             return null;
         }
-        const url = translateChatUrl(provider);
+        const body = buildAiSummaryBody(input, provider, prompt, model);
+        if (!body) return null; // 无标题：信息量为零，调用方已拦
+        const label = providerLabel(provider);
+        if (!key) {
+            this.deps.notify(`未配置 ${label} API Key，请先到 设置 → AI集成 · 模型服务 填写（总结与翻译共用 Key）`, 5000);
+            return null;
+        }
+        const endpoint = url || translateChatUrl(provider);
         try {
             const req = this.deps.http({
-                url,
+                url: endpoint,
                 method: 'POST',
                 contentType: 'application/json',
                 headers: { Authorization: `Bearer ${key}` },
                 body: JSON.stringify(body),
             });
             const res = this.deps.withTimeout ? await this.deps.withTimeout(req, AI_SUMMARY_TIMEOUT_MS) : await req;
-            if (res.status === 401) {
-                this.deps.notify(`AI 摘要失败：${label} API Key 无效（HTTP 401），请检查设置`, 5000);
-                return null;
-            }
-            if (res.status === 429) {
-                this.deps.notify('AI 摘要失败：请求过于频繁或额度不足（HTTP 429）', 5000);
+            // #478：401/402/403/404/429 统一可读（原来只特判 401/429）
+            const httpIssue = aiHttpIssue(res.status, label);
+            if (httpIssue) {
+                this.deps.notify(`AI 摘要失败：${httpIssue}`, 5000);
                 return null;
             }
             if (res.status !== 200) {
@@ -81,15 +91,21 @@ export class AiSummaryService {
                 this.deps.notify('AI 摘要失败（响应非 JSON）', 4000);
                 return null;
             }
-            const parsed = parseAiSummaryResult(parseTranslateResponse(json));
+            const reply = parseAiReply(json);
+            const parsed = reply.ok ? parseAiSummaryResult(reply.text) : null;
             if (!parsed) {
-                this.deps.notify('AI 摘要失败（模型未返回可用结果）', 4000);
+                this.deps.notify(
+                    !reply.ok && reply.reason === 'reasoning-only'
+                        ? 'AI 摘要失败：该模型只返回了思考过程、没给答案\n请在 设置 → AI集成 · 用途 换一个非推理模型'
+                        : 'AI 摘要失败（模型未返回可用结果）',
+                    !reply.ok && reply.reason === 'reasoning-only' ? 6000 : 4000,
+                );
                 return null;
             }
             return parsed;
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            this.deps.notify(`AI 摘要失败：${msg || `无法连接 ${label}`}\n请检查网络或 API Key（${url}）`, 5000);
+            this.deps.notify(`AI 摘要失败：${msg || `无法连接 ${label}`}\n请检查网络或 API Key（${endpoint}）`, 5000);
             return null;
         }
     }

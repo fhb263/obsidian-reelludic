@@ -7,6 +7,8 @@
 //  - 池按**出现频次**降序（并列按名称拼音序），过滤空值，另给「未分类」桶（D-5：全选含它）。
 //  - 筛选是**视图级**的：每个子视图一套独立池（阅读的「文学」「网文」是两个池，影视的
 //    「动画/电视剧/电影」是三个池）；阅读-全部 / 影视-全部 与所有上层聚合视图**不提供**题材筛选。
+//    🔴 #444 追加：**系列视图也是一套独立池**（池 = 该系列组内的条目，见 `seriesGenreScope`）——
+//    「每个系列视图拥有独立题材池，互不影响」。
 //  - 多选，值之间是 OR；胶囊文案按**题材池顺序**取第一个已选（D-6），其余折成 `+N`。
 import type { BookKind, EntryType } from 'data/types';
 import { normalizeBookKind } from 'pure/bookKind';
@@ -99,7 +101,9 @@ export function resolveGenreScope(
     if (lockType) {
         if (lockType === 'book') {
             if (kindFilter === 'all') return null;
-            // 存量脏值（已下线的 comic 等）由 normalizeBookKind 归文学，不会分裂出第三个池
+            // 🔴 2026-09-30 翻面：comic 加回后 **会**分裂出第三个池（文学 / 网文 / 漫画各一套题材池）——
+            //    这正是「每个子分类独立题材池」要的；⛔ 别按旧注释把 comic 再归一成文学。
+            //    ⚠️ 仍有脏值兜底：非法值由 normalizeBookKind 归文学（不会造出第四个池）。
             const kind = normalizeBookKind(kindFilter);
             return { key: `book:${kind}`, type: 'book', bookKind: kind };
         }
@@ -117,6 +121,38 @@ export function matchesGenreScope(
     if (e.type !== scope.type) return false;
     if (scope.bookKind === undefined) return true;
     return normalizeBookKind(e.bookKind) === scope.bookKind;
+}
+
+/**
+ * **系列视图**的题材作用域（#444 用户点名：「每个系列视图拥有独立题材池，互不影响」）。
+ *
+ * 池 = 该系列组内的条目；key 带**组键** ⇒ 从 A 系列切到 B 系列时作用域 key 变了、
+ * 已选题材自动清空（`MediaList` 的那条复位 `$:` 管这件事）—— 各系列视图互不影响。
+ * ⚠️ 与 `resolveGenreScope` 的关键差别：**恒非 null**。系列视图本身就是一个具体子集，
+ *    哪怕它从「影视-全部」这种「不提供题材筛选」的视图点进来（折叠卡在任何类型下都可能出现），
+ *    进去之后也该能按这一系列的题材再筛一层。
+ */
+export function seriesGenreScope(groupKey: string, type: EntryType): GenreScope {
+    return { key: `series:${groupKey}`, type };
+}
+
+/**
+ * 题材作用域的**复位键**（#444 抽出）。
+ *
+ * 🔴 为什么要单独抽：系列视图下 `genreScope` 依赖 `activeGroup`，而 `activeGroup` 是
+ *    `foldSeries(filtered)` 查出来的 ⇒ 若复位逻辑直接读 `genreScope.key`，就构成
+ *    `genreScope → genreScopeKey → genreSel → filtered → activeGroup → genreScope` 的**响应式环**
+ *    （Svelte 4 对环只能退化成语义未定义的求值顺序）。
+ *    这里只吃「视图标识」这几个**不经过 `filtered`** 的量，口径与 `genreScope.key` 逐字一致。
+ */
+export function genreScopeKeyOf(
+    lockType: EntryType | null | undefined,
+    typeFilter: 'all' | EntryType,
+    kindFilter: 'all' | BookKind,
+    seriesKey?: string | null,
+): string {
+    if (seriesKey) return `series:${seriesKey}`;
+    return resolveGenreScope(lockType, typeFilter, kindFilter)?.key ?? '';
 }
 
 /**

@@ -159,7 +159,11 @@ export function collectFeed(entries: MediaEntry[], log: ActivityEvent[] | undefi
             const key = `watch|${e.id}|${watched}`;
             if (!seen.has(key)) {
                 seen.add(key);
-                items.push({ id: e.id, title: titleOf(e), type: e.type, kind: 'watch', date: watched, text: STATUS_LABELS.watched });
+                // 🔴 #449：**别用状态名当这一类标签**（用户：「统计页签这动态怎么显示了两个已看，观感不太好」）——
+            //    `STATUS_LABELS.watched` =「已看」，与「状态翻转到已看」那行**同名**，年/月视图里就并排出现两行「已看」
+            //    （一行是状态变更、一行是完成日期兜底）。这一类在本仓其它地方一律叫**「完成」**（统计页汇总文案
+            //    「状态变更 32 · 新增 101 · 完成 2」、`FEED_KIND_LABELS`）⇒ 取其名。
+            items.push({ id: e.id, title: titleOf(e), type: e.type, kind: 'watch', date: watched, text: FEED_KIND_LABELS.watch });
             }
         }
         // 6) 游玩记录
@@ -213,13 +217,25 @@ export interface FeedGroup {
 const STATUS_ORDER: Record<MediaStatus, number> = { want: 0, watching: 1, watched: 2, archived: 3 };
 const KIND_ORDER: Record<FeedKind, number> = { status: 0, watch: 1, created: 2, track: 3, plan: 4, play: 5 };
 
-/** 行标签（也是行的归并键之一）：状态/完成用类型化标签，其余用事件名 */
+/**
+ * 动态**类目**文案（行标签 + 统计页汇总共用一张表）。
+ * 🔴 #449：以前这张表长在 `StatsBoard.svelte` 里（汇总行用），而行标签在 `rowLabelOf` 里**另写一份 if 链** ——
+ *    两处必然漂：同一条动态在汇总里叫「完成」、在行里却叫「已看」（就是用户看到的两行「已看」）。
+ *    ⇒ 收敛成本表，行标签与汇总都从这里取（状态变更那类另有类型化文案，见 `rowLabelOf`）。
+ */
+export const FEED_KIND_LABELS: Record<FeedKind, string> = {
+    status: '状态变更',
+    created: '新增',
+    track: '追更',
+    plan: '计划',
+    watch: '完成',
+    play: '游玩',
+};
+
+/** 行标签（也是行的归并键之一）：**状态变更**用类型化状态名（想看/在看/已看），其余取 `FEED_KIND_LABELS` */
 function rowLabelOf(it: FeedItem): string {
-    if (it.kind === 'status' || it.kind === 'watch') return it.text;
-    if (it.kind === 'created') return '新增';
-    if (it.kind === 'track') return '追更';
-    if (it.kind === 'plan') return '计划';
-    return '游玩';
+    if (it.kind === 'status') return it.text;
+    return FEED_KIND_LABELS[it.kind];
 }
 
 /** 行排序键：先看事件大类，状态类内再按状态流程 */

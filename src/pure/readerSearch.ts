@@ -3,12 +3,12 @@
 //   ① 网络搜索（「引擎浮层 → 系统浏览器」）：本模块只负责「选引擎 + 拼查询 URL」，
 //      跳转由宿主 `openExternalUrl` 完成 —— 零 API Key、零维护，且不受引擎 X-Frame-Options 限制。
 //   ② AI 搜索：复用翻译通道的 OpenAI 兼容 chat/completions（`pure/translate` 的端点/模型/解析），
-//      服务商与 system 提示词在设置页「AI集成 → AI服务 → 搜索服务 / 搜索提示词」可调。
+//      服务商与 system 提示词在设置页「AI集成 → 用途 → 搜索服务 / 搜索提示词」可调。
 //
 // 注：网络搜索不抓取结果列表（Bing Search API 已于 2025 停服、Google CSE 收费、
 // DuckDuckGo 无官方 API），「卡内出网页结果」需自备 Key，故本版不做（见 UI-GUIDE）。
 
-import { modelFor, normalizeProvider, type TranslateProvider, type TranslateRequestBody } from 'pure/translate';
+import { resolveModel, type TranslateProvider, type TranslateRequestBody } from 'pure/translate';
 
 /** 引擎 id（25 个内置引擎；脏数据一律回退首个） */
 export type SearchEngineId =
@@ -160,11 +160,16 @@ export const DEFAULT_SEARCH_QUESTION_PROMPT =
  * 构造 AI 搜索请求体（OpenAI 兼容，与翻译同形）。空/纯空白文本 → null（不该发请求）。
  * prompt 传空/纯空白 → 用 DEFAULT_SEARCH_PROMPT（设置页提示词框留空即默认）。
  */
-export function buildSearchBody(text: string, provider?: TranslateProvider, prompt?: string): TranslateRequestBody | null {
+export function buildSearchBody(
+    text: string,
+    provider?: TranslateProvider,
+    prompt?: string,
+    model?: string,
+): TranslateRequestBody | null {
     const trimmed = typeof text === 'string' ? text.trim() : '';
     if (!trimmed) return null;
     return {
-        model: modelFor(normalizeProvider(provider)),
+        model: resolveModel(provider, model),
         messages: [
             { role: 'system', content: prompt?.trim() || DEFAULT_SEARCH_PROMPT },
             { role: 'user', content: trimmed },
@@ -182,12 +187,13 @@ export function buildSearchQuestionBody(
     text: string,
     question: string,
     provider?: TranslateProvider,
+    model?: string,
 ): TranslateRequestBody | null {
     const q = typeof question === 'string' ? question.trim() : '';
     if (!q) return null;
     const t = typeof text === 'string' ? text.trim() : '';
     return {
-        model: modelFor(normalizeProvider(provider)),
+        model: resolveModel(provider, model),
         messages: [
             { role: 'system', content: DEFAULT_SEARCH_QUESTION_PROMPT },
             { role: 'user', content: t ? `【选段】\n${t}\n\n【问题】\n${q}` : q },

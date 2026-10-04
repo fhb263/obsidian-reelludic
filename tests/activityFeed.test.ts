@@ -86,8 +86,42 @@ describe('pure/activityFeed collectFeed 归并与去重', () => {
         const e = entry({ id: 'a', type: 'book', title: '熊出没', status: 'watched', watchedDate: '2026-09-10' });
         const feed = collectFeed([e], undefined, span);
         expect(feed).toHaveLength(1);
-        expect(feed[0]).toMatchObject({ kind: 'watch', date: '2026-09-10', text: '已看' });
+        // 🔴 #449 翻面：这一类的文案**不再是状态名「已看」**，而是本仓其它地方（统计页汇总）一直用的「完成」——
+        //    同名会让年/月视图并排出现两行「已看」（一行状态变更、一行完成日期兜底），用户报的就是这个观感。
+        expect(feed[0]).toMatchObject({ kind: 'watch', date: '2026-09-10', text: '完成' });
         expect(feed[0].time).toBeUndefined();
+    });
+
+    it('🔴 #449 同一份动态里「状态翻转到已看」与「完成日期」是两行、且标签不同（不再并排两个「已看」）', () => {
+        const year = feedSpan('year', new Date(2026, 8, 10));
+        const feed = collectFeed(
+            [
+                // 状态日志（9/10 已看）+ 完成日期在**另一天**（不触发同日去重）⇒ 两类都会出现
+                entry({ id: 'x1', type: 'movie', title: '咒', status: 'watched', watchedDate: '2026-09-08' }),
+            ],
+            [{ at: iso(2026, 9, 10, 20, 0), id: 'x1', status: 'watched' }],
+            year,
+        );
+        const labels = groupFeed(feed, 'year')[0].rows.map((r) => r.label);
+        expect(labels).toContain('已看'); // 状态变更那一行（类型化状态名）
+        expect(labels).toContain('完成'); // 完成日期那一行（类目名）
+        expect(labels.filter((l) => l === '已看')).toHaveLength(1); // ⛔ 不许再出现两行「已看」
+    });
+
+    it('🔴 #449 行标签取自 `FEED_KIND_LABELS`（与统计页汇总同一张表）：新增/追更/计划/完成/游玩', () => {
+        const year = feedSpan('year', new Date(2026, 8, 10));
+        const feed = collectFeed(
+            [
+                entry({ id: 'c1', type: 'game', title: '部落冲突', status: 'watching', createdAt: iso(2026, 9, 9, 9, 0) }),
+                entry({ id: 'p1', type: 'tv', title: '剧', status: 'want', plannedDate: '2026-09-10' }),
+                entry({ id: 'y1', type: 'game', title: '游戏', status: 'watching', playSessions: [{ date: '2026-09-11', minutes: 90 }] }),
+                entry({ id: 'w1', type: 'book', title: '书', status: 'watched', watchedDate: '2026-09-12' }),
+            ],
+            undefined,
+            year,
+        );
+        const labels = groupFeed(feed, 'year')[0].rows.map((r) => r.label);
+        for (const l of ['新增', '计划', '游玩', '完成']) expect(labels).toContain(l);
     });
 
     it('追更历史与游玩记录按日期归集；游玩文案用小时', () => {
@@ -153,7 +187,7 @@ describe('pure/activityFeed groupFeed 周期汇总（周/月/年）', () => {
         expect(groups.map((g) => g.total)).toEqual([3, 1, 1]);
         expect(groups[0].rows.map((r) => `${r.label}(${r.items.map((i) => i.title).join(',')})`)).toEqual([
             '在看(沙丘)', // 状态类在前
-            '已看(咒)',
+            '完成(咒)', // 🔴 #449 翻面：完成日期这一类叫「完成」（与状态变更的「已看」区分开）
             '追更(剧名)',
         ]);
         expect(groups[2].rows[0].items[0].title).toBe('百年孤独');
@@ -166,7 +200,7 @@ describe('pure/activityFeed groupFeed 周期汇总（周/月/年）', () => {
         expect(groups[0].total).toBe(5);
         expect(groups[0].rows.map((r) => `${r.label}(${r.items.map((i) => i.title).join(',')})`)).toEqual([
             '在看(沙丘)',
-            '已看(咒,活着,百年孤独)', // 状态名统一后，「已读」行与「已看」行同标签归并为一行
+            '完成(咒,活着,百年孤独)', // 🔴 #449 翻面：这三条走的是「完成日期」兜底（无状态日志）⇒ 标签 = 完成
             '追更(剧名)',
         ]);
     });
@@ -245,10 +279,10 @@ describe('pure/activityFeed 周期打卡区块（记录到日记跟随范围）'
             '## ReelLudic 打卡 · 第 37 周（2026-09-07–09-13）',
             '> [!reelludic] 本周 3 条动态',
             '> **9月10日**（2 条）',
-            '> - 已看《咒》',
+            '> - 完成《咒》',
             '> - 追更《剧名》 S1E2',
             '> **9月8日**（1 条）',
-            '> - 已看《百年孤独》',
+            '> - 完成《百年孤独》',
         ]);
         expect(renderPeriodBlock('week', weekSpan, [])).toBeNull();
     });
@@ -261,6 +295,6 @@ describe('pure/activityFeed 周期打卡区块（记录到日记跟随范围）'
         );
         const block = renderPeriodBlock('month', feedSpan('month', new Date(2026, 8, 10)), groupFeed(items, 'month'))!;
         expect(block.split('\n')[2]).toBe('> **第 37 周**（9月7日–9月13日）（1 条）');
-        expect(block.split('\n')[3]).toBe('> - 已看《咒》');
+        expect(block.split('\n')[3]).toBe('> - 完成《咒》'); // 🔴 #449 翻面
     });
 });

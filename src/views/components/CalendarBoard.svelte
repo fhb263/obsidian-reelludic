@@ -223,7 +223,7 @@
                     <button class="rl-cal-banner-btn" on:click={() => startWatching(e)}>开始观看</button>
                 </span>
             {/each}
-            <button class="rl-cal-banner-close" data-tip="关闭提醒（今天不再提醒）" on:click={() => (bannerDismissed = true)}><Icon icon="x" size={12} /><span class="rl-sr">关闭提醒（今天不再提醒）</span></button>
+            <button class="rl-cal-banner-close" data-tip="关闭提醒" on:click={() => (bannerDismissed = true)}><Icon icon="x" size={12} /><span class="rl-sr">关闭提醒（今天不再提醒）</span></button>
         </div>
     {/if}
 
@@ -243,7 +243,7 @@
                         draggable="true"
                         on:dragstart={(ev) => dragStart(ev, e.id)}
                         on:click={() => onEditEntry(e.id)}
-                        data-tip="拖拽到日期格排期，或点击编辑">
+                        data-tip="拖到日期排期 / 点击编辑">
                         {#if posterUrl(e)}
                             <img class="rl-cal-card-cov" src={posterUrl(e)} alt="" loading="lazy" />
                         {:else}

@@ -9,6 +9,9 @@ import { posterUrl, type TmdbSearchResult } from 'services/tmdb';
 import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
 import type { BangumiSearchResult } from 'services/bangumi';
 import type { ProviderId } from 'pure/sourceRegistry';
+import { SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
+// HTML 还原的**唯一真源**（⛔ 别在这里手写第二份实体表 / 剥标签正则）
+import { decodeHtmlBlockText } from 'pure/htmlText';
 
 export type SearchResult = TmdbSearchResult | OmdbSearchResult | BookSearchResult | GameSearchResult | BangumiSearchResult | MusicSearchResult;
 
@@ -94,6 +97,8 @@ const GROUP_OF_SOURCE: Record<string, ShapeGroup> = {
     omdb: 'movieTv',
     bangumi: 'anime',
     anilist: 'anime',
+    // #464 在线曲库（歌曲）：形状同音乐（歌名/歌手/专辑），查表命中后直接走 musicView
+    [SONG_LIB_ID]: 'music',
 };
 
 interface SourceViewEntry {
@@ -147,10 +152,12 @@ function imdbUrl(o: SourceRecord): string | undefined {
 }
 
 /**
- * source 查表（内部，10 源全覆盖；未知/缺省由 buildSourceUrl 兜底 undefined）。
+ * 查表（内部，10 源全覆盖 + #464 在线曲库；未知/缺省由 buildSourceUrl 兜底 undefined）。
  * 徽标短文本：豆瓣/TMDB/Bangumi 沿用现 UI 文案；新源用短英文名对齐来源直达站（如 omdb → IMDb）。
+ * ⚠️ `songlib` 不是注册表里的「数据源」（它不进设置页/不进源链），但**同样要有展示名** ——
+ *    `sourceLabel` / `sourceEnLabel` 也从这张表的同一个常量取值，保证列头/徽标/自动回填的「来源」框同名。
  */
-export const SOURCE_VIEW: Record<ProviderId, SourceViewEntry> = {
+export const SOURCE_VIEW: Record<ProviderId | typeof SONG_LIB_ID, SourceViewEntry> = {
     douban: { label: '豆瓣', url: doubanUrl },
     tmdb: { label: 'TMDB', url: tmdbUrl },
     bangumi: { label: 'Bangumi', url: (o) => (idStr(o) ? `https://bgm.tv/subject/${idStr(o)}` : undefined) },
@@ -162,6 +169,10 @@ export const SOURCE_VIEW: Record<ProviderId, SourceViewEntry> = {
     omdb: { label: 'IMDb', url: imdbUrl },
     anilist: { label: 'AniList', url: (o) => (idStr(o) ? `https://anilist.co/anime/${idStr(o)}` : undefined) },
     igdb: { label: 'IGDB', url: (o) => (idStr(o) ? `https://www.igdb.com/games/${idStr(o)}` : undefined) },
+    // 漫画源（2026-09-30 接入）：来源直达站 = MangaDex 作品页 /title/{uuid}
+    mangadex: { label: 'MangaDex', url: (o) => (idStr(o) ? `https://mangadex.org/title/${idStr(o)}` : undefined) },
+    // #464 在线曲库：结果自带平台歌曲网页（`pure/songLibrary` 从 `webUrl` 搬过来），直接用它；缺则无直达
+    [SONG_LIB_ID]: { label: SONG_LIB_LABEL, url: (o) => str(o.sourceUrl) },
 };
 
 /** 查表存在性/取值（防原型键污染） */
@@ -348,12 +359,13 @@ export function describeSearchResult(r: SearchResult): SearchDisplay {
 }
 
 /**
- * 结果 → 来源 id（ProviderId）：UI 按来源分栏的稳定分组键。
+ * 结果 → 来源 id（ProviderId 或 #464 曲库 id）：UI 按来源分栏的稳定分组键。
  * 语义与 describeSearchResult/resolveSource 完全一致——显式已知 source 原样返回；
  * 显式未知 → douban；无 source 旧数据按形状回退（author/platform/album→douban、
  * studio→bangumi、影视→tmdb）。分组只用它，避免 UI 端再手搓一套形状判别。
+ * ⚠️ 已知 source 里含 `songlib`（在线曲库）—— 它不在注册表里，但栏位与结果同口径（#458 的教训）。
  */
-export function sourceIdOf(r: SearchResult): ProviderId {
+export function sourceIdOf(r: SearchResult): ProviderId | typeof SONG_LIB_ID {
     const o = r as unknown as SourceRecord;
     const raw = str(o.source);
     if (raw) return hasSource(raw) ? (raw as ProviderId) : 'douban';
@@ -363,4 +375,40 @@ export function sourceIdOf(r: SearchResult): ProviderId {
     if ('platform' in o) return 'douban';
     if ('studio' in o) return 'bangumi';
     return 'tmdb';
+}
+
+// ──────────────────── 作品简介原文（#499E） ────────────────────
+
+/**
+ * 简介原文的长度上限（超出裁断）。
+ * ⚠️ 它是**喂给模型 + 直接落进「简介」框**的正文，不是预览用的短句 —— 太短会把真简介拦腰截断。
+ */
+export const SYNOPSIS_MAX_CHARS = 800;
+
+/**
+ * 从数据源记录里取**作品简介原文**（`summary` → `description` → `overview` 三取一，先命中先用）。
+ *
+ * 用途：AI 预填的工具回路 —— 用户 2026-10-03 裁定「简介要**搜索照搬真正作品的简介**，
+ * ⛔ 不要模型自己写的客观概述」。工具把原文交出去，服务侧**直接照搬**（不经模型改写）。
+ *
+ * 🔴 **三个字段名都要认**（实测各源不一致）：豆瓣 / Bangumi / AniList / IGDB = `summary`；
+ *    TMDB / OMDb = `overview`；Google Books / Open Library = `description`。
+ *    ⛔ 只认 `summary` 等于只覆盖一半源。
+ * ⚠️ 搜索级就带简介的源：豆瓣 / Bangumi / AniList / IGDB / OMDb / TMDB / Google Books；
+ *    **Open Library 的简介只在 works.json 详情里**（搜索级没有）⇒ 那一路自然落到「模型凭记忆」。
+ * ⚠️ 原文里可能带 HTML（Google Books 的描述常是 `<p>` 段落，豆瓣带 `<br>`）⇒ 一律过
+ *    `decodeHtmlBlockText`（**块级标签当空格** → 剥标签 → 还原实体 → 折空白），
+ *    ⛔ 别用只剥标签的那套 —— 相邻段落会首尾粘成一个词；也⛔ 别把 `<p>` 原样塞进简介框。
+ * ⚠️ **只认字符串**（数字 / 对象一律当没有）：简介是正文，`summary: 2024` 这种脏数据不是简介。
+ */
+export function synopsisOf(rec: unknown): string | undefined {
+    const o = rec as SourceRecord | null | undefined;
+    if (!o || typeof o !== 'object') return undefined;
+    for (const k of ['summary', 'description', 'overview'] as const) {
+        const v = o[k];
+        if (typeof v !== 'string') continue;
+        const t = decodeHtmlBlockText(v);
+        if (t) return t.slice(0, SYNOPSIS_MAX_CHARS);
+    }
+    return undefined;
 }

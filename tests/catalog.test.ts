@@ -109,9 +109,30 @@ describe('normalizeEntry 缺字段兜底', () => {
         expect(normalizeEntry({ title: 'x' }).musicKind).toBeUndefined();
     });
 
-    it('已下线的子分类值不落库：comic 漫画 / other 其他（1.0.3.1 下线，白名单剔除 → undefined → 读取端归文学/音乐）', () => {
-        expect(normalizeEntry({ title: 'x', bookKind: 'comic' as never }).bookKind).toBeUndefined();
+    it('子分类白名单：bookKind 收三值（comic 于 2026-09-30 加回 ⇒ **要落库**）、musicKind 仍只收 music（other 剔除）', () => {
+        // 🔴 翻面：comic 曾是「已下线值」（1.0.3.1 起被白名单剔除），2026-09-30 用户裁定加回 ⇒ 现在是合法值。
+        //    ⚠️ 只认精确值：'comicx' 仍要被剔除（别写成前缀/包含匹配）。
+        expect(normalizeEntry({ title: 'x', bookKind: 'comic' }).bookKind).toBe('comic');
+        expect(normalizeEntry({ title: 'x', bookKind: 'comicx' as never }).bookKind).toBeUndefined();
         expect(normalizeEntry({ title: 'x', musicKind: 'other' as never }).musicKind).toBeUndefined();
+    });
+
+    it('🔴 #444g 画师 `artist` 在白名单里（⚠️ 漏加会被静默丢弃 —— 历史踩坑：bookKind 就这么丢过）', () => {
+        expect(normalizeEntry({ title: 'x', type: 'book', artist: '作画君' }).artist).toBe('作画君');
+        // ⚠️ 归一层**不 trim**（`isString('')` 算合法 ⇒ 空串会原样留）—— 空串由**表单层** `trim() || undefined` 拦掉；
+        //    这里只钉「非字符串不落库」（与 author / publisher 等既有字段同一条口径）。
+        expect(normalizeEntry({ title: 'x', artist: 123 as never }).artist).toBeUndefined();
+    });
+
+    it('#434 seriesIndex 走白名单：**有限数**才落库（允许小数/0/负数 —— 语义由用户定），NaN/Infinity/字符串一律丢 —— 回归锁定：漏加白名单会让系列序号被静默丢弃、折叠卡组内排序全乱', () => {
+        expect(normalizeEntry({ title: 'x', seriesIndex: 3 }).seriesIndex).toBe(3);
+        expect(normalizeEntry({ title: 'x', seriesIndex: 2.5 }).seriesIndex).toBe(2.5); // 小数必须能存（Calibre 口径）
+        expect(normalizeEntry({ title: 'x', seriesIndex: 0 }).seriesIndex).toBe(0);
+        expect(normalizeEntry({ title: 'x', seriesIndex: -1 }).seriesIndex).toBe(-1);
+        expect(normalizeEntry({ title: 'x', seriesIndex: NaN }).seriesIndex).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', seriesIndex: Infinity }).seriesIndex).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', seriesIndex: '3' as never }).seriesIndex).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).seriesIndex).toBeUndefined();
     });
 
     it('豆瓣适配字段归一化：字符串透传、数组过滤、空数组归 undefined', () => {
@@ -174,19 +195,44 @@ describe('normalizeEntry 缺字段兜底', () => {
         expect(normalizeEntry({ title: 'x' }).excerptCount).toBeUndefined();
         // 本地剧集视频路径（集按钮关联）：字符串数组透传、非法项过滤、缺失兜底 undefined——回归锁定：增字段必须同步 normalizeEntry
         expect(normalizeEntry({ episodeFiles: ['C:/videos/ep01.mp4', 'C:/videos/ep02.mp4'] }).episodeFiles).toEqual(['C:/videos/ep01.mp4', 'C:/videos/ep02.mp4']);
-        expect(normalizeEntry({ episodeFiles: ['ok.mp4', 42 as never, '', 'bad'] }).episodeFiles).toEqual(['ok.mp4', 'bad']);
         expect(normalizeEntry({ episodeFiles: 'x' as never }).episodeFiles).toBeUndefined();
         expect(normalizeEntry({ title: 'x' }).episodeFiles).toBeUndefined();
         // 剧集网络地址（每集与 episodeFiles 同下标）：字符串数组透传、非法项过滤、缺失兜底 undefined
         expect(normalizeEntry({ episodeUrls: ['https://a.com/1', 'https://b.com/2'] }).episodeUrls).toEqual(['https://a.com/1', 'https://b.com/2']);
-        expect(normalizeEntry({ episodeUrls: ['https://a.com', 42 as never, '', 'x'] }).episodeUrls).toEqual(['https://a.com', 'x']);
         expect(normalizeEntry({ episodeUrls: 'x' as never }).episodeUrls).toBeUndefined();
         expect(normalizeEntry({ title: 'x' }).episodeUrls).toBeUndefined();
         // 集标题（hover 显示）：字符串数组透传、非法项过滤、缺失兜底 undefined
         expect(normalizeEntry({ episodeTitles: ['p1 开始', '第二集'] }).episodeTitles).toEqual(['p1 开始', '第二集']);
-        expect(normalizeEntry({ episodeTitles: ['ok', 42 as never, '', 'bad'] }).episodeTitles).toEqual(['ok', 'bad']);
         expect(normalizeEntry({ episodeTitles: 'x' as never }).episodeTitles).toBeUndefined();
         expect(normalizeEntry({ title: 'x' }).episodeTitles).toBeUndefined();
+        // 🔴 #446 三个集数组一律**保位**（index i 恒 = 第 i+1 集）：空位留洞、非法项/空串 → 该位未关联、
+        //    尾部空位去掉、整段空 → 字段缺省。旧口径是 `filter` 压缩空位 ⇒ 集标题会前移一格，
+        //    用户看到的是「在第 2 集填的标题跑到第 1 集」（2026-10-01 报障）—— 下面这条就是那个场景。
+        const posFiles = normalizeEntry({ episodeFiles: ['ok.mp4', 42 as never, '', 'bad'] }).episodeFiles;
+        expect(posFiles?.length).toBe(4);
+        expect(posFiles?.[0]).toBe('ok.mp4');
+        expect(posFiles?.[1]).toBeUndefined();
+        expect(posFiles?.[2]).toBeUndefined();
+        expect(posFiles?.[3]).toBe('bad');
+        const posUrls = normalizeEntry({ episodeUrls: ['https://a.com', 42 as never, '', 'x'] }).episodeUrls;
+        expect(posUrls?.[1]).toBeUndefined();
+        expect(posUrls?.[3]).toBe('x');
+        const posTitles = normalizeEntry({ episodeTitles: ['ok', 42 as never, '', 'bad'] }).episodeTitles;
+        expect(posTitles?.[1]).toBeUndefined();
+        expect(posTitles?.[3]).toBe('bad');
+        // 尾部空位去掉（第 3 集填标题 → 长度 3，不写一长串 null）
+        const tail = normalizeEntry({ episodeTitles: ['a', undefined as never, 'c'] }).episodeTitles;
+        expect(tail?.length).toBe(3);
+        // 纯空白视同未填（旧口径 `length > 0` 会把它当有值留下来）
+        expect(normalizeEntry({ episodeTitles: ['   '] }).episodeTitles).toBeUndefined();
+        // 落盘 → 读回**不移位**（JSON 把洞写成 null）
+        const roundTitles = normalizeEntry({ episodeTitles: [undefined as never, '标题'] }).episodeTitles;
+        expect(roundTitles?.[0]).toBeUndefined();
+        expect(roundTitles?.[1]).toBe('标题');
+        const backTitles = normalizeEntry(JSON.parse(JSON.stringify({ episodeTitles: roundTitles })) as never).episodeTitles;
+        expect(backTitles?.length).toBe(2);
+        expect(backTitles?.[0]).toBeUndefined();
+        expect(backTitles?.[1]).toBe('标题');
         // 音乐专辑/本地音频路径（music 类型）：字符串透传、空串过滤、缺失兜底 undefined——回归锁定：增字段必须同步 normalizeEntry
         expect(normalizeEntry({ album: '犹豫' }).album).toBe('犹豫');
         expect(normalizeEntry({ album: '' }).album).toBeUndefined();

@@ -195,8 +195,8 @@
             <span class="rl-tr-cnt rl-tr-cnt-new"><Icon icon="bell" size={11} /> {updatedCount} 部有更新</span>
         {/if}
         <span class="rl-tr-hint">更新置顶 · 滞后置顶 · 点击标题打开笔记</span>
-        <button class="rl-tr-refresh" class:rl-btn-loading={checking} disabled={checking} data-tip="重新检查所有在追条目的更新" on:click={() => runChecks(true)}>重新检测</button>
-        <button class="rl-tr-import" on:click={onImportBangumi} data-tip="从 Bangumi 收藏列表批量导入动画条目">从 Bangumi 导入</button>
+        <button class="rl-tr-refresh" class:rl-btn-loading={checking} disabled={checking} data-tip="重新检测更新" on:click={() => runChecks(true)}>重新检测</button>
+        <button class="rl-tr-import" on:click={onImportBangumi} data-tip="从 Bangumi 收藏批量导入">从 Bangumi 导入</button>
     </div>
 
     {#if watching.length === 0}
@@ -229,7 +229,7 @@
                             {#if u === 'checking'}
                                 <span class="rl-tr-upd rl-tr-upd-check"><span class="rl-spinner"></span> 检测中…</span>
                             {:else if !u}
-                                <span class="rl-tr-upd rl-tr-upd-na" data-tip="该条目没有观看链接 — 编辑条目添加后即可检测更新">— 未设置</span>
+                                <span class="rl-tr-upd rl-tr-upd-na" data-tip="无观看链接 — 添加后可检测">— 未设置</span>
                             {:else if u.status === 'updated'}
                                 {@const isNew = decideUpdateDisplay(u.latestEpisode, e.latestKnownEpisode ?? 0, e.progress?.episode ?? 0) === 'new'}
                                 {#if isNew}
@@ -240,9 +240,9 @@
                             {:else if u.status === 'synced'}
                                 <span class="rl-tr-upd rl-tr-upd-ok" data-tip="最新 {u.latestEpisode} 集 · 已看 {u.watchedEpisodes} 集">✅ 已同步</span>
                             {:else if u.status === 'no-info'}
-                                <span class="rl-tr-upd rl-tr-upd-na" data-tip="页面未找到集数信息（第X集/第X话/Episode X）">— 无集数</span>
+                                <span class="rl-tr-upd rl-tr-upd-na" data-tip="页面无集数信息">— 无集数</span>
                             {:else if u.status === 'blocked'}
-                                <span class="rl-tr-upd rl-tr-upd-blocked" data-tip="该站有 CDN 人机验证，请在浏览器打开确认可访问，或更换观看链接">🔒 站点拦截</span>
+                                <span class="rl-tr-upd rl-tr-upd-blocked" data-tip="站点有验证 — 浏览器打开确认">🔒 站点拦截</span>
                             {:else}
                                 <span class="rl-tr-upd rl-tr-upd-fail" data-tip="检测失败：{u.error}">❌ 失败</span>
                             {/if}

@@ -1,6 +1,11 @@
 // Bangumi（bgm.tv）动画元数据抓取（v0 API，Bearer token；纯逻辑：HTTP 注入可 mock）
 // 1.0.3.1：书籍类目（type=1，含漫画）搜索随漫画子视图下线删除（用户 2026-09-13 裁定）——本客户端只服务动画。
+// 🔴 2026-09-30 用户裁定**加回**书籍类目搜索：漫画源链 = 豆瓣（主）+ **Bangumi** + MangaDex（用户原话
+//    「设置里漫画源接豆瓣、Bangumi、MangaDex 三个源」）⇒ 本客户端重新服务**动画 + 漫画**两组，
+//    漫画用 `subjectType=1`（书籍类目，Bangumi 的漫画挂在这类下），走 `searchBooks`。
+//    ⚠️ 与 1.0.3 那版不同：这次是**参数化**（`buildSearchBody` 的第三参），⛔ 别退回写死 `type: 1` 的独立函数。
 import { asRecord, parseYear } from 'pure/record';
+import type { BookSearchResult } from 'services/resultTypes';
 
 export interface BangumiSearchResult {
     id: number;
@@ -42,6 +47,10 @@ const USER_COLLECTIONS_URL = (userId: number | string) => `${API_BASE}/v0/users/
  *  接口支持 offset 分页（limit=30&offset=30 拉下一页），如需完整结果集可加分页循环 */
 export const BANGUMI_SEARCH_LIMIT = 30;
 
+/** subject.type：**1 = 书籍类目（含漫画）**、2 = 动画、6 = 三次元。
+ *  🔴 2026-09-30 用户裁定「漫画源接豆瓣、Bangumi、MangaDex 三个源」⇒ 漫画用 **type=1**（Bangumi 的漫画挂在书籍类目下）。 */
+export const BANGUMI_BOOK_SUBJECT_TYPE = 1;
+
 /** subject.type → 条目类型映射：2=动画（含剧场版动画电影）、6=三次元电影；其余（1书籍/3音乐/4游戏）跳过不入库 */
 export function bangumiSubjectTypeToEntryType(type: unknown): 'anime' | 'movie' | null {
     if (type === 2 || type === '2') return 'anime';
@@ -49,9 +58,15 @@ export function bangumiSubjectTypeToEntryType(type: unknown): 'anime' | 'movie' 
     return null;
 }
 
-/** 构造搜索 POST body：keyword + type(2=动画) + limit（与"至少 30 条"要求一致） */
-export function buildSearchBody(keyword: string, limit: number = BANGUMI_SEARCH_LIMIT): string {
-    return JSON.stringify({ keyword, type: 2, limit });
+/**
+ * 构造搜索 POST body：keyword + type + limit（与"至少 30 条"要求一致）。
+ * 🔴 2026-09-30：加第三参 `subjectType`（默认 **2 动画**，显式写出 —— 原来这个 2 是硬编码的），
+ *    漫画走 `BANGUMI_BOOK_SUBJECT_TYPE`（1）。⚠️ 书籍类目搜索在 1.0.3.1 曾被整块删掉
+ *    （随漫画子视图下线，2026-09-13 裁定），本次是**加回** —— 但换成了「按 subjectType 参数化」的形态，
+ *    ⛔ 别再退回当年那个写死 `type: 1` 的独立函数。
+ */
+export function buildSearchBody(keyword: string, limit: number = BANGUMI_SEARCH_LIMIT, subjectType: number = 2): string {
+    return JSON.stringify({ keyword, type: subjectType, limit });
 }
 
 /** 提取 infobox 中指定 key 的文本值（value 可为字符串或 {v: ...}） */
@@ -67,6 +82,18 @@ function infoboxValue(items: unknown, key: string): string | undefined {
         }
     }
     return undefined;
+}
+
+/**
+ * 🔴 #445 总话数：把 infobox 里的「话数」值（字符串，可能是「全 139 话」这种带单位的）解析成非负整数，
+ *    否则 `undefined`。⛔ 空串 / 非数字 / 负数 / NaN 一律不给（给 0 会覆盖用户手填值）。
+ */
+export function parseChapterCount(raw: string | undefined): number | undefined {
+    if (!raw) return undefined;
+    const m = /(\d+)/.exec(raw);
+    if (!m) return undefined;
+    const n = Number(m[1]);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 /** 解析 /v0/search/subjects 响应：name_cn 优先，回退 name；提取制作公司/年份/封面 */
@@ -94,9 +121,54 @@ export function parseBangumiResults(text: string): BangumiSearchResult[] {
         .filter((r) => r.title);
 }
 
+/**
+ * 解析**书籍类目（type=1，含漫画）**搜索结果 → 本仓统一的 `BookSearchResult`。
+ * 🔴 2026-09-30 加回（漫画源链第二源；用户裁定接 Bangumi）。
+ * ⚠️ Bangumi 的书籍条目**没有**独立作者/出版社字段 —— 它们藏在 `infobox` 里（键名「作者」「出版社」「ISBN」），
+ *    所以必须走 `infoboxValue`，别指望顶层字段。
+ * ⛔ 别把结果塞进 `BangumiSearchResult`：那是动画/电影的形状（studio/airDate），塞了会丢作者与 ISBN。
+ */
+export function parseBangumiBookResults(text: string): BookSearchResult[] {
+    let root: unknown;
+    try {
+        root = JSON.parse(text);
+    } catch {
+        return [];
+    }
+    const list = Array.isArray(asRecord(root).data) ? (asRecord(root).data as unknown[]) : [];
+    return list
+        .map(asRecord)
+        .map((s) => {
+            const images = asRecord(s.images);
+            const id = typeof s.id === 'number' ? s.id : 0;
+            const tags = Array.isArray(s.tags)
+                ? s.tags.map(asRecord).filter((t) => typeof t.name === 'string').map((t) => t.name as string)
+                : [];
+            return {
+                id: id ? String(id) : '',
+                // 中文名优先（与动画那条同一口径）
+                title: (typeof s.name_cn === 'string' && s.name_cn) ? s.name_cn : (typeof s.name === 'string' ? s.name : ''),
+                author: infoboxValue(s.infobox, '作者'),
+                // 🔴 #444g 画师：Bangumi 书籍条目用 infobox 的「作画」表画师（与「作者」分开的两栏）
+                artist: infoboxValue(s.infobox, '作画'),
+                // 🔴 #445 总话数：Bangumi 书籍 infobox 的「话数」（漫画专用；缺失/非数一律不给）
+                pageCount: parseChapterCount(infoboxValue(s.infobox, '话数')),
+                publisher: infoboxValue(s.infobox, '出版社'),
+                isbn: infoboxValue(s.infobox, 'ISBN'),
+                year: parseYear(s.date),
+                thumbnail: typeof images.large === 'string' ? images.large : (typeof images.common === 'string' ? images.common : undefined),
+                description: typeof s.summary === 'string' ? s.summary : undefined,
+                genres: tags.slice(0, 3),
+                rating: typeof s.score === 'number' ? Number(s.score.toFixed(1)) : undefined,
+                source: 'bangumi',
+                sourceUrl: id ? `https://bgm.tv/subject/${id}` : undefined,
+            };
+        })
+        .filter((r) => !!r.id && !!r.title);
+}
+
 /** 解析用户收藏列表响应（/v0/users/{id}/collections）：data[].subject → BangumiSearchResult（type 收藏状态忽略；subject.type 决定条目类型 2动画/6电影，其余跳过） */
-export function parseBangumiCollections(text: string): BangumiSearchResult[] {
-    const data = asRecord(JSON.parse(text));
+export function parseBangumiCollections(text: string): BangumiSearchResult[] {    const data = asRecord(JSON.parse(text));
     const list = Array.isArray(data.data) ? data.data : [];
     return list
         .map(asRecord)
@@ -196,6 +268,17 @@ export class BangumiClient {
     async search(keyword: string): Promise<BangumiSearchResult[]> {
         const text = await this.httpPost(SEARCH_URL, buildSearchBody(keyword), authHeaders(this.token));
         return parseBangumiResults(text);
+    }
+
+    /**
+     * 🔴 2026-09-30 加回：**书籍类目（type=1，含漫画）**搜索 —— 漫画源链的第二源（用户裁定）。
+     * ⚠️ 需要 Access Token（与动画搜索同一枚）；未配置时上层 `providerConfigured('bangumi')` 会判 false，
+     *    该源在链里**静默降级**（状态 unconfigured），不会让整组搜索失败。
+     */
+    async searchBooks(keyword: string): Promise<BookSearchResult[]> {
+        const body = buildSearchBody(keyword, BANGUMI_SEARCH_LIMIT, BANGUMI_BOOK_SUBJECT_TYPE);
+        const text = await this.httpPost(SEARCH_URL, body, authHeaders(this.token));
+        return parseBangumiBookResults(text);
     }
 
     /** 详情补全：/v0/subjects/{id}（评分+评价人数+制作公司） */

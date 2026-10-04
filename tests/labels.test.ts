@@ -1,6 +1,6 @@
 // 状态文案按类型映射（书/游戏专属语义，内部仍四态）
 import { describe, it, expect } from 'vitest';
-import { statusLabel, statusVerb, reviewLabel, isTrackingType, overviewUnitLabel } from 'pure/labels';
+import { statusLabel, statusVerb, isTrackingType, overviewUnitLabel } from 'pure/labels';
 import { ENTRY_TYPES } from 'data/types';
 
 
@@ -60,25 +60,9 @@ describe('statusVerb 状态区动词按类型映射', () => {
     });
 });
 
-describe('reviewLabel 评语 placeholder 按类型映射', () => {
-    it('影视/动画用「观后感」', () => {
-        expect(reviewLabel('movie')).toBe('观后感');
-        expect(reviewLabel('tv')).toBe('观后感');
-        expect(reviewLabel('anime')).toBe('观后感');
-    });
-
-    it('书籍用「读后感」', () => {
-        expect(reviewLabel('book')).toBe('读后感');
-    });
-
-    it('游戏用「游玩体验」', () => {
-        expect(reviewLabel('game')).toBe('游玩体验');
-    });
-
-    it('音乐用「收听感受」', () => {
-        expect(reviewLabel('music')).toBe('收听感受');
-    });
-});
+// 🔴 #452：`reviewLabel`（评语 placeholder 按类型映射）**已删除** —— 用户要求「个人评语」的占位符
+//   全类型统一成一句引导语（「在这里用一句话概括你的核心感受或者情绪记录...」），该函数随之退场。
+//   原先这里那 4 条用例（影视=观后感 / 书籍=读后感 / 游戏=游玩体验 / 音乐=收听感受）一并删除。
 
 describe('isTrackingType 追更范围', () => {
     it('仅剧集与动画可追更', () => {
