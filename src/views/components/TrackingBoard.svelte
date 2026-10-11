@@ -123,7 +123,7 @@
         });
     }
 
-    /** 在看条目（追番池）：仅动画/电视剧（书籍/游戏不追番）；updateMap 显式传入 → 检测结果变化时重排（有更新置顶） */
+    /** 在看条目（追番池）：仅动画/剧集（书籍/游戏不追番）；updateMap 显式传入 → 检测结果变化时重排（有更新置顶） */
     $: watching = sortWatching(
         entries.filter((e) => e.status === 'watching' && isTrackingType(e.type)),
         updateMap,

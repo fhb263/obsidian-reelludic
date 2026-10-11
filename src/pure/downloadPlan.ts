@@ -52,7 +52,7 @@ export const DOWNLOAD_DIR_DEFAULT: Record<DownloadKind, string> = {
 export const DOWNLOAD_EXT_WHITELIST: Record<DownloadKind, readonly string[]> = {
     music: AUDIO_ASSOCIABLE_EXTENSIONS,
     video: VIDEO_ASSOCIABLE_EXTENSIONS,
-    book: ['epub', 'pdf', 'txt', 'mobi', 'azw3', 'fb2', 'cbz', 'zip'],
+    book: ['epub', 'pdf', 'txt', 'mobi', 'azw3', 'fb2', 'cbz', 'zip', 'cbt', 'tar'],
     other: [],
 };
 
@@ -174,8 +174,10 @@ export function migrateLegacyDownloadDir(raw: string | undefined, kind: Download
 /**
  * 该类型文件**所在目录**的库内相对路径（#459 起 = 设置项的值**本身**，⛔ 不再拼 `音乐/` `书籍/` 子目录）。
  *
- * ⚠️ 落盘（`downloadRelPath`）与「检索库内同名文件」（`main.listLibraryAudioFiles` /
- *    `listLibraryBookFiles`）**必须都走这一个函数** —— 两处各拼一份路径，用户改完设置立刻对不上。
+ * ⚠️ 落盘（`downloadRelPath`）与「检索库内同名文件」（`main.listLibraryAudioFiles`）
+ *    **必须都走这一个函数** —— 两处各拼一份路径，用户改完设置立刻对不上。
+ *    🔴 #602：书籍那侧的「按标题检索本地」已改走**分类目录**（`pure/localDirs`，可能与库内无关），
+ *    ⛔ 别再把书籍的检索根当成「书籍文件目录」——本函数仍是**落盘**那一侧的真源。
  */
 export function downloadDir(root: string | undefined, kind: DownloadKind): string {
     return normalizeDownloadRoot(root, kind);

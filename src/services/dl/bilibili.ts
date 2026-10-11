@@ -106,7 +106,7 @@ async function biliViewOnce(t: DlTransport, bvid: string, refreshCookie: boolean
     if (cookie) headers.Cookie = `${BILI_COOKIE_NAME}=${cookie}`;
     const res = await t.get(buildBiliViewUrl(bvid), headers);
     if (!res || res.status < 200 || res.status >= 300) {
-        return { code: -(res?.status || 0), message: '', title: '', parts: [] };
+        return { code: -(res?.status || 0), message: '', title: '', parts: [], cover: '' };
     }
     return parseBiliView(res.text);
 }
@@ -117,21 +117,24 @@ async function biliViewOnce(t: DlTransport, bvid: string, refreshCookie: boolean
  *    `view` 同样吃风控（实测不带 Cookie 会 412），重试能救掉偶发那一次。
  * ⚠️ 空 `parts` **不是错误**（单P 视频只有 1 条、也可能真没有 `pages`）——
  *    调用方据此走「直接填这一条」的老路（能力回落，⛔ 别把能用的路堵死）。
+ * 🔴 #577：顺带把**封面原图**（`cover`）带回去 —— 选集弹窗的缩略图就吃它。
+ *    ⛔ 不为封面另写一条 cookie / 重试链（同一接口、同一份真源：那样必然分叉）。
+ *    失败时 `cover` 为空串 ⇒ 调用方落统一占位图。
  */
 export async function dlBiliView(
     t: DlTransport,
     bvid: string,
-): Promise<{ title: string; parts: BiliPart[]; error?: string }> {
+): Promise<{ title: string; parts: BiliPart[]; cover: string; error?: string }> {
     const b = String(bvid ?? '').trim();
-    if (!b) return { title: '', parts: [], error: '缺少 bvid' };
+    if (!b) return { title: '', parts: [], cover: '', error: '缺少 bvid' };
     try {
         const first = await biliViewOnce(t, b, false);
-        if (first.code === 0) return { title: first.title, parts: first.parts };
+        if (first.code === 0) return { title: first.title, parts: first.parts, cover: first.cover };
         const second = await biliViewOnce(t, b, true);
-        if (second.code === 0) return { title: second.title, parts: second.parts };
-        if (second.code < 0) return { title: '', parts: [], error: `读取分P请求失败（HTTP ${-second.code || '未知'}）` };
-        return { title: '', parts: [], error: biliViewError(second) };
+        if (second.code === 0) return { title: second.title, parts: second.parts, cover: second.cover };
+        if (second.code < 0) return { title: '', parts: [], cover: '', error: `读取分P请求失败（HTTP ${-second.code || '未知'}）` };
+        return { title: '', parts: [], cover: '', error: biliViewError(second) };
     } catch (e) {
-        return { title: '', parts: [], error: `读取分P出错：${e instanceof Error ? e.message : String(e)}` };
+        return { title: '', parts: [], cover: '', error: `读取分P出错：${e instanceof Error ? e.message : String(e)}` };
     }
 }

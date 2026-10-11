@@ -1,7 +1,7 @@
 <script lang="ts">
     import { lrcTranslatableCount } from 'pure/lrcBilingual';
     import { buildPlatformCoverQuery, posterSourcesFor, type PosterSource } from 'pure/posterSources';
-    import { onMount, tick } from 'svelte';
+    import { onMount, onDestroy, tick } from 'svelte';
     import { ENTRY_TYPE_LABELS, type EntryType } from 'data/types';
     import { statusLabel, statusVerb } from 'pure/labels';
     import { reconcileBookProgress, pageFromPercent, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
@@ -12,6 +12,15 @@
     import { normalizeBookKind, BOOK_KIND_LABELS } from 'pure/bookKind';
 import { toSearchTypeSel, applySearchTypeSel, type SearchTypeSel } from 'pure/searchTypeSel';
     import { normalizeMusicKind } from 'pure/musicKind';
+    // #563 自动保存轻提示的文案与时长真源（⛔ 别在模板里手写「设置已保存」）
+    import { TOAST_SAVED, TOAST_FAILED, TOAST_MS, shouldFlashSaved } from 'pure/toast';
+    // #568/#569/#583 浮层自动保存的**触发判据**与**就地提示键空间**真源
+    // （纯模块 + 单测；⛔ 别在组件里再写一遍条件、也别手写裸键名 —— 拼错是静默的）
+    import { AUTOSAVE_KEYS, shouldAutoSave, type AutoSaveKey } from 'pure/popoverAutoSave';
+    // #563 未配置分类目录时的警告原文（唯一一份，与宿主 `searchLocalEpisode` 的 'nodir' 语义配对）
+    import { LOCAL_DIR_MISSING_WARN, type LocalEpisodeOutcome, type LocalEpisodeQuery } from 'pure/localEpisode';
+    // 🔴 #602：书籍本地检索的查询 / 结果形状（与关联弹窗**同一份** —— 收在纯模块，⛔ 别在组件侧另立一个）
+    import type { LocalBookSearchQuery, LocalFileSearchOutcome } from 'pure/localDirs';
     import { placeMenu } from 'pure/menuPlacement';
     import { AI_HIGHLIGHT_SUGGEST, aiFieldsToText, textToAiFields } from 'pure/aiSummary';
     import type { AiSummaryInput, AiSummaryResult } from 'pure/aiSummary';
@@ -29,10 +38,15 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import { mergeTmdbDetail } from 'pure/resultMerge';
     import type { LyricCandidate, LyricSourceId } from 'pure/lyricOnline';
     import { formatCandidateLabel } from 'pure/lyricOnline';
+    // #529 书籍「检索在线书籍阅读」：检索词与候选形状都来自 `pure/weread`（组件不碰网络，只画列表）
+    import { buildWereadQuery, type WereadCandidate, type WereadBookInfo } from 'pure/weread';
+    // #527 剧集链接失效：状态类型与判据在 `pure/linkStatus`（探测在宿主 `services/linkCheck`）
+    import type { LinkStatus } from 'pure/linkStatus';
     // #500③ 集编辑浮层的「B站」按钮复用**音乐下载那条 B 站搜索链**（同一个 `pure` 解析 + 同一个服务）
     import {
         biliCheckedRows,
         biliEpisodeQuery,
+        biliPartTitles,
         biliSelectableRows,
         buildBiliFillRows,
         buildBiliPartUrl,
@@ -47,10 +61,12 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import {
         BATCH_PARTS_ANCHOR,
         batchCheckedRows,
+        batchFillTitles,
         batchProgressText,
         batchSleep,
         batchStopText,
         buildBatchTargets,
+        bvidFromPaste,
         canExpandParts,
         canFillBatch,
         candidatesToMark,
@@ -62,6 +78,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
         pickedCandidate,
         pickedUrl,
         runBatchSearch,
+        titleMatchesWork,
         withChecked,
         withPartCount,
         withPicked,
@@ -79,6 +96,9 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import type { LyricFetchOutcome, LyricSearchOutcome } from 'services/lyricSearch';
     import { communityScoreIssue, entrySourceLabel, parseCommunityScore, parseRatingCount, parseSourceName, ratingCountIssue, sourceNameIssue, sourceUrlIssue, splitScoreCount } from 'pure/sourceMeta';
     import type { SearchProgressCb, SearchProgress } from 'pure/searchProgress';
+    // 🔴 #559：模拟进度条的**时间线**（五段曲线 + 慢网络提示 + 重试阈值）全在 `pure/simProgress`
+    // ⛔ 别在本组件里再写一套「每 N ms 随机加几」——那正是本批要换掉的旧形态。
+    import { simPctAt, simVisibleAt, simSlowTextAt, simShowRetryAt } from 'pure/simProgress';
     import type { MediaStatus } from 'pure/status';
     import Icon from './Icon.svelte';
     import type { MediaEntry, BookKind, MusicKind } from 'data/types';
@@ -88,7 +108,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     /** 状态选项（想看/在看/已看/存档；存档选中时右侧不显示日期输入框；弃剧已移除，旧数据 dropped 编辑保存时迁移为存档） */
 const STATUS_OPTIONS: MediaStatus[] = ['want', 'watching', 'watched', 'archived'];
 
-/** 类型下拉选项（显式顺序，2026-09-12 用户指定）：文学 → 网文 → 漫画 → 动画 → 电视剧 → 电影 → 游戏 → 音乐
+/** 类型下拉选项（显式顺序，2026-09-12 用户指定）：文学 → 网文 → 漫画 → 动画 → 剧集 → 电影 → 游戏 → 音乐
  *  （网文 / 漫画 = 书籍类目子类的搜索快捷态，非独立 EntryType）。
  *  🔴 2026-09-30 用户裁定**加回「漫画」**（1.0.3.1 曾删，2026-09-13 裁定）：紧跟网文 ⇒ 书籍三个子类连排。 */
 const TYPE_OPTIONS: ReadonlyArray<{ value: SearchTypeSel; label: string }> = [
@@ -121,6 +141,12 @@ export let initialBookKind: BookKind | undefined = undefined;
     export let onFetchBangumiDetail: (id: number) => Promise<{ rating?: number; ratingCount?: number; director?: string; cast?: string[] }> = async () => ({});
     /** Open Library 书籍详情按需补全（选中搜索书籍时调用：works.json → 简介/页数/出版社；失败返回 null 静默） */
     export let onFetchOpenLibraryDetail: (key: string) => Promise<Record<string, unknown> | null> = async () => null;
+    /**
+     * 🔴 #609 拉**一本微信读书书的详情**（`/web/book/info?bookId=`）—— 与「从微信读书同步书架」逐本补详情
+     * **同一个端点、同一份解析**（宿主 `main.fetchWereadBookInfo`）。
+     * ⚠️ 需要已填 Cookie；没填 / 失败 ⇒ 返回 `null`，本组件**静默保留搜索级字段**（与豆瓣详情同款降级）。
+     */
+    export let onFetchWereadDetail: (bookId: string) => Promise<WereadBookInfo | null> = async () => null;
     /** OMDb（IMDb）影视详情按需补全（选中结果时调用：i= 详情 → Plot/导演/演员/评分；失败返回 null 静默） */
     export let onFetchOmdbDetail: (imdbID: string) => Promise<Record<string, unknown> | null> = async () => null;
     export let onSubmit: (input: Record<string, unknown>) => Promise<void> = async () => {};
@@ -163,9 +189,14 @@ export let initialBookKind: BookKind | undefined = undefined;
     export let onOpenReader: () => Promise<BookProgressFields | undefined> = async () => undefined;
     /** 书籍编辑浮层「浏览」：系统文件选择器选 TXT/EPUB/PDF，返回 vault 相对路径 */
     export let onPickBookFile: (ev?: MouseEvent) => Promise<string | undefined> = async () => undefined;
+    /**
+     * 🔴 #539 书籍「选文件夹」：漫画「散装文件夹型」把**文件夹本身**关联成书。
+     * ⚠️ 与 `onPickBookFile` 分开两枚回调 —— Electron 在 Windows/Linux 上不能同时选文件与目录。
+     */
+    export let onPickBookFolder: () => Promise<string | null | undefined> = async () => undefined;
     /** 书籍「进度页数」自动关联：探针本地书籍文件基准（PDF → numPages；TXT → 按章节解析 totalChapters；EPUB/失败 → undefined） */
     export let onProbeBookPages: (path: string) => Promise<BookProbeResult | undefined> = async () => undefined;
-    /** 选视频文件夹（动画/电视剧「从文件夹检索剧集」目录选择器；非桌面/取消 → undefined） */
+    /** 选视频文件夹（动画/剧集「从文件夹检索剧集」目录选择器；非桌面/取消 → undefined） */
     export let onPickVideoDir: () => Promise<string | undefined> = async () => undefined;
     /** 读文件夹内视频并识别集号（按集号升序 {ep,path,name}；不可读/无命中 → []） */
     export let onScanEpisodeDir: (dir: string) => Promise<{ ep: number; path: string; name: string }[]> = async () => [];
@@ -222,10 +253,35 @@ export let initialBookKind: BookKind | undefined = undefined;
     });
 
     /**
+     * 🔴 #529（用户：「在书籍条目加检索在线书籍阅读小图标按钮（网络链接回填）」）：
+     * 书籍「网络地址」行里那枚小图标按钮的检索通道（宿主 `main.searchWeread` → `services/weread`）。
+     * · 检索源 = **微信读书**网页版（免登录搜索；回填的是 `web/reader/<hash>` 在线阅读链接）；
+     * · 只**返回候选**，⛔ 不下载、不解析正文（回填到表单 `readUrl`，仍要点「保存」才落库）；
+     * · 宿主那侧按 `Platform.isDesktopApp` 门控并给出文案 ⇒ 组件不重复判断。
+     */
+    export let onSearchWeread: (keyword: string) => Promise<{ books: WereadCandidate[]; error?: string }> = async () => ({
+        books: [],
+        error: '微信读书检索不可用',
+    });
+
+    /**
+     * 🔴 #527 / #531：本条目各集的**链接失效状态**（与 `episodeUrls` 下标对齐；`'ok' | 'dead' | 'unknown'`）。
+     * · 由 `EntryModal` 从宿主**内存缓存**读一次注入（缓存由设置页那枚「失效链接检测」扫全库时写入）；
+     * · 本组件只**显示**：失效集按钮标红 + 悬停提示加一句「⚠ 链接可能已失效」。
+     * · ⛔ 本组件**不再**发起检测（入口已按用户指令挪到设置页）；缺席 ⇒ `[]` ⇒ 不标红。
+     */
+    export let linkStatuses: (LinkStatus | undefined)[] = [];
+
+    /**
      * ⑤-c：是否显示「下载」按钮（真源 = 设置里的「启用内置音乐播放器」开 + 桌面端）。
      * ⚠️ 由 `EntryModal` 按当前设置传入 —— ⛔ 别在组件里读 settings（组件不认识 plugin）。
      */
     export let canDownload = false;
+    /**
+     * #538：是否显示结果区那栏「在线曲库」（真源 = 宿主 `canUseSongLibrary()` = 能力 ∧ 用户开关，默认关）。
+     * ⚠️ 只喂给 `songLibOn` 一个消费点；⛔ 别拿它去门控「下载歌曲」按钮（那是 `canDownload` 的事）。
+     */
+    export let songLibraryEnabled = false;
     /* 🔴 #523：书籍那枚「下载」小按钮**整对撤除**（连它要的两个 prop 一起删）—— 用户 2026-10-04 裁定
        「下载只保留音乐」⇒ 书籍「路径」旁只留「检索本地书籍」那一枚。
        ⚠️ 下载**实现本体**（`BookDownload.svelte` / 宿主那支 open…Downloader 方法 / 书源服务）与两条
@@ -262,22 +318,39 @@ export let initialBookKind: BookKind | undefined = undefined;
         newStem: string,
     ) => Promise<{ ok: boolean; message: string; path?: string }> = async () => ({ ok: false, message: '' });
     /**
-     * 🔴 #524：**选目录**（系统 openDirectory）—— 「检索本地书籍」**先让用户挑一个文件夹**
-     * （用户：「书籍检索文件目录给我先弹出系统文件选择器让我选择目录」）。
-     * 🔴 **三态返回值**（⛔ 别拿 `!dir` 一把抓）：`string` = 选中；`null` = **用户取消**（⇒ 什么都不做）；
-     *    `undefined` = **本环境没有系统对话框**（非桌面端）⇒ 回落到下面的「库内书籍文件」清单。
+     * 🔴 #602：书籍「检索本地」—— 与影视单集本地检索（`onSearchLocalEpisode`）**同一条链**。
+     *
+     * 由来：用户报障「书籍关联入口这个小图标按钮怎么是选文件夹关联的，统一成检索关联」（问答裁定
+     * 「两处一起改」）⇒ #524 那套「先弹系统目录选择器 → 列该目录 → 匹配」**对书籍作废**，
+     * 改成**不问用户**：宿主按子分类取设置里的「文学 / 网文 / 漫画目录」（`pure/localDirs`），
+     * 递归扫 + 按标题匹配（`pure/libraryBooks.pickLibraryBook`）。
+     * ⚠️ 与影视那条不同的是**返回值形状**：影视是「三态码」（`ok` / `'nodir'` / `'notfound'`），
+     *    这条直接回一句**给用户看的文案**（`notice`）—— 本组件把它原样弹出去，⛔ 不再自己编措辞。
+     * ⚠️ 三个一并退场的 prop（`onPickBookDir` / `onListBookFilesInDir` / `onListLibraryBooks`）与
+     *    对应的宿主方法都已删 —— ⛔ 别「留着备用」，那正是本仓明令禁止的死代码。
      */
-    export let onPickBookDir: () => Promise<string | null | undefined> = async () => undefined;
-    /** 🔴 #524：列出**刚挑的那个目录**里的可关联书籍文件（宿主走 fs；库内转相对、库外保留绝对） */
-    export let onListBookFilesInDir: (dir: string) => Promise<LibraryBookFile[]> = async () => [];
+    export let onSearchLocalBook: (q: LocalBookSearchQuery) => Promise<LocalFileSearchOutcome> =
+        async () => ({ notice: '当前环境不支持本地检索' });
     /**
-     * #417：**库内书籍文件**清单（= 设置里那个「书籍文件目录」）。
-     * ⚠️ 🔴 #524 起它的角色**降级成「非桌面端的回落路径」**（原来那枚「检索同名书籍」小按钮已按 #523 撤除，
-     *    现在挂了「检索本地书籍」这条先选目录的新链）。
-     * 宿主注入（`main.listLibraryBookFiles`：扫**全库**、按书籍扩展名白名单筛）——
-     * ⛔ 组件不碰 vault；匹配与排序在纯模块 `pure/libraryBooks`。
+     * 🔴 #534：游戏「检索本地」—— 🔴 #602 起它是**全仓唯一**还「先挑目录」的本地检索
+     * （书籍改走分类目录、音乐走音频目录，都不问用户）。
+     * 用户（2026-10-05）：「希望全类型条目启动路径旁都添加统一本地路径和网络路径检索小图标按钮」。
+     * ⚠️ 游戏**不接在线检索源**（用户裁定：「不接，仅在右键弹窗加网络路径框（加粘贴文字按钮）」）——
+     *    所以游戏行内只有这**一枚**本地检索；网络路径靠浮层手填/粘贴。
+     * 三态口径与 `onPickVideoDir` **完全一致**（`string` 选中 / `null` 用户取消 / `undefined` 本环境无对话框）。
      */
-    export let onListLibraryBooks: () => LibraryBookFile[] = () => [];
+    export let onPickGameDir: () => Promise<string | null | undefined> = async () => undefined;
+    /** 🔴 #534：列出刚挑的那个目录里的**可启动文件**（宿主走 `pure/gameLaunch.isGameLaunchPath`；库内转相对、库外保留绝对） */
+    export let onListGameLaunchFilesInDir: (dir: string) => Promise<LibraryBookFile[]> = async () => [];
+    /**
+     * 🔴 #563 编辑浮层「本地路径」标签旁那枚**单集本地检索**（用户：「点一下要自动去设置页前置填写的
+     *    媒体库目录路径里（含多层嵌套）递归搜索当前集的视频文件，并直接自动填入绝对路径」）。
+     * 🔴 与上面几条「先弹目录选择器再找」**不是同一件事**：它**不问用户** —— 根目录来自设置页的分类目录
+     *    （`pure/localDirs`），按条目类型分流（剧集/动画/电影 各自的目录）。
+     * 三态返回：`ok` 填入 / `'nodir'` 该分类没配目录（弹「去设置页配置」的警告）/ `'notfound'` 没找到这一集。
+     */
+    export let onSearchLocalEpisode: (opts: LocalEpisodeQuery) => Promise<LocalEpisodeOutcome> =
+        async () => ({ ok: false, reason: 'nodir' });
     /** 游戏编辑表单「记录游玩」：弹窗侧打开游玩记录弹窗（固定挂载当前游戏） */
     export let onRecordPlaySession: () => void = () => {};
     /** 拖入本地图片上传为封面：返回相对路径（covers/xxx） */
@@ -314,10 +387,25 @@ export let initialBookKind: BookKind | undefined = undefined;
     let progDone = 0;
     let progTotal = 0;
     let progLabel = '';
-    /** 模拟进度（单步搜索 total 未知时显示爬升百分比，避免「看不到进度」；有真实步骤时用真实值） */
+    /**
+     * 模拟进度（单步搜索 total 未知时显示爬升百分比，避免「看不到进度」；有真实步骤时用真实值）。
+     * 🔴 #559（用户 2026-10-08）：爬升曲线**不再是**「每 420ms 随机加 4~10」，改成
+     *    `pure/simProgress` 的五段时间线（0–200ms 防闪烁 / 200ms–2s ease-out 冲到 70 /
+     *    2–3s 到 80 / 3–5s 蠕动到 85 / 5–8s 到 **90 封顶**，⛔ 永不自己到 100）。
+     *    `simMs` = 本次搜索已耗时（50ms tick 重算），端点值由单测钉死。
+     */
     let progSim = 0;
     let progSimTimer: ReturnType<typeof setInterval> | undefined;
-    /** 进度百分比：total 已知用真实值；未知用模拟爬升（封顶 88%，完成时跳 100） */
+    /** 已耗时（ms）；驱动曲线、慢网络提示与重试按钮三条判据 */
+    let simMs = 0;
+    let simStart = 0;
+    /** 200ms 之后才让进度条上屏（防闪烁）；完成后还要留一帧给「拉满 + 淡出」 */
+    let progVisible = false;
+    /** 完成冲刺：100% + 淡出（用户「100ms 内瞬间拉满 + 淡出」） */
+    let progFade = false;
+    /** 搜索序号：点「中止重试」后 +1 ⇒ 在飞的旧请求回来时被丢弃（不再覆盖新一轮的结果） */
+    let searchSeq = 0;
+    /** 进度百分比：total 已知用真实值；未知用模拟爬升（封顶 90，完成时跳 100） */
     $: progPct = progTotal > 0
         ? Math.min(100, Math.round((progDone / progTotal) * 100))
         : progSim;
@@ -348,16 +436,41 @@ export let initialBookKind: BookKind | undefined = undefined;
         }
     };
     function startSimProgress() {
-        progSim = 4;
+        simStart = Date.now();
+        simMs = 0;
+        progSim = 0;
+        progFade = false;
+        progVisible = false; // 🔴 0–200ms 不显示任何加载动画（防闪烁）
         clearInterval(progSimTimer);
         progSimTimer = setInterval(() => {
-            progSim = Math.min(88, progSim + Math.round(4 + Math.random() * 6));
-        }, 420);
+            simMs = Date.now() - simStart;
+            progSim = simPctAt(simMs);
+            if (!progVisible && simVisibleAt(simMs)) progVisible = true;
+        }, 50);
     }
     function stopSimProgress() {
         clearInterval(progSimTimer);
         progSimTimer = undefined;
-        progSim = 100;
+        progSim = 100; // 🟢 完成冲刺：API 返回那一刻拉满
+        progFade = true;
+        // 若这一轮压根没到 200ms（搜索极快）⇒ 全程不显示进度条，直接出结果（用户第一段的口径）
+        if (!progVisible) return;
+        // 留 160ms 给「拉满 + 淡出」动画，然后卸载（`{#if searching || progVisible}`）
+        setTimeout(() => { progVisible = false; progFade = false; }, 160);
+    }
+    /** 5s 之后把「正在搜索 N 个数据源」换成慢网络提示（未到点 ⇒ undefined，保持原文案） */
+    $: simSlowText = searching ? simSlowTextAt(simMs) : undefined;
+    /** 8s 之后给「中止重试」按钮 */
+    $: simRetry = searching && simShowRetryAt(simMs);
+    /**
+     * 「中止重试」：把在飞的这一轮**作废**（`searchSeq` +1 ⇒ 回来后丢弃结果），然后立刻重搜。
+     * ⚠️ 底层请求**掐不断**（与 #428 的取消哨兵同一条现实），能做的只是「不再等它」。
+     */
+    function retrySearch(): void {
+        searchSeq++;
+        stopSimProgress();
+        searching = false;
+        void doSearch();
     }
     /** 编辑模式默认已"选/填"（picked=true 直接渲染字段区）；新增需搜索点结果才置 true */
     let picked: boolean = entry !== null;
@@ -572,6 +685,9 @@ export let initialBookKind: BookKind | undefined = undefined;
         const next = applySearchTypeSel((ev.currentTarget as HTMLSelectElement).value as SearchTypeSel, bookKind);
         type = next.type;
         bookKind = next.bookKind;
+        // 🔴 #535：切到网文 / 漫画后那枚在线检索按钮就没了 ⇒ 开着的候选浮层必须一并收起
+        //    （⛔ 留着它会显示一个「当前分类根本不接」的检索结果，自相矛盾）。
+        if (next.bookKind !== 'book') readUrlOpen = false;
     }
     /** 音乐分类（1.0.3.1 起不再分：用户 2026-09-13 裁定删除「其他」，表单选择行已下线）；字段保留恒归一为 music（pure/musicKind） */
     let musicKind: MusicKind = normalizeMusicKind(entry?.musicKind);
@@ -581,18 +697,45 @@ export let initialBookKind: BookKind | undefined = undefined;
     let artist = entry?.artist ?? '';
     let album = entry?.album ?? '';
     let audioPath = entry?.audioPath ?? '';
+    /**
+     * 🔴 #601 音乐**网络地址**（存 `audioUrl`，append-only 新字段）。
+     * 与 `gameUrl` 同一条口径：音乐侧没有可用的在线检索源（四平台都要鉴权 / 签名）
+     * ⇒ 只在浮层里手填 / 粘贴，**没有检索按钮**。
+     */
+    let audioUrl = entry?.audioUrl ?? '';
     /** 游戏启动快捷方式（.lnk）路径（表单「启动快捷方式」行） */
     let gameLaunchPath = entry?.gameLaunchPath ?? '';
+    /**
+     * 🔴 #534 游戏**网络路径**（存 `gameUrl`，append-only 新字段）。
+     * 用户裁定：游戏**不接在线检索源** —— 「仅在右键弹窗加网络路径框（加粘贴文字按钮）」，
+     * 所以它没有检索按钮，只在「启动路径」浮层里手填 / 粘贴（与影视集编辑浮层那套「粘贴」同款）。
+     */
+    let gameUrl = entry?.gameUrl ?? '';
     /** 书籍文件路径（阅读器打开入口）：右键编辑浮层浏览/手动输入，存 bookFile */
     let bookFileVal = entry?.bookFile ?? '';
     /** 书籍文件右键编辑浮层开关 */
     let bookEditOpen = false;
+    /**
+     * #529 书籍**网络地址**（在线阅读链接，存 `readUrl`）+ 「检索在线书籍阅读」候选浮层状态。
+     * 🔴 检索源 = 微信读书（宿主 `main.searchWeread` → `services/weread`）；只**回填链接**，
+     *    ⛔ 不下载、不解析正文。写入的只是**表单状态**，仍要点表单「保存」才落库。
+     */
+    let readUrl = entry?.readUrl ?? '';
+    let readUrlOpen = false;
+    let readUrlQuery = '';
+    let readUrlBusy = false;
+    let readUrlBooks: WereadCandidate[] = [];
+    let readUrlErr = '';
     /** 游戏启动快捷方式右键编辑浮层开关 + 编辑缓冲值（保存才写回 gameLaunchPath） */
     let gameEditOpen = false;
     let gameLaunchVal = '';
+    /** #534 游戏网络路径的编辑缓冲值（与 `gameUrl` 分开：保存才写回 —— 同 gameLaunchVal 的模式） */
+    let gameUrlVal = '';
     /** 本地音频右键编辑浮层开关 + 编辑缓冲值（保存才写回 audioPath） */
     let audioEditOpen = false;
     let audioPathVal = '';
+    /** 🔴 #601 音乐网络地址的编辑缓冲值（与 `audioUrl` 分开：失焦才写回 —— 同 `audioPathVal` 的模式） */
+    let audioUrlVal = '';
     /**
      * #497 改名：输入框里的**新主名** + 失败原因提示 + 进行中标记。
      * 🔴 输入框只放主名，扩展名以静态后缀渲染（`audioExtOf`）—— 扩展名一改，这个文件就不再是音频了，
@@ -735,7 +878,7 @@ export let initialBookKind: BookKind | undefined = undefined;
     let platform = entry?.platform ?? '';
     let developer = entry?.developer ?? '';
     let poster = entry?.poster ?? '';
-    /** 表单 UI 模式：douban（豆瓣版，全类型）/ tmdb（电影/电视剧）/ bangumi（动画）；命中搜索结果或编辑已有条目时按 source 确定 */
+    /** 表单 UI 模式：douban（豆瓣版，全类型）/ tmdb（电影/剧集）/ bangumi（动画）；命中搜索结果或编辑已有条目时按 source 确定 */
     let formMode: 'douban' | 'tmdb' | 'bangumi' = entry
         ? (entry.source === 'tmdb' ? 'tmdb' : entry.source === 'bangumi' ? 'bangumi' : 'douban')
         : 'douban';
@@ -868,11 +1011,33 @@ export let initialBookKind: BookKind | undefined = undefined;
                 : readPct < 100
                   ? 'rl-readbar-high'
                   : 'rl-readbar-done';
-    /** 进度单位：关联 TXT/EPUB 按章节解析 → 章；否则（PDF/手填）→ 页（EPUB 无固定页码，spine 章节数为基准） */
-    $: bookUnit = ['.txt', '.epub'].some((ext) => bookFileVal.trim().toLowerCase().endsWith(ext)) ? '章' : '页';
+    /**
+     * 进度单位：关联 TXT/EPUB 按章节解析 → 章；否则（PDF/手填）→ 页（EPUB 无固定页码，spine 章节数为基准）。
+     * 🔴 #549：**漫画恒「页」** —— 漫画无论挂的是图片文件夹 / CBZ / ZIP 还是 EPUB，
+     *    进度基准都是**图片页**（`probeBookPages` 对漫画一律返回 `{ format: 'comic', numPages }`，
+     *    漫画阅读器也是一页一页翻的）⇒ 不能跟着 `.epub` 扩展名退回「章」（那样 EPUB 漫画会显示「总章节」）。
+     */
+    $: bookUnit =
+        type === 'book' && bookKind === 'comic'
+            ? '页'
+            : ['.txt', '.epub'].some((ext) => bookFileVal.trim().toLowerCase().endsWith(ext))
+              ? '章'
+              : '页';
     $: bookUnitLabel = bookUnit === '章' ? '进度章节' : '进度页数';
+    /**
+     * 🔴 #539 书籍「启动路径」的**格式说明按子分类分叉**（用户报障：「漫画怎么是启动路径（TXT/EPUB/PDF)」）。
+     *   漫画吃 **图片文件夹 / 压缩包**（CBZ·ZIP·CBT·TAR）与 **文档型** PDF·EPUB；
+     *   文学 / 网文仍吃 TXT/EPUB/PDF。
+     * ⚠️ 浮层标题 / 输入框占位 / 「浏览」提示 / 「检索本地」提示**四处共用这一份** —— ⛔ 别各写一遍（必然漂）。
+     */
+    $: bookFmtTitle = bookKind === 'comic' ? '图片文件夹 / 压缩包' : 'TXT/EPUB/PDF';
+    $: bookFmtExts = bookKind === 'comic' ? 'cbz / cbt / zip / tar / pdf / epub' : 'txt / epub / pdf';
+    $: bookFmtName = bookKind === 'comic' ? '漫画' : '书籍';
     /** 游戏游玩时长（小时录入，落库转分钟；有游玩记录明细时以明细累计为准） */
     let playtimeHours = entry?.playtimeMinutes ? String(Math.round(entry.playtimeMinutes / 60)) : '';
+    /** #537 书籍阅读时长（小时录入，落库转分钟）：内置阅读器读该条目时会自动累计（见 main.withReadTime），
+     *  这里手填 = **覆盖**总数。保留 1 位小数（90 分钟 → 「1.5」），与海报墙「已读 1.5h」同一口径。 */
+    let readHours = entry?.readMinutes ? String(Math.round((entry.readMinutes / 60) * 10) / 10) : '';
     let notes = entry?.notes ?? '';
     /** 搜索框引用（添加模式自动聚焦） */
     let queryInput: HTMLInputElement | null = null;
@@ -1035,18 +1200,20 @@ export let initialBookKind: BookKind | undefined = undefined;
     $: sourcesKind = type === 'book' ? bookKind : undefined;
 
     /**
-     * 📌 #464 在线曲库栏的**开关（两个消费点共用这一份口径）**：音乐类型 + 可下载。
+     * 📌 #464 在线曲库栏的**开关（两个消费点共用这一份口径）**：音乐类型 + **曲库开关开启**。
      *
      * 🔴 为什么要它：豆瓣音乐搜索**只按专辑名匹配**（搜歌手名搜不到他的歌），
      *   而「按歌手找他的流行曲」只有四平台曲库能干 —— 那正是「下载歌曲」窗口那条链。
      *   ⇒ 音乐态的结果区固定多一栏「在线曲库」（宿主 `searchMusic` 已把结果并进来，见 `songLibrarySearch`）。
      *
-     * 🔴 门控为什么是 `canDownload`（= 桌面端 + 「启用内置音乐播放器」）：曲库检索要发网络请求（Node http），
-     *   移动端必然失败；且它与「下载歌曲」按钮**本来就是同一个门控**（宿主同一枚 `canUseAudioDownload()`）。
+     * 🔴 门控为什么是 `songLibraryEnabled`（宿主 `canUseSongLibrary()`）：它**已经包含**了能力判定
+     *   （桌面端 + 「启用内置音乐播放器」，曲库检索要发网络请求、移动端必然失败），再 ∧ 用户那枚
+     *   「启用在线曲库检索」开关（#538，默认关）。⇒ 组合只有宿主那一处，⛔ 本组件别再 ∧ 一遍 `canDownload`
+     *   （那会让两处口径分叉：按钮亮着、曲库栏却永远空 —— #464 的老毛病）。
      *   ⚠️ 栏位必须在**发起搜索前**就定好（与其它源同一口径：栏数不随本次成败增减），
      *     缺结果时该栏显示「无匹配」占位，而不是整栏消失/位置漂移。
      */
-    $: songLibOn = type === 'music' && canDownload;
+    $: songLibOn = type === 'music' && songLibraryEnabled;
 
     /** 头部「数据源」栏文案（onSourcesForType 实时解析，含已配置/免 Key 判断）：
      *  如 movieTv 勾选 Douban+TMDB+OMDb → 「数据源：Douban / TMDB / OMDb」。
@@ -1132,6 +1299,8 @@ export let initialBookKind: BookKind | undefined = undefined;
     async function doSearch() {
         // 空输入提示态（2026-09-12 用户需求）：原静默 return 用户无感知，就地给行内红字
         if (!query.trim()) { searchError = '请输入标题'; return; }
+        // 🔴 #559：「中止重试」靠它作废在飞的旧一轮（旧请求回来后 `mySeq !== searchSeq` ⇒ 直接丢弃）
+        const mySeq = ++searchSeq;
         searching = true;
         searchError = '';
         results = [];
@@ -1170,9 +1339,13 @@ export let initialBookKind: BookKind | undefined = undefined;
             searchError = e instanceof Error ? e.message : String(e);
             new Notice(searchError, 8000);
         } finally {
-            stopSimProgress();
-            searching = false;
-            void prefetchTmdbDetails(); // 后台预取 TMDB 详情，不阻塞结果展示
+            // 🔴 #559：只有在飞的那一轮「还是当前这一轮」时才收尾 —— 点过「中止重试」之后
+            //    旧请求回来不许覆盖新一轮的进度条与结果。
+            if (mySeq === searchSeq) {
+                stopSimProgress();
+                searching = false;
+                void prefetchTmdbDetails(); // 后台预取 TMDB 详情，不阻塞结果展示
+            }
         }
     }
 
@@ -1270,7 +1443,15 @@ export let initialBookKind: BookKind | undefined = undefined;
                 toc = r.toc ?? '';
                 // 重新拉取封面策略：本地封面（封面/xxx.jpg）不被远程结果覆盖——豆瓣封面基本不变，
                 // 每次重新拉取都覆盖会再次触发下载，封面/{标题}-2/-3.jpg 重复文件堆积；换封面走 URL 输入/拖图
+                // 🔴 #589 翻面 #582：大图升级已上移到**结果投影层**（`pure/weread.toWereadBookResult`）
+                //    —— 走到这里的微信读书结果**已经是大图**，这一层不再判来源、也不升级第二遍
+                //    （升级函数是幂等的，但「同一件事两处做」正是本仓反复踩的那类分叉源）。
                 if (shouldAdoptCover(poster, r.thumbnail)) poster = r.thumbnail;
+                // 🔴 #582：微信读书的结果**自带在线阅读链接**（`sourceUrl` = `web/reader/<hash>`，见 #580），
+                //    但表单的「网络地址」是**另一个字段**（`readUrl`，书籍专用）⇒ 通用回填**不会**碰它，
+                //    于是从搜索源选完一本书后「阅读」按钮打开的是空白（用户 2026-10-09 报障）。
+                //    ⛔ 只对微信读书补：别的源的 `sourceUrl` 是官网页面，塞进「网络地址」就是一条错链接。
+                if (r.source === 'weread' && sourceUrl) readUrl = sourceUrl;
                 // 豆瓣书籍兜底：搜索级缺 ISBN/装帧/定价 等，点击时按需拉详情补全
                 if (r.source === 'douban' && !r.publisher) {
                     try {
@@ -1290,6 +1471,20 @@ export let initialBookKind: BookKind | undefined = undefined;
                         if (d) {
                             applyDoubanDetail(d);
                             if (d.summary || d.pageCount) new Notice('已自动补全 Open Library 书籍详情', 2000);
+                        }
+                    } catch {
+                        // 详情拉取失败静默，保留搜索级字段
+                    }
+                }
+                // 🔴 #609 微信读书：搜索结果**天生没有出版年**（接口不返回 `publishTime`）、简介也非全文
+                //    ⇒ 选中时按需拉一次详情补齐，口径与「从微信读书同步书架」逐本补详情**完全一致**
+                //    （同一端点 / 同一解析 / 同一字段映射）。⚠️ 需已填 Cookie；没填或失败 ⇒ 静默保留搜索级字段。
+                if (r.source === 'weread' && r.bookId) {
+                    try {
+                        const d = await onFetchWereadDetail(r.bookId);
+                        if (d) {
+                            applyWereadDetail(d);
+                            new Notice('已自动补全微信读书书籍详情', 2000);
                         }
                     } catch {
                         // 详情拉取失败静默，保留搜索级字段
@@ -1544,25 +1739,163 @@ export let initialBookKind: BookKind | undefined = undefined;
         editLocal = episodeFiles[i] ?? '';
         editUrl = episodeUrls[i] ?? '';
     }
-    /** 编辑弹窗保存：写回数组（空串 → undefined），重新赋值触发响应式 */
-    function saveEpEditor() {
+    // ─── 🔴 #563 / #568 / #583 自动保存「就地轻提示」────────────────────────────────
+    //  历史：① #563 建了这条提示，但它挂在**窗口底部**（固定定位居中悬浮）；
+    //        ② #568 用户点名「显示在浮层弹窗内本地路径或网络路径标题旁，**而不是窗口外**」
+    //           ⇒ 集浮层改成**就地**（字段标签旁），另三个浮层当时**没动**（用户只点了集浮层）；
+    //        ③ #583 用户：「书籍…的自动保存**逻辑与显示**与影视类型不一致，请说明并统一」
+    //           ＋「其他类型也一并统一起该自动保存逻辑和显示」
+    //           ⇒ 四类浮层（集 / 游戏 / 音乐 / 书籍）**共用同一个状态机**，提示一律**就地**；
+    //             🔴 只服务旧路径的那条底部提示与其三件套（文案态 / 弹它 / 包它的那个出口）
+    //             **整体退场**（死码不留）—— 同一条提示两次真源必然分叉。
+    //             ⚠️ 本条注释**刻意不写那三个被删标识符的名字**：反向守卫就是按名字 grep 的，
+    //                写了会自撞（本仓老坑）。
+    //
+    //  🔴 同一个状态机 + 键空间（`AUTOSAVE_KEYS`，真源在 `pure/popoverAutoSave`）：
+    //     `savedKey` 记住「刚刚保存的是哪一行」，模板按它决定谁出提示（判据形态见模板里的 `{#if}`）。
+    //     ⛔ 别给每类浮层各留一份 `xxxSaved` —— 那正是本批要收掉的分叉。
+    /** 刚刚自动保存的那一行（`''` = 不显示）；取值域 = `AUTOSAVE_KEYS` */
+    let savedKey: AutoSaveKey | '' = '';
+    /** 失败态（红字）；文案真源 `pure/toast.TOAST_FAILED` */
+    let savedBad = false;
+    /**
+     * 递增序号 —— 只为给 `{#key}` 换实例。
+     * 🔴 为什么需要它：用户「如果用户在 3 秒内又进行了修改，原有的提示应该立即消失，
+     *    重置 3 秒倒计时**并重新显示提示**」⇒ 同一句「设置已保存」必须**重播一次淡入**；
+     *    只改文案变量的话 Svelte 会复用同一个 DOM 节点 ⇒ 动画不重播，看着像「第二次没提示」。
+     */
+    let savedSeq = 0;
+    let savedTimer: ReturnType<typeof setTimeout> | undefined;
+    /** 就地闪一条「设置已保存」（`TOAST_MS` 后自己消失） */
+    function flashSaved(key: AutoSaveKey, bad = false): void {
+        // 🔴 #593：提示**显示期间**的后续保存**不重弹、也不重置倒计时**——判据本体在
+        //    `pure/toast.shouldFlashSaved`（与快捷关联弹窗共用一处；⚠️ 失败态例外，见那里的注释）。
+        //    这条**翻面**了 #563/#568 的旧口径（旧：立即消失 + 重置倒计时 + 重播淡入）——
+        //    用户 2026-10-10 明确改口，⛔ 别把旧口径写回来。
+        if (!shouldFlashSaved(savedKey !== '', bad)) return;
+        clearTimeout(savedTimer);
+        savedKey = key;
+        savedBad = bad;
+        savedSeq += 1;
+        savedTimer = setTimeout(() => { savedKey = ''; }, TOAST_MS);
+    }
+    /**
+     * 四类浮层失焦自动保存的**唯一出口**（#583 统一）：判据 → 提交 → 就地闪提示。
+     *
+     * 🔴 判据本体在**纯模块** `pure/popoverAutoSave.shouldAutoSave`（配 `tests/popoverAutoSave.test.ts`），
+     *    这里⛔ 一个字都不重复（trim / 比对 / force 三条口径只此一处）。
+     * ⚠️ 面板里改的都是**表单态**（纯本地写入），正常不会抛；`catch` 求的是「真有异常时别静默吞掉」——
+     *    用户点名失败要变红，那就得有一条**真能走到**的失败路径，⛔ 不是摆一块永远不亮的红牌。
+     */
+    function autoSaveField(key: AutoSaveKey, next: string, committed: string, commit: () => void, force = false): void {
+        if (!shouldAutoSave(next, committed, force)) return;
+        try {
+            commit();
+            flashSaved(key, false);
+        } catch {
+            flashSaved(key, true);
+        }
+    }
+    onDestroy(() => clearTimeout(savedTimer));
+
+
+    // ─── 🔴 #568 集浮层：自动保存**就地轻提示** ＋ 触发条件收窄（用户 2026-10-08 两条）──────────
+    //  ① 「触发条件仅为填写了正确（非空）路径，为空时不触发自动保存」⇒ 三个输入框的失焦自动保存
+    //     **只在该框去空白后有值时才跑**；为空一律早退 —— 既不写回、也不出提示。
+    //     ⚠️ **不会丢数据**：把已填的路径清空后，`closeEpEditor()`（关闭时先提交）照旧会把空值写回表单态。
+    //  ② 提示**就地**落在那一行的标签旁（#568 用户原话：「显示在浮层弹窗内本地路径或网络路径标题旁，
+    //     而不是窗口外」）⇒ 键空间 `ep:title` / `ep:url` / `ep:local` 三枚，模板三处各挂一枚。
+    //     🔴 #583：这条口径**已推广到全部四类浮层**（状态机与 `flashSaved` 见上方）。
+    /** 集浮层的三个字段 → 就地提示键（⛔ 别在模板里手写裸字符串） */
+    const EP_SAVE_KEYS: Record<'title' | 'url' | 'local', AutoSaveKey> = {
+        title: AUTOSAVE_KEYS.epTitle,
+        url: AUTOSAVE_KEYS.epUrl,
+        local: AUTOSAVE_KEYS.epLocal,
+    };
+
+    /**
+     * 🔴 #563 集编辑浮层「自动保存」：把缓冲写回**表单态**数组（空串 → undefined，重新赋值触发响应式）。
+     * ⛔ **不关浮层** —— 关浮层另有出口（遮罩 / 各面板自己的关闭路径）。
+     * 🔴 写回的是**表单值**，不是 catalog：最终落库仍是表单底部那枚「保存并生成笔记」
+     *    （用户口径：「添加条目：保存并生成笔记，这个按钮才是最终保存态」）⇒ 所以文案说「已保存」而不是「已更新」。
+     */
+    function commitEpEditor(): void {
         if (editEp === null) return;
         const i = editEp;
         episodeFiles = episodeFiles.map((v, idx) => (idx === i ? editLocal.trim() || undefined : v));
         episodeUrls = episodeUrls.map((v, idx) => (idx === i ? editUrl.trim() || undefined : v));
         episodeTitles = episodeTitles.map((v, idx) => (idx === i ? editTitle.trim() || undefined : v));
-        closeEpEditor();
-        new Notice(type === 'movie' ? '关联已保存' : `第 ${i + 1} 集关联已保存`);
     }
-    /** 编辑弹窗清除该集全部关联 */
-    function clearEpEditor() {
-        if (editEp === null) return;
+
+    /**
+     * 某个字段在**表单态里的已存值**（去空白）—— 供「没改就不保存」那条守卫比对。
+     * ⚠️ 只读**当前这一集**（`editEp`）的那一格；表里存的是 `string | undefined`（提交时空串会落成 `undefined`）。
+     */
+    function committedEpValue(field: 'title' | 'url' | 'local'): string {
+        if (editEp === null) return '';
         const i = editEp;
-        episodeFiles = episodeFiles.map((v, idx) => (idx === i ? undefined : v));
-        episodeUrls = episodeUrls.map((v, idx) => (idx === i ? undefined : v));
-        episodeTitles = episodeTitles.map((v, idx) => (idx === i ? undefined : v));
-        closeEpEditor();
-        new Notice(type === 'movie' ? '关联已清除' : `第 ${i + 1} 集关联已清除`);
+        const v = field === 'title' ? episodeTitles[i] : field === 'url' ? episodeUrls[i] : episodeFiles[i];
+        return (v ?? '').trim();
+    }
+
+    /**
+     * 集浮层三处自动保存的**唯一入口**（失焦 / 粘贴 / 检索回填 都走它）。
+     *
+     * 🔴 三条触发口径（#568 ＋ #569，用户 2026-10-08 两次点名）—— 判据本体在**纯模块**
+     *    `pure/popoverAutoSave.shouldAutoSave`（配 `tests/popoverAutoSave.test.ts`，⛔ 别在这里再写一遍条件）：
+     *    ⑴ **空值不保存**：「为空时不触发自动保存」；
+     *    ⑵ **没改不保存**（#569）：与**表单态里已存的那份值**一致就 return
+     *       （⚠️ 比对必须拿表单态那份（`committedEpValue`），⛔ 别自己另存一份「上次的值」——
+     *        打开/关闭浮层、批量填入都会改表单态，两份状态必然漂移）；
+     *    ⑶ **填入即保存**（#569）：「**拉取网络路径填入后**自动保存，而不是需要我手动切换其他框才保存」
+     *       —— 粘贴 / B站 候选回填 / 单集本地检索回填 / 浏览选文件 这四条**程序动作**都带 `force`。
+     *    ⛔ 别把这些守卫挪进 `commitEpEditor`：那里的语义是「提交当前缓冲」（关闭出口要它能提交空值）。
+     * 🔴 #583：出口统一到 `autoSaveField`（四类浮层同一条）—— 本函数只做「取缓冲 + 挑键」。
+     */
+    function autoSaveEp(field: 'title' | 'url' | 'local', force = false): void {
+        if (editEp === null) return;
+        const raw = field === 'title' ? editTitle : field === 'url' ? editUrl : editLocal;
+        autoSaveField(EP_SAVE_KEYS[field], raw, committedEpValue(field), commitEpEditor, force);
+    }
+
+    /**
+     * 🔴 #563 单集本地检索（用户：「本地路径旁边的小图标按钮，点一下要自动去设置页前置填写的媒体库目录
+     *    路径里递归搜索当前集的视频文件，并直接自动填入绝对路径」）。
+     *
+     * 🔴 `epLocalBusy` 是**必须**的：底层是 fs 递归扫盘（可能几百毫秒到数秒）⇒
+     *    ⑴ 按钮旁出转圈指示器（用户点名）；⑵ 期间的重复点击直接忽略（⛔ 别排队跑两遍）。
+     * 🔴 三态提示**分开**（与宿主 `searchLocalEpisode` 的返回一一对应）：
+     *    · `'nodir'` → 弹 `LOCAL_DIR_MISSING_WARN`（「请先前往设置页配置媒体文件根目录」）；
+     *    · `'notfound'` → 只说**没找到这一集**（⛔ 别混进上面那条，那会把人支使去改一个本来就对的设置）。
+     * ⚠️ 回填后**立刻**走一次自动保存（用户：「填入成功后，直接触发自动保存小灰色文字轻提示3秒后消失」）——
+     *    走的是**同一个** `autoSaveEp('local')`（回填值必然非空 ⇒ 过得了 #568 那条空值守卫）；
+     *    提示形态见 #568：**就地**显示在「本地路径」标签旁（⛔ 不再是窗口底部那条浮层提示）。
+     */
+    let epLocalBusy = false;
+    async function searchLocalEpisodeNow(): Promise<void> {
+        if (editEp === null || epLocalBusy) return;
+        const i = editEp;
+        const isMovie = type === 'movie';
+        epLocalBusy = true;
+        try {
+            const res = await onSearchLocalEpisode({
+                type,
+                bookKind: bookKind || undefined,
+                epIndex: i,
+                epTitle: editTitle,
+                title,
+                isMovie,
+            });
+            if (!res.ok) {
+                if (res.reason === 'nodir') new Notice(LOCAL_DIR_MISSING_WARN, 6000);
+                else new Notice(isMovie ? '目录里没找到这个视频文件' : `目录里没找到第 ${i + 1} 集`, 5000);
+                return;
+            }
+            editLocal = res.path;
+            autoSaveEp('local', true);
+        } finally {
+            epLocalBusy = false;
+        }
     }
     /** 集按钮 hover 提示：第 N 集 + 填写的集标题（如「第 1 集 开始」；未填标题只显示「第 N 集」）；
      *  电影无集概念（单集）：只显示标题，未填则提示右键编辑关联。
@@ -1577,7 +1910,11 @@ export let initialBookKind: BookKind | undefined = undefined;
         }
         return episodeHintLabel(i, title, false);
     }
-    /** 编辑浮层「粘贴」：读剪贴板 → 清洗 → 填入网络地址（仍要点「保存」才写回条目） */
+    /**
+     * 编辑浮层「粘贴」：读剪贴板 → 清洗 → 填入网络地址。
+     * 🔴 #569（用户：「**拉取网络路径填入后自动保存**，而不是需要我手动切换其他框才保存」）：
+     *    粘贴**也算「程序填入」** ⇒ 填完立刻 `autoSaveEp('url', true)`（不等失焦、当场提交并在标签旁出提示）。
+     */
     async function pasteEpUrl() {
         const raw = await readClipboardText();
         const v = raw ? cleanPastedText(raw) : '';
@@ -1586,6 +1923,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             return;
         }
         editUrl = v;
+        autoSaveEp('url', true);
     }
 
     // ─── #500③ 集编辑浮层「网络地址」旁的「B站」：搜候选 → 点一条把链接填进编辑框 ───
@@ -1731,6 +2069,10 @@ export let initialBookKind: BookKind | undefined = undefined;
                 }
                 const dup = epBiliDupNote(v.webUrl);
                 editUrl = v.webUrl;
+                // 🔴 #569：候选回填也是「程序填入」⇒ 立刻保存（⛔ 别等用户失焦 —— 用户原话：
+                //    「拉取网络路径填入后自动保存，而不是需要我手动切换其他框才保存」）。
+                //    ⚠️ 放在**关浮层之前**：`autoSaveEp` 读的是 `editEp` / `editUrl`，关浮层会清掉它们。
+                autoSaveEp('url', true);
                 epBiliOpen = false;
                 backToEpBiliSearch();
                 new Notice(
@@ -1788,10 +2130,22 @@ export let initialBookKind: BookKind | undefined = undefined;
         }
         if (byIndex.size === 0) return;
         episodeUrls = episodeUrls.map((v, idx) => (byIndex.has(idx) ? byIndex.get(idx) : v));
+        // 🔴 #601：**分P 标题一起写进集标题**（用户报障「选集窗口拉取的网络 p1-52 都没有集标题显示」）——
+        //    口径唯一真源 `biliPartTitles`（**只填空位**，与快捷关联弹窗同一次调用形态）。
+        // 🔴 #607：`samePartUrl` 让**早先关联过、当时还没写标题**的集也能补上
+        //     （那些集因为已有链接而默认不勾 ⇒ 不加这一层就永远补不上，用户二次报障即此）。
+        const titleFills = biliPartTitles(epBiliRows, episodeTitles, (r) => {
+            const cur = String(episodeUrls[r.epIndex] ?? '').trim();
+            return !!cur && cur === buildBiliPartUrl(epBiliPickBvid, r.page);
+        });
+        if (titleFills.length) {
+            const byTitle = new Map(titleFills);
+            episodeTitles = episodeTitles.map((v, idx) => (byTitle.has(idx) ? byTitle.get(idx) : v));
+        }
         epBiliOpen = false;
         backToEpBiliSearch();
         closeEpEditor();
-        new Notice(`已把 ${byIndex.size} 条链接填进对应集（点「保存」生效）`);
+        new Notice(`已把 ${byIndex.size} 条链接填进对应集${titleFills.length ? `、${titleFills.length} 个集标题` : ''}（点「保存」生效）`);
     }
     // ────────────────────── #519 批量搜索未填集（确认表）──────────────────────
     //
@@ -1876,6 +2230,48 @@ export let initialBookKind: BookKind | undefined = undefined;
         epBiliView = 'search';
         // `fallbackEp = null`：单集投稿不该从这枚入口填（那条路是「直接勾上这一行」）
         await openEpBiliParts(v, BATCH_PARTS_ANCHOR, null);
+    }
+
+    /**
+     * 🔴 #542 批量卡「粘贴链接」：把**手里已有的 B站 合集链接**直接变成分P 勾选表。
+     *
+     * 与「搜索」的分工：搜索 = 「我不知道是哪一条」；粘贴 = 「我已经有那条链接了，别再替我搜一轮」。
+     *
+     * 🔴 **走现成的那条链**（⛔ 不另写一套）：`bvidFromPaste`（从剪贴板文本认号）
+     *    → `openEpBiliParts(v, BATCH_PARTS_ANCHOR, null)` —— 与批量卡某行的「展开分P」
+     *    **同一个实现、同一个锚**（用户 2026-10-07 裁定：带 `?p=` 也**忽略 p**，一律当整季合集）。
+     * 🔴 顺序：**先关批量卡、再开集编辑浮层 + 勾选表**（同 #526 的理由：两张卡同 z 层级、
+     *    批量卡在 DOM 里更靠后，叠着开会被盖住）。
+     * ⚠️ 宿主浮层开在**第一个未填集**上（不是第 1 集）：第 1 集可能本来就已填好，
+     *    而那个浮层只是勾选表的容器（填完 `applyEpBiliParts` 会把它一起收起）。
+     */
+    async function pasteBiliBatchLink(): Promise<void> {
+        if (batchRunning) return;
+        const raw = await readClipboardText();
+        const text = raw ? cleanPastedText(raw) : '';
+        if (!text) {
+            new Notice('读不到剪贴板内容（请手动复制后重试）');
+            return;
+        }
+        const bvid = bvidFromPaste(text);
+        if (!bvid) {
+            new Notice(/b23\.tv/i.test(text)
+                ? '这是 b23.tv 短链 —— 请在浏览器里打开后复制完整链接（带 BV 号）'
+                : '剪贴板里没找到 B 站视频号（需含 BV 号）');
+            return;
+        }
+        const webUrl = buildBiliPartUrl(bvid, 1);
+        if (!webUrl) {
+            new Notice('这个 BV 号看起来不合法');
+            return;
+        }
+        const hostEp = batchAllTargets[0]?.epIndex ?? 0;
+        closeBiliBatch();
+        openEpEditor(hostEp);
+        // ⚠️ 分P 勾选表住在 `{#if epBiliOpen}` 里 ⇒ 得先把那个浮层打开（同 `expandBatchCandParts`）
+        epBiliOpen = true;
+        epBiliView = 'search';
+        await openEpBiliParts({ bvid, title: '', author: '', durationSec: 0, play: 0, webUrl }, BATCH_PARTS_ANCHOR, null);
     }
 
     /** 按当前区间**重开一轮**（用户点了「搜索」）：整表重来，游标归零 */
@@ -2001,13 +2397,23 @@ export let initialBookKind: BookKind | undefined = undefined;
         }
         if (byIndex.size === 0) return;
         episodeUrls = episodeUrls.map((v, idx) => (byIndex.has(idx) ? byIndex.get(idx) : v));
+        // 🔴 #607：**这批也把标题一起写进去**（用户报障「关联网络的 52 集一集标题都没显示」——
+        //     批量这条链原先只写链接、从不写标题；口径真源 `batchFillTitles`，与分P 那条同一套纪律）。
+        const titleFills = batchFillTitles(batchRows, episodeTitles);
+        if (titleFills.length) {
+            const byTitle = new Map(titleFills);
+            episodeTitles = episodeTitles.map((v, idx) => (byTitle.has(idx) ? byTitle.get(idx) : v));
+        }
         const n = byIndex.size;
         closeBiliBatch();
-        new Notice(`已把 ${n} 集的链接填进对应集（点「保存」生效）`);
+        new Notice(`已把 ${n} 集的链接填进对应集${titleFills.length ? `、${titleFills.length} 个集标题` : ''}（点「保存」生效）`);
     }
 
-    /** 集编辑浮层收尾（三处出口：保存 / 清除 / 取消 / 点遮罩）时把候选浮层一起收起 —— 否则会留一层孤儿 */
+    /** 集编辑浮层收尾（点遮罩 / Esc）时把候选浮层一起收起 —— 否则会留一层孤儿。
+     *  🔴 #563：收尾**先自动保存**再关 —— 底部三枚按钮（保存/清除/取消）已按用户要求整体移除，
+     *     遮罩就是本浮层**唯一的关闭出口**，不在这里提交的话「改完直接点外面」会把改动丢掉。 */
     function closeEpEditor() {
+        commitEpEditor();
         editEp = null;
         epBiliOpen = false;
         epBiliView = 'search';
@@ -2017,12 +2423,18 @@ export let initialBookKind: BookKind | undefined = undefined;
         // ⚠️ #520：批量确认表已**独立成卡**（不再寄生在本浮层里）⇒ 这里不再动它的状态，
         //    它的停批归 `closeBiliBatch()`。
     }
-    /** 编辑弹窗「浏览」：系统文件选择器（Electron remote.dialog 绝对路径），填入编辑框，保存时写回 */
+    /**
+     * 编辑弹窗「浏览」：系统文件选择器（Electron remote.dialog 绝对路径），填入编辑框。
+     * 🔴 #569：选完文件**也是「程序填入」** ⇒ 立刻 `autoSaveEp('local', true)`（与「检索本地 / 粘贴」同一口径：
+     *    填完当场保存 + 标签旁出提示）。⚠️ 因此**撤掉了原来那句让用户手动保存的 Notice** ——
+     *    它和「填入即保存」自相矛盾（用户已裁定填完就走）；真正落库仍是表单底部那枚主按钮。
+     * ⚠️ 注释里**不写那句 Notice 的原文**：本块的反向守卫锚的就是它（注释进源码，写了会自撞红 —— 本仓老坑）。
+     */
     async function browseLocalVideo(ev?: MouseEvent) {
         const p = await onPickLocalVideo(ev);
         if (p) {
             editLocal = p;
-            new Notice('已选择本地视频，点「保存」生效');
+            autoSaveEp('local', true);
         } else {
             new Notice('无法打开文件选择器，请手动输入路径');
         }
@@ -2048,7 +2460,8 @@ export let initialBookKind: BookKind | undefined = undefined;
             new Notice('未选择文件或系统对话框不可用，可手动输入路径');
         }
     }
-    /** 书籍「▶ 观看」左键：有关联文件 → 打开阅读器，关闭后自动同步阅读器最新进度（percent 真源派生当前页/章）；无 → 提示右键编辑 */
+    /** 书籍「▶ 阅读」左键：有关联文件 → 打开阅读器（关闭后同步进度）；无本地但**有网络地址** → 打开在线阅读页
+     *  （#529「本地优先、无本地才走网络」，与影视「观看」同语义）；两者都没有 → 提示右键编辑 / 点检索。 */
     async function watchBook() {
         if (bookFileVal.trim()) {
             const rp = await onOpenReader();
@@ -2061,31 +2474,91 @@ export let initialBookKind: BookKind | undefined = undefined;
                     readingPage = String(rp.page);
                 }
             }
+        } else if (readUrl.trim()) {
+            onOpenSource(readUrl.trim());
         } else {
-            new Notice('未关联书籍文件 — 右键「观看」选择 TXT/EPUB/PDF', 5000);
+            // 🔴 #535：网文 / 漫画**没有**那枚在线检索按钮（用户裁定「暂不做在线检索」）
+            //    ⇒ 提示里⛔ 不许再指向一个不存在的按钮，改指「右键浮层里粘贴」。
+            new Notice(
+                bookKind === 'book'
+                    ? '未关联本地文件 / 网络地址 — 右键「阅读」选本地文件，或点「检索在线书籍阅读」'
+                    : '未关联本地文件 / 网络地址 — 右键「阅读」选本地文件，或在「网络地址」里粘贴在线阅读链接',
+                5000,
+            );
         }
     }
-    /** 书籍「▶ 观看」右键：弹编辑浮层（浏览/手动输入路径） */
+    /**
+     * 书籍「▶ 阅读」右键：弹编辑浮层（浏览/手动输入路径）。
+     * 🔴 #583：这个浮层是四类里**唯一没有独立缓冲**的 —— 两个输入框直连表单态
+     *    （`bookFileVal` = 表单的 `bookFile`；`readUrl` = 表单的 `readUrl`）
+     *    ⇒ 「没改不保存」那条判据**只能对着「打开浮层那一刻的快照」比**（这就是快照的由来）。
+     *    ⚠️ 别的浮层不要照抄这个快照：它们的 `committed` 是**表单态里那份独立的值**（缓冲制），
+     *       两份状态并存时再存快照 = 第三份状态（#569 明令禁止）。
+     */
     function openBookEditor() {
+        bookOpenPath = bookFileVal;
+        bookOpenUrl = readUrl;
         bookEditOpen = true;
     }
-    /** 书籍编辑浮层保存：路径写回 bookFileVal（保存条目时入库） */
-    function saveBookEditor() {
-        bookEditOpen = false;
-        new Notice('书籍文件已更新，点「保存」生效');
-        void autoLinkBookProgress(bookFileVal.trim());
-    }
-    /** 书籍编辑浮层清除：清空关联 */
-    function clearBookEditor() {
-        bookFileVal = '';
-        bookEditOpen = false;
-        new Notice('书籍文件关联已清除');
+    /** 打开书籍浮层那一刻的两个值（仅供「没改不保存」比对；⛔ 别拿它当提交目标） */
+    let bookOpenPath = '';
+    let bookOpenUrl = '';
+    /** 书籍浮层两个字段 → 就地提示键 */
+    const BOOK_SAVE_KEYS: Record<'path' | 'url', AutoSaveKey> = {
+        path: AUTOSAVE_KEYS.bookPath,
+        url: AUTOSAVE_KEYS.bookUrl,
+    };
+    /**
+     * 🔴 #583 书籍浮层自动保存（与集浮层**同一判据 + 同一出口**）。
+     * 🔴 「提交」在这里是**空操作**：输入框绑定的就是表单态本身 ⇒ 值早在表单里了。
+     *    但**判据与就地提示照跑** —— 用户点名要的就是「显示也统一」，而不是「什么都不显示」。
+     */
+    function autoSaveBook(field: 'path' | 'url', force = false): void {
+        const raw = field === 'path' ? bookFileVal : readUrl;
+        const committed = field === 'path' ? bookOpenPath : bookOpenUrl;
+        autoSaveField(BOOK_SAVE_KEYS[field], raw, committed, () => undefined, force);
     }
     /**
-     * #417「检索库内同名书籍文件」—— 🔴 #523 起挂在**表单「路径」标签旁**（用户：「这些关联浮窗内
-     * 小图标按钮都不再显示」+「浮层小标题一起改成『路径』」）⇒ 反馈从浮层内的提示行改为 `Notice`
-     * （与「浏览」那条同款：填进框里、仍要点「保存」才落库 ⇒ 文案必须说清这一点）。
-     * 🔴 匹配逻辑在纯模块 `pure/libraryBooks`（与下载排序共用同一把相似度尺），组件只负责取数与提示。
+     * 🔴 #535（用户报障：「书籍类编辑弹窗网络路径框没有粘贴文字按钮」）：
+     * 书籍「网络地址」那行原先只有一枚裸输入框（游戏那行有「粘贴」、影视集编辑浮层也有）
+     * ⇒ 与同类输入框**不同款**。补一枚，走与 `pasteEpUrl` / `pasteGameUrl` **同一条**读剪贴板纪律。
+     */
+    async function pasteReadUrl(): Promise<void> {
+        const raw = await readClipboardText();
+        const v = raw ? cleanPastedText(raw) : '';
+        if (!v) {
+            new Notice('读取剪贴板失败或为空，请手动粘贴');
+            return;
+        }
+        readUrl = v;
+        // 🔴 #583：粘贴 = 「程序填入」⇒ 当场保存（见 `pasteGameUrl` 那条注释的同一口径）
+        autoSaveBook('url', true);
+    }
+    /**
+     * 书籍浮层关闭（点遮罩）。
+     * 🔴 #583：这里**没有「先提交再关」这一步** —— 两个输入框直连表单态（见 `openBookEditor`），
+     *    关浮层时值早在表单里了，不存在「改完点外面会丢」的情形（另三个浮层有缓冲，所以要提交）。
+     * 🔴 解析页数（`autoLinkBookProgress`，实打实读一次本地文件）**只在关浮层时**跑，⛔ 别挂到 blur 上 ——
+     *    点一次「浏览」也会失焦，那样每选一次文件就要多解析一轮。
+     */
+    function closeBookEditor(): void {
+        bookEditOpen = false;
+        void autoLinkBookProgress(bookFileVal.trim());
+    }
+    /**
+     * 书籍「检索本地」—— 🔴 #602 起 = 与影视单集本地检索**同一条链**（宿主 `main.searchLocalBookFile`：
+     * 按子分类取设置里的「文学 / 网文 / 漫画目录」→ 递归扫 → 标题匹配）。
+     *
+     * 用户两次改口，都在这里留痕（⛔ 别再往回改）：
+     *   · #417「检索库内同名书籍文件」（扫「书籍文件目录」）；
+     *   · #524「书籍检索文件目录给我先弹出系统文件选择器让我选择目录」⇒ 改成**先挑目录**；
+     *   · 🔴 #602「书籍关联入口这个小图标按钮怎么是**选文件夹**关联的，**统一成检索关联**」
+     *     ⇒ 两段式作废，回到「不问用户、直接搜配置目录」——与音乐那枚（音频目录）、影视那枚（分类目录）
+     *     彻底同款；行为差异只剩「搜哪个目录」，而那由 `pure/localDirs.localDirKeyFor` 一处决定。
+     *
+     * 🔴 匹配逻辑在纯模块 `pure/libraryBooks`（与下载排序共用同一把相似度尺），组件只负责**取数与提示**。
+     * ⚠️ 回填进框里仍要**点「保存」才落库** —— 文案必须说清（与「浏览」那条同款）。
+     * ⚠️ 失败/没配目录一律走 `out.notice`（宿主给的文案），⛔ 组件不再自己编一套。
      */
     async function findLibraryBook(): Promise<void> {
         const t = title.trim();
@@ -2093,30 +2566,116 @@ export let initialBookKind: BookKind | undefined = undefined;
             new Notice('标题为空，先填标题再检索');
             return;
         }
-        // 🔴 #524：**先弹系统目录选择器**（用户：「书籍检索文件目录给我先弹出系统文件选择器让我选择目录」）
-        const dir = await onPickBookDir();
+        const out = await onSearchLocalBook({ bookKind, title: t, author: author.trim() });
+        if (out.path) {
+            bookFileVal = out.path;
+            new Notice(`${(out.count ?? 0) > 1 ? `命中 ${out.count} 个，已` : '已'}填入「${out.name ?? out.path}」，点「保存」生效`);
+            return;
+        }
+        if (out.notice) new Notice(out.notice, 5000);
+    }
+
+    /**
+     * 🔴 #534 游戏「检索本地」—— 与书籍那条**同款两段式**（用户裁定「按现有做法：先弹目录选择器，再按标题找同名」）：
+     *   ① `onPickGameDir()` 三态（选中 / 取消 / 本环境无对话框）；
+     *   ② 列出该目录里的**可启动文件**（`.lnk/.exe/.bat/.cmd/.app/.sh`，判据在 `pure/gameLaunch`）；
+     *   ③ 复用 `pickLibraryBook` 的**同一把尺**做标题匹配（⛔ 别在这里另写相似度），命中即回填 `gameLaunchVal`。
+     * ⚠️ 游戏**没有**「配置目录」可回落（不像书籍有「书籍文件目录」）⇒ 非桌面端 / 没有对话框时**只能提示**，⛔ 别硬编一个目录。
+     */
+    async function findLibraryGame(): Promise<void> {
+        const t = title.trim();
+        if (!t) {
+            new Notice('标题为空，先填标题再检索');
+            return;
+        }
+        const dir = await onPickGameDir();
         if (dir === null) {
-            // 用户主动取消 ⇒ 什么都不做（⛔ 别静默拿配置目录顶上 —— 那是另一个目录，结果会让人意外）
             new Notice('未选择目录，已取消检索');
             return;
         }
-        const fallback = dir === undefined;   // 非桌面端：没有系统对话框 ⇒ 能力回落到设置里的配置目录
-        const files = fallback ? onListLibraryBooks() : await onListBookFilesInDir(dir);
-        // 提示里**说清搜的是哪个目录**（两种情况结果可能完全不同，不说清用户会以为程序找错地方）
-        const where = fallback ? '设置里的「书籍文件目录」' : dir;
+        if (dir === undefined) {
+            // 与书籍那条不同：游戏没有配置目录可回落（⛔ 别拿库目录顶上 —— 结果会让人意外）
+            new Notice('当前环境没有系统目录选择器，无法检索本地游戏文件', 5000);
+            return;
+        }
+        const files = await onListGameLaunchFilesInDir(dir);
         if (files.length === 0) {
-            new Notice(`${where} 里没有可关联的书籍文件（epub / pdf / txt…）`, 5000);
+            new Notice(`${dir} 里没有可启动的游戏文件（.lnk / .exe / .bat…）`, 5000);
             return;
         }
-        const { best, ranked } = pickLibraryBook(files, t, author.trim());
+        const { best, ranked } = pickLibraryBook(files, t, '');
         if (!best) {
-            new Notice(`${where} 里没找到与「${t}」同名的书籍文件`, 5000);
+            new Notice(`${dir} 里没找到与「${t}」同名的游戏文件`, 5000);
             return;
         }
-        bookFileVal = best.path;
+        gameLaunchVal = best.path;
         new Notice(`${ranked.length > 1 ? `命中 ${ranked.length} 个，已` : '已'}填入「${best.name}」，点「保存」生效`);
     }
-    /** 书籍编辑浮层「浏览」：系统文件选择器选 TXT/EPUB/PDF，回填 bookFileVal */
+
+    /**
+     * 🔴 #534 电影行内那枚「网络检索」（用户：「电影两枚（本地和网络）」）。
+     * 电影只有一个链接位（第 0 集）⇒ 直接复用**集内那套**：开第 0 集编辑浮层 + B 站候选弹窗
+     * （⛔ 不新写检索逻辑、⛔ 不复制一份候选卡），选完在浮层里点「保存」。
+     */
+    async function searchMovieOnline(): Promise<void> {
+        openEpEditor(0);
+        await openEpBiliPicker();
+    }
+    /**
+     * #529 书籍「检索在线书籍阅读」：打开候选浮层，按标题（+ 作者）预填检索词并立刻搜一次。
+     * 🔴 检索源 = 微信读书（宿主 `main.searchWeread`）；只回填链接到表单 `readUrl`
+     *    （仍要点表单「保存」才落库）—— ⛔ 组件不下载、不解析正文。
+     * 🔴 #535：检索源**按书籍子分类分流**（用户裁定）—— 目前**只有文学（含缺省）接微信读书**；
+     *    网文 / 漫画**不接在线源**（实测起点 / 番茄 / 腾讯动漫 / B站漫画等一律反爬或需签名，
+     *    拿到的是 JS 空壳；拷贝漫画 / 动漫之家域名不可达）⇒ 那类条目走右键「网络地址」手填或粘贴。
+     *    ⚠️ 这条守卫与模板里 `{#if bookKind === 'book'}` 那层**必须同时存在**：模板挡住入口，
+     *    这里挡住「切换子分类时浮层还开着」的漏网（⛔ 别只留一边）。
+     */
+    async function openReadUrlPicker() {
+        if (bookKind !== 'book') {
+            new Notice('网文 / 漫画暂不提供在线检索 — 可在右键「启动路径」里手填或粘贴网络地址', 5000);
+            return;
+        }
+        readUrlOpen = true;
+        readUrlQuery = buildWereadQuery(title, author);
+        readUrlBooks = [];
+        readUrlErr = '';
+        if (!readUrlQuery.trim()) {
+            readUrlErr = '先填写标题（或作者）再检索';
+            return;
+        }
+        await runReadUrlSearch();
+    }
+    async function runReadUrlSearch() {
+        const q = readUrlQuery.trim();
+        if (!q || readUrlBusy) return;
+        readUrlBusy = true;
+        readUrlErr = '';
+        try {
+            const out = await onSearchWeread(q);
+            readUrlBooks = out.books ?? [];
+            readUrlErr = out.error ?? '';
+        } catch (err) {
+            readUrlBooks = [];
+            readUrlErr = err instanceof Error ? err.message : String(err);
+        } finally {
+            readUrlBusy = false;
+        }
+    }
+    /** 选中一条候选 → 写入表单 `readUrl`（仍要点「保存」落库），关浮层并提示 */
+    function pickReadUrl(c: WereadCandidate) {
+        readUrl = c.readUrl;
+        readUrlOpen = false;
+        new Notice('已填入网络地址，点「保存」生效');
+    }
+    /**
+     * 失效集的悬停提示后缀（未检测 / 非 `dead` → 空串）。
+     * 🔴 `dead` 才提示：`unknown`（403 / 超时）**不提示**，与不标红同口径（别把「测不动」说成「已失效」）。
+     */
+    function deadHint(i: number): string {
+        return linkStatuses[i] === 'dead' ? '\n⚠ 链接可能已失效' : '';
+    }
+    /** 书籍编辑浮层「浏览」：系统文件选择器选 TXT/EPUB/PDF（书籍）或 CBZ/CBT/…（漫画），回填 bookFileVal */
     async function browseBookFile(ev?: MouseEvent) {
         const p = await onPickBookFile(ev);
         if (p) {
@@ -2126,6 +2685,29 @@ export let initialBookKind: BookKind | undefined = undefined;
         } else {
             new Notice('无法打开文件选择器，请手动输入路径');
         }
+    }
+    /**
+     * 🔴 #539 漫画「选文件夹」：把**这个文件夹本身**关联成书（「散装文件夹型」= 一个装满图片的文件夹）。
+     *
+     * 🔴 为什么必须单独一枚按钮：Electron 的 `showOpenDialog` 在 **Windows / Linux 上不能同时**选文件与目录
+     *    （组合形态会退化成只能选文件）⇒ 用户实测报障「漫画关联不了图片文件夹、只能单文件格式」正是这个平台差异。
+     *    ⇒ **明确分流**：文件走「浏览」（`openFile`）、目录走这一枚（`openDirectory`）。
+     * ⚠️ 三态与「检索本地书籍」同一口径（`string` 选中 / `null` 用户取消 / `undefined` 本环境没有系统对话框）：
+     *   取消 ⇒ 什么都不做（⛔ 别静默拿别的路径顶上）；无对话框（非桌面端）⇒ 说清这台机器没有文件夹选择器。
+     * 🔴 只回填表单值，仍要点「保存」才落库（与「浏览」同款，文案必须说清）。
+     */
+    async function browseBookFolder(): Promise<void> {
+        const dir = await onPickBookFolder();
+        if (dir === undefined) {
+            new Notice('当前环境没有系统文件夹选择器（仅桌面端支持）', 4000);
+            return;
+        }
+        if (dir === null) {
+            new Notice('未选择文件夹，已取消');
+            return;
+        }
+        bookFileVal = dir;
+        new Notice(`已关联文件夹「${dir}」，点「保存」生效`);
     }
     /** 进度页数自动关联本地文件：PDF 解析本地页数、TXT/EPUB 按章节解析 → totalPage 收紧本地基准、当前进度按既有 percent 重算/钳制
      *  （复用 reconcileBookProgress）；无变化/失败静默（保持手填） */
@@ -2152,9 +2734,13 @@ export let initialBookKind: BookKind | undefined = undefined;
             }
             return;
         }
-        // 进度基准单位：PDF=页；TXT/EPUB=章（章节制，EPUB 无固定页码）
-        const total = info.format === 'pdf' ? info.numPages : info.totalChapters;
-        const unit = info.format === 'pdf' ? '页' : '章';
+        // 进度基准单位：PDF=页；TXT/EPUB=章（章节制，EPUB 无固定页码）；
+        // 🔴 #549 **漫画=页**（图片文件夹 / CBZ·ZIP / EPUB 漫画一律按图片页计，见 `bookUnit` 那条口径）——
+        //    漏掉这一档时 `info.numPages` 取不到（`total` 变 undefined、`unit` 误写成「章」），
+        //    而这颗 ⟳ 又恰好走在 #426 那条「解析不出就清空」的路上 ⇒ 漫画的手填进度会被平白抹掉。
+        const isPageUnit = info.format === 'pdf' || info.format === 'comic';
+        const total = isPageUnit ? info.numPages : info.totalChapters;
+        const unit = isPageUnit ? '页' : '章';
         const r = reconcileBookProgress(
             {
                 page: readingPage ? Number(readingPage) || undefined : undefined,
@@ -2194,24 +2780,60 @@ export let initialBookKind: BookKind | undefined = undefined;
     /** 游戏「▶ 启动」右键：弹编辑浮层（浏览/手动输入路径） */
     function openGameEditor() {
         gameLaunchVal = gameLaunchPath;
+        gameUrlVal = gameUrl; // #534 网络路径与启动路径同一浮层（两条各自缓冲，保存一起写回）
         gameEditOpen = true;
     }
-    /** 游戏编辑浮层保存：路径写回 gameLaunchPath（保存条目时入库） */
-    function saveGameEditor() {
+    /** 🔴 #563 游戏浮层提交：两条缓冲各自写回（`gameLaunchPath` 启动路径 / `gameUrl` 网络路径） */
+    function commitGameEditor(): void {
         gameLaunchPath = gameLaunchVal.trim();
-        gameEditOpen = false;
-        new Notice('启动快捷方式已更新，点「保存」生效');
+        gameUrl = gameUrlVal.trim(); // #534：网络路径与启动路径同属「关联」，一起写回（⛔ 别只写一条）
     }
-    /** 游戏编辑浮层清除：清空关联 */
-    function clearGameEditor() {
-        gameLaunchPath = '';
-        gameEditOpen = false;
-        new Notice('启动快捷方式关联已清除');
+    /** 游戏浮层两个字段 → 就地提示键 */
+    const GAME_SAVE_KEYS: Record<'launch' | 'url', AutoSaveKey> = {
+        launch: AUTOSAVE_KEYS.gameLaunch,
+        url: AUTOSAVE_KEYS.gameUrl,
+    };
+    /**
+     * 🔴 #583 游戏浮层自动保存（与集浮层**同一判据 + 同一出口**）。
+     * `committed` = 表单态里的 `gameLaunchPath` / `gameUrl` —— 浮层期间**不会被改**
+     * （用户改的是两条缓冲），所以直接拿它比对即可，⛔ 不需要另存快照。
+     */
+    function autoSaveGame(field: 'launch' | 'url', force = false): void {
+        const raw = field === 'launch' ? gameLaunchVal : gameUrlVal;
+        const committed = field === 'launch' ? gameLaunchPath : gameUrl;
+        autoSaveField(GAME_SAVE_KEYS[field], raw, committed, commitGameEditor, force);
     }
+    /** 游戏浮层关闭（点遮罩）—— 同集浮层：**先无条件提交缓冲再关**，否则「改完点外面」会丢改动。
+     *  ⚠️ 这里**不跑判据**（与 `closeEpEditor` 同口径）：关闭出口要能把空值也提交下去（那是「清除」的唯一路）。 */
+    function closeGameEditor(): void {
+        commitGameEditor();
+        gameEditOpen = false;
+    }
+    /**
+     * #534 游戏浮层「网络路径」旁的**粘贴**：读剪贴板 → 清洗 → 填进缓冲值 → **立即保存**。
+     * 🔴 复用影视集编辑浮层那套（`readClipboardText` + `cleanPastedText`），⛔ 别另写一份剪贴板读取。
+     * 🔴 #583：粘贴属于 #569 说的「**程序填入**」⇒ 带 `force` **当场保存**（⛔ 别留成「要点别的框才生效」——
+     *    集浮层那四条程序填入路径已是这个口径，本批把游戏/音乐/书籍三条一并对齐）。
+     */
+    async function pasteGameUrl(): Promise<void> {
+        const raw = await readClipboardText();
+        const v = raw ? cleanPastedText(raw) : '';
+        if (!v) {
+            new Notice('读取剪贴板失败或为空，请手动粘贴');
+            return;
+        }
+        gameUrlVal = v;
+        autoSaveGame('url', true);
+    }
+    // 🔴 #563：「游戏浮层清除」那枚按钮已随底部三枚按钮一并退场（用户：「移除底部的保存、清除、取消三个按钮」）
+    //    ⇒ 那条只剩「一键清空」用途的路径**整体删除**（死码不留）。要清关联就把两个输入框清空、失焦即自动保存。
     /** 音乐「▶ 播放」左键：有关联 → 播放音频；无 → 提示右键编辑 */
     function playMusicFromForm() {
         if (audioPath.trim()) {
             onPlayMusic();
+        } else if (audioUrl.trim()) {
+            // 🔴 #601：没有本地音频但填了「网络地址」⇒ 浏览器打开（与宿主 `playAudioEntry` 同口径）
+            window.open(audioUrl.trim(), '_blank');
         } else {
             new Notice('未关联本地音频 — 右键「播放」选择音频文件', 5000);
         }
@@ -2243,6 +2865,7 @@ export let initialBookKind: BookKind | undefined = undefined;
 
     function openAudioEditor() {
         audioPathVal = audioPath;
+        audioUrlVal = audioUrl; // 🔴 #601：网络地址与文件路径同一浮层（两条各自缓冲，失焦各存各的）
         syncAudioName();
         audioEditOpen = true;
     }
@@ -2313,17 +2936,41 @@ export let initialBookKind: BookKind | undefined = undefined;
         syncAudioName();
         new Notice(`${ranked.length > 1 ? `命中 ${ranked.length} 个，已` : '已'}填入「${best.name}」，点「保存」生效`);
     }
-    /** 音乐编辑浮层保存：路径写回 audioPath（保存条目时入库） */
-    function saveAudioEditor() {
+    /** 🔴 #563 音频浮层自动保存（缓冲 `audioPathVal` → 表单 `audioPath`） */
+    function commitAudioEditor(): void {
         audioPath = audioPathVal.trim();
-        audioEditOpen = false;
-        new Notice('本地音频已更新，点「保存」生效');
+        audioUrl = audioUrlVal.trim(); // 🔴 #601：网络地址与文件路径同属「关联」，一起写回（⛔ 别只写一条）
     }
-    /** 音乐编辑浮层清除：清空关联 */
-    function clearAudioEditor() {
-        audioPath = '';
+    /** 音乐浮层两个字段 → 就地提示键（🔴 #601 起是两条） */
+    const AUDIO_SAVE_KEYS: Record<'path' | 'url', AutoSaveKey> = {
+        path: AUTOSAVE_KEYS.audioPath,
+        url: AUTOSAVE_KEYS.audioUrl,
+    };
+    /** 🔴 #583 音乐浮层自动保存（与集浮层**同一判据 + 同一出口**）；
+     *  `committed` = 表单态里那一项（浮层期间不会被改 ⇒ 直接比对，无需快照）。 */
+    function autoSaveAudio(force = false): void {
+        autoSaveField(AUDIO_SAVE_KEYS.path, audioPathVal, audioPath, commitAudioEditor, force);
+    }
+    /** 🔴 #601：音乐浮层「网络地址」的失焦自动保存（与 `autoSaveAudio` 同一出口，只是换了键与缓冲） */
+    function autoSaveAudioUrl(force = false): void {
+        autoSaveField(AUDIO_SAVE_KEYS.url, audioUrlVal, audioUrl, commitAudioEditor, force);
+    }
+    /** 🔴 #601 音乐浮层「网络地址」旁的**粘贴**：读剪贴板 → 清洗 → 填进缓冲 → **立即保存**
+     *  （与 `pasteGameUrl` 同款：粘贴属于「程序填入」⇒ 带 `force` 当场落库）。 */
+    async function pasteAudioUrl(): Promise<void> {
+        const raw = await readClipboardText();
+        const v = raw ? cleanPastedText(raw) : '';
+        if (!v) {
+            new Notice('读取剪贴板失败或为空，请手动粘贴');
+            return;
+        }
+        audioUrlVal = v;
+        autoSaveAudioUrl(true);
+    }
+    /** 音频浮层关闭（点遮罩）—— 同集浮层：**先无条件提交缓冲再关**（⛔ 不跑判据，见 `closeGameEditor`） */
+    function closeAudioEditor(): void {
+        commitAudioEditor();
         audioEditOpen = false;
-        new Notice('本地音频关联已清除');
     }
 
     /**
@@ -2445,6 +3092,27 @@ export let initialBookKind: BookKind | undefined = undefined;
         if (d.pageCount && !pageCountVal) pageCountVal = String(d.pageCount);
     }
 
+    /**
+     * 🔴 #609 把「微信读书详情」应用到表单 —— 口径**镜像**「从微信读书同步书架」的映射
+     * （`pure/wereadShelf.shelfBookEntryFields`），⛔ 别在两边各写一份字段对照。
+     *
+     * 为什么必须有这一步：搜索接口（`/web/search/global`）**没有 `publishTime`**（2026-10-11 实测，
+     * `囚徒健身` 那条 bookInfo 的字段表里根本没有「出版年」）⇒ 光靠搜索结果，「出版年」永远填不上；
+     * 简介也只有在详情接口里才是**全文**。于是「用微信读书源搜索添加」比「书架同步导入」缺斤少两 —— 用户报障的原样。
+     * ⚠️ 幂等：已有值不覆盖（与 `applyDoubanDetail` 同一口径）；封面按 `shouldAdoptCover` 走（详情封面优先，本地封面保留）。
+     */
+    function applyWereadDetail(d: WereadBookInfo) {
+        if (d.rating != null && !communityScore) communityScore = String(d.rating);
+        if (d.ratingCount != null && !ratingCount) ratingCount = String(d.ratingCount);
+        if (d.intro && !summary) summary = d.intro;
+        if (d.publisher && !publisher) publisher = d.publisher;
+        if (d.year !== undefined && !year) year = String(d.year);
+        if (d.category && !genres) genres = d.category;
+        // 🔴 #444g：漫画**不补** ISBN（表单里没这个框 ⇒ 补了就是「看不见却落库」的幽灵字段）
+        if (bookKind !== 'comic' && d.isbn && !isbn) isbn = d.isbn;
+        if (d.coverUrl && shouldAdoptCover(poster, d.coverUrl)) poster = d.coverUrl;
+    }
+
     /** 题材：普通 input（/ 分隔文本，非标签）——提交时拆分存 genres 数组 */
 
     /** 主演/声优：普通 input（/ 分隔文本，非标签）——提交时拆分存 cast 数组 */
@@ -2487,7 +3155,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             aliases: type === 'game' ? undefined : aliases.split(/[\/、,，]/).map((s) => s.trim()).filter(Boolean),
             notes: notes.trim(),
         };
-        // 影视类型（电影/电视剧/动画）：观看链接双路径——旧「资源链接」(links) 已迁移到 episodeUrls，此处清空（url 不丢）
+        // 影视类型（电影/剧集/动画）：观看链接双路径——旧「资源链接」(links) 已迁移到 episodeUrls，此处清空（url 不丢）
         if (type === 'movie' || type === 'tv' || type === 'anime') {
             input.links = [];
             // 按当前总集数截取写入（resize 只扩不缩，超出部分不入库）
@@ -2534,18 +3202,23 @@ export let initialBookKind: BookKind | undefined = undefined;
             //    时把上一条的画师留在库里（与网文清出版社/ISBN 同一条「换分类即清不对口字段」的口径）。
             input.artist = bookKind === 'comic' ? (artist.trim() || undefined) : undefined;
             input.bookFile = bookFileVal.trim() || undefined;
+            // #529 书籍在线阅读链接：恒写（清空则落 undefined ⇒ 真正清掉旧值）
+            input.readUrl = readUrl.trim() || undefined;
         }
         if (type === 'game') {
             input.platform = platform.trim() || undefined;
             input.developer = developer.trim() || undefined;
             // 发行商/别名：对游戏条目废弃（豆瓣游戏页无此数据），不再读写
             input.gameLaunchPath = gameLaunchPath.trim() || undefined; // 启动快捷方式（.lnk）
+            input.gameUrl = gameUrl.trim() || undefined; // #534 网络路径（浮层手填/粘贴；append-only 字段）
         }
         if (type === 'music') {
             input.musicKind = musicKind; // 恒写（normalize 后恒为 'music'；1.0.3.1 起无子分类，写入即把存量 other 归一）
             input.author = author.trim() || undefined;
             input.album = album.trim() || undefined;
             input.audioPath = audioPath.trim() || undefined;
+            // 🔴 #601：音乐网络地址（append-only 新字段）—— 恒写（清空则落 undefined ⇒ 真正清掉旧值）
+            input.audioUrl = audioUrl.trim() || undefined;
             // 🔴 LRC 歌词**不是 catalog 字段**：它住在笔记的 ` ```lrc ` 块里，由弹窗侧
             //    （`EntryModal.onSubmit`）取出后经 `service.setNoteLrc` 写回笔记，⛔ 不要落库。
             input.lrc = lrc;
@@ -2679,6 +3352,9 @@ export let initialBookKind: BookKind | undefined = undefined;
             // ⛔ 本行是 pageCount 落库的**唯一判据点**；🔴 #444g 那条「漫画不落」已随 #445 翻面
             //    （当时排除是因为漫画没有这个框；现在有了 ⇒ 必须落，否则填了不存）。
             input.pageCount = pageCountVal ? Number(pageCountVal) || undefined : undefined;
+            // 🔴 #537 阅读时长（小时录入 → 落库分钟）：表单手填 = **覆盖**总数。
+            //    自动累计只在「内置阅读器关闭」那一刻由宿主叠加（main.withReadTime），两者不会同时写同一笔。
+            input.readMinutes = readHours ? Math.round(Number(readHours) * 60) || undefined : undefined;
         }
         if (type === 'game') {
             // 游玩时长：小时录入 → 落库分钟（游玩记录明细由弹窗即时落盘，submit 不再重复提交）
@@ -2741,7 +3417,7 @@ export let initialBookKind: BookKind | undefined = undefined;
         </div>
     {/if}
 
-    {#if searching}
+    {#if searching || progVisible}
         <!-- 逐源真实进度：每个参与源一行实时状态（先返回先亮「已返回 N 条」，未完成「搜索中…」，超时/失败给文案） -->
         <div class="rl-prog-srcs" aria-hidden="true">
             {#each sourcePlan as sid}
@@ -2754,13 +3430,33 @@ export let initialBookKind: BookKind | undefined = undefined;
                 </span>
             {/each}
         </div>
-        <div class="rl-progress" aria-hidden="true">
-            <div class="rl-progress-fill" style={`width:${progPct}%`}></div>
-        </div>
-        <div class="rl-progress-meta">
-            <span class="rl-progress-label"><span class="rl-spinner"></span> {sourcePlan.length > 0 ? `正在搜索 ${sourcePlan.length} 个数据源` : (progLabel || '正在搜索…')}</span>
-            <span class="rl-progress-eta">{progPct}%</span>
-        </div>
+        <!-- 🔴 #559（用户 2026-10-08）「模拟进度条」时间线：
+             · **200ms 之前整块不上屏**（`progVisible`）—— 这 200ms 内不显示任何加载动画（防闪烁），
+               API 若在 200ms 内返回就**全程没有进度条**、直接出结果；
+             · 5s 起把「正在搜索 N 个数据源」换成「网络较慢，正在尽力加载…」（`simSlowText`）；
+             · 8s 起追加「中止重试」（`simRetry`）；
+             · 完成那一刻 `.is-done` 负责「拉满 + 淡出」（160ms 后整块卸载）。 -->
+        {#if progVisible}
+            <div class="rl-progress" class:is-done={progFade} aria-hidden="true">
+                <div class="rl-progress-fill" style={`width:${progPct}%`}></div>
+            </div>
+            <div class="rl-progress-meta">
+                <span class="rl-progress-label"><span class="rl-spinner"></span> {simSlowText ?? (sourcePlan.length > 0 ? `正在搜索 ${sourcePlan.length} 个数据源` : (progLabel || '正在搜索…'))}</span>
+                <!-- 🔴 #571（用户 2026-10-08 截图：「中止重试按钮把百分比 90% **隔到中间**去了」）：
+                     真因 = 这一行是 `justify-content: space-between` 且有**三个**孩子 ——
+                     8s 后按钮一上屏，中间那个孩子（百分比）就被顶到**正中间**。
+                     ⇒ 把「按钮 + 百分比」收进**同一个右端组**（`.rl-progress-tail`）：
+                       本行只剩「左标签 / 右端组」两个孩子，**百分比恒贴右缘**（有没有按钮都一样），
+                       按钮出现在它**左边**（不再抢走右端）。
+                     下划线命名口径：百分比位置由「右端组」承担，⛔ 别再靠 DOM 顺序 + `space-between` 碰运气。 -->
+                <span class="rl-progress-tail">
+                    {#if simRetry}
+                        <button class="rl-btn rl-prog-retry" on:click={retrySearch}>中止重试</button>
+                    {/if}
+                    <span class="rl-progress-eta">{Math.round(progPct)}%</span>
+                </span>
+            </div>
+        {/if}
     {/if}
 
     {#if !sourceReady}
@@ -3141,7 +3837,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             {/if}
 
             {#if (type === 'tv' || type === 'anime') && formMode !== 'bangumi'}
-                <!-- 总集数 + 当前进度并排（动画/电视剧；电影无总集数概念，观看链接区渲染单集播放钮）：
+                <!-- 总集数 + 当前进度并排（动画/剧集；电影无总集数概念，观看链接区渲染单集播放钮）：
                      两字段同一行两列，行高与同列条目一致、信息密度更高。
                      🔴 #440：**「当前进度」收成一个数字框**（用户 2026-09-30：「把 S1E1 那个位置做成当前进度，
                         如填写 5 就代表当前进度为第 5 集，不做右键可标记动作了」）—— 原来是 `S[1] E[3]`
@@ -3196,6 +3892,16 @@ export let initialBookKind: BookKind | undefined = undefined;
                     <input id="rl-f-series-index" class="rl-input" type="number" step="1" min="1" bind:value={seriesIndexVal} placeholder="可留空，填整数（第几部/季）" />
                 </div>
             </div>
+            <!-- 🔴 #537 阅读时长（文学 / 网文 / 漫画三子类共用 —— 都是 `type === 'book'`）：位置在「内容简介」**上方**。
+                 数据两来源：① 内置阅读器阅读该条目时**自动累计**（宿主 main.withReadTime，扣后台 + 单次≥1 分钟）；
+                 ② 本框手填 = **覆盖**总数。海报墙封面左下角显示「已读 2h」（复用游戏 `.rl-cov-playtime` 那枚角标）。
+                 ⚠️ label 带 `for`/`id` —— 裸 label 会多报一条 A11y 告警、破 89 基线（同系列两框那条口径）。 -->
+            {#if type === 'book'}
+                <div>
+                    <label class="rl-lbl" for="rl-f-readhours">阅读时长（小时）</label>
+                    <input id="rl-f-readhours" class="rl-input" type="number" min="0" step="0.1" bind:value={readHours} placeholder="如 2.5" />
+                </div>
+            {/if}
             <label class="rl-lbl">{type === 'book' ? '内容简介' : '简介'}</label>
             <textarea class="rl-input rl-summary" rows="6" bind:this={summaryEl} placeholder={type === 'book' ? '填写图书内容简介…' : '填写作品剧情简介…'} bind:value={summary}></textarea>
 
@@ -3299,34 +4005,69 @@ export let initialBookKind: BookKind | undefined = undefined;
                     <div><label class="rl-lbl">游玩时长（小时）</label><input class="rl-input" type="number" min="0" step="0.1" bind:value={playtimeHours} placeholder="如 12" /></div>
                 </div>
                 <div>
-                    <!-- 🔴 #523：标签统一「路径」（原「启动快捷方式」）。🔴 游戏类**不配**小图标按钮
-                         （用户：「游戏类不配」）—— 所以这里只有标签，⛔ 别再往这一行加 `.rl-ai-btn`。 -->
-                    <label class="rl-lbl">启动路径</label>
+                    <!-- 🔴 #523：标签统一「路径」（原「启动快捷方式」）；当时裁定「游戏类**不配**小图标按钮」。
+                         🔴🔴 #534 **翻面**（用户 2026-10-05：「希望全类型条目启动路径旁都添加统一本地路径和
+                         网络路径检索小图标按钮」＋追问后点定「只放本地一枚（推荐）」）：
+                         游戏行**配一枚「本地检索」**（`folder-search`，先弹目录选择器再按标题找同名可启动文件）；
+                         ⛔ 网络那枚**不配**（用户裁定「不接，仅在右键弹窗加网络路径框（加粘贴文字按钮）」）
+                         —— 游戏的网络路径靠下面浮层里的输入框手填/粘贴（没有可检索的源，硬放一枚按钮是空转）。 -->
+                    <div class="rl-lbl-row">
+                        <label class="rl-lbl">启动路径</label>
+                        <!-- 本地检索：选文件夹 → 按标题在目录里找同名**可启动文件**（.lnk/.exe/.bat…）→ 回填启动路径 -->
+                        <button
+                            class="rl-ai-btn"
+                            on:click={() => void findLibraryGame()}
+                            data-tip="检索本地：先选一个文件夹，再按标题在里面找同名游戏文件（.lnk / .exe / .bat…）">
+                            <span class="rl-sr">检索本地游戏</span>
+                            <Icon icon="folder-search" size={13} />
+                        </button>
+                    </div>
                     <div class="rl-ep-row">
-                        <span class="rl-ep-wrap" class:linked={!!gameLaunchPath.trim()}>
+                        <span class="rl-ep-wrap" class:linked={!!gameLaunchPath.trim() || !!gameUrl.trim()}>
                             <button
                                 class="rl-ep-btn rl-ep-btn-book"
                                 on:click={launchGameFromForm}
                                 on:contextmenu={(ev) => { ev.preventDefault(); openGameEditor(); }}
-                                data-tip={gameLaunchPath.trim() ? `启动：${gameLaunchPath}\n右键编辑/浏览更换` : '未关联 — 右键选 .lnk'}>
+                                data-tip={gameLaunchPath.trim() ? `启动：${gameLaunchPath}\n右键编辑/浏览更换` : (gameUrl.trim() ? `网络路径：${gameUrl}\n右键编辑/粘贴更换` : '未关联 — 右键选 .lnk')}>
                                 <Icon icon="play" size={11} /> 启动
                             </button>
                         </span>
                         {#if gameEditOpen}
                             <!-- 启动快捷方式编辑浮层（参照书籍文件浮层）：浏览选择/手动输入路径 -->
-                            <div class="rl-ep-edit-mask" on:click={() => (gameEditOpen = false)}></div>
+                            <div class="rl-ep-edit-mask" on:click={closeGameEditor}></div>
                             <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-game">
                                 <div class="rl-ep-edit-title" id="rl-ep-title-game">启动路径（.lnk）</div>
-                                <label class="rl-lbl-inline">文件路径</label>
+                                <!-- 🔴 #583：这两行的「标签 → 控件」间距与就地提示**与集浮层同款**
+                                     （`.rl-edit-lblrow` + `.rl-saved-hint`）—— 用户点名「显示也统一」。
+                                     ⛔ 别只加提示不包行：裸 `<label>` 直跟输入框时提示会掉到行外成新的一行。 -->
+                                <div class="rl-edit-lblrow">
+                                    <label class="rl-lbl-inline">文件路径</label>
+                                    {#if savedKey === AUTOSAVE_KEYS.gameLaunch}
+                                        {#key savedSeq}
+                                            <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                        {/key}
+                                    {/if}
+                                </div>
                                 <div class="rl-ep-edit-row">
-                                    <input class="rl-input rl-ep-edit-input" value={gameLaunchVal} on:input={(ev) => (gameLaunchVal = inputVal(ev))} placeholder="库内路径，或系统绝对路径（.lnk）" />
+                                    <input class="rl-input rl-ep-edit-input" value={gameLaunchVal} on:input={(ev) => (gameLaunchVal = inputVal(ev))} on:blur={() => autoSaveGame('launch')} placeholder="库内路径，或系统绝对路径（.lnk）" />
                                     <button class="rl-btn rl-link-act" on:click={(ev) => browseGameLaunch(ev)} data-tip="选择 .lnk 快捷方式">浏览</button>
                                 </div>
-                                <div class="rl-ep-edit-ops">
-                                    <button class="rl-btn" on:click={saveGameEditor} data-tip="保存">保存</button>
-                                    <button class="rl-btn" disabled={!gameLaunchPath} on:click={clearGameEditor} data-tip="清除">清除</button>
-                                    <button class="rl-btn" on:click={() => (gameEditOpen = false)}>取消</button>
+                                <!-- 🔴 #534 游戏**网络路径**（用户：「不接，仅在右键弹窗加网络路径框（加粘贴文字按钮）」）：
+                                     与影视集编辑浮层那行同款（label + 输入框 + 粘贴）；⚠️ label 必须带 `for`/`id`
+                                     —— 本仓新 label 裸写会多报一条 A11y 告警破 89 基线。 -->
+                                <div class="rl-edit-lblrow">
+                                    <label class="rl-lbl-inline" for="rl-f-gameurl">网络路径</label>
+                                    {#if savedKey === AUTOSAVE_KEYS.gameUrl}
+                                        {#key savedSeq}
+                                            <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                        {/key}
+                                    {/if}
                                 </div>
+                                <div class="rl-ep-edit-row">
+                                    <input id="rl-f-gameurl" class="rl-input rl-ep-edit-input" value={gameUrlVal} on:input={(ev) => (gameUrlVal = inputVal(ev))} on:blur={() => autoSaveGame('url')} placeholder="https://…（商店页 / 官网 / 攻略）" />
+                                    <button class="rl-btn rl-link-act" on:click={() => void pasteGameUrl()} data-tip="粘贴网络路径">粘贴</button>
+                                </div>
+                                <!-- 🔴 #563：底部三枚按钮退场（同集浮层），改失焦自动保存 + 点遮罩关闭 -->
                             </div>
                         {/if}
                     </div>
@@ -3364,6 +4105,15 @@ export let initialBookKind: BookKind | undefined = undefined;
             <textarea class="rl-input rl-ai-hl" rows="4" bind:value={aiText}
                 placeholder={'一句话总结：\n1. 要点1\n2. 要点2\n3. 要点3'}></textarea>
                 {/if}
+            {/if}
+            <!-- 🔴 #549（用户 2026-10-07：「网文/漫画也加上阅读进度框」）：**三个书籍子类都要有**这一组
+                 （当前页 / 总页 + 进度条 + 百分比）—— 它原先跟着「作者简介 / 目录」一起被关在
+                 `bookKind !== 'comic'` 那层里，漫画因此整组拿不到，而漫画**同样有阅读进度**
+                 （图片文件夹 / CBZ 走漫画阅读器逐页读，`readingProgress.percent` 自动落库）。
+                 ⚠️ 拆出来的只有**这一组**：作者简介 / 目录 / 总结摘要的取舍**一字不动**
+                   （#444g 用户点名：漫画不要 ISBN / 元数据页数 / 作者简介）。
+                 ⚠️ 位置刻意留在原处（紧接上面那一组之后）⇒ 文学 / 网文的字段顺序**零变化**。 -->
+            {#if type === 'book'}
                 <!-- 🔴 #409：这颗「重新解析」小按钮从**输入行末尾**挪到**标签行**，与「总结摘要」「本地音频」
                      那几枚**同款同位**（`.rl-lbl-row` + `.rl-ai-btn`）—— 用户：「把阅读器进度页数同款的小按钮
                      也移到旁边，统一摆放以便查看」＋「修正这些小按钮颜色不一致的问题」。
@@ -3404,7 +4154,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                             on:click={findLibraryAudio}
                             data-tip="检索本地：按标题在音频文件目录里找同名音频">
                             <span class="rl-sr">检索本地音频</span>
-                            <Icon icon="search" size={13} />
+                            <Icon icon="folder-search" size={13} />
                         </button>
                         {#if canDownload}
                             <button
@@ -3428,16 +4178,42 @@ export let initialBookKind: BookKind | undefined = undefined;
                         </span>
                         {#if audioEditOpen}
                             <!-- 本地音频编辑浮层（参照书籍文件浮层）：浏览选择/手动输入路径 -->
-                            <div class="rl-ep-edit-mask" on:click={() => (audioEditOpen = false)}></div>
+                            <div class="rl-ep-edit-mask" on:click={closeAudioEditor}></div>
                             <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-audio">
                                 <!-- 🔴 #523：这枚 🔍（#404 加的「检索库内同名音频」）已按用户裁定
                                      「这些关联浮窗内小图标按钮都不再显示」**撤除**，功能搬到表单「路径」标签旁
                                      （`findLibraryAudio`，见那边注释）。标题也统一成「路径」。 -->
                                 <div class="rl-ep-edit-title" id="rl-ep-title-audio">启动路径</div>
-                                <label class="rl-lbl-inline">文件路径</label>
+                                <!-- 🔴 #583：就地提示与集/游戏浮层同款（`.rl-edit-lblrow` + `.rl-saved-hint`）。
+                                     ⚠️ 失焦那处**必须**是箭头函数包一层：直接把函数名交给 `on:blur` 时，
+                                     Svelte 会把**事件对象**当第一个实参传进去 ⇒ `force` 变成真值（处处强制保存）。 -->
+                                <div class="rl-edit-lblrow">
+                                    <label class="rl-lbl-inline">文件路径</label>
+                                    {#if savedKey === AUTOSAVE_KEYS.audioPath}
+                                        {#key savedSeq}
+                                            <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                        {/key}
+                                    {/if}
+                                </div>
                                 <div class="rl-ep-edit-row">
-                                    <input class="rl-input rl-ep-edit-input" value={audioPathVal} on:input={(ev) => { audioPathVal = inputVal(ev); syncAudioName(); }} placeholder="库内路径，或系统绝对路径（mp3/flac/m4a…）" />
+                                    <input class="rl-input rl-ep-edit-input" value={audioPathVal} on:input={(ev) => { audioPathVal = inputVal(ev); syncAudioName(); }} on:blur={() => autoSaveAudio()} placeholder="库内路径，或系统绝对路径（mp3/flac/m4a…）" />
                                     <button class="rl-btn rl-link-act" on:click={(ev) => browseAudio(ev)} data-tip="选择音频文件">浏览</button>
+                                </div>
+                                <!-- 🔴 #601 音乐**网络地址**（append-only 新字段 `audioUrl`）：与游戏浮层那条同款
+                                     （label + 输入框 + 粘贴）。音乐侧**没有可用的在线检索源** ⇒ 只有手填 / 粘贴，
+                                     ⛔ 不挂检索按钮（与 `gameUrl` 同口径）；⚠️ label 带 `for`/`id`（裸写会多报一条
+                                     A11y 告警破 89 基线）。 -->
+                                <div class="rl-edit-lblrow">
+                                    <label class="rl-lbl-inline" for="rl-f-audiourl">网络地址</label>
+                                    {#if savedKey === AUTOSAVE_KEYS.audioUrl}
+                                        {#key savedSeq}
+                                            <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                        {/key}
+                                    {/if}
+                                </div>
+                                <div class="rl-ep-edit-row">
+                                    <input id="rl-f-audiourl" class="rl-input rl-ep-edit-input" value={audioUrlVal} on:input={(ev) => (audioUrlVal = inputVal(ev))} on:blur={() => autoSaveAudioUrl()} placeholder="https://…（在线页 / 试听链接）" />
+                                    <button class="rl-btn rl-link-act" on:click={() => void pasteAudioUrl()} data-tip="粘贴网络地址">粘贴</button>
                                 </div>
                                 <!-- 🔴 #497 改名（用户：「再添加在音乐条目上修改关联的音频文件名称的功能」）：
                                      只改**主名**，扩展名以静态后缀显示 —— 扩展名一改这文件就不是音频了，
@@ -3450,11 +4226,8 @@ export let initialBookKind: BookKind | undefined = undefined;
                                     <button class="rl-btn rl-link-act" disabled={!audioPathVal.trim() || audioRenaming} on:click={() => void renameAudioNow()} data-tip="改磁盘上的文件名（同名歌词文件一起改），并更新关联与笔记">重命名</button>
                                 </div>
                                 {#if audioRenameHint}<div class="rl-hint rl-hint-warn">{audioRenameHint}</div>{/if}
-                                <div class="rl-ep-edit-ops">
-                                    <button class="rl-btn" on:click={saveAudioEditor} data-tip="保存">保存</button>
-                                    <button class="rl-btn" disabled={!audioPath} on:click={clearAudioEditor} data-tip="清除">清除</button>
-                                    <button class="rl-btn" on:click={() => (audioEditOpen = false)}>取消</button>
-                                </div>
+                                <!-- 🔴 #563：底部三枚按钮退场（同集浮层），改失焦自动保存 + 点遮罩关闭。
+                                     ⚠️ 「重命名」那枚**留着** —— 它是一次**动磁盘**的显式动作，不是「保存」。 -->
                             </div>
                         {/if}
                     </div>
@@ -3468,50 +4241,177 @@ export let initialBookKind: BookKind | undefined = undefined;
                          与两条命令面板入口保留 —— 门控真源 `pure/featureGate` 里那条清单已同步改写）。
                          ⚠️ 被删那两个 prop 的全名**刻意不写**：注释会进产物，抄了会撞红反向守卫（老坑）。
                      原「检索库内同名书籍」🔍 住在书籍文件浮层标题行，已按「关联浮窗内小图标按钮都不再显示」
-                         搬到这里。 -->
+                         搬到这里。
+                         🔴 #602（用户：「书籍关联入口这个小图标按钮怎么是**选文件夹**关联的，统一成检索关联」）：
+                         这枚的**行为**换了 —— 由「先弹系统目录选择器」改成**直接检索**设置里的分类目录
+                         （与影视那枚单集本地检索同一条链），⛔ 提示语里再也别提「先选一个文件夹」。 -->
                     <div class="rl-lbl-row">
                         <label class="rl-lbl">启动路径</label>
+                        <!-- 🔴 #531（用户：「检索在线书籍阅读小图标按钮放在**启动路径标题旁边**，不再另增框」）：
+                             从原来单独那行「网络地址」搬来，与「检索本地书籍」并排；⛔ 主表单不再另开输入框
+                             （链接改为在右键「启动路径」浮层里查看/编辑）。
+                             🔴 #532（用户：「书籍检索本地和网络的小图标按钮怎么一样啊」）：两枚**必须不同图标**。
+                             🔴 #533（用户：「全类型条目内的『启动路径』下面的小图标按钮按照语义统一」）—— 全仓口径：
+                             **本地检索 = `folder-search`**（音乐「检索本地音频」/ 书籍「检索本地书籍」/ 影视「从文件夹检索剧集」三处一致）、
+                             **网络检索 = `globe`**（书籍「检索在线书籍阅读」/ 影视浮层「在 B 站搜索这一集」）、
+                             **批量网络检索（B站 视频）= `list-video`**（影视「批量搜索未填集」）、**下载 = `download`**（音乐，非检索语义）。
+                             ⛔ 别再给同语义的按钮挂不同图标（`search` / `book-search` 那两款已全部退场）。
+                             🔴 #534（用户：「全类型…统一…」＋追问后裁定「统一为『本地在前』」）：**顺序固定为「本地检索 → 网络检索」**
+                             —— 本行原先是在线在前，本批按裁定调换（各类型两枚的先后一律本地在前）。 -->
                         <button
                             class="rl-ai-btn"
                             on:click={findLibraryBook}
-                            data-tip="检索本地：先选一个文件夹，再按标题在里面找同名书籍（epub / pdf / txt…）">
+                            data-tip={`检索本地：在设置里对应的分类目录（文学 / 网文 / 漫画）里按标题递归找同名${bookFmtName}（${bookFmtExts}）`}>
                             <span class="rl-sr">检索本地书籍</span>
-                            <Icon icon="search" size={13} />
+                            <Icon icon="folder-search" size={13} />
                         </button>
+                        <!-- 🔴 #535（用户：「除文学搜的是微信读书，其他网文搜的改成主流小说平台…漫画搜的是漫画在线阅读平台」
+                             → 追问后用户点定「网文 / 漫画**暂不做在线检索**」）：
+                             那枚在线检索只在**文学（含缺省）**态出现；网文 / 漫画靠右键「网络地址」手填或粘贴。
+                             ⚠️ 源与子分类的绑定关系见 `openReadUrlPicker` 那条守卫（两处口径必须一致）。 -->
+                        {#if bookKind === 'book'}
+                            <button
+                                class="rl-ai-btn"
+                                on:click={() => void openReadUrlPicker()}
+                                data-tip="检索在线书籍阅读（微信读书）\n按书名搜到在线阅读页，选一条填入（在右键「启动路径」里可改）">
+                                <span class="rl-sr">检索在线书籍阅读</span>
+                                <Icon icon="globe" size={13} />
+                            </button>
+                        {/if}
                     </div>
                     <div class="rl-ep-row">
-                        <span class="rl-ep-wrap" class:linked={!!bookFileVal.trim()}>
+                        <!-- 🔴 #532（用户：「填写了网络链接这个阅读按钮不高亮」）：高亮门控原先只看 `bookFileVal`
+                             ⇒ **只填了在线阅读链接**时按钮仍呈灰态，看着像「没关联」。现改成「本地**或**网络」任一有值即高亮
+                             （与左键行为同口径 —— 无本地就开网络地址）。 -->
+                        <span class="rl-ep-wrap" class:linked={!!bookFileVal.trim() || !!readUrl.trim()}>
                             <button
                                 class="rl-ep-btn rl-ep-btn-book"
                                 on:click={watchBook}
                                 on:contextmenu={(ev) => { ev.preventDefault(); openBookEditor(); }}
-                                data-tip={bookFileVal.trim() ? `打开阅读器：${bookFileVal}\n右键编辑/浏览更换` : '未关联书籍文件 — 右键编辑选择 TXT/EPUB/PDF'}>
+                                data-tip={bookFileVal.trim()
+                                    ? `打开阅读器：${bookFileVal}\n右键编辑/浏览更换`
+                                    : readUrl.trim()
+                                      ? `打开在线阅读：${readUrl}\n右键编辑/更换链接`
+                                      : '未关联本地文件 / 网络地址 — 右键「阅读」选本地文件，或点「检索在线书籍阅读」'}>
                                 <Icon icon="book-open" size={11} /> 阅读
                             </button>
                         </span>
                         {#if bookEditOpen}
                             <!-- 书籍文件编辑浮层（参照集按钮浮层）：浏览选择/手动输入路径 -->
-                            <div class="rl-ep-edit-mask" on:click={() => (bookEditOpen = false)}></div>
+                            <div class="rl-ep-edit-mask" on:click={closeBookEditor}></div>
                             <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-book">
                                 <!-- 🔴 #523：标题统一「路径（…）」（括号里的格式说明保留）。
                                      那枚「检索库内同名书籍」🔍（#500⑥ 挪到「文件路径」标签旁的）已按用户裁定
                                      「关联浮窗内小图标按钮都不再显示」**撤除**，功能搬到表单「路径」标签旁
                                      （`findLibraryBook`）。 -->
-                                <div class="rl-ep-edit-title" id="rl-ep-title-book">启动路径（TXT/EPUB/PDF）</div>
-                                <label class="rl-lbl-inline">文件路径</label>
+                                <!-- 🔴 #539：标题的格式说明**按子分类分叉**（用户报障：「漫画怎么是启动路径（TXT/EPUB/PDF)」）
+                                     —— 漫画 = 图片文件夹 / 压缩包，文学·网文 = TXT/EPUB/PDF；文案真源 = 上面那三个 `bookFmt*`。 -->
+                                <div class="rl-ep-edit-title" id="rl-ep-title-book">启动路径（{bookFmtTitle}）</div>
+                                <!-- 🔴 #583：就地提示与集/游戏/音乐浮层同款（`.rl-edit-lblrow` + `.rl-saved-hint`）。
+                                     ⚠️ 失焦处必须是箭头函数：把函数名直接交给 `on:blur` 会把事件对象当 `force` 传下去。 -->
+                                <div class="rl-edit-lblrow">
+                                    <label class="rl-lbl-inline">文件路径</label>
+                                    {#if savedKey === AUTOSAVE_KEYS.bookPath}
+                                        {#key savedSeq}
+                                            <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                        {/key}
+                                    {/if}
+                                </div>
                                 <div class="rl-ep-edit-row">
-                                    <input class="rl-input rl-ep-edit-input" value={bookFileVal} on:input={(ev) => (bookFileVal = inputVal(ev))} placeholder="库内路径，如 书籍/书名.txt（TXT/EPUB/PDF）" />
-                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseBookFile(ev)} data-tip="选择书籍文件">浏览</button>
+                                    <input
+                                        class="rl-input rl-ep-edit-input"
+                                        value={bookFileVal}
+                                        on:input={(ev) => (bookFileVal = inputVal(ev))}
+                                        on:blur={() => autoSaveBook('path')}
+                                        placeholder={bookKind === 'comic'
+                                            ? '文件夹路径（图片序列），或 .cbz / .cbt / .zip / .tar / .pdf / .epub 文件'
+                                            : '库内路径，如 书籍/书名.txt（TXT/EPUB/PDF）'} />
+                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseBookFile(ev)} data-tip={`选择${bookFmtName}文件（${bookFmtExts}）`}>浏览</button>
+                                    <!-- 🔴 #539：**漫画专属**的「选文件夹」—— 「散装文件夹型」要把**文件夹本身**关联成书。
+                                         ⛔ 不能靠「浏览」那枚同时选目录：Electron 在 Windows/Linux 上只能二选一
+                                         （实测会退化成只能选文件 ⇒ 用户报障「漫画关联不了图片文件夹」）。 -->
+                                    {#if bookKind === 'comic'}
+                                        <button class="rl-btn rl-link-act" on:click={() => void browseBookFolder()} data-tip="选择图片文件夹（散装图片序列型漫画）">选文件夹</button>
+                                    {/if}
                                 </div>
-                                <div class="rl-ep-edit-ops">
-                                    <button class="rl-btn" on:click={saveBookEditor} data-tip="保存">保存</button>
-                                    <button class="rl-btn" on:click={clearBookEditor} data-tip="清除">清除</button>
-                                    <button class="rl-btn" on:click={() => (bookEditOpen = false)}>取消</button>
+                                <!-- 🔴 #531：**在线阅读链接**收进本浮层（用户：「不再另增框」）—— 主表单只留标签行那枚检索图标。
+                                     ⚠️ label 带 `for`/`id`：本仓新 label ⛔ 不许裸写（会多报一条 A11y 告警破 89 基线）。 -->
+                                <!-- 🔴 #535（用户报障：「没有粘贴文字按钮」＋「占位提示客观点」）：
+                                     ⑴ 补一枚「粘贴」（与游戏「网络路径」/ 影视集「网络地址」**同款同位**）；
+                                     ⑵ 占位提示改**中性** —— 原先写「如微信读书网页版」，而检索源按子分类分流后
+                                        （文学走微信读书、网文/漫画暂不接在线源，靠手填）那句既不准确也不客观。 -->
+                                <div class="rl-edit-lblrow">
+                                    <label class="rl-lbl-inline" for="rl-f-readurl">网络地址</label>
+                                    {#if savedKey === AUTOSAVE_KEYS.bookUrl}
+                                        {#key savedSeq}
+                                            <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                        {/key}
+                                    {/if}
                                 </div>
+                                <div class="rl-ep-edit-row">
+                                    <input
+                                        id="rl-f-readurl"
+                                        class="rl-input rl-ep-edit-input"
+                                        bind:value={readUrl}
+                                        on:blur={() => autoSaveBook('url')}
+                                        placeholder="在线阅读链接（http/https）" />
+                                    <button class="rl-btn rl-link-act" on:click={() => void pasteReadUrl()} data-tip="粘贴在线阅读链接">粘贴</button>
+                                </div>
+                                <!-- 🔴 #563：底部三枚按钮退场（同集浮层），改失焦自动保存 + 点遮罩关闭 -->
                             </div>
                         {/if}
                     </div>
                 </div>
+                <!-- #529 / #531 候选浮层：触发按钮已按用户指令搬到上面「启动路径」标签行，
+                     这里只留浮层本体（⛔ 主表单不再另开「网络地址」输入框 —— 链接在右键浮层里改）。
+                     ⛔ 只回填链接，不下载、不解析正文。 -->
+                {#if readUrlOpen}
+                        <!-- 候选浮层：壳与列表**复用 B站 那套**（`.rl-ep-edit.rl-bili-pop` + `.rl-bili-list/-row`）
+                             —— 同为「封面 + 名称 + 副标题 + 右侧胶囊」的候选列表，⛔ 不另写第二套。
+                             ⚠️ 封面是**竖版**（书），靠样式表里那条 `.rl-wr-pop` 前缀规则覆写尺寸。 -->
+                        <div class="rl-ep-edit rl-bili-pop rl-wr-pop" role="dialog" aria-labelledby="rl-wr-pop-title">
+                            <div class="rl-lrc-pop-head">
+                                <span class="rl-ep-edit-title" id="rl-wr-pop-title">检索在线书籍阅读</span>
+                                <button class="rl-lrc-pop-close" on:click={() => (readUrlOpen = false)} data-tip="关闭">✕</button>
+                            </div>
+                            <div class="rl-ep-edit-row">
+                                <input
+                                    class="rl-input rl-ep-edit-input"
+                                    value={readUrlQuery}
+                                    on:input={(ev) => (readUrlQuery = inputVal(ev))}
+                                    on:keydown={(ev) => { if (ev.key === 'Enter') void runReadUrlSearch(); }}
+                                    placeholder="书名（可补作者，如 三体 刘慈欣）" />
+                                <button class="rl-btn rl-link-act" disabled={readUrlBusy} on:click={() => void runReadUrlSearch()}>
+                                    {readUrlBusy ? '搜索中…' : '搜索'}
+                                </button>
+                            </div>
+                            {#if readUrlErr}<div class="rl-hint rl-hint-warn">{readUrlErr}</div>{/if}
+                            <div class="rl-bili-list">
+                                {#each readUrlBooks as bk (bk.readUrl)}
+                                    <button
+                                        class="rl-bili-row"
+                                        disabled={readUrlBusy}
+                                        on:click={() => pickReadUrl(bk)}
+                                        data-tip={`填入阅读链接：${bk.title}`}>
+                                        <!-- `referrerpolicy="no-referrer"`：图床常按 Referer 防盗链（Obsidian 内 Referer 恒为 app://） -->
+                                        {#if bk.coverUrl}
+                                            <img class="rl-bili-cover" src={bk.coverUrl} alt="" loading="lazy" referrerpolicy="no-referrer" />
+                                        {:else}
+                                            <span class="rl-bili-cover rl-bili-cover-ph"><Icon icon="book-open" size={14} /></span>
+                                        {/if}
+                                        <span class="rl-bili-main">
+                                            <span class="rl-bili-name">{bk.title}</span>
+                                            <span class="rl-bili-artist">{bk.author || bk.publisher || '未知作者'}</span>
+                                        </span>
+                                        <span class="rl-bili-pill">{bk.rating !== undefined ? `${bk.rating}★` : '—'}</span>
+                                    </button>
+                                {/each}
+                            </div>
+                            {#if !readUrlBusy && !readUrlErr && readUrlBooks.length === 0 && readUrlQuery.trim()}
+                                <div class="rl-hint">没搜到，换个书名试试</div>
+                            {/if}
+                        </div>
+                    {/if}
             {/if}
 
             <!-- 观看链接（网络 + 本地合一）：电影 = 单集 ▶ 观看按钮（左键播放/打开第 1 集，右键编辑关联）；
@@ -3519,21 +4419,37 @@ export let initialBookKind: BookKind | undefined = undefined;
             {#if type === 'movie' || type === 'tv' || type === 'anime'}
                 <div>
                     <div class="rl-lbl-row">
-                        <!-- 🔴 #523：标签统一「路径」（原「观看链接」）；两枚小图标 = 检索本地 + 检索网络。 -->
+                        <!-- 🔴 #523：标签统一「路径」（原「观看链接」）；小图标 = 检索本地（+ 该类型自己的第二枚）。 -->
                         <label class="rl-lbl">启动路径</label>
                         <!-- 🔴 #521：**电影也挂这两枚**（用户：「电影条目观看链接也把这两个按钮移上来」
-                             ——⛔ 原来这两枚被 `type !== 'movie'` 挡掉了）。两枚都是「批量填集」，所以并排。 -->
-                        <!-- 批量检索图标：选文件夹 → 识别文件名集号自动填入未关联集本地路径（已填跳过） -->
+                             ——⛔ 原来这两枚被 `type !== 'movie'` 挡掉了）。
+                             🔴 #534（用户：「电影两枚（本地和网络），剧集/动画两枚（本地和批量网络）还有右键单集网络检索」）：
+                             ⇒ 第二枚**按类型分叉** —— 电影 = `globe`（网络检索，整片只有一个链接位，点开除第 0 集浮层+候选）；
+                                剧集/动画 = `list-video`（批量搜未填集；单集检索仍在集编辑浮层里，别搬走）。
+                             ⛔ 顺序固定「本地在前」（与书籍/音乐一致）。 -->
+                        <!-- 本地检索：选文件夹 → 识别文件名集号自动填入未关联集本地路径（已填跳过） -->
                         <button
                             class="rl-ai-btn"
                             data-tip={'选文件夹批量填集（按文件名认集号补标题）\n已填的不覆盖'}
                             on:click={() => void batchScanLocalEps()}><Icon icon="folder-search" size={13} /><span class="rl-sr">从文件夹检索剧集</span></button>
-                        <!-- 🔴 #520：批量搜 B站 **紧挨着「从文件夹检索剧集」**（用户：「小图标按钮是放在观看
-                             链接的检索本地剧集图标按钮的旁边」）。 -->
-                        <button
-                            class="rl-ai-btn"
-                            data-tip="批量搜索未填的集（可选集数区间，搜完给一张确认表）"
-                            on:click={openBiliBatch}><Icon icon="list-video" size={13} /><span class="rl-sr">批量搜索未填集</span></button>
+                        {#if type === 'movie'}
+                            <!-- 🔴 #534 电影的网络检索：复用**集内那套**（开第 0 集浮层 + B 站候选），⛔ 不另写检索逻辑 -->
+                            <button
+                                class="rl-ai-btn"
+                                data-tip={'检索网络：在 B 站搜这部片，选一条把链接填进来'}
+                                on:click={() => void searchMovieOnline()}><Icon icon="globe" size={13} /><span class="rl-sr">检索网络</span></button>
+                        {:else}
+                            <!-- 🔴 #520：批量搜 B站 **紧挨着「从文件夹检索剧集」**（用户：「小图标按钮是放在观看
+                                 链接的检索本地剧集图标按钮的旁边」）。 -->
+                            <button
+                                class="rl-ai-btn"
+                                data-tip="批量搜索未填的集（可选集数区间，搜完给一张确认表）"
+                                on:click={openBiliBatch}><Icon icon="list-video" size={13} /><span class="rl-sr">批量搜索未填集</span></button>
+                        {/if}
+                        <!-- 🔴 #531：原在**本行**的「检测失效链接」按钮已按用户指令**撤除**，改成
+                             「设置 › 基本设置 › 封面与清理 › 失效链接检测」一键扫**全库**；
+                             本表单只负责**显示**结果（`linkStatuses` 由 EntryModal 从宿主内存缓存注入）⇒
+                             ⛔ 这里别再挂检测入口（同款功能两处 = 用户会以为两个功能）。 -->
                     </div>
                     {#if type === 'movie' || Number(totalEpisodes) > 0}
                         <div class="rl-ep-grid">
@@ -3541,18 +4457,20 @@ export let initialBookKind: BookKind | undefined = undefined;
                                 <span class="rl-ep-wrap" class:linked={!!episodeFiles[0] || !!episodeUrls[0]}>
                                     <button
                                         class="rl-ep-btn rl-ep-btn-book"
+                                        class:rl-ep-dead={linkStatuses[0] === 'dead'}
                                         on:click={() => playOrOpenEpisode(0)}
                                         on:contextmenu={(ev) => { ev.preventDefault(); openEpEditor(0); }}
-                                        data-tip={epLinkHint(type, 0, episodeTitles[0], !!episodeFiles[0] || !!episodeUrls[0])}><Icon icon="play" size={12} /> 观看</button>
+                                        data-tip={epLinkHint(type, 0, episodeTitles[0], !!episodeFiles[0] || !!episodeUrls[0]) + deadHint(0)}><Icon icon="play" size={12} /> 观看</button>
                                 </span>
                             {:else}
                                 {#each Array.from({ length: Number(totalEpisodes) }, (_, i) => i) as i}
                                     <span class="rl-ep-wrap" class:linked={!!episodeFiles[i] || !!episodeUrls[i]} class:cur-ep={episode >= 1 && i + 1 === episode}>
                                         <button
                                             class="rl-ep-btn"
+                                            class:rl-ep-dead={linkStatuses[i] === 'dead'}
                                             on:click={() => playOrOpenEpisode(i)}
                                             on:contextmenu={(ev) => { ev.preventDefault(); openEpEditor(i); }}
-                                            data-tip={epLinkHint(type, i, episodeTitles[i], !!episodeFiles[i] || !!episodeUrls[i])}>{i + 1}</button>
+                                            data-tip={epLinkHint(type, i, episodeTitles[i], !!episodeFiles[i] || !!episodeUrls[i]) + deadHint(i)}><span class="rl-ep-num">{i + 1}<span class="rl-ep-dot"></span></span></button>
                                     </span>
                                 {/each}
                             {/if}
@@ -3566,13 +4484,22 @@ export let initialBookKind: BookKind | undefined = undefined;
                     <div class="rl-ep-edit-mask" on:click={closeEpEditor}></div>
                     <div class="rl-ep-edit" role="dialog" aria-labelledby="rl-ep-title-ep">
                         <div class="rl-ep-edit-title" id="rl-ep-title-ep">{type === 'movie' ? '编辑观看链接' : '编辑第 ' + (editEp + 1) + ' 集'}</div>
-                        <label class="rl-lbl-inline">{type === 'movie' ? '标题' : '集标题'}</label>
-                        <input class="rl-input rl-ep-edit-input" value={editTitle} on:input={(ev) => (editTitle = inputVal(ev))} placeholder="如：开始" />
-                        <label class="rl-lbl-inline">本地路径</label>
-                        <div class="rl-ep-edit-row">
-                            <input class="rl-input rl-ep-edit-input" value={editLocal} on:input={(ev) => (editLocal = inputVal(ev))} placeholder="库内路径，或系统绝对路径" />
-                            <button class="rl-btn rl-link-act" on:click={(ev) => browseLocalVideo(ev)} data-tip="选择本地视频">浏览</button>
+                        <!-- 🔴 #568：标题行也包进 `.rl-edit-lblrow`（与下面两行同款「标签 → 控件」间距），
+                             并在标签旁挂这枚**就地**轻提示（用户：「显示在浮层弹窗内…标题旁，而不是窗口外」）。 -->
+                        <div class="rl-edit-lblrow">
+                            <label class="rl-lbl-inline">{type === 'movie' ? '标题' : '集标题'}</label>
+                            {#if savedKey === AUTOSAVE_KEYS.epTitle}
+                                {#key savedSeq}
+                                    <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                {/key}
+                            {/if}
                         </div>
+                        <input
+                            class="rl-input rl-ep-edit-input"
+                            value={editTitle}
+                            on:input={(ev) => (editTitle = inputVal(ev))}
+                            on:blur={() => autoSaveEp('title')}
+                            placeholder="如：开始" />
                         <!-- 🔴 #501②（用户：「『网络地址』旁那枚 B站 改成小图标搜索、放在网络地址**标题**旁边平行
                              （像文件夹检索剧集按钮那样）」）：从**输入框行**里挪出来、贴到**标签行**，且收成
                              **纯图标** —— `.rl-edit-lblrow` + `.rl-ai-btn`，与「检索库内同名书籍」（⑥）、
@@ -3594,19 +4521,67 @@ export let initialBookKind: BookKind | undefined = undefined;
                              形态沿用 #501②：`.rl-edit-lblrow` + `.rl-ai-btn` + `.rl-sr`，与
                              「从文件夹检索剧集」「批量搜索未填集」同款同位同手感。
                              ⛔ 别在下面输入框行再留一枚（同款入口两处 = 用户会以为两个功能）。 -->
+                        <!-- 🔴 #536（用户：「电影类型条目右键浮层把网络检索小图标按钮去掉，仅保留编辑条目启动路径旁的两枚按钮，
+                             但剧集/动画类型条目右键浮层单集网络小图标按钮不去掉」）：
+                             电影**只有一个链接位**、且行内已有「检索网络」（#534 那枚，锚第 0 集）⇒ 浮层里这枚是重复入口。
+                             ⚠️ 只包**按钮**，`网络地址` 的 label + 下面那行「粘贴」照旧（电影仍要能手填 / 粘贴）。
+                             🔴 判别力在 `type !== 'movie'`（⛔ 别写成 `=== 'tv' || === 'anime'`：
+                             将来若新增别的剧集类型，这里会漏掉那一种）。
+                             ⚠️ 这段说明**必须留在容器外**：写进 `.rl-edit-lblrow` 里会把「label → 按钮」之间的
+                             判据窗口撑到几百字符（#536 首版就这么假红了一次）。 -->
                         <div class="rl-edit-lblrow">
                             <label class="rl-lbl-inline">网络地址</label>
-                            <button
-                                class="rl-ai-btn"
-                                data-tip="在 B 站搜这一集，点候选把链接填进来"
-                                on:click={() => void openEpBiliPicker()}>
-                                <span class="rl-sr">在 B 站搜索这一集</span>
-                                <Icon icon="search" size={13} />
-                            </button>
+                            {#if type !== 'movie'}
+                                <button
+                                    class="rl-ai-btn"
+                                    data-tip="在 B 站搜这一集，点候选把链接填进来"
+                                    on:click={() => void openEpBiliPicker()}>
+                                    <span class="rl-sr">在 B 站搜索这一集</span>
+                                    <Icon icon="globe" size={13} />
+                                </button>
+                            {/if}
+                            <!-- 🔴 #568：就地轻提示挂**本行标签旁**（⚠️ 必须在按钮**之后** —— 那个「label 紧邻按钮」
+                                 的既有判据窗口只有 260 字符，塞在中间会把它顶出去）。 -->
+                            {#if savedKey === AUTOSAVE_KEYS.epUrl}
+                                {#key savedSeq}
+                                    <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                {/key}
+                            {/if}
                         </div>
                         <div class="rl-ep-edit-row">
-                            <input class="rl-input rl-ep-edit-input" value={editUrl} on:input={(ev) => (editUrl = inputVal(ev))} placeholder="https://…" />
+                            <input class="rl-input rl-ep-edit-input" value={editUrl} on:input={(ev) => (editUrl = inputVal(ev))} on:blur={() => autoSaveEp('url')} placeholder="https://…" />
                             <button class="rl-btn rl-link-act" on:click={() => void pasteEpUrl()} data-tip="粘贴链接">粘贴</button>
+                        </div>
+                        <!-- 🔴 #563 字段顺序按用户给定排定：**集标题 → 网络地址 → 本地路径**（本地路径殿后）＋
+                             「本地路径」标签**右侧**加一枚与「网络地址」同款同尺寸的小图标（单集本地检索）。
+                             ⚠️ 这段说明**留在容器外**（同 #536）：写进 `.rl-edit-lblrow` 里会把
+                                「label → 按钮」之间的判据窗口撑到几百字符。
+                             🔴 检索根目录来自**设置页的分类目录**（`pure/localDirs`：剧集/动画/电影各一份），
+                                ⛔ 不是让用户每次现挑 —— 那是上面「从文件夹检索剧集」那条批量入口的语义。 -->
+                        <div class="rl-edit-lblrow">
+                            <label class="rl-lbl-inline">本地路径</label>
+                            <button
+                                class="rl-ai-btn"
+                                disabled={epLocalBusy}
+                                data-tip="检索本地：按设置页的分类目录递归找当前集"
+                                on:click={() => void searchLocalEpisodeNow()}>
+                                <span class="rl-sr">单集本地检索</span>
+                                {#if epLocalBusy}
+                                    <span class="rl-spinner"></span>
+                                {:else}
+                                    <Icon icon="folder-search" size={13} />
+                                {/if}
+                            </button>
+                            <!-- 🔴 #568：就地轻提示挂**本行标签旁**（⚠️ 同样必须在按钮之后 —— 见上面网络地址那行的说明）。 -->
+                            {#if savedKey === AUTOSAVE_KEYS.epLocal}
+                                {#key savedSeq}
+                                    <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                {/key}
+                            {/if}
+                        </div>
+                        <div class="rl-ep-edit-row">
+                            <input class="rl-input rl-ep-edit-input" value={editLocal} on:input={(ev) => (editLocal = inputVal(ev))} on:blur={() => autoSaveEp('local')} placeholder="库内路径，或系统绝对路径" />
+                            <button class="rl-btn rl-link-act" on:click={(ev) => browseLocalVideo(ev)} data-tip="选择本地视频">浏览</button>
                         </div>
                         {#if epBiliOpen}
                             <div class="rl-ep-edit rl-bili-pop" role="dialog" aria-labelledby="rl-bili-pop-title">
@@ -3711,11 +4686,9 @@ export let initialBookKind: BookKind | undefined = undefined;
                                 {/if}
                             </div>
                         {/if}
-                        <div class="rl-ep-edit-ops">
-                            <button class="rl-btn" on:click={saveEpEditor} data-tip={'保存'}>保存</button>
-                            <button class="rl-btn" on:click={clearEpEditor} data-tip={'清除'}>清除</button>
-                            <button class="rl-btn" on:click={closeEpEditor}>取消</button>
-                        </div>
+                        <!-- 🔴 #563：底部「保存 / 清除 / 取消」三枚按钮**整体退场**（用户：「移除底部的保存、
+                             清除、取消三个按钮…底部区域留空或适当缩减弹窗高度」）⇒ 改为**失焦自动保存** +
+                             轻提示；关闭出口 = 点遮罩（`closeEpEditor` 会先提交再关，⛔ 别让它变成「改了直接丢」）。 -->
                     </div>
                 {/if}
             {/if}
@@ -3771,6 +4744,13 @@ export let initialBookKind: BookKind | undefined = undefined;
                                 选好区间后点「搜索」——只会搜**还没关联**的集（共 {batchAllTargets.length} 个）
                             </div>
                         {/if}
+                        <!-- 🔴 #542 与「搜索」互补的一枚：手里已经有合集链接时不必再替我搜一轮。
+                             ⚠️ 它**常驻**（不随上面三态切换）—— 「我已经知道是哪一条」这件事与搜到哪一步无关。 -->
+                        <button
+                            class="rl-bili-batch-btn is-ghost"
+                            disabled={batchRunning}
+                            on:click={() => void pasteBiliBatchLink()}
+                            data-tip="粘贴一条 B 站链接，按它的分P 顺序填未填的集">粘贴链接</button>
                     </div>
                     <div class="rl-bili-batch-list">
                         {#each batchRows as r, idx (r.epIndex)}
@@ -3882,6 +4862,16 @@ export let initialBookKind: BookKind | undefined = undefined;
                                                 {#if partCountLabel(r.partCounts[cv.bvid] ?? 0)}
                                                     <span class="rl-bili-batch-parts">
                                                         {partCountLabel(r.partCounts[cv.bvid] ?? 0)}
+                                                    </span>
+                                                {/if}
+                                                <!-- 🔴 #589：「换一条」列表里**每一条**都标出「标题是否含作品名」——
+                                                     原来只有「当前选中」那条标（`.rl-bili-batch-warn`），
+                                                     用户在候选里挑的时候看不见别的条到底匹不匹配。 -->
+                                                {#if !titleMatchesWork(cv.title, r.workTitle)}
+                                                    <span
+                                                        class="rl-bili-batch-warn"
+                                                        data-tip="标题里没有本条目作品名，勾上它多半不是这一集">
+                                                        不含作品名
                                                     </span>
                                                 {/if}
                                             </button>
@@ -4007,15 +4997,34 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-err { font-size: 11px; color: var(--text-error); margin-top: 6px; }
     /* ── 搜索进度条（朴素版：无流光/脉冲/淡出等网页式动效，符合 Obsidian 插件观感） ── */
     .rl-progress { position: relative; height: 6px; background: var(--background-modifier-border); border-radius: 4px; overflow: hidden; margin-top: 10px; }
-    /* 填充：纯色 + 平滑宽度过渡 */
+    /* 填充：纯色 + 平滑宽度过渡
+       🔴 #559：过渡从 .3s 收到 **.12s** —— 用户口径是「API 返回那一刻**100ms 内**瞬间拉满 100%」。
+       ⚠️ 平时爬升靠 50ms tick 逐帧改 width，短过渡才不会把「蠕动」的节奏拖平。 */
     .rl-progress-fill {
         height: 100%; border-radius: 4px;
         background: var(--interactive-accent);
-        transition: width .3s ease;
+        transition: width .12s ease;
     }
+    /* 🔴 #559 完成冲刺：整条**淡出**（160ms 后由组件卸载）。只加 `opacity` 一条过渡。 */
+    .rl-progress.is-done { opacity: 0; transition: opacity .16s ease; }
     .rl-progress-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 5px; font-size: 11px; color: var(--text-faint); }
-    .rl-progress-label { color: var(--text-muted); }
+    .rl-progress-label { color: var(--text-muted); min-width: 0; }
     .rl-progress-eta { color: var(--text-faint); }
+    /* 🔴 #571 右端组：**按钮在百分比左边**、两者一起贴右缘 ——
+       有了它，本行永远只有「左标签 / 右端组」两个孩子，`space-between` 再没有中间孩子可顶，
+       ⇒ 8s 后按钮上屏时百分比**不会**被隔到正中间（用户截图里的那个症状）。 */
+    .rl-progress-tail { display: inline-flex; align-items: baseline; gap: 8px; flex: none; }
+    /* 🔴 #559「中止重试」（8s 未返回才出现）：小号幽灵按钮，跟在百分比左侧（右端组内）。
+       ⚠️ 两级选择器 + 显式 `height: auto`：核心给所有 `button` 按死 `var(--input-height)`。
+       ⚠️ 间距交给 `.rl-progress-tail` 的 `gap`（⛔ 别在这里再写 `margin-left`，会双份）。 */
+    .rl-progress-meta .rl-prog-retry {
+        font-family: inherit; font-size: 11px; height: auto; line-height: 1.2;
+        padding: 2px 8px;
+        border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px);
+        background: transparent; box-shadow: none; color: var(--text-muted); cursor: pointer;
+        transition: color .15s ease, border-color .15s ease;
+    }
+    .rl-progress-meta .rl-prog-retry:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
     /* 逐源进度行：每源一个小标签，先返回的标记为已完成（主题色），未完成灰态 */
     .rl-prog-srcs { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 2px 0 6px; }
     .rl-prog-src { font-size: 11px; color: var(--text-faint); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-pill, 999px); padding: 1px 9px; line-height: 18px; white-space: nowrap; user-select: none; }
@@ -4245,7 +5254,7 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-link-act:disabled { opacity: .4; cursor: not-allowed; }
     /* 观看链接区块：1..N 集按钮网格，左键播放/打开、右键编辑；本地绿点 / 网络蓝点双角标 */
     .rl-ep-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-    /* 「观看链接」标题行：label + 批量检索小图标（动画/电视剧）并排；行内覆盖 label 底边距防图标下沉。
+    /* 「观看链接」标题行：label + 批量检索小图标（动画/剧集）并排；行内覆盖 label 底边距防图标下沉。
        🔴 #410：「从文件夹检索剧集」那枚图标按钮已并入**共用的** `.rl-ai-btn`（用户：「观看链接旁边的按钮
        也给我统一配色」）—— 原来这里另有一份（20×18 / 透明 / muted→accent），与 `.rl-ai-btn` **同形**，
        两套必然漂 ⇒ 删掉。⛔ 别再复制一份出来。 */
@@ -4267,11 +5276,34 @@ export let initialBookKind: BookKind | undefined = undefined;
         justify-content: center;
     }
     .rl-ep-wrap.linked .rl-ep-btn { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
-    /* 🔴 #447 当前进度所在的那一集（用户：「如在影视类型条目里的当前进度集标记为5，那么在观看按钮第 5 集按钮标记为黄」）：
-       **黄环**标记（1px 黄边 + 2px 黄外环），画在按钮**外沿** —— 与「已关联」的 accent 实底叠加时照样看得见。
-       ⛔ 不改底色 / 不改文字色：底色已被「已关联」占用（一个按钮的底色只表达一件事），而黄字在白底只有 2.4:1（§2.1 明令）。
-       ⚠️ 集按钮间距 6px ≥ 外环 2px，相邻环不会互压。判据 = 当前进度（`episode`，1 基；0 = 还没开始看 ⇒ 不标）。 */
-    .rl-ep-wrap.cur-ep .rl-ep-btn { border-color: var(--rl-progress-now); box-shadow: 0 0 0 2px var(--rl-progress-now); }
+    /* 🔴 #586 当前进度所在的那一集 —— **集号右下角的橙色小圆点**。
+       判据 = 当前进度（`episode`，1 基；0 = 还没开始看 ⇒ 不标）。
+       🔴 本批**翻面 #447**：原先画的是「1px 黄边 + 2px 黄外环」（旧令牌值 `#b8860b`）。用户
+          2026-10-09：「修复当前编辑条目进度的显示问题，**正确以橙色小圆点显示在数字右下角**」
+          —— 与 #576 选集弹窗里那粒 `.rl-eps-dot` 是**同一件事的两种画法**，留着两套必然分叉。
+       🔴 显隐**只由 `.cur-ep` 这一个类驱动**（那一行按钮上方已挂好 `class:cur-ep`）：圆点每一格都渲染、
+          默认 `display: none` —— ⛔ 别退回「模板里再写一遍 `episode >= 1 && i + 1 === episode`」，
+          同一个判据两处 = 迟早漂（填了进度却只有一处重画）。
+       ⚠️ 圆点挂在 `.rl-ep-num`（贴着数字本身的盒子，宽度随文字）⇒ 落在**数字**右下角而不是按钮角落；
+          `bottom/right` 取负值 ⇒ 不撑开按钮、不挤动数字。
+       ⛔ 仍**不改按钮底色 / 文字色**：底色已被「已关联」占用（一个按钮的底色只表达一件事）。
+       ⚠️ 色值取令牌 `--rl-progress-now`（= Obsidian `--color-orange`，真源在 `styles.css` 文件头）。 */
+    .rl-ep-num { position: relative; }
+    .rl-ep-dot {
+        display: none; position: absolute; right: -6px; bottom: 0;
+        width: 5px; height: 5px; border-radius: 50%;
+        background: var(--rl-progress-now, #e8890c); pointer-events: none;
+    }
+    .rl-ep-wrap.cur-ep .rl-ep-dot { display: block; }
+    /* 🔴 #527 失效网络链接标红（用户：「检测剧集网络链接失效的项，呈现为红色」）：
+       红描边 + 红字 + 回到 primary 底（「已关联」的 accent 底会吃掉红字对比度）。
+       ⚠️ 特异性 (0,5,0) 与 `.rl-ep-wrap.linked .rl-ep-btn` **相同** ⇒ 靠**写在它后面**取胜，
+          ⛔ 别把本条上移到那条规则之前（会静默失效）。 */
+    .rl-ep-wrap .rl-ep-btn.rl-ep-dead {
+        border-color: var(--text-error);
+        color: var(--text-error);
+        background: var(--background-primary);
+    }
     /* 第 N 集编辑弹窗（EntryForm 自绘浮层，fixed 遮罩 + 居中卡片） */
     .rl-ep-edit-mask { position: fixed; inset: 0; z-index: 999; background: rgba(0, 0, 0, .35); }
     .rl-ep-edit {
@@ -4288,6 +5320,8 @@ export let initialBookKind: BookKind | undefined = undefined;
        ⚠️ `.rl-lbl-inline` 平时是块级独占一行（下面直接跟一个框），进到这一行里必须收成 inline。
        ⚠️ #523 撤掉的两个壳样式中，本次只恢复了**这一个**（标题行那个仍未回归）。 */
     .rl-edit-lblrow { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    /* ⚠️ 就地轻提示（`.rl-saved-hint`）的样式统一写在 `<style>` 末尾那条注释块里（#583 合并四类浮层），
+       ⛔ 别在这里再写一份 —— 同一条提示两套几何必然分叉。 */
     .rl-edit-lblrow .rl-lbl-inline { margin-bottom: 0; }
     .rl-ep-edit-input { flex: 1; min-width: 0; }
     /* #497 改名的**静态扩展名后缀**：扩展名锁死不可编辑 ⇒ 用 muted 色 + 等宽字体，
@@ -4310,6 +5344,10 @@ export let initialBookKind: BookKind | undefined = undefined;
           理由见那边 #506 那段（快捷关联弹窗是 DOM-API 组件、拿不到哈希类名，那个入口长不出按钮）。
        ⛔ 别把内部件在这里再复制一份（两份必然漂）。 */
     .rl-bili-pop { width: min(520px, 92vw); }
+    /* #529：书籍候选卡复用 B站 那套（`.rl-bili-list/-row/-cover`），**内部件规则一律留在 `styles.css` 全局**
+       （#506 纪律：DOM-API 组件拿不到 scoped 哈希，组件里留一份 = 两份必然漂）。
+       竖版封面尺寸的那条覆写（`.rl-wr-pop` 前缀 + B站 封面类）也因此在全局，⛔ 别搬回这里
+       —— 连注释里都别写出那条选择器全名（注释会进产物，撞红本块的反向守卫）。 */
     /* 标题行 = 左标题 + 右 ✕（2026-09-28 #401 照 `obsidian-lyricflux` 的候选框头搬）：
        ⛔ 不再用「底部一个取消按钮」那套 —— 正本只有右上角 ✕（外加点击遮罩关闭）。 */
     .rl-lrc-pop-head {
@@ -4413,4 +5451,20 @@ export let initialBookKind: BookKind | undefined = undefined;
         background: var(--interactive-accent); border-color: var(--interactive-accent);
         color: var(--text-on-accent); filter: brightness(1.07);
     }
+
+    /* ── 🔴 #563 / #568 / #583 自动保存「就地轻提示」────────────────────────────────
+       位置 = **它自己那一行的标签旁**（`#568` 用户点名：「显示在浮层弹窗内本地路径或网络路径标题旁，
+       而不是窗口外」；`#583` 推广到全部四类浮层）。
+       🔴 它**不是浮层、不占新的一行**（`inline` + 与标签同处 `.rl-edit-lblrow`）——
+          四类浮层共用这一个类，⛔ 别给某一类再另起一个类名（那会分叉出第二套几何）。
+       ⚠️ 颜色只走主题变量（灰字靠 `--text-faint`），⛔ 不给它底色 / 阴影（仓库 UI 铁律）；
+          失败态复用 `--rl-danger-strong`（与 `pure/toast.TOAST_FAILED` 的语义配对）。
+       ⚠️ 旧的那条**窗口底部固定定位提示**（类名见 #563 的批注 / 历史 CHANGELOG）已随 #583 **整体退场**——
+          本条注释**刻意不写它的类名**：反向守卫就是按类名 grep 的，写了会自撞（本仓老坑）。 */
+    .rl-saved-hint {
+        font-size: 11px; font-weight: 400; color: var(--text-faint);
+        white-space: nowrap; animation: rl-saved-hint-in .18s ease-out;
+    }
+    .rl-saved-hint-bad { color: var(--rl-danger-strong, #c0493f); }
+    @keyframes rl-saved-hint-in { from { opacity: 0; } to { opacity: 1; } }
 </style>

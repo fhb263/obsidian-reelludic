@@ -3,23 +3,46 @@
 // 需求（用户 2026-09-19）：「在进度条上显示小圆点 —— 当用户在视频任意时间点写下笔记时，进度条对应位置
 // 自动生成一个标记；点击标记可以快速定位到该时间点对应的笔记内容」。
 //
-// 🔴 **数据源 = 条目笔记**（真源，零 schema 改动 / 零迁移 / 零漂移）：扫「## 时间戳」/「## 截图」两区里的链接，
-//    用 `parseTimeLink` 取秒数。**认链接目标、不认显示文字** ⇒ 老笔记（`[7:46·回到视频](…)`）与新格式
-//    （`[7:46](…)`）都天然能读，**不需要迁移也不需要兼容分支**。
+// 🔴 **数据源 = 条目笔记**（真源，零 schema 改动 / 零迁移 / 零漂移）：扫「## 单时间戳」/「## 截图时间戳」两区
+//    里的链接，用 `parseTimeLink` 取秒数。**认链接目标、不认显示文字** ⇒ 老笔记（`[7:46·回到视频](…)`）与
+//    新格式（`[7:46](…)`）都天然能读，**不需要迁移也不需要兼容分支**。
+//    🔴 **区段名在 2026-10-09 改过**（用户：「写入笔记的 `## 时间戳`、`## 截图` 改成 `## 单时间戳`、
+//    `## 截图时间戳`」）：写入一律用新名，**旧名继续读**（兼容面见下方 `MARK_SECTIONS_LEGACY` 的注释）。
 //    「写下笔记」的入口就是顶栏那两个按钮（T 插入时间戳 / S 截图）；**手写**在区里的行也照样算一个点
 //    （用户 2026-09-19 明确：「可以」）。
 //
 // ⚠️ 与 `pure/excerpt.ANNOTATION_SECTIONS` 的区别：那张名单管「`writeNote` 重写笔记时要搬回哪些区」
-//    （`高亮/摘抄/时间戳/截图`），本文件的 `MARK_SECTIONS` 只管「哪两区里的链接算进度条标记」
-//    （`时间戳/截图`）—— **两者含义不同，别合并成一份**。
+//    （`摘抄/单时间戳/截图时间戳` + 两个历史名），本文件的 `MARK_SECTIONS` 只管「哪几区里的链接算进度条标记」
+//    —— **两者含义不同，别合并成一份**；但⚠️ **改区名时两处都要动**（少一处 = 静默丢数据）。
 //
 // 生态参照：交互惯例 = **YouTube 章节**（进度条上的标记 + 悬停看标题 + 点击跳转），而它的数据源
 //    也正是「一份纯文本的时间戳列表」—— 与本模块的输入**同构**。
 
 import { inlineLinks, parseTimeLink } from 'pure/videoLink';
 
-/** 哪两区里的链接算进度条标记（改这里 = 改数据来源） */
-export const MARK_SECTIONS = ['时间戳', '截图'] as const;
+/** 写入用的两个区名（用户 2026-10-09 定稿：`## 单时间戳` / `## 截图时间戳`） */
+export const MARK_SECTION_STAMP = '单时间戳';
+export const MARK_SECTION_SHOT = '截图时间戳';
+
+/** 2026-10-09「区段改名」之前的两个**历史区名** —— ⛔ 只读兼容、写入一律用新名 */
+export const MARK_SECTION_STAMP_LEGACY = '时间戳';
+export const MARK_SECTION_SHOT_LEGACY = '截图';
+
+/**
+ * 🔴🔴 **历史区名只许留、不许删**（2026-10-09 区段改名的兼容面）：
+ * 改名**不迁移已有笔记**（用户没要求动笔记文件）⇒ 老笔记里写下的 `## 时间戳` / `## 截图` 必须
+ * **照样读得出来**（否则进度条圆点与侧边栏那两栏会**当场空白** —— 看着就像数据丢了）。
+ * 🔴 **两处都要列上**，少一处就是静默丢数据：
+ *   · 本文件的读名单（`MARK_SECTIONS`）—— 决定「哪些区的链接算标记」；
+ *   · `pure/excerpt.ANNOTATION_SECTIONS` —— 决定「`writeNote` 重写笔记时把哪些区搬回去」。
+ */
+export const MARK_SECTIONS_LEGACY = [MARK_SECTION_STAMP_LEGACY, MARK_SECTION_SHOT_LEGACY] as const;
+
+/** 哪几区里的链接算进度条标记（**新名 + 旧名**；改这里 = 改数据来源） */
+export const MARK_SECTIONS = [MARK_SECTION_STAMP, MARK_SECTION_SHOT, ...MARK_SECTIONS_LEGACY] as const;
+
+/** 算「截图」的那两区（新名 + 旧名）—— 只有它们走 `![[图]]` + 上一行的取图逻辑 */
+const SHOT_SECTIONS: readonly string[] = [MARK_SECTION_SHOT, MARK_SECTION_SHOT_LEGACY];
 
 /** 标记多于这个数量 → 视图加「密集」态（圆点缩小变淡，D-5 Ⓐ）—— 免得进度条变成一条花边 */
 export const MARK_DENSE_THRESHOLD = 12;
@@ -58,7 +81,7 @@ function baseName(p: string): string {
 
 /**
  * 从条目笔记解析出**全部**标记（按笔记里的先后顺序）。
- * 只扫 `MARK_SECTIONS` 两区 ⇒ 正文 / 摘抄区里的链接**不会**被误当成标记。
+ * 只扫 `MARK_SECTIONS` 那几区（新名 + 旧名）⇒ 正文 / 摘抄区里的链接**不会**被误当成标记。
  */
 export function parseNoteMarks(markdown: string): VideoMark[] {
     const md = typeof markdown === 'string' ? markdown : '';
@@ -76,7 +99,8 @@ export function parseNoteMarks(markdown: string): VideoMark[] {
         if (!(MARK_SECTIONS as readonly string[]).includes(section)) continue;
         const links = inlineLinks(raw);
         if (!links.length) continue;
-        const kind: VideoMark['kind'] = section === '截图' ? 'shot' : 'stamp';
+        // 截图那两区（新名 + 旧名）走取图逻辑，其余算「纯时间戳」
+        const kind: VideoMark['kind'] = SHOT_SECTIONS.includes(section) ? 'shot' : 'stamp';
         // 截图块是两行：`![[图]]` + 链接行 → 标记落在**图片那一行**（点「在笔记中打开」时整块都在视野里）
         let image: string | undefined;
         let line = i;

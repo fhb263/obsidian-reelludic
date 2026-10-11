@@ -17,6 +17,9 @@ import type { BookKind } from 'data/types';
 import type { AiSummaryInput } from 'pure/aiSummary';
 import type { AiPrefillInput } from 'pure/aiPrefill';
 import type { LyricSourceId } from 'pure/lyricOnline';
+import type { LocalEpisodeQuery } from 'pure/localEpisode';
+// 🔴 #602：书籍本地检索的查询形状（与关联弹窗**同一份**，收在纯模块 —— ⛔ 别在组件侧另立一个）
+import type { LocalBookSearchQuery } from 'pure/localDirs';
 
 export class EntryModal extends Modal {
     private form: EntryForm | null = null;
@@ -130,6 +133,9 @@ export class EntryModal extends Modal {
                 onFetchBangumiDetail: (id: number) => this.plugin.fetchBangumiDetailForEntry(id),
                 // Open Library 书籍选中结果按需补全（works.json → 简介/页数/出版社；失败 null 静默）
                 onFetchOpenLibraryDetail: (key: string) => this.plugin.fetchOpenLibraryDetailForEntry(key),
+                // 🔴 #609 微信读书书籍选中结果按需补全（/web/book/info → 出版年/出版社/ISBN/分类/完整简介/大图封面；
+                //    与「从微信读书同步书架」逐本补详情同一端点、同一解析、同一闸门；失败 null 静默）
+                onFetchWereadDetail: (bookId: string) => this.plugin.fetchWereadDetailForEntry(bookId),
                 // OMDb（IMDb）影视选中结果按需补全（i= 详情 → Plot/导演/演员/评分；失败 null 静默）
                 onFetchOmdbDetail: (imdbID: string) => this.plugin.fetchOmdbDetailForEntry(imdbID),
                 onSubmit: async (raw: Record<string, unknown>) => {
@@ -229,13 +235,31 @@ export class EntryModal extends Modal {
                     this.plugin.aiPrefillEntry(input, onStep),
                 /** 编辑表单游戏「启动快捷方式」：系统文件选择器选 .lnk，返回 vault 相对路径（库外绝对路径） */
                 onPickGameLaunch: () => this.plugin.pickGameLaunchPath(),
-                /** 编辑表单书籍「浏览」：系统文件选择器选 TXT/EPUB，返回 vault 相对路径 */
+                /** 编辑表单书籍「浏览」：系统文件选择器选 TXT/EPUB/PDF/CBZ/CBT，返回 vault 相对路径 */
                 onPickBookFile: () => this.plugin.pickBookFilePath(),
+                /**
+                 * 🔴 #539 编辑表单书籍「选文件夹」：**漫画「散装文件夹型」**把**文件夹本身**关联成书。
+                 * ⚠️ 与 `onPickBookFile`（`openFile`）**分开两枚** —— Electron 在 Windows/Linux 上不能
+                 *    同时选文件与目录（组合形态会退化成只能选文件，实测报障即此）。
+                 * 三态透传：`string` 选中 / `null` 取消 / `undefined` 本环境无系统对话框。
+                 */
+                onPickBookFolder: () => this.plugin.pickBookFolderPath(),
                 onPickVideoDir: () => this.plugin.pickVideoDirPath(),
-                /** 🔴 #524 编辑表单「检索本地书籍」：**先弹系统目录选择器**，再在选中的目录里找同名书籍 */
-                onPickBookDir: () => this.plugin.pickBookDirPath(),
-                onListBookFilesInDir: (dir: string) => this.plugin.listBookFilesInDir(dir),
+                /**
+                 * 🔴 #602 编辑表单「检索本地书籍」：**与影视那枚单集本地检索同一条链** —— 宿主按子分类
+                 * 取设置里的「文学 / 网文 / 漫画目录」，递归扫 + 按标题匹配（`main.searchLocalBookFile`）。
+                 * ⚠️ #524 那套「先弹系统目录选择器」的 `onPickBookDir` / `onListBookFilesInDir` 连同
+                 *    只服务它们的 `onListLibraryBooks` **一并退场**（用户：那枚图标「怎么是选文件夹关联的，
+                 *    统一成检索关联」+ 问答裁定「两处一起改」）⇒ 三个 prop 与对应宿主方法都已删。
+                 */
+                onSearchLocalBook: (q: LocalBookSearchQuery) => this.plugin.searchLocalBookFile(q),
+                /** 🔴 #534 游戏「检索本地」：同样**先弹系统目录选择器**，再在选中目录里找同名**可启动文件**（.lnk/.exe/.bat…） */
+                onPickGameDir: () => this.plugin.pickGameDirPath(),
+                onListGameLaunchFilesInDir: (dir: string) => this.plugin.listGameLaunchFilesInDir(dir),
                 onScanEpisodeDir: (dir: string) => this.plugin.scanEpisodeDir(dir),
+                /** 🔴 #563 编辑浮层「本地路径」旁那枚**单集本地检索**：按条目类型去设置里的分类目录递归找当前集
+                 *  （与上面几条「先选目录再找」不同 —— 它**不问用户**，目录来自设置页） */
+                onSearchLocalEpisode: (o: LocalEpisodeQuery) => this.plugin.searchLocalEpisode(o),
                 /** 书籍「进度页数」自动关联：探针本地书籍文件基准（PDF → numPages；TXT → 按章节解析 totalChapters；EPUB/失败 → undefined） */
                 onProbeBookPages: (path: string) => this.plugin.probeBookPages(path),
                 /** 编辑表单「阅读」：打开书籍阅读器（TXT 立即读入；EPUB 后置），关闭后返回最新阅读进度供表单同步 */
@@ -282,6 +306,18 @@ export class EntryModal extends Modal {
                  */
                 onBiliParts: (bvid: string) => this.plugin.dlBiliView(bvid),
                 /**
+                 * #529 书籍「检索在线书籍阅读」：搜**微信读书**网页版，回填在线阅读链接。
+                 * ⛔ 只取候选（书名/作者/封面/评分 + `web/reader/<hash>`），**不下载、不解析正文**。
+                 * 🔴 门控在宿主那侧（`searchWeread` 自判 `Platform.isDesktopApp` 并给文案），组件不重复判断。
+                 */
+                onSearchWeread: (keyword: string) => this.plugin.searchWeread(keyword),
+                /**
+                 * 🔴 #527 / #531 链接失效状态（**只读注入**）：从宿主内存缓存读一次 ——
+                 * 缓存由「设置 › 基本设置 › 封面与清理 › 失效链接检测」扫**全库**时写入。
+                 * ⛔ 本弹窗不再提供检测入口（用户 2026-10-05 指令：按钮挪到设置页）。
+                 */
+                linkStatuses: this.entry ? this.plugin.getLinkStatuses(this.entry.id) : [],
+                /**
                  * ⑤-c 下载歌曲：**仅桌面端 + 「启用内置音乐播放器」开启时**才给按钮。
                  * 移动端没有 Node http ⇒ 显示了也必然失败，不如不给（与「获取歌词」同口径）。
                  * 🔴 #399 起门控真源由 `musicDownloadEnabled` 换成 `audioInlinePlayer` ——
@@ -292,6 +328,12 @@ export class EntryModal extends Modal {
                  *    「按钮亮着、曲库栏却永远空」这类不一致。
                  */
                 canDownload: this.plugin.canUseAudioDownload(),
+                /* 🔴 #538 在线曲库栏的**独立开关**（用户：「设置项可选择开启或关闭新增音乐条目『在线曲库』的搜索，
+                   默认关闭」）。与 `canDownload` **不是同一件事**：
+                   · `canDownload` = 能力（桌面端 + 内置音乐播放器）⇒ 管表单「下载歌曲」按钮；
+                   · `songLibraryEnabled` = 能力 ∧ 用户开关（`canUseSongLibrary()`，单一真源）⇒ 管「在线曲库」那一栏。
+                   ⛔ 别再让曲库栏共用 `canDownload`。 */
+                songLibraryEnabled: this.plugin.canUseSongLibrary(),
                 onOpenDownloader: (t: string, a: string, onPicked: (relPath: string) => void) =>
                     this.plugin.openMusicDownloader(t, a, onPicked),
                 /* 🔴 #523：书籍下载那一套接线（两个门控 prop + 一个写回回调）按用户 2026-10-04 裁定
@@ -317,12 +359,6 @@ export class EntryModal extends Modal {
                     if (r.ok && r.path && this.entry) this.entry.audioPath = r.path;
                     return r;
                 },
-                /**
-                 * #417：**库内书籍文件**清单（书籍「书籍文件」浮层那枚 🔍 用）。
-                 * 🔴 与上面那枚同族同位、同一套形态：宿主给清单、组件只拿去和条目书名比对。
-                 * ⚠️ 扫全库（不像音频那样限定目录）—— 用户可能把书放在自己建的文件夹里。
-                 */
-                onListLibraryBooks: () => this.plugin.listLibraryBookFiles(),
                 /**
                  * 🔴 #402 下载后**自动关联到条目**（用户：「下载后的音频需能自动关联到对应的音乐类型条目」）。
                  * 编辑态直接写回 catalog 的 `audioPath`；`service.update` 是**按字段合并**（`{...prev, ...patch}`），

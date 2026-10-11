@@ -16,9 +16,16 @@ export type MusicKind = 'music';
 
 export const ENTRY_TYPES: readonly EntryType[] = ['movie', 'tv', 'anime', 'book', 'game', 'music'];
 
+/**
+ * 类型显示名（全仓唯一真源）。**改这里的字会连带**：合并视图「媒体类型」下拉 / 类型 chips /
+ * 添加表单类型下拉 / 空态文案 / 库概览量词 / 系列折叠卡标题（`N 剧集系列`）/ 笔记「类型」行。
+ * 🔴 2026-10-08（#555）：`tv` 由「电视剧」改为**「剧集」**（用户裁定，全局统一）。
+ *    ⚠️ **历史笔记目录名不受影响** —— 那个走 `pure/dirs.LEGACY_TYPE_DIR_ZH`（已冻结为旧文案），
+ *       ⛔ 不要再让任何「历史识别」逻辑引用本表（改了会让老目录搬不动）。
+ */
 export const ENTRY_TYPE_LABELS: Record<EntryType, string> = {
     movie: '电影',
-    tv: '电视剧',
+    tv: '剧集',
     anime: '动画',
     book: '书籍',
     game: '游戏',
@@ -153,10 +160,31 @@ export interface MediaEntry {
     album?: string;
     /** 音乐本地音频路径（music 类型；vault 相对路径优先，库外绝对路径兼容；lrc source 行来源） */
     audioPath?: string;
+    /**
+     * 音乐**网络地址**（#601；append-only 可选字段）。
+     * 语义 = 「这首没有本地音频时，去这里听 / 这是它的在线页」。手填 / 粘贴，**没有检索按钮**
+     * —— 与 `gameUrl` 同一条口径：音乐侧没有可用的在线检索源（实测四平台都需鉴权 / 签名）。
+     * ⚠️ 与 `sourceUrl`（数据来源平台页，搜索回填自动记录）不是一回事：那是出处，这是手填的入口。
+     */
+    audioUrl?: string;
     /** 游戏启动快捷方式（.lnk）路径（game 类型；vault 相对优先，库外绝对兼容；「▶ 启动」打开） */
     gameLaunchPath?: string;
+    /**
+     * 游戏**网络路径**（#534；append-only 可选字段）。
+     * 用户裁定「游戏**不接**在线检索源 —— 仅在右键弹窗加网络路径框（加粘贴文字按钮）」⇒
+     * 它只在游戏「启动路径」浮层里手填 / 粘贴（商店页 / 官网 / 攻略链接都行），**没有检索按钮**。
+     * ⚠️ 与 `sourceUrl`（数据来源平台页，搜索回填自动记录）不是一回事：那是出处，这是手填的入口。
+     */
+    gameUrl?: string;
     /** 书籍文件路径（TXT/EPUB，阅读器打开入口；vault 相对路径，复用 audioPath 模式） */
     bookFile?: string;
+    /**
+     * 书籍**在线阅读**链接（#529；append-only 可选字段）。
+     * 形如微信读书网页版 `https://weread.qq.com/web/reader/<hash>`（由「检索在线书籍阅读」回填，
+     * 也可手填）。语义 = 「这本没有本地文件时，去这里读」⇒ 表单「阅读」按钮**本地优先、无本地才开它**。
+     * ⚠️ 与 `sourceUrl`（数据来源平台页）不是一回事：它是**阅读入口**，不是来源出处。
+     */
+    readUrl?: string;
     /** 已弃用（#159 删除追番表本地文件夹监控）：字段保留兼容旧数据，不再读写 */
     localWatchDir?: string;
     /** 开播日期 YYYY-MM-DD（动画：Bangumi 放送时间回填；追番表「开播季度」列数据源） */
@@ -179,6 +207,13 @@ export interface MediaEntry {
     plannedDate?: string;
     /** 书籍阅读进度（页码/总页，可选；percent = 阅读器进度百分比估算 0-100，书架进度条优先读） */
     readingProgress?: { page?: number; totalPage?: number; percent?: number };
+    /**
+     * 书籍**阅读时长**（分钟，可选；1.2.1 #537，append-only）。
+     * 🔴 两个来源：① **内置阅读器**打开期间按「前台且为活动页」累计，关闭时叠加（不足 1 分钟不计）；
+     *    ② 编辑表单**手填**（小时录入 → 分钟落库，**覆盖**总数 —— ⛔ 不与阅读器自动累计同时写同一笔）。
+     * 语义与游戏 `playtimeMinutes` 同构；海报墙封面左下角显示「已读 2h」（复用 `.rl-cov-playtime` 角标）。
+     */
+    readMinutes?: number;
     /** 本地视频播放位置（key = 剧集下标字符串，value = 秒）：内置播放器打开时续播、暂停/切集/关闭时写回 */
     videoPositions?: Record<string, number>;
     /** 书籍元数据页数（豆瓣实体书；仅展示与统计，不参与进度换算——进度基准 totalPage 以本地文件为准） */

@@ -192,6 +192,8 @@ export function extractFrontmatterFromNote(text: string): Partial<MediaEntry> {
         watched_date: (v, { str: s }) => { out.watchedDate = s(v); },
         planned_date: (v, { str: s }) => { out.plannedDate = s(v); },
         playtime_minutes: (v, { num: n }) => { out.playtimeMinutes = n(v); },
+        // #537 书籍阅读时长（分钟，append-only）：表单手填覆盖总数；与阅读器自动累计**不同时写**
+        read_minutes: (v, { num: n }) => { out.readMinutes = n(v); },
         progress_season: (v, { num: n }) => {
             const s = n(v);
             if (s !== undefined) { progress.season = s; out.progress = progress; }

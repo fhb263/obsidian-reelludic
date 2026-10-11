@@ -16,6 +16,10 @@
 import type { EntryType, MediaEntry } from 'data/types';
 // ⚠️ `MediaStatus` 的真源是 `pure/status`（`data/types` 只是**内部**引用它、不对外导出）
 import type { MediaStatus } from './status';
+// 🔴 #592：列表视图的「合集整体置顶」要按当前排序档给**整组**一个代表值 ⇒ 需要 `SortBy`。
+//    ⚠️ 只引**类型**（`import type`，编译期擦除）—— `pure/search` 反过来 import 本文件的
+//       `compareSeriesIndex`，引类型不会造出运行期循环依赖。
+import type { SortBy } from './search';
 // 🔴 #472：组级进度**必须复用单卡那份取值口径**（`percent` 优先、无则按 `page/totalPage`）——
 //   卡面那行 `.rl-readrow` 用的是什么，这里就得是什么，⛔ 别在本文件里另写一套百分比判定。
 import { readPercent } from './mediaProgress';
@@ -93,6 +97,76 @@ export function seriesIndexValue(e: { seriesIndex?: number } | null | undefined)
 export function parseSeriesIndexInput(raw: unknown): number | undefined {
     const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw.trim() === '' ? NaN : raw.trim()) : NaN;
     return Number.isFinite(n) ? Math.round(n) : undefined;
+}
+
+/**
+ * **按「选中集合」重排序号**的计划（#573 立的规则；#608 起**唯一调用方**是 `planSeriesReindexAll`
+ * —— 批量条上那组「起始 / 步长 / 重排序号」已按用户裁定整体删除，见本文件下方那条）。
+ *
+ * 规则：
+ *  ① **只编选中项**，未选中的**跳过且不占号** —— 勾 3 条就出 `1 / 2 / 3`，
+ *     不会因为中间夹着没勾的条目而跳号（那正是「批量重排」与「逐条改」的区别）；
+ *  ② 起始值 / 步长都走 `parseSeriesIndexInput` 的同一口径（**只出整数**，小数四舍五入），
+ *     并各自兜底：起始值缺失或非法 ⇒ `1`；步长 **< 1 一律按 `1`**
+ *     （步长 0 会让整组同号 ⇒ 序号立刻失去「第几部」的含义，用户点一下反而更乱）；
+ *  ③ 顺序 = **传进来的 `orderedIds` 顺序**（调用方给的就是当前视图的显示顺序）⇒
+ *     本函数**只编号、不排序**，⛔ 别在这里再排一次（那会与用户看到的顺序不一致）。
+ * ⚠️ 返回的是**补丁列表**（`{ id, seriesIndex }[]`），本函数是纯的、**不碰 catalog** ——
+ *    落库由宿主逐条 `service.update`。
+ */
+export function planSeriesReindex(
+    orderedIds: readonly string[],
+    selected: ReadonlySet<string>,
+    start?: unknown,
+    step?: unknown,
+): { id: string; seriesIndex: number }[] {
+    const s = parseSeriesIndexInput(start);
+    const st = parseSeriesIndexInput(step);
+    const from = s === undefined ? 1 : s;
+    const by = st === undefined || st < 1 ? 1 : st;
+    const out: { id: string; seriesIndex: number }[] = [];
+    let n = 0;
+    for (const id of orderedIds) {
+        if (!selected.has(id)) continue;
+        out.push({ id, seriesIndex: from + n * by });
+        n++;
+    }
+    return out;
+}
+
+/**
+ * **整组重排序号的计划**（#608；海报墙「系列折叠卡」右键 → 「排序号」）。
+ *
+ * 与 `planSeriesReindex` 的关系：那个是「**只编勾选项**」的通用版；折叠卡上**没有「勾选」这个概念**
+ * （它是一张聚合卡，右键点的是组本身），所以口径直接锁死为：
+ *   ① **整组全部成员**依次编号（不存在"跳过不占号"这一说）；
+ *   ② **起始 1、步长 1** 固定 —— 折叠卡上没有那两个输入框，⛔ 别在这里另开参数（#608 已按用户裁定
+ *      把批量条上那组「起始 / 步长 / 重排序号」整体删除，入口只剩右键这一条）。
+ * 顺序 = **传进来的 `orderedIds` 顺序**（调用方给的就是该系列当前的显示顺序）——
+ *    本函数**只编号、不排序**，⛔ 别在这里再排一次（那会与用户看到的顺序不一致）。
+ * ⚠️ 返回的是**补丁列表**（`{ id, seriesIndex }[]`），本函数是纯的、**不碰 catalog** ——
+ *    落库由宿主逐条 `service.update`。
+ */
+export function planSeriesReindexAll(orderedIds: readonly string[]): { id: string; seriesIndex: number }[] {
+    return planSeriesReindex(orderedIds, new Set(orderedIds), 1, 1);
+}
+
+/**
+ * 🔴 #609 数组内**移动一项**（系列「排序号」弹窗的拖拽排序，纯逻辑可单测）。
+ *
+ * 语义：把 `from` 位置那一项搬到 `to` 位置，**其余保持相对顺序**（不是交换、也不是旋转）。
+ * 越界 / 非整数 / `from === to` ⇒ **原样返回**（返回新数组，不改入参）。
+ * 🔴 为什么不抛：拖拽在 DOM 层偶发会给到 `-1`（没拿到行下标）—— 抛错会变成「拖一下就炸」，
+ *    这里静默回退成「没动」，⛔ 别改成 throw。
+ */
+export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
+    const n = list.length;
+    if (!Number.isInteger(from) || !Number.isInteger(to)) return [...list];
+    if (from < 0 || from >= n || to < 0 || to >= n || from === to) return [...list];
+    const out = [...list];
+    const [it] = out.splice(from, 1);
+    out.splice(to, 0, it);
+    return out;
 }
 
 /**
@@ -241,6 +315,149 @@ export function foldSeries(entries: readonly MediaEntry[]): SeriesRow[] {
 
 /** 卡片缺失字段占位（与 `pure/cardMeta` 同款 —— 同列卡片行占位恒定才不会错位） */
 const PLACEHOLDER = '—';
+
+// ──────────── #592 列表视图的「合集整体置顶 + 组间按代表值」────────────────────────────
+//
+// 需求（用户 2026-10-10）：海报墙把「熊出没」13 部聚成一张折叠卡，而**列表视图仍是散开的 13 条**
+// —— 两种视图对同一批数据的聚合口径不一致。用户裁定：
+//   ⑴ **只改列表视图**（海报墙 / 瀑布流保持现状：折叠卡仍落在「组内首个成员」的位置）；
+//   ⑵ **合集永远置顶**：任何排序档下，合集都作为一个整体排在所有单集**前面**，两者**绝不混排**；
+//   ⑶ 次级排序：**合集之间**按「代表值」比（见下），**单集之间**按常规排序（入口已排好，保持原序）。
+//
+// 🔴 「代表值」按当前排序档取，**口径镜像 `pure/search.filterAndSort` 的同档语义**（⛔ 别自创规则）：
+//    最近更新 → 组内**最新**的 `updatedAt`（升序档取**最旧**）｜发布日期 → 组内**最大**年份
+//    ｜大众评分 / 个人评分 → 组内**按部平均**（与 `seriesReadPercent` 的「按部平均」同款；
+//      **缺值的部按 0 计入分母** —— ⛔ 别把没分数的部 skip 掉，那会让 1 部 9 分 + 4 部没分
+//      的组排到只 1 部 7 分的组前面）｜标题 → 组名 zh 排序（组名 = `seriesTitleOf`，单一真源）。
+// ⚠️ 排序档 `status-*` 不在下拉里（历史遗留的 `SortBy` 值）⇒ 落进「最近更新」那一档处理。
+// ⚠️ 结果**恒定**：主判据相等时再按分组键兜底（否则同一份数据两次渲染可能换位，看着像抖动）。
+
+/** 组内年份的**最大值**（无年份按 0 计 —— 与 `filterAndSort` 的 `year ?? 0` 同口径） */
+function groupMaxYear(items: readonly MediaEntry[]): number {
+    let max = 0;
+    for (const it of items) max = Math.max(max, typeof it.year === 'number' && Number.isFinite(it.year) ? it.year : 0);
+    return max;
+}
+
+/** 组内某数值字段的**按部平均**（缺值按 0 计入分母 —— 见上方口径说明） */
+function groupAvg(items: readonly MediaEntry[], pick: (e: MediaEntry) => number | undefined): number {
+    if (items.length === 0) return 0;
+    let sum = 0;
+    for (const it of items) {
+        const v = pick(it);
+        sum += typeof v === 'number' && Number.isFinite(v) ? v : 0;
+    }
+    return sum / items.length;
+}
+
+/** 组内 `updatedAt`（ISO 串，可直接字典序比）的极值；组内全空 ⇒ 空串（排在最早） */
+function groupUpdatedAt(items: readonly MediaEntry[], want: 'newest' | 'oldest'): string {
+    let out: string | null = null;
+    for (const it of items) {
+        const v = typeof it.updatedAt === 'string' ? it.updatedAt : '';
+        if (out === null) { out = v; continue; }
+        if (want === 'newest' ? v > out : v < out) out = v;
+    }
+    return out ?? '';
+}
+
+/**
+ * 两个合集在**当前排序档**下的先后（<0 = a 在前）。
+ *
+ * ⚠️ 只在「合集之间」用；合集与单集的先后由 {@link listTreeRows} 直接定死（合集恒前），
+ *    ⛔ 别拿本函数去和单集比（那正是用户要杜绝的「混排」）。
+ */
+export function compareSeriesGroups(a: SeriesGroup, b: SeriesGroup, sortBy: SortBy): number {
+    const asc = (x: number, y: number) => (x === y ? 0 : x < y ? -1 : 1);
+    let primary: number;
+    switch (sortBy) {
+        case 'release-asc':
+            primary = asc(groupMaxYear(a.items), groupMaxYear(b.items));
+            break;
+        case 'release-desc':
+            primary = -asc(groupMaxYear(a.items), groupMaxYear(b.items));
+            break;
+        case 'score-asc':
+            primary = asc(groupAvg(a.items, (e) => e.communityScore), groupAvg(b.items, (e) => e.communityScore));
+            break;
+        case 'score-desc':
+            primary = -asc(groupAvg(a.items, (e) => e.communityScore), groupAvg(b.items, (e) => e.communityScore));
+            break;
+        case 'myrating-asc':
+            primary = asc(groupAvg(a.items, (e) => e.rating), groupAvg(b.items, (e) => e.rating));
+            break;
+        case 'myrating-desc':
+            primary = -asc(groupAvg(a.items, (e) => e.rating), groupAvg(b.items, (e) => e.rating));
+            break;
+        case 'title-asc':
+            primary = a.name.localeCompare(b.name, 'zh');
+            break;
+        case 'title-desc':
+            primary = b.name.localeCompare(a.name, 'zh');
+            break;
+        case 'series-asc':
+            primary = compareSeriesIndex(a.items[0] ?? {}, b.items[0] ?? {});
+            break;
+        case 'series-desc':
+            primary = compareSeriesIndexDesc(a.items[0] ?? {}, b.items[0] ?? {});
+            break;
+        case 'recent-asc':
+            primary = groupUpdatedAt(a.items, 'oldest').localeCompare(groupUpdatedAt(b.items, 'oldest'));
+            break;
+        // `recent` 与下拉里没有的 `status-*` 一律按「最近更新 ↓」处理
+        default:
+            primary = groupUpdatedAt(b.items, 'newest').localeCompare(groupUpdatedAt(a.items, 'newest'));
+            break;
+    }
+    return primary !== 0 ? primary : a.key.localeCompare(b.key);
+}
+
+/**
+ * **列表视图的显示行**（#592）：合集父级行 + （该合集被展开时）它的成员子行；单集行与子行**共用
+ * 同一段行 markup**（子行只多一个「缩进」标记）—— ⛔ 别为子行再抄一份行模板（两处必然漂移）。
+ *
+ * ⚠️ 展开态由**外部**传进来（`openKeys`）：本函数**不持有状态**，纯映射 ⇒ 可单测、可被
+ *    Svelte 的 `$:` 直接依赖（🔴 Svelte 4 的依赖分析**不穿透函数体** ⇒ 视图侧必须把 `openKeys`
+ *    写在 `$:` 语句里，见 `MediaList`）。
+ */
+export type ListDisplayRow =
+    | { kind: 'group'; group: SeriesGroup }
+    | { kind: 'entry'; entry: MediaEntry; child: boolean };
+
+export function listDisplayRows(rows: readonly SeriesRow[], openKeys: readonly string[]): ListDisplayRow[] {
+    const open = new Set(openKeys);
+    const out: ListDisplayRow[] = [];
+    for (const r of rows) {
+        if (r.kind === 'single') {
+            out.push({ kind: 'entry', entry: r.entry, child: false });
+            continue;
+        }
+        out.push({ kind: 'group', group: r.group });
+        if (open.has(r.group.key)) {
+            for (const it of r.group.items) out.push({ kind: 'entry', entry: it, child: true });
+        }
+    }
+    return out;
+}
+
+/**
+ * **列表视图的行序**（#592）：合集整体置顶（组间按当前排序档的代表值），其后是所有单集。
+ *
+ * 🔴 三条纪律：
+ *  ⑴ 分组与组内排序**一律复用 `foldSeries`**（⛔ 别在这里重写一遍分组/组内排序 —— 那是单一真源）；
+ *  ⑵ **单集保持传入顺序**（入口 `filterAndSort` 已按当前排序档排好，这里只做「分类搬运」）；
+ *  ⑶ 合集**恒在单集之前**（用户点名「绝不混排」）⇒ 与海报墙 `foldSeries` 的「落在原位」**有意不同**。
+ */
+export function listTreeRows(entries: readonly MediaEntry[], sortBy: SortBy): SeriesRow[] {
+    const folds: Extract<SeriesRow, { kind: 'series' }>[] = [];
+    const singles: Extract<SeriesRow, { kind: 'single' }>[] = [];
+    for (const r of foldSeries(entries)) {
+        if (r.kind === 'series') folds.push(r);
+        else singles.push(r);
+    }
+    folds.sort((x, y) => compareSeriesGroups(x.group, y.group, sortBy));
+    return [...folds, ...singles];
+}
 
 /**
  * 折叠卡的「年份跨度」行（占用普通卡的**创作者行**那一格）：

@@ -4,7 +4,7 @@
 //      书籍 → book、游戏 → game、音乐 → music）。UI 中文标签（ENTRY_TYPE_LABELS）与目录名解耦。
 //      1.0.3.1：书籍按子分类再分目录（文学 book/、网文 novel/），见 noteSubDir。
 // 纯逻辑无 obsidian 依赖；catalog.json 文件名不变（数据索引文件，兼容性依赖多）
-import { ENTRY_TYPE_DIRS, ENTRY_TYPE_LABELS, ENTRY_TYPES, type BookKind, type EntryType, type MediaEntry } from 'data/types';
+import { ENTRY_TYPE_DIRS, ENTRY_TYPES, type BookKind, type EntryType, type MediaEntry } from 'data/types';
 import { normalizeBookKind } from 'pure/bookKind';
 
 /** 条目笔记目录（v0.4 起中文名，保持；类型子目录在其下按英文名分） */
@@ -44,13 +44,25 @@ export function noteSubDir(e: Pick<MediaEntry, 'type' | 'bookKind'>): string {
     return e.type === 'book' ? BOOK_KIND_DIRS[normalizeBookKind(e.bookKind)] : ENTRY_TYPE_DIRS[e.type];
 }
 
-/** 旧版类型子目录中文名（v0.4–v1.0.1，迁移识别用；勿用于新路径生成） */
-export const LEGACY_TYPE_DIR_ZH: Record<EntryType, string> = ENTRY_TYPE_LABELS;
+/** 旧版类型子目录中文名（v0.4–v1.0.1，迁移识别用；勿用于新路径生成）
+ *  🔴 2026-10-08（#555）：本表**从 `ENTRY_TYPE_LABELS` 派生改为硬编码冻结** ——
+ *     UI 标签 `tv` 已由「电视剧」改名「剧集」，若继续引用本表就会让**历史目录识别失效**
+ *     （`笔记/电视剧/` 再也搬不到 `笔记/teleplay/`，且静默不报错）。
+ *     ⇒ 本表是**历史快照**，⛔ 此后一律不得跟随任何 UI 文案改名而改（要改只能新增映射，不能替换旧值）。 */
+export const LEGACY_TYPE_DIR_ZH: Record<EntryType, string> = {
+    movie: '电影',
+    tv: '电视剧',
+    anime: '动画',
+    book: '书籍',
+    game: '游戏',
+    music: '音乐',
+};
 
-/** 旧中文目录名 → 类型 反查表（relocateLegacyNotePath 用） */
+/** 旧中文目录名 → 类型 反查表（relocateLegacyNotePath 用）。
+ *  ⚠️ 走上面那张**冻结表**，⛔ 不是 `ENTRY_TYPE_LABELS`（见那里的说明）。 */
 const TYPE_BY_LEGACY_ZH: Record<string, EntryType> = {};
 for (const t of ENTRY_TYPES) {
-    TYPE_BY_LEGACY_ZH[ENTRY_TYPE_LABELS[t]] = t;
+    TYPE_BY_LEGACY_ZH[LEGACY_TYPE_DIR_ZH[t]] = t;
 }
 
 /** 旧版笔记 notePath 的类型目录段中文 → 英文（catalog 引用迁移）。

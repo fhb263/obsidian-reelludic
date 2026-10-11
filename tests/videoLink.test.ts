@@ -5,7 +5,7 @@
 //   ② 解析过窄 → 自己写出来的链接自己认不出（往返一致性）
 //   ③ 脏值（负数 / 非数字 / 超大秒数 / 非法转义）被当成合法目标
 import { describe, expect, it } from 'vitest';
-import { buildShotBlock, buildTimeLink, matchLineLink, parseMediaFragmentTime, parseSecondsText, parseTimeLink, sanitizeFileStem, shotFileName, videoDeepLinkFromParams } from 'pure/videoLink';
+import { appendRemark, buildShotBlock, buildTimeLink, matchLineLink, parseMediaFragmentTime, parseSecondsText, parseTimeLink, sanitizeFileStem, shotFileName, videoDeepLinkFromParams } from 'pure/videoLink';
 import { parseReaderDeepLink } from 'pure/readerLink';
 
 describe('pure/videoLink parseSecondsText', () => {
@@ -218,6 +218,69 @@ describe('pure/videoLink 截图块', () => {
         const ok = buildTimeLink({ seconds: 3, filePath: 'a.mp4' }) ?? '';
         expect(buildShotBlock({ fileName: '', timeLink: ok })).toBe('');
         expect(buildShotBlock({ fileName: 'a.png', timeLink: '' })).toBe('');
+    });
+});
+
+// 🔴 #585「[时间戳+备注]」：备注写在链接**后面**（用户 2026-10-09 裁定），侧边栏靠
+//    `pure/videoMarks.markCaption` 读「链接与图片以外的文字」⇒ 天然显示得到，不需要新解析。
+describe('pure/videoLink appendRemark（#585 时间戳 / 截图备注）', () => {
+    it('备注拼在链接**后面**（空格一分隔），链接本身一个字不动', () => {
+        const link = buildTimeLink({ seconds: 466, filePath: '影片.mp4' }) ?? '';
+        expect(link).toBe('[7:46](影片.mp4#t=466)');
+        expect(appendRemark(link, '高潮来了')).toBe('[7:46](影片.mp4#t=466) 高潮来了');
+    });
+
+    it('🔴 备注为空 / 全空白 ⇒ **原样返回链接**（留空 = 与 #326 以来的行为一字不差）', () => {
+        const link = '[0:03](a.mp4#t=3)';
+        expect(appendRemark(link, '')).toBe(link);
+        expect(appendRemark(link, '   ')).toBe(link);
+        expect(appendRemark(link, '\n\t ')).toBe(link);
+    });
+
+    it('🔴 备注里的换行折成空格（本仓前提是「一行一个标记」——换行会把标记劈成两行）', () => {
+        expect(appendRemark('[0:03](a.mp4#t=3)', '第一行\n第二行')).toBe('[0:03](a.mp4#t=3) 第一行 第二行');
+        expect(appendRemark('[0:03](a.mp4#t=3)', '  段前  段中\r\n段后  ')).toBe('[0:03](a.mp4#t=3) 段前 段中 段后');
+    });
+
+    it('🔴 链接为空 ⇒ 空串（不产出「只有备注、点不动」的行）', () => {
+        expect(appendRemark('', '备注')).toBe('');
+        expect(appendRemark('   ', '备注')).toBe('');
+    });
+
+    it('🔴 备注里的 markdown 链接语法**不被当链接**（`markCaption` 只剥图片与链接，备注是自由文本）', () => {
+        const line = appendRemark('[0:03](a.mp4#t=3)', '看 [这个](https://x) 说法');
+        expect(line).toBe('[0:03](a.mp4#t=3) 看 [这个](https://x) 说法');
+    });
+});
+
+describe('pure/videoLink buildShotBlock（#585 带备注）', () => {
+    it('截图块第二行 = 链接 + 备注（图仍在第一行）', () => {
+        const link = buildTimeLink({ seconds: 3, filePath: 'a.mp4' }) ?? '';
+        const block = buildShotBlock({ fileName: '图.png', timeLink: link, remark: '这一帧分镜很好' });
+        expect(block).toBe('![[图.png]]\n[0:03](a.mp4#t=3) 这一帧分镜很好');
+        expect(block.split('\n')).toHaveLength(2);
+    });
+
+    it('🔴 留空 / 不传 `remark` ⇒ 与旧行为一字不差（升级不改变已有习惯）', () => {
+        const link = buildTimeLink({ seconds: 3, filePath: 'a.mp4' }) ?? '';
+        const plain = `![[图.png]]\n${link}`;
+        expect(buildShotBlock({ fileName: '图.png', timeLink: link })).toBe(plain);
+        expect(buildShotBlock({ fileName: '图.png', timeLink: link, remark: '' })).toBe(plain);
+        expect(buildShotBlock({ fileName: '图.png', timeLink: link, remark: '  ' })).toBe(plain);
+    });
+
+    it('🔴 形态校验只看**链接本身**：带空格的备注不会把合法链接判成坏块（fail-closed 别变噪声源）', () => {
+        const link = buildTimeLink({ seconds: 466, entryId: 'e_1', ep: 0 }) ?? '';
+        expect(buildShotBlock({ fileName: '图.png', timeLink: link, remark: '带 空格 与 (括号) 的备注' })).not.toBe('');
+        // 反面：链接本身不是 markdown 链接 ⇒ 照样空串（备注救不了一个坏链接）
+        expect(buildShotBlock({ fileName: '图.png', timeLink: 'a.mp4#t=3', remark: '备注' })).toBe('');
+    });
+
+    it('🔴 端到端：带备注的块里，第二行仍能被解析回同一目标（备注没把链接吃掉）', () => {
+        const link = buildTimeLink({ seconds: 466, entryId: 'e_1', ep: 0 }) ?? '';
+        const second = (buildShotBlock({ fileName: '图.png', timeLink: link, remark: '备注文字' }) ?? '').split('\n')[1] ?? '';
+        const dest = /\]\(([^)]+)\)/.exec(second)?.[1] ?? '';
+        expect(parseTimeLink(dest)?.seconds).toBe(466);
     });
 });
 

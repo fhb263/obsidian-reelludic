@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { reconcileBookProgress, pageFromPercent } from 'pure/bookProgress';
+import { reconcileBookProgress, pageFromPercent, dropsReadingProgress } from 'pure/bookProgress';
 
 describe('bookProgress 百分比→页码换算', () => {
     it('按总页数等比例取整，钳制 0..totalPage', () => {
@@ -155,5 +155,36 @@ describe('bookProgress 不校正场景', () => {
 
     it('空进度 + 无文件：空', () => {
         expect(reconcileBookProgress({}, null)).toEqual({});
+    });
+});
+
+// ── #609：解除本地文件关联 ⇒ 该书的阅读进度一并清掉 ──────────────────────────
+// 用户报障：「阅读进度条取消本地文件关联后，应该清除海报墙封面的阅读进度条样式」。
+// 真根因：解除关联只清 `bookFile`，`readingProgress` 留着；而卡面 `mediaProgress.readPercent`
+// **只看 `readingProgress`** ⇒ 文件没了、进度条照画。用户裁定 = **直接清数据**（不是「只不显示」）。
+// 🔴 判据做成**纯函数**是刻意的：调用点只有 `EntryService.update` 一处（右键弹窗 / 编辑表单 /
+//    书籍浮层三条清空路径都经它）⇒ ⛔ 别在那三处各判一次（本仓反复踩的「两份必然漂」）。
+describe('bookProgress.dropsReadingProgress（#609 解除关联清进度）', () => {
+    it('🔴 本次把 `bookFile` 清成空串 ⇒ 清（这是「取消关联」的形态）', () => {
+        expect(dropsReadingProgress({ bookFile: '' })).toBe(true);
+    });
+
+    it('🔴 空白串与空串同口径（前端 trim 后再落库，别只认空串）', () => {
+        expect(dropsReadingProgress({ bookFile: '   ' })).toBe(true);
+    });
+
+    it('⚠️ `undefined` / `null` 也算清（`Partial<MediaEntry>` 里就是这么表示「删掉这个键」）', () => {
+        expect(dropsReadingProgress({ bookFile: undefined })).toBe(true);
+        expect(dropsReadingProgress({ bookFile: null })).toBe(true);
+    });
+
+    it('🔴 **本次没动 `bookFile`** ⇒ 不清（⛔ 关键：否则「改个标题」这类 patch 会被误判成解除关联）', () => {
+        expect(dropsReadingProgress({})).toBe(false);
+        expect(dropsReadingProgress({ title: '新标题' })).toBe(false);
+        expect(dropsReadingProgress({ readingProgress: { percent: 40 } })).toBe(false);
+    });
+
+    it('🔴 **换一个文件**（不是解除）⇒ 不清（进度要按新基准平移，清了就丢了）', () => {
+        expect(dropsReadingProgress({ bookFile: '书/三体.pdf' })).toBe(false);
     });
 });

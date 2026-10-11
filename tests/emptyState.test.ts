@@ -121,7 +121,7 @@ describe('resolveEmptyState · 视图池措辞（#444f poolKey）', () => {
     it('影视聚合页签：空的类型各有专属措辞（⛔ 不再说「库还是空的」—— 库里可能有别的类型）', () => {
         expect(must({ poolCount: 0, filteredCount: 0, lockType: null, poolKey: 'movieTv' }).title).toContain('影视库还是空的');
         expect(must({ poolCount: 0, filteredCount: 0, lockType: null, poolKey: 'movieTv:movie' }).title).toContain('还没有电影');
-        expect(must({ poolCount: 0, filteredCount: 0, lockType: null, poolKey: 'movieTv:tv' }).title).toContain('还没有电视剧');
+        expect(must({ poolCount: 0, filteredCount: 0, lockType: null, poolKey: 'movieTv:tv' }).title).toContain('还没有剧集');
         expect(must({ poolCount: 0, filteredCount: 0, lockType: null, poolKey: 'movieTv:anime' }).title).toContain('还没有动画');
     });
 

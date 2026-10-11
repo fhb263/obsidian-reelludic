@@ -11,7 +11,9 @@
  *     ⛔ 别照抄 `splitSongStem`，那样会把作者当书名去比；
  *  ⑶ 切不出作者时**不**拿条目的作者去补 —— 那会把「同作者的另一本书」也判成命中。
  *
- * ⚠️ 本模块**只做匹配与排序**；「库内有哪些书籍文件」由宿主提供（`main.listLibraryBookFiles()`）。
+ * ⚠️ 本模块**只做匹配与排序**；「有哪些书籍文件」由宿主提供 —— 🔴 #602 起是**分类目录**那一条链
+ *    （`main.searchLocalBookFile` → `collectFilesInDir`，候选路径库内相对 / 库外绝对）；
+ *    游戏那枚「先挑文件夹」的检索也复用这把尺（`main.searchLocalForAssociate`）。
  */
 import { songSimilarityScore } from 'pure/dl/utils';
 import { segmentsExactTitle } from 'pure/libraryMatch';

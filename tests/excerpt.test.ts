@@ -9,6 +9,7 @@ import {
     mergeExcerptSection,
     appendExcerptToNote,
     removeExcerptBlock,
+    ANNOTATION_SECTIONS,
     extractAnnotationSections,
     replaceAnnotationSection,
     type ParsedExcerpt,
@@ -763,7 +764,7 @@ describe('pure/excerpt callout 解析与往返', () => {
     });
 });
 
-describe('extractAnnotationSections（2026-09-18：writeNote 吞高亮修复的底座）', () => {
+describe('extractAnnotationSections（2026-09-18：writeNote 吞标注区修复的底座；#528 起「高亮」不在名单内）', () => {
     const hlBlock = renderExcerptBlock(
         { quote: '应无所住而生其心', loc: { chapter: 1, pct: 3 }, id: 'hlAAA', style: '高亮', color: '黄' },
         { callout: true },
@@ -771,21 +772,21 @@ describe('extractAnnotationSections（2026-09-18：writeNote 吞高亮修复的�
     const exBlock = renderExcerptBlock({ quote: '凡所有相，皆是虚妄', note: '想法', id: 'bkBBB' }, { callout: true });
     const note = ['> [!bookinfo]+ **《金刚经》**', '', '## 高亮', '', hlBlock, '', '## 摘抄', '', exBlock, '', '## 相关链接', '（暂无链接）'].join('\n');
 
-    it('按笔记里的出现顺序抽出「高亮 + 摘抄」两区（空区不返回）', () => {
+    it('#528：「## 高亮」已移出名单 —— 只抽「摘抄」，旧笔记里的高亮区被忽略（重写即清掉）', () => {
         const secs = extractAnnotationSections(note);
-        expect(secs.map((s) => s.section)).toEqual(['高亮', '摘抄']);
-        expect(secs[0].body).toContain('应无所住而生其心');
-        expect(secs[1].body).toContain('凡所有相，皆是虚妄');
+        expect(secs.map((s) => s.section)).toEqual(['摘抄']);
+        expect(secs[0].body).toContain('凡所有相，皆是虚妄');
     });
 
-    it('空区不返回；两区都没有 → []（合并时原样返回模板）', () => {
+    it('空区不返回；没有可搬的区 → []（合并时原样返回模板）', () => {
         expect(extractAnnotationSections(['## 高亮', '', '## 摘抄', '', '## 相关链接'].join('\n'))).toEqual([]);
         expect(extractAnnotationSections('没有任何标注区')).toEqual([]);
     });
 
-    it('顺序跟随旧笔记（摘抄在前时先返回摘抄）', () => {
-        const swapped = ['## 摘抄', '', exBlock, '', '## 高亮', '', hlBlock].join('\n');
-        expect(extractAnnotationSections(swapped).map((s) => s.section)).toEqual(['摘抄', '高亮']);
+    it('多区时顺序跟随旧笔记的出现顺序', () => {
+        const stamp = '[7:46](obsidian://reelludic?action=video&entry=e_1&ep=0&t=466)';
+        const multi = ['## 时间戳', '', stamp, '', '## 摘抄', '', exBlock].join('\n');
+        expect(extractAnnotationSections(multi).map((s) => s.section)).toEqual(['时间戳', '摘抄']);
     });
 
     // 🔴 2026-09-19 补：`## 时间戳` / `## 截图` 也是**用户数据**，但不在笔记模板里 ——
@@ -794,13 +795,35 @@ describe('extractAnnotationSections（2026-09-18：writeNote 吞高亮修复的�
     it('🔴 「## 时间戳」/「## 截图」同样要被抽出（否则 writeNote 重写会把它们抹掉）', () => {
         const stamp = '[7:46](obsidian://reelludic?action=video&entry=e_1&ep=0&t=466)';
         const withStamps = [
-            '## 高亮', '', hlBlock,
+            '## 摘抄', '', exBlock,
             '', '## 时间戳', '', stamp,
             '', '## 截图', '', '![[截屏 片名 0-03.png]]', '', stamp,
             '', '## 观看链接', '（暂无链接）',
         ].join('\n');
         const secs = extractAnnotationSections(withStamps);
-        expect(secs.map((s) => s.section)).toEqual(['高亮', '时间戳', '截图']);
+        expect(secs.map((s) => s.section)).toEqual(['摘抄', '时间戳', '截图']);
+        expect(secs[1].body).toContain('[7:46](');
+        expect(secs[2].body).toContain('![[截屏 片名 0-03.png]]');
+    });
+
+    // 🔴 #587（2026-10-09 用户裁定）：写入名改成 `单时间戳` / `截图时间戳`。
+    //    改名**不迁移已有笔记** ⇒ 名单必须**同时列上新名与两个历史名**：
+    //    少了历史名 = 老笔记里那两区被 `writeNote` 重写抹掉（静默丢数据）；
+    //    少了新名 = 新写进去的区被抹掉（更荒唐）。
+    it('🔴 #587 名单 = 新名 + 历史名（两个都不能少）', () => {
+        expect([...ANNOTATION_SECTIONS]).toEqual(['摘抄', '单时间戳', '截图时间戳', '时间戳', '截图']);
+    });
+
+    it('🔴 #587 新名两区照样抽出、按笔记出现顺序', () => {
+        const stamp = '[7:46](obsidian://reelludic?action=video&entry=e_1&ep=0&t=466)';
+        const note = [
+            '## 摘抄', '', exBlock,
+            '', '## 单时间戳', '', stamp,
+            '', '## 截图时间戳', '', '![[截屏 片名 0-03.png]]', '', stamp,
+            '', '## 观看链接', '（暂无链接）',
+        ].join('\n');
+        const secs = extractAnnotationSections(note);
+        expect(secs.map((s) => s.section)).toEqual(['摘抄', '单时间戳', '截图时间戳']);
         expect(secs[1].body).toContain('[7:46](');
         expect(secs[2].body).toContain('![[截屏 片名 0-03.png]]');
     });

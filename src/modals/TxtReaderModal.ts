@@ -110,6 +110,8 @@ import { currentParagraph, paraPct } from 'pure/readerParagraph';
 import { isTypingTarget, resolveReaderHotkey } from 'pure/readerHotkeys';
 import { formatChapterTitle } from 'pure/chapterTitle';
 import { READER_THEMES, normalizeReaderTheme, readerThemeClass, type ReaderThemeId } from 'pure/readerTheme';
+// 🔴 #603：底栏图标组里「描述行为」的悬停轻提示真源（TXT / EPUB / PDF / 漫画 四件共用）
+import { READER_FOPS } from 'pure/readerFops';
 
 export interface TxtReaderOptions {
     /** 书籍标题（弹窗标题） */
@@ -1588,7 +1590,9 @@ export class TxtReaderPanel {
         this.autoBtnEl?.toggleClass("is-on", this.autoOn);
     }
 
-    /** 沉浸模式（用户 2026-09-15）：隐藏上下边栏；鼠标靠近顶部/底部边缘临时唤出；再点按钮退出 */
+    /** 沉浸模式（用户 2026-09-15）：隐藏上下边栏；**点正文空白**收起 / 展开；再点按钮退出。
+     *  🔴 #603 改正注释：这里**没有**「鼠标靠近顶部 / 底部边缘临时唤出」那条热区 —— 它在 2026-09-15
+     *     就被用户裁定撤掉了（换成点击正文空白）。旧注释一直没跟着改，底栏那枚按钮的悬停提示便跟着错了。*/
     private setImmersive(on: boolean): void {
         if (on === this.immersive) return;
         this.immersive = on;
@@ -1769,8 +1773,11 @@ export class TxtReaderPanel {
             return b;
         };
         this.fsBtnEl = mkFop('maximize', '全屏显示', () => this.toggleFullscreen());
-        this.immersiveBtnEl = mkFop('eye', '沉浸模式（移到边缘唤出）', () => this.setImmersive(!this.immersive));
-        this.autoBtnEl = mkFop('timer', '自动滚动 / 翻页（右键调速）', () => this.setAuto(!this.autoOn));
+        // 🔴 #603：这三条「描述行为」的提示走**四件共用**的真源 `pure/readerFops`
+        //    （⛔ 别在这里写第二份字面量 —— TXT / EPUB 那两句**漏改**的老路就是这么来的，
+        //      详见 `pure/readerFops` 头部那两条由来）。
+        this.immersiveBtnEl = mkFop('eye', READER_FOPS.immersive, () => this.setImmersive(!this.immersive));
+        this.autoBtnEl = mkFop('timer', READER_FOPS.autoScrollPaged, () => this.setAuto(!this.autoOn));
         this.autoBtnEl.addEventListener('contextmenu', (ev) => this.openAutoMenu(ev));
         this.ttsBtnEl = mkFop('volume-2', '从本段开始朗读', () => this.toggleTts());
         this.ttsBtnEl.addEventListener('contextmenu', (ev) => this.openTtsMenu(ev));
@@ -3093,7 +3100,7 @@ export class TxtReaderPanel {
         this.hlTrashReady = Boolean(hl || ex);
     }
 
-    /** 一键即黄即记核心：写阅读数据存档（main 侧顺带同步笔记镜像）→ 本地列表追加 → 重包当前章 mark。
+    /** 一键即黄即记核心：写阅读数据存档（高亮真源；#528 起不再写笔记）→ 本地列表追加 → 重包当前章 mark。
      *  返回新块 id（失败 null，已自行 Notice）；`quiet` ＝ 不播报「已高亮」（改样式路径用，由调用方统一报一条）。 */
     private async doHighlight(text: string, chapter: number, pct: number, style: HlStyle = this.hlStyle, color: HlColor = this.hlColor, quiet = false): Promise<string | null> {
         if (!text || !this.options.onHighlight) {
@@ -3161,7 +3168,7 @@ export class TxtReaderPanel {
      * 会每条都弹确认，删 8 条要连点 8 次。
      */
     private async deleteSelectedHighlights(ids: string[]): Promise<boolean> {
-        const msg = `确定删除选中的 ${ids.length} 条高亮吗？（将从阅读数据中移除，笔记里的镜像区同步清空）`;
+        const msg = `确定删除选中的 ${ids.length} 条高亮吗？（将从阅读数据中移除，不可恢复）`;
         const ok = this.options.onConfirmClear ? await this.options.onConfirmClear(msg) : confirm(msg);
         if (!ok) return false;
         const sel = new Set(ids);

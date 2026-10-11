@@ -3,7 +3,7 @@
 //    本文件按「三值同构」锁：归一只认合法三值、计数四桶、量词三键、匹配各自成桶。
 // 缺省归「book」（展示为「文学」；用户 2026-09-12 裁定改名，原「出版」）：未指定 bookKind 的存量书籍不丢失
 import { describe, it, expect } from 'vitest';
-import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_TOP_UNITS, normalizeBookKind, matchesBookKind, bookKindCounts } from 'pure/bookKind';
+import { BOOK_KINDS, BOOK_KIND_LABELS, normalizeBookKind, matchesBookKind, bookKindCounts } from 'pure/bookKind';
 
 describe('normalizeBookKind 合法值归一（缺省 → 文学）', () => {
     it('合法三值原样返回（含 comic —— 2026-09-30 加回）', () => {
@@ -76,8 +76,5 @@ describe('常量定义', () => {
     it('BOOK_KINDS 与 LABELS 一致（chips 顺序依据：全部/文学/网文/漫画 —— comic 追加在末尾）', () => {
         expect(BOOK_KINDS).toEqual(['book', 'novel', 'comic']);
         expect(BOOK_KIND_LABELS).toEqual({ book: '文学', novel: '网文', comic: '漫画' });
-    });
-    it('BOOK_KIND_TOP_UNITS 顶部量词（子分类 chip 选中时：5 本书 / 5 本网文 / 5 本漫画）', () => {
-        expect(BOOK_KIND_TOP_UNITS).toEqual({ book: '本书', novel: '本网文', comic: '本漫画' });
     });
 });

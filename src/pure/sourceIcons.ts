@@ -6,7 +6,7 @@
 //      此处仅用于「指代该来源」这一指代性用途。每个标是 24×24 **单路径填充式**（源 SVG 即 `currentColor`）。
 //      ⚠️ 本表**不存品牌 hex**：设置页只走「主题色 + 已配置绿」两通道（与 `pure/aiIcons` 同口径），
 //      渲染端统一 `currentColor` 上色，深色主题自动跟随。
-//   ② **未被 Simple Icons 收录的**（TMDB / Bangumi / OMDb / Google Books / QQ 音乐 / 酷狗）→ `kind: 'builtin'`，
+//   ② **未被 Simple Icons 收录的**（TMDB / Bangumi / OMDb / Google Books / QQ 音乐 / 酷狗 / 微信读书）→ `kind: 'builtin'`，
 //      回退 Obsidian 内置图标（语义近似，**描边式**、颜色跟随主题）。
 //      ⛔ **刻意不拿别家品牌标顶替** —— 例：OMDb 转的是 IMDb 数据却不是 IMDb 官方源，
 //         挂 IMDb 标会让用户认错来源（同 `pure/searchIcons` 的既定纪律）。
@@ -25,8 +25,8 @@ import type { AiIcon } from 'pure/aiIcons';
  */
 export type SourceIcon = AiIcon;
 
-/** 需凭据的元数据源（与设置页 `KEY_SOURCE_ORDER` 同一批；类型保证这六个都有图标） */
-export type KeySourceId = 'douban' | 'tmdb' | 'bangumi' | 'omdb' | 'googleBooks' | 'igdb';
+/** 需凭据的元数据源（与设置页 `KEY_SOURCE_ORDER` 同一批；类型保证这七个都有图标） */
+export type KeySourceId = 'douban' | 'weread' | 'tmdb' | 'bangumi' | 'omdb' | 'googleBooks' | 'igdb';
 
 /** 音乐源 · 带 Cookie 行的三个平台（与设置页 `DL_COOKIE_ROWS` 同一批） */
 export type MusicSourceId = 'netease' | 'qq' | 'kugou';
@@ -39,6 +39,10 @@ export const SOURCE_ICON: Record<KeySourceId, SourceIcon> = {
         viewBox: '0 0 24 24',
         d: 'M.51 3.06h22.98V.755H.51V3.06Zm20.976 2.537v9.608h-2.137l-1.669 5.76H24v2.28H0v-2.28h6.32l-1.67-5.76H2.515V5.597h18.972Zm-5.066 9.608H7.58l1.67 5.76h5.501l1.67-5.76ZM18.367 7.9H5.634v5.025h12.733V7.9Z',
     },
+    // 🔴 #580 微信读书走**内置标**：本表的数据源是 simple-icons **v16**，而 WeRead 是**之后**才收录的
+    //    （v16.31 里查无 `weread`）⇒ 按本表既定纪律只能走内置兜底，⛔ 不引新版依赖、⛔ 不手抄品牌路径。
+    //    `book-open` 已由 `_probe_lucide.cjs` 在 Obsidian 的 app.js 图标表里**实测存在**。
+    weread: { kind: 'builtin', id: 'book-open' },
     tmdb: { kind: 'builtin', id: 'film' },
     bangumi: { kind: 'builtin', id: 'tv' },
     omdb: { kind: 'builtin', id: 'clapperboard' },

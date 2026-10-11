@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
     biliCheckedRows,
     biliEpisodeQuery,
+    biliEpisodeQueries,
+    biliPartTitles,
     biliSelectableRows,
     biliViewError,
     buildBiliFillRows,
@@ -21,6 +23,7 @@ import {
     parseBiliDuration,
     parseBiliSearch,
     urlUsedByOtherEp,
+    type BiliFillRow,
 } from 'pure/dl/bilibili';
 
 /** 真响应里抽出来的一条（含 `<em class="keyword">` 高亮、`&quot;` 实体、协议相对封面） */
@@ -279,8 +282,15 @@ const REAL_PAGES = [
     { cid: 2, page: 2, from: 'vupload', part: '02 树神的反击', duration: 1001 },
     { cid: 3, page: 3, from: 'vupload', part: '第03集\u3000\u3000\u3000\u3000\u3000消失的记忆 上', duration: 781 },
 ];
-function viewBody(pages: unknown, code = 0, message = 'OK', title = '一口气看完【熊出没之春日对对碰】52集合集') {
-    return JSON.stringify({ code, message, data: { bvid: 'BV1NreA6rE2L', title, videos: 3, pages } });
+function viewBody(
+    pages: unknown,
+    code = 0,
+    message = 'OK',
+    title = '一口气看完【熊出没之春日对对碰】52集合集',
+    // 🔴 #577：`pic` 是**协议相对**地址（真响应就这样），`normalizeBiliCover` 会补 `https:`
+    pic = '//i0.hdslb.com/bfs/archive/abc.jpg',
+) {
+    return JSON.stringify({ code, message, data: { bvid: 'BV1NreA6rE2L', title, videos: 3, pages, pic } });
 }
 
 describe('parseBiliView', () => {
@@ -301,6 +311,23 @@ describe('parseBiliView', () => {
         expect(out.code).toBe(-1);
         expect(out.parts).toEqual([]);
         expect(out.message).toContain('JSON');
+    });
+
+    // 🔴 #577：封面原图（选集弹窗缩略图的来源）
+    it('🔴 #577 带出**封面原图**（协议相对 `//i0.hdslb.com/…` 补成 `https:`）', () => {
+        expect(parseBiliView(viewBody(REAL_PAGES)).cover).toBe('https://i0.hdslb.com/bfs/archive/abc.jpg');
+    });
+
+    it('🔴 #577 ⛔ 本层**不挂缩略图后缀** —— `@320w_200h_1c.webp` 是**选集封面**那一层的口径，'
+        + '别的调用方要原图时不该被改尺寸（挂后缀的是 `pure/epCover.biliThumbUrl`）', () => {
+        expect(parseBiliView(viewBody(REAL_PAGES)).cover).not.toContain('@');
+    });
+
+    it('🔴 #577 缺 `pic` / 失败响应 ⇒ `cover` 空串（调用方落**统一占位图**，⛔ 不编假地址）', () => {
+        expect(parseBiliView(viewBody(REAL_PAGES, 0, 'OK', 't', '')).cover).toBe('');
+        expect(parseBiliView('<html>412</html>').cover).toBe('');
+        expect(parseBiliView(viewBody([], 62002, '稿件不可见')).cover).toBe('');
+        expect(parseBiliView(viewBody(null)).cover).toBe('https://i0.hdslb.com/bfs/archive/abc.jpg');
     });
 
     it('code ≠ 0 ⇒ 空列表并带出 code / message（不假装成功）', () => {
@@ -442,6 +469,40 @@ describe('biliEpisodeQuery（#517 检索词初值）', () => {
         expect(biliEpisodeQuery('', 2, '')).toBe('');
         expect(biliEpisodeQuery('   ', 2, '')).toBe('');
     });
+});
+
+// #575（2026-10-09 用户）：「**精确匹配**：支持精确匹配标题，如自动追加『第1集』或『1』进行检索」
+// —— 落地为**有序变体**（先精确、后宽泛），主词沿用 `biliEpisodeQuery` 的原口径（⛔ 那个函数不改）。
+describe('biliEpisodeQueries（#575 检索词变体：先精确、后宽泛）', () => {
+    it('集标题为空 ⇒ 主词「第N集」+ 备用词**裸数字**（两个变体互补，不是一个的复读）', () => {
+        expect(biliEpisodeQueries('熊出没', 2, '')).toEqual(['熊出没 第2集', '熊出没 2']);
+        expect(biliEpisodeQueries('熊出没', 1, '')).toEqual(['熊出没 第1集', '熊出没 1']);
+    });
+
+    it('有集标题 ⇒ 主词仍是「作品 + 集标题」，备用词照样给裸数字', () => {
+        expect(biliEpisodeQueries('熊出没', 2, '新邻居')).toEqual(['熊出没 新邻居', '熊出没 2']);
+    });
+
+    it('🔴 电影态（epNo = 0）⇒ **没有备用词**（电影没有「第几集」，裸数字只会搜出无关投稿）', () => {
+        expect(biliEpisodeQueries('让子弹飞', 0, '')).toEqual(['让子弹飞']);
+        expect(biliEpisodeQueries('熊出没', Number.NaN, '新邻居')).toEqual(['熊出没 新邻居']);
+    });
+
+    it('🔴 **去重**：主词本身就等于备用词时只留一条（⛔ 不产生同一串的复读）', () => {
+        // 作品名 + 集标题恰好就是「熊出没 1」这种形态
+        expect(biliEpisodeQueries('熊出没', 1, '1')).toEqual(['熊出没 1']);
+    });
+
+    it('作品名与集标题都空 ⇒ 空数组（一条词都没有，调用方据此直接跳过）', () => {
+        expect(biliEpisodeQueries('', 2, '')).toEqual([]);
+        expect(biliEpisodeQueries('   ', 2, '  ')).toEqual([]);
+    });
+
+    it('主词恒等于 `biliEpisodeQuery` 的产物（两处口径不许漂）', () => {
+        for (const [w, n, t] of [['熊出没', 3, ''], ['熊出没', 3, '开始'], ['让子弹飞', 0, '']] as const) {
+            expect(biliEpisodeQueries(w, n, t)[0]).toBe(biliEpisodeQuery(w, n, t));
+        }
+    });
 
     it('只有集标题（作品标题空）⇒ 就它自己（与旧口径一致）', () => {
         expect(biliEpisodeQuery('', 2, '新邻居')).toBe('新邻居');
@@ -545,5 +606,61 @@ describe('buildBiliFillRows 的锚点与集数（#518 跨集覆盖修复）', ()
         expect(rows[0].hasUrl).toBe(true);
         expect(rows[0].checked).toBe(false);
         expect(rows[1].checked).toBe(true);
+    });
+});
+
+// 🔴 #601：分P 标题 → 集标题（用户报障「选集窗口拉取的网络 p1-52 都没有集标题显示」）
+describe('biliPartTitles（分P 勾选表 → 集标题「只填空位」）', () => {
+    const P = (n: number, title: string) => ({ page: n, title, durationSec: 60 });
+
+    it('🔴 只取**已勾中**的行（与写链接那批同一批行）：已有链接的集默认不勾 ⇒ 不写它的标题', () => {
+        // 第 1 集已有链接（默认不勾）⇒ 不该出现在结果里；第 2 集没链接（默认勾）⇒ 写
+        const rows = buildBiliFillRows([P(1, '第1话 出发'), P(2, '第2话 到达')], ['https://ep1', undefined]);
+        expect(biliPartTitles(rows, [])).toEqual([[1, '第2话 到达']]);
+    });
+
+    it('🔴 **只填空位**：该集已有（手填）标题 ⇒ 跳过、⛔ 不覆盖', () => {
+        const rows = buildBiliFillRows([P(1, '第1话 出发'), P(2, '第2话 到达')], [], 0, 2);
+        expect(biliPartTitles(rows, ['我自己填的', undefined])).toEqual([[1, '第2话 到达']]);
+        // 手填的是**纯空格** ⇒ 视作空位（照填）
+        expect(biliPartTitles(rows, ['   ', undefined])).toEqual([[0, '第1话 出发'], [1, '第2话 到达']]);
+    });
+
+    it('分P 标题为空 / 纯空格 ⇒ 那一格跳过（⛔ 不写空标题）', () => {
+        const rows = buildBiliFillRows([P(1, '   '), P(2, '有标题')], [], 0, 2);
+        expect(biliPartTitles(rows, [])).toEqual([[1, '有标题']]);
+    });
+
+    it('超出集数的行即使勾着也不算（`outOfRange` 永远跳过）', () => {
+        const rows = buildBiliFillRows([P(1, 'a'), P(2, 'b')], [], 0, 1); // 总集数 1 ⇒ 第 2 行超出
+        expect(biliPartTitles(rows, [])).toEqual([[0, 'a']]);
+    });
+
+    // 🔴 #607：只认已勾中的行 ⇒ 早先关联过（已有链接、默认不勾）的老条目永远补不上标题
+    //    ⇒ 第 3 个形参允许调用方声明「这一行本来就指向本合集对应分P」，把它纳入范围。
+    describe('#607 samePartUrl：已指向本合集分P 的行也纳入（补老条目的标题）', () => {
+        const picked = (epIndex: number) => (r: BiliFillRow): boolean => r.epIndex === epIndex;
+
+        it('🔴 未勾但链接就是本合集那一片 ⇒ 补标题（用户二次报障的那条路径）', () => {
+            const rows = buildBiliFillRows([P(1, '第1话'), P(2, '第2话')], ['https://p1', 'https://p2']);
+            // 两行都因为已有链接而默认不勾
+            expect(rows.every((r) => !r.checked)).toBe(true);
+            expect(biliPartTitles(rows, [], picked(0))).toEqual([[0, '第1话']]);
+        });
+
+        it('🔴 不给 `samePartUrl` ⇒ 行为与 #601 逐字一致（未勾的仍不写）', () => {
+            const rows = buildBiliFillRows([P(1, '第1话'), P(2, '第2话')], ['https://p1', 'https://p2']);
+            expect(biliPartTitles(rows, [])).toEqual([]);
+        });
+
+        it('⛔ 不因 `samePartUrl` 放宽「只填空位」：已有手填标题的那一格仍跳过', () => {
+            const rows = buildBiliFillRows([P(1, '第1话'), P(2, '第2话')], ['https://p1', 'https://p2']);
+            expect(biliPartTitles(rows, ['我手填的', undefined], () => true)).toEqual([[1, '第2话']]);
+        });
+
+        it('⛔ `outOfRange` 的行连 `samePartUrl` 也救不了（边界只有一条）', () => {
+            const rows = buildBiliFillRows([P(1, 'a')], ['https://p1'], 0, 0); // 总集数 0 ⇒ 第 1 行超出
+            expect(biliPartTitles(rows, [], () => true)).toEqual([]);
+        });
     });
 });

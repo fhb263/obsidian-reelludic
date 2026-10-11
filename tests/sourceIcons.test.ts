@@ -11,17 +11,17 @@ import { SOURCE_ICON, MUSIC_COOKIE_ICON, type SourceIcon } from 'pure/sourceIcon
  * 🔴 已用 `node _probe_lucide.cjs <name>` 在 Obsidian 的 `app.js` 图标表里**实测存在**的名字。
  *    写错的名字会被 `setIcon` 静默吞掉（留一个空白 span）——所以这里是**正向白名单**，⛔ 别凭推测扩。
  */
-const KNOWN_BUILTIN_ICONS = new Set(['film', 'tv', 'clapperboard', 'book-marked', 'music', 'disc-3']);
+const KNOWN_BUILTIN_ICONS = new Set(['film', 'tv', 'clapperboard', 'book-marked', 'book-open', 'music', 'disc-3']);
 
 /** 🔴 刻意**不许**挂别家品牌标顶替的源（本表建成时 Simple Icons 未收录它们） */
-const MUST_STAY_BUILTIN_SOURCE = ['tmdb', 'bangumi', 'omdb', 'googleBooks'] as const;
+const MUST_STAY_BUILTIN_SOURCE = ['tmdb', 'bangumi', 'omdb', 'googleBooks', 'weread'] as const;
 const MUST_STAY_BUILTIN_MUSIC = ['qq', 'kugou'] as const;
 
 const isBrand = (i: SourceIcon): i is Extract<SourceIcon, { kind: 'brand' }> => i.kind === 'brand';
 
 describe('pure/sourceIcons 元数据源图标表', () => {
-    it('与设置页「需 Key 源」同一批（六个，一个不多一个不少）', () => {
-        expect(Object.keys(SOURCE_ICON).sort()).toEqual(['bangumi', 'douban', 'googleBooks', 'igdb', 'omdb', 'tmdb']);
+    it('与设置页「需 Key 源」同一批（七个，一个不多一个不少）', () => {
+        expect(Object.keys(SOURCE_ICON).sort()).toEqual(['bangumi', 'douban', 'googleBooks', 'igdb', 'omdb', 'tmdb', 'weread']);
     });
 
     it('音乐平台与设置页 Cookie 行同一批（三行：网易云 / QQ / 酷狗）', () => {

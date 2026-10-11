@@ -44,13 +44,6 @@ export const POSTER_CARD_MIN_WIDTHS: Record<PosterMinWidthDensity, number> = {
     cozy: 220,
 };
 
-/**
- * 自定义列数的「最小卡片宽度保护」值。
- * 🔴 用户 2026-09-22 裁定（D-3）：**取当前密度档的值** —— 即复用上面档位表里的值，不另造数字；
- * 自定义档以「标准」档为基准（标准既是默认档、也是历史行为）。
- */
-export const POSTER_CUSTOM_MIN_WIDTH: number = POSTER_CARD_MIN_WIDTHS.standard;
-
 /** 卡片间距（px）：必须与 MediaList `.rl-grid` 的 gap 一致 —— 自定义列数按它反算列宽 */
 export const POSTER_GRID_GAP = 12;
 
@@ -105,7 +98,15 @@ export function posterGridTemplate(density: PosterDensity, columns: number): str
         const n = normalizePosterColumns(columns);
         // 间距总量：(N-1) × gap —— 必须真的按 gap 扣掉，否则 N 列时会因间距挤成 N-1 列
         const gapTotal = (n - 1) * POSTER_GRID_GAP;
-        const track = `min(max(${POSTER_CUSTOM_MIN_WIDTH}px, calc((100% - ${gapTotal}px) / ${n})), 100%)`;
+        // 🔴🔴 #597 **翻面**：轨道只取**目标宽**，⛔ 不再给它套「卡宽下限 px 地板」（见下两行）。
+        //    旧写法（#591）给轨道套了一层「卡宽下限 px 地板」的 max()，**宽容器**下会「n 变了、渲染列数没变」：
+        //    1080px 下 n=12…5 **全都渲染成 5 列**
+        //    ⇒ Ctrl + 滚轮放大**好几格都是零反应**（用户报障：「怎么不能放大海报墙视图的卡片」）。
+        //    现在 track = (100% - gapTotal)/n ⇒ 按构造**恰好渲染 n 列**（`auto-fill` 的取整是恒等式），
+        //    每一步滚轮都看得见变化：**放大**一路到 `POSTER_COLUMNS_MIN`（1 列 = 满宽那张）、
+        //    **缩小**一路到 `POSTER_COLUMNS_MAX`（12 列最密）。
+        //    ⚠️ 这里**没有任何 px 地板** —— 上下界全由列数常量（1 / 12）表达，⛔ 别再往轨道里塞 px。
+        const track = `min(calc((100% - ${gapTotal}px) / ${n}), 100%)`;
         return `repeat(auto-fill, minmax(${track}, 1fr))`;
     }
     const minW = POSTER_CARD_MIN_WIDTHS[d];
@@ -117,3 +118,25 @@ export function posterGridTemplate(density: PosterDensity, columns: number): str
  * 内联 style 因任何原因缺席时，海报墙退回历史观感，而不是塌成单列。
  */
 export const FALLBACK_POSTER_GRID_TEMPLATE: string = posterGridTemplate(DEFAULT_DENSITY, POSTER_COLUMNS_DEFAULT);
+
+/** 🔴 #591 Ctrl+滚轮缩放：一次步进的列数增量（列数越少 = 卡片越大）。 */
+export const POSTER_ZOOM_STEP = 1;
+
+/**
+ * 🔴 #591 Ctrl+滚轮缩放：把当前列数按方向步进一档，并钳制在 `[POSTER_COLUMNS_MIN, POSTER_COLUMNS_MAX]`。
+ *
+ * 方向语义 = **跟浏览器一致**：向上滚（`in`）= 放大 = 卡片变大 = **列数减少**；向下滚（`out`）= 列数增加。
+ * ⚠️ `current` 允许传「从 DOM 量来的实际列数」（`grid-template-columns` 的轨道数）⇒ 先过
+ *    `normalizePosterColumns` 兜住脏值 / 空值；返回值恒为合法列数（⛔ 别在这里判「变没变」，
+ *    调用方拿返回值与原值比 —— 已在边界上时两者相等，等于天然的 no-op）。
+ */
+export function posterZoomColumns(current: unknown, dir: 'in' | 'out'): number {
+    const n = normalizePosterColumns(current);
+    const next = dir === 'in' ? n - POSTER_ZOOM_STEP : n + POSTER_ZOOM_STEP;
+    // 🔴🔴 #598 **翻面**：上下界回到**列数常量**（1 / 12），⛔ 不再按容器宽度夹一个「卡片不小于 180px」的上限。
+    //    用户 2026-10-10：「是 ctrl+滚轮**缩小**失灵，怎么不能缩小到展示更多卡片」——
+    //    #597 那套「按宽度算列数上限」实测把缩小的路堵死了：1080px 宽时上限只有 **5 列**，
+    //    从 5 列再往下滚**恒 no-op**（用户眼前完全没反应，正是他报的那条）。
+    //    ⇒ 现在缩小一路到 `POSTER_COLUMNS_MAX`（12 列，卡片约 80px）。
+    return Math.min(POSTER_COLUMNS_MAX, Math.max(POSTER_COLUMNS_MIN, next));
+}

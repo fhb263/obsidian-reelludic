@@ -11,7 +11,7 @@ import { SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
 export type ProviderId =
     | 'douban' | 'tmdb' | 'bangumi'
     | 'openLibrary' | 'googleBooks' | 'steam' | 'musicbrainz' | 'itunes' | 'omdb' | 'anilist' | 'igdb'
-    | 'mangadex';
+    | 'mangadex' | 'weread';
 
 /** 源链配置组：六组（movie/tv 共用 movieTv；书籍/游戏/音乐/影视/动画 + 漫画）。
  *  🔴 2026-09-30 用户裁定**加回 comic 组**（1.0.3.1 曾随漫画子视图下线，2026-09-13 裁定）：漫画**独立成组**、主源豆瓣。
@@ -67,6 +67,25 @@ export interface ProviderMeta {
     /** 已实现（可被搜索/进设置候选）；false = 注册位 */
     implemented: boolean;
     /**
+     * 🔴🔴 #597：**是否国内源**（用户 2026-10-10：「失效检测仅检测元数据源的国内源和音乐源凭据的国内源，
+     * 如 TMDB、Bangumi、Google Books、IGDB 不检测」）。
+     *
+     * ⛔ **必填**（不是 `?`）—— 新增数据源时必须**主动表态**自己算不算国内源；
+     * 写成可选就会出现「忘了写 ⇒ 悄悄被排除在自检之外」那种沉默错误。
+     * 🔴 唯一使用点 = `pure/credentialCheck.configuredCredentialChecks`（开机凭据自检的源名单）；
+     * ⛔ 别拿它去筛搜索源 / 设置页凭据行 —— 那些地方的用户口径与「该不该自检」是两回事。
+     */
+    domestic: boolean;
+    /**
+     * 空态徽标文案（`keyField` 为空时设置页凭据行右侧显示的那两个字）。
+     *
+     * 🔴 存在的理由：徽标的默认两态是「未配置 / 可选 Key」，而后者里的 **Key** 是**写死**的 ——
+     *    #580 的微信读书凭据是**Cookie 不是 Key** ⇒ 借用「可选 Key」会让用户在凭据栏里找一个
+     *    根本不存在的 key。有此字段的源按它显示，其余源一字不变（⛔ 别顺手把所有源都写成这个字段）。
+     * ⚠️ **仅对「未配置」态生效**：一旦填了值，徽标恒为「已配置」（与所有源同一条口径）。
+     */
+    emptyBadge?: string;
+    /**
      * 设置页说明文案（凭据行展开后的那行提示）。
      *
      * 🔴 **#489 口径（用户 2026-10-02：「元数据源凭据项下只说明：获取网址、平台特色、用途就行了」）**：
@@ -83,61 +102,85 @@ export const PROVIDERS: readonly ProviderMeta[] = [
     {
         id: 'douban', label: '豆瓣', groups: ['book', 'game', 'music', 'movieTv', 'anime', 'comic'], hosts: ['douban.com'],
         keyField: 'doubanCookie', implemented: true,
+        domestic: true,
         hint: '获取：登录 douban.com 后按 F12，复制任意请求的 Cookie（含 dbcl2）。特色：中文条目最全，带评分、评价人数与简介。用途：书籍 / 漫画 / 影视 / 动画 / 音乐 / 游戏的默认首源；缺 Cookie 会 403。',
+    },
+    // 🔴 #580：微信读书（book 组第三源；用户 2026-10-09 点名「新增微信读书搜索源导入」）。
+    //    位置紧跟豆瓣 —— 书籍组候选顺序 = 本表顺序 ⇒ 启用组那一行读作
+    //    「豆瓣 / 微信读书 / Open Library / Google Books」（与用户原话的列举同序）。
+    //    ⚠️ `keyField` 是 **Cookie** 而非 Key：**搜索本身免登录**（实测），
+    //       Cookie 只在「测试连接」与后续的「从微信读书同步书架」里用得上 ⇒ 空 Cookie 时
+    //       它**照常参与搜索**（`OPTIONAL_KEY_SOURCES` / `OPTIONAL_KEY_AUX` 两处都放行，见各自注释）。
+    {
+        id: 'weread', label: '微信读书', groups: ['book'], hosts: ['weread.qq.com'],
+        keyField: 'wereadCookie', implemented: true,
+        domestic: true, emptyBadge: '可选 Cookie',
+        hint: '获取：登录 weread.qq.com 后按 F12，复制任意请求头里的整条 Cookie。特色：中文电子书与网络文学平台，条目自带简介、出版方与评分。用途：书籍的并排源，与豆瓣一起参与搜索；Cookie 只在同步书架时需要。',
     },
     {
         id: 'tmdb', label: 'TMDB', groups: ['movieTv'], hosts: ['themoviedb.org'],
         keyField: 'tmdbApiKey', implemented: true,
+        domestic: false,
         hint: '获取：themoviedb.org 注册后到「设置 → API」申请 API Key（免费）。特色：全球影视库，海报、剧集与演职员齐全。用途：影视的并排源，与豆瓣一起参与搜索。',
     },
     {
         id: 'bangumi', label: 'Bangumi', groups: ['anime', 'comic'], hosts: ['bangumi.tv', 'bgm.tv'],
         keyField: 'bangumiToken', implemented: true,
+        domestic: false,
         hint: '获取：bgm.tv 的「设置 → 开发」创建 Access Token。特色：中文动画与漫画条目最全，含章节与放送信息。用途：动画的并排源，兼作漫画的第二源。',
     },
     {
         id: 'openLibrary', label: 'Open Library', groups: ['book'], hosts: ['openlibrary.org'],
         keyField: null, implemented: true,
+        domestic: false,
         hint: '书籍第二源（免 Key）：openlibrary.org 开放检索，书名/作者/出版社/年份/ISBN/封面。',
     },
     {
         id: 'googleBooks', label: 'Google Books', groups: ['book'], hosts: ['books.google.com'],
         keyField: 'googleBooksApiKey', implemented: true,
+        domestic: false,
         hint: '获取：console.cloud.google.com 启用 Books API 后创建 API Key。特色：书目元数据较全，含 ISBN、页数与分类。用途：书籍的补充源；Key 可选，不填也能用，只是免费额度受限。',
     },
     {
         id: 'steam', label: 'Steam', groups: ['game'], hosts: ['steampowered.com', 'steamcommunity.com'],
         keyField: null, implemented: true,
+        domestic: false,
         hint: '游戏第二源（免 Key）：Steam 商店公开检索，开发商/发行商/发售日/封面。',
     },
     {
         id: 'musicbrainz', label: 'MusicBrainz', groups: ['music'], hosts: ['musicbrainz.org'],
         keyField: null, implemented: true,
+        domestic: false,
         hint: '音乐数据源（免 Key）：厂牌/年份/专辑-曲目关系规范；中文曲库一般。',
     },
     {
         id: 'itunes', label: 'iTunes', groups: ['music'], hosts: ['music.apple.com', 'itunes.apple.com'],
         keyField: null, implemented: true,
+        domestic: false,
         hint: '音乐数据源（免 Key）：中文曲库 + 高清封面，与 MusicBrainz 互补。',
     },
     {
         id: 'omdb', label: 'OMDb', groups: ['movieTv'], hosts: ['imdb.com'],
         keyField: 'omdbApiKey', implemented: true,
+        domestic: false,
         hint: '获取：omdbapi.com 申请免费 API Key（1000 次/日）。特色：IMDb 评分与上映信息，以英文为主。用途：影视的第三源，补 IMDb 数据；需在上方「元数据源启用」勾上。',
     },
     {
         id: 'anilist', label: 'AniList', groups: ['anime'], hosts: ['anilist.co'],
         keyField: null, implemented: true,
+        domestic: false,
         hint: '动画第三源（免 Key，GraphQL）：默认关，中文弱。',
     },
     {
         id: 'igdb', label: 'IGDB', groups: ['game'], hosts: ['igdb.com'],
         keyField: 'igdbClientId', keyField2: 'igdbClientSecret', implemented: true,
+        domestic: false,
         hint: '获取：dev.twitch.tv/console/apps 注册应用，取得 Client ID 与 Client Secret。特色：游戏库覆盖广，含平台、发售日与评分。用途：游戏的补充源；需在上方「元数据源启用」勾上。',
     },
     {
         id: 'mangadex', label: 'MangaDex', groups: ['comic'], hosts: ['mangadex.org'],
         keyField: null, implemented: true,
+        domestic: false,
         hint: '漫画并排源（免 Key）：api.mangadex.org 公开检索。⚠️ 标题以日文罗马音/英文为主，但**索引中文别名**（实测搜「海贼王」能中 One Piece）；官方要求带可标识 User-Agent，并禁止用于含广告或付费的产品（本插件为本地个人工具，符合）。元数据来源：MangaDex。',
     },
 ];
@@ -152,6 +195,7 @@ const SOURCE_EN: Record<ProviderId, string> = {
     openLibrary: 'Open Library', googleBooks: 'Google Books', steam: 'Steam',
     musicbrainz: 'MusicBrainz', itunes: 'iTunes', omdb: 'OMDb', anilist: 'AniList', igdb: 'IGDB',
     mangadex: 'MangaDex',
+    weread: 'WeRead',
 };
 
 /** 源英文名（未知 id 原样返回，不崩）。⚠️ 非元数据源（在线曲库）没有英文名 ⇒ 回它与中文入口同一份展示名。 */
@@ -243,6 +287,9 @@ export function platformLabelFromUrl(url: string | undefined): string {
  *     ⚠️ 与 1.0.3 那版不同 —— 当时是 `['bangumi', 'douban']`（Bangumi 主源、两源），且 Bangumi 书籍搜索
  *        后来被整块删掉了；那份实现**没回来**（现在走参数化的 subjectType + 新写的 MangaDex 客户端）。
  *     ⚠️ bangumi 需要 Access Token：未配置时它在这条链里静默降级（unconfigured），漫画仍能用豆瓣 + MangaDex。 */
+// 🔴 #580：**微信读书不进任何默认链**（book 仍是 douban + openLibrary）—— 它是**用户自选**才加入的源
+//    （与 googleBooks / omdb / anilist 同一条口径：新源默认关 ⇒「升级后搜索结果与旧版逐条一致」）。
+//    要加它 = 到「设置 → 元数据源配置 › 元数据源启用」把「书籍」那一行的**微信读书**勾上。
 export const DEFAULT_CHAINS: Record<SourceGroup, readonly ProviderId[]> = {
     book: ['douban', 'openLibrary'],
     game: ['douban', 'steam'],

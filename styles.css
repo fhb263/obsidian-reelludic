@@ -26,10 +26,14 @@
     --rl-good-bar: #4d9b52;       /* 读完 / 通用填充（3.43 ✓ · 4.86 ✓） */
     --rl-good-soft: #5a9e7d;      /* 70-99% 接近完成（3.17 ✓ · 5.26 ✓） */
     --rl-danger-soft: #e85a4f;    /* <30% 起步（3.50 ✓ · 4.77 ✓） */
-    /* 当前进度所在集的**黄环**（#447；图形，门槛 3:1；两主题均达标 → 无需覆盖）。
-       ⚠️ 与 `--rl-score` 同为金色系但**故意分成两个变量**：一个说「评分/星星」，一个说「你看到这一集」，
-          将来任一侧要调色时不必拆；取值也是按**图形 3:1** 反算的（原色 #d99a2b 白底只有 2.44 ✗）。 */
-    --rl-progress-now: #b8860b;   /* 当前进度集标记（3.25 ✓ · 5.12 ✓） */
+    /* 🔴 「当前进度所在集」的标记色（#447 建为**黄环** → #586 按用户指令改成**橙点**）。
+       ⚠️ #586 起它是**两支的共用真源**：编辑表单那粒（组件 scoped `.rl-ep-dot`）＋ 选集弹窗那粒
+          （`.rl-eps-dot`）—— ⛔ 别在任一处另写色值（同一条语义两处色值必然分叉）。
+       ⚠️ 取值 = Obsidian 的 `--color-orange`（带兜底值；与 #395 音量滑条同款写法，跟随主题）。
+       ⚠️ 代价（有意接受的）：它**不再满足图形 3:1**（白底约 2.4:1）。这是用户点名的取色
+          （「正确以橙色小圆点显示在数字右下角」），且该点是**补充标记**（集号本身才是信息本体），
+          故按 §2.1「既知取舍」处理 —— 若将来要恢复达标的金色，请先找用户确认。 */
+    --rl-progress-now: var(--color-orange, #e8890c);   /* 当前进度集标记（橙点） */
     /* 状态徽标四色（灰/橙/绿/蓝，色相区分状态；9px 粗体白字，按正文 4.5 计） */
     --rl-badge-want: #8a8a86;     /* 白字 3.47 ✗ · 4.64 ✓ */
     --rl-badge-watching: #d99a2b; /* 白字 2.44 ✗ · 2.90 ✗ */
@@ -100,6 +104,33 @@
     --rl-t-shadow-cta: 0 3px 10px color-mix(in srgb, var(--interactive-accent) 38%, transparent);
     --rl-t-lift: -3px;
     --rl-t-scale: 1.025;
+}
+
+/* ── #541 外观偏好：卡片风格 / 界面动效（两个 body 类，由设置驱动）──────────────
+   出处：`main.applyAppearance()` → `pure/appearance` 的 `MOTION_CLASS` / `CARD_STYLE_CLASS`。
+   🔴 **本块必须写在上面 `.rl-theme-modern` 之后**：两边都是挂在 body 上的单类规则（同 (0,1,0)），
+      CSS 靠**书写顺序**决胜 —— 挪到前面会被 modern 那套静默覆盖（且只在现代主题下看得出）。
+   🔴 缺省档（完整 / 标准）**不挂类** ⇒ 整块对没改过设置的用户完全不生效（升级观感零变化）。
+   ⚠️ `--rl-t-card-radius` 刻意**只在下面两个类里定义**（默认不定义）：
+      于是 `.rl-card` 的 `var(--rl-t-card-radius, var(--rl-t-radius-lg, 8px))` 在缺省档下
+      回落到通用圆角令牌 —— 8px 这个数只存在一处，⛔ 别在 :root 再补一份「默认值」。 */
+.rl-motion-static {
+    /* 精简：过渡时长归零 + 悬停不上浮不放大（组件读的就是这几条令牌） */
+    --rl-t-dur: 0s;
+    --rl-t-dur-ind: 0s;
+    --rl-t-lift: 0px;
+    --rl-t-scale: 1;
+}
+.rl-card-soft {
+    /* 圆润：封面卡片圆角放大 + 悬停阴影收轻 */
+    --rl-t-card-radius: 14px;
+    --rl-t-shadow-card-hover: 0 1px 4px rgba(0, 0, 0, .07);
+}
+.rl-card-flat {
+    /* 扁平：封面卡片小圆角 + 无悬停阴影 + 不上浮 */
+    --rl-t-card-radius: 4px;
+    --rl-t-shadow-card-hover: none;
+    --rl-t-lift: 0px;
 }
 
 /* ── 纯图标按钮的读屏名（视觉隐藏、读屏可读）────────────────────────────
@@ -772,6 +803,18 @@
     margin-top: calc(-1 * var(--size-4-12));
 }
 
+/* 🔴 #560（用户 2026-10-08：「设置页标签页切换时导航标签页抖动，不同标签页的内容高度不一致导致的布局偏移」）
+   根因 = **滚动条的出现 / 消失**，不是内容本身在动：
+   四个 Tab 内容高度不同 ⇒ 切到矮页（如「关于」）时核心那个滚动外框 `.vertical-tab-content`
+   （实测 `overflow-y: auto; height: 100%`，见 obsidian.asar）上的**纵向滚动条消失** ⇒
+   内容盒宽度一下多出约 15px ⇒ 里面**居中**的 Tab 栏（`.rl-set-bar` 所在的 shell）与内容列
+   整体横跳一下 —— 用户看到的「抖」就是这一下。
+   修法 = 给滚动外框**常驻滚动条槽**：`scrollbar-gutter: stable`（核心自己在 CM6 滚动器上就是这么用的）。
+   ⚠️ 用 `:has(.rl-set-shell)` **限定在本插件的设置页** —— ⛔ 别全局改 Obsidian 的滚动外框
+      （那会把别的插件页与核心设置页一起改掉）。
+   ⚠️ 老内核不认 `:has()` 时整条被忽略 ⇒ 只是「没修」，不会更糟（无 `!important`、无硬编码尺寸、不写死宽度）。 */
+.vertical-tab-content:has(.rl-set-shell) { scrollbar-gutter: stable; }
+
 /* 顶栏 = Tab 栏（4 项，可横向滚动）。#354 起「关于」已回归为平级 Tab
    ⇒ 栏里只有这一个滚动容器，不再有「右上角常驻按钮」那套例外。 */
 .rl-set-bar {
@@ -904,6 +947,207 @@
    ⇒ 不收掉它，页顶会平白空出一段（看起来像"内容没对齐"）。 */
 .rl-set-page-body > .rl-svc-group:first-child { margin-top: 0; }
 
+/* ── 🔴 #553「基本设置」页：**撤销 #541 手写的分组卡**（用户上手两轮后裁定：「还是改回 Obsidian 原生吧」）──
+   #541 当年照 yolo 的排版手写了一张「分组卡」（background + border + border-radius + padding）。
+   现在改用**核心原生**的 `.setting-group` / `.setting-items`（口径见上面 #553 那段、实现见 `Settings.ts`）
+   ⇒ 这里**只剩组标题的排版**（标题仍是我们自己的节点 —— 核心没有等价的组标题类），
+   ⛔ 别再给 `.rl-svc-group` 加任何卡片属性、也别再加「首张卡补上边距」那种补丁。
+   ⚠️ 组的上下间距由核心 `.setting-group + .setting-group { margin-top: var(--size-4-6) }` 负责；
+      首个组贴顶由下面那条 (0,3,0) 的 `:first-child { margin-top: 0 }` 管（#354 立的规矩，仍在）。 */
+.rl-set-page[data-page="basic"] .rl-svc-group-title { padding: 0 0 var(--size-4-1); }
+/* 组内容器贴到卡片内缘：那 32px（`--size-4-4 * 2`）缩进是给「无边框长列表 + 子分组」那套层级用的，
+   原生卡里只会显得右倾；而核心 `.setting-items` 自带 `--setting-items-padding-*` ⇒ 我们清零，⛔ 别叠加。 */
+.rl-set-page[data-page="basic"] .rl-svc-group-body { padding: 0; }
+
+/* ── 🔴 #561 外观与体验：**原生「左文右控」标准布局**（撤销 #546 的卡片式勾选）─────────────────
+   用户 2026-10-08：「把外观与体验下重构返回为**原生的开关项式和下拉框式**、标准布局（左文右控），
+   如果副标题描述很长，文字换行时，**开关应该依然保持在行的最右侧**」。
+   🔴 核心 `.setting-item` 本来就是 flex（info 左 / control 右），但只靠它**不够**：
+      ⑴ `setting-item-info` 缺 `min-width: 0` 时，一条长描述会把整行撑宽、把控件**顶出容器**；
+      ⑵ 描述换行后 info 变高，控件若没 `align-self` 会跟着被拉高或被压到底部 → 看着像「跑了」。
+   ⇒ 三条一起写（info 允许收缩 / control 不收缩且贴右 / 控件在行内**垂直居中**），
+      ⛔ 不写死任何宽度（窄窗 / 宽窗都成立）。
+   ⚠️ 只作用于**本组**（`renderAppearanceRows` 给组体加的 `.rl-appearance-rows`）——
+      其它组的行有自己的排版（数据源 / AI 页组内是卡片），⛔ 别全局改 `.setting-item`。 */
+.rl-appearance-rows .setting-item { align-items: center; }
+.rl-appearance-rows .setting-item-info { flex: 1 1 auto; min-width: 0; }
+.rl-appearance-rows .setting-item-control { flex: 0 0 auto; margin-left: auto; align-self: center; }
+
+/* ── 🔴🔴 #597：设置页「外观与体验」的**分段控制器**已**整体删除** ──────────────────────
+   #591 立（「二元开关类改成 `[ 开启 | 关闭 ]` 的胶囊按钮组」）、#596 沿用；
+   **#597 用户改口**：「把 Ctrl + 滚轮缩放、隐藏插件内滚动条、笔记表格的**文字分段控件**改成**滑动开关**」
+   ⇒ 那三处改走**原生 `.addToggle`**（样式由核心提供），本套类名 / 渲染方法 / 文案常量一起删除
+   （本仓「死码不留」）。⛔ 别再把它们加回来。
+   ⚠️ 与**阅读器**那套分段控件无关（`.rl-seg` / `.rl-seg-item` 仍在，也不归本批管）。 */
+
+/* ── 🔴 #562「实验性功能」可折叠分组行（用户 2026-10-08 参考 obsidian-agent-client）─────────────
+   #564 按参考实现重写内核（`obsidian-agent-client-master` 的 `renderCollapsibleAgentSection`）：
+   摘要行 = **一个真实 `<button>`**（名称 + 说明两个 span），**开关是它的兄弟节点**（在核心 `controlEl` 里）。
+   ⇒ 键盘可用（Tab / Enter / Space）+ `aria-expanded`/`aria-controls` 语义正确；
+     **开关的点击到不了展开处理器**（不同子树），那条「排除开关」的守卫因此整条删掉。
+   🔴 #565（用户上手截图 ③「设置页组可折叠项要这个界面效果」）：**这一行本身读作一个「框」** ——
+      边框 + 圆角 + 内距（像一枚输入框），框内左「名称 + 说明」、框内右「箭头」，**开关挂在框外**右侧。
+      ⇒ 三件事一起：⑴ `.rl-exp-head` 带边框与内距；⑵ 箭头进到按钮内部当尾随 `span`
+        （`justify-content: space-between` 把它顶到框的右缘内侧）；⑶ 摘要按钮 `justify-content: space-between`。
+      ⚠️ `.rl-exp-row`（核心 `.setting-item`）自身的框要**拍平**：否则主题给的框 + 我们画的框 = **卡中卡**
+        （#551/#553 那条老账）。这是**定点**拍平（只作用于这 3 行），⛔ 不是全局改 `.setting-item`。
+      ⚠️ hover 走 `--interactive-accent`（参考实现的手感：整行文字与框线一起变强调色）——
+        ⛔ 别铺底色（本仓「切换类只变色」同口径）。
+   🔴 箭头**旋转**而不是换图标名：`chevron-right` 展开时转 90° ⇒ 朝下（与参考实现同法）。
+      换图标名（`chevron-right` ↔ `chevron-down`）会让「旋转」这个连续动作变成**瞬间替换**，
+      用户看到的是闪一下 —— 而「展开时箭头向下旋转」是用户点名的观感。
+   🔴 子面板**体现层级**：左侧一条竖线 + 缩进（用户原话「视觉上要体现层级关系」），
+      而不是换个背景色（组内本来就有核心给的卡片底色，再叠一层会糊成一团）。
+
+   🔴🔴 #567（用户 2026-10-08）两条：
+   ⑴ **三项各自成卡**（用户：「目前是这样的**一个卡片**里的，**分开**」）——
+      做法是**不再给这一组套核心的 `.setting-group` 卡**（见 `Settings.ts → renderBasicPage`）：
+      核心给**裸** `.setting-item` 的规则本身就是一张卡（bg + border + radius + padding + 8px 外边距）
+      ⇒ 不套 = 三项各自一张卡、项间自动留缝。**零手写卡片样式**（⛔ 别第三次去手写卡片）。
+      ⚠️ 于是 `.rl-exp-row` 那条「定点拍平」的语义变了：它当年拍的是**组卡里的行**，
+        现在拍的是**卡本身的边/底**（我们要的卡画在里面的摘要框上，⛔ 别两层都画）。
+   ⑵ **说明（小标题）整体去掉** ⇒ 框内只剩名称；`.rl-exp-desc` 那两条规则**一并退场**
+      （用户：「把小标题去掉不要了，如『启用后播放本地视频文件』」）。
+   ⑶ 🔴 顺手修的真 bug：摘要按钮上同时挂着 `data-tip` 与 `aria-label` ⇒ Obsidian 会为
+      `aria-label` **自绘官方气泡**，与插件自绘的 `data-tip` **叠成两层**（已在 `Settings.ts` 里撤掉
+      `aria-label`，本处只留痕 —— UI-GUIDE §3 v3 的既定禁令）。
+   🔴 #574 **翻面上面两条**（用户 2026-10-08：「由独立卡片式改为**无缝列表组**。去掉投影和较大圆角，
+      改为**底部分割线**（如 iOS 设置列表）」）：
+      ⑴ **#565 那个「像输入框」的框退场** —— `.rl-exp-head` 的 `border / border-radius / padding`
+         **一并归零**（整行读作一条列表项，容器才是那张卡）；
+      ⑵ **#567 的「三项各自成卡」退场** —— 改为**一个容器卡 + 行间 hairline 分割线**（见下一条注释）。 */
+/* 🔴 #574（用户 2026-10-08）：**无缝列表组** ——
+   用户原话：「由独立卡片式改为无缝列表组。去掉投影和较大圆角，改为底部分割线（如 iOS 设置列表）」。
+   做法：容器 `.rl-exp-list` **自己就是那张卡**（小圆角 / 无投影 / 1px hairline 描边）；
+   行拍平透明、行间只留一条**上分割线**。
+   ⛔ 分割线**不许**写成 `> .rl-exp-row:not(:last-child) { border-bottom: … }` —— 子面板
+   （`.rl-exp-panel`）是行与行之间的兄弟节点，`last-child` 会判到最后那个面板上，
+   于是**最后一行下面永远多一条线**（列表底部凭空出现一道缝）。
+   ⚠️ 于是 #567 那条「gap 8px + 行 margin 0」的旧口径**作废**：现在 `gap` 归 0（卡片里不留缝）。 */
+.rl-exp-list {
+    gap: 0;
+    background: var(--setting-items-background, var(--background-secondary));
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    box-shadow: none;
+    overflow: hidden;
+}
+/* 行内距按用户给的档：垂直 8–10px、水平 12–16px ⇒ 取 9px / 14px */
+.rl-exp-list > .rl-exp-row { margin-bottom: 0; padding: 9px 14px; border-radius: 0; }
+/* 🔴🔴 #588（用户 2026-10-10 实机截图：「现状」里**三行各自长出一圈细框**，「想实现」没有）
+   —— 行自身的「框三件」原来写在**单类** `.rl-exp-row`（0,1,0）上，与核心 `.setting-item`（0,1,0）
+   **同特异性** ⇒ 全靠「插件样式表排在核心之后」赢，换个版本/主题就可能翻车。
+   ⇒ 一律改走两级 `.rl-exp-list > .rl-exp-row`（0,2,0），与书写顺序无关。
+   ⚠️ 行间那条上分割线（`.rl-exp-list > .rl-exp-row:not(:first-child)`，0,3,0）比本条更高 ⇒ 不受影响。 */
+.rl-exp-list > .rl-exp-row { border: none; background: transparent; box-shadow: none; }
+.rl-exp-row {
+    /* 本组自带容器卡（`.rl-exp-list`）⇒ 行只负责布局，⛔ 别两层都画卡 */
+    align-items: center;
+    /* 🔴 #588：摘要框与开关之间恒定 12px（用户点名「可折叠项开关组的对齐与间距」） */
+    gap: var(--size-4-3, 12px);
+}
+/* 分割线只画在「不是第一行」的那些行上（首行贴着卡的上边，不该有线）
+   ⚠️ 特异性 0,3,0 > `.rl-exp-row` 的 0,1,0 ⇒ 与书写顺序无关，`border: none` 压不掉它。 */
+.rl-exp-list > .rl-exp-row:not(:first-child) { border-top: 1px solid var(--background-modifier-border); }
+/* 🔴🔴 #566（用户实机截图「这是怎么回事，给我改好了啊」）：**框没铺满 —— 三行的框宽随说明文字长短变**
+   （框只包到文字 + 箭头就停了，与开关之间吊着一大段空白）。真根因（真实 app.css 逐条核过）：
+   **核心给 `.setting-item-info` 与 `.setting-item-control` 都是 `flex: 1 1 auto`（两栏各吃一半）** ——
+   styles.css 235 行那条 #493 的老注释早写过这件事；info 的最终宽 = 内容 + 剩余的一半 ⇒ 框宽必然随内容变。
+   （⚠️ 首跑误诊为「主题接管了按钮的 width:100%」—— 替身仿真量不出，换真核心 app.css 才现形。） */
+.rl-exp-row .setting-item-info { display: flex; }
+/* 🔴🔴 control 改 **`flex: 0 0 0`**（basis 显式 0）—— 仿真页两组对照实验实证的分水岭：
+   basis 是 `auto` 时（哪怕 grow=0）Chrome 会把整行内容宽都记到 control 头上
+   （info 的内容宽被 head 的 `flex-basis:0` 链式带成 0 ⇒ 同伴 auto basis 的分配随之失真，
+   实测 info=0 / control=整行）；basis 显式 0 后立刻正常（info 独占剩余、control 按内容
+   34px 贴右，`min-width:auto` 兜底开关不被裁）。
+   ⚠️ ⛔ 别给 control 加 `margin-left: auto` —— auto margin 会**优先于 grow** 吃掉全部剩余空间，
+   info 的 grow 就分不到（仿真页首跑量出 info 只有 22px 就是它）。 */
+.rl-exp-row .setting-item-control { flex: 0 0 0; }
+.rl-exp-row .setting-item-info .rl-exp-head { width: 100%; flex: 1 1 0; min-width: 0; }
+.rl-exp-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--size-4-2, 8px);
+    flex: 1 1 auto; width: 100%; min-width: 0;
+    font-family: inherit; font-size: inherit; text-align: left;
+    color: var(--text-normal); cursor: pointer;
+    transition: color var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
+}
+/* 🔴🔴 #588 **摘要按钮的「框」的真根因**（用户 2026-10-10 实机截图「现状」里那一圈框）：
+   不是 border，是**核心给 `button` 的 `box-shadow`** ——
+     · 核心 `button:not(.clickable-icon) { box-shadow: var(--input-shadow) }` 是 **(0,1,1)**；
+     · 亮色主题的 `--input-shadow` 第一段就是 `inset 0 0 0 1px rgba(0,0,0,.12)`
+       —— 一条 **1px 内描边环**，画出来正是那个「框」（第二段那颗 0/1px 的淡影也在）；
+     · 我们原来把 `box-shadow: none` 写在**单类** `.rl-exp-head`（0,1,0）上 ⇒ **压不过 (0,1,1)** ⇒ 环一直在。
+   ⇒ 「框四件」（`border / border-radius / padding / box-shadow`）**一律两级**
+     （`.rl-exp-row .rl-exp-head`，0,2,0）：既压核心的环，也压核心的灰底
+     （`background-color: var(--interactive-normal)`，同为 (0,1,1)），与书写顺序、与主题都无关。
+   ⚠️ 同族老账：`MergedPageMenu` 那枚按钮也吃过核心这套灰底 + 内阴影（当时只解决了底色，没解决框）。
+   ⚠️ 仿真页口径：作用域前缀**必须 `:where(...)`**（零特异性），⛔ 别写 `.fB .rl-exp-head`
+     —— 那会把它抬成 (0,2,0)，反过来压过核心 (0,1,1) ⇒ **「现状」那一帧的框复现不出来**（本批先栽了一次）。 */
+.rl-exp-row .rl-exp-head {
+    border: none; border-radius: 0; padding: 0; box-shadow: none;
+    margin: 0; height: auto;
+    background: transparent;
+}
+.rl-exp-head:hover { color: var(--interactive-accent); }
+.rl-exp-head:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+/* 框内左半：名称（#567 起只剩它一行 —— 说明已整体去掉，见本节顶部注释 ⑵）。 */
+.rl-exp-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.rl-exp-name { font-size: 13px; font-weight: 600; line-height: 1.4; }
+/* 框内右半：箭头（`span` —— 它不再是一枚按钮，点击冒泡到摘要按钮那一个处理器） */
+.rl-exp-chev {
+    display: flex; align-items: center; justify-content: center;
+    flex: 0 0 auto; width: 16px; height: 16px;
+    color: var(--text-muted);
+    transition: transform .18s ease, color .18s ease;
+}
+.rl-exp-head:hover .rl-exp-chev { color: inherit; }
+.rl-exp-chev svg { width: 14px; height: 14px; }
+.rl-exp-row.is-open .rl-exp-chev { transform: rotate(90deg); }
+/* 🔴 #588：展开时**箭头也随名称一起变强调色**（用户点名「悬停/箭头/展开线索」）——
+   原来只有名称变色，箭头仍是 `--text-muted` ⇒ 线索偏弱。⛔ 仍不铺底色（本仓「只变色」口径）。 */
+.rl-exp-row.is-open .rl-exp-chev { color: var(--interactive-accent); }
+/* 🔴 #574：展开态的「框线变强调色」随那个框一起退场 ⇒ 改为**名称变强调色**
+   （纯文字线索，与 `.rl-exp-head:hover` 同一口径；⛔ 不铺底色 —— 本仓「只变色」）。 */
+.rl-exp-row.is-open .rl-exp-name { color: var(--interactive-accent); }
+/* 收起时**不占空间**：否则每一行下面都吊着一段空白，摘要行的「紧凑」就没了 */
+.rl-exp-panel { display: none; }
+.rl-exp-panel.is-open { display: block; }
+/* 层级线索（#588 起）：**灰底 chip 本身**。
+   🔴 #574 当时把子面板里的行「一并拍平」只留「缩进 + 左侧一条竖线」；#588 用户给的「想实现」里，
+   展开后的每一项都是**一块独立的圆角块**（参考图：Claude Code / Gemini CLI 的设置面板）
+   ⇒ 撤掉 `border-left` 竖线，改为 `background + border-radius`；行高 `8px → 10px`。
+   ⚠️ 仍要拍掉核心给「裸 `.setting-item`」的那张卡（bg + border + radius），否则会在容器卡里叠成卡中卡
+      —— 我们只要「一块灰底 + 圆角」，不要核心的描边与它的 `margin-bottom: 8px` 间距。 */
+.rl-exp-panel.is-open > .setting-item {
+    margin: 0 14px 8px 14px;
+    padding: 10px 12px;
+    border: none;
+    border-radius: var(--rl-t-radius-md, 6px);
+    /* 🔴 底色用 `--background-modifier-hover` 而**不是** `--background-secondary`：
+       容器那张卡的底就是 `--setting-items-background`（= `--background-primary-alt` = base-10），
+       而 `--background-secondary` 是 base-20 ⇒ 亮色下 #f6f6f6 vs #fafafa **只差 4 级**、chip 几乎看不见
+       （仿真页实测）；`--background-modifier-hover` 在亮/暗两套下都比容器底**明显一档**。 */
+    background: var(--background-modifier-hover);
+    box-shadow: none;
+}
+/* ⚠️ #588：子面板里的行是「裸 `.setting-item`」—— 上面那条已经把它们改成灰底 chip；
+   这里只补一条「info 列可压缩」（长目录名不把 chip 撑破），⛔ 别再加框/线。 */
+.rl-exp-panel.is-open > .setting-item .setting-item-info { min-width: 0; }
+
+/* ── 🔴 #553「基本设置」页：**撤销 #551 那套手写覆盖**，交给核心原生结构 ──────────────────────
+   #551 用 (0,4,0) 硬压「行框」四件（边框 / 圆角 / 背景 / 外边距）—— 方向是对的（组内就该平铺），
+   但**做法错了**：那是替核心打工。提 `obsidian.asar` 里的 `app.css` 逐条核过，核心**自带**这套规则：
+     · `.setting-group .setting-items { background / border-radius / border }`      ← 组 = 一张卡
+     · `.setting-group .setting-item:not(.setting-item-heading) { border:none; background:transparent }`
+                                                                                    ← 组内各行平铺
+     · `.setting-group { max-width: var(--setting-group-max-width); margin-inline: auto }`
+                                                                                    ← 限宽居中（原生观感）
+   ⇒ 正解是**让容器带上核心的类名**（见 `Settings.ts.createGroupSection` 的 `nativeGroup` 参数），
+      核心自己会把「卡 + 平铺」算对，而且**跟着主题与版本走**；我们这边一条覆盖都不需要。
+   ⛔ 别再把这一节写回来 —— 同族教训：#541 手写分组卡 → #551 手写压制 → 两次都是在补丁上再打补丁，
+      用户一句话点到根上：「还是改回 Obsidian 原生吧」。 */
+
 /* ── 窄屏（< 720px）：Primer 溢出策略的第一步 —— **先藏图标**腾宽度（D-2(a)）──
    阈值 720 与阅读器顶栏同一口径（全项目只保留一个「窄屏」概念）。
    ⚠️ 实测口径：合并成 4 项后，藏图标 + `padding:0 8px` 在 360pt 手机上**刚好放下**（零余量）
@@ -949,6 +1193,21 @@
     background: color-mix(in srgb, var(--color-green) 12%, transparent);
 }
 .rl-key-badge-on::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+}
+/* 🔴 #589 第三态「已失效」（开机自检 / 手动「测试连接」测不通）：与 `.rl-key-badge-on` 同构，
+   只换色 —— 红字红框 + 一层极淡红底 + 前面一颗**红实心点**（「正常」那态是绿点，两态一眼可分）。
+   ⚠️ 色值一律走主题变量（`--text-error`），⛔ 不写死 hex（深色下自动跟着走）。 */
+.rl-key-badge-bad {
+    color: var(--text-error);
+    border-color: var(--text-error);
+    background: color-mix(in srgb, var(--text-error) 12%, transparent);
+}
+.rl-key-badge-bad::before {
     content: '';
     width: 5px;
     height: 5px;
@@ -1423,6 +1682,30 @@
 .rl-sub-skip-why { color: var(--text-muted); }
 .rl-sub-skip-more { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-top: 4px; }
 .rl-import-ops { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+/* ── #581 「从微信读书同步书架」弹窗（与 `.rl-import-*` / `.rl-sub-*` 同族：DOM API 渲染，样式在此）──
+   形态：说明一行 → 计数 + [全选] → 可滚列表（勾选框 + 封面 + 书名/副行 + 徽标）→ [取消][导入 N 本]。
+   🔴 列表行是 `<label>`（点哪都能勾，⛔ 别只让那 13px 的小方块可点）；「库里已有」的行**整体降饱和**
+      + 勾选框 **disabled**，原因就挂在那枚「库里已有」标上（⛔ 不做「点了没反应」的假可勾）。 */
+.rl-wshelf-modal h2 { font-size: 15px; margin: 0 0 8px; }
+.rl-wshelf-hint { font-size: var(--font-ui-smaller); color: var(--text-muted); line-height: 1.7; margin-bottom: 10px; }
+.rl-wshelf-status { min-height: 18px; font-size: var(--font-ui-smaller); color: var(--interactive-accent); margin: 6px 0; }
+.rl-wshelf-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
+.rl-wshelf-count { font-size: var(--font-ui-smaller); color: var(--text-muted); flex: 1; }
+.rl-wshelf-list { display: flex; flex-direction: column; gap: 2px; max-height: 46vh; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 4px; }
+.rl-wshelf-row { display: flex; align-items: center; gap: 10px; padding: 5px 6px; border-radius: var(--rl-t-radius-md, 6px); cursor: pointer; }
+.rl-wshelf-row:hover { background: var(--background-modifier-hover); }
+.rl-wshelf-row.is-dup { cursor: default; opacity: .62; }
+.rl-wshelf-row.is-dup:hover { background: transparent; }
+.rl-wshelf-row input { margin: 0; flex: none; }
+.rl-wshelf-cv { width: 30px; height: 45px; flex: none; border-radius: 3px; object-fit: cover; background-color: var(--background-secondary); display: block; }
+.rl-wshelf-cv.is-ph { border: 1px solid var(--background-modifier-border); }
+.rl-wshelf-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rl-wshelf-t { font-size: var(--font-ui-small); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-wshelf-sub { font-size: var(--font-ui-smaller); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-wshelf-tag { flex: none; font-size: 10px; color: var(--text-muted); border: 1px solid var(--background-modifier-border); border-radius: 4px; padding: 1px 6px; }
+.rl-wshelf-dup { flex: none; font-size: 10px; color: var(--text-faint); }
+.rl-wshelf-note { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-top: 8px; line-height: 1.6; }
+.rl-wshelf-ops { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 /* ── 统一按钮体系（rl-btn 唯一基准，紧凑 Obsidian 尺寸）：rl-ex-btn/rl-day-btn 等历史别名并入；danger 危险操作统一红边红字 → hover 红底白字 ── */
 .rl-btn, .rl-ex-btn, .rl-day-btn {
     font-family: inherit;
@@ -1469,17 +1752,113 @@
 
 /* ── 本地剧集集数选择弹窗（EpisodePickerModal） ── */
 .rl-eps-title { font-weight: 600; color: var(--text-normal); }
-.rl-eps-grid { display: flex; flex-wrap: wrap; gap: 8px; max-height: 320px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 12px; margin-bottom: 14px; }
-/* 🔴 #447「选择集数」弹窗（EpisodePickerModal）专用：**框里不滚动 + 按钮与框对齐**（用户：「把滑动条移除掉，剧集按钮对齐框」）。
-   ① `max-height: none; overflow: visible` 覆盖基础类那条 320px 内滚 —— 集数列全，真的超高时由**宿主 `.modal`** 自己滚
-      （它本就有 `max-height: var(--dialog-max-height)` + `overflow: auto`），比在框里再滚一层好。
-   ② 改成 `grid + repeat(auto-fill, minmax(44px, 1fr))`：每行铺满框内宽度、左右留白相等；
-      基础类的 `flex-wrap` 会把余量全堆在右边（再叠上滚动条占位）= 用户截图里「按钮没跟框对齐」的样子。
-   ⛔ 快捷关联弹窗（`.rl-eps-grid.rl-qa-grid`）**不挂**这个类：它是窄框内滚，口径不同（别顺手合并成一条）。 */
-.rl-eps-grid-fill {
-    max-height: none; overflow: visible;
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+/* 🔴 #599（用户 2026-10-09）：「选集（封面 + 集数号 + 集数标题）改成多列」+「去除【去关联】入口按钮」。
+   ⑴ 竖排行 → **网格**：每格 = 封面（在上，铺满格宽 · 16:10）+ 集数号 + 集数标题（在下）；
+   🔴 #600（用户 2026-10-10）：列数 **3 → 4**（用户「改成四列」）—— 只动下面那一条规则的轨道数；
+   ⑵ 每行那枚「去关联」**整体退场** ⇒ `.rl-eps-item` 不再是「行 + 兄弟按钮」的中转层，
+      改成**网格里的一格**（`button.rl-eps-row` 独占一格，⛔ 别再把任何按钮塞回这层）；
+   ⑶ 本窗 `modalEl` 挂 `.rl-hide-scroll`（隐藏滚动条，仍可滚）。
+   ⚠️ 下面 `.rl-eps-grid` / `.rl-eps-btn` 那两组**仍归快捷关联弹窗**（`.rl-eps-grid.rl-qa-grid`：
+   集号格子，选「要填哪一集」）—— 与这里用途不同，⛔ 别顺手删、也别把本网格的样式挂过去。
+   ⚠️ 列表**不设框内滚动**（#447 用户裁定「把滑动条移除掉」）：真的超出视口由宿主 `.modal` 自己滚。 */
+.rl-eps-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.rl-eps-item { display: block; min-width: 0; }
+.rl-eps-item .rl-eps-row { width: 100%; }
+/* 🔴 行是**两级选择器**（`.rl-eps-list .rl-eps-row`）：核心给所有 `button:not(.clickable-icon)`
+   一条灰底 + 定高（(0,1,1)），单类 (0,1,0) 压不过 —— 自造按钮要自己的底色，选择器至少两级
+   （本仓 #567 已为同一笔账栽过一次）。 */
+.rl-eps-list .rl-eps-row {
+    display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+    width: 100%; height: auto; padding: 6px;
+    border: none; background: transparent; box-shadow: none;
+    font-family: inherit; font-size: var(--font-ui-small); text-align: left;
+    color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer;
+    transition: background .12s ease;
 }
+.rl-eps-list .rl-eps-row.is-linked:hover { background: var(--background-modifier-hover); }
+.rl-eps-list .rl-eps-row.is-off { opacity: .45; cursor: not-allowed; }
+/* ── 上图：封面缩略图（#577 接线；缺省占位）────────────────────────────────────────────
+   🔴 #599：从「定宽 64×40 的左格」改成**铺满格宽的上格**（`aspect-ratio` 16:10 与 B 站缩略图同比例）。
+   ⚠️ `flex: none` 只等于 `basis: auto`：宽度靠 `width: 100%`、高度靠 `aspect-ratio`，两轴都写死才不会回缩。 */
+.rl-eps-cover {
+    /* 🔴 #589：B 站缩略图的后缀是 `@320w_200h_1c.webp`（**16:10**）⇒ 这一格也按 16:10，`object-fit: cover`
+       不会上下裁掉内容；本地视频首帧同理。 */
+    flex: none; width: 100%; aspect-ratio: 16 / 10; height: auto;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px; overflow: hidden;
+    background: var(--background-modifier-border);
+}
+.rl-eps-cover.is-ph { color: var(--text-faint); }
+.rl-eps-cover.is-ph svg { width: 16px; height: 16px; }
+.rl-eps-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 🔴 #577 **骨架屏**：封面在途时铺灰底 + 一道来回的微光（弱网也是先看到集数与标题，封面慢慢来）。
+   功能性动画（非装饰）——与 `.rl-spinner` 同一条豁免口径；`prefers-reduced-motion` 下停。 */
+@keyframes rl-eps-sheen { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.rl-eps-cover.is-load { position: relative; }
+.rl-eps-cover.is-load::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, var(--background-modifier-hover), transparent);
+    animation: rl-eps-sheen 1.1s linear infinite;
+}
+/* #577 **本地视频首帧**：铺满那一格；⛔ `pointer-events: none` 必须留着 ——
+   这一格是封面、不是播放器，点它仍然走「选这一集去播放」（别让 `<video>` 吃掉点击）。 */
+.rl-eps-vid { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+    .rl-eps-cover.is-load::after { animation: none; }
+}
+.rl-eps-txt { flex: none; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+/* 🔴 #576「当前进度」= 集号**右下角**一粒极小的橙点。`position: relative` 挂在名称这一层，
+   点用负方向偏移贴到右下角外侧（`bottom/right` 为负 ⇒ 不撑开行高、不挤动后面的文字）。
+   🔴 #586：色值改取**令牌** `--rl-progress-now`（真源在 `styles.css` 文件头）——
+   编辑表单里那一粒（组件 scoped 的 `.rl-ep-dot`）与这里**共用同一支**，⛔ 别在这写第二份色值。
+   ⛔ 不用 `--rl-warn` —— 那是「次级提醒**文字**」的令牌，语义是告警、不是「你正在看这一集」。 */
+.rl-eps-name { line-height: 1.35; position: relative; width: fit-content; }
+.rl-eps-dot {
+    position: absolute; right: -7px; bottom: 1px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--rl-progress-now, #e8890c); pointer-events: none;
+}
+.rl-eps-sub { font-size: var(--font-ui-smaller); color: var(--text-muted); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl-eps-tag { flex: none; font-size: var(--font-ui-smaller); color: var(--text-faint); }
+/* 🔴 #599：那枚「去关联」按钮**整体退场**（用户：「去除【去关联】入口按钮」）——
+   它的两条规则（常态 + `:disabled`）随按钮一起删，⛔ 别留着当死码。 */
+/* 🔴 #527 失效网络链接标红（与编辑表单 `.rl-ep-dead` 同口径）—— 本批从「格子按钮整块变红」
+   改成「行内文字 + 状态标变红」：**行的语义没变**（`is-dead` 仍在），只是载体换了。 */
+.rl-eps-list .rl-eps-row.is-dead .rl-eps-name,
+.rl-eps-list .rl-eps-row.is-dead .rl-eps-tag.is-dead { color: var(--text-error); }
+
+/* ── #576 底部页码条（`< 1 2 3 … 8 9 10 >`）────────────────────────────────────────────
+   ⚠️ 单页时元素是**空的** ⇒ 靠 `:empty` 整行收掉（与旧档签 `.rl-eps-tabs:empty` 同一招），
+   ⛔ 别改成「不渲染」—— 那样 `paint()` 每次都得重建容器。 */
+.rl-eps-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; margin-top: 10px; }
+.rl-eps-pager:empty { display: none; margin: 0; }
+.rl-eps-pager .rl-eps-pg {
+    width: auto; min-width: 28px; height: 26px; padding: 0 7px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px);
+    background: var(--background-primary); box-shadow: none;
+    font-family: inherit; font-size: var(--font-ui-smaller); font-variant-numeric: tabular-nums;
+    color: var(--text-muted); cursor: pointer;
+    transition: color .12s ease, border-color .12s ease;
+}
+.rl-eps-pager .rl-eps-pg:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
+.rl-eps-pager .rl-eps-pg.is-on {
+    background: var(--interactive-accent); border-color: var(--interactive-accent);
+    color: var(--text-on-accent); font-weight: 600; cursor: default;
+}
+.rl-eps-pager .rl-eps-pg.is-step svg { width: 14px; height: 14px; }
+.rl-eps-pager .rl-eps-pg:disabled { opacity: .3; cursor: not-allowed; color: var(--text-faint); background: transparent; }
+.rl-eps-pager .rl-eps-pg:disabled:hover { border-color: var(--background-modifier-border); }
+/* 🔴 #589 页码读数（`第 3 / 10 页`）—— 放在整条的最前当「标签」，与页码按钮区分开（弱一档、不加框）。 */
+.rl-eps-pager .rl-eps-pg-info {
+    padding: 0 6px 0 0;
+    color: var(--text-faint); font-size: var(--font-ui-smaller); font-variant-numeric: tabular-nums;
+}
+.rl-eps-pager .rl-eps-pg-gap { padding: 0 2px; color: var(--text-faint); font-size: var(--font-ui-smaller); }
+
+/* ⚠️ 下面这组是**快捷关联弹窗**（`QuickAssociateModal` 的 `.rl-eps-grid.rl-qa-grid`）在用的：
+   窄框内滚 + 集号格子（选「链接填进哪一集」）。⛔ 别拿它当选集弹窗的样式（那个已改行式，见上）。 */
+.rl-eps-grid { display: flex; flex-wrap: wrap; gap: 8px; max-height: 320px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 12px; margin-bottom: 14px; }
 .rl-eps-btn {
     width: auto; min-width: 44px; padding: 0 10px; height: 34px; font-family: inherit; font-size: var(--font-ui-small);
     border: 1px solid var(--background-modifier-border); background: var(--background-primary);
@@ -1528,12 +1907,43 @@
 .rl-qa-total { display: flex; align-items: center; gap: 6px; margin: 2px 0 10px; }
 .rl-qa-total-input { width: 76px; flex: none; }
 /* 「总集数」行右侧批量检索小图标（动画/电视剧）：hover 提示出说明 */
-.rl-qa-grid { max-height: 160px; margin-bottom: 12px; }
+/* 🔴 #599：集号格子改**一排 10 个**（用户：「1排按钮为10个」）⇒ 从 `flex-wrap` 换成
+   **定列网格**（`repeat(10, minmax(0,1fr))`，宽度由格子自己分，⛔ 不靠 `min-width` 撑）；
+   ⚠️ `.rl-eps-btn` 那条 `min-width: 44px` 是给旧的 flex 排布用的，10 列下会**顶破行** ⇒ 在这一层归零。
+   ⚠️ 框内滚动保留（#447 那条只管选集弹窗）：本窗滚动条由 `.rl-hide-scroll` 统一收掉。 */
+.rl-eps-grid.rl-qa-grid {
+    display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px;
+    max-height: 160px; margin-bottom: 12px;
+}
+.rl-qa-grid .rl-eps-btn { min-width: 0; padding: 0 2px; }
 .rl-eps-btn.cur { outline: 2px solid var(--interactive-accent); outline-offset: -1px; }
 .rl-eps-btn.linked.cur { outline-color: var(--text-on-accent); }
 .rl-qa-cur { border-top: 1px solid var(--background-modifier-border); padding-top: 6px; }
 .rl-qa-cur-t { font-size: var(--font-ui-small); font-weight: 600; color: var(--text-normal); margin: 4px 0 2px; }
-.rl-qa-ops { margin-top: 14px; }
+/* 🔴 #593：「观看 / 去关联」弹窗底部原「保存并生效 / 取消」那一行（`.rl-qa-ops`）**整体退场**
+   —— 改成自动保存（实时 + 关窗兜底），这里只留一条**就地轻提示**。
+   ⚠️ 隐藏时用 `opacity`（**保留高度**）⇒ 提示出现/消失不推挤上面的表单（与编辑浮层那条
+      「提示不能把表单挤得发生位移抖动」同一口径）；文案 / 时长 / 重弹判据全在 `pure/toast`。 */
+.rl-qa-saved {
+    margin-top: 12px; min-height: 16px;
+    font-size: var(--font-ui-smaller); color: var(--text-muted); text-align: center;
+    opacity: 0; transition: opacity var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
+}
+.rl-qa-saved.is-on { opacity: 1; }
+.rl-qa-saved.rl-qa-saved-bad { color: var(--text-error); }
+/* 🔴 #599：影视「网络地址」「本地路径」两行标签旁的**就地轻提示**（用户：「设置已保存提示放在
+   网络地址和本地路径标题旁边」）—— 形态与编辑浮层 #568 那份同源，只是这里必须有一份**全局**的
+   （本弹窗是 DOM-API、拿不到 Svelte 哈希类名；同 `.rl-ai-btn` / `.rl-bili-*` 的理由）。
+   ⚠️ 默认 `opacity: 0`（**不占位、不推挤**），保存那一刻淡入、`pure/toast.TOAST_MS` 后淡出；
+      失败态复用 `--rl-danger-strong`（与 `pure/toast.TOAST_FAILED` 语义配对）。
+   ⛔ 别加底色 / 阴影（仓库 UI 铁律）。 */
+.rl-qa-lbl-row .rl-saved-hint {
+    font-size: 11px; font-weight: 400; color: var(--text-faint);
+    white-space: nowrap; opacity: 0;
+    transition: opacity var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
+}
+.rl-qa-lbl-row .rl-saved-hint.is-on { opacity: 1; }
+.rl-qa-lbl-row .rl-saved-hint.rl-saved-hint-bad { color: var(--rl-danger-strong, #c0493f); }
 
 /* ── #506 B站 候选 / 分P 勾选表（**两个入口共用的一份全局样式**）──────────────────────────
    🔴 为什么上移：这套件原先只在 `EntryForm.svelte` 的 scoped 样式里，而「右键 → 动词 · 去关联」
@@ -1583,6 +1993,10 @@
 .rl-bili-name { font-size: 12px; color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rl-bili-artist { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rl-bili-pill { flex: none; font-size: 11px; color: var(--text-muted); font-family: var(--font-monospace); }
+/* 🔴 #529：书籍「检索在线书籍阅读」候选 = **复用** B站 那张候选卡（`pure/weread` 的候选形状一致），
+   只有封面是**竖版**（书，32×44）而非 B站 的横版（44×30）。
+   ⚠️ 这条必须留在**全局**（内部件规则不许回组件，见 #506 纪律）；特异性 (0,2,0) 压过 `.rl-bili-cover`(0,1,0)。 */
+.rl-wr-pop .rl-bili-cover { width: 32px; height: 44px; }
 /* ── #505 分P 勾选表（入口 C）────────────────────────────────────────────
    ⚠️ 表头的候选标题那行：`‹ 候选` 按钮 + 视频标题（**单行省略**，长标题不许把浮层撑宽）。
    ⚠️ 行高保持紧凑：52 行要在 `max-height` 里滚得动，一行约 26px ⇒ 一屏能看到十来行。 */
@@ -3911,6 +4325,54 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 /* 目录嵌套行（复用 rl-reader-toc-item 样式，嵌套缩进由行内 padding 控制） */
 .rl-reader-toc-row { display: flex; flex-direction: column; }
 
+/* ── 漫画阅读器（ComicReaderPanel：#537 单页制整页 contain + 翻页/缩放） ──
+   舞台 = 一整页的容器：单页制下 DOM 里恒只有一张 `<img>`（或一个占位），
+   缩放 ≤1× 时 `max-width/max-height:100%` 让整页 contain 进舞台；>1× 时放开约束、
+   由舞台的 `overflow:auto` 平移（面板在缩放时清 scrollTop/scrollLeft，换页也归零）。 */
+.rl-comic .rl-reader-body { align-items: stretch; }
+.rl-comic-stage {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    text-align: center;
+    padding: 12px 12px 40px;
+    background: var(--background-primary);
+    user-select: none;
+    scrollbar-width: thin;
+    scrollbar-color: var(--rl-scroll-thumb) transparent;
+}
+.rl-comic-stage::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+.rl-comic-stage::-webkit-scrollbar-track { background: transparent; }
+.rl-comic-stage::-webkit-scrollbar-thumb {
+    background: var(--rl-scroll-thumb);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+.rl-comic-stage::-webkit-scrollbar-thumb:hover { background: var(--rl-scroll-thumb-hover); background-clip: padding-box; }
+/* 页图：块级 + margin auto 居中（⛔ 不用 flex 居中 —— 放大溢出时 flex 会把起始边裁掉，滚不到左/上边缘）。
+   🔴 #540：⛔ **不许写 `width: 100%`** —— 那时 `max-height: 100%` 只压高度、宽度仍钉在 100%，
+   竖版漫画页会被**横向拉伸**（用户 2026-10-05 报障「打开默认是拉伸的」）。
+   尺寸由面板算好写成**行内像素宽**（适屏基准 × 缩放，`height: auto` 恒保纵横比）；
+   这里的 `auto` + 双 max 只是首帧/兜底：替换元素在 max-* 约束下会按原始纵横比回缩，不会变形。 */
+.rl-comic-img {
+    display: block;
+    margin: 0 auto;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 2px;
+    box-shadow: var(--rl-t-shadow-card, 0 1px 4px rgba(0, 0, 0, 0.18));
+}
+.rl-comic-ph {
+    margin: 64px auto;
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+}
+
 /* ── 「添加条目」搜索结果区（全局兜底：与 EntryForm.svelte 的 Svelte scoped 样式重复，确保 Obsidian 重启/CSP 下也生效）── */
 .rl-res-head { display: flex; align-items: baseline; gap: 10px; margin: 8px 0 10px; }
 .rl-res-head-cnt { font-size: 12px; font-weight: 700; color: var(--text-normal); }
@@ -3951,21 +4413,44 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     height: 100%;
     min-height: 0;
 }
+/* 🔴🔴 #604 播放器**配色真源**：所有成块的底色都收成变量 —— 浅色档 = 原观感（一个字没改），
+   深色档 = 用户点名的那套深灰。⛔ 别在下面的规则里再写死底色（写了就只改得动一半，正是本次报障的形态）。 */
 .rl-vp-root {
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: #000;
+    background: var(--rl-vp-page);
     position: relative;
+    /* 浅色档：播放器本身就是一块「影院黑」，与 Obsidian 主题无关，故页面仍是纯黑 */
+    --rl-vp-page: #000;
+    --rl-vp-stage: #fff;
+    --rl-vp-bar-bg: linear-gradient(to bottom, rgba(0, 0, 0, .78), rgba(0, 0, 0, 0));
+    --rl-vp-ctrl-bg: linear-gradient(to top, rgba(0, 0, 0, .82), rgba(0, 0, 0, 0));
+    --rl-vp-menu-bg: #1E1E1E;
+    --rl-vp-fg: #fff;
+    --rl-vp-fg-2: rgba(255, 255, 255, .72);
+    --rl-vp-line: rgba(255, 255, 255, .14);
+}
+/* 深色主题：页面 / 舞台 / 控制栏三段都**不再是纯黑**（用户原话「不要纯黑，也不要保留白底」）。
+   底色取自用户给的那组：#1E1E1E 页 · #141414 舞台 · #2A2A2A 控制栏与菜单 · #3A3A3A 分割线。 */
+.theme-dark .rl-vp-root {
+    --rl-vp-page: #1E1E1E;
+    --rl-vp-stage: #141414;
+    --rl-vp-bar-bg: #2A2A2A;
+    --rl-vp-ctrl-bg: #2A2A2A;
+    --rl-vp-menu-bg: #2A2A2A;
+    --rl-vp-fg: #E8EAED;
+    --rl-vp-fg-2: #9AA0A6;
+    --rl-vp-line: #3A3A3A;
 }
 /* 视图被 Obsidian 恢复布局、但当前没有播放内容时的占位 */
 .rl-vp-empty {
     margin: auto;
     padding: 28px 32px;
     text-align: center;
-    color: rgba(255,255,255,.72);
+    color: var(--rl-vp-fg-2);
 }
-.rl-vp-empty-title { font-size: 16px; font-weight: 600; color: #fff; margin-bottom: 8px; }
+.rl-vp-empty-title { font-size: 16px; font-weight: 600; color: var(--rl-vp-fg); margin-bottom: 8px; }
 .rl-vp-empty-hint { font-size: 13px; line-height: 1.6; }
 /* 顶栏：2026-09-18 按 B 站口径瘦身为**只剩片名**（原「上一集/下一集/字幕/↗」全部下移到控制条与设置齿轮），
    仍是绝对悬浮于视频上方、随闲置一起淡出的浮层（视频上缘/下缘 hover 不变，常驻半透明黑底）。 */
@@ -3978,7 +4463,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     justify-content: space-between;
     gap: 10px;
     padding: 8px 14px;
-    background: linear-gradient(to bottom, rgba(0,0,0,.78), rgba(0,0,0,0));
+    background: var(--rl-vp-bar-bg);
 }
 .rl-vp-title-wrap { min-width: 0; overflow: hidden; }
 /* #326：顶栏右上角的「插入时间戳 / 截取当前帧」（用户 2026-09-19 指定放右上角）。
@@ -3988,7 +4473,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-vp-title {
     font-size: 14px;
     font-weight: 600;
-    color: #fff;
+    color: var(--rl-vp-fg);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -4001,7 +4486,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-vp-root .rl-vp-btn {
     background: transparent;
     border: 1px solid transparent;
-    color: rgba(255,255,255,.95);
+    color: var(--rl-vp-fg);
     box-shadow: none;
     font-family: inherit;
     font-size: var(--font-ui-small);
@@ -4012,16 +4497,18 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-vp-root .rl-vp-btn.is-on:hover { background: var(--interactive-accent-hover); border-color: var(--interactive-accent-hover); color: var(--text-on-accent); }
 
 /* 视频区：撑满；flex 让 video 等比缩放居中。
-   🔴 底色 = **白**（用户 2026-09-18 二次裁定：留白不要高斯模糊、也不要镜像 video）——
-     主 video 是 `object-fit: contain` + `background: transparent`，
-     没被画面盖住的上下左右留白自然露出这层白底。 */
+   🔴 底色 = **浅色档白 / 深色档 #141414**（用户 2026-09-18 二次裁定：留白不要高斯模糊、也不要镜像 video；
+      #604 深色主题再裁定：这一圈留白**不再是白的、也不是纯黑**，取舞台灰 #141414）——
+      主 video 是 `object-fit: contain` + `background: transparent`，
+      没被画面盖住的上下左右留白自然露出这层底。
+   ⚠️ 视频**自己**烤进画面里的黑边不受影响（那是内容像素，CSS 碰不到）—— 用户「视频黑边仍纯黑」指的正是它。 */
 .rl-vp-stage {
     flex: 1;
     min-height: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #fff;
+    background: var(--rl-vp-stage);
 }
 .rl-vp-stage video {
     /* 撑满内容区宽度 + 保持原始宽高比（contain → 不拉伸、不裁切）。
@@ -4065,8 +4552,8 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     flex-direction: row;
     align-items: center;
     padding: 8px 14px 10px;
-    background: linear-gradient(to top, rgba(0,0,0,.82), rgba(0,0,0,0));
-    color: #fff;
+    background: var(--rl-vp-ctrl-bg);
+    color: var(--rl-vp-fg);
 }
 .rl-vp-row { display: flex; align-items: center; gap: 8px; width: 100%; }
 .rl-vp-left,
@@ -4234,8 +4721,8 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     transform: translateX(-50%);
     padding: 2px 6px;
     border-radius: 4px;
-    background: rgba(0,0,0,.82);
-    color: #fff;
+    background: var(--rl-vp-menu-bg);
+    color: var(--rl-vp-fg);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -4300,6 +4787,114 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     color: rgba(255,255,255,.62);
     font-size: 11px;
 }
+
+/* ── #579 时间戳侧边栏（抽屉：截图笔记 / 名场面）────────────────────────────────
+   用户口径：「**默认收起**，以抽屉/浮层形式展开，**不挤压主视频区域**」＋「点击列表项精准跳转」
+   ＋「播放时对应时间戳条目**自动高亮并滚动到可视区**」＋「截图支持**大图预览**」＋「空状态引导」。
+   🔴 收起态走 `hidden`（`display:none`），⛔ **不用「`transform` 推出去」那种写法**：
+      ① 推出去的盒子仍参与可滚动溢出 ⇒ 播放器会凭空多出横向滚动；
+      ② `transform` 会**创建层叠上下文**（#553 那条老账）⇒ 层级钉死 `auto`、被 DOM 靠后的内容盖住。
+      这里显式给 `z-index`，并把滑入做成**一次性的入场动画**（收起态根本没有 transform）。
+   🔴 层级：舞台 0 ＜ **抽屉 35** ＜ 浮层（`.rl-vp-menu` / `.rl-vp-next`）40 ＜ 大图预览 45。
+      抽屉压在画面上、但压在浮层**之下** —— 浮层是「点一下立刻选一个」的临时件，被抽屉盖住就点不着了。
+   ⚠️ 上下边距由 `syncDrawerInset()` **按顶栏/控制条的真实高度量出来写内联**（见视图里的注释：
+      铺满全高会盖住顶栏那几枚按钮，连它自己的开关都点不到 = 展不开又关不掉的死局）。 */
+.rl-vp-drawer {
+    position: absolute;
+    right: 0;
+    width: 288px;
+    z-index: 35;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px 12px;
+    background: rgba(18,18,20,.92);
+    border-left: 1px solid rgba(255,255,255,.14);
+    box-shadow: -8px 0 24px rgba(0,0,0,.35);
+    color: #fff;
+    overflow: hidden;
+}
+.rl-vp-drawer.hidden { display: none; }
+.rl-vp-drawer:not(.hidden) { animation: rl-vp-drawer-in .18s ease-out; }
+@keyframes rl-vp-drawer-in {
+    from { transform: translateX(12px); opacity: 0; }
+    to { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .rl-vp-drawer:not(.hidden) { animation: none; }
+}
+/* 两栏 Tab（用户点名的【截图笔记】/【名场面】；数字 = 该栏条数，与列表同一份计数） */
+.rl-vp-dtabs { display: flex; flex: none; gap: 6px; }
+/* 🔴 两级选择器（`.rl-vp-drawer .rl-vp-*`）：核心那条 `button:not(.clickable-icon)`（0,1,1）
+   会给自造按钮铺灰底 + 定高，单类 (0,1,0) 压不过 —— 本仓反复栽过的账（#567 / #576）。 */
+.rl-vp-drawer .rl-vp-dtab {
+    flex: 1 1 0; height: auto; margin: 0; padding: 5px 8px;
+    border: 1px solid rgba(255,255,255,.16); border-radius: 6px;
+    background: transparent; box-shadow: none;
+    font-family: inherit; font-size: 12px; color: rgba(255,255,255,.75);
+    cursor: pointer; font-variant-numeric: tabular-nums;
+    transition: color .12s ease, border-color .12s ease, background .12s ease;
+}
+.rl-vp-drawer .rl-vp-dtab:hover { color: #fff; border-color: rgba(255,255,255,.34); }
+.rl-vp-drawer .rl-vp-dtab.is-on {
+    background: var(--interactive-accent); border-color: var(--interactive-accent);
+    color: #fff; font-weight: 600;
+}
+/* 列表本身可滚（抽屉是有限高度的一块）；⛔ 不给整个抽屉滚（那会把 Tab 一起滚走） */
+.rl-vp-dlist {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 4px;
+}
+/* 一行 = 缩略图（可点，看大图）+ 跳转按钮（时间 + 说明）—— **两个兄弟按钮**，
+   ⛔ 不是嵌套：行本身是 `<button>`，button 里再放 button 是非法内容模型（#564 / #576 同源）。 */
+.rl-vp-ditem { display: flex; align-items: center; gap: 8px; }
+.rl-vp-drawer .rl-vp-dthumb {
+    flex: none; width: 76px; height: 44px; margin: 0; padding: 0;
+    border: 1px solid rgba(255,255,255,.16); border-radius: 4px;
+    background: rgba(255,255,255,.06); box-shadow: none; overflow: hidden; cursor: zoom-in;
+}
+.rl-vp-dthumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.rl-vp-drawer .rl-vp-dthumb:hover { border-color: var(--interactive-accent); }
+.rl-vp-drawer .rl-vp-dgo {
+    flex: 1 1 auto; min-width: 0; height: auto; margin: 0; padding: 6px 8px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    border: 1px solid transparent; border-radius: 4px;
+    background: transparent; box-shadow: none;
+    font-family: inherit; text-align: left; color: #fff; cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+}
+.rl-vp-drawer .rl-vp-dgo:hover { background: rgba(255,255,255,.1); }
+/* 当前所处的那一条（#579 双向联动）：底色 + 边线一起亮，扫一眼就知道「播到哪了」 */
+.rl-vp-ditem.is-active .rl-vp-dgo {
+    background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.24);
+}
+.rl-vp-dtime {
+    font-size: 12px; font-weight: 600;
+    color: var(--interactive-accent); font-variant-numeric: tabular-nums;
+}
+.rl-vp-dtext {
+    max-width: 100%; font-size: 12px; line-height: 1.35;
+    color: rgba(255,255,255,.86);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rl-vp-ditem.is-active .rl-vp-dtext { color: #fff; }
+/* 空状态引导（分栏两句，文案真源 `pure/videoDrawer.markEmptyHint`） */
+.rl-vp-dempty { padding: 10px 4px; font-size: 12px; line-height: 1.65; color: rgba(255,255,255,.6); }
+
+/* #579 大图预览（截图笔记专用）：整块遮罩 + 居中大图。
+   z-index 45：高于抽屉 35 与浮层 40，仍**低于模态族**（`.rl-ctx` 50）—— 与全仓那套取值的相对关系一致。 */
+.rl-vp-lightbox {
+    position: absolute; inset: 0; z-index: 45;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: rgba(0,0,0,.84); cursor: zoom-out;
+}
+.rl-vp-lightbox.hidden { display: none; }
+.rl-vp-lightbox-img {
+    max-width: 100%; max-height: 100%;
+    object-fit: contain; border-radius: 6px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+    cursor: default;
+}
 /* 画面中央的播放按钮（用户 2026-09-18 二次裁定）：**只在暂停时显示**，满不透明、
    悬停不再额外出现、也不再有呼吸细环微动效（上一版「悬停浮出 + 暂停淡显」已撤）。
    居中靠 flex 静态位置（stage 是 flex 容器且 justify/align 居中，绝对定位子项的静态位置即居中点）。
@@ -4329,8 +4924,8 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     transform: translateX(-50%);
     padding: 4px 10px;
     border-radius: 6px;
-    background: rgba(0,0,0,.72);
-    color: #fff;
+    background: var(--rl-vp-menu-bg);
+    color: var(--rl-vp-fg);
     font-size: 12px;
     pointer-events: none;
 }
@@ -4349,8 +4944,9 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     flex-direction: column;
     gap: 2px;
     padding: 6px;
-    border-radius: 8px;
-    background: rgba(0,0,0,.9);
+    /* #604：圆角按用户口径收到 12–16 区间（三类浮层共用同一容器 ⇒ 一起改才「统一」） */
+    border-radius: 14px;
+    background: var(--rl-vp-menu-bg);
     box-shadow: 0 6px 20px rgba(0,0,0,.45);
 }
 /* 🔴 本插件没有全局 `.hidden` —— 凡会 addClass('hidden') 的元素都必须自带这一条（2026-09-18 事故后立的规矩） */
@@ -4363,7 +4959,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     border-radius: 5px;
     background: transparent;
     box-shadow: none;
-    color: rgba(255,255,255,.9);
+    color: var(--rl-vp-fg);
     font-family: inherit;
     font-size: 12px;
     line-height: 1.5;
@@ -4373,42 +4969,154 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     text-overflow: ellipsis;
     cursor: pointer;
 }
-.rl-vp-root .rl-vp-menu-item:hover { background: rgba(255,255,255,.16); color: #fff; }
+.rl-vp-root .rl-vp-menu-item:hover { background: rgba(255,255,255,.16); color: var(--rl-vp-fg); }
 /* 当前集 / 当前倍速：学 B 站用「强调色文字 + 加粗」而不是实底块（实底会把整列压得喘不过气）。
    规则写在 :hover 之后、同特异性 —— 高亮项 hover 时保住强调色文字，只多出一层淡底。 */
 .rl-vp-root .rl-vp-menu-item.is-on { color: var(--interactive-accent); font-weight: 600; }
-/* 设置框（#337：三个开关改判为「点高亮、关则不亮」的框 —— 「后台播放」一个开关框 +
-   「播完这一集」三选一框组（切下一集 / 循环本集 / 暂停）。互斥选项用单选，
-   「自动切集 × 单集循环」的行为冲突从根上消失；「暂停」= 停在片尾，补齐第三个正式选项）。
-   亮 = 强调色底 + 反白字；不亮 = 透明底 + 暗字。
-   🔴 hover 只给「不亮」的框加淡底（亮起项 hover 带 :not(.is-on) 的老规矩）。 */
-.rl-vp-root .rl-vp-menu-group-label {
-    padding: 2px 0;
-    color: rgba(255,255,255,.5);
-    font-size: 12px;
+/* 🔴 #607 倍速面板：条目是「1× / 1.25×」这类**短词**，整列左对齐在窄浮层里歪得明显 ⇒ 整列居中
+   （用户原话「把内置播放器的倍速面板中间的居中对齐显示，现在为左对齐不美观」）。
+   ⚠️ 只认 `.rl-vp-menu-speed` 这一档 —— 选集的条目是长中文，居中会把它们顶得七零八落。
+   📌 居中的是 `.rl-vp-menu-item` 的**文本**（按钮仍 `width: 100%`），所以 hover 底色仍是整行、点击区不变。 */
+.rl-vp-root .rl-vp-menu-speed .rl-vp-menu-item { text-align: center; }
+
+/* ── #604/#605 设置弹窗（三组；每项一行 —— 循环值行 / 动作行）────────────────────
+   结构与文案全由 `pure/playerMenu.buildSettingOptions` 给，这里只管外观。
+   🔴 #605 精简成**三行**（播放模式 / 画中画 / 用系统播放器打开）后，用户要求「重新调整间距、
+      避免弹窗显得太空」⇒ 行高与组间距一并收一轮：行高 48 → **40**、组间距 6 → **5**、
+      标题内距收掉 2px、弹窗内距 6px（原 6/6/8）。实测弹窗总高 207 → 179px。
+   组间 1px 分割线取 `--rl-vp-line`（三组两线，用户裁定「保留三段分割线」）。
+   🔴 主色（`--interactive-accent`）**只剩一处**：播放模式的「当前值」（⛔ 别给整行铺强调色底）。 */
+.rl-vp-menu-set {
+    min-width: 240px;
+    padding: 6px;
+    gap: 0;
 }
-.rl-vp-root .rl-vp-menu-box-row { display: flex; gap: 6px; }
-.rl-vp-root .rl-vp-menu-box {
-    flex: 1;
-    padding: 5px 4px;
-    border: 1px solid rgba(255,255,255,.24);
-    border-radius: var(--rl-t-radius-md, 6px);
+/* 弹窗标题（小号灰字）—— 用户口径的「分组标题」样式就落在这一行 */
+.rl-vp-set-head {
+    padding: 4px 12px 6px;
+    color: var(--rl-vp-fg-2);
+    font-size: 11px;
+    letter-spacing: .04em;
+}
+.rl-vp-set-group { display: flex; flex-direction: column; }
+/* 组间分割线：用 `+` 兄弟选择器 ⇒ 第一组上方天然没有线 */
+.rl-vp-set-group + .rl-vp-set-group {
+    margin-top: 5px;
+    padding-top: 5px;
+    border-top: 1px solid var(--rl-vp-line);
+}
+/* 🔴 两级选择器（`.rl-vp-root .rl-vp-set-row`）：核心 `button:not(.clickable-icon)`（0,1,1）会给
+   自造按钮铺灰底 + 左右各 14px 内距，单类 (0,1,0) 压不过 —— 本仓反复栽过的账（#567 / #576）。 */
+.rl-vp-root .rl-vp-set-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    /* #605 行高 48 → 40（三行弹窗的「收紧间距」） */
+    min-height: 40px;
+    margin: 0;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 10px;
     background: transparent;
     box-shadow: none;
-    color: rgba(255,255,255,.55);
+    color: var(--rl-vp-fg);
     font-family: inherit;
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.4;
-    text-align: center;
+    text-align: left;
+    cursor: pointer;
+    transition: background .12s ease;
+}
+.rl-vp-root .rl-vp-set-row:hover { background: rgba(255,255,255,.08); }
+/* 标签独占剩余宽度（值 / 开关 / 箭头一律 `flex: none` 靠右） */
+.rl-vp-root .rl-vp-set-lbl {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 循环值行的当前值（#605 起主色的**唯一**用途；⛔ 无箭头 —— 整行点击即切下一档） */
+.rl-vp-set-val { flex: none; color: var(--interactive-accent); font-size: 13px; }
+/* 置灰行的右缘说明（如「当前设备不支持」） */
+.rl-vp-set-note { flex: none; color: var(--rl-vp-fg-2); font-size: 12px; }
+.rl-vp-set-chev { flex: none; display: flex; align-items: center; color: var(--rl-vp-fg-2); }
+.rl-vp-set-chev svg { width: 16px; height: 16px; }
+/* 置灰行：做成 `div`（不带 `disabled` —— 禁用按钮仍会收 mouseover，本仓规矩是禁用态提示走 data-tip，
+   而这里把说明**直接写出来**更直白），天然不可聚焦、不可点。 */
+.rl-vp-root .rl-vp-set-row.is-disabled { color: var(--rl-vp-fg-2); opacity: .45; cursor: default; }
+.rl-vp-root .rl-vp-set-row.is-disabled:hover { background: transparent; }
+/* Switch（小开关，⛔ 不是大蓝按钮）：轨道 36×20、圆钮 16；开启 = 主色轨道 + 圆钮右移。
+   🔴 #605 曾在设置弹窗里撤掉它（后台播放搬去设置页、播放模式改整行循环）⇒ #606 字幕面板收进播放器内后
+      **它又回来了**，但唯一使用者就是字幕面板那一行「显示字幕」。
+   ⚠️ 轨道圆角写 **10px**（= 高度的一半，视觉即全圆）—— 仓内 #591/#596 的反向守卫把全圆角
+      胶囊当作**已撤的分段控制器**特征、按那串字面值全仓封杀；注释**也会进产物**，所以连那串字面值都不能提。 */
+.rl-vp-root .rl-vp-switch {
+    flex: none;
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: rgba(255,255,255,.22);
+    transition: background .16s ease;
+}
+.theme-dark .rl-vp-root .rl-vp-switch { background: #3A3A3A; }
+.rl-vp-root .rl-vp-switch-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform .16s ease;
+}
+.rl-vp-root .rl-vp-switch-row.is-on .rl-vp-switch { background: var(--interactive-accent); }
+.rl-vp-root .rl-vp-switch-row.is-on .rl-vp-switch-knob { transform: translateX(16px); }
+
+/* ── #606 字幕面板：**播放器内上浮浮层**（与设置面板同容器、同开合 / 外点关闭 / Esc / 闲置淡出）──
+   🔴 用户裁定「同设置面板一样上浮出来，不是弹窗」⇒ 此前那个独立的 Obsidian Modal（`.rl-subp-*` 全局样式）
+      整体退场，样式全部 scoped 在 `.rl-vp-root` 下；深色卡片底色自动继承 `--rl-vp-menu-bg`。
+   结构与文案来自 `pure/playerMenu.buildSubtitleMenu`；标题 / 行 / 箭头 / 组分割线都复用 `.rl-vp-set-*` 那套。 */
+.rl-vp-menu-sub { min-width: 268px; padding: 6px; gap: 0; }
+.rl-vp-menu-sub .rl-vp-set-head { padding: 6px 12px 8px; }
+.rl-vp-sub-hint { padding: 0 12px 8px; color: var(--rl-vp-fg-2); font-size: 11px; }
+.rl-vp-sub-list { display: flex; flex-direction: column; gap: 2px; padding: 0 6px 2px; }
+.rl-vp-sub-empty { padding: 2px 12px 8px; color: var(--rl-vp-fg-2); font-size: 12px; }
+/* 🔴 两级选择器：候选行也是自造 `button`，同样要压核心 (0,1,1) 的灰底 + 内距（本仓 #567/#576 老账） */
+.rl-vp-root .rl-vp-sub-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 32px;
+    margin: 0;
+    padding: 5px 10px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    box-shadow: none;
+    color: var(--rl-vp-fg);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    text-align: left;
     cursor: pointer;
 }
-.rl-vp-root .rl-vp-menu-box:not(.is-on):hover { background: rgba(255,255,255,.14); color: #fff; }
-.rl-vp-root .rl-vp-menu-box.is-on {
-    background: var(--interactive-accent);
-    border-color: var(--interactive-accent);
-    color: var(--text-on-accent);
-    font-weight: 600;
+.rl-vp-root .rl-vp-sub-row:hover { background: rgba(255,255,255,.08); }
+.rl-vp-root .rl-vp-sub-row.is-on { color: var(--interactive-accent); font-weight: 600; }
+.rl-vp-sub-lang { flex: none; font-weight: 500; }
+.rl-vp-sub-file {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: .82;
 }
+
 /* 音量滑条浮层：唯一的**窄浮层** → 去掉列表菜单的最小宽度与列表内距（否则竖条两侧会空出一大片）。
    🔴 必须写在 `.rl-vp-menu` 之后：两者同为 (0,1,0)，同特异性靠顺序覆盖 min-width / padding。 */
 .rl-vp-menu-volume { min-width: 0; padding: 8px 10px 12px; }
@@ -4425,11 +5133,11 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     gap: 6px;
     padding: 10px 12px;
     border-radius: var(--rl-t-radius-lg, 8px);
-    background: rgba(0,0,0,.86);
-    color: #fff;
+    background: var(--rl-vp-menu-bg);
+    color: var(--rl-vp-fg);
 }
 .rl-vp-next.hidden { display: none; }
-.rl-vp-next-label { font-size: 12px; color: rgba(255,255,255,.72); }
+.rl-vp-next-label { font-size: 12px; color: var(--rl-vp-fg-2); }
 .rl-vp-next-title { font-size: 13px; font-weight: 600; }
 .rl-vp-next-ops { display: flex; gap: 6px; }
 /* 字幕渲染（::cue 只认固定值，不认主题变量） */
@@ -4438,50 +5146,6 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     line-height: 1.35;
     background: rgba(0,0,0,.62);
     color: #fff;
-}
-/* 字幕选择弹窗（对齐「选剧集」的轻量列表形态） */
-.rl-sub-title { margin-bottom: 8px; }
-.rl-sub-empty {
-    padding: 6px 2px 10px;
-    font-size: var(--font-ui-small);
-    color: var(--text-muted);
-}
-.rl-sub-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    max-height: 260px;
-    overflow-y: auto;
-}
-.rl-sub-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 10px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: var(--rl-t-radius-md, 6px);
-    background: var(--background-primary);
-    color: var(--text-normal);
-    font-family: inherit;
-    font-size: var(--font-ui-small);
-    text-align: left;
-    cursor: pointer;
-}
-.rl-sub-row:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
-.rl-sub-row.is-on {
-    background: var(--interactive-accent);
-    border-color: var(--interactive-accent);
-    color: var(--text-on-accent);
-}
-.rl-sub-lang { flex: none; font-weight: 500; }
-.rl-sub-file {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    opacity: .82;
 }
 
 /* ── 1.0.3 现代主题：弹窗骨架（Obsidian 原生 .modal 为宿主类，靠 body 主题前缀获得特异性）──

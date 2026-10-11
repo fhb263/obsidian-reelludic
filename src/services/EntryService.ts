@@ -14,8 +14,9 @@ import {
     renderExcerptBlock,
     type ParsedExcerpt,
 } from 'pure/excerpt';
+import { dropsReadingProgress } from 'pure/bookProgress';
 import { parseNoteMarks, type VideoMark } from 'pure/videoMarks';
-import { HIGHLIGHT_SECTION, renderHighlightMirror, type ReaderHighlight } from 'pure/highlight';
+import { HIGHLIGHT_SECTION } from 'pure/highlight';
 import { lrcBlockLyrics, withLrcLyrics } from 'pure/lrcSource';
 import { DIR_NOTES } from 'pure/dirs';
 
@@ -30,9 +31,10 @@ export class EntryService {
         private io: VaultIO,
         private catalogPath: string = 'ReelLudic/catalog.json',
         private entriesDir: string = 'ReelLudic/笔记',
-        /** 笔记是否渲染属性表格（设置页「笔记表格」开关；缺省 true = 保持历史行为）。
-         *  由 main.rebuildService() 每次 saveSettings 时按设置重建服务传入，故改开关即时生效。 */
-        private noteTable: boolean = true,
+        /** 笔记是否渲染属性表格（设置页「笔记表格」开关）。
+         *  🔴🔴 #596 **翻面**：缺省由 `true` 改成 **`false`** —— 用户点名「默认全部关闭」；
+         *  由 `main.rebuildService()` 每次 saveSettings 时按设置重建服务传入，故改开关即时生效。 */
+        private noteTable: boolean = false,
     ) {
         this.store = new CatalogStore(io, catalogPath);
     }
@@ -104,7 +106,12 @@ export class EntryService {
         const idx = c.entries.findIndex((e) => e.id === id);
         if (idx < 0) throw notFound(id);
         const prev = c.entries[idx];
-        const merged = normalizeEntry({ ...prev, ...patch, updatedAt: this.now() });
+        // 🔴 #609：本次**清空本地书籍文件**（解除关联）⇒ 阅读进度失去载体，一并清掉（用户裁定「直接清数据」）。
+        //    ⚠️ **单点收口**：右键「关联入口」、编辑表单、书籍浮层三条清空路径都经 `update` ⇒ ⛔ 别在别处再判一次。
+        const effective: Partial<MediaEntry> = dropsReadingProgress(patch)
+            ? { ...patch, readingProgress: undefined }
+            : patch;
+        const merged = normalizeEntry({ ...prev, ...effective, updatedAt: this.now() });
         c.entries[idx] = merged;
         if (merged.status !== prev.status) this.pushActivity(c, id, merged.status); // 编辑表单改状态也要进日志
         await this.save(c);
@@ -204,11 +211,12 @@ export class EntryService {
     }
 
     /** 生成/覆写条目详情笔记，回填 notePath。
-     *  合并写入策略 C：模板重写时按「## 高亮」「## 摘抄」标记行提取旧笔记**两个标注区**，原样回填
-     *  （防覆写清空用户标注）。⚠️ 只搬「摘抄」会把「## 高亮」整区吞掉 —— 2026-09-18 实测：重写后
-     *  高亮块全丢，正文里还显示着却删不掉、双向溯源断链；两区按旧笔记里的先后顺序搬回。
-     *  （2026-09-18 存储重构后「## 高亮」是 JSON 单向生成的只读镜像，**仍然必须搬回** ——
-     *   吞掉它 = 用户在 Obsidian 里看到的高亮整片消失，直到下一次高亮变更才重新生成。）
+     *  合并写入策略 C：模板重写时按「## 摘抄」「## 时间戳」「## 截图」等标记行提取旧笔记**用户标注区**，
+     *  原样回填（防覆写清空用户标注）。⚠️ 只搬「摘抄」会把其它区整段吞掉 —— 2026-09-18 实测：
+     *  重写后块全丢，正文里还显示着却删不掉；各区按旧笔记里的先后顺序搬回。
+     *  🔴🔴 #528（2026-10-05）：「## 高亮」**已移出**搬回名单（`ANNOTATION_SECTIONS` 不含它）——
+     *  高亮真源只在阅读数据 JSON，笔记里那份镜像不再生成；模板重写会把旧笔记里的高亮区**顺手覆盖掉**
+     *  （这正是存量清理的惰性路径）。
      *  🔴 2026-09-27 增第三处：**` ```lrc ` 块内的歌词正文**（非指令行）。模板只按 `audioPath` 写出
      *  `source` 指令行 ⇒ 不搬回就等于「用户填过 / 在线获取的歌词，保存一次全没了」（静默丢数据）。
      *  指令行仍由模板决定（`formatLrcSourceDirective`），歌词正文归用户 —— 两者分工不能混。 */
@@ -412,34 +420,28 @@ export class EntryService {
     }
 
     /**
-     * 同步笔记「## 高亮」区为**只读镜像**（2026-09-18 存储重构，D-3②）。
+     * 删除笔记里的「## 高亮」区（#528 清理历史镜像用；幂等）。
      *
-     * 🔴 真源是每本书的阅读数据 JSON（`pure/readerStore`，进度+书签+高亮三合一）；笔记里这一区
-     *    **由 JSON 单向生成**，只为保住 Obsidian 侧的搜索/导出/反链与块锚点双向溯源，改笔记不会回写 JSON。
-     * 🔴 本方法必须留在 EntryService：笔记文件与 `noteFingerprint` 的唯一拥有者在这里 —— 镜像写入也是
-     *    「插件自己的写入」，不刷新指纹的话，用户下次编辑该条目会被 `noteWasExternallyModified()`
-     *    误判成「笔记被外部修改」并弹二选一冲突框（既有 bug 的同类，别再绕开这里直接写笔记）。
-     *
-     * 无笔记 → **跳过且不生成笔记**（高亮是阅读数据，不该有「必须先有一本笔记」的前置条件；
-     * 旧实现 `addHighlight` 会顺手 `writeNote()` 凭空造一本）；高亮清空 → 整区删掉而不是留空标题；
-     * 内容无变化 → 不写盘（幂等）。
+     * 🔴 2026-10-05 用户裁定「高亮数据仅保存在阅读进度文件里」⇒ 笔记里那份「## 高亮」区
+     *    **不再生成**（原「镜像同步」方法已删）。本方法只为**清掉存量笔记里的残留**：
+     *    真源是高亮 JSON（`pure/readerStore`），笔记区只是历史镜像，删掉不丢任何数据。
+     * 🔴 必须经 `writeNoteRaw`（笔记 + 指纹的唯一出口）：否则下次编辑该条目会被
+     *    `noteWasExternallyModified()` 误判成「笔记被外部修改」并弹二选一冲突框。
+     * 无笔记 / 无该区 / 删后无变化 → 返回 `false`（不写盘）。
      */
-    async syncHighlightMirror(
-        id: string,
-        highlights: ReaderHighlight[],
-        opts: { refLink?: string } = {},
-    ): Promise<{ count: number }> {
+    async removeHighlightSection(id: string): Promise<boolean> {
         const e = await this.get(id);
         if (!e) throw notFound(id);
-        if (!e.notePath) return { count: highlights.length }; // 无笔记：直接跳过（不建笔记）
+        if (!e.notePath) return false;
         try {
             const old = await this.io.readText(e.notePath);
-            const next = replaceAnnotationSection(old, HIGHLIGHT_SECTION, renderHighlightMirror(highlights, opts));
-            if (next !== old) await this.writeNoteRaw(id, e.notePath, next);
+            const next = replaceAnnotationSection(old, HIGHLIGHT_SECTION, '');
+            if (next === old) return false;
+            await this.writeNoteRaw(id, e.notePath, next);
+            return true;
         } catch {
-            // 笔记不可读/不可写：镜像失败不影响真源（JSON 已落盘），静默跳过
+            return false;
         }
-        return { count: highlights.length };
     }
 
     /** 追加游玩记录（仅游戏）：明细追加 + 同步重写笔记「游玩记录」章节（记录立即可见）。

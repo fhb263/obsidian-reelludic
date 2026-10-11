@@ -106,8 +106,13 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
         developer: isString(raw.developer) ? raw.developer : undefined,
         album: isString(raw.album) && raw.album.length > 0 ? raw.album : undefined, // 音乐专辑（豆瓣详情回填，过滤空串）
         audioPath: isString(raw.audioPath) && raw.audioPath.length > 0 ? raw.audioPath : undefined, // 音乐本地音频（过滤空串）
+        // #601 音乐网络地址（append-only）——⚠️ 新增字段必须同步本白名单，漏了会被静默丢弃（历史踩坑）
+        audioUrl: isString(raw.audioUrl) && raw.audioUrl.length > 0 ? raw.audioUrl : undefined,
         gameLaunchPath: isString(raw.gameLaunchPath) && raw.gameLaunchPath.length > 0 ? raw.gameLaunchPath : undefined, // 游戏启动快捷方式（过滤空串）
+        gameUrl: isString(raw.gameUrl) && raw.gameUrl.length > 0 ? raw.gameUrl : undefined, // #534 游戏网络路径（浮层手填/粘贴，过滤空串）
         bookFile: isString(raw.bookFile) && raw.bookFile.length > 0 ? raw.bookFile : undefined, // 书籍文件（阅读器入口，过滤空串）
+        // #529 书籍在线阅读链接（append-only）——⚠️ 新增字段必须同步本白名单，漏了会被静默丢弃（历史踩坑）
+        readUrl: isString(raw.readUrl) && raw.readUrl.length > 0 ? raw.readUrl : undefined,
         airDate: isString(raw.airDate) && /^\d{4}-\d{2}-\d{2}$/.test(raw.airDate) ? raw.airDate : undefined, // 开播日期（Bangumi 放送时间回填，YYYY-MM-DD 校验）
         poster: isString(raw.poster) ? raw.poster : undefined,
         progress: raw.progress && typeof raw.progress === 'object' ? raw.progress : undefined,
@@ -138,6 +143,11 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
             return Object.keys(out).length ? out : undefined;
         })(),
         playtimeMinutes: typeof raw.playtimeMinutes === 'number' ? raw.playtimeMinutes : undefined,
+        // #537 书籍阅读时长（分钟，append-only）：有限正数才透传（取整）。
+        // ⚠️ 新增 schema 字段必须同步本白名单，否则读取端会静默丢弃（历史踩坑：bookKind / readUrl / gameUrl）
+        readMinutes: typeof raw.readMinutes === 'number' && Number.isFinite(raw.readMinutes) && raw.readMinutes > 0
+            ? Math.round(raw.readMinutes)
+            : undefined,
         pageCount: typeof raw.pageCount === 'number' && raw.pageCount > 0 ? raw.pageCount : undefined, // 书籍元数据页数（豆瓣，仅展示/统计）
         playSessions: Array.isArray(raw.playSessions)
             ? raw.playSessions

@@ -45,7 +45,7 @@ describe('注册表元数据', () => {
             ['douban', 'doubanCookie'], ['tmdb', 'tmdbApiKey'], ['bangumi', 'bangumiToken'],
             ['openLibrary', null], ['googleBooks', 'googleBooksApiKey'], ['steam', null],
             ['musicbrainz', null], ['itunes', null], ['omdb', 'omdbApiKey'], ['anilist', null],
-            ['igdb', 'igdbClientId'],
+            ['igdb', 'igdbClientId'], ['weread', 'wereadCookie'], // #580：微信读书凭据是 Cookie 不是 Key，但同样走 keyField
         ];
         for (const [id, kf] of keyed) {
             expect(PROVIDER_META[id].keyField, id).toBe(kf);
@@ -76,10 +76,11 @@ describe('注册表元数据', () => {
     });
 });
 
-describe('候选源矩阵（T1：各组适用源全部 implemented → 候选 = 该组全部源，槽位 ≤3）', () => {
-    it('六组候选恰为各组合法源集合（bangumi 服务动画+漫画；openLibrary/googleBooks 仅书籍；comic 三源）', () => {
+describe('候选源矩阵（T1：各组适用源全部 implemented → 候选 = 该组全部源，槽位 ≤4）', () => {
+    it('六组候选恰为各组合法源集合（bangumi 服务动画+漫画；openLibrary/googleBooks/weread 仅书籍；comic 三源）', () => {
         const expectSet: Record<SourceGroup, ProviderId[]> = {
-            book: ['douban', 'openLibrary', 'googleBooks'],
+            // 🔴 #580：书籍组加了「微信读书」（用户 2026-10-09 点名接入；紧随豆瓣，可选 Cookie 源）⇒ 4 候选
+            book: ['douban', 'weread', 'openLibrary', 'googleBooks'],
             game: ['douban', 'steam', 'igdb'],
             music: ['douban', 'musicbrainz', 'itunes'],
             movieTv: ['douban', 'tmdb', 'omdb'],
@@ -89,7 +90,9 @@ describe('候选源矩阵（T1：各组适用源全部 implemented → 候选 = 
         for (const g of SOURCE_GROUPS) {
             const cands = PROVIDERS.filter((p) => p.implemented && p.groups.includes(g)).map((p) => p.id);
             expect(cands, g).toEqual(expectSet[g]);
-            expect(cands.length, g).toBeLessThanOrEqual(3);
+            // 🔴 #580：书籍组因「微信读书」成为**首个 4 候选组** ⇒ 原「每组 ≤3」槽位上限放宽到 4；
+            //    其余五组仍恰 3（由上面的 `expectSet` 精确钉住，⛔ 别删那条）。
+            expect(cands.length, g).toBeLessThanOrEqual(4);
         }
     });
 });
@@ -348,7 +351,8 @@ describe('sourceLabel 数据源展示名（评分角标 / data-tip 共用）', (
     });
 
     it('与注册表 label 同源（单一真源：改 PROVIDERS 即改角标，不另维护手写表）', () => {
-        expect(PROVIDERS.length).toBe(12);
+        // #580：新增「微信读书」⇒ 12 → 13
+        expect(PROVIDERS.length).toBe(13);
         for (const p of PROVIDERS) {
             expect(sourceLabel(p.id), p.id).toBe(p.label);
         }
@@ -444,7 +448,7 @@ describe('providerFromUrl 平台链接 → 数据源识别（#385 手填平台�
         expect(platformLabelFromUrl('https://example.com/x')).toBe('');
     });
 
-    it('全 11 源都至少有一个可识别域名（新增源别忘填 hosts）', () => {
+    it('#580 起「全部源」都至少有一个可识别域名（新增源别忘填 hosts）', () => {
         for (const p of PROVIDERS) {
             expect(p.hosts.length, p.id).toBeGreaterThan(0);
             const url = `https://${p.hosts[0]}/x`;

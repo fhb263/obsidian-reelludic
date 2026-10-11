@@ -13,12 +13,14 @@ import { ItemView, Scope, WorkspaceLeaf } from 'obsidian';
 import { TxtReaderPanel, type TxtReaderOptions } from 'modals/TxtReaderModal';
 import { EpubReaderPanel, type EpubReaderOptions } from 'modals/EpubReaderModal';
 import { PdfReaderPanel, type PdfReaderOptions } from 'modals/PdfReaderModal';
+import { ComicReaderPanel, type ComicReaderOptions } from 'modals/ComicReaderModal';
 import { ConfirmModal } from 'modals/ConfirmModal';
 import type { ParsedExcerpt } from 'pure/excerpt';
 
 export const TXT_READER_VIEW_TYPE = 'reelludic-txt-reader';
 export const EPUB_READER_VIEW_TYPE = 'reelludic-epub-reader';
 export const PDF_READER_VIEW_TYPE = 'reelludic-pdf-reader';
+export const COMIC_READER_VIEW_TYPE = 'reelludic-comic-reader';
 
 /** 面板要能挂载 / 销毁 / 刷新摘抄（三个面板的公共面） */
 interface ReaderPanelLike {
@@ -219,5 +221,24 @@ export class PdfReaderView extends ReaderViewBase<PdfReaderOptions> {
 
     protected mountPanel(container: HTMLElement, scope: Scope, opts: PdfReaderOptions): ReaderPanelLike {
         return new PdfReaderPanel(container, scope, opts, () => void this.leaf.detach());
+    }
+}
+
+/** 漫画阅读器视图（#537）：单页制整页 contain + 翻页/缩放 + 底栏进度（图片文件夹 / CBZ / CBT） */
+export class ComicReaderView extends ReaderViewBase<ComicReaderOptions> {
+    getViewType(): string {
+        return COMIC_READER_VIEW_TYPE;
+    }
+
+    getIcon(): string {
+        return 'book-open';
+    }
+
+    protected emptyHint(): string {
+        return '在书籍条目上点「阅读」即可在这个标签页里打开';
+    }
+
+    protected mountPanel(container: HTMLElement, scope: Scope, opts: ComicReaderOptions): ReaderPanelLike {
+        return new ComicReaderPanel(container, scope, opts, () => void this.leaf.detach());
     }
 }

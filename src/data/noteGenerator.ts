@@ -91,6 +91,7 @@ export function entryFrontmatter(e: MediaEntry, libraryDir: string = 'ReelLudic'
         if (e.readingProgress.totalPage) lines.push(`reading_total_page: ${e.readingProgress.totalPage}`);
     }
     if (e.type === 'book' && e.pageCount) lines.push(`page_count: ${e.pageCount}`); // 元数据页数（豆瓣实体书，仅展示/统计）；网文同字段 = 章数，键名不变（Dataview 查询兼容，1.0.3）
+    if (e.type === 'book' && e.readMinutes) lines.push(`read_minutes: ${e.readMinutes}`); // #537 阅读时长（分钟；阅读器自动累计 + 表单手填）
     if (e.type === 'game' && e.playtimeMinutes) lines.push(`playtime_minutes: ${e.playtimeMinutes}`);
     // progress_percent：进度百分比（Dataview 排序/筛选用）——书籍优先 percent，回退 page/totalPage（与书架进度条同口径）；
     // 剧集/动画按已看集数比；游戏/音乐无统一百分比，不输出
@@ -225,6 +226,8 @@ export function generateNoteMarkdown(
         const pagesLabel = bookKind === 'comic' ? '话数' : (novel ? '章数' : '页数');
         const bookPages = e.pageCount ?? e.readingProgress?.totalPage;
         if (bookPages) rows.push([pagesLabel, String(bookPages)]);
+        // #537 阅读时长（分钟 → 小时文本，`formatPlaytime` 与游戏时长同一个格式化真源，⛔ 别另写一套）
+        if (e.readMinutes) rows.push(['阅读时长', formatPlaytime(e.readMinutes)]);
         if (!novel) {
             if (e.binding) rows.push(['装帧', e.binding]);
             if (e.price) rows.push(['定价', e.price]);

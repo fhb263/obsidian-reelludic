@@ -1,7 +1,8 @@
 // 进度条打点/标记的纯逻辑（`pure/videoMarks`）：从条目笔记解析出「时间戳点」→ 过滤到当前集 → 换算成百分比 → 命中判定。
 //
 // 为什么是纯模块：这些判据全都**没有 DOM/vault 依赖**，但每一条都容易静默出错，必须单测钉死：
-//   ① 只认两区（`## 时间戳` / `## 截图`）—— 正文/摘抄区里的链接**不许**被当成标记
+//   ① 只认那两区（写入名 `## 单时间戳` / `## 截图时间戳`，外加两个**历史区名** `## 时间戳` / `## 截图`
+//      —— #587 改名不改旧笔记 ⇒ 老区里的标记照样读得出来）—— 正文/摘抄区里的链接**不许**被当成标记
 //   ② **认链接目标、不认显示文字** —— 老笔记里 `[7:46·回到视频](…)` 与新格式 `[7:46](…)` 都要认
 //   ③ 多集：库外深链按 `ep` 过滤；**库内链接只有文件名**（可能带 `<…>` 与 URL 编码）→ 按文件名比
 //   ④ 行号要准（「在笔记中打开」要滚到那一行）
@@ -9,6 +10,10 @@
 import { describe, expect, it } from 'vitest';
 import {
     MARK_SECTIONS,
+    MARK_SECTION_SHOT,
+    MARK_SECTION_SHOT_LEGACY,
+    MARK_SECTION_STAMP,
+    MARK_SECTION_STAMP_LEGACY,
     hitMark,
     inBarBand,
     markCaption,
@@ -79,8 +84,27 @@ describe('pure/videoMarks parseNoteMarks', () => {
         expect(marks.map((m) => m.kind)).toEqual(['stamp', 'shot', 'shot']);
     });
 
-    it('区名单就是「时间戳 / 截图」两项（改这里等于改数据来源）', () => {
-        expect([...MARK_SECTIONS]).toEqual(['时间戳', '截图']);
+    it('🔴 #587 区名单 = **新名 + 历史名**四项（改这里等于改数据来源；漏掉历史名就是静默丢旧数据）', () => {
+        expect(MARK_SECTION_STAMP).toBe('单时间戳');
+        expect(MARK_SECTION_SHOT).toBe('截图时间戳');
+        expect(MARK_SECTION_STAMP_LEGACY).toBe('时间戳');
+        expect(MARK_SECTION_SHOT_LEGACY).toBe('截图');
+        expect([...MARK_SECTIONS]).toEqual(['单时间戳', '截图时间戳', '时间戳', '截图']);
+    });
+
+    it('🔴 #587 新名两区照样解析（写入已切到新名；老笔记的历史名也仍读得到）', () => {
+        const note = [
+            '## 单时间戳', '', entryLink(466), '',
+            '## 截图时间戳', '', '![[图 7-46.png]]', vaultLink(466, '影片.mp4'), '',
+            '## 时间戳', '', entryLink(60), '',
+            '## 截图', '', vaultLink(75, '影片.mp4'),
+        ].join('\n');
+        const marks = parseNoteMarks(note);
+        expect(marks.map((m) => [m.kind, m.seconds])).toEqual([
+            ['stamp', 466], ['shot', 466], ['stamp', 60], ['shot', 75],
+        ]);
+        // 新名那两区的种类判定与旧名一致：`## 截图时间戳` 走取图逻辑
+        expect(marks[1].image).toBe('图 7-46.png');
     });
 });
 

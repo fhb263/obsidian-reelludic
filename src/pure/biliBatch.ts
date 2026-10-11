@@ -14,7 +14,9 @@
  * 🔴 **请求量是硬约束**：B 站风控（412）是实测事实，本仓既有链**没有任何限速**。
  *    ⇒ 本模块给出**唯一**的间隔常量 `BATCH_GAP_MS`，调用方必须**串行 + 每集之间 await `batchSleep()`**；
  *    ⛔ 不许 `Promise.all` 并发（52 集并发的请求量必然撞风控，且撞了之后整批都拿不到数据）。
- *    ⛔ 也不对**每个**候选都取分P 数 —— 只标「当前选中的那条」，其余按需再取（见 `withPartCount`）。
+ *    ⛔ 也不对**每个**候选都取分P 数 —— 🔴 #575 起给**前 `BATCH_MARK_LIMIT` 条依序探、确认多P 即停**
+ *    （见 `probePartsUntilCollection`：第一条就是合集时请求量与旧实现完全一样），其余按需再取
+ *    （「换一条」展开 → `candidatesToMark`）。
  *
  * 🔴 #526（用户 2026-10-04）：「批量网络检索只能适合单集的，有很多分52p的怎么办」——
  *    「填入」写的是候选的 `webUrl`，**恒定 P1** ⇒ 选中 52P 整季合集时，第 2/4 集都会被写进
@@ -22,7 +24,7 @@
  *    ⑴ **多P 候选不自动勾**（并标出分P 数）；⑵ 行内给一枚「展开分P」⇒ 走**现成的分P 勾选表**
  *    （`buildBiliFillRows`，锚 `BATCH_PARTS_ANCHOR = 0`）一次把整季填完。⛔ 两处入口共用同一份口径。
  */
-import { biliEpisodeQuery, type BiliPart, type BiliVideo } from 'pure/dl/bilibili';
+import { biliEpisodeQueries, biliEpisodeQuery, type BiliPart, type BiliVideo } from 'pure/dl/bilibili';
 
 /**
  * 两集之间的请求间隔（ms）—— 两入口共用的**唯一**限速常量。
@@ -46,6 +48,11 @@ export interface BatchRow {
     epNo: number;
     /** 这一集的检索词（= `biliEpisodeQuery` 的口径，与单集搜索**同一份真源**） */
     query: string;
+    /**
+     * 🔴 #575：**备用检索词**（有序）—— 主词 `query` **一条候选都没搜到**时按序试（见 `biliEpisodeQueries`）。
+     * ⛔ 主词有结果时一律不试（#520 的「弱判据 + 交给人挑」口径不许因为「更精确」而丢候选）。
+     */
+    altQueries: string[];
     /** 本条目作品名（⛔ 不是每一集的检索词）—— `matched` 的判据靠它，存在行上省得层层传参 */
     workTitle: string;
     /** 搜到的候选（原样来自 `dlBiliSearch`；⛔ 这里不筛不排不裁） */
@@ -71,11 +78,13 @@ export interface BatchRow {
     error: string;
 }
 
-/** 一个待搜目标（未填集 + 它的检索词） */
+/** 一个待搜目标（未填集 + 它的检索词变体） */
 export interface BatchTarget {
     epIndex: number;
     epNo: number;
     query: string;
+    /** 🔴 #575：主词 0 命中时按序试的备用词（见 `biliEpisodeQueries`）；缺省 = 没有备用词 */
+    altQueries?: string[];
 }
 
 /**
@@ -103,12 +112,14 @@ export function buildBatchTargets(
     titles: readonly (string | undefined)[] | undefined = [],
     single = false,
 ): BatchTarget[] {
-    return unfilledEpIndexes(urls, total).map((i) => ({
-        epIndex: i,
-        epNo: i + 1,
+    return unfilledEpIndexes(urls, total).map((i) => {
         // ⚠️ 电影态（`single`）传 `epNo = 0` ⇒ **不补「第1集」**（与 `biliEpisodeQuery` 的口径一致）
-        query: biliEpisodeQuery(workTitle, single ? 0 : i + 1, (Array.isArray(titles) ? titles[i] : '') ?? ''),
-    }));
+        const epTitle = (Array.isArray(titles) ? titles[i] : '') ?? '';
+        // 🔴 #575：**先精确、后宽泛**的检索词变体 —— 主词沿用 `biliEpisodeQuery` 的原口径，
+        //    备用词是「作品名 + 裸数字」（见 `biliEpisodeQueries` 的模块注释）。
+        const [query = '', ...altQueries] = biliEpisodeQueries(workTitle, single ? 0 : i + 1, epTitle);
+        return { epIndex: i, epNo: i + 1, query, altQueries };
+    });
 }
 
 /** 把「待搜目标」列成等待答案的行（还没搜 ⇒ 没有候选、不勾、不选中） */
@@ -117,6 +128,8 @@ export function makeBatchRows(targets: readonly BatchTarget[] | undefined, workT
         epIndex: Number(t?.epIndex) || 0,
         epNo: Number(t?.epNo) || (Number(t?.epIndex) || 0) + 1,
         query: String(t?.query ?? ''),
+        // 🔴 #575：备用词随目标带过来（缺省 `[]` ⇒ 该行没有可回落的词）
+        altQueries: Array.isArray(t?.altQueries) ? t!.altQueries!.map((s) => String(s ?? '')).filter(Boolean) : [],
         workTitle: String(workTitle ?? ''),
         videos: [],
         partCounts: {},
@@ -293,6 +306,33 @@ export function withChecked(row: BatchRow, checked: boolean): BatchRow {
     return row.checked === want && row.manual ? row : { ...row, checked: want, manual: true };
 }
 
+// ────────────────────── #542 「粘贴链接」入口（跳过搜索，直接用手里已有的合集）──────────────────────
+
+/**
+ * 🔴 #542 从**用户粘贴的文本**里认出 B 站视频号（BV 号）。找不到 ⇒ 空串。
+ *
+ * 由来（用户 2026-10-07）：「给批量搜索 b 站视频集数加个可**手动粘贴链接**分P 填入的功能」——
+ *    批量搜是「我不知道是哪一条」，而这条是「我已经有那条链接了，别再替我搜一轮」。
+ *
+ * 🔴 与 `pure/linkStatus.bvidOf` 的**分工**（⛔ 别合并成一份，两者判据要的松紧正相反）：
+ *    · `bvidOf` 服务于**已存在条目里的链接**，必须**限定 B 站域名** —— 别的站点 URL 里恰好出现
+ *      `BV…` 不得误判（那是「这条链接失效了吗」的判据，宁可漏判不可误判）；
+ *    · 本函数服务于**刚从剪贴板拿到的任意文本**（可能只有裸号、可能带着分享文案 / 前后缀），
+ *      所以**全文本找第一处** `BV` + 10 位字母数字即可。
+ * 🔴 **短链 `b23.tv` 明确返回空串**（`/b23\.tv/i` 命中即放弃）：短链里**不含** BV 号，
+ *    要发一次请求拿 302 才知道真身。⛔ 别硬抠 —— 抠不出东西，只会让调用方给出「没找到链接」这种
+ *    **误导**提示（用户明明粘了链接）。由调用方用「短链暂不支持」这类准确话说清楚。
+ * ⚠️ BV 号形态 = `BV` + 10 位 `[0-9A-Za-z]`（B 站现行口径）。⚠️ `BV` 前缀**区分大小写**
+ *    （真实号恒为大写，放开 `/i` 会把 `bv1234567890` 这类普通文本也吃进来）。
+ */
+export function bvidFromPaste(text: string): string {
+    const s = String(text ?? '');
+    if (!s.trim()) return '';
+    if (/b23\.tv/i.test(s)) return '';
+    const m = s.match(/BV[0-9A-Za-z]{10}/);
+    return m ? m[0] : '';
+}
+
 // ────────────────────── #526 「展开分P」入口（多P 合集专用）──────────────────────
 
 /**
@@ -332,6 +372,33 @@ export function canFillBatch(rows: readonly BatchRow[] | undefined): boolean {
     return batchCheckedRows(rows).length > 0;
 }
 
+/**
+ * 🔴 #607：批量表「填入」时顺带写的**集标题**（`[集下标, 标题]`）。
+ *
+ * 由来（用户报障）：「关联网络的 52 集一集标题都没显示」—— **批量这条链只写链接、从不写标题**。
+ *   #601 当时只补齐了「分P 勾选表」那两条链（弹窗 + 编辑表单），这张**批量确认表**漏了 ⇒ 同一类病根的第二处。
+ *
+ * 口径（与 `biliPartTitles` 逐条对齐，⛔ 别各写一套）：
+ *   ⑴ 只取**已勾中且有链接**的行（= `batchCheckedRows`，与写链接那批**同一批行**）；
+ *   ⑵ **只填空位**（用户手填的优先）；
+ *   ⑶ 取**选中候选的标题**（`pickedCandidate().title`；空 ⇒ 跳过，⛔ 不写空串）。
+ * ⚠️ 批量行是「一集一条视频」，所以这里的标题就是那条视频的标题；若用户挑的是**多P 合集**，
+ *    它会是合集名 —— 想按分P 逐条命名请走「分P 勾选表」那条（`biliPartTitles`）。
+ */
+export function batchFillTitles(
+    rows: readonly BatchRow[] | undefined,
+    titles: readonly (string | undefined)[],
+): [number, string][] {
+    const out: [number, string][] = [];
+    for (const r of batchCheckedRows(rows)) {
+        const t = String(pickedCandidate(r)?.title ?? '').trim();
+        if (!t) continue;
+        if (String(titles[r.epIndex] ?? '').trim()) continue; // 已有（手填）标题 ⇒ 不覆盖
+        out.push([r.epIndex, t]);
+    }
+    return out;
+}
+
 /** 跑动中那句进度：`正在搜索 12/52 · 第 12 集…`（`epNo <= 0` ⇒ 只报进度） */
 export function batchProgressText(done: number, total: number, epNo: number): string {
     const t = Math.max(0, Math.floor(Number(total) || 0));
@@ -362,6 +429,104 @@ export function candidatesToMark(row: BatchRow | undefined, limit: number = BATC
     const lim = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
     const head = (row?.videos ?? []).slice(0, lim);
     return head.filter((v) => !row?.partCounts?.[v.bvid]);
+}
+
+// ────────────────────── #575 多P 合集优先（排序靠前）──────────────────────
+//
+// 用户 2026-10-09：「**优先级排序**：如果是多集视频，优先展示**多P合集**，并使其排序靠前」。
+//
+// 🔴🔴 **B 站搜索结果里没有任何「分P 数」字段**（2026-10-09 本机实测：`episode_count_text` 是空串、
+//    `biz_data` 是 `null`、`is_union_video` 讲的是「联合投稿」不是分P）⇒ 要判「是不是多P 合集」，
+//    **只能**拿 `view` 接口的 `videos` 字段。而 B 站风控（412）是实测事实（见文件顶部）⇒
+//    本组函数全部围绕一条纪律设计：**尽快找到第一个多P，找到了就不再问**（早退）。
+//
+// ⚠️ 与 `candidatesToMark` 的分工（⛔ 别合并）：那个服务于「换一条」展开时的**补标**（要把前几条都标上，
+//    供用户比较）；本组服务于**搜索完成那一刻的排序**（只要结论「有没有多P」，不求标全）。
+
+/**
+ * 排序用的候选下标：**依原序**，跳过「已知分P」的，并在**遇到第一个已确认的多P 时停下**。
+ * ⚠️ 上限 `limit`（与 `candidatesToMark` 同源）—— B 站搜索一页 20 条，全标 = 每集 +20 个 `view` 请求，
+ *    52 集直接 1000+ ⇒ 必撞风控；而用户实际只在**前几条**里挑。
+ */
+export function candidatesToProbe(row: BatchRow | undefined, limit: number = BATCH_MARK_LIMIT): BiliVideo[] {
+    const lim = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+    const head = (row?.videos ?? []).slice(0, lim);
+    const out: BiliVideo[] = [];
+    for (const v of head) {
+        const known = row?.partCounts?.[v.bvid];
+        if (Number.isFinite(known) && (known as number) >= 2) break; // 已经有结论了 ⇒ 不再问
+        if (!known) out.push(v);
+    }
+    return out;
+}
+
+/**
+ * 🔴 #575 排序规则：把**已知多P 的候选挪到最前**（组内保持 B 站原序 —— 相关性仍是 B 站排的），
+ * 再把**已知单P** 沉到最后、**未知**居中；`picked` 落到**排序后的第一条**。
+ *
+ * 🔴 **为什么 `picked` 也跟着走**：本表每行默认只显示**选中的那一条**（其余要「换一条」才看见），
+ *    若只改顺序不动 `picked`，「优先展示多P」在界面上**完全看不见**（等于没做）。
+ *    排到最前的就是这一行的默认推荐 —— 与 #520「默认取第一条」**同一句话**，只是那份「第一条」现在是排序后的。
+ * ⚠️ **与 #526 的交互（刻意如此）**：多P 合集**不自动勾选**（勾了「填入」会把 P1 写进每一集，是静默填错）
+ *    ⇒ 排序后默认推荐是合集时，该行会**不勾**、并显示「展开分P」让用户一次填完整季。这是设计，不是 bug。
+ * ⚠️ 未知（没问过）排在已知单P **之前**：别因为「没来得及问」就把它沉底 —— 那等于用缺失当负面证据。
+ * ⚠️ `manual` 为真的行**原样返回**（用户手动勾过 / 换选过 ⇒ 他的决定优先，⛔ 后台排序不许覆盖）。
+ */
+export function hoistCollections(row: BatchRow): BatchRow {
+    if (!row || row.manual) return row;
+    const list = row.videos ?? [];
+    if (list.length < 2) return row;
+    const rank = (v: BiliVideo): number => {
+        const n = row.partCounts?.[v.bvid];
+        if (Number.isFinite(n) && (n as number) >= 2) return 0; // 已知多P → 最前
+        if (Number.isFinite(n) && (n as number) >= 1) return 2; // 已知单P → 最后
+        return 1; // 未知 → 居中
+    };
+    const order = list.map((_, i) => i).sort((a, b) => rank(list[a]) - rank(list[b]) || a - b);
+    if (order.every((v, i) => v === i)) return row; // 已经是目标顺序 ⇒ 原样返回（⛔ 不无谓重建对象）
+    const videos = order.map((i) => list[i]);
+    const top = videos[0];
+    const matched = titleMatchesWork(top?.title ?? '', row.workTitle);
+    const multi = (row.partCounts?.[top?.bvid] ?? 0) >= 2;
+    // 与 `withPartCount` 同一条判据（有候选 且 标题含作品名 且 不是多P）—— 两处必须同口径
+    return { ...row, videos, picked: 0, matched, checked: matched && !multi };
+}
+
+/** 探分P 的 IO（组件注入；单测注入假实现）—— 与 `BatchRunHooks.parts` 同形 */
+export type PartsProbe = (bvid: string) => Promise<{ title?: string; parts?: BiliPart[]; error?: string }>;
+
+/**
+ * 🔴 #575 搜索完成那一刻的**多P 探测**：依序给候选取分P 数，**一确认多P 立刻停**。
+ *
+ * 请求量（本函数存在的意义就是把它压到最小）：
+ *   · 最好的情况 —— 第一条就是合集 ⇒ **1 次请求**，与旧实现（只问第一条）**完全一样**；
+ *   · 最坏的情况 —— 前三条都是单P ⇒ 3 次（比旧实现多 2 次）；
+ *   · 取不到分P（`view` 失败 / 无 `pages`）**不算失败**，也不阻断后面的候选（胶囊留空，链接照常可用）。
+ * ⚠️ 候选之间必须 `await sleep(BATCH_GAP_MS)`（限速是硬约束，⛔ 不许并发）。
+ * ⚠️ 该行没有候选 / 已手动操作过 ⇒ 一次请求都不发。
+ */
+export async function probePartsUntilCollection(
+    row: BatchRow,
+    parts: PartsProbe,
+    sleep: (ms: number) => Promise<void> = batchSleep,
+    limit: number = BATCH_MARK_LIMIT,
+): Promise<BatchRow> {
+    if (!row || row.manual || (row.videos?.length ?? 0) === 0) return row;
+    const todo = candidatesToProbe(row, limit);
+    let next = row;
+    for (let k = 0; k < todo.length; k++) {
+        if (k > 0) await sleep(BATCH_GAP_MS);
+        const v = todo[k];
+        try {
+            const out = await parts(v.bvid);
+            const n = Array.isArray(out?.parts) ? out.parts.length : 0;
+            if (n > 0) next = withPartCount(next, v.bvid, n);
+        } catch {
+            /* 标不出分P 不影响链接可用（⛔ 别把它当失败） */
+        }
+        if ((next.partCounts?.[v.bvid] ?? 0) >= 2) break; // 🔴 早退：已经找到多P
+    }
+    return next;
 }
 
 // ────────────────────── 跑批（**唯一**一份循环，两入口共用）──────────────────────
@@ -400,7 +565,8 @@ export interface BatchRunResult {
 }
 
 /**
- * 串行跑批：逐集搜 → 默认选中第一条 → 给第一条标分P 数 → 报进度 → 限速 → 下一集。
+ * 串行跑批：逐集搜（主词 0 命中时回落备用词）→ 默认选中第一条 → **探分P（确认多P 即停）→ 把多P 挪到最前**
+ * → 报进度 → 限速 → 下一集。
  *
  * 🔴 **遇错即停**：某一集 `error` 非空（含 412 风控）⇒ 立刻结束本轮并**把原因带出去**
  *    （已搜到的照常留在 `rows` 里）。`nextIndex` 落回出错那一集 ⇒ 用户点「继续」是**重试它**，
@@ -433,17 +599,36 @@ export async function runBatchSearch(
         } catch (e) {
             next = applyBatchResult(rows[i], { videos: [], error: `搜索出错：${e instanceof Error ? e.message : String(e)}` });
         }
-        rows[i] = next;
-        const first = pickedCandidate(next);
-        if (first) {
-            try {
-                const v = await hooks.parts(first.bvid);
-                const n = Array.isArray(v?.parts) ? v.parts.length : 0;
-                if (n > 0) rows[i] = withPartCount(next, first.bvid, n);
-            } catch {
-                /* 标不出分P 不影响链接可用（⛔ 别把它当失败） */
+        // 🔴 #575：主词**一条候选都没搜到**时按序试备用词（「作品名 N」），命中即停 —— 见 `biliEpisodeQueries`。
+        //    ⛔ 主词有「好」结果就一律不试（#520 的口径是「弱判据 + 交给人挑」，为了「更精确」而丢掉已有候选是倒退）。
+        //    ⚠️ 只有真·成功但 0 条时才试：`error` 非空是「失败」不是「没搜到」，换个词也一样。
+        // 🔴 #589 **放宽**：主词**有结果、但没有一条标题含作品名**时也试 —— 那批候选按 #520 的弱判据
+        //    一条都不会被自动勾上（等于白搜）。但**只有备用词真给出「含作品名」的候选才采纳**，
+        //    否则**保留主词结果**（⛔ 别让「更精确」把候选整批换成一堆同样不匹配的）。
+        const noneMatched = next.videos.length > 0
+            && !next.videos.some((v) => titleMatchesWork(v.title, next.workTitle));
+        if ((next.videos.length === 0 || noneMatched) && !next.error) {
+            for (const alt of next.altQueries) {
+                if (!hooks.shouldContinue()) break;
+                await sleep(BATCH_GAP_MS);
+                try {
+                    const cand = applyBatchResult(next, await hooks.search(alt));
+                    const usable = cand.videos.length > 0
+                        && (!noneMatched || cand.videos.some((v) => titleMatchesWork(v.title, cand.workTitle)));
+                    if (usable) {
+                        next = cand;
+                        break;
+                    }
+                } catch {
+                    /* 备用词失败 ⇒ 保持原样（不影响主词那条结论） */
+                }
             }
         }
+        // 🔴 #575：多P 合集优先 —— 依序探分P（**确认多P 即停**，见 `probePartsUntilCollection`），
+        //    再把已知多P 挪到最前（`hoistCollections`）。
+        next = await probePartsUntilCollection(next, hooks.parts, sleep);
+        next = hoistCollections(next);
+        rows[i] = next;
         lastEpNo = epNo;
         hooks.onUpdate(rows, i + 1, total, 0);
         if (next.error) return { rows, nextIndex: i, lastEpNo, reason: next.error, done: false };

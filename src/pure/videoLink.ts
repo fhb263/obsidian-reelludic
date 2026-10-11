@@ -182,6 +182,31 @@ export function parseTimeLink(href: string): VideoTimeTarget | null {
 const MD_LINK_RE = /^\[[^\]]+\]\(.+\)$/;
 
 /**
+ * 🔴 #585：把「备注」拼到时间戳链接行的**后面**（用户 2026-10-09 裁定的形态）：
+ * ```
+ * [7:46](影片.mp4#t=466) 高潮来了
+ * ```
+ *  · 备注写在链接**外面**，⛔ 不并进链接文字 —— 两条理由：
+ *    ⑴ `backLinkText` 那条铁律：链接文字里不许有空白（Obsidian 悬停会在第一个空白处截断 token
+ *       去 `new URL()`，控制台报 `Invalid URL`）；带备注的链接文字必然含空格。
+ *    ⑵ 侧边栏列表（`pure/videoMarks.markCaption`）显示的就是「链接与图片以外的文字」⇒ 备注天然读得到，
+ *       ⛔ 不必为它新开一套解析；用户手写补的备注也天然同形态。
+ *  · 备注去空白后为空 ⇒ **原样返回链接**（留空 = 与 #326 以来的行为一字不差）。
+ *  · 备注里的换行折成空格 —— 本仓既有前提是「一行一个标记」（`parseNoteMarks` 按行解析）。
+ *  · 链接为空 ⇒ 空串（不产出「只有备注、点不动」的行）。
+ *
+ * 🔴 #587（用户 2026-10-09 裁定）：**单击动作不再弹备注框**（那段已整体退场）⇒ 现在能产生备注的
+ *    只剩「用户手动编辑笔记」这一条路（他手写补的字天然同形态、照样被 `markCaption` 读出来）。
+ *    本函数与 `buildShotBlock` 的 `remark?` 参数**保留**（单一真源，别删 —— 删了得另找一处拼空格）。
+ */
+export function appendRemark(timeLink: string, remark: string): string {
+    const link = (timeLink ?? '').trim();
+    if (!link) return '';
+    const note = (remark ?? '').replace(/\s+/g, ' ').trim();
+    return note ? `${link} ${note}` : link;
+}
+
+/**
  * 截图块（用户 2026-09-19 裁定 D-3 Ⓑ「极简两行」）：
  * ```
  * ![[截屏 片名 00-03.png]]
@@ -203,12 +228,16 @@ const MD_LINK_RE = /^\[[^\]]+\]\(.+\)$/;
  * ⇒ 两处防复发：⑴ 入参名从 `link` 改成 **`timeLink`**、并**去掉 `seconds`**（label 由 `buildTimeLink` 决定，
  *    这里再算一遍就是两处真源）；⑵ **fail-closed**：传进来的若不是 markdown 链接形态，直接返回空串
  *    —— 宁可什么都不写，也**绝不产出「点不动的裸 URL 行」**（裸 URL 在编辑视图只是文本，见 #328）。
+ *
+ * 🔴 #585：可选的 `remark` 由 `appendRemark` 拼到链接**后面**（留空 ⇒ 第二行与旧行为一字不差）。
+ *    ⚠️ 形态校验（`MD_LINK_RE`）只看**链接本身**，⛔ 别看拼上备注之后的那一行 —— 备注是自由文本，
+ *    拿它一起校验会把「带空格的备注」误判成坏链接（fail-closed 会变成 fail-open 的噪声源）。
  */
-export function buildShotBlock(opts: { fileName: string; timeLink: string }): string {
+export function buildShotBlock(opts: { fileName: string; timeLink: string; remark?: string }): string {
     const name = (opts.fileName ?? '').trim();
     const link = (opts.timeLink ?? '').trim();
     if (!name || !MD_LINK_RE.test(link)) return '';
-    return `![[${name}]]\n${link}`;
+    return `![[${name}]]\n${appendRemark(link, opts.remark ?? '')}`;
 }
 
 /**

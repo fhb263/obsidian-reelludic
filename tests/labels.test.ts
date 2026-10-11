@@ -1,7 +1,6 @@
 // 状态文案按类型映射（书/游戏专属语义，内部仍四态）
 import { describe, it, expect } from 'vitest';
 import { statusLabel, statusVerb, isTrackingType, overviewUnitLabel } from 'pure/labels';
-import { ENTRY_TYPES } from 'data/types';
 
 
 describe('statusLabel 按类型映射', () => {
@@ -74,26 +73,16 @@ describe('isTrackingType 追更范围', () => {
     });
 });
 
-describe('overviewUnitLabel 概览量词（顶部「N X」的单位）', () => {
-    it('各类型给专属量词', () => {
+// 🔴 #552：概览量词**恢复**（#547 曾随库概览一起删除）—— 用户上手后改主意：
+//    「把统计如 90 项媒体**加回来**吧」。这组穷举锁就是为「音乐页签不许显示成『项媒体』」立的。
+describe('overviewUnitLabel 顶部概览量词', () => {
+    it('每个类型都有专属量词，无类型回落「项媒体」', () => {
+        expect(overviewUnitLabel(null)).toBe('项媒体');
+        expect(overviewUnitLabel('movie')).toBe('部电影');
+        expect(overviewUnitLabel('tv')).toBe('部剧集');
+        expect(overviewUnitLabel('anime')).toBe('部动画');
         expect(overviewUnitLabel('book')).toBe('本书');
         expect(overviewUnitLabel('game')).toBe('款游戏');
-        expect(overviewUnitLabel('movie')).toBe('部电影');
-        expect(overviewUnitLabel('tv')).toBe('部电视剧');
-        expect(overviewUnitLabel('anime')).toBe('部动画');
-        // 回归锁定：音乐页签曾因漏映射落到兜底，顶部显示成「8 项媒体」而非「8 首音乐」
         expect(overviewUnitLabel('music')).toBe('首音乐');
-    });
-
-    it('无类型（总库/聚合）回落「项媒体」', () => {
-        expect(overviewUnitLabel(null)).toBe('项媒体');
-    });
-
-    it('穷举 ENTRY_TYPES：每个类型都必须有专属量词，不得落兜底', () => {
-        // 这条锁的价值在于「将来新增类型却忘了配量词」会直接测试失败，
-        // 而不是上线后才发现顶部写成「N 项媒体」
-        for (const t of ENTRY_TYPES) {
-            expect(overviewUnitLabel(t), `类型 ${t} 缺少专属量词`).not.toBe('项媒体');
-        }
     });
 });

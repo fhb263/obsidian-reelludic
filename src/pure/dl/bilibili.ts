@@ -218,6 +218,34 @@ export function biliEpisodeQuery(workTitle: string, epNo: number, epTitle: strin
 }
 
 /**
+ * 🔴 #575（用户 2026-10-09）：「**精确匹配**：支持精确匹配标题，如自动追加『第1集』或『1』进行检索」。
+ *
+ * 语义 = **有序检索词变体**（调用方**按序试、命中即停**），不是「拼成一个更长的词」：
+ *   ① 主词 = `biliEpisodeQuery` 的产物 —— ⛔ **原函数一字不改**（它是单集检索链与既有单测的真源）；
+ *   ② 备用词 = **`作品标题 + 空格 + 裸数字`**（`熊出没 2`）—— 只在「有作品名可依托 + 确实是剧集态
+ *      （`epNo ≥ 1`）」时给。
+ *
+ * 🔴 **为什么备用词用「裸数字」而不是「第N集」**：主词在**集标题缺位**时**本来就**是 `作品名 第N集`
+ *    （见上），再给一遍是同一串；而 B 站上大量投稿把集号写成 `02` / `EP02` / `#2` / 甚至只挂在标题尾部，
+ *    `作品名 2` 恰好能捞到「第N集」捞不到的那批 ⇒ 两个变体互补，不是一个的复读。
+ * ⚠️ **只在主词一条候选都没搜到时才试备用词**（见 `runBatchSearch`）：主词有结果就照旧交给用户挑 ——
+ *    #520 的既定口径是「弱判据 + 交给人挑」，为了「更精确」把已有候选丢掉是**倒退**。
+ * ⚠️ 返回**去重**后的非空串；一条都没有（作品名与集标题都空）⇒ 空数组。
+ */
+export function biliEpisodeQueries(workTitle: string, epNo: number, epTitle: string): string[] {
+    const base = biliEpisodeQuery(workTitle, epNo, epTitle);
+    const out: string[] = base ? [base] : [];
+    const w = String(workTitle ?? '').trim();
+    const n = Number(epNo);
+    const no = Number.isFinite(n) && Math.floor(n) >= 1 ? Math.floor(n) : 0;
+    if (w && no > 0) {
+        const alt = `${w} ${no}`;
+        if (!out.includes(alt)) out.push(alt);
+    }
+    return out;
+}
+
+/**
  * 这条链接是否已被**别的集**占用 ⇒ 返回那个集的**集号**（1 起）；没有 ⇒ 0。
  * 用于「单P 直填」那一步的提示：用户报障第 ② 条的典型形态就是**把第 1 集的链接又填进第 2 集**。
  * 🔴 2026-10-04 用户裁定：**提示但仍照填**（⛔ 不是拦截 —— 用户可能就是要复用同一条链接）。
@@ -265,6 +293,13 @@ export interface BiliViewParse {
     message: string;
     title: string;
     parts: BiliPart[];
+    /**
+     * 🔴 #577：视频**封面原图**（`data.pic`，已归一为 `https:`）—— 选集弹窗的缩略图来源。
+     * ⚠️ 这里是**原图**，缩略图后缀由 `pure/epCover.biliThumbUrl` 挂（⛔ 别在本层拼后缀：
+     *    那一层是「选集封面」的口径，别的调用方要原图时不该被改尺寸）。
+     * 缺字段 / 失败 ⇒ 空串（调用方落占位图）。
+     */
+    cover: string;
 }
 
 /** 视频详情地址（`bvid` 走 `encodeURIComponent`） */
@@ -298,15 +333,17 @@ export function parseBiliView(text: string): BiliViewParse {
     try {
         data = JSON.parse(text);
     } catch {
-        return { code: -1, message: '响应不是 JSON（多半被风控或接口变更）', title: '', parts: [] };
+        return { code: -1, message: '响应不是 JSON（多半被风控或接口变更）', title: '', parts: [], cover: '' };
     }
-    const root = (data ?? {}) as { code?: unknown; message?: unknown; data?: { title?: unknown; pages?: unknown } };
+    const root = (data ?? {}) as { code?: unknown; message?: unknown; data?: { title?: unknown; pages?: unknown; pic?: unknown } };
     const code = Number(root.code ?? -1);
     const message = String(root.message ?? '');
-    if (code !== 0) return { code: Number.isFinite(code) ? code : -1, message, title: '', parts: [] };
+    if (code !== 0) return { code: Number.isFinite(code) ? code : -1, message, title: '', parts: [], cover: '' };
     const title = decodeBiliText(root.data?.title);
+    // #577：封面原图（`pic` 是协议相对地址 ⇒ `normalizeBiliCover` 补 `https:`）
+    const cover = normalizeBiliCover(root.data?.pic);
     const raw = root.data?.pages;
-    if (!Array.isArray(raw)) return { code, message, title, parts: [] };
+    if (!Array.isArray(raw)) return { code, message, title, parts: [], cover };
     const parts: BiliPart[] = [];
     for (const item of raw) {
         const p = (item ?? {}) as Record<string, unknown>;
@@ -318,7 +355,7 @@ export function parseBiliView(text: string): BiliViewParse {
             durationSec: parseBiliDuration(p.duration),
         });
     }
-    return { code, message, title, parts };
+    return { code, message, title, parts, cover };
 }
 
 /**
@@ -419,4 +456,45 @@ export function biliSelectableRows(rows: readonly BiliFillRow[]): BiliFillRow[] 
 /** 勾选表里当前**已勾中**的行（= 点「填入」时真正要写的那批） */
 export function biliCheckedRows(rows: readonly BiliFillRow[]): BiliFillRow[] {
     return (rows ?? []).filter((r) => r.checked && !r.outOfRange);
+}
+
+/**
+ * 🔴 #601：分P 勾选表 → **集标题**该写哪几格。
+ *
+ * 由来（用户报障）：「选集窗口怎么拉取的网络 p1-52 都没有集标题显示」——真因是填入那一步**只写链接、
+ * 从不写标题**（`applyBiliParts` 两处都如此），而标题本来就在手边（`BiliFillRow.part` = 分P 标题）。
+ *
+ * 口径（**三条**）：
+ *   ⑴ 取**已勾中**的行，**外加**「已经指向本合集对应分P」的行（见 `samePartUrl` 形参的说明，⛔ 那一层别放宽）；
+ *   ⑵ **只填空位**：该集已有标题 ⇒ 跳过（用户手填的优先，与「批量检索本地剧集」同一条纪律）；
+ *   ⑶ 超出集数（`outOfRange`）的行永远不写 —— 与 `biliCheckedRows` 同一条边界。
+ *
+ * ⚠️ 抽成纯函数是刻意的：弹窗（`QuickAssociateModal`）与编辑表单（`EntryForm`）**两处都调它** ——
+ *    ⛔ 别在两个调用点各写一份「只填空位」（两份必然漂）。
+ */
+export function biliPartTitles(
+    rows: readonly BiliFillRow[],
+    titles: readonly (string | undefined)[],
+    /**
+     * 🔴 #607 补丁：**已经指向本合集第 `r.page` 个分P 的那些集**，也算「在范围内」。
+     *
+     * 由来（用户二次报障）：「关联网络的 52 集一集标题都没显示」—— 上一版（#601）只认**已勾中**的行，
+     *   而 `buildBiliFillRows` 对**已有链接**的集默认**不勾**（#518 的用户裁定）⇒ 早先关联过、当时还没写标题的
+     *   老条目，再打开分P 表时 52 行**全是未勾**，一点「填入」直接早退（`picked.length === 0`），标题永远补不上。
+     *
+     * 🔴 判据**必须是链接相等**（该集现存的网络地址 === 本合集第 `r.page` 个分P 的链接）——
+     *    ⛔ 别放宽成「有链接就算」：那会把「从别处关联来的集」也安上本合集的分P 标题（静默写错、还难发现）。
+     */
+    samePartUrl?: (r: BiliFillRow) => boolean,
+): [number, string][] {
+    const out: [number, string][] = [];
+    for (const r of rows ?? []) {
+        if (r.outOfRange) continue; // 超出集数的行永远不写（与 `biliCheckedRows` 同一条边界）
+        const part = String(r.part ?? '').trim();
+        if (!part) continue; // 这个分P 本身没标题 ⇒ 跳过（⛔ 别写空）
+        if (String(titles[r.epIndex] ?? '').trim()) continue; // 已有（手填）标题 ⇒ 不覆盖
+        if (!r.checked && !(samePartUrl ? samePartUrl(r) : false)) continue;
+        out.push([r.epIndex, part]);
+    }
+    return out;
 }

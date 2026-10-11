@@ -1,8 +1,10 @@
 // 阅读器高亮纯模型（纯逻辑，无 obsidian 依赖，可单测）。
-// 🔴 真源（2026-09-18 起）：高亮存**每本书的 JSON 存档**（`pure/readerStore`，字段与进度/书签三合一），
-//    **不再写进书目笔记**。笔记里的 `## 高亮` 区改为由 JSON **单向生成的只读镜像**（保住 Obsidian 搜索/导出/反链），
-//    用户手改会被下次生成覆盖 —— 高亮 CRUD 一律经 `readerStore`，不得再出现「写笔记」的调用形态。
-// 本模块保留：类型与档位/颜色、markdown 渲染（镜像生成用 `renderHighlightBlock`）、
+// 🔴 真源（2026-09-18 起）：高亮存**每本书的 JSON 存档**（`pure/readerStore`，字段与进度/书签三合一）。
+// 🔴🔴 #528（2026-10-05 用户裁定「高亮数据仅保存在阅读进度文件里」）：**笔记里的 `## 高亮` 区彻底取消** ——
+//    原「由 JSON 单向生成的只读镜像」不再生成（`renderHighlightMirror` / `HL_MIRROR_NOTICE` 已删），
+//    存量笔记里的残留由 `migrateRemoveHighlightMirrors` 清理。高亮 CRUD 一律经 `readerStore`，
+//    ⛔ 不得再出现「写笔记」的调用形态。
+// 本模块保留：类型与档位/颜色、markdown 块渲染（`renderHighlightBlock`，仅历史解析/测试用）、
 //    笔记解析（**仅一次性迁移用** `parseHighlightBlocks`）、以及页内黄标渲染与判定（`markParagraphHtml` 等）。
 
 import {
@@ -161,6 +163,7 @@ function toHighlight(ex: ParsedExcerpt): ReaderHighlight {
  */
 export function parseHighlightBlocks(noteMd: string): ReaderHighlight[] {
     // 跳过镜像区首行提示（`%%…%%` 注释）：它不是高亮块，但会被切块器当成一个「扁平块」解析出非空 quote。
+    // （历史数据里「## 高亮」区曾由 JSON 生成、首行带这条 `%%` 提示；#528 起不再生成，但老笔记仍可能带它。）
     // 少了这道过滤，「镜像已生成 → 用户删掉 JSON → 再次迁移」就会把提示行当成一条高亮搬进 JSON。
     return parseExcerptBlocks(noteMd, HIGHLIGHT_SECTION)
         .filter((ex) => !ex.quote.trim().startsWith('%%'))
@@ -255,23 +258,6 @@ export function renderHighlightBlock(
         { callout: true, refLink: opts.refLink, calloutColor: co },
     );
 }
-
-/** 镜像区首行提示（Obsidian 注释语法：阅读视图不渲染，源码里可见；迁移解析端按 `%%` 前缀跳过） */
-export const HL_MIRROR_NOTICE = '%% 本区由 ReelLudic 从阅读数据自动生成，手动修改会在下次高亮变更时被覆盖 %%';
-
-/**
- * 生成笔记「## 高亮」区的**内容**（不含 `## 高亮` 标题行）—— 只读镜像，由 JSON 存档单向生成：
- * 首行提示 + 逐条 callout 块（块 id 沿用 JSON 里的 `^hl…`，双向溯源/删除定位都靠它）。
- * 无高亮 → 空串（调用方据此把整区删掉，而不是留一个空标题）。
- */
-export function renderHighlightMirror(highlights: ReaderHighlight[], opts: { refLink?: string } = {}): string {
-    const blocks = highlights
-        .map((h) => renderHighlightBlock(h.quote, h.loc, h.style, h.color, { refLink: opts.refLink, id: h.id }))
-        .filter((b) => b !== '');
-    if (blocks.length === 0) return '';
-    return [HL_MIRROR_NOTICE, '', blocks.join('\n\n')].join('\n');
-}
-
 
 /** 选段是否落在高亮 mark 上 → 命中时返回该 mark 的块 id 与引用文本。
  *  `id === ''` 表示**确实落在 mark 上、但块缺 `^id`**（老数据 / 手写笔记）→ 调用方用 quote 兜底删。

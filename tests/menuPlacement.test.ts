@@ -81,3 +81,56 @@ describe('pure/menuPlacement 参数与退化输入', () => {
         expect(p.top).toBeGreaterThanOrEqual(0);
     });
 });
+
+// ── #610：可用区 = 视口 ∩「内容区」──────────────────────────────────────────
+// 用户报障：「系列合集卡右键出现的菜单…还是在侧边栏的下面」。
+// 真根因：菜单是 `absolute` 挂在**内容锚点**里，而 `placeMenu` 原先**只按视口钳制** ⇒
+//   翻转后仍越界时被压到视口 margin（6）⇒ 换算成锚点相对坐标是**负值** ⇒ 整块跑到内容区左侧、
+//   落进 Obsidian 左侧栏底下被盖住。窗口越窄越容易撞（内容区比菜单宽不了多少时必撞）。
+// ⇒ 修法：钳制发生在「可用区」（视口 ∩ 内容区）内，调用方把内容区左右界传进来。
+describe('placeMenu.minX / maxX（#610 可用区钳制 · 不钻到侧栏底下）', () => {
+    // 视口 1000 宽、左侧栏占 0..300 ⇒ 内容区 300..1000
+    const band = { ...base, minX: 300, maxX: 1000 };
+
+    it('🔴 鼠标落在内容区里且与右界有富余 ⇒ 与不传时完全一致（可用区只在越界时起作用）', () => {
+        expect(placeMenu({ ...band, x: 500, y: 100 }).left).toBe(500);
+        expect(placeMenu({ ...base, x: 500, y: 100 }).left).toBe(500);
+    });
+
+    it('🔴🔴 **窄窗口**是出事的那档：菜单无处可放时，落点必须是**内容区左界**（300）'
+        + '⛔ 不是视口 margin（6）—— 6−300 = −294 的负偏移正是「跑到侧栏底下」', () => {
+        // 视口 500、内容区 300..500、菜单 140：翻到左侧后 252 < 300 ⇒ 必须钳回 300
+        const narrow = { vw: 500, vh: 800, menuW: 140, menuH: 150 };
+        const fixed = placeMenu({ ...narrow, minX: 300, maxX: 500, x: 400, y: 100 });
+        const old = placeMenu({ ...narrow, x: 400, y: 100 });
+        expect(fixed.left).toBe(300); // 贴内容区左界 ⇒ 换算成锚点相对坐标 = 0
+        expect(old.left).toBe(252); // 旧行为：252 < 300 ⇒ 负偏移 −48 ⇒ 左半截钻到侧栏底下
+        expect(old.left).toBeLessThan(300);
+    });
+
+    it('🔴 右界同样收口：`maxX` 之外不算可用区（内容区右侧被别的面板占了时同理）', () => {
+        const p = placeMenu({ ...band, maxX: 700, x: 690, y: 100 });
+        expect(p.left).toBe(542); // 690+140=830 > 694 ⇒ 翻到 542；整块 542..682 不出 700
+        expect(p.left + 140).toBeLessThanOrEqual(700);
+    });
+
+    it('🔴 可用区比菜单还窄 ⇒ 封顶 `maxWidth`，且左界**仍是内容区左界**（不钻到侧栏下）', () => {
+        const p = placeMenu({ ...band, minX: 300, maxX: 360, x: 330, y: 100 });
+        expect(p.left).toBe(300);
+        expect(p.maxWidth).toBe(54); // 354 − 300
+    });
+
+    it('🔴 只传 minX（不给 maxX）⇒ 右界仍按视口（缺省值不得改变既有行为）', () => {
+        const p = placeMenu({ ...base, minX: 300, x: 990, y: 100 });
+        expect(p.left).toBe(842); // 翻到 842；842+140=982 ≤ 994
+        expect(placeMenu({ ...base, x: 990, y: 100 }).left).toBe(842); // 与不传同值
+    });
+
+    it('🔴 入参脏（minX > maxX / 越出视口）⇒ 不出负、不 NaN（⛔ 别让钳制自己造出「钻到侧栏下」）', () => {
+        const a = placeMenu({ ...base, minX: 800, maxX: 400, x: 500, y: 100 });
+        expect(Number.isFinite(a.left)).toBe(true);
+        expect(a.left).toBeGreaterThanOrEqual(0);
+        const b = placeMenu({ ...base, minX: -50, maxX: 5000, x: 500, y: 100 });
+        expect(b.left).toBe(500);
+    });
+});

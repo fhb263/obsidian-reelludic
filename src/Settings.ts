@@ -2,6 +2,8 @@
 import { Modal, Notice, Platform, PluginSettingTab, Setting, setIcon, requestUrl, TFolder } from 'obsidian';
 import type ReelLudicPlugin from '../main';
 import type { ColorTheme, UiTheme } from 'data/types';
+// #604 内置播放器的播放模式（四档真源在纯模块；设置里只存这个联合类型）
+import type { PlayMode } from 'pure/playerMenu';
 import { ENTRY_TYPES, ENTRY_TYPE_LABELS } from 'data/types';
 import type { ProviderId, SourceGroup, ProviderMeta } from 'pure/sourceRegistry';
 import {
@@ -18,8 +20,12 @@ import { renderAiIcon, aiChoiceIcon } from 'services/aiIcon';
 // #488：元数据源 / 音乐平台图标真源（simple-icons CC0 品牌标 + 内置兜底；**生成器写盘**，
 // 见 `_gen_source_icons.cjs`）。与 AI 服务商图标共用**同一个** `renderAiIcon` 渲染端。
 import { SOURCE_ICON, MUSIC_COOKIE_ICON, type KeySourceId, type MusicSourceId } from 'pure/sourceIcons';
+// #589 开机凭据自检：凭据行的徽标要能显示「已失效」，键与文案的真源在纯模块里
+import { EXPIRED_BADGE, isExpired, musicCheckKey, sourceCheckKey } from 'pure/credentialCheck';
 // #491「更新日志」= 内置弹窗（⛔ 不再跳浏览器）；正文是 `pure/releaseNotes` 里那张**手写**的版本一句话表
 import { ReleaseNotesModal } from 'modals/ReleaseNotesModal';
+// #598 对外链接的唯一真源（仓库 / 报 Bug / 提需求 / 爱发电）—— 「关于」页那几枚按钮只读它
+import { REPO_URL, AFDIAN_URL, SUPPORT_BUTTONS } from 'pure/supportLinks';
 import { AiPickerModal, AiModelNameModal, type AiModelItem, type AiPickerPick } from 'modals/AiPickerModal';
 // #480 ④ / #482 ③：朗读音源行的「音源 + 音色 + 试听」（纯逻辑在 pure/ttsSettings；引擎复用阅读器那两套）
 import {
@@ -55,10 +61,21 @@ import {
     folderCandidates, attachFolderInputSuggest, VaultFolderSuggest, type FolderInputSuggest,
 } from 'modals/VaultFolderSuggest';
 import { DEFAULT_LIBRARY_DIR, libraryDirIssue, normalizeLibraryDirInput, sameLibraryDir } from 'pure/libraryDir';
+// #562 分类本地目录：7 个键 / 分组 / 文案 / 字段映射的真源（⛔ 别在本文件里另写一份 key→字段 表）。
+//   音乐那一档没有新字段（复用 `musicDownloadDir`），见 `pure/localDirs` 模块头。
+import { LOCAL_DIR_FIELD, LOCAL_DIR_GROUPS, LOCAL_DIR_LABELS, localDirOf, type LocalDirKey } from 'pure/localDirs';
 import {
     SETTING_NAV_TABS, SETTING_NAV_PAGES, SETTING_NAV_DEFAULT,
     groupIcon, nextTabId, tabStates,
 } from 'pure/settingNav';
+// #541「个性化体验」四项：主导航布局 / 起始页 / 卡片风格 / 界面动效。
+// 🔴 三项归一与文案**一律走 pure 模块**，⛔ 别在渲染处另写一份选项表（第二份真源）。
+import { HOME_TAB_ORDER, homeTabLabel, normalizeStartTab, type HomeTab } from 'pure/homeTabs';
+import { NAV_LAYOUTS, NAV_LAYOUT_LABELS, normalizeNavLayout, type NavLayout } from 'pure/navLayout';
+import {
+    CARD_STYLES, CARD_STYLE_LABELS, MOTION_MODES, MOTION_MODE_LABELS,
+    normalizeCardStyle, normalizeMotionMode, type CardStyle, type MotionMode,
+} from 'pure/appearance';
 
 export interface ReelLudicSettings {
     /** TMDB API Key（免费注册，设置页引导） */
@@ -79,6 +96,9 @@ export interface ReelLudicSettings {
     bangumiToken: string;
     /** 豆瓣 Cookie（过反爬，浏览器登录后复制） */
     doubanCookie: string;
+    /** 🔴 #580 微信读书 Cookie（**仅书架同步与「测试连接」需要**；书籍检索本身免登录，见 `pure/weread`）。
+     *  append-only 可选字段：旧数据无此键时由 `DEFAULT_SETTINGS` 补空串（⛔ 不写迁移）。 */
+    wereadCookie: string;
     /** 色彩主题：彩色（类型色条+状态五色）/ 单色（关闭类型色条）（v0.4 起设置页移除选项，固定单色；字段保留兼容旧数据） */
     colorTheme: ColorTheme;
     /** 封面本地化：开启后新条目网络封面自动下载到 covers/（离线可用、防图床失效） */
@@ -96,6 +116,39 @@ export interface ReelLudicSettings {
     posterColumns?: number;
     /** 界面主题（1.0.3）：全面 modern 后恒为 'modern'（设置页已无切换入口；字段按 schema append-only 保留） */
     uiTheme?: UiTheme;
+    /**
+     * 🔴 #541 主导航布局（append-only 可选字段；**缺省 `top` = 顶部横向胶囊**，与 1.2.0 观感一致）。
+     * `sidebar` = 主视图**视图内**的左侧竖向导航（图标 + 文字，可折叠）。
+     * ⚠️ 是「视图内的左栏」，不是 Obsidian 工作区侧栏 —— 视图仍是同一个 `ItemView`，
+     *    与 `AudioPlayerView.isInSidebar()` 那件事**无关**（⛔ 别把两者当成一个概念）。
+     * 归一走 `pure/navLayout.normalizeNavLayout`（脏值回 `top`，⛔ 升级不得换脸）。
+     */
+    navLayout?: NavLayout;
+    /**
+     * 🔴 #541 引入 / **#543 退场**：曾表示侧边栏的折叠态（图标+文字 ↔ 只留图标）。
+     * #543 把侧边栏改成**恒定图标轨**（用户裁定的 ④ 排法：轨里只有图标、页名交给内容区大标题承担）
+     * ⇒ 没有「折叠态」这个量了，**字段按 append-only 红线保留但不再被任何地方读取**。
+     * ⛔ 别把它接回任何判定（会造出「设置页没有、行为却受它影响」的鬼开关），也⛔ 别删字段（旧 data.json 兼容）。
+     */
+    navCollapsed?: boolean;
+    /**
+     * 🔴 #541 起始页（append-only；缺省 `media`，= `plugin.homeTab` 的历史初值）。
+     * 打开主视图时默认落在哪个一级页签。归一走 `pure/homeTabs.normalizeStartTab`
+     * （只认一级导航那 6 个 id，`anime`/`tv`/`movie` 这类聚合内部类型一律回 `media`）。
+     */
+    startTab?: HomeTab;
+    /** 🔴 #541 界面动效（append-only；缺省 `full` = 与 1.2.0 一致）。`reduced` = 关掉过渡与悬停位移。 */
+    motionMode?: MotionMode;
+    /** 🔴 #541 卡片风格（append-only；缺省 `standard` = 与 1.2.0 一致）。`soft` 圆润 / `flat` 扁平。 */
+    cardStyle?: CardStyle;
+    /**
+     * 🔴 #591 Ctrl + 滚轮缩放（append-only 可选字段）。
+     * `true` = 在媒体库视图（海报墙 / 瀑布流）里**拦截** Ctrl+滚轮的默认页面缩放，改为缩放内容区卡片
+     * （步进列数 → 落成 `posterColumns` 并把 `posterDensity` 置 `custom`，即「海报密度」显示为自定义）。
+     * 🔴 **缺省 `false`**（用户 2026-10-10 裁定）：它要接管一个系统级手势，⛔ 不能默认改变所有人的行为。
+     * ⚠️ 读取一律 `!!settings.ctrlWheelZoom`（旧数据无此键 ⇒ false，无需迁移）。
+     */
+    ctrlWheelZoom?: boolean;
     /** 阅读排版：字号（px，默认 16）/ 行距（倍数，默认 1.8）——设置项已移除（v0.5 起在阅读器内调整，写回本字段），字段保留兼容旧数据 */
     readerFontSize: number;
     readerLineHeight: number;
@@ -129,8 +182,16 @@ export interface ReelLudicSettings {
     /** 播放器 · 自动切集（缺省 true = 保持历史行为：播完弹连播倒计时并自动切下一集）；关掉则播完**停在结尾**。
      *  append-only 可选字段；读取口径 `settings.playerAutoNext !== false`（旧数据无此键 → 视为开）。 */
     playerAutoNext?: boolean;
-    /** 播放器 · 单集循环（缺省 false）：播完重播当前集；**优先级高于自动切集**。append-only 可选字段 */
+    /** 播放器 · 单集循环（缺省 false）：播完重播当前集；**优先级高于自动切集**。append-only 可选字段
+     *  ⚠️ #604 起**不再读它**（被 `playerPlayMode` 取代）—— 保留只为**旧数据迁移**（`playModeFromLegacy`）。 */
     playerLoopOne?: boolean;
+    /**
+     * #604 播放器 · 播放模式（`'listLoop' | 'singleLoop' | 'sequential' | 'shuffle'`，缺省 `listLoop`）。
+     * append-only 可选字段；读取一律经 `pure/playerMenu.normalizePlayMode`（手改设置文件写脏值 ⇒ 回落 listLoop）。
+     * 🔴 缺省时由旧的两个布尔迁移（`playModeFromLegacy`）—— ⛔ 别在这里就地写默认值，那会让「旧数据」与
+     *    「新用户」走同一条路，迁移逻辑反而失去意义。
+     */
+    playerPlayMode?: PlayMode;
     /**
      * 音频播放器 · 播放模式（④-4；`'off' | 'single' | 'sequential' | 'shuffle'`，缺省 `off` = 不循环）。
      * append-only 可选字段；读取一律经 `pure/audioQueue.normalizeAudioPlayMode`（手改设置文件写脏值 ⇒ 回落 off）。
@@ -152,6 +213,17 @@ export interface ReelLudicSettings {
      *    且默认关可保证升级后笔记外观不变（D-8(c)）。启用时若检测到 LyricFlux 已启用则仍然让位。
      */
     audioInlinePlayer?: boolean;
+    /**
+     * #538 音乐「在线曲库」检索开关（append-only 可选字段；**默认 false = 关**）。
+     * 用户 2026-10-05：「设置项可选择开启或关闭新增音乐条目『在线曲库』的搜索，默认关闭」。
+     *
+     * 语义：开启后，**新增/编辑音乐条目**的搜索会多一栏「在线曲库」（四平台按「歌名 + 歌手」搜，
+     * 见 `pure/songLibrary` 与宿主 `songLibrarySearch`）；关闭时那一栏**整栏不出现**。
+     * 🔴 与「启用内置音乐播放器」（`audioInlinePlayer`）是**两件事**：后者是能力（能不能发这套请求 +
+     *    表单「下载歌曲」按钮），这个是**用户要不要它在检索结果里出现**。真正的组合只有一处：
+     *    `main.canUseSongLibrary()`（能力 ∧ 本开关）。⛔ 别在组件里再摊一份判定。
+     */
+    musicSongLibrary?: boolean;
     /**
      * ⑤-c 音乐下载总开关。🔴 2026-09-27 #399 起**已无 UI、也不再被任何地方读取** ——
      *    下载能力的门控并入 `audioInlinePlayer`（「启用内置音乐播放器」）。
@@ -186,6 +258,29 @@ export interface ReelLudicSettings {
      *  ⚠️ 只在 `onload` 里读：置 true 后**永不回退**（用户可能故意填 `下载`，每次载入都改＝改不回去）。 */
     downloadDirMigrated?: boolean;
     /**
+     * #562 分类「本地目录」六个（append-only）：**单集 / 单文件本地检索**的搜索根目录。
+     *
+     * 🔴 用户 2026-10-08：「把音乐路径目录放在启用内置音乐播放器折叠分组下、三个各个的电视剧/动画/电影
+     *    路径目录放在启用内置视频播放器折叠分组下、三个各个的文学/网文/漫画路径目录放在启用内置阅读器
+     *    折叠分组下」，用途见 ⑧「（本地路径旁的）单集检索…去设置页前置填写的媒体库目录路径里递归搜索」。
+     * ⚠️ **音乐那一档刻意不在这里**：它复用上面的 `musicDownloadDir`（本来就是「音频下载的存放与检索目录」）
+     *    —— 再建一个 `localDirMusic` 就是同一件事两份设置，必然打架（设置页只是把那一行**搬进**音乐分组）。
+     * ⚠️ **游戏也没有**：它的本地关联是「当场挑一个文件夹」（`findLibraryGame`），没有「按类型配根目录」的需求。
+     * 口径：与其它目录类设置一致 —— **库内相对路径**为主，但**也认绝对路径**（视频/图书常放在 vault 之外，
+     *    见 `pure/localDirs.resolveLocalDirAbs`）；缺省空串 = 未配置 ⇒ 检索时提示去设置页（⛔ 不猜目录）。
+     */
+    localDirBook?: string;
+    /** 见 `localDirBook` */
+    localDirNovel?: string;
+    /** 见 `localDirBook` */
+    localDirComic?: string;
+    /** 见 `localDirBook` */
+    localDirMovie?: string;
+    /** 见 `localDirBook` */
+    localDirTv?: string;
+    /** 见 `localDirBook` */
+    localDirAnime?: string;
+    /**
      * 音乐下载 · 各平台登录 Cookie（#399-D 移植批；key ∈ `netease` / `qq` / `kugou` / `kuwo`）。
      * append-only 可选字段，**明文存 `data.json`**（与各数据源 API Key 同款口径，设置页已给出提示）。
      * 用途：**网易云**带 Cookie 才走 VIP 高音质；**QQ 必需** Cookie 才能下载；酷狗可选；
@@ -199,7 +294,9 @@ export interface ReelLudicSettings {
      * ⚠️ 转 mp3 还需要 ffmpeg：yt-dlp 自己会去 PATH 与「它自己所在目录」找，⛔ 本仓不另设 ffmpeg 路径项。
      */
     ytdlpPath?: string;
-    /** 每类型源链（五组自选 ≤3 源及顺序；缺省/空 = 默认链，见 pure/sourceRegistry.DEFAULT_CHAINS。append-only 可选字段，旧数据无此键不迁移） */
+    /** 每类型源链（六组自选源及顺序；缺省/空 = 默认链，见 pure/sourceRegistry.DEFAULT_CHAINS。append-only 可选字段，旧数据无此键不迁移）。
+     *  ⚠️ #580：书籍组因新增「微信读书」成为**首个 4 候选组**（豆瓣 / 微信读书 / Open Library / Google Books），
+     *     ⛔ 原「≤3 源」不再是各组通用上限（其余五组仍 ≤3）。 */
     sourceChains?: Partial<Record<SourceGroup, ProviderId[]>>;
     /** 阅读翻译服务商（'zhipu' 智谱 GLM / 'deepseek' / **'siliconflow'（#480）** / **'custom' 自定义 OpenAI 兼容端点（#478）** / 'off' 不启用；
      *  默认 zhipu。批3 r3 双源。
@@ -267,7 +364,9 @@ export interface ReelLudicSettings {
     serviceFoldOpen?: Partial<Record<'api' | 'sources' | 'translate', boolean>>;
     /** 详情笔记是否渲染「属性表格」（笔记生成开关，用户 2026-09-18）。append-only 可选字段，
      *  缺省 true = 保持历史行为；关掉后笔记只有 callout/简介/评语/链接等章节，无表格。
-     *  读取口径：`settings.noteTable !== false`（旧数据无此键 → 视为开）。 */
+     *  🔴🔴 #596 **翻面**：读取口径由 `!== false`（缺省开）改成 **`=== true`（缺省关）** ——
+     *  用户点名「默认全部关闭」（旧数据无此键 ⇒ 关）。⚠️ 与 `main.ts` 构造 `EntryService` 那一句
+     *  必须**一起翻**，漏一处就会出现「设置显示关闭、笔记里仍有属性表」。 */
     noteTable?: boolean;
     /** 打卡日记所在文件夹（vault 内相对路径，如 日记）；留空/缺省 = 自动跟随核心「日记」插件配置。
      *  09-10 起**设置页不再提供入口**（打卡动作只在统计页「今日」面板），字段保留兼容/兜底读取。 */
@@ -297,6 +396,7 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     googleBooksApiKey: '',
     bangumiToken: '',
     doubanCookie: '',
+    wereadCookie: '',
     colorTheme: 'mono',
     localizePosters: false,
     defaultViewMode: 'grid',
@@ -304,6 +404,15 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     posterDensity: 'standard',
     posterColumns: 6,
     uiTheme: 'modern',
+    // #541「个性化体验」四项 —— 🔴 缺省值必须让**升级后的观感与 1.2.0 逐项一致**：
+    //    顶部胶囊 / 展开态 / 影视页 / 完整动效 / 标准卡片。换任何一个缺省都是在用户没点过的前提下换脸。
+    navLayout: 'top',
+    navCollapsed: false,
+    startTab: 'media',
+    motionMode: 'full',
+    cardStyle: 'standard',
+    // #591 Ctrl+滚轮缩放：**缺省关**（要接管系统手势，不能替所有人改行为）。旧数据无此键 ⇒ falsy ⇒ 关。
+    ctrlWheelZoom: false,
     readerFontSize: 16,
     readerLineHeight: 1.8,
     readerIndent: true,
@@ -318,11 +427,21 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     audioVolume: 1,
     lyricsWordHighlight: true,
     audioInlinePlayer: false,
+    // #538 在线曲库检索（默认关：不主动开就与旧版行为一致）
+    musicSongLibrary: false,
     musicDownloadEnabled: false,
     // #459：这两项的值 = **目录本身**（不再由代码拼 `音乐/` `书籍/` 子目录）⇒ 缺省就得带上子目录名，
     //   否则老用户/新装用户的默认落点会从 `下载/音乐` 变成 `下载/`（与既有文件分家、检索扫不到）。
     musicDownloadDir: DOWNLOAD_DIR_DEFAULT.music,
     bookDownloadDir: DOWNLOAD_DIR_DEFAULT.book,
+    // #562 分类本地目录：缺省**空串** = 未配置（⛔ 别给个默认目录 —— 那会让「单集本地检索」在
+    //   用户从没说过媒体放哪的前提下，去扫一个凭空冒出来的路径）。
+    localDirBook: '',
+    localDirNovel: '',
+    localDirComic: '',
+    localDirMovie: '',
+    localDirTv: '',
+    localDirAnime: '',
     musicDlCookies: {},
     // #496：空串 = 用系统 PATH 里的 yt-dlp（见 `ytdlpPath` 字段注释，⛔ 别填成 `yt-dlp`）
     ytdlpPath: '',
@@ -341,7 +460,7 @@ export const PLATFORM_URL_PRESETS: Record<string, string> = {
  *     那一批只读行随用户要求整体删除（「不显示这类凭据」），表随之退场。
  *  🔴 #488：类型从 `ProviderId` **收窄成 `KeySourceId`**（`pure/sourceIcons` 那张图标表的键）——
  *     这样「加一个凭据源却忘了配图标」会在**编译期**报错，⛔ 别再退回宽类型（那会静默缺图标）。 */
-const KEY_SOURCE_ORDER: readonly KeySourceId[] = ['douban', 'tmdb', 'bangumi', 'omdb', 'googleBooks', 'igdb'];
+const KEY_SOURCE_ORDER: readonly KeySourceId[] = ['douban', 'weread', 'tmdb', 'bangumi', 'omdb', 'googleBooks', 'igdb'];
 
 /** ② 数据源启用分类展示顺序（spec S5：书籍/漫画/影视/动画/音乐/游戏；registry SOURCE_GROUPS 顺序不同，UI 行序以此为准）。
  *  🔴 2026-09-30：漫画组**加回**（1.0.3.1 曾下线），UI 里**紧跟书籍**（同属书籍类目）——
@@ -396,8 +515,12 @@ const DL_COOKIE_ROWS: ReadonlyArray<{
 const YTDLP_PATH_DESC =
     'B 站音频下载用的 yt-dlp 可执行文件路径；留空则用系统 PATH 里的 yt-dlp。转 mp3 还需 ffmpeg（放 yt-dlp 同目录或系统 PATH 中）。';
 
-/** 需 Key 但 Key 可选的数据源（未配仍照常工作，仅限流；空态徽标文案标「可选」而非「未配置」） */
-const OPTIONAL_KEY_SOURCES: ReadonlySet<ProviderId> = new Set(['googleBooks']);
+/** 需 Key 但 Key 可选的数据源（未配仍照常工作，仅限流；空态徽标文案标「可选」而非「未配置」）
+ *  🔴 #580：微信读书**也在这一集合里**，但理由与 googleBooks 不同 —— 它连「限流」都不涉及：
+ *     书籍检索本身**免登录**（实测），Cookie 只是「测试连接」与「从微信读书同步书架」的凭据。
+ *     ⇒ 用户不填 Cookie 时它照常参与搜索（⛔ 别把它挪出这个集合：那会让勾选后什么都不发生）。
+ *     ⚠️ 空态徽标不借用「可选 Key」（它是 **Cookie**）—— 由注册表 `emptyBadge` 单独给文案。 */
+const OPTIONAL_KEY_SOURCES: ReadonlySet<ProviderId> = new Set(['googleBooks', 'weread']);
 
 /** 折叠 API 行的测试结果类型 */
 export interface SourceTestResult {
@@ -456,6 +579,19 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     /** 🔴 #425 「书籍文件目录」输入框的同款实例 —— 与上面两个**各存一份**（三个输入框可能先后各开一个浮层，
      *  共用一个字段会让先开的那个失去引用、关不掉）。⚠️ 同样要在重渲染 / 关闭设置页时 `close()`。 */
     private bookFolderSuggest: FolderInputSuggest | null = null;
+    /** 🔴 #425 起三个目录输入框的自动补全实例各存一份（见上）；#562 又添四个"分类本地目录"输入框
+     *  —— 它们**共用**本 Map（一个「本地目录」浮层同时只可能开一个，用不到各存一份的粒度）。
+     *  但**键必须包含键名**：同一个键的输入框在重绘后是**新元素**，旧实例仍指向已卸载的 input，
+     *  不 close 就会留下一个飘在已删节点旁边的孤儿浮层。 */
+    private localDirSuggests = new Map<LocalDirKey, FolderInputSuggest | null>();
+
+    /**
+     * #562 可折叠分组行的展开态（内存态，⛔ 不落库）：键 = 那一行的标题文本。
+     *  ⚠️ 为什么按标题而不是按索引：`display()` 每次整页重建，索引会随「上面插了一行」而错位；
+     *     标题是那一行**自己的身份**（同名行在本页不存在）。
+     *  ⚠️ 缺省 = **收起**（用户口径「将每个设置项收起为摘要行」）；用户在本次会话里展开过就一直记着。
+     */
+    private expandedGroups = new Set<string>();
     /** 🔴 #479 「用途 › 模型」拉取到的真实模型清单（按服务商缓存）。#482 起**带真元数据** —— 见 `ModelFetched`。
      *  ⚠️ **只活在本次设置页会话**（实例字段），⛔ 不落库 —— 模型清单易变，存下来就是第二个「会过期的预置表」。 */
     private aiFetchedModels = new Map<TranslateProvider, ModelFetched[]>();
@@ -539,6 +675,9 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         this.dlFolderSuggest = null;
         this.bookFolderSuggest?.close(); // #425：书籍文件目录那颗
         this.bookFolderSuggest = null;
+        // #562：六个「分类本地目录」输入框的浮层（一个 Map 装全部；见 `localDirSuggests` 的说明）
+        for (const inst of this.localDirSuggests.values()) inst?.close();
+        this.localDirSuggests.clear();
         // #480 ④：试听引擎随面板释放（系统引擎在 window 上挂了 `voiceschanged`，云引擎可能正在播）
         this.ttsSystemEngine?.dispose();
         this.ttsSystemEngine = null;
@@ -970,8 +1109,11 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             //    （⛔ 别再退回「已填写 / 必需 / 可选」—— 同页两组说同一件事却两套词，用户点名统一）。
             const refreshBadge = (): void => {
                 const has = !!current();
-                badge.setText(has ? '已配置' : '未配置');
-                badge.toggleClass('rl-key-badge-on', has);
+                // 🔴 #589：第三态「已失效」（开机自检 / 手动测试测不通）；没测过（`undefined`）不标。
+                const expired = has && isExpired(this.plugin.credentialStatusOf(musicCheckKey(p.id)));
+                badge.setText(expired ? EXPIRED_BADGE : (has ? '已配置' : '未配置'));
+                badge.toggleClass('rl-key-badge-on', has && !expired);
+                badge.toggleClass('rl-key-badge-bad', expired);
             };
             refreshBadge();
             head.createSpan({ cls: 'rl-key-caret', text: '▸' });
@@ -989,6 +1131,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     else delete next[p.id];
                     this.plugin.settings.musicDlCookies = next;
                     void this.plugin.saveSettings();
+                    // #589：值一改 ⇒ 旧的「已失效」作废
+                    this.plugin.clearCredentialStatus(musicCheckKey(p.id));
                     refreshBadge();
                 },
             });
@@ -1008,13 +1152,16 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 testBtn.disabled = false;
                 testBtn.setText('测试连接');
                 testBtn.removeClass('rl-btn-loading');
+                // 🔴 #589：结论记进同一张结果表 ⇒ 徽标（含刚被打开的「已失效」）同步刷新
+                this.plugin.setCredentialStatus(musicCheckKey(p.id), r.ok);
+                refreshBadge();
                 resultEl.setText(`${r.ok ? '✓ ' : '✗ '}${r.message} · ${elapsedMs}ms`);
                 resultEl.toggleClass('rl-key-result-ok', r.ok);
                 resultEl.toggleClass('rl-key-result-bad', !r.ok);
             });
             head.addEventListener('click', () => row.toggleClass('rl-key-open', !row.hasClass('rl-key-open')));
         }
-        // ── ④-B 站下载（#496）：yt-dlp 可执行文件路径 ──
+        // ── ④-B 站音频流（#496）：yt-dlp 可执行文件路径 ──
         // 🔴 为什么排在**同一个组**里：它是「下载这一件事的配置」，与三条 Cookie 一起读最省事；
         //    但它是**路径不是凭据** ⇒ 输入框走明文（不挂「显示/隐藏」眼睛），⛔ 别用 `createSecretField`。
         // ⚠️ 这行是**追加**在 `DL_COOKIE_ROWS` 循环**之后**的 —— #488/#489 那几条按「循环体内前几行」
@@ -1022,7 +1169,11 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         const dlRow = list.createDiv({ cls: 'rl-key-row rl-prov-card' });
         const dlHead = dlRow.createDiv({ cls: 'rl-key-head' });
         renderAiIcon(dlHead.createSpan({ cls: 'rl-ai-icon' }), { kind: 'builtin', id: 'terminal' });
-        dlHead.createSpan({ cls: 'rl-key-name', text: 'yt-dlp（B站下载）' });
+        // 🔴 #555：本行名称按用户裁定改名（原先是「工具名 + 括号里的用途」那种写法）——
+        //    旧名把**实现工具**当成了功能名，用户看不出这行到底在开什么；新名先说是「B 站音频流」，
+        //    再把两个外部依赖写进括号（与下面 `YTDLP_PATH_DESC` 说的事一致，⛔ 别改成第二套说法）。
+        //    ⚠️ 注释里**刻意不复述旧名** —— 反向守卫会连同注释一起查（本仓老坑：写了就自撞）。
+        dlHead.createSpan({ cls: 'rl-key-name', text: 'B站音频流（需yt-dlp、ffmpeg）' });
         const dlBadge = dlHead.createSpan({ cls: 'rl-key-badge' });
         const currentExe = (): string => this.plugin.settings.ytdlpPath ?? '';
         const refreshExeBadge = (): void => {
@@ -1081,15 +1232,28 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         parent: HTMLElement,
         title: string,
         fill: (body: HTMLDivElement) => void,
+        nativeGroup = false,
     ): void {
-        const wrap = parent.createDiv({ cls: 'rl-svc-group' });
+        // 🔴 #553 第 4 参 = 借**核心原生的分组结构**（`.setting-group` + `.setting-items`）：
+        //    新版 Obsidian 自己就带「组 = 一张卡、组内各行平铺、行间细分隔线」这套规则
+        //    （app.css：`.setting-group .setting-items { background/border-radius/border }` +
+        //      `.setting-group .setting-item:not(.setting-item-heading) { border:none; background:transparent }`）。
+        //    ⇒ 基本设置页**直接用核心的类名**，让它自己算，⛔ 别再手写分组卡 + 覆盖 ——
+        //      #541 手写过一版（分组卡）、#551 又手写过一版压制（压主题给的框），两版都在替核心打工，
+        //      还一路踩到「每一行各自一个框」。用户上手后一句话点到根上：「还是改回 Obsidian 原生吧」。
+        //    ⚠️ 数据源 / AI 页**不传**这个参数：那两页组内各有自己的卡片（`.rl-prov-list` / `.rl-ai-svc-card`），
+        //      再套一层原生卡就是卡中卡。
+        //    ⚠️ 代价是核心的 `.setting-group { max-width: var(--setting-group-max-width) }`（默认 700px、
+        //      且 `margin-inline: auto`）会一起生效 —— 那正是原生设置页的观感，本批**刻意接受**。
+        const wrap = parent.createDiv({ cls: nativeGroup ? 'rl-svc-group setting-group' : 'rl-svc-group' });
         const head = wrap.createDiv({ cls: 'rl-svc-group-title' });
         // 图标按标题从真源取；未登记则跳过（只是缺个图标，不抛错）
         const icon = groupIcon(title);
         if (icon) safeSetIcon(head.createSpan({ cls: 'rl-svc-group-icon' }), icon);
         head.createSpan({ text: title });
-        // ⛔ #490：这里原有一行「组级说明」（`if (note) …`）—— 已随第 4 参一并删除（死码不留）
-        const body = wrap.createDiv({ cls: 'rl-svc-group-body' });
+        // ⛔ #490：这里原有一行「组级说明」（`if (note) …`）—— 已随旧的第 4 参一并删除（死码不留）
+        // 🔴 #553：`nativeGroup` 时给内容器补核心的 `.setting-items`（组卡与行平铺都由它触发，见上）。
+        const body = wrap.createDiv({ cls: nativeGroup ? 'rl-svc-group-body setting-items' : 'rl-svc-group-body' });
         fill(body);
     }
 
@@ -1857,24 +2021,10 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         return typeof v === 'string' ? v : '';
     }
 
-    /** 测试连接分派：Douban/TMDB/Bangumi → plugin 既有 testXxx；OMDb/Google Books → T9/T11 新增测试 */
+    /** 测试连接分派：⛔ **只有一份** —— 已移到宿主 `main.checkSourceCredential`（开机自检也要用同一份，
+     *  在设置页留一份必然与它分叉：加一个源时只改一处 ⇒ 另一处永远「该源无可用测试」）。 */
     private testConnectionFor(id: ProviderId): Promise<SourceTestResult> {
-        switch (id) {
-            case 'douban':
-                return this.plugin.testDoubanConnection();
-            case 'tmdb':
-                return this.plugin.testTmdbConnection();
-            case 'bangumi':
-                return this.plugin.testBangumiConnection();
-            case 'omdb':
-                return this.plugin.testOmdbConnection();
-            case 'googleBooks':
-                return this.plugin.testGoogleBooksConnection();
-            case 'igdb':
-                return this.plugin.testIgdbConnection();
-            default:
-                return Promise.resolve({ ok: false, message: '该源无可用测试', elapsedMs: 0 });
-        }
+        return this.plugin.checkSourceCredential(id);
     }
 
     /** 密文输入占位符（按源给出引导语境） */
@@ -1883,6 +2033,9 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         if (meta.id === 'bangumi') return '输入 Bangumi Access Token';
         if (meta.id === 'googleBooks') return 'API Key（可选，提配额）';
         if (meta.id === 'igdb') return 'IGDB Client ID';
+        // 🔴 #580：微信读书的凭据是 **Cookie** 不是 Key —— 占位符要说清「从哪儿抄、抄什么」，
+        //    以及「只在同步书架时用得上」（否则用户会以为不填就不能搜）。
+        if (meta.id === 'weread') return '微信读书 Cookie（书架同步用）';
         return `输入 ${meta.label} API Key`;
     }
 
@@ -1912,13 +2065,21 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         const badge = head.createSpan({ cls: 'rl-key-badge' });
         const refreshBadge = (): void => {
             const has = !!this.settingValue(keyField) && (!keyField2 || !!this.settingValue(keyField2));
-            if (has) {
+            // 🔴 #589：开机自检（或手动「测试连接」）**测不通** ⇒ 徽标改「已失效」（红）。
+            //    ⚠️ 只在**已配置**时才谈失效；`undefined`（还没测过）走原来的两态 ——
+            //       ⛔ 别把「还没跑」画成「已失效」（那是撒谎，判据见 `pure/credentialCheck.isExpired`）。
+            const expired = has && isExpired(this.plugin.credentialStatusOf(sourceCheckKey(meta.id)));
+            if (expired) {
+                badge.setText(EXPIRED_BADGE);
+            } else if (has) {
                 badge.setText('已配置');
-                badge.toggleClass('rl-key-badge-on', true);
             } else {
-                badge.setText(OPTIONAL_KEY_SOURCES.has(meta.id) ? '可选 Key' : '未配置');
-                badge.toggleClass('rl-key-badge-on', false);
+                // 🔴 #580：源可自带文案（`emptyBadge`，如微信读书的「可选 Cookie」）；
+                //    没带的源逐字沿用「可选 Key / 未配置」两态（#489 口径未动）。
+                badge.setText(meta.emptyBadge ?? (OPTIONAL_KEY_SOURCES.has(meta.id) ? '可选 Key' : '未配置'));
             }
+            badge.toggleClass('rl-key-badge-on', has && !expired);
+            badge.toggleClass('rl-key-badge-bad', expired);
         };
         refreshBadge();
         head.createSpan({ cls: 'rl-key-caret', text: '▸' });
@@ -1931,6 +2092,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             onInput: (v) => {
                 (this.plugin.settings as unknown as Record<string, unknown>)[keyField] = v;
                 void this.plugin.saveSettings();
+                // #589：值一改，旧的「已失效」结论立刻作废（⛔ 别让红标挂在一个刚填的新值上）
+                this.plugin.clearCredentialStatus(sourceCheckKey(meta.id));
                 refreshBadge();
             },
         });
@@ -1942,6 +2105,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 onInput: (v) => {
                     (this.plugin.settings as unknown as Record<string, unknown>)[keyField2 as string] = v;
                     void this.plugin.saveSettings();
+                    this.plugin.clearCredentialStatus(sourceCheckKey(meta.id));
                     refreshBadge();
                 },
             });
@@ -1960,6 +2124,9 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             testBtn.disabled = false;
             testBtn.setText('测试连接');
             testBtn.removeClass('rl-btn-loading');
+            // 🔴 #589：手动测试的结论**记进同一个结果表** —— 徽标（含刚被打开的「已失效」）据此同步刷新。
+            this.plugin.setCredentialStatus(sourceCheckKey(meta.id), res.ok);
+            refreshBadge();
             resultEl.setText(`${res.ok ? '✓ ' : '✗ '}${res.message} · ${res.elapsedMs}ms`);
             // 反馈配色（用户 2026-09-14 裁定）：失败才红，成功一律绿 —— 不再区分「偏慢」档
             resultEl.toggleClass('rl-key-result-ok', res.ok);
@@ -2106,7 +2273,11 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         for (const page of SETTING_NAV_PAGES) {
             const el = content.createDiv({
                 cls: 'rl-set-page',
-                attr: { id: pageDomId(page.id), role: 'tabpanel', 'aria-labelledby': tabDomId(page.id) },
+                // 🔴 #541：`data-page` 是「基本设置页分组卡片化」的**唯一选择器锚**
+                //    （`.rl-set-page[data-page="basic"] .rl-svc-group`）。
+                //    ⚠️ 刻意不用 id 选择器（`#rl-set-page-basic`）—— id 权重 (1,0,0) 会盖过所有类规则，
+                //      以后想再细化某一组就得一路加 id，本仓没有这个先例。
+                attr: { id: pageDomId(page.id), 'data-page': page.id, role: 'tabpanel', 'aria-labelledby': tabDomId(page.id) },
             });
             const body = el.createDiv({ cls: 'rl-set-page-body' });
             this.renderPage(page.id, body);
@@ -2134,7 +2305,9 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
-     * 「基本设置」页（#354 合并三页）：**4 组 / 8 行**。
+     * 「基本设置」页（#354 合并三页）：**4 组 / 17 行**。
+     *   ⚠️ 行数：#399 时点 2/3/3/2 → #425 数据与备份 +1 → **#541 外观与体验 +4**（导航布局 / 起始页 /
+     *      卡片风格 / 界面动效）⇒ 现为 **8 / 3 / 4 / 2**。
      *
      * 🔴 分组是用户可见的层级，顺序即下表（用户 2026-09-21 要求「为基本设置页面设计合理的内部排版
      *    （建议按外观偏好、数据清理等小标题分组）」）：
@@ -2146,20 +2319,37 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *    —— 免得读者以为"顺手优化"了什么。
      */
     private renderBasicPage(parent: HTMLElement): void {
-        this.createGroupSection(parent, '外观与体验', (body) => this.renderAppearanceRows(body));
+        // 🔴 #553：三组传 `true` ⇒ 借**核心原生**的分组结构（`.setting-group` + `.setting-items`）。
+        //    本页是唯一"组内没有自己的卡片"的一页 ⇒ 只有它适合直接套核心那套（另两页会卡中卡）。
+        this.createGroupSection(parent, '外观与体验', (body) => this.renderAppearanceRows(body), true);
         // 🔴 #490（用户 2026-10-02）：本组标题下那句风险提示**已按用户要求删除** ——
-        //    #477 加的那个可选第 4 参**连同参数一起删除**（只有一个使用者 = 死码）。
+        //    当时那个可选第 4 参（组级说明）**连同参数一起删除**（只有一个使用者 = 死码）。
         //    ⛔ 别再往回加；⚠️ 注释里刻意不抄那句原文（注释进产物，抄了会撞红自己的反向守卫）。
-        this.createGroupSection(parent, '实验性功能', (body) => this.renderExperimentalRows(body));
-        this.createGroupSection(parent, '数据与备份', (body) => this.renderDataBackupRows(body));
-        this.createGroupSection(parent, '封面与清理', (body) => this.renderPosterCleanupRows(body));
+        //    ⚠️ 现在这个第 4 参是**另一个用途**（`nativeGroup`，见 `createGroupSection`），别跟当年那个混。
+        //
+        // 🔴🔴 #567（用户 2026-10-08）：「目前是这样的**一个卡片**里的，**分开**」。这一组**不传** `true`：
+        //    核心给「**裸** `.setting-item`」的规则**本身就是一张卡**（真实 `app.css`：
+        //    `.setting-item { background-color: var(--setting-items-background); border: …;
+        //     border-radius: var(--setting-items-radius); padding: var(--size-4-4);
+        //     margin-bottom: var(--size-4-2) }`），而套进 `.setting-group` 后它反被压成
+        //    「组内平铺、无边框、只有发丝分隔线」（`.setting-group .setting-item:not(.setting-item-heading)`
+        //    那条 —— #553 借的就是这个形态）。
+        //    ⇒ **不套 = 三项各自一张卡 + 项间 8px 留缝**，正是用户要的「分开」，而且**零手写卡片样式**
+        //      （⛔ 别再去写一套卡片：那就是 #541 手写分组卡 → #551 手写压制那条老账的第三次）。
+        //    ⚠️ **组标题仍在**（`.rl-svc-group-title`），只是它后面不再跟着那张大卡。
+        //    ⚠️ 本组是**唯一**不套原生卡的一组（另三组的成员是普通设置行，套上才对）。
+        this.createGroupSection(parent, '实验性功能', (body) => this.renderExperimentalRows(body), false);
+        this.createGroupSection(parent, '数据与备份', (body) => this.renderDataBackupRows(body), true);
+        this.createGroupSection(parent, '封面与清理', (body) => this.renderPosterCleanupRows(body), true);
     }
 
     /**
-     * 「基本设置」页 · 第 1 组「外观与体验」（4 行）。
+     * 「基本设置」页 · 第 1 组「外观与体验」（8 行）。
      *
-     * 🔴 **子项顺序由用户点名（#411）**：「笔记表格 - 隐藏插件内滚动条 - 歌词逐字高亮 - 海报密度」。
-     *    ⛔ 别按「谁先做的」排 —— 断言按本组函数体里 `setName` 的**出现顺序**钉住。
+     * 🔴🔴 **子项顺序（#596 用户点名重排，2026-10-10）**：导航布局 → 起始页 → 卡片风格 → 界面动效 →
+     *    海报密度 → Ctrl + 滚轮缩放 → 隐藏插件内滚动条 → 笔记表格。
+     *    ⚠️ 本次把「卡片风格 / 界面动效」提到多档设置的中段、把两处二元开关与「笔记表格」压到组尾
+     *    （⛔ 别按「谁先做的」排 —— 断言按本组函数体里 `setName` 的**出现顺序**逐项钉住）。
      *
      * 🔴🔴 **#477 设置页描述总口径（设置页 17 条 `setDesc` 一体适用；#476 立、#477 收紧措辞）**：
      *    #476（用户 2026-10-02）立了「**用途式 + 每条 ≤ 15 字**」，这两条硬约束**本批沿用不变**；
@@ -2183,53 +2373,110 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      */
     private renderAppearanceRows(parent: HTMLDivElement): void {
         // 界面主题切换入口已删（1.0.3 全面 modern）：onload 强制 settings.uiTheme = "modern"。
+        //
+        // 🔴 #561（用户 2026-10-08：「把外观与体验下重构返回为**原生的开关项式和下拉框式**、
+        //    标准布局（左文右控），如果副标题描述很长，文字换行时，开关应该依然保持在行的最右侧」）：
+        //    本组控件**改回原生** —— 多档的走 `.addDropdown`、布尔的走 `.addToggle`。
+        //    ⛔ 别再把那套「卡片式勾选」加回来（它的渲染方法 / 常量 / 样式类已随本批**整体删除**，
+        //       本仓「死码不留」）—— 那三处引用点（本组 7 行）现在全是原生控件。
+        //    ⚠️ 「左文右控 + 描述换行时控件仍贴最右」由 styles.css 的 `.rl-appearance-rows` 三条兜住
+        //       （核心 `.setting-item` 本来就是 flex，但 `setting-item-info` 缺 `min-width: 0` 时
+        //        长描述会把控件挤出容器；三条一起写才稳）。
+        //  🔴🔴 #596 / #597（用户 2026-10-10 两条口径，后者顶掉前者那半）：
+        //    本组控件形态按「值的性质」分两类 ——
+        //      · **二元开关**（开 / 关）= `noteTable` / `hideScrollbars` / `ctrlWheelZoom` 三处 ⇒
+        //        **原生滑动开关 `.addToggle`**（#596 先做成胶囊按钮组，**#597 用户改口**：
+        //        「把这三处的文字分段控件改成滑动开关」⇒ 那套分段控制器的**渲染方法 / 文案常量 / 样式类**
+        //        已随本批**整体删除**，本仓「死码不留」；⛔ 别再加回来）；
+        //        三处**缺省一律关闭**（口径由 #596 立，本批不动）。
+        //      · **多档选择**（≥2 档且互不包含）= 导航布局 / 起始页 / 卡片风格 / 界面动效 / 海报密度 五处 ⇒
+        //        **原生下拉框**（`.addDropdown`）。
+        //    ⛔ 别把那套「卡片式勾选」（#546）加回来 —— 它的渲染方法与样式类早已整体删除。
+        //    ⚠️ 「左文右控 + 描述换行时控件仍贴最右」由 styles.css 的 `.rl-appearance-rows` 三条兜住
+        //       （核心 `.setting-item` 本来就是 flex，但 `setting-item-info` 缺 `min-width: 0` 时
+        //        长描述会把控件挤出容器；三条一起写才稳）。
+        //    🔴 **行序（8 行，见方法上方那条）**：导航布局 → 起始页 → 卡片风格 → 界面动效 → 海报密度 →
+        //       **Ctrl + 滚轮缩放** → 隐藏插件内滚动条 → 笔记表格。
+        //       ⚠️ 既有断言按 `setName` 的出现顺序钉着，⛔ 别顺手调。
+        //       🔴 #574：原第 5 项「歌词逐字高亮」已**搬去「实验性功能 › 启用内置音乐播放器」折叠分组**
+        //       （用户：「将『歌词逐字高亮』、『启用在线曲库』移入【启用内置音乐播放器】折叠分组下」）。
+        //    🔴 选项与文案仍**全部来自 pure 模块**（`NAV_LAYOUT_LABELS` / `homeTabLabel` /
+        //       `POSTER_DENSITY_LABELS` / `CARD_STYLE_LABELS` / `MOTION_MODE_LABELS`），
+        //       ⛔ 不在这里手写第二份。
+        //    🔴 #477 描述四原则（准确 / 简洁 / 专业 / 一致 + ≤15 字）继续适用，本批把长描述**再收一档**
+        //       （去掉「设置…」这类引言，直接说这一项管什么）。
 
-        // ── ① 笔记表格（用户 2026-09-18 建立；🔴 2026-09-28 #403 **从「数据与备份」搬到本组**，
-        //    #411 又按用户点名排到本组**首位**）──
-        //  它管的是**笔记正文长什么样**（那张「| 属性 | 内容 |」表写不写），与「外观与体验」同类。
-        //  ⛔ 别搬回去（断言按分组函数体钉位置）。
-        //  #477：位置口径按**事实**写「笔记顶部」—— `data/noteGenerator.generateNoteMarkdown` 的顺序 =
-        //    顶部块（标题 + 封面 callout）→ **属性表格** → 歌词 → 评语 → 链接（⛔ 别写「底部」）。
+        // 标记本组：控件列贴最右 + 描述换行不挤控件（见 styles.css `.rl-appearance-rows`）
+        parent.addClass('rl-appearance-rows');
+
+        // ── ① 导航布局（🔴 #541 新增，2026-10-07）──
+        //  决定**主视图一级导航排在哪**；这是**结构分支**（改完必须 `syncNavLayout()` 即时重推，
+        //  ⛔ 不能只落盘「等下次刷新」—— 用户当场看不到变化就会当成「点了没反应」）。
+        //  🔴 #596（用户 2026-10-10）：**由分段控制器改回下拉框式**（用户点名「改回下拉框式」）。
+        //    选项与文案仍**一律取自 `pure/navLayout`**，⛔ 不在这里手写第二份。
         new Setting(parent)
-            .setName('笔记表格')
-            .setDesc('在笔记顶部插入属性表')
-            .addToggle((t) =>
-                t.setValue(this.plugin.settings.noteTable !== false).onChange(async (value) => {
-                    this.plugin.settings.noteTable = value;
+            .setName('导航布局').setDesc('主导航的排列方式')
+            .addDropdown((d) => {
+                for (const k of NAV_LAYOUTS) d.addOption(k, NAV_LAYOUT_LABELS[k]);
+                d.setValue(normalizeNavLayout(this.plugin.settings.navLayout)).onChange(async (key) => {
+                    this.plugin.settings.navLayout = normalizeNavLayout(key);
                     await this.plugin.saveSettings();
-                }),
-            );
+                    this.plugin.syncNavLayout();
+                });
+            });
 
-        // ── ② 隐藏插件内滚动条 ──
+        // ── ② 起始页（🔴 #541 新增；#596 仍是第 2 行）──
+        //  缺省 `media` = `plugin.homeTab` 的历史初值 ⇒ 不选它就跟旧版一样。
+        //  🔴 #591 起**一直保留原生下拉框**（用户：「起始页：保留原生的下拉框，因为选项较多，下拉框更合适」）；
+        //     #596 之后本组有 **5 处**下拉（本行 + 导航布局 / 卡片风格 / 界面动效 / 海报密度）。
         new Setting(parent)
-            .setName('隐藏插件内滚动条')
-            .setDesc('隐藏插件界面的滚动条')
-            .addToggle((t) =>
-                t.setValue(this.plugin.settings.hideScrollbars).onChange(async (value) => {
-                    this.plugin.settings.hideScrollbars = value;
+            .setName('起始页').setDesc('打开主视图时的默认页签')
+            .addDropdown((d) => {
+                for (const t of HOME_TAB_ORDER) d.addOption(t, homeTabLabel(t));
+                d.setValue(normalizeStartTab(this.plugin.settings.startTab)).onChange(async (key) => {
+                    this.plugin.settings.startTab = normalizeStartTab(key);
                     await this.plugin.saveSettings();
-                }),
-            );
+                    this.plugin.syncStartTab();
+                });
+            });
 
-        // ── ③ 歌词逐字高亮（#406 用户：「歌词滚动效果需支持逐字高亮（按时间均分）方式，
-        //    请在设置页-外观与体验中新增该效果的开关项」）──
-        //  🔴 只影响**内置音频播放器**里那一列歌词：当前行按字逐个点亮（`.rl-ap-lyr-w.is-on`）。
-        //    时间从哪来：LRC 自带 `<mm:ss.xx>` 就用精确值，没有则由 `pure/lrc.parseLrc` 按
-        //    「到下一行」**均分** ⇒ 用户说的「按时间均分」正是这条兜底。
-        //  ⚠️ 读取口径 `!== false`（缺省开）；真源 `pure/lrc.wordIndexAt`（⛔ 视图层别自己写二分）。
+        // ── ③ 卡片风格（🔴 #541 新增；#596 由组尾递补到第 3 行）──
+        //  只作用于**封面卡片**（`.rl-card` 的圆角与悬停阴影），⛔ 不动别的卡的通用圆角令牌。
+        //  🔴 实现 = 挂 body 类覆写形态令牌（`pure/appearance.CARD_STYLE_CLASS`），
+        //      样式在 styles.css 里必须排在 `.rl-theme-modern` **之后**才生效（同特异性靠顺序）。
+        //  🔴 #596：分段控制器 → **下拉框**；选项与文案取自 `pure/appearance` 的标签表。
         new Setting(parent)
-            .setName('歌词逐字高亮')
-            .setDesc('歌词按字逐一高亮显示')
-            .addToggle((t) =>
-                t.setValue(this.plugin.settings.lyricsWordHighlight !== false).onChange(async (value) => {
-                    this.plugin.settings.lyricsWordHighlight = value;
+            .setName('卡片风格').setDesc('封面卡片的圆角与阴影')
+            .addDropdown((d) => {
+                for (const k of CARD_STYLES) d.addOption(k, CARD_STYLE_LABELS[k]);
+                d.setValue(normalizeCardStyle(this.plugin.settings.cardStyle)).onChange(async (key) => {
+                    this.plugin.settings.cardStyle = normalizeCardStyle(key);
                     await this.plugin.saveSettings();
-                }),
-            );
+                    this.plugin.applyAppearance();
+                });
+            });
 
-        // ── ④ 海报密度（用户 2026-09-22）──
+        // ── ④ 界面动效（🔴 #541 新增；#596 由组尾递补到第 4 行）──
+        // 「精简」= 过渡时长归零 + 悬停不上浮不放大（走 `--rl-t-dur*` / `--rl-t-lift` / `--rl-t-scale`）。
+        //  ⚠️ 它管的是**令牌驱动**的那批动效；少数组件内的硬编码过渡不在其内 —— 那是刻意的：
+        //     一刀切 `transition: none !important` 会连「加载中」这类**功能性**反馈一起杀掉。
+        //  🔴 #596：分段控制器 → **下拉框**；两档文案仍取 `pure/appearance` 的 `MOTION_MODE_LABELS`
+        //     （完整 / 精简）—— 用「开启 / 关闭」描述一个**档位**不够准确（关掉的是过渡与位移，不是这项功能）。
+        new Setting(parent)
+            .setName('界面动效').setDesc('界面过渡与缩放动画')
+            .addDropdown((d) => {
+                for (const k of MOTION_MODES) d.addOption(k, MOTION_MODE_LABELS[k]);
+                d.setValue(normalizeMotionMode(this.plugin.settings.motionMode)).onChange(async (key) => {
+                    this.plugin.settings.motionMode = normalizeMotionMode(key);
+                    await this.plugin.saveSettings();
+                    this.plugin.applyAppearance();
+                });
+            });
+
+        // ── ⑤ 海报密度（用户 2026-09-22；#596 排到第 5 行）──
         // 三档 = 最小卡片宽度（紧凑 150 / 标准 180（历史值）/ 宽松 220），列数仍由容器宽度决定；
         // 「自定义列数」= 目标列数 + 最小卡片宽度保护（容器窄了自动减列）。纯逻辑见 pure/posterGrid。
+        // 🔴 #596：分段控制器 → **下拉框**（用户点名）；「自定义列数」仍是其中一档，选中它才显出数字框。
         let colsInputEl: HTMLInputElement | null = null;
         let colsUnitEl: HTMLElement | null = null;
         const syncColsVisible = () => {
@@ -2238,21 +2485,19 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             if (colsInputEl) colsInputEl.style.display = display;
             if (colsUnitEl) colsUnitEl.style.display = display;
         };
-        new Setting(parent)
+        const densityRow = new Setting(parent)
             .setName('海报密度')
-            // #477：原「调整海报墙每行卡片数」= 复述标题（用户：「描述和标题意思重复」）⇒ 改为说**密度**本身。
-            //   ⛔ 不加「（当前为紧凑）」—— 旁边的下拉框本来就显示当前档位，那句会把关键信息挤掉且推满 15 字。
-            .setDesc('设置海报墙每行卡片密度')
-            .addDropdown((d) => {
-                for (const key of POSTER_DENSITIES) d.addOption(key, POSTER_DENSITY_LABELS[key]);
-                d.setValue(normalizePosterDensity(this.plugin.settings.posterDensity)).onChange(async (value) => {
-                    this.plugin.settings.posterDensity = normalizePosterDensity(value);
-                    await this.plugin.saveSettings();
-                    syncColsVisible();
-                    this.plugin.syncPosterGrid();
-                });
-            })
-            .addText((t) => {
+            .setDesc('海报墙每行卡片密度');
+        densityRow.addDropdown((d) => {
+            for (const key of POSTER_DENSITIES) d.addOption(key, POSTER_DENSITY_LABELS[key]);
+            d.setValue(normalizePosterDensity(this.plugin.settings.posterDensity)).onChange(async (value) => {
+                this.plugin.settings.posterDensity = normalizePosterDensity(value);
+                await this.plugin.saveSettings();
+                syncColsVisible();
+                this.plugin.syncPosterGrid();
+            });
+        });
+        densityRow.addText((t) => {
                 colsInputEl = t.inputEl;
                 t.inputEl.type = 'number';
                 t.inputEl.min = String(POSTER_COLUMNS_MIN);
@@ -2277,6 +2522,55 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 });
                 syncColsVisible();
             });
+
+        // ── ⑥ Ctrl + 滚轮缩放（🔴 #591 新增）──
+        //  在**媒体库视图**（海报墙 / 瀑布流）里按住 Ctrl 滚滚轮 = 放大 / 缩小内容区卡片：
+        //  拦截系统默认缩放、步进列数并落成 `posterColumns` + `posterDensity = 'custom'`
+        //  ⇒ 「海报密度」那一行**自动显示为「自定义列数」**（两者并存：下拉是预设、滚轮是微调）。
+        //  🔴 **缺省关**（`!!settings.ctrlWheelZoom`）：它要接管一个系统级手势，⛔ 不默认改所有人的行为。
+        //  🔴🔴 #597（用户 2026-10-10）：「把 Ctrl + 滚轮缩放、隐藏插件内滚动条、笔记表格的文字分段控件
+        //     改成**滑动开关**」⇒ 这三处由「胶囊按钮组」改回**原生 `.addToggle`**。
+        new Setting(parent)
+            .setName('Ctrl + 滚轮缩放')
+            .setDesc('按住 Ctrl 滚轮缩放卡片')
+            .addToggle((t) =>
+                t.setValue(!!this.plugin.settings.ctrlWheelZoom).onChange(async (value) => {
+                    this.plugin.settings.ctrlWheelZoom = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.syncPosterGrid();
+                }),
+            );
+
+        // ── ⑦ 隐藏插件内滚动条（#596 由第 4 行挪到第 7 行）──
+        //  🔴 #597：**原生滑动开关**（#591 分段控制器 → #596 胶囊按钮组 → 本批定形为 `.addToggle`）。
+        //     🔴 **默认关闭**（用户 #596 点名）⇒ 缺省值 `hideScrollbars: false` 不动。
+        new Setting(parent)
+            .setName('隐藏插件内滚动条')
+            .setDesc('隐藏插件界面滚动条')
+            .addToggle((t) =>
+                t.setValue(!!this.plugin.settings.hideScrollbars).onChange(async (value) => {
+                    this.plugin.settings.hideScrollbars = value;
+                    await this.plugin.saveSettings();
+                }),
+            );
+
+        // ── ⑧ 笔记表格（#403 从「数据与备份」搬来；#411 进本组；#596 排到组尾）──
+        //  管的是**笔记正文长什么样**（那张「| 属性 | 内容 |」表写不写），与「外观与体验」同类。
+        //  #477：位置口径按**事实**写「笔记顶部」（`generateNoteMarkdown` 顺序 = 顶部块 → 属性表格 → …）。
+        //  🔴🔴 #596（用户 2026-10-10）：「笔记表格」与另两处二元开关一起**默认关闭** ——
+        //    读取口径由 `!== false`（缺省开）**翻面**成 `=== true`（缺省关；旧数据无此键 ⇒ 关）。
+        //    ⚠️ **两处必须一起翻**（这里 + `main.ts` 构造 `EntryService` 那一句），漏一处就会出现
+        //       「设置里显示关闭、生成的笔记里却仍有属性表」。⛔ 别再退回 `!== false`。
+        //  ⚠️ 存储仍是同一个布尔 `noteTable`（⛔ 没有新字段、⛔ 不做数据迁移）。
+        new Setting(parent)
+            .setName('笔记表格')
+            .setDesc('在笔记顶部插入属性表')
+            .addToggle((t) =>
+                t.setValue(this.plugin.settings.noteTable === true).onChange(async (value) => {
+                    this.plugin.settings.noteTable = value;
+                    await this.plugin.saveSettings();
+                }),
+            );
     }
 
     /**
@@ -2291,39 +2585,336 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *    ⛔ 也别退回无主语的纯动词短语（三条必须同形）。
      */
     private renderExperimentalRows(parent: HTMLDivElement): void {
-        new Setting(parent)
+        // 🔴 #562（用户 2026-10-08）：「采用**可折叠的分组**设计，将每个设置项收起为摘要行，点击后展开详情」
+        //    —— 三枚「启用内置…」各自变成一整行摘要（**左侧名称 / 右侧开关 + 箭头**），
+        //    它管的那批**分类目录**收进子面板。⛔ 开关与展开是两个独立动作（见 `makeCollapsible`）。
+        //    ⚠️ 三行的 `setName` **必须仍在本方法体内**（#399 钉了「恰 3 条、顺序 阅读→视频→音乐」），
+        //      所以折叠装饰走 `makeCollapsible(setting, …)`，⛔ 别把标题挪进助手函数的参数里。
+        //
+        // 🔴 #567：本组**不套核心原生分组卡**（见 `renderBasicPage` 那条注释）⇒ 三行各自是一张
+        //    「裸 `.setting-item`」= 一张卡。标记本组容器只为**把项间留缝钉成一条**：
+        //    核心给卡的是 `margin-bottom: var(--size-4-2)`（8px），而组容器自带 `gap: 6px`
+        //    ⇒ 两者会叠成 14px 且与其它组不一致 ⇒ 这里统一成「gap 8px + 行 margin 0」。
+        // 🔴 #574（用户 2026-10-08）：**#567 的「三项各自成卡」改写为「无缝列表组」** ——
+        //    「由独立卡片式改为无缝列表组。去掉投影和较大圆角，改为底部分割线（如 iOS 设置列表）」。
+        //    ⇒ 容器 `.rl-exp-list` **自己就是那张卡**（小圆角 / 无投影 / hairline 描边），
+        //      `gap` 归 0、行拍平成透明 + `padding: 9px 14px`、行与行之间只留一条**上分割线**
+        //      （`> .rl-exp-row:not(:first-child)`，⛔ 不用 `border-bottom`：子面板会插在行与行之间，
+        //        `:last-child` 判不准）。摘要按钮上那个「框」也随之拍平（`border/padding` 归零）。
+        //    ⚠️ 于是 `.rl-exp-list` 上「gap 8px + margin 0」那条旧口径**作废**（现在 gap 0）。
+        parent.addClass('rl-exp-list');
+        const reader = new Setting(parent)
             .setName('启用内置阅读器')
-            .setDesc('启用后可在插件内阅读电子书')
-            .addToggle((t) =>
-                t.setValue(!!this.plugin.settings.internalBookReader).onChange(async (value) => {
-                    this.plugin.settings.internalBookReader = value;
-                    await this.plugin.saveSettings();
-                }),
-            );
+            .setDesc('启用后可在插件内阅读电子书');
+        this.makeCollapsible(
+            reader,
+            parent,
+            !!this.plugin.settings.internalBookReader,
+            async (value) => {
+                this.plugin.settings.internalBookReader = value;
+                await this.plugin.saveSettings();
+            },
+            (panel) => {
+                for (const k of LOCAL_DIR_GROUPS.reader) this.createLocalDirRow(panel, k);
+                this.createWereadShelfRow(panel);
+            },
+        );
 
-        new Setting(parent)
+        const video = new Setting(parent)
             .setName('启用内置视频播放器')
             // #477：用户「『影视』用词偏娱乐化，『视频文件』更标准」⇒ 改标准词
-            .setDesc('启用后播放本地视频文件')
-            .addToggle((t) =>
-                t.setValue(!!this.plugin.settings.internalMediaPlayback).onChange(async (value) => {
-                    this.plugin.settings.internalMediaPlayback = value;
-                    await this.plugin.saveSettings();
-                }),
-            );
+            .setDesc('启用后播放本地视频文件');
+        this.makeCollapsible(
+            video,
+            parent,
+            !!this.plugin.settings.internalMediaPlayback,
+            async (value) => {
+                this.plugin.settings.internalMediaPlayback = value;
+                await this.plugin.saveSettings();
+            },
+            (panel) => {
+                for (const k of LOCAL_DIR_GROUPS.video) this.createLocalDirRow(panel, k);
+                // 🔴 #605（用户 2026-10-11）：「把播放设置弹窗里的『后台播放』移到 设置页 › 内置播放器
+                //    折叠分组下」—— 它是**全局设置**，不该占播放器快捷面板。样式保持「标题 + 副标题 + 开关」。
+                //    ⚠️ 与前两个目录行同为**折叠面板内**的行（`panel`，⛔ 不是组容器）。
+                //    ⚠️ 仍**单独一个方法**：本方法体内 `setName` 被 #399 钉成**恰 3 条**（阅读→视频→音乐），
+                //      塞进来会当场撞红那条判据（#562/#574 同款理由）。
+                this.renderBgPlayRow(panel);
+            },
+        );
 
         // ④-4 音频播放器 + ⑤-c 歌曲下载的**唯一门控**（#399 起）：笔记里的 ` ```lrc ` 块是否就地渲染成播放器，
         // 以及音乐编辑表单是否给「下载」按钮 —— 两件事共用一个开关，⛔ 别再拆回两个。
         // 🔴 默认关（D-8(c)）：LyricFlux 注册了同名块处理器，两插件同时开会打架；
         //    且默认关能保证「升级后笔记外观不变」。开启后若检测到 LyricFlux 仍启用，本插件依然让位。
-        new Setting(parent)
+        const music = new Setting(parent)
             .setName('启用内置音乐播放器')
             // #477：用户「『笔记里』表达不准确（播放器可能是全局的）」⇒ 去掉地点限定，只说能力。
             //   ⚠️ 「下载」这半个功能必须留着（门控的另一半 = 音乐表单的「下载」按钮），只是不再写「下载到哪」。
-            .setDesc('启用后支持播放与下载音频')
+            .setDesc('启用后支持播放与下载音频');
+        this.makeCollapsible(
+            music,
+            parent,
+            !!this.plugin.settings.audioInlinePlayer,
+            async (value) => {
+                this.plugin.settings.audioInlinePlayer = value;
+                await this.plugin.saveSettings();
+            },
+            (panel) => {
+                // 🔴 #562：**「音频文件目录」整行从「数据与备份」搬到这里**（用户：「把音乐路径目录放在
+                //    启用内置音乐播放器折叠分组下」）。⛔ 不是新建一个「音乐目录」设置 —— 它就是同一个
+                //    `musicDownloadDir`，只是换了个摆放位置（两份设置必然打架，见 `pure/localDirs` 模块头）。
+                //    ⚠️ 因此这里仍走 `createLibraryDirRow`（下载根口径：归一 / 校验 / 「将落到 X」提示都在它里面），
+                //      ⛔ 别改用下面那个 `createLocalDirRow`（那是「本地检索根目录」口径，不做下载根归一）。
+                this.createLibraryDirRow(
+                    panel,
+                    '音频文件目录',
+                    '音频下载的存放与检索目录',
+                    () => this.plugin.settings.musicDownloadDir,
+                    async (next) => {
+                        this.plugin.settings.musicDownloadDir = next;
+                        await this.plugin.saveSettings();
+                    },
+                    'dl',
+                    'music',
+                );
+                // 🔴 #574（用户 2026-10-08）：「将『歌词逐字高亮』、『启用在线曲库』移入
+                //    【启用内置音乐播放器】折叠分组下」—— 两项都只作用于**音乐那一面**
+                //    （逐字高亮 = 内置音频播放器的歌词栏；在线曲库 = 音乐检索要不要打四个平台），
+                //    放进这个能力开关下才读得通。
+                //    ⚠️ 两者各自**单独一个方法**：本方法体内 `setName` 被 #399 钉成**恰 3 条**
+                //       （阅读 → 视频 → 音乐），塞进来会当场撞红那条判据（#562 同款理由）。
+                //    ⚠️ ⛔ 别再在「外观与体验」组里留一份 —— 同一个设置字段只许一个输入框/开关。
+                this.renderLyricsWordRow(panel);
+                this.renderSongLibraryRow(panel);
+            },
+        );
+    }
+
+    /**
+     * #562 把一行设置**变成可折叠分组的摘要行**（用户 2026-10-08 参考 obsidian-agent-client 的设计）；
+     * **#564 按参考实现重写内核**（`renderCollapsibleAgentSection`，本地参考仓库 `obsidian-agent-client-master`）。
+     *
+     * 🔴 #564 改了什么、为什么（用户原话：「参考 …代码**再实现**设置页可折叠分组」）：
+     *    旧版把展开判定挂在**整行**上，再用「点在核心开关宿主里就提前 return」把开关那一下排除掉。
+     *    参考实现的做法更硬：**摘要行 = 一个真实 `<button>`**（里面是名称 + 说明两个 span），
+     *    **开关是它的兄弟节点**（在 `controlEl` 里，不在按钮内部）——
+     *      ⑴ 键盘可用：Tab 能聚焦、Enter / Space 展开（旧版挂在 `div` 上，键盘用户压根碰不到）；
+     *      ⑵ `aria-expanded` / `aria-controls` 落在**按钮**上，语义正确；
+     *      ⑶ **开关的点击根本到不了展开处理器**（两个不同子树）⇒ 那条「排除开关」的守卫可以**整条删掉**。
+     *    ⚠️ 参考代码的原话：交互内容不能嵌在 `button` 里（内容模型不合法），而作为**兄弟**时它的点击
+     *    传不到折叠处理器 —— 这正是旧版那条守卫在手动模拟的事，现在由**结构本身**保证（守卫是补丁，结构是解药）。
+     * 🔴 #565（用户上手截图 ③「设置页组可折叠项要这个界面效果」）：**箭头从「control 里的第二枚按钮」
+     *    改成摘要按钮内部的尾随 `span`** —— 参考实现里这一行**本身就是一个带边框的框**（像一枚输入框），
+     *    箭头在框的**右缘内侧**、开关挂在框的**外面**。这样改还顺带少一个按钮：
+     *    点箭头冒泡到同一个处理器，⛔ 不再有两份 `aria-expanded` 要同步。
+     * 🔴 展开态存 `expandedGroups`（实例字段）⇒ 整页重建后仍在；缺省收起。
+     * 🔴 箭头用 `chevron-right` + CSS **旋转**（参考实现同样是 `rotate(90deg)` + 过渡）；
+     *    ⛔ 不换图标名 —— 换名会让「旋转」变成瞬间替换、看着像闪一下。
+     *
+     * 🔴🔴 #567（用户 2026-10-08 第三次改这一块）三条一起落：
+     *    ⑴ **说明（小标题）整体去掉**（用户原话：「把小标题去掉不要了，如『启用后播放本地视频文件』」）
+     *       ⇒ 摘要框里只剩**名称**一个 span。⚠️ 核心那两个节点仍要**移除**（`descEl.remove()`）——
+     *          留着它，核心会把它按自己的排版再画一遍（位置还不受我们控制）。
+     *       ⇒ `.rl-exp-text` 这一层**保留**（框内左列容器，`space-between` 的两列布局靠它），
+     *          只是列内现在只有一行字；⛔ 别为了少一层而把名称直接挂到按钮上（旧锚会漂、也不省事）。
+     *    ⑵ 🔴 **`aria-label` 撤掉**（本条是顺手修的真 bug）：它和 `data-tip` 挂在**同一个元素**上 ⇒
+     *       Obsidian 对带 `aria-label` 的悬停目标**自绘官方气泡**，与插件那条 `data-tip` **叠成两层**
+     *       （UI-GUIDE §3 v3 明令：「`aria-label` 不放在带 `data-tip` 的元素或祖先链上」；
+     *        同族踩过：`.rl-ro-meta`（#501）、EntryForm 那 13 处）。
+     *       ⚠️ 读屏名**不受影响**：按钮里本来就有可见文字（名称），它天然就是可访问名。
+     *    ⑶ 摘要框的白底由 styles.css 那条**两级选择器**兜住（核心 `button:not(.clickable-icon)` 的灰底
+     *       是 (0,1,1)，单类压不过 —— 见 styles.css 里 `.rl-exp-row .rl-exp-head` 那段）。
+     * ⚠️ 名称的文本从核心的 `.setting-item-name` **搬进**按钮，核心那个节点随后被替换掉
+     *    （外观由 `.rl-exp-name` 接管，⛔ 别两套都留着）。
+     */
+    private makeCollapsible(
+        setting: Setting,
+        parent: HTMLElement,
+        on: boolean,
+        onToggle: (value: boolean) => Promise<void>,
+        renderPanel: (panel: HTMLDivElement) => void,
+    ): void {
+        const key = setting.nameEl.textContent ?? '';
+        setting.settingEl.addClass('rl-exp-row');
+        setting.addToggle((t) => t.setValue(on).onChange((value) => void onToggle(value)));
+
+        // 面板先建 —— 按钮的 `aria-controls` 要指向它（id 由标题派生，稳定，重建后不变）
+        const panelId = `rl-exp-panel-${key.replace(/[^\w\u4e00-\u9fa5-]+/g, '-')}`;
+        const panel = parent.createDiv({ cls: 'rl-exp-panel' });
+        panel.id = panelId;
+        renderPanel(panel);
+
+        // 摘要 = **一个框**（真实 <button>）：框内左「名称」、框内右「箭头」；开关在**框外**
+        //  🔴 #565（用户上手截图 ③）：参考实现里这一行**本身是个带边框的框**（像一枚输入框），
+        //     箭头在框的**右缘内侧**，开关挂在框的**外面**（右侧）。
+        //     ⇒ 箭头从「control 里的第二枚按钮」改成**摘要按钮内部的尾随 span**：
+        //       ⑴ 视觉与参考一致（箭头在框内右端，`justify-content: space-between` 顶到最右）；
+        //       ⑵ 少一个按钮 —— 点箭头冒泡到同一个处理器，⛔ 不再有两份 aria-expanded 要同步。
+        //  🔴 #567：说明那行**整体去掉**（用户：「把小标题去掉不要了」）⇒ 框内只剩名称；
+        //     同时撤掉 `aria-label`（与 `data-tip` 同元素 = Obsidian 官方气泡 + 自绘气泡叠两层，
+        //     见本方法顶部注释 ⑵）。按钮里的可见名称本身就是可访问名。
+        const head = document.createElement('button');
+        head.addClass('rl-exp-head');
+        head.type = 'button';
+        head.setAttribute('aria-expanded', 'false');
+        head.setAttribute('aria-controls', panelId);
+        head.setAttribute('data-tip', '展开/收起');
+        const text = head.createSpan({ cls: 'rl-exp-text' });
+        text.createSpan({ cls: 'rl-exp-name', text: key });
+        const chev = head.createSpan({ cls: 'rl-exp-chev' });
+        safeSetIcon(chev, 'chevron-right');
+        setting.nameEl.replaceWith(head);
+        setting.descEl.remove();
+
+        const sync = (): void => {
+            const open = this.expandedGroups.has(key);
+            panel.toggleClass('is-open', open);
+            setting.settingEl.toggleClass('is-open', open);
+            head.setAttribute('aria-expanded', open ? 'true' : 'false');
+        };
+        const flip = (): void => {
+            if (this.expandedGroups.has(key)) this.expandedGroups.delete(key);
+            else this.expandedGroups.add(key);
+            sync();
+        };
+        head.addEventListener('click', flip);
+        sync();
+    }
+
+    /**
+     * #562 「分类本地目录」一行（**本地检索根目录**口径，与 `createLibraryDirRow` 的**下载根**口径不同）。
+     *
+     * 🔴 为什么另起一个工厂而不是复用 `createLibraryDirRow`：
+     *    那个走 `pure/downloadPlan` 的「下载根」归一（缺省兜底 `下载/音乐`、把「下载」补成类型子目录），
+     *    而本地目录**允许留空**（= 未配置 ⇒ 让「单集本地检索」提示去配置），且**允许绝对路径**
+     *    （媒体常放在 vault 之外，拼库内相对路径会得到一个扫描不到的位置）。
+     * ⚠️ 音乐那一档**不走这里**（它是同一个 `musicDownloadDir`，仍走下载根口径那条，见调用点）。
+     * 提交时机与其它目录项一致：**失焦 / 回车**（⛔ 别改成 onChange，打字中途会连续写盘 + 连续重扫）。
+     */
+    private createLocalDirRow(parent: HTMLElement, key: LocalDirKey): void {
+        const field = LOCAL_DIR_FIELD[key];
+        const row = new Setting(parent).setName(LOCAL_DIR_LABELS[key]).setDesc('本地文件检索的根目录');
+        const hint = row.descEl.createDiv({ cls: 'rl-hint-note' });
+        const showState = (): void => {
+            const v = localDirOf(this.plugin.settings, key);
+            hint.setText(v ? `检索目录：${v}` : '未配置 — 单集本地检索不可用');
+        };
+        this.localDirSuggests.get(key)?.close();
+        this.localDirSuggests.set(key, null);
+        row.addText((text) => {
+            text.setPlaceholder('库内路径，或系统绝对路径').setValue(localDirOf(this.plugin.settings, key));
+            const commit = async (): Promise<void> => {
+                const next = text.getValue().trim();
+                (this.plugin.settings as unknown as Record<string, unknown>)[field] = next;
+                await this.plugin.saveSettings();
+                text.setValue(next); // 失焦回显去空白后的值
+                showState();
+            };
+            text.inputEl.addEventListener('blur', () => void commit());
+            text.inputEl.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    void commit();
+                }
+            });
+            const folders = folderCandidates(this.app);
+            const fromPick = (folder: TFolder): void => {
+                text.setValue(folder.path);
+                void commit();
+            };
+            const inst = attachFolderInputSuggest(this.app, text.inputEl, folders, fromPick);
+            this.localDirSuggests.set(key, inst);
+            if (!inst) {
+                row.addButton((b) =>
+                    b.setButtonText('浏览').onClick(() => {
+                        new VaultFolderSuggest(this.app, folders, fromPick).open();
+                    }),
+                );
+            }
+            showState();
+        });
+    }
+
+
+    /**
+     * #581 「从微信读书同步书架」（用户 2026-10-09 点名的落点：**基本设置 › 「启用内置阅读器」折叠组**）。
+     *
+     * 🔴 为什么放这儿而不是「元数据源凭据」里那一行：用户给的落点就是阅读器这组 —— 它的语义是
+     *    「**导入书籍**」而不是「配一个源」，与上面那三个本地目录同属一个心智；
+     *    凭据本身仍填在「元数据源配置 › 元数据源凭据 › 微信读书」（弹窗里也写了这句指路）。
+     * ⚠️ 它**不依赖阅读器开关**：面板是**常驻**的（`makeCollapsible` 只切 `.is-open` 的可见性），
+     *    ⛔ 别给它再挂一道 `internalBookReader` 门控（那会让关了阅读器的用户找不到这个入口）。
+     */
+    private createWereadShelfRow(parent: HTMLElement): void {
+        const row = new Setting(parent)
+            .setName('从微信读书同步书架')
+            .setDesc('勾选书架里的电子书导入本库');
+        row.addButton((b) => b.setButtonText('同步').onClick(() => this.plugin.openWereadShelfSync()));
+    }
+
+    /**
+     * #406 音乐「歌词逐字高亮」开关（🔴 #574 从「外观与体验」**搬进**「启用内置音乐播放器」折叠分组）。
+     *
+     * 只影响**内置音频播放器**里那一列歌词：当前行按字逐个点亮（`.rl-ap-lyr-w.is-on`）。
+     * 时间从哪来：LRC 自带 `<mm:ss.xx>` 就用精确值，没有则由 `pure/lrc.parseLrc` 按「到下一行」**均分**
+     * ⇒ 用户说的「按时间均分」正是这条兜底。
+     *
+     * ⚠️ 读取口径 `!== false`（缺省开）；真源 `pure/lrc.wordIndexAt`。⛔ 别改成 `!!` ——
+     *   旧数据里没有这个键，改成 `!!` 会让升级后歌词不再逐字高亮（等于悄悄换脸）。
+     * ⚠️ 与 `renderSongLibraryRow` 同样是**独立方法**（理由见调用点注释）。
+     */
+    private renderLyricsWordRow(parent: HTMLDivElement): void {
+        new Setting(parent)
+            .setName('歌词逐字高亮').setDesc('歌词按字逐一高亮显示')
             .addToggle((t) =>
-                t.setValue(!!this.plugin.settings.audioInlinePlayer).onChange(async (value) => {
-                    this.plugin.settings.audioInlinePlayer = value;
+                t.setValue(this.plugin.settings.lyricsWordHighlight !== false).onChange(async (v) => {
+                    this.plugin.settings.lyricsWordHighlight = v;
+                    await this.plugin.saveSettings();
+                }),
+            );
+    }
+
+    /**
+     * #605 「后台播放」开关（用户 2026-10-11：「把播放设置弹窗里的『后台播放』项移到 设置页 › 内置播放器
+     * 的折叠分组下。样式保持现在的『标题+副标题+Switch 开关』不变，因为它是全局设置，不应该占用播放器快捷面板」）。
+     *
+     * 语义：不可见（切走标签页 / 窗口最小化 / 不在视口）时**继续播放**，既不暂停、也不起「超时彻底释放」计时。
+     * 字段照旧是 append-only 的 `playerBgPlay`（⛔ 不新建键）；写入方式与其它开关同款（直接写 + saveSettings）。
+     * ⚠️ 与 `renderLyricsWordRow` / `renderSongLibraryRow` 同样是**独立方法**（理由见调用点注释）。
+     * desc 沿用播放器弹窗里那条副标题，按 #477 口径 ≤ 15 字。
+     */
+    private renderBgPlayRow(parent: HTMLDivElement): void {
+        new Setting(parent)
+            .setName('后台播放')
+            .setDesc('退出后继续播放音频')
+            .addToggle((t) =>
+                t.setValue(this.plugin.settings.playerBgPlay === true).onChange(async (value) => {
+                    this.plugin.settings.playerBgPlay = value;
+                    await this.plugin.saveSettings();
+                }),
+            );
+    }
+
+    /**
+     * #538 音乐「在线曲库」检索开关（用户 2026-10-05：「设置项可选择开启或关闭新增音乐条目『在线曲库』的搜索，
+     * **默认关闭**」）。
+     *
+     * 🔴 #574：摆放位置从「实验性功能**组尾**」改为**音乐子面板内**（用户：「将『歌词逐字高亮』、
+     *    『启用在线曲库』移入【启用内置音乐播放器】折叠分组下」）⇒ 接线处传的是 `panel` 而不是组容器。
+     * ⚠️ 仍**单独一个方法**：`renderExperimentalRows` 组内 `setName` 被既有断言钉成**恰 3 条、顺序
+     *    阅读→视频→音乐**（#399），⛔ 别把这一行并进那个方法体（会当场撞红那条判据）。
+     *
+     * 默认**关**：曲库检索要打四个平台，默认关能保证「升级后音乐检索结果与旧版一模一样」。
+     * desc 走组内统一句式「启用后…」，且 ≤ 15 字（#477）。
+     */
+    private renderSongLibraryRow(parent: HTMLDivElement): void {
+        new Setting(parent)
+            .setName('启用在线曲库检索')
+            .setDesc('启用后音乐检索含在线曲库')
+            .addToggle((t) =>
+                t.setValue(!!this.plugin.settings.musicSongLibrary).onChange(async (value) => {
+                    this.plugin.settings.musicSongLibrary = value;
                     await this.plugin.saveSettings();
                 }),
             );
@@ -2428,20 +3019,9 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //  和『书籍文件目录』（作用为下载和检索功能）」。
         //  🔴 两行**共用同一个工厂** `createLibraryDirRow` —— 校验 / 提交时机（失焦 · 回车）/ 库内
         //     自动补全三件事必须逐项一致，⛔ 别复制一份出来改（改一处忘一处是这类设置项最常见的事故）。
-        this.createLibraryDirRow(
-            parent,
-            '音频文件目录',
-            // 🔴 #476 改用途式 → #477 按用户口径微调（「『下载与检索』稍微生硬」⇒「存放与检索」）；
-            //    ⚠️ 顶掉的信息各有兜底：占位符 = 真实落点、提交后提示「将落到「X」文件夹」。
-            '音频下载的存放与检索目录',
-            () => this.plugin.settings.musicDownloadDir,
-            async (next) => {
-                this.plugin.settings.musicDownloadDir = next;
-                await this.plugin.saveSettings();
-            },
-            'dl',
-            'music',
-        );
+        // 🔴 #562：原「音频文件目录」那一行**已搬到「实验性功能 › 启用内置音乐播放器」折叠分组下**
+        //    （用户 2026-10-08：「把音乐路径目录放在启用内置音乐播放器折叠分组下」）。
+        //    ⛔ 别在本组再渲染一份 —— 同一个 `musicDownloadDir` 出现两个输入框，改哪个都只影响一半心智。
         // 🔴 #468 封禁：整个「书籍文件目录」项**不再渲染**（用户 2026-10-01：「设置页书籍文件路径也封禁掉」）。
         //    ⚠️ 字段本身照旧（`downloadDir(root,'book')` 仍读它，存量值不动、也不影响任何现存条目）——
         //    封的只是「让用户改它」这件事，⛔ 别顺手把字段也删了（schema append-only + 解禁要还原）。
@@ -2615,6 +3195,48 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     void this.plugin.openAssetCleanup();
                 }),
             );
+
+        // ③.6 失效链接检测（🔴 #531，用户 2026-10-05 指令：「把检测已填网络地址是否失效按钮放在设置页-基本设置-
+        //      封面与清理下面，功能为**全库**检索失效链接标红」）—— 原在**编辑表单**里的那枚按钮**已撤**，
+        //      改成这里一键扫全库；结果只存内存，失效的集在**编辑表单 / 集数选择弹窗**里标红（用户裁定「仅表单/弹窗」）。
+        const scanStatus = parent.createDiv({ cls: 'rl-hint' });
+        scanStatus.style.display = 'none';
+        let scanning = false;
+        new Setting(parent)
+            .setName('失效链接检测')
+            .setDesc('检测全库网络链接是否失效')
+            .addButton((b) => {
+                b.setButtonText('检测').onClick(() => {
+                    if (scanning) return;
+                    scanning = true;
+                    b.setDisabled(true);
+                    b.setButtonText('检测中…');
+                    scanStatus.style.display = '';
+                    scanStatus.setText('正在检测…（条目多时请稍候）');
+                    void this.plugin
+                        .scanLibraryLinks()
+                        .then((r) => {
+                            const tail = r.unknown ? `，另有 ${r.unknown} 条无法确认` : '';
+                            scanStatus.setText(
+                                r.entries
+                                    ? `已检测 ${r.entries} 个条目：${r.dead} 条可能已失效${tail}`
+                                    : '没有可检测的网络地址',
+                            );
+                            new Notice(
+                                r.dead ? `检测完成：${r.dead} 条可能已失效${tail}` : `检测完成：未发现失效链接${tail}`,
+                                6000,
+                            );
+                        })
+                        .catch(() => {
+                            scanStatus.setText('检测失败，请稍后再试');
+                        })
+                        .finally(() => {
+                            scanning = false;
+                            b.setDisabled(false);
+                            b.setButtonText('检测');
+                        });
+                });
+            });
     }
 
     /**
@@ -2632,7 +3254,13 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *
      * 🔴 **#492（用户 2026-10-03）**：信息卡的**第一枚按钮（一键复制环境信息）整体退场** —— 连它下面的
      *    纯函数模块、剪贴板写入端与配套单测一并删除（只有一个使用者 = 死码，本仓「死码不留」）。
-     *    ⇒ 信息卡现在只剩**两枚按钮**（问题反馈 / 更新日志）；本页仍是两块 **`.rl-about`** 卡。
+     *    ⇒ 信息卡一度只剩**两枚按钮**（问题反馈 / 更新日志）；本页仍是两块 **`.rl-about`** 卡。
+     *
+     * 🔴🔴 **#598（用户 2026-10-10）**：「把**问题反馈**按钮分成**报 Bug、提需求**两个按钮，做好调用入口」
+     *    ⇒ 信息卡现在是**三枚**：报 Bug / 提需求 / 更新日志。
+     *    ⚠️ 两枚反馈按钮的 label 与 URL 都取自 `pure/supportLinks.SUPPORT_BUTTONS`（唯一真源），
+     *      链到 `.github/ISSUE_TEMPLATE/` 下的两个 issue form（模板已排好必填项）——
+     *      ⛔ 别再退回那枚笼统的「问题反馈」（它只落到 issue 列表页，用户还得自己挑模板）。
      */
     private renderAboutPage(parent: HTMLElement): void {
         // ── ① 插件信息卡（名称 · 版本 / 简介 / 作者 · 许可证 + 两枚按钮）──
@@ -2648,10 +3276,15 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         infoText.createDiv({ cls: 'rl-about-meta', text: `作者 ${this.plugin.manifest.author} · 许可证 ${license}` });
 
         const infoBtns = info.createDiv({ cls: 'rl-about-buttons' });
-        const issueBtn = infoBtns.createEl('button', { cls: 'rl-about-btn', text: '问题反馈' });
-        issueBtn.addEventListener('click', () =>
-            window.open('https://github.com/fhb263/obsidian-reelludic/issues', '_blank'),
-        );
+        // 🔴🔴 #598（用户 2026-10-10）：「把**问题反馈**按钮分成**报 Bug、提需求**两个按钮，做好调用入口」。
+        //    原来那一枚「问题反馈」笼统指向 `/issues`（裸的 issue 列表页，用户进去还得自己挑模板）；
+        //    现在拆成两枚，各自**直达**对应的 issue form —— 模板里已把必填项排好，点进去先看到该填什么。
+        //    文案与 URL 都取自 `pure/supportLinks.SUPPORT_BUTTONS`（唯一真源）——
+        //    ⛔ 别在这里手写第二份 label / URL（本仓「同一概念只准一份」）。
+        for (const b of SUPPORT_BUTTONS) {
+            const btn = infoBtns.createEl('button', { cls: 'rl-about-btn', text: b.label });
+            btn.addEventListener('click', () => window.open(b.url, '_blank'));
+        }
         // 🔴 #491（用户 2026-10-03：「点击更新日志不跳转网页改成内置弹窗」）：原先是 `window.open(CHANGELOG.md)`
         //    ⇒ 改成在 Obsidian 里打开**内置弹窗**（正文见 `pure/releaseNotes`）。
         //    ⛔ 别再退回浏览器跳转；完整发布记录那条链在弹窗底部，由用户主动点。
@@ -2665,8 +3298,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         aboutText.createDiv({ cls: 'rl-about-desc', text: '如果 ReelLudic 对你有帮助，欢迎在 GitHub 上给个 ⭐，或通过爱发电支持一下～' });
         const aboutBtns = about.createDiv({ cls: 'rl-about-buttons' });
         const githubBtn = aboutBtns.createEl('button', { cls: 'rl-about-btn', text: 'Github' });
-        githubBtn.addEventListener('click', () => window.open('https://github.com/fhb263/obsidian-reelludic', '_blank'));
+        githubBtn.addEventListener('click', () => window.open(REPO_URL, '_blank'));
         const afdianBtn = aboutBtns.createEl('button', { cls: 'rl-about-btn rl-about-btn-accent', text: '爱发电' });
-        afdianBtn.addEventListener('click', () => window.open('https://ifdian.net/a/fhb263', '_blank'));
+        afdianBtn.addEventListener('click', () => window.open(AFDIAN_URL, '_blank'));
     }
 }

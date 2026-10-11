@@ -8,6 +8,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs';
 import { estimatePdfPercent, normalizePdfOutline, resolveFlushPos, flattenPdfOutline, chooseActivePdfIndex, type PdfOutlineItem, type ReaderPos, type FlatPdfOutlineItem } from 'pure/pdfProgress';
 import { READER_THEMES, normalizeReaderTheme, readerThemeClass, type ReaderThemeId } from 'pure/readerTheme';
+// 🔴 #603：底栏图标组里「描述行为」的悬停轻提示真源（与另外三件共用）
+import { READER_FOPS } from 'pure/readerFops';
 // #382：目录栏右缘拖宽（与 TXT/EPUB 同款共用件；#339 只写 CSS 变量 + localStorage 记忆）
 import { attachTocResizer } from 'pure/readerToc';
 // #382b：书签（PDF **只做书签** —— 高亮/摘抄依赖选区，而 PDF 选中文字没有任何反馈，用户裁定不做）
@@ -352,8 +354,10 @@ export class PdfReaderPanel {
         this.fsBtnEl = mkFop('maximize', '全屏显示', () => this.toggleFullscreen());
         // ⚠️ 这一行与 TXT/EPUB **逐字同形、且必须单行** —— 既有断言按 `mkFop("eye"` 这种**连续形态**计数；
         //    写成跨行箭头（`() =>\n  this.setImmersive(…)`）会让 esbuild 把调用拆行 ⇒ 锚点断掉、计数掉到 2（#382 实测）。
-        this.immersiveBtnEl = mkFop('eye', '沉浸模式（点空白收起）', () => this.setImmersive(!this.immersive));
-        this.autoBtnEl = mkFop('timer', '自动滚动（再点停 · 右键调速）', () => this.setAuto(!this.autoOn));
+        // 🔴 #603：提示文案改走**四件共用**的真源 `pure/readerFops`（PDF 原先写「点空白收起」、TXT/EPUB 写
+        //    「移到边缘唤出」—— 同一件事两种说法，且后者早就过期）；自动那枚 PDF 只有滚动，用 `autoScrollOnly`。
+        this.immersiveBtnEl = mkFop('eye', READER_FOPS.immersive, () => this.setImmersive(!this.immersive));
+        this.autoBtnEl = mkFop('timer', READER_FOPS.autoScrollOnly, () => this.setAuto(!this.autoOn));
         this.autoBtnEl.addEventListener('contextmenu', (ev) => this.openAutoMenu(ev));
         if (!document.fullscreenEnabled) {
             this.fsBtnEl.disabled = true;

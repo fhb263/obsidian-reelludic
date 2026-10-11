@@ -7,6 +7,13 @@ import { measure, withTimeout, TimedError, TIMEOUT_MS, retry } from 'pure/timing
 import { CLOUD_VOICE_DEFAULT, buildSpeechBody, classifySpeechError, speechEndpointUrl } from 'pure/ttsCloud';
 import { createSearchCache } from 'pure/searchCache';
 import { normalizeUiTheme, THEME_CLASS } from 'pure/themeTokens';
+import { isNumberInputTarget, parseNumberBounds, wheelStepValue } from 'pure/numberWheel';
+// #541「个性化体验」：主导航布局 / 起始页 / 卡片风格 / 界面动效（归一与 body 类名全在 pure 侧）
+import { normalizeStartTab } from 'pure/homeTabs';
+import { normalizeNavLayout } from 'pure/navLayout';
+import {
+    APPEARANCE_BODY_CLASSES, CARD_STYLE_CLASS, MOTION_CLASS, normalizeCardStyle, normalizeMotionMode,
+} from 'pure/appearance';
 import { checkAnimeUpdate, isBlockedPage, type UpdateCheckResult } from 'pure/updateCheck';
 import { EntryService } from 'services/EntryService';
 import { AiSummaryService } from 'services/aiSummary';
@@ -64,8 +71,28 @@ import { MusicDownloadModal } from 'modals/MusicDownloadModal';
 // 🔴 两者都不在 `services/dl` 里 —— 那边是**四平台音乐**（直连音频流），这边是**视频站 + 外部进程**，
 //    混进去会让「四平台」这条链路的职责说不清。
 import { dlBiliSearch, dlBiliView } from 'services/dl/bilibili';
+// #529 书籍「检索在线书籍阅读」：微信读书网页版搜索（服务层只发请求，形态在 `pure/weread`）
+// 🔴 #580：同一份服务层再供两条路 —— 「测试连接」（Cookie 打书架接口）与 **book 组元数据检索**
+//    （`searchWereadMeta` 复用同一个免登录搜索 + 同一份解析/映射）。⛔ 别为元数据源另写一份请求。
+import { searchWeread as searchWereadSvc, searchWereadMeta, testWereadAuth, fetchWereadShelf as fetchWereadShelfSvc, fetchWereadBookInfo as fetchWereadBookInfoSvc } from 'services/weread';
+import { hasWereadAuth, WEREAD_INFO_GAP_MS, type WereadBookInfo, type WereadCandidate } from 'pure/weread';
+// #589 开机凭据自检（纯逻辑在 pure；网络调用在本文件）
+import {
+    CREDENTIAL_CHECK_DELAY_MS,
+    CREDENTIAL_CHECK_GAP_MS,
+    configuredCredentialChecks,
+    musicCheckKey,
+    sourceCheckKey,
+} from 'pure/credentialCheck';
+import { partitionShelfBooks, shelfBookEntryFields, shelfExtraNote, type WereadShelfBook } from 'pure/wereadShelf';
+// 🔴 #591 Ctrl+滚轮缩放：媒体库把「缩到几列」报回来，落盘 + 重推都在宿主（视图侧不碰 settings）
+import { normalizePosterColumns, normalizePosterDensity, type PosterDensity } from 'pure/posterGrid';
+// #527/#531 剧集链接失效探测（服务层只发请求，判据在 `pure/linkStatus`）
+import { checkAllLinks } from 'services/linkCheck';
+import { collectLinkScanTargets, summarizeLinkStatus, bvidOf, type LinkStatus } from 'pure/linkStatus';
 import { defaultYtDlpDeps, fetchBiliAudioWithYtDlp } from 'services/ytdlp';
 import type { BiliPart, BiliVideo } from 'pure/dl/bilibili';
+import { biliThumbUrl, planEpCover, EP_COVER_GAP_MS, type EpCoverPlan } from 'pure/epCover';
 import { buildSongFilename } from 'pure/dl/utils';
 // #414 书籍下载（**#417 起 = 用户自备来源**；**#422 续四 起只剩「书源」一条通道** —— 「粘贴直链」已撤）
 // 🔴 #433：文学 / 网文**各一个窗口**（薄壳共用一个基类）
@@ -116,6 +143,7 @@ import { HomeView, HOME_VIEW_TYPE } from 'views/HomeView';
 import type { HomeTab } from 'views/tab';
 import { EntryModal } from 'modals/EntryModal';
 import { SeriesPickerModal } from 'modals/SeriesPickerModal';
+import { SeriesReorderModal } from 'modals/SeriesReorderModal';
 import type { SeriesGroup } from 'pure/seriesGroup';
 import { ConfirmModal } from 'modals/ConfirmModal';
 import { LinkPickerModal } from 'modals/LinkPickerModal';
@@ -123,11 +151,19 @@ import { EpisodePickerModal } from 'modals/EpisodePickerModal';
 import { QuickAssociateModal, type QuickAssociateResult, type QuickAssocPickKind } from 'modals/QuickAssociateModal';
 import { ExcerptModal } from 'modals/ExcerptModal';
 import { AssetCleanupModal } from 'modals/AssetCleanupModal';
+import { WereadShelfSyncModal, type WereadShelfFetchOutcome } from 'modals/WereadShelfSyncModal';
 import { DeleteEntryModal } from 'modals/DeleteEntryModal';
 import { GameSessionModal } from 'modals/GameSessionModal';
 import { VaultFileSuggest } from 'modals/VaultFileSuggest';
-import { EpubReaderView, PdfReaderView, TxtReaderView, EPUB_READER_VIEW_TYPE, PDF_READER_VIEW_TYPE, TXT_READER_VIEW_TYPE } from 'views/ReaderViews';
+import { ComicReaderView, EpubReaderView, PdfReaderView, TxtReaderView, COMIC_READER_VIEW_TYPE, EPUB_READER_VIEW_TYPE, PDF_READER_VIEW_TYPE, TXT_READER_VIEW_TYPE } from 'views/ReaderViews';
 import { probePdfNumPages } from 'modals/PdfReaderModal';
+// #537 漫画阅读（零依赖档：图片文件夹 / CBZ·ZIP / CBT·TAR）——判据真源在 pure/comicFiles，TAR 解析在 pure/tarParse
+import { isComicArchivePath, isComicImageName, sortComicPages, isComicArchiveEntry, comicExt } from 'pure/comicFiles';
+// #540 EPUB 漫画（漫画条目 + .epub → 抽出页图走漫画阅读器）：判据真源在 pure/epubComic
+import { extractEpubComicPages } from 'pure/epubComic';
+import { parseTar } from 'pure/tarParse';
+// #537 阅读时长计时（前台 + 活动页；最小 1 分钟）
+import { addReadMinutes, countableMinutes, createReadTimeState, readActiveMs, setReadActive } from 'pure/readTimer';
 // #351 阅读排版载荷（两个阅读器与宿主共用一份形状；字体/字重/字距的归一化也从这里取）
 import { normalizeFontFamily, normalizeFontWeight, normalizeLetterSpacing, type ReaderTypoPayload } from 'pure/readerTypography';
 import { countExcerpts, generateBlockId, parseExcerptBlocks, type ParsedExcerpt } from 'pure/excerpt';
@@ -169,17 +205,17 @@ import {
     videoDeepLinkFromParams,
     type VideoTimeTarget,
 } from 'pure/videoLink';
-import { type VideoMark } from 'pure/videoMarks';
+import { MARK_SECTION_SHOT, MARK_SECTION_STAMP, type VideoMark } from 'pure/videoMarks';
 import { sanitizePosterTitle } from 'pure/posterFile';
 // #349 附件清理：孤儿资产判定（封面 + 阅读存档）收敛在纯模块里；#350 起同一模块还产「删除条目的资产计划」
 import { buildOrphanAssets, entryAssetPlan, type OrphanAsset } from 'pure/orphanAssets';
 import { imageSizeFromBytes } from 'pure/imageSize';
 import { toFileUrl } from 'pure/mediaFileUrl';
-import { isEmbeddableVideoPath, isAssociableAudioPath, VIDEO_ASSOCIABLE_EXTENSIONS, AUDIO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
+import { isEmbeddableVideoPath, isAssociableVideoPath, isAssociableAudioPath, VIDEO_ASSOCIABLE_EXTENSIONS, AUDIO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
 import type { MediaInfo } from 'pure/mediaInfo';
 // #404「库内音乐目录里找回同名音频」：目录真源 `downloadDir` + 匹配纯模块
 import { downloadDir, downloadDirAbsPath, downloadRelPath, downloadSizeIssue, migrateLegacyDownloadDir, type DownloadKind } from 'pure/downloadPlan';
-import type { LibraryAudioFile } from 'pure/libraryAudio';
+import { pickLibraryAudio, type LibraryAudioFile } from 'pure/libraryAudio';
 // #497「改名关联的音频文件」：路径拆分 / 校验 / 目标 .lrc 路径的唯一真源
 import { planAudioRename } from 'pure/renameAudio';
 // #498「从网络搜索封面」：请求地址 / 解析 / 缩略图回退链 / 下载 Referer 的唯一真源
@@ -188,13 +224,30 @@ import { searchPosterImages, POSTER_UA } from 'services/posterSearch';
 // #509：封面来源（网络搜索 + 四大音乐平台）与「平台封面→大图」的实测规则
 import { platformCandidates, type PosterSource } from 'pure/posterSources';
 // #417「库内找回同名书籍文件」：白名单真源走 `downloadPlan`，匹配纯模块是 `libraryBooks`
-import { isAssociableBookPath, type LibraryBookFile } from 'pure/libraryBooks';
+import { isAssociableBookPath, pickLibraryBook, type LibraryBookFile } from 'pure/libraryBooks';
+// #534 游戏「检索本地」：可启动文件判据（与书籍那套扩展名集合分开，⛔ 别互相借用）
+import { isGameLaunchPath } from 'pure/gameLaunch';
+// #562 分类本地目录（键 / 分组 / 字段映射的真源）+ #563 单集本地检索的匹配纯模块
+// 🔴 #602：`LocalBookSearchQuery` / `LocalFileSearchOutcome` 也收在这里 —— 关联弹窗与编辑表单
+//    （`.svelte`）要用**同一个形状**，放弹窗模块里会让组件反向依赖弹窗（见 `pure/localDirs` 的说明）。
+import {
+    localDirKeyFor,
+    localDirOf,
+    resolveLocalDirAbs,
+    LOCAL_DIR_LABELS,
+    type LocalDirKey,
+    type LocalBookSearchQuery,
+    type LocalFileSearchOutcome,
+} from 'pure/localDirs';
+import { pickLocalEpisode, type LocalEpisodeOutcome, type LocalEpisodeQuery } from 'pure/localEpisode';
 // #464 在线曲库：四平台搜歌结果 → 音乐结果卡片（纯映射；请求复用 `dlSearchSongs`）
 import { songLibraryResults, SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
 import { dirOfPath, fileNameOfPath, pickSubtitleCandidates, srtToVtt, type SubtitleCandidate } from 'pure/subtitle';
 import { scanEpisodeNumbers } from 'pure/episodeScan';
 import { initGlobalTooltip } from 'services/globalTooltip';
 import { VideoPlayerView, VIDEO_PLAYER_VIEW_TYPE, type EmbedVideoItem, type VideoPlayerOptions } from 'views/VideoPlayerView';
+// #604 内置播放器「播放模式」四档真源 + 脏值归一 + 旧数据迁移（设置里只存联合类型，逻辑全在纯模块）
+import { normalizePlayMode, playModeFromLegacy, type PlayMode } from 'pure/playerMenu';
 // ④-4 内置音频播放器：视图 + 可复用装配层（笔记内 ` ```lrc ` 块共用同一套 DOM）
 import { AudioPlayerView, AUDIO_PLAYER_VIEW_TYPE, type AudioPlayerOptions } from 'views/AudioPlayerView';
 import { AudioInlineBlock, type AudioPlayerTrack } from 'views/audioPlayerMount';
@@ -208,6 +261,8 @@ import { mergeBySource, sortByRelevance } from 'pure/searchMerge';
 import { PROVIDER_META, resolveSourceChain, sourceGroupForBookKind, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
 import { audioSubtitle } from 'pure/cardMeta';
 import type { BookKind } from 'data/types';
+// #540：书籍子分类归一（唯一入口）—— EPUB 漫画分流按 `normalizeBookKind(entry.bookKind) === 'comic'` 判
+import { normalizeBookKind } from 'pure/bookKind';
 import { DIR_NOTES, DIR_COVERS, DIR_BACKUPS, DIR_REPORTS, typeDir, LEGACY_TYPE_DIR_ZH, relocateLegacyNotePath } from 'pure/dirs';
 import { migrateNovelNotes } from 'services/novelMigration';
 import { generateYearReport, yearReportPath } from 'pure/report';
@@ -221,8 +276,11 @@ const AUX_SEARCH_TIMEOUT = 5000;
 /** 链内非 douban 源 id（douban 主源走既有 doubanFallback，不进 aux 超时包装） */
 type AuxProviderId = Exclude<ProviderId, 'douban'>;
 
-/** 可选 Key 辅助源（key 仅提升配额/免限流，未配仍照常运行、不带 key 请求）：T5 现状仅 googleBooks */
-const OPTIONAL_KEY_AUX: ReadonlySet<AuxProviderId> = new Set(['googleBooks']);
+/** 可选 Key 辅助源（key 仅提升配额/免限流，未配仍照常运行、不带 key 请求）：googleBooks；
+ *  🔴 #580 加上 **weread**（它连限流都不涉及：书籍检索免登录，Cookie 只给「测试连接 / 书架同步」用）。
+ *  ⚠️ 本表与 `Settings.ts` 的 `OPTIONAL_KEY_SOURCES` 是**同一概念的两份**（那处管徽标文案、这处管
+ *     `providerConfigured` 判定）⇒ **改一处必须同时改另一处**，否则会出现「徽标说可选、实际被跳过」。 */
+const OPTIONAL_KEY_AUX: ReadonlySet<AuxProviderId> = new Set(['googleBooks', 'weread']);
 
 /** 影视/剧集组搜索合并结果的类型（#165 T9）：omdb imdbID 为字符串，与 tmdb id:number 不可强塞——
  *  以联合并排（TmdbSearchResult | OmdbSearchResult），OmdbSearchResult 独立类型决策见 tests/omdb.test.ts；
@@ -235,6 +293,17 @@ type MovieTvSearchResult = TmdbSearchResult | OmdbSearchResult;
  * runner 内不弹 Notice、不做 withTimeout（T3 对齐 spec S3「失败源静默降级」，收敛 B1 的 tmdb/bangumi 单源失败 Notice）。
  */
 type AuxSearchRunner = (query: string, type: EntryType, prog?: SearchProgressReporter) => Promise<unknown[]>;
+
+/**
+ * #562/#563 分类本地目录的**扩展名判据**（按分类分叉）。
+ * ⛔ 别用一把梭的集合：视频目录里的 `.nfo` / `.srt` / `.jpg` 会被一起收进候选，
+ * 然后在「按集号挑」那一步跟正片抢位置。
+ */
+function localDirAccept(key: LocalDirKey): (name: string) => boolean {
+    if (key === 'music') return isAssociableAudioPath;
+    if (key === 'book' || key === 'novel' || key === 'comic') return isAssociableBookPath;
+    return isAssociableVideoPath;
+}
 
 /** 豆瓣主源一次运行结果（主源不限时 + reachable/cookieInvalid 归集） */
 interface DoubanRun<T> {
@@ -282,6 +351,20 @@ const READER_STORE_FLUSH_MS = 1000;
  */
 const LYRICFLUX_PLUGIN_ID = 'obsidian-lyricflux';
 
+/** #537 漫画页的 MIME（Blob 带上正确类型，`<img>` 解码更稳、avif/webp 尤其）；未知回落 `image/*` */
+function comicMime(path: string): string {
+    const map: Record<string, string> = {
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        webp: 'image/webp',
+        gif: 'image/gif',
+        avif: 'image/avif',
+        bmp: 'image/bmp',
+    };
+    return map[comicExt(path)] ?? 'image/*';
+}
+
 export default class ReelLudicPlugin extends Plugin {
     settings: ReelLudicSettings = DEFAULT_SETTINGS;
     service!: EntryService;
@@ -307,6 +390,20 @@ export default class ReelLudicPlugin extends Plugin {
     /** #462 本地音频「体积 + 时长」探测缓存（按路径）：hover 是高频动作，同一文件只探一次
      *  （⚠️ 会话内不失效 —— 文件被替换后数字会旧；探一次的成本远低于每次重探，且旧数字不影响使用） */
     private readonly audioInfoCache = new Map<string, MediaInfo>();
+    /**
+     * 🔴 #577 选集封面：B 站 **`bvid → 缩略图地址`** 内存缓存。
+     *  - **跨弹窗复用**：用户口径「组件内使用 Map 做内存缓存，**二次打开直接读缓存**」——
+     *    ⛔ 不能只做「单次打开内」的缓存（弹窗每次都是新实例，那样等于没缓存）；
+     *  - **只存成功**：取不到（412 / 已下架）**不写**，下次打开再试一次（⛔ 别把失败也钉死）；
+     *  - ⛔ **地址里不许带时间戳**（用户点名：加时间戳等于每次都破 HTTP 缓存）。
+     */
+    private readonly epCoverCache = new Map<string, string>();
+    /** 同一 `bvid` 的在途请求（并发来问只发一次） */
+    private readonly epCoverPending = new Map<string, Promise<string>>();
+    /** 串行闸门：封面请求**一条一条来**（见 `EP_COVER_GAP_MS`，`view` 吃风控） */
+    private epCoverGate: Promise<void> = Promise.resolve();
+    /** #582 串行闸门：书架导入时**逐本**拉详情（见 `WEREAD_INFO_GAP_MS`，并发吃风控） */
+    private wereadInfoGate: Promise<void> = Promise.resolve();
     /** ④-4 音频播放器：上一次播放的条目（命令面板「在标签页/侧边栏打开」用它重建队列） */
     private lastAudioEntry: MediaEntry | null = null;
     /** 笔记内块锚点链接 → 该书阅读器 leaf（M1 双向溯源：同一本书不重复开标签，D-4）；用前按 getLeavesOfType 校验存活 */
@@ -329,6 +426,22 @@ export default class ReelLudicPlugin extends Plugin {
     homeTab: HomeTab = 'media';
     /** 数据文件变更刷新防抖定时器（vault 监听兜底） */
     private refreshTimer: number | null = null;
+    /**
+     * 🔴 #589 开机凭据自检的结果：`sourceCheckKey(id)` / `musicCheckKey(id)` → **测通没测通**。
+     * ⚠️ 只存 `true` / `false`；**没有键 = 还没测过**（⛔ 别用 `undefined` 或默认 `false` 混进去 ——
+     *    那会把「还没跑」画成「已失效」，是撒谎；判据见 `pure/credentialCheck.isExpired`）。
+     */
+    private readonly credentialStatus = new Map<string, boolean>();
+    /** 自检的延时器（卸载要清；⛔ 别让它悬着） */
+    private credentialTimer: number | null = null;
+    /** 一次只跑一轮（设置页手动测试与开机自检可能同时想写同一个键） */
+    private credentialRunning = false;
+    /**
+     * 🔴 #584：本轮防抖窗口内**被改动的条目笔记路径**（防抖会合并多次触发，得把路径攒着）。
+     * 用途 = 播放器标记（进度条圆点 + 时间戳侧边栏）随笔记**实时同步**：
+     * 用户在笔记里删掉一行时间戳 / 改一句备注时，抽屉与圆点必须在**不重开播放器**的前提下跟上。
+     */
+    private readonly pendingNotePaths = new Set<string>();
 
     /** 搜索入口缓存包装：命中直接返回；未命中执行后缓存（按 type+query 维度） */
     private cachedSearch<T>(key: string, fn: () => Promise<T[]>): Promise<T[]> {
@@ -356,6 +469,10 @@ export default class ReelLudicPlugin extends Plugin {
         // 分支就会对这批老用户复活（他们的 Svelte prop 默认值也是 'colorful'），
         // 表现为升级后突然冒出类型色条 —— 而设置页已无入口、saveSettings 也不覆写，用户无法自救。
         this.settings.colorTheme = 'mono';
+        // #541 起始页：主视图的初始页签由设置决定（缺省 media = 历史行为）。
+        // ⚠️ 只在此处播种 —— 用户在会话中切页签走 `homeTab` 这个内存字段，⛔ 不落盘（那是「上次看到哪」，
+        //    不是「起始页」；把它写回设置会让「起始页」永远被最后停留的页覆盖）。
+        this.homeTab = normalizeStartTab(this.settings.startTab);
         // sourceChains 基线以磁盘加载值初始化：此后 saveSettings 只要链配置与上次持久化基线不同即清缓存
         this.sourceChainBaselineJson = JSON.stringify(this.settings.sourceChains ?? {});
         // 目录命名演进迁移（顶层中文化 + 类型子目录英文化，幂等）：须在 rebuildService 之前执行，service 用新路径构造
@@ -363,6 +480,8 @@ export default class ReelLudicPlugin extends Plugin {
         this.rebuildService();
         // 阅读进度/书签文件名可读化迁移（旧 e_xxx 名 → {书名}-阅读进度|书签-{id}，幂等；须在 service 就绪后）
         await this.migrateProgressFileNames();
+        // #528：清理存量笔记里的「## 高亮」镜像区（高亮真源已收敛到阅读数据 JSON；幂等，须在 service 就绪后）
+        await this.migrateRemoveHighlightMirrors();
         this.rebuildClients();
 
         // 🔴 #459 下载目录**一次性**迁移（与「填了『下载/音乐』却多出『下载/音乐/音乐』」同一批）。
@@ -380,6 +499,8 @@ export default class ReelLudicPlugin extends Plugin {
         }
 
         this.applyUiTheme();
+        // #541：卡片风格 / 界面动效两类 body 类（与主题类同一挂载点 —— 都是「按设置刷 body 类」）
+        this.applyAppearance();
 
         this.registerView(HOME_VIEW_TYPE, (leaf) => new HomeView(leaf, this));
         this.registerView(VIDEO_PLAYER_VIEW_TYPE, (leaf) => new VideoPlayerView(leaf));
@@ -388,9 +509,18 @@ export default class ReelLudicPlugin extends Plugin {
         this.registerView(TXT_READER_VIEW_TYPE, (leaf) => new TxtReaderView(leaf));
         this.registerView(EPUB_READER_VIEW_TYPE, (leaf) => new EpubReaderView(leaf));
         this.registerView(PDF_READER_VIEW_TYPE, (leaf) => new PdfReaderView(leaf));
+        // #537 漫画阅读器（图片文件夹 / CBZ·ZIP / CBT·TAR）
+        this.registerView(COMIC_READER_VIEW_TYPE, (leaf) => new ComicReaderView(leaf));
         // 笔记内摘录/高亮块头行链接 → 打开阅读器并定位（M1 双向溯源）。
         // 捕获阶段挂 document：既抢在 Obsidian「打开源文件」之前，也能 stopPropagation 彻底拦下那次导航。
         this.registerDomEvent(document, 'click', this.onWorkspaceAnchorClick, true);
+        // ④ 数字输入框「滚轮增减」（#556，用户 2026-10-08）——
+        // 🔴 两条硬规矩：⑴ **只有聚焦时才接管**：未聚焦一律原样放行（否则指针滑过输入框时页面就滚不动，
+        //    这正是用户点名要防的）；⑵ 接管时必须 `preventDefault` + `stopPropagation`（「不让页面跟着滚」）。
+        // 🔴 挂 **document 捕获阶段**（`capture: true`）：抢在任何容器的滚动处理之前拦下，才真的挡得住；
+        //    `passive: false` 也是必须的 —— passive 监听里 `preventDefault()` 会被浏览器直接忽略。
+        // ⚠️ 判据与算法全在 `pure/numberWheel`（纯逻辑 + 单测），这里只做 DOM 接线。
+        this.registerDomEvent(document, 'wheel', this.onNumberWheel, { passive: false, capture: true });
         // 「回到原文」深链（`[↩](obsidian://reelludic?…)`）的**兜底通道**：笔记内点击由上面的捕获阶段拦截处理，
         // 万一被别的插件抢先 / 或从浏览器等外部唤起，Obsidian 会把 `obsidian://reelludic?…` 路由到这里。
         // 🔴 插件**无法**注册 OS 级自定义协议（`app.setAsDefaultProtocolClient` 是 Electron 主进程能力，
@@ -522,6 +652,9 @@ export default class ReelLudicPlugin extends Plugin {
 
         this.registerLrcBlockProcessor();
         this.addSettingTab(new ReelLudicSettingTab(this.app, this));
+        // 🔴 #589：新会话打开时——**等界面就绪之后**再安排一轮凭据自检（延迟 + 串行，见那个方法）。
+        //    ⛔ 别在这里直接 await：那会把插件加载拖住 4 秒以上（一件 700ms 间隔 × 十来件）。
+        this.app.workspace.onLayoutReady(() => this.scheduleCredentialCheck());
     }
 
     async onunload(): Promise<void> {
@@ -530,10 +663,19 @@ export default class ReelLudicPlugin extends Plugin {
         for (const cls of Object.values(THEME_CLASS)) {
             if (cls !== '') document.body.removeClass(cls);
         }
+        // #541：外观偏好那两类 body 类同样要摘掉（清理名单的唯一真源在 pure/appearance）
+        for (const cls of APPEARANCE_BODY_CLASSES) document.body.removeClass(cls);
         if (this.refreshTimer !== null) {
             window.clearTimeout(this.refreshTimer);
             this.refreshTimer = null;
         }
+        // #589：开机自检的延时器也一并清掉（还没跑的话就别跑了 —— 插件都卸了）
+        if (this.credentialTimer !== null) {
+            window.clearTimeout(this.credentialTimer);
+            this.credentialTimer = null;
+        }
+        // #584：待刷新的笔记路径也一并清掉（否则禁用插件后残留的路径会在下次启用时被当成「刚改过」）
+        this.pendingNotePaths.clear();
         // 阅读数据存档：把合并窗口里还没落盘的进度写掉 —— 否则禁用插件/关应用会丢掉最后一次滚动
         const pending = [...this.readerStores.keys()];
         for (const mem of this.readerStores.values()) {
@@ -563,6 +705,52 @@ export default class ReelLudicPlugin extends Plugin {
             (leaf.view as HomeView).setUiTheme(theme);
         }
     }
+
+    /**
+     * #541 应用外观偏好：卡片风格 / 界面动效 → `document.body` 上的类。
+     *
+     * 🔴 与 `applyUiTheme` 同一套路（body 单点挂载即可覆盖主界面与**全部弹窗**）；区别只在来源 ——
+     *    主题类来自 `uiTheme`（1.0.3 起恒 'modern'），本节两个类来自用户可改的两项设置。
+     * 🔴 **先按全表清理、再按当前档位加**（`APPEARANCE_BODY_CLASSES` 是清理点的唯一真源）：
+     *    不清理的话切档时 `rl-card-soft` 与 `rl-card-flat` 会同时挂在 body 上，
+     *    变成「靠 styles.css 书写顺序决胜」的隐式行为 —— 排查时几乎看不出来。缺省档映射空串，天然不挂类。
+     */
+    applyAppearance(): void {
+        for (const cls of APPEARANCE_BODY_CLASSES) document.body.removeClass(cls);
+        const motion = MOTION_CLASS[normalizeMotionMode(this.settings.motionMode)];
+        if (motion !== '') document.body.addClass(motion);
+        const card = CARD_STYLE_CLASS[normalizeCardStyle(this.settings.cardStyle)];
+        if (card !== '') document.body.addClass(card);
+    }
+
+    /**
+     * #541 主导航布局即时生效（设置页「外观与体验 › 导航布局」改动后调用）。
+     * 与 `syncPosterGrid` 同思路：只重推 prop，不重读条目、不落盘。
+     * 🔴 布局是**结构分支**（侧栏那一支要增删 DOM 节点）⇒ 必须即时重推；只落盘「等下次刷新」
+     *    会让用户以为「切了没反应」。
+     */
+    syncNavLayout(): void {
+        for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
+            (leaf.view as HomeView).setNavLayout(this.settings.navLayout);
+        }
+    }
+
+    /**
+     * #541 起始页即时生效（设置页改动后调用）。两件事：
+     *   ⑴ 记住新值 —— 供**之后**新建 / 重开的视图当初始页（`HomeView.render` 读 `this.homeTab`）；
+     *   ⑵ 把已经开着的视图**当场切过去** —— 否则用户改了设置却看不到任何变化（同 `syncNavLayout` 的理由）。
+     */
+    syncStartTab(): void {
+        const tab = normalizeStartTab(this.settings.startTab);
+        this.homeTab = tab;
+        for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
+            (leaf.view as HomeView).setRequestedTab(tab);
+        }
+    }
+
+    // 🔴 #543：`setNavCollapsed()` 已整体删除 —— 侧边栏改成**恒定图标轨**后就没有「折叠态」这个量了
+    //    （#541 那套「折叠钮 → 落库 → 回推」随之退场；`settings.navCollapsed` 字段按 append-only 红线
+    //     **保留但不再被读取**，⛔ 别把它接回任何判定 —— 那会造出一个「设置页没有、行为却受它影响」的鬼开关）。
 
     /** 目录命名演进迁移（幂等，旧版任意起点一步到位；须在 rebuildService 之前执行，service 用新路径构造）：
      *  v0.4：顶层通俗化 entries/covers/backups/reports → 笔记/封面/备份/报告，类型子目录用中文标签；
@@ -678,11 +866,46 @@ export default class ReelLudicPlugin extends Plugin {
         const catalogPath = `${dir}/catalog.json`;
         const entriesDir = `${dir}/${DIR_NOTES}`;
         if (p !== catalogPath && !p.startsWith(entriesDir + '/')) return;
+        // 🔴 #584：笔记改动要**顺带把播放器标记刷新一遍**（先攒路径，防抖窗口结束再统一刷）——
+        //    这是「在笔记里删掉/改动一个时间戳，侧边栏与进度条圆点当场跟上」的唯一入口：
+        //    `refreshPlayerMarks` 只被插入/截图那两条写入路径调用过，**外部改笔记**（手删一行、别的插件改）
+        //    以前只会刷海报墙，播放器那份标记是**打开那一刻的快照**，一直不动。
+        if (p !== catalogPath) this.pendingNotePaths.add(p);
         if (this.refreshTimer !== null) return; // 已有待执行刷新，合并触发
         this.refreshTimer = window.setTimeout(() => {
             this.refreshTimer = null;
+            const notes = [...this.pendingNotePaths];
+            this.pendingNotePaths.clear();
             void this.refreshViews();
+            // 顺序无关：两边都只是「重画」，互不依赖；不 await 是为了不拖慢海报墙刷新
+            void this.refreshPlayerMarksForNotes(notes);
         }, 500);
+    }
+
+    /**
+     * 🔴 #584：把**被改动过的笔记**重解析成标记，推给正开着那条目的播放器（没有播放器就是空转）。
+     *
+     * 🔴 为什么按 notePath 逐个比对、而不是「把所有播放器都刷一遍」：
+     *    ⑴ 只刷**真的被改到的那条**（别的条目在放，不该因为无关笔记被动重画）；
+     *    ⑵ 比对用 `normalizePath`（vault 事件给的是 `/` 分隔路径，但条目里存的可能带 `\` —— 见 `normalizePath` 调用点）。
+     * ⚠️ 与 `refreshPlayerMarks` 的分工：那个是「**我刚写完**笔记，把这条的标记推下去」（单条目、由写入方调）；
+     *    这个是「**笔记被别人改了**，把受影响条目推下去」（按路径匹配、由 vault 监听调）。
+     *    两者都汇到 `view.setMarks` 这一个出口，⛔ 别在视图里再加一条刷新路径。
+     */
+    private async refreshPlayerMarksForNotes(notePaths: readonly string[]): Promise<void> {
+        if (!notePaths.length) return;
+        const wanted = new Set(notePaths.map((p) => normalizePath(p)));
+        try {
+            for (const leaf of this.app.workspace.getLeavesOfType(VIDEO_PLAYER_VIEW_TYPE)) {
+                const view = leaf.view;
+                if (!(view instanceof VideoPlayerView) || !view.playingEntryId) continue;
+                const entry = await this.service.get(view.playingEntryId);
+                if (!entry?.notePath || !wanted.has(normalizePath(entry.notePath))) continue;
+                view.setMarks(await this.service.readNoteMarks(view.playingEntryId));
+            }
+        } catch {
+            /* 标记刷新失败不该影响数据刷新本身（与 refreshPlayerMarks 同一条纪律） */
+        }
     }
 
     async saveSettings(): Promise<void> {
@@ -717,7 +940,8 @@ export default class ReelLudicPlugin extends Plugin {
             createVaultIO(this.app),
             `${dir}/catalog.json`,
             `${dir}/${DIR_NOTES}`,
-            this.settings.noteTable !== false,
+            // 🔴 #596：口径**翻面**（缺省关）—— 与 `Settings.renderAppearanceRows` 里那一处必须一致。
+            this.settings.noteTable === true,
         );
     }
 
@@ -901,6 +1125,14 @@ export default class ReelLudicPlugin extends Plugin {
             anilist: (query) => this.anilist.search(query),
             // igdb 默认链不含（game=douban→steam）→ 仅用户自选加入且双凭据配置后参与（game 组第三源）
             igdb: (query) => this.igdb.search(query),
+            // 🔴 #580 weread（book 组第三源；用户 2026-10-09 点名接入）：默认链**不含** ⇒ 仅用户自选加入后参与。
+            //    复用「检索在线书籍阅读」那条链的同一个服务函数（同一接口、同一解析），只做投影。
+            //    ⚠️ 走 Node 传输层 ⇒ **仅桌面端**：移动端如实抛错（`runAuxSource` 收成 failed 静默降级），
+            //      ⛔ 别在移动端假装成功返回空数组（那会把「跑不了」说成「没搜到」）。
+            weread: (query) => {
+                if (!Platform.isDesktopApp) throw new Error('微信读书检索仅桌面端支持');
+                return searchWereadMeta(this.dlTransport(), query);
+            },
         };
     }
 
@@ -1109,6 +1341,27 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
+    /**
+     * 🔴 #609 微信读书**详情按需补全**（表单选中「微信读书源」的搜索结果时调用）。
+     *
+     * 起因（用户报障）：「用微信读书源搜索添加」比「从微信读书同步书架」缺斤少两 —— 封面糊、出版年 / 出版社不回填。
+     * 真根因：搜索接口（`/web/search/global`）**不返回 `publishTime`**（2026-10-11 实测 `囚徒健身` 那条
+     * bookInfo 的字段表里没有出版年），且简介在**候选**里不是全文 ⇒ 与书架导入（逐本调详情）天然不一致。
+     *
+     * 🔴 走**同一个闸门** `wereadBookInfoGated`（串行 + 间隔）—— ⛔ 别为表单另开一条并发路径：
+     *    微信读书对并发/高频请求会风控，书架导入那条闸门就是为此立的。
+     * ⛔ 不抛：详情失败一律 `null` ⇒ 表单静默降级回搜索级字段（与豆瓣 / Open Library 同款）。
+     */
+    async fetchWereadDetailForEntry(bookId: string): Promise<WereadBookInfo | null> {
+        const id = String(bookId ?? '').trim();
+        if (!id || !hasWereadAuth(this.settings.wereadCookie)) return null;
+        try {
+            return await this.wereadBookInfoGated(id);
+        } catch {
+            return null;
+        }
+    }
+
     /** OMDb 详情按需补全（选中 IMDb 搜索结果时调用）：?i={imdbID}&plot=full 补 Plot/导演/演员/类型/评分；
      *  投影键名对齐 EntryForm.applyDoubanDetail（director/cast/genres/summary/cover/ratingCount + rating 供评分回填）；
      *  失败（未配 key / 网络 / 错误体）返回 null 静默，不阻塞保存。 */
@@ -1243,7 +1496,7 @@ export default class ReelLudicPlugin extends Plugin {
      * 豆瓣那栏该出的照出（与 aux 源同口径）。
      */
     private async songLibrarySearch(query: string, prog: SearchProgressReporter): Promise<MusicSearchResult[]> {
-        if (!this.canUseAudioDownload()) return [];
+        if (!this.canUseSongLibrary()) return [];
         try {
             const { songs } = await withTimeout(this.dlSearchSongs(query), AUX_SEARCH_TIMEOUT, `${SONG_LIB_LABEL} 搜索`);
             const items = songLibraryResults(songs);
@@ -1263,6 +1516,21 @@ export default class ReelLudicPlugin extends Plugin {
      */
     canUseAudioDownload(): boolean {
         return Platform.isDesktopApp && this.settings.audioInlinePlayer === true;
+    }
+
+    /**
+     * #538 音乐「在线曲库」检索门控（用户 2026-10-05：「设置项可选择开启或关闭新增音乐条目『在线曲库』的搜索，
+     * **默认关闭**」）。
+     *
+     * 🔴 与 `canUseAudioDownload()` **不是同一件事**：那个管「有没有能力发这套请求」，这个管「用户要不要它」。
+     *    ⇒ 这里是「能力 ∧ 开关」的组合，且**只有这一处**做组合（单一真源）——
+     *    表单的 `songLibraryEnabled`（曲库栏位）与宿主侧 `songLibrarySearch` 都从这里取，
+     *    ⛔ 别在组件/服务里再摊一份（#464 立的「按钮亮着、曲库栏却永远空」正是两处口径分叉的产物）。
+     * ⚠️ 默认关的理由（与 `audioInlinePlayer` 同款）：曲库检索要打四个平台（Node http），
+     *    默认关能保证「升级后行为不变」——用户不主动开，音乐检索结果与旧版一模一样。
+     */
+    canUseSongLibrary(): boolean {
+        return this.canUseAudioDownload() && this.settings.musicSongLibrary === true;
     }
 
     /** 动画搜索（Bangumi + 豆瓣并行）：按相似度排序合并；无 Token 且 Douban 不可用时给出准确提示（结果缓存 30min） */
@@ -1362,7 +1630,7 @@ export default class ReelLudicPlugin extends Plugin {
                 try {
                     persons = await this.bangumi.fetchPersons(r.id);
                 } catch { /* 静默 */ }
-                await this.service.create({
+                const created = await this.service.create({
                     type: entryType,
                     title: r.title,
                     originalTitle: r.originalTitle || undefined,
@@ -1384,11 +1652,117 @@ export default class ReelLudicPlugin extends Plugin {
                     notes: '',
                     tags: [],
                 });
+                // 🔴 #593：导入的条目也要像「表单新建」那样**当场生成笔记**（出口仍是唯一的 `writeNote`）。
+                //    ⛔ 单条失败**不阻断**导入（与上面两处详情失败同款）；否则整批导入会被一本书卡住。
+                try {
+                    await this.service.writeNote(created.id);
+                } catch { /* 笔记失败不阻断导入 */ }
                 added++;
             }
         }
         await this.refreshViews();
         return { added, skipped };
+    }
+
+    /**
+     * #581 读微信读书书架（同步弹窗的数据源）。
+     *
+     * 🔴 与 #580「测试连接」**同一个端点、同一份 Cookie**（服务层 `fetchWereadShelf`）；真伪判定
+     *    （`errCode` → 文案）在纯模块里，⛔ 这里不再抄一遍。⛔ 只桌面端（底层走 Node 传输层）。
+     * 🔴 「库里是否已有同名书」**在这里算好**（判重口径在 `partitionShelfBooks`，宿主只提供 `isImported`）——
+     *    弹窗拿到的每一行都自带 `imported`，⛔ 别让 UI 自己去查 catalog。
+     */
+    async fetchWereadShelf(): Promise<WereadShelfFetchOutcome> {
+        if (!Platform.isDesktopApp) return { ok: false, message: '微信读书书架同步仅桌面端支持' };
+        const parsed = await fetchWereadShelfSvc(this.dlTransport(), this.settings.wereadCookie);
+        if (!parsed.ok) return parsed;
+        const entries = await this.service.list();
+        // 判重范围 = **书籍**条目（同名的一部影视不该挡住一本书）
+        const titles = new Set(entries.filter((e) => e.type === 'book').map((e) => e.title));
+        const { dup } = partitionShelfBooks(parsed.books, (t) => titles.has(t));
+        const dupIds = new Set(dup.map((b) => b.bookId));
+        return {
+            ok: true,
+            snapshot: {
+                rows: parsed.books.map((b) => ({ ...b, imported: dupIds.has(b.bookId) })),
+                note: shelfExtraNote(parsed.stats),
+            },
+        };
+    }
+
+    /**
+     * #582 **逐本拉详情**（串行 + 间隔；失败静默回 `null` ⇒ 调用方降级回书架级字段）。
+     * 🔴 闸门与 #577 封面那条同构（`promise` 链 + 间隔）：微信读书对**并发/高频**请求会风控。
+     */
+    private wereadBookInfoGated(bookId: string): Promise<WereadBookInfo | null> {
+        const task = this.wereadInfoGate
+            .catch(() => undefined)
+            .then(() => fetchWereadBookInfoSvc(this.dlTransport(), this.settings.wereadCookie, bookId));
+        this.wereadInfoGate = task.then(() => new Promise<void>((r) => window.setTimeout(r, WEREAD_INFO_GAP_MS)));
+        return task;
+    }
+
+    /**
+     * #581 把选中的书架书籍落库（导入循环 = 「调 `shelfBookEntryFields` + `service.create`」，
+     * ⛔ 别在别处再拼一遍字段）。
+     *
+     * 🔴 判重口径 = **书名**（与 `partitionShelfBooks` / `importBangumiCollections` 同族）；命中的
+     *    **跳过、不动已有条目**（用户 2026-10-09 裁定：不覆盖评语 / 评分 / 进度）。
+     *    ⚠️ 用**本地 Set 累进**（⛔ 不能只查「打开弹窗那一刻」的快照：同一书名在书架里可能重复出现）。
+     * 🔴 **#582**：落库前**逐本补详情**（`/web/book/info`）—— 书架同步**不含**评分与简介，
+     *    用户点名「导入的书没有评分/简介」⇒ 补来的字段经 `shelfBookEntryFields(b, info)` 合并；
+     *    ⚠️ 详情失败**不阻断**（该书用书架级字段照常导入）。
+     */
+    async importWereadShelf(
+        books: WereadShelfBook[],
+        onProgress?: (done: number, total: number, label: string) => void,
+    ): Promise<{ added: number; skipped: number }> {
+        const existing = await this.service.list();
+        const titles = new Set(existing.filter((e) => e.type === 'book').map((e) => e.title));
+        let added = 0;
+        let skipped = 0;
+        let done = 0;
+        for (const b of books) {
+            done++;
+            if (titles.has(b.title)) {
+                skipped++;
+                continue;
+            }
+            onProgress?.(done, books.length, `读取详情 ${b.title}`);
+            const info = await this.wereadBookInfoGated(b.bookId);
+            onProgress?.(done, books.length, `导入 ${b.title}`);
+            const fields = shelfBookEntryFields(b, info);
+            const created = await this.service.create({
+                rating: 0,
+                cast: [],
+                links: [],
+                notes: '',
+                tags: [],
+                ...fields,
+                // 兜底放**最后**：`shelfBookEntryFields` 在没拿到分类时给的是 `undefined`（#582），
+                // 直接透传会让 normalizeEntry 收到 undefined ⇒ 这里显式落成空数组。
+                genres: fields.genres ?? [],
+            });
+            // 🔴 #593：**导入的条目也要有笔记** —— 用户报障原话：「从微信读书同步书架导入的新增条目
+            //    关联不到自动生成的笔记，点击提示『该条目还没有笔记』」。根因 = `service.create()`
+            //    只写 catalog、**不生成笔记**（表单新建那条路在 `EntryModal` 里额外调了 `writeNote`）。
+            //    ⇒ 这里补上同一件事（出口仍是唯一的 `service.writeNote`）。⚠️ 单条失败**不阻断**导入。
+            try {
+                await this.service.writeNote(created.id);
+            } catch { /* 笔记失败不阻断导入 */ }
+            titles.add(b.title);
+            added++;
+        }
+        await this.refreshViews();
+        return { added, skipped };
+    }
+
+    /** #581 打开「从微信读书同步书架」弹窗（入口：设置 › 基本设置 ›「启用内置阅读器」折叠组） */
+    openWereadShelfSync(): void {
+        new WereadShelfSyncModal(this.app, {
+            onFetch: () => this.fetchWereadShelf(),
+            onImport: (books, onProgress) => this.importWereadShelf(books, onProgress),
+        }).open();
     }
 
     /** 网站更新检测缓存（10min TTL：追更表每次打开都检测会频繁抓站，命中直接复用） */
@@ -1548,8 +1922,112 @@ export default class ReelLudicPlugin extends Plugin {
         });
     }
 
-    async activateView(type: string): Promise<void> {
-        const { workspace } = this.app;
+    /**
+     * 测试微信读书连接（设置页按钮，#580）：带用户 Cookie 打一次**书架 / 鉴权**接口验登录态。
+     *
+     * 🔴 三条口径：
+     *   ⑴ **不能只看状态码** —— 该端点未登录时回 **HTTP 200**（实测），真相在 body 的 `errCode` 里
+     *      ⇒ 真伪判定全交给纯函数 `parseWereadShelfAuth`（服务层 `testWereadAuth` 已接好）；
+     *   ⑵ **空 Cookie 不发请求** ⇒ 直接给「未填写」文案（⛔ 别把「没填」误报成「网络失败」）；
+     *   ⑶ ⛔ **只桌面端** —— 底层走 Node 传输层；移动端如实拒绝（与 `searchWeread` 同口径）。
+     * ⚠️ 微信读书的 Cookie 是**可选**的（书籍检索免登录，见 `sourceRegistry.emptyBadge`）——
+     *    这里测的是**书架登录态**，所以未填时给的是「未填写」而非「不可用」。
+     */
+    async testWereadConnection(): Promise<SourceTestResult> {
+        return this.runTest('微信读书 连接', async () => {
+            if (!hasWereadAuth(this.settings.wereadCookie)) {
+                return { ok: false, message: '未填写微信读书 Cookie' };
+            }
+            if (!Platform.isDesktopApp) {
+                return { ok: false, message: '微信读书连接测试仅桌面端支持' };
+            }
+            return testWereadAuth(this.dlTransport(), this.settings.wereadCookie);
+        });
+    }
+
+    /**
+     * #589：按 id 跑一条**元数据源**连接测试 —— `ProviderId → testXxxConnection` 的**唯一**分派。
+     * 🔴 它在**宿主**这一侧（`Settings.testConnectionFor` 已改为转调这里）：开机自检够得着设置页的按钮逻辑，
+     *    ⛔ 别在两处各写一份 switch（加一个源时必然漏一处 = 那条永远「无可用测试」）。
+     */
+    async checkSourceCredential(id: ProviderId): Promise<SourceTestResult> {
+        switch (id) {
+            case 'douban': return this.testDoubanConnection();
+            case 'tmdb': return this.testTmdbConnection();
+            case 'bangumi': return this.testBangumiConnection();
+            case 'omdb': return this.testOmdbConnection();
+            case 'googleBooks': return this.testGoogleBooksConnection();
+            case 'igdb': return this.testIgdbConnection();
+            case 'weread': return this.testWereadConnection();
+            default: return { ok: false, message: '该源无可用测试', elapsedMs: 0 };
+        }
+    }
+
+    /** #589：读一条凭据的自检结果（`undefined` = **还没测过** ⇒ 设置页**不标**「已失效」）。 */
+    credentialStatusOf(key: string): boolean | undefined {
+        return this.credentialStatus.get(key);
+    }
+
+    /** #589：记下结果 —— 开机自检与设置页手动「测试连接」**都走这一个口**（结论必须同源）。 */
+    setCredentialStatus(key: string, ok: boolean): void {
+        this.credentialStatus.set(key, ok);
+    }
+
+    /** #589：清掉某条结果（用户**改了凭据** ⇒ 旧结论立刻作废，⛔ 别让「已失效」挂在一个刚填的新值上）。 */
+    clearCredentialStatus(key: string): void {
+        this.credentialStatus.delete(key);
+    }
+
+    /**
+     * #589：安排一轮开机凭据自检 —— 延迟 `CREDENTIAL_CHECK_DELAY_MS` 后跑。
+     * 🔴 **只桌面端**：微信读书与音乐源那几条测试本身就写死「仅桌面端支持」⇒ 在移动端跑只会得到一排假失效。
+     */
+    private scheduleCredentialCheck(): void {
+        if (!Platform.isDesktopApp) return;
+        if (this.credentialTimer !== null) window.clearTimeout(this.credentialTimer);
+        this.credentialTimer = window.setTimeout(() => {
+            this.credentialTimer = null;
+            void this.runCredentialChecks();
+        }, CREDENTIAL_CHECK_DELAY_MS);
+    }
+
+    /**
+     * #589：跑一轮自检 —— **串行**，每件之间间隔 `CREDENTIAL_CHECK_GAP_MS`。
+     * 🔴 绝不并发：豆瓣那类源吃风控，一串请求同时打过去会**集体失败** ⇒ 好凭据被误标「已失效」。
+     * 🔴 只测「已经填了」的凭据（`configuredCredentialChecks`）；单件失败**不打断**后面的。
+     * ⚠️ 测试函数**抛错不属于「凭据失效」**（那是代码/环境问题）⇒ 抛错时**不记录**（宁可不标，也不误标）。
+     */
+    private async runCredentialChecks(): Promise<void> {
+        if (this.credentialRunning) return;
+        this.credentialRunning = true;
+        const wait = (ms: number): Promise<void> => new Promise((r) => window.setTimeout(r, ms));
+        try {
+            const { sources, music } = configuredCredentialChecks(this.settings);
+            for (const id of sources) {
+                try {
+                    const r = await this.checkSourceCredential(id as ProviderId);
+                    this.credentialStatus.set(sourceCheckKey(id), r.ok);
+                } catch {
+                    /* 抛错 ≠ 凭据失效 ⇒ 不记录 */
+                }
+                await wait(CREDENTIAL_CHECK_GAP_MS);
+            }
+            const cookies = (this.settings.musicDlCookies ?? {}) as Record<string, string | undefined>;
+            for (const id of music) {
+                try {
+                    const r = await this.dlTestConnection(id, String(cookies[id] ?? ''));
+                    this.credentialStatus.set(musicCheckKey(id), r.ok);
+                } catch {
+                    /* 同上：抛错不记录 */
+                }
+                await wait(CREDENTIAL_CHECK_GAP_MS);
+            }
+        } finally {
+            this.credentialRunning = false;
+        }
+    }
+
+    async activateView(type: string): Promise<void> {        const { workspace } = this.app;
         let leaf: WorkspaceLeaf | null = null;
         for (const l of workspace.getLeavesOfType(type)) {
             leaf = l;
@@ -1591,6 +2069,20 @@ export default class ReelLudicPlugin extends Plugin {
      */
     openSeriesPicker(group: SeriesGroup): void {
         new SeriesPickerModal(this.app, this, group).open();
+    }
+
+    /**
+     * 🔴 #609 系列「排序号」弹窗（海报墙**折叠卡右键 →「排序号」**）—— 拖拽排序、确认后按新顺序重编 1..N。
+     *
+     * 翻面 **#608**（那版是「点一下整组自动重排」）：用户裁定「弹窗批量勾选排序手动排，不是自动排」。
+     * 🔴 落库仍走 `bulkSetSeriesIndex`（只写 `seriesIndex` 一个字段）；**回执在这里给** ——
+     *    折叠卡封面只显示 `×N`、看不到序号，没有 `Notice` 的话用户点完像没反应（#608 立的那条纪律继续有效）。
+     */
+    openSeriesReorder(group: SeriesGroup): void {
+        new SeriesReorderModal(this.app, this, group, async (pairs) => {
+            await this.bulkSetSeriesIndex(pairs);
+            new Notice(`已按顺序重排「${group.title}」${pairs.length} 部的序号`);
+        }).open();
     }
 
     /** 当前打开的添加/编辑弹窗（防重复打开叠加：新开前先关闭旧的，避免遮罩堆叠导致新弹窗无法交互/无法输入搜索） */
@@ -1838,7 +2330,16 @@ export default class ReelLudicPlugin extends Plugin {
             const files: (string | undefined)[] = Array.from({ length: n }, (_, i) => eps[i]);
             const net: (string | undefined)[] = Array.from({ length: n }, (_, i) => urls[i]);
             const titles: (string | undefined)[] = Array.from({ length: n }, (_, i) => entry.episodeTitles?.[i]);
-            const idx = await new EpisodePickerModal(this.app, entry.title, files, net, titles, entry.type === 'movie').open();
+            // #527 失效标红：读**内存缓存**（编辑表单点过「检测失效」才有；没检测过 → 全 undefined，不标）
+            const statuses = this.linkStatusCache.get(entry.id);
+            // #573 建立 / #576 语义升级：**当前看到的那一集**（0 基）—— 决定打开时停在哪一页 + 橙点标它
+            const at = Math.max(0, (entry.progress?.episode ?? 1) - 1);
+            const idx = await new EpisodePickerModal(
+                this.app, entry.title, files, net, titles, entry.type === 'movie', statuses, at,
+                // #577：封面计划（本地视频首帧 / B 站缩略图 @320w_200h_1c.webp / 统一占位图）
+                //   宿主供网与缓存，弹窗只管渲染（弹窗摸不到 vault / service）
+                (i) => this.epCoverFor(files, net, i),
+            ).open();
             if (idx !== null) {
                 const p = entry.episodeFiles?.[idx];
                 const u = entry.episodeUrls?.[idx];
@@ -1857,8 +2358,17 @@ export default class ReelLudicPlugin extends Plugin {
         if (url) this.openExternalUrl(url);
     }
 
-    /** 海报墙/列表右键「动词 · 去关联」：无关联入口 → 打开快捷关联弹窗（书/游戏/音乐=本地路径；
-     *  影视=选集网络/本地源），保存由 saveQuickAssociate 落库 + 同步笔记 + 刷新视图 */
+    /**
+     * 海报墙 / 列表右键那条**常驻**的关联入口（文案见 `pure/actionLabel.associateMenuLabel`）。
+     * 书 / 游戏 / 音乐 = 本地路径；影视 = 选集网络 / 本地源；保存由 `saveQuickAssociate` 落库 + 同步笔记 + 刷新视图。
+     *
+     * 🔴 #599：选集弹窗里那枚「去关联」（清该集本地路径 + 网络链接）**已整体撤除**（用户点名「去除【去关联】入口按钮」）
+     *    —— 连带那枚按钮、它在宿主侧的那枚落库出口与它的样式一并退场（⛔ 不留死码）。
+     *    ⚠️「按钮类名 / 回调名 / 那个方法名」三个字面量**刻意一个都不写**：注释会进产物，
+     *       写了会撞红「那枚按钮不许回潮」的反向守卫（本仓老坑）。
+     *    改关联 / 解除关联改走**本弹窗**（清空输入框 = 解除关联，`collectResult` 的空值照写那条口径不变）。
+     *    ⚠️ 「集号保位」那条口径仍有效，只是由 `pure/episodeAssoc.storeEpisodeList` 执行（去尾空位、保留中间的洞）。
+     */
     quickAssociateEntry(entry: MediaEntry): void {
         new QuickAssociateModal(this.app, entry, {
             pickFile: (kind) => this.pickForAssociate(kind),
@@ -1876,6 +2386,14 @@ export default class ReelLudicPlugin extends Plugin {
             //    `biliParts` 缺了就会回落成「只填当前这一集」；两个都缺 ⇒ 弹窗里不画那枚按钮。
             biliSearch: (kw: string) => this.dlBiliSearch(kw),
             biliParts: (bvid: string) => this.dlBiliView(bvid),
+            // 🔴 #599：「本地路径」标签旁那枚**单集本地检索** —— 与编辑浮层 #563 走**同一个宿主方法**
+            //    （设置页分类目录递归找当前集；⛔ 这里不另写扫盘逻辑、也不判平台）。
+            searchLocalEpisode: (o) => this.searchLocalEpisode(o),
+            // 🔴 #601：单路径三类（书 / 游戏 / 音乐）「本地路径」旁那枚检索 —— 一步到位（见下方方法注释）。
+            searchLocalFile: () => this.searchLocalForAssociate(entry),
+            // 🔴 #601：书籍「网络地址」旁那枚在线检索（微信读书）—— 与编辑表单 `onSearchWeread`
+            //    **同一个出口**（`main.searchWeread`），⛔ 不另写一份请求。
+            searchOnlineBook: (kw: string) => this.searchWeread(kw),
             save: (r) => this.saveQuickAssociate(entry, r),
         }).open();
     }
@@ -1990,6 +2508,8 @@ export default class ReelLudicPlugin extends Plugin {
         const patch: Partial<MediaEntry> = {};
         if (entry.type === 'book') {
             patch.bookFile = r.bookFile?.trim() || undefined;
+            // 🔴 #601：网络地址与本地路径**两条并列**（清空 = 只解除那一条）
+            patch.readUrl = r.readUrl?.trim() || undefined;
             if (r.bookFile) {
                 const probe = await this.probeBookPages(r.bookFile);
                 if (probe) {
@@ -2000,8 +2520,11 @@ export default class ReelLudicPlugin extends Plugin {
             }
         } else if (entry.type === 'game') {
             patch.gameLaunchPath = r.gameLaunchPath?.trim() || undefined;
+            patch.gameUrl = r.gameUrl?.trim() || undefined;
         } else if (entry.type === 'music') {
             patch.audioPath = r.audioPath?.trim() || undefined;
+            // 🔴 #601：音乐网络地址（append-only 新字段）
+            patch.audioUrl = r.audioUrl?.trim() || undefined;
         } else {
             patch.episodeFiles = r.episodeFiles;
             patch.episodeUrls = r.episodeUrls;
@@ -2126,29 +2649,34 @@ export default class ReelLudicPlugin extends Plugin {
         this.pauseOtherPlayers('video');
     }
 
-    /** 播放器三个开关 → 视图选项（两处 openVideoPlayer 共用一份，免得缺省口径各写一遍漂掉）。
-     *  缺省：后台播放关 / 自动切集开（= 历史行为）/ 单集循环关。 */
+    /** 播放器选项 → 视图选项（两处 openVideoPlayer 共用一份，免得缺省口径各写一遍漂掉）。
+     *  🔴 #604：旧的「自动切集 / 单集循环」两个布尔被 `playMode` 取代 ——
+     *  迁移只在**这里**发生一次（`playModeFromLegacy`），视图只认 `PlayMode` 一种形态。
+     *  🔴 #605：「后台播放」**只读传快照**（开关本体已搬到 设置页 › 内置视频播放器 折叠分组，
+     *  由设置页直接读写 `playerBgPlay`）—— 故这里**没有** `onToggleSetting` 了。
+     *  缺省：后台播放关 / 播放模式 = 列表循环。 */
     private playerSwitchOptions(): Pick<
         VideoPlayerOptions,
-        'backgroundPlay' | 'autoNextEpisode' | 'loopSingleEpisode' | 'onToggleSetting'
+        'backgroundPlay' | 'playMode' | 'onSetPlayMode'
     > {
+        const legacyAutoNext = this.settings.playerAutoNext !== false;
+        const legacyLoopOne = this.settings.playerLoopOne === true;
         return {
             backgroundPlay: this.settings.playerBgPlay === true,
-            autoNextEpisode: this.settings.playerAutoNext !== false,
-            loopSingleEpisode: this.settings.playerLoopOne === true,
-            onToggleSetting: (key, value) => void this.persistPlayerSetting(key, value),
+            playMode: this.settings.playerPlayMode
+                ? normalizePlayMode(this.settings.playerPlayMode)
+                : playModeFromLegacy(legacyAutoNext, legacyLoopOne),
+            onSetPlayMode: (mode) => void this.persistPlayMode(mode),
         };
     }
 
-    /** 播放器开关写回 settings（append-only 可选字段；落盘失败静默 —— 本次会话已经生效） */
-    private async persistPlayerSetting(key: 'bgPlay' | 'autoNext' | 'loopOne', value: boolean): Promise<void> {
-        if (key === 'bgPlay') this.settings.playerBgPlay = value;
-        else if (key === 'autoNext') this.settings.playerAutoNext = value;
-        else this.settings.playerLoopOne = value;
+    /** #604 播放模式写回（归一后落盘；落盘失败静默 —— 本次会话已经生效） */
+    private async persistPlayMode(mode: PlayMode): Promise<void> {
+        this.settings.playerPlayMode = normalizePlayMode(mode);
         try {
             await this.saveSettings();
         } catch {
-            // 落盘失败不影响本次会话已生效的开关
+            // 落盘失败不影响本次会话已生效的模式
         }
     }
 
@@ -2436,6 +2964,10 @@ export default class ReelLudicPlugin extends Plugin {
                     void dialog
                         .showOpenDialog({
                             filters: [{ name, extensions: exts }],
+                            // 🔴 #539 撤掉 #537 试过的「同时选文件与目录」组合：Electron 在 **Windows / Linux 上
+                            //    不支持「既是文件选择器又是目录选择器」**（该组合只会弹目录选择器）⇒ 实测「漫画关联不了
+                            //    图片文件夹、只能选单文件」正是这种平台差异。选目录改由**专用方法**（`pickBookFolderPath`）
+                            //    走 `openDirectory` 明确分流。⛔ 别再把这个组合拿回来。
                             properties: ['openFile'],
                             defaultPath: this.lastSystemDir || fallbackDir || undefined,
                         })
@@ -2494,22 +3026,33 @@ export default class ReelLudicPlugin extends Plugin {
         return d || undefined;
     }
 
-    /** 🔴 #524：选书籍目录（编辑表单「检索本地书籍」）—— 冷启动锚点 = 设置里的「书籍文件目录」 */
-    pickBookDirPath(): Promise<string | null | undefined> {
-        return this.pickDirPath(this.downloadDirSystemPath(this.settings.bookDownloadDir, 'book'));
+    /**
+     * #534：选游戏目录（编辑表单「检索本地」—— 游戏那枚）—— 没有配置目录，冷启动锚点留空。
+     * ⚠️ 只认「选中」与「没选」两态（取消 / 无对话框都当没选），与视频文件夹同口径。
+     * 🔴 #602 起它是**全仓唯一**还走「当场挑文件夹」的本地检索（书籍改走分类目录、音乐走音频目录）——
+     *    保留的依据见 `searchLocalBookFile` 那条注释（游戏按 #562 没有分类目录）。
+     */
+    async pickGameDirPath(): Promise<string | undefined> {
+        const d = await this.pickDirPath();
+        return d || undefined;
     }
 
     /**
-     * 🔴 #524：列出**用户刚挑的那个目录**里的可关联书籍文件（支持子目录，深度 ≤ 4；忽略隐藏目录）。
-     *
-     * 用户：「书籍检索文件目录给我先弹出系统文件选择器让我选择目录」——原来只扫设置里那个
-     *   「书籍文件目录」（`listLibraryBookFiles`），书放在别处就找不到。
-     * ⚠️ 与 `listLibraryBookFiles()` 的分工：那条**读设置**（配置目录；也是非桌面端的回落路径）；
-     *   这条**只认传进来的目录**（库内、库外都行）。
-     * 返回的 `path` 与「浏览」同口径：库内 → 库内相对路径；库外 → 系统绝对路径（`toVaultRelPath` 认得出才转）。
+     * #534：列出用户刚挑的目录里的**可启动文件**（游戏「检索本地」）。
+     * 判据在 `pure/gameLaunch.isGameLaunchPath`（.lnk/.exe/.bat/.cmd/.app/.sh；⛔ 与书籍扩展名集合分开）。
+     * 其余口径（子目录深度 ≤ 4、忽略隐藏、库内/库外路径转换、失败返回 `[]`）与书籍那条**共用同一个 walk**。
+     */
+    async listGameLaunchFilesInDir(dir: string): Promise<LibraryBookFile[]> {
+        return this.collectFilesInDir(dir, isGameLaunchPath);
+    }
+
+    /**
+     * 在目录里按扩展名收集文件（支持子目录，深度 ≤ 4；忽略隐藏项）—— 书籍 / 游戏两个入口**共用的唯一 walk**。
+     * 🔴 抽出来是因为原先只有书籍一份；再加游戏时若照抄一遍 ⇒ 两条 walk 必然漂（深度、隐藏、路径转换三处最容易分叉）。
+     * `path` 与「浏览」同口径：库内 → 库内相对路径；库外 → 系统绝对路径（`toVaultRelPath` 认得出才转）。
      * 目录不存在 / 不可读 / 非桌面 ⇒ `[]`（调用方提示，⛔ 不抛）。
      */
-    async listBookFilesInDir(dir: string): Promise<LibraryBookFile[]> {
+    private collectFilesInDir(dir: string, accept: (name: string) => boolean): LibraryBookFile[] {
         const d = String(dir ?? '').trim();
         if (!d || !Platform.isDesktopApp) return [];
         const out: LibraryBookFile[] = [];
@@ -2522,7 +3065,7 @@ export default class ReelLudicPlugin extends Plugin {
                     if (ent.name.startsWith('.')) continue;
                     const child = `${abs.replace(/[\\/]+$/, '')}${sep}${ent.name}`;
                     if (ent.isDirectory()) walk(child, depth + 1);
-                    else if (isAssociableBookPath(ent.name)) out.push({ path: this.toVaultRelPath(child), name: ent.name });
+                    else if (accept(ent.name)) out.push({ path: this.toVaultRelPath(child), name: ent.name });
                 }
             };
             walk(d, 0);
@@ -2531,6 +3074,113 @@ export default class ReelLudicPlugin extends Plugin {
             return [];
         }
         return out;
+    }
+
+    /**
+     * #563 「单集本地检索」—— 编辑浮层「本地路径」标签旁那枚小图标按钮的宿主实现。
+     *
+     * 用户原话：「点一下要自动去设置页前置填写的媒体库目录路径里（含多层嵌套）递归搜索当前集的
+     * 视频文件，并直接自动填入绝对路径」＋「这个不同类型条目检索不同的路径目录」。
+     *
+     * 流程：条目类型 → 分类目录键（`localDirKeyFor`）→ 读设置（`localDirOf`）→ 解析成系统绝对路径
+     * （`resolveLocalDirAbs`，库内相对 / 系统绝对都认）→ **递归扫**（复用 `collectFilesInDir`，
+     * 深度 ≤ 4、忽略隐藏项，与书籍 / 游戏两条检索**同一份 walk**）→ 按集号（+集标题加权）挑一条
+     * （`pickLocalEpisode`）。
+     *
+     * 🔴 返回值分三种，**组件必须能区分**：
+     *    · `ok`        → 填入路径；
+     *    · `'nodir'`   → 该分类**没配目录**（或游戏这种压根没有目录的）⇒ 弹「去设置页配置」的警告；
+     *    · `'notfound'`→ 配了但没找到这一集 ⇒ 只说没找到（⛔ 别混进上面那条，会把人支使去改设置）。
+     * ⚠️ 扩展名判据按分类分叉：影视 → 可关联视频；文学/网文/漫画 → 可关联书籍；音乐 → 可关联音频。
+     *    ⛔ 别用「一把梭」的扩展名集合 —— 那会让视频目录里的 `.nfo`/`.srt` 也进候选。
+     * ⚠️ 路径口径与「浏览」按钮**一致**（库内 → 库内相对；库外 → 系统绝对，见 `toVaultRelPath`）。
+     */
+    async searchLocalEpisode(opts: LocalEpisodeQuery): Promise<LocalEpisodeOutcome> {
+        const key = localDirKeyFor(opts.type, opts.bookKind);
+        if (!key) return { ok: false, reason: 'nodir' };
+        const abs = resolveLocalDirAbs(this.vaultBasePath(), localDirOf(this.settings, key));
+        if (!abs) return { ok: false, reason: 'nodir' };
+        const files = this.collectFilesInDir(abs, localDirAccept(key));
+        const picked = pickLocalEpisode(files, opts.epIndex + 1, opts.epTitle || opts.title, opts.isMovie);
+        return picked ? { ok: true, path: picked.path } : { ok: false, reason: 'notfound' };
+    }
+
+    /**
+     * 🔴 #602 书籍「按标题检索本地文件」—— **唯一入口**（快捷关联弹窗与编辑表单 `findLibraryBook` 都走它）。
+     *
+     * 用户原话：「书籍关联入口这个小图标按钮怎么是选文件夹关联的，统一成检索关联」（问答里裁定「两处一起改」）。
+     * ⇒ 书籍那枚 `folder-search` 不再「先弹系统目录选择器」（#524 那套两段式**对书籍作废**），换成与
+     *    `searchLocalEpisode` **同一条链**：条目 → 分类目录键（`localDirKeyFor('book', bookKind)`，
+     *    文学 / 网文 / 漫画三档）→ 读设置（`localDirOf`）→ 绝对路径（`resolveLocalDirAbs`）→ 递归扫
+     *    （`collectFilesInDir` + 该分类的扩展名判据）→ 标题匹配（`pure/libraryBooks.pickLibraryBook`，
+     *    与下载排序 / #417 那把相似度尺**同一份**）。
+     *
+     * ⛔ 三个「不」：⛔ 不判平台（`collectFilesInDir` 里已门控）、⛔ 不另写相似度、⛔ 不在这里拼第二份目录路径
+     *    （目录真源只有 `pure/localDirs` 那一份）。
+     * ⚠️ **游戏不走这条**（按 #562 它没有分类目录 ⇒ 本地关联就是「当场挑一个文件夹」，见
+     *    `searchLocalForAssociate` 的游戏分支）—— ⛔ 别为「对称」给它硬造一个设置项。
+     * ⚠️ 没配目录 / 目录里没文件 / 没找到同名 ⇒ 一律折成 `notice` 交回调用方（⛔ 别静默什么都不做）。
+     */
+    async searchLocalBookFile(q: LocalBookSearchQuery): Promise<LocalFileSearchOutcome> {
+        const title = q.title?.trim() ?? '';
+        if (!title) return { notice: '标题为空，先填标题再检索' };
+        const key = localDirKeyFor('book', q.bookKind);
+        if (!key) return { notice: '这一类没有配置本地目录，无法检索' };
+        const dir = localDirOf(this.settings, key);
+        if (!dir) return { notice: `还没设置「${LOCAL_DIR_LABELS[key]}」，先去设置页填一个目录` };
+        const abs = resolveLocalDirAbs(this.vaultBasePath(), dir);
+        if (!abs) return { notice: `「${LOCAL_DIR_LABELS[key]}」不是有效路径，去设置页检查一下` };
+        const files = this.collectFilesInDir(abs, localDirAccept(key));
+        if (files.length === 0) return { notice: `${LOCAL_DIR_LABELS[key]}（${dir}）里没有可关联的书籍文件` };
+        const { best, ranked } = pickLibraryBook(files, title, q.author?.trim() ?? '');
+        if (!best) return { notice: `${LOCAL_DIR_LABELS[key]}（${dir}）里没找到与「${title}」同名的书籍文件` };
+        return { path: best.path, name: best.name, count: ranked.length };
+    }
+
+    /**
+     * 🔴 #601/#602 快捷关联弹窗「本地路径」标签旁那枚检索（`folder-search`）的宿主出口 —— **三类分流**：
+     *    · 书籍 ⇒ `searchLocalBookFile`（#602：按子分类直接检索设置里的分类目录，**不问用户**）；
+     *    · 音乐 ⇒ 音频目录（`listLibraryAudioFiles` 走 **vault API** ⇒ 移动端照样能用）+ `pickLibraryAudio`
+     *      —— ⛔ 别顺手把它也改成 fs 扫盘（那会平白砍掉移动端这条路，用户没要求）；
+     *    · 游戏 ⇒ **当场挑一个文件夹**（`pickGameDirPath` → `listGameLaunchFilesInDir` → 同一把匹配尺）
+     *      —— #562 定过游戏没有「分类目录」，#602 问答里也裁定**保持原样**。
+     * ⛔ 弹窗侧不判平台、不另写相似度；所有分支一律折成 `notice` 交回（用户取消 ≠ 出错，⛔ 别静默）。
+     */
+    async searchLocalForAssociate(entry: MediaEntry): Promise<LocalFileSearchOutcome> {
+        if (entry.type === 'book') {
+            return this.searchLocalBookFile({
+                bookKind: entry.bookKind,
+                title: entry.title ?? '',
+                author: entry.author,
+            });
+        }
+        const title = entry.title?.trim() ?? '';
+        if (!title) return { notice: '标题为空，先填标题再检索' };
+        if (entry.type === 'music') {
+            const files = this.listLibraryAudioFiles();
+            if (files.length === 0) return { notice: '音频文件目录里还没有音频文件' };
+            const { best, ranked } = pickLibraryAudio(files, title, entry.author?.trim() ?? '');
+            if (!best) return { notice: `音频文件目录里没找到与「${title}」同名的音频` };
+            return { path: best.path, name: best.name, count: ranked.length };
+        }
+        // 游戏：当场挑一个文件夹（上面已门控桌面端 ⇒ 这里的 undefined 只可能是「用户取消」）
+        const dir = await this.pickGameDirPath();
+        if (!dir) return { notice: '未选择目录，已取消检索' };
+        const files = await this.listGameLaunchFilesInDir(dir);
+        if (files.length === 0) return { notice: `${dir} 里没有可关联的文件` };
+        const { best, ranked } = pickLibraryBook(files, title, entry.author?.trim() ?? '');
+        if (!best) return { notice: `${dir} 里没找到与「${title}」同名的文件` };
+        return { path: best.path, name: best.name, count: ranked.length };
+    }
+
+    /** vault 根的系统绝对路径（拿不到 ⇒ 空串）。⚠️ 与 `toVaultRelPath` / `downloadDirSystemPath` 同源取法 */
+    private vaultBasePath(): string {
+        try {
+            const adapter = this.app.vault.adapter as FileSystemAdapter;
+            return typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
+        } catch {
+            return '';
+        }
     }
 
     /** 读视频文件夹内可识别集号的视频文件（快捷关联弹窗/编辑表单批量检索用）：过滤可关联容器扩展名 →
@@ -2593,14 +3243,31 @@ export default class ReelLudicPlugin extends Plugin {
         );
     }
 
-    /** 选书籍文件（TXT/EPUB/PDF）｜🔴 #460：冷启动锚点 = 「书籍文件目录」的绝对路径（同音频那枚） */
+    /** 选书籍文件（TXT/EPUB/PDF/CBZ/CBT）｜🔴 #460：冷启动锚点 = 「书籍文件目录」绝对路径（同音频那枚）
+     *  🔴 #539：**只选文件**。漫画的「散装文件夹型」改由 `pickBookFolderPath()` 那枚专用入口走目录选择器 ——
+     *     Electron 在 Windows/Linux 上不能同时选文件与目录（实测会退化成只能选文件）。 */
     async pickBookFilePath(): Promise<string | undefined> {
         return this.pickSystemFile(
-            ['txt', 'epub', 'pdf'],
-            '电子书',
+            ['txt', 'epub', 'pdf', 'cbz', 'zip', 'cbt', 'tar'],
+            '电子书 / 漫画',
             true,
             this.downloadDirSystemPath(this.settings.bookDownloadDir, 'book'),
         );
+    }
+
+    /**
+     * #539 选**漫画图片文件夹**（「散装文件夹型」= 一个装满图片的文件夹，把**这个文件夹本身**关联成书）。
+     *
+     * 🔴 为什么必须与「浏览」分成两枚入口：Electron 的 `showOpenDialog` 在 **Windows / Linux 上不能同时**
+     *    选文件与目录（组合形态只会给出目录选择器，实测还会退化成只能选文件）
+     *    ⇒ 与其赌平台差异，不如**明确分流**：文件走 `pickBookFilePath`（`openFile`），目录走这一枚（`openDirectory`）。
+     * 口径与「浏览」选文件一致：库内转**库内相对路径**（`toVaultRelPath`），库外保留绝对路径。
+     * ⚠️ 三态原样透传（`string` 选中 / `null` 用户取消 / `undefined` 本环境没有系统对话框），⛔ 别拿 `!dir` 一把抓。
+     */
+    async pickBookFolderPath(): Promise<string | null | undefined> {
+        const d = await this.pickDirPath(this.downloadDirSystemPath(this.settings.bookDownloadDir, 'book'));
+        if (typeof d !== 'string') return d;
+        return this.toVaultRelPath(d);
     }
 
     /** 选游戏启动快捷方式（.lnk） */
@@ -2638,6 +3305,13 @@ export default class ReelLudicPlugin extends Plugin {
      */
     async playAudioEntry(entry: MediaEntry): Promise<void> {
         if (!entry.audioPath) {
+            // 🔴 #601：没有本地音频但填了「网络地址」⇒ 用浏览器打开 —— `hasActionEntry` 把 `audioUrl`
+            //    也算作可用入口，判可用与真能执行**必须同口径**（⛔ 别造一条点了没反应的死入口）。
+            const u = entry.audioUrl?.trim();
+            if (u) {
+                window.open(u, '_blank');
+                return;
+            }
             new Notice('未关联本地音频 — 编辑条目选择文件', 4000);
             return;
         }
@@ -3546,9 +4220,113 @@ export default class ReelLudicPlugin extends Plugin {
      * 🔴 与 `dlBiliSearch` 同一条纪律：只桌面端、共用 `buvid3` 缓存、失败重取一次再报原因；
      *    ⛔ 只**取列表**，不下载（下载是音乐下载弹窗那条路的职责）。
      */
-    async dlBiliView(bvid: string): Promise<{ title: string; parts: BiliPart[]; error?: string }> {
-        if (!Platform.isDesktopApp) return { title: '', parts: [], error: '仅桌面端支持' };
+    async dlBiliView(bvid: string): Promise<{ title: string; parts: BiliPart[]; cover: string; error?: string }> {
+        if (!Platform.isDesktopApp) return { title: '', parts: [], cover: '', error: '仅桌面端支持' };
         return dlBiliView(this.dlTransport(), bvid);
+    }
+
+    /**
+     * 🔴 #577 选集封面**计划**（宿主侧）：本地视频 ⇒ 首帧；否则 B 站直链 ⇒ 缩略图；都没有 ⇒ 统一占位图。
+     *
+     * - **本地优先**（与全仓「本地恒在最前」同一条口径）：本地文件能定位到就**直接返回**，
+     *   连 B 站那条请求都不发（⛔ 别为了「也拿个图」白打一次接口）；
+     * - 网络侧**只认 B 站**（`bvidOf` 只认 bilibili.com / b23.tv 域名）：别的平台没有公开稳定的取图方式
+     *   ⇒ 落占位图（用户明确允许的兜底：「获取失败时必须显示统一的默认占位图」）；
+     * - 本方法**不写缓存**（缓存在 `biliThumb` 里按 `bvid` 做，同一合集 52 集共享同一条）。
+     */
+    private async epCoverFor(
+        files: readonly (string | undefined)[],
+        urls: readonly (string | undefined)[],
+        idx: number,
+    ): Promise<EpCoverPlan> {
+        const raw = files[idx];
+        // 库内走 getResourcePath、库外走 app://（与播放/探时长**同一条链**，⛔ 别另拼一份）
+        const local = raw ? this.resolveEmbedUrl(String(raw)) ?? '' : '';
+        if (local) return planEpCover(local, '');
+        const bvid = bvidOf(urls[idx]);
+        const thumb = bvid ? await this.biliThumb(bvid) : '';
+        return planEpCover('', thumb);
+    }
+
+    /**
+     * 🔴 #577 B 站视频**缩略图**地址（`bvid → https://…@320w_200h_1c.webp`）。三条纪律：
+     *   ⑴ **同 `bvid` 只问一次**：缓存 → 在途 → 才排队（52 集同属一个合集时只打 1 次接口）；
+     *   ⑵ **串行 + 间隔**（`EP_COVER_GAP_MS`）：`view` 实测吃风控，并发必然 412；
+     *   ⑶ **取不到 ⇒ 空串**（调用方落占位图），**不写缓存**（下次打开还试）。
+     * ⚠️ 走的是 `dlBiliView` 这条**已有**的链（同一接口、同一份 `buvid3` 缓存与重试纪律）
+     *    —— ⛔ 别为封面另写一套 request + cookie。
+     */
+    private async biliThumb(bvid: string): Promise<string> {
+        const b = String(bvid ?? '').trim();
+        if (!b) return '';
+        const hit = this.epCoverCache.get(b);
+        if (hit !== undefined) return hit;
+        const inflight = this.epCoverPending.get(b);
+        if (inflight) return inflight;
+        const task = this.epCoverGate
+            .then(async () => {
+                // 排到队时可能已经被前一条填上了（同一 bvid 的两条路）
+                const again = this.epCoverCache.get(b);
+                if (again !== undefined) return again;
+                const out = await this.dlBiliView(b);
+                const thumb = out.cover ? biliThumbUrl(out.cover) : '';
+                if (thumb) this.epCoverCache.set(b, thumb);
+                return thumb;
+            })
+            .catch(() => ''); // 传输层抛错 ⇒ 当「取不到」（封面不该把弹窗搞崩）
+        this.epCoverPending.set(b, task);
+        // 闸门后移：无论成败都等一个间隔再放行下一条
+        this.epCoverGate = task.then(() => new Promise<void>((r) => window.setTimeout(r, EP_COVER_GAP_MS)));
+        try {
+            return await task;
+        } finally {
+            this.epCoverPending.delete(b);
+        }
+    }
+
+    /**
+     * #529 书籍「检索在线书籍阅读」：搜**微信读书网页版**，返回候选（书名/作者/封面/评分 + 阅读链接）。
+     * ⛔ 只桌面端（走 Node 传输层）；失败一律「空结果 + error」，不抛（对齐 B 站那条口径）。
+     * ⛔ 只检索链接，**不下载、不解析正文** —— 回填目标 = 条目 `readUrl`。
+     */
+    async searchWeread(keyword: string): Promise<{ books: WereadCandidate[]; error?: string }> {
+        if (!Platform.isDesktopApp) return { books: [], error: '仅桌面端支持在线检索' };
+        return searchWereadSvc(this.dlTransport(), keyword);
+    }
+
+    /**
+     * #531 读某条目的失效检测结果（编辑表单 / 集数选择弹窗标红用）。
+     * 🔴 内存态（`linkStatusCache`）；**没检测过 → 空数组**（⇒ 不标红，与旧行为一致）。
+     */
+    getLinkStatuses(entryId: string): (LinkStatus | undefined)[] {
+        return this.linkStatusCache.get(entryId) ?? [];
+    }
+
+    /**
+     * #531 **全库**检测失效链接 —— 入口在「设置 › 基本设置 › 封面与清理」那一组（用户 2026-10-05 指令：
+     * 「把检测已填网络地址是否失效按钮放在设置页-基本设置-封面与清理下面，功能为全库检索失效链接标红」）。
+     *
+     * 🔴 结果**只存内存**（按条目写进 `linkStatusCache`）⇒ 编辑表单的集按钮与集数选择弹窗据此标红；
+     *    ⛔ 不落 catalog（用户上一轮已裁定「仅内存缓存」）。
+     * 🔴 全局并发上限 6：所有条目的地址**摊平成一条队列**（见 `services/linkCheck.checkAllLinks`），
+     *    ⛔ 不是「每条目各开 6 路」。
+     * ⛔ 只桌面端（走 Node 传输层）。
+     */
+    async scanLibraryLinks(): Promise<{ entries: number; ok: number; dead: number; unknown: number }> {
+        if (!Platform.isDesktopApp) return { entries: 0, ok: 0, dead: 0, unknown: 0 };
+        const targets = collectLinkScanTargets(await this.service.list());
+        const results = await checkAllLinks(this.dlTransport(), targets);
+        let ok = 0;
+        let dead = 0;
+        let unknown = 0;
+        for (const r of results) {
+            this.linkStatusCache.set(r.entryId, r.statuses);
+            const s = summarizeLinkStatus(r.statuses);
+            ok += s.ok;
+            dead += s.dead;
+            unknown += s.unknown;
+        }
+        return { entries: results.length, ok, dead, unknown };
     }
 
     /**
@@ -3587,24 +4365,6 @@ export default class ReelLudicPlugin extends Plugin {
         } catch (e) {
             return { ok: false, message: `写入失败：${e instanceof Error ? e.message : String(e)}` };
         }
-    }
-
-    /**
-     * 列出**库内可关联的书籍文件**（#417：书籍「书籍文件」浮层那枚 🔍 的数据源）。
-     *
-     * 🔴 扩展名白名单真源 = `pure/downloadPlan.DOWNLOAD_EXT_WHITELIST.book`（经 `isAssociableBookPath`）
-     *    —— 与「书籍文件」字段能接受的文件同源，⛔ 不另列一份名单。
-     * 🔴 **#426 起只扫「书籍文件目录」**（用户原话：「检索限定到新目录」）—— 与音频那侧同款：
-     *    目录真源 = `downloadDir(settings.bookDownloadDir, 'book')`，与**落盘用的是同一个函数**
-     *    ⇒ ⛔ 别在这里另拼一份路径（否则用户改完「书籍文件目录」，这里立刻找不到东西）。
-     * ⚠️ 此前是**全库扫**（旧口径「用户可能把书放自己建的文件夹里」）—— 已被用户推翻，⛔ 别改回去。
-     */
-    listLibraryBookFiles(): LibraryBookFile[] {
-        const prefix = `${downloadDir(this.settings.bookDownloadDir, 'book')}/`;
-        return this.app.vault
-            .getFiles()
-            .filter((f) => f.path.startsWith(prefix) && isAssociableBookPath(f.path))
-            .map((f) => ({ path: f.path, name: f.name }));
     }
 
     /**
@@ -3927,7 +4687,8 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /** 一键即黄即记：写入**阅读数据存档**（高亮真源）并返回新块 id 供阅读器即时 mark；失败 null（不抛，已 Notice 原因）。
-     *  ⚠️ 2026-09-18 前这里写的是笔记「## 高亮」区（连笔记都要顺手造一本）；现在笔记那份只是 JSON 生成的镜像。 */
+     *  🔴 #528（2026-10-05 用户裁定「高亮数据仅保存在阅读进度文件里」）：**不再同步笔记镜像** —— 高亮只落 JSON，
+     *  笔记里那份「## 高亮」区不再生成（存量残留由 `migrateRemoveHighlightMirrors` 清理）。 */
     private async addBookHighlight(
         entryId: string,
         title: string,
@@ -3948,7 +4709,6 @@ export default class ReelLudicPlugin extends Plugin {
             };
             mem.store = withHighlights(mem.store, [...mem.store.highlights, hl]);
             await this.flushReaderStore(entryId);
-            await this.syncHighlightMirror(entryId);
             return id;
         } catch (err) {
             new Notice(`高亮失败：${err instanceof Error ? err.message : String(err)}`);
@@ -3956,7 +4716,7 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
-    /** 删除高亮（阅读器标注右键）：ConfirmModal 确认 → 从存档移除 + 同步笔记镜像；返回是否成功 */
+    /** 删除高亮（阅读器标注右键）：ConfirmModal 确认 → 从存档移除（#528 起不再写笔记）；返回是否成功 */
     async deleteBookHighlight(entryId: string, blockId: string): Promise<boolean> {
         try {
             const e = await this.service.get(entryId);
@@ -4027,10 +4787,109 @@ export default class ReelLudicPlugin extends Plugin {
         return null;
     }
 
+    // ── #537 漫画来源（图片文件夹 / CBZ·ZIP / CBT·TAR）────────────────────────────
+    // 判据真源在 `pure/comicFiles`（图 / 档两张扩展名表 + 自然序 + 归档项过滤）；
+    // 本段只做「来源 → 页序（按需取字节）」的宿主侧适配 —— 面板不碰文件系统、也不解包。
+
+    /** 路径是否**绝对**（盘符 / UNC / 以斜杠开头）—— 区分「库内相对」与「库外绝对」两条 IO 通道 */
+    private isAbsolutePath(path: string): boolean {
+        return /^([A-Za-z]:[\\/]|\\\\|\/)/.test(String(path ?? '').trim());
+    }
+
+    /** 该路径是不是**目录**（漫画文件夹型）：库内查 TFolder；库外桌面端 statSync；拿不到一律 false */
+    isDirectoryPath(path: string): boolean {
+        const p = String(path ?? '').trim();
+        if (!p) return false;
+        const f = this.app.vault.getAbstractFileByPath(normalizePath(p));
+        if (f) return f instanceof TFolder;
+        if (!this.isAbsolutePath(p) || !Platform.isDesktopApp) return false;
+        try {
+            const fsMod = require('fs') as { statSync(p: string): { isDirectory(): boolean } };
+            return fsMod.statSync(p).isDirectory();
+        } catch {
+            return false;
+        }
+    }
+
+    /** 列出漫画文件夹里的图片页（**自然序**；库内相对走 vault.adapter，库外绝对走 fs）。失败 → [] */
+    async listComicFolderPages(dir: string): Promise<string[]> {
+        const d = String(dir ?? '').trim().replace(/[\\/]+$/, '');
+        if (!d) return [];
+        try {
+            if (this.isAbsolutePath(d)) {
+                if (!Platform.isDesktopApp) return [];
+                const fsMod = require('fs') as { readdirSync(p: string): string[] };
+                const names = fsMod.readdirSync(d).filter(isComicImageName);
+                return sortComicPages(names.map((name) => ({ name }))).map((x) => x.name);
+            }
+            const adapter = this.app.vault.adapter as unknown as { list(p: string): Promise<{ files: string[] }> };
+            const r = await adapter.list(d);
+            const names = (r?.files ?? [])
+                .map((p) => p.slice(p.lastIndexOf('/') + 1))
+                .filter(isComicImageName);
+            return sortComicPages(names.map((name) => ({ name }))).map((x) => x.name);
+        } catch {
+            return [];
+        }
+    }
+
+    /** 读一页图片字节（文件夹型 / 宿主兜底）：库内相对或库外绝对，与 `readBookBytes` 同一通道 */
+    private async readComicPageBlob(filePath: string): Promise<Blob | null> {
+        const bytes = await this.readBookBytes(filePath);
+        return bytes ? new Blob([bytes], { type: comicMime(filePath) }) : null;
+    }
+
+    /**
+     * 打开漫画压缩包（CBZ/ZIP 走 jszip；CBT/TAR 走零依赖 `pure/tarParse`）→ 页序句柄。
+     * 🔴 **按需取页**：ZIP 只持 jszip 文档（`file().async()` 逐页解）、TAR 只持原字节视图，
+     *    ⛔ 别在打开时把 200 页全读进内存（200 张 1MB 图 = 200MB 常驻）。
+     * 返回 `null` = 文件不存在 / 读取或解包失败；`names.length === 0` = 包里没有图片页（调用方分别提示）。
+     */
+    private async openComicArchive(path: string): Promise<{ names: string[]; read: (i: number) => Promise<Uint8Array | null> } | null> {
+        const bytes = await this.readBookBytes(path);
+        if (!bytes) return null;
+        const ext = comicExt(path);
+        if (ext === 'zip' || ext === 'cbz') {
+            try {
+                // jszip 懒加载（esbuild 打包进 main.js；CJS 互操作取 .default）—— 与 EPUB 解包同款
+                const JSZip = (await import('jszip')).default;
+                const zip = await JSZip.loadAsync(bytes);
+                const entries = Object.keys(zip.files).filter((n) => !zip.files[n].dir && isComicArchiveEntry(n));
+                const names = sortComicPages(entries.map((name) => ({ name }))).map((x) => x.name);
+                return {
+                    names,
+                    read: async (i) => {
+                        const n = names[i];
+                        if (!n) return null;
+                        const f = zip.file(n);
+                        return f ? await f.async('uint8array') : null;
+                    },
+                };
+            } catch {
+                return null;
+            }
+        }
+        // TAR / CBT：`parseTar` 返回的 bytes 是原缓冲的**子视图**（不额外拷贝），过滤 + 自然序后按名取页
+        const found = parseTar(bytes).filter((e) => isComicArchiveEntry(e.name));
+        const names = sortComicPages(found.map((e) => ({ name: e.name }))).map((x) => x.name);
+        const byName = new Map(found.map((e) => [e.name, e.bytes] as const));
+        return { names, read: async (i) => (names[i] ? (byName.get(names[i]) ?? null) : null) };
+    }
+
     /** 探针本地书籍文件进度基准（表单「进度页数」自动关联用）：PDF 返回 numPages（页基准）；TXT 按章节解析返回 totalChapters；
-     *   EPUB 解包取 spine 章节数做基准（章节制，与 TXT 同构）；失败返回 undefined。PDF 复用 pdfjs 单例 worker（Blob 内联），只解析不渲染，轻量 */
+     *   EPUB 解包取 spine 章节数做基准（章节制，与 TXT 同构）；漫画（#537）返回页数（文件夹图片数 / 压缩包图片页数）；
+     *   失败返回 undefined。PDF 复用 pdfjs 单例 worker（Blob 内联），只解析不渲染，轻量 */
     async probeBookPages(path: string): Promise<BookProbeResult | undefined> {
         const lower = path.toLowerCase();
+        // 🔴 #537 漫画优先于扩展名判定 —— 文件夹型**没有扩展名**，得先看它是不是目录
+        if (this.isDirectoryPath(path)) {
+            const names = await this.listComicFolderPages(path);
+            return names.length ? { format: 'comic', numPages: names.length } : undefined;
+        }
+        if (isComicArchivePath(path)) {
+            const arc = await this.openComicArchive(path);
+            return arc && arc.names.length ? { format: 'comic', numPages: arc.names.length } : undefined;
+        }
         if (lower.endsWith('.pdf')) {
             const data = await this.readPdf(path);
             if (data === null) return undefined;
@@ -4088,6 +4947,14 @@ export default class ReelLudicPlugin extends Plugin {
     private readerStores = new Map<string, ReaderStoreMem>();
     /** 载入去重（同一本书被并发打开时只读一遍、只迁移一遍） */
     private readerStoreLoads = new Map<string, Promise<ReaderStoreMem>>();
+
+    /**
+     * #527 剧集链接失效检测结果（**只存内存**，用户裁定「仅内存缓存」）：
+     * key = 条目 id，value = 与 `episodeUrls` 下标对齐的状态数组。
+     * 用途：编辑表单点「检测失效」后写入，海报墙「观看」那张**集数选择弹窗**据此标红（同一份口径）；
+     * 🔴 不落 catalog（探测结果可随时重测，写进 schema 只会引入一份会过期的缓存）。
+     */
+    private linkStatusCache = new Map<string, (LinkStatus | undefined)[]>();
 
     /** 取内存态（无则载入 + 懒迁移）；title 每次都刷新（条目可能改过名，文件名基准要跟着走） */
     private async ensureReaderStore(entryId: string, title: string): Promise<ReaderStoreMem> {
@@ -4236,22 +5103,11 @@ export default class ReelLudicPlugin extends Plugin {
         await this.flushReaderStore(entryId);
     }
 
-    /** 同步笔记「## 高亮」只读镜像（D-3②）。失败静默：真源在 JSON，镜像只是给人看/给 Obsidian 搜索用的。
-     *  🔴 必须经 EntryService（笔记与 noteFingerprint 的唯一拥有者）—— 自己直接写笔记会让指纹过期，
-     *  下次编辑该条目被误判「笔记被外部修改」。 */
-    private async syncHighlightMirror(entryId: string): Promise<void> {
-        const mem = this.readerStores.get(entryId);
-        if (!mem) return;
-        try {
-            const e = await this.service.get(entryId);
-            await this.service.syncHighlightMirror(entryId, mem.store.highlights, { refLink: this.excerptRefLink(e) });
-        } catch { /* 镜像失败不影响真源 */ }
-    }
-
     /**
      * 批量移除高亮（阅读器垃圾桶 / 侧栏「清除全部」共用）：先按块 id，再按**引用文本**兜底
      * （去空白归一；老数据/手改的条目可能没有 id）—— 只按 id 删会「提示删了却还在」。
-     * 一次 flush + 一次镜像；返回实际移除条数（调用方据此提示）。
+     * 一次 flush；返回实际移除条数（调用方据此提示）。
+     * 🔴 #528：**不再同步笔记镜像**（高亮只落 JSON）。
      */
     private async removeReaderHighlights(entryId: string, title: string, ids: string[], quotes: string[]): Promise<number> {
         const mem = await this.ensureReaderStore(entryId, title);
@@ -4272,7 +5128,6 @@ export default class ReelLudicPlugin extends Plugin {
         if (n) {
             mem.store = withHighlights(mem.store, list);
             await this.flushReaderStore(entryId);
-            await this.syncHighlightMirror(entryId);
         }
         return n;
     }
@@ -4301,6 +5156,28 @@ export default class ReelLudicPlugin extends Plugin {
                 await this.app.vault.rename(f, target);
             }
         } catch { /* 迁移失败静默（新写入走新名，下次启动重试） */ }
+    }
+
+    /**
+     * #528 清理：删掉**存量笔记**里的「## 高亮」镜像区（高亮真源 = 阅读数据 JSON，笔记那份只是历史镜像）。
+     *
+     * 🔴 **只在「该条目已有阅读数据 JSON」时才删** —— 此时笔记区必然是镜像（或过期镜像），删掉不丢数据；
+     *    JSON 不存在 ⇒ 跳过（可能是**尚未懒迁移**的旧手写高亮，等用户打开阅读器把它搬进 JSON 后，
+     *    下一次 `writeNote` 重写会自然清掉 —— `ANNOTATION_SECTIONS` 已不含「高亮」）。
+     * 幂等：无该区 → `removeHighlightSection` 返回 false（不写盘）；单条失败不中断，整体失败静默（下次启动重试）。
+     */
+    private async migrateRemoveHighlightMirrors(): Promise<void> {
+        try {
+            const entries = await this.service.list();
+            for (const e of entries) {
+                if (!e.notePath) continue;
+                const storePath = normalizePath(readerStoreFilePath(e.id, e.title, this.settings.libraryDir));
+                if (!(this.app.vault.getAbstractFileByPath(storePath) instanceof TFile)) continue;
+                try {
+                    await this.service.removeHighlightSection(e.id);
+                } catch { /* 单条失败不中断 */ }
+            }
+        } catch { /* 迁移失败静默（下次启动重试） */ }
     }
 
     /**
@@ -4805,8 +5682,8 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /** EPUB 解包解析：jszip 解包（懒加载）→ 纯逻辑解析结构（container/opf/spine/toc）；文件缺失返回 null，解析失败抛错 */
-    /** 解包 EPUB（jszip 懒加载 → 文本 fileMap + 结构解析）；供 ReaderView 视图内调用 */
-    async unpackEpub(path: string): Promise<{ fileMap: Record<string, string>; book: { title: string; chapters: string[]; toc: { label: string; href: string }[]; manifest: Record<string, string> } } | null> {
+    /** 解包 EPUB（jszip 懒加载 → 文本 fileMap + 结构解析 + 二进制按需取）；供 ReaderView 视图内 / 漫画抽取调用 */
+    async unpackEpub(path: string): Promise<{ fileMap: Record<string, string>; book: { title: string; chapters: string[]; toc: { label: string; href: string }[]; manifest: Record<string, string> }; loadBinary: (abs: string) => Promise<Uint8Array | null> } | null> {
         // jszip 动态 import（esbuild 打包进 main.js，避免启动期加载；CJS 互操作取 .default）
         const JSZip = (await import('jszip')).default;
         // 双路径读取二进制：vault 相对 → adapter.readBinary；库外绝对路径 → fs.readFile
@@ -4827,6 +5704,19 @@ export default class ReelLudicPlugin extends Plugin {
         for (const f of zip.filter((p: string) => !p.endsWith('/') && /\.(xhtml?|html|htm|ncx|opf|xml|css)$/i.test(p))) {
             fileMap[f.name] = await f.async('string');
         }
+        // 🔴 #540 漫画页图**按需取**（二进制不进 fileMap —— 那是文本表）：
+        //   闭包持有 jszip 文档（与 CBZ 漫画同款代价），逐页 `async('uint8array')`，⛔ 不整包预解压。
+        //   索引按小写建：包内路径与 XHTML 里 href 的**大小写常不一致**（Calibre 重打包的典型毛病）。
+        const zipKeys = new Map<string, string>();
+        for (const n of Object.keys(zip.files)) {
+            if (!zip.files[n].dir) zipKeys.set(n.toLowerCase(), n);
+        }
+        const loadBinary = async (abs: string): Promise<Uint8Array | null> => {
+            const key = zipKeys.get(String(abs ?? '').toLowerCase());
+            if (!key) return null;
+            const f = zip.file(key);
+            return f ? await f.async('uint8array') : null;
+        };
         // container.xml → rootfile → content.opf
         const container = fileMap['META-INF/container.xml'];
         if (!container) throw new Error('EPUB 缺少 META-INF/container.xml');
@@ -4873,7 +5763,7 @@ export default class ReelLudicPlugin extends Plugin {
                 return { label, href };
             });
         }
-        return { fileMap, book: { ...parsed, toc } };
+        return { fileMap, book: { ...parsed, toc }, loadBinary };
     }
 
     /** 读取条目笔记「## 摘抄」区 → 逐块解析（供阅读器摘抄书签目录；失败/无笔记返回空数组） */
@@ -4894,13 +5784,31 @@ export default class ReelLudicPlugin extends Plugin {
     /** 打开书籍阅读器：外部打开（系统默认程序）立即返回 undefined；内置阅读器关闭后返回最新阅读进度（percent 真源，供表单自动同步） */
     async openBookReader(entry: MediaEntry): Promise<BookProgressFields | undefined> {
         if (!entry.bookFile) {
-            new Notice('未关联书籍文件 — 编辑条目选择 TXT/EPUB/PDF', 5000);
+            // 🔴 #536（用户报障：「书籍填了网络链接，海报墙点阅读却提示未关联书籍文件」）：
+            //    海报墙卡片 / 右键菜单 / 系列季列表走的是**本方法**（`runEntryAction` → `openBookReader`），
+            //    它原先**只认 `bookFile`** ⇒ 只填了 `readUrl` 的条目点「阅读」就撞这句提示。
+            //    ⚠️ 与编辑表单的 `watchBook`（本地优先、无本地才开 `readUrl`）**必须是同一套口径** ——
+            //    否则会出现「表单里点得开、海报墙上点不开」。无本地文件时回落到在线阅读链接。
+            if (entry.readUrl?.trim()) {
+                this.openExternalUrl(entry.readUrl.trim());
+                return undefined;
+            }
+            new Notice('未关联书籍文件 / 网络地址 — 编辑条目关联本地文件（TXT/EPUB/PDF/漫画）或填在线阅读链接', 5000);
             return undefined;
         }
         const path = normalizePath(entry.bookFile);
         const ext = path.split('.').pop()?.toLowerCase();
-        if (ext !== 'txt' && ext !== 'epub' && ext !== 'pdf') {
-            new Notice('暂不支持该格式（支持 TXT/EPUB/PDF）', 3000);
+        // 🔴 #537 漫画放行两条路：压缩包（cbz/zip/cbt/tar，判据 `pure/comicFiles.isComicArchivePath`）
+        //    与**文件夹**（散装图片序列 —— 目录没有扩展名，只能靠 `isDirectoryPath` 实测）。
+        const comicSource = isComicArchivePath(path) || this.isDirectoryPath(path);
+        if (ext !== 'txt' && ext !== 'epub' && ext !== 'pdf' && !comicSource) {
+            // Kindle（mobi/azw3）在书籍扩展名白名单里**选得进来**，但本批阅读器不支持 ⇒ 单独说一句，
+            // ⛔ 别混进下面那条通用提示（用户会以为是自己格式选错了）。
+            if (ext === 'mobi' || ext === 'azw3' || ext === 'fb2') {
+                new Notice('Kindle 格式（mobi/azw3）暂不支持 — 可转成 EPUB 或 PDF 再关联', 4000);
+            } else {
+                new Notice('暂不支持该格式（支持 TXT/EPUB/PDF/CBZ/CBT 与漫画文件夹）', 3000);
+            }
             return undefined;
         }
         // 实验性功能「内置阅读器打开书籍文件」：默认 false = 外部打开（系统默认程序）；开启或非桌面端（无法外部）才走内置
@@ -4921,6 +5829,29 @@ export default class ReelLudicPlugin extends Plugin {
      * 🔴 形态 ①③ 在**编辑视图里不是 `<a>`**（是 CM6 span，见 ③ 处注释）→ 目标得回所在行的 markdown 源码里取。
      * 三种之外的链接**一律不拦**（交回 Obsidian 默认行为，绝不吞掉用户正常的链接点击）。
      */
+    /**
+     * ④ 数字输入框「滚轮增减」（#556，用户 2026-10-08）。
+     * 只做 DOM 接线：判据与算法在 `pure/numberWheel`（纯逻辑 + 单测）。
+     * 🔴 顺序不可换：**先**判目标是不是 `input[type=number]`、**再**判是否聚焦 —— 两步都过才接管。
+     * 🔴 未聚焦一律原样放行（不 preventDefault / 不 stopPropagation）：指针滑过输入框时页面必须照常滚动。
+     */
+    private onNumberWheel = (ev: WheelEvent): void => {
+        const el = ev.target;
+        if (!isNumberInputTarget(el)) return;
+        if (document.activeElement !== el) return;
+        const { min, max, step } = parseNumberBounds(el);
+        const next = wheelStepValue(el.value, ev.deltaY < 0 ? 1 : -1, step, min, max);
+        // 接管即拦：即便这一下算不出新值（已在边界 / 当前不是数），也不让页面跟着滚 ——
+        // 否则同一只输入框上「能改值时页面不动、到边界时页面突然开始滚」会显得像 bug。
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (next === undefined) return;
+        el.value = String(next);
+        // 派发原生事件让 `bind:value` / `on:input` 照常收到（Svelte 4 的 bind:value 监听 input）。
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
     private onWorkspaceAnchorClick = (ev: MouseEvent): void => {
         const target = ev.target as HTMLElement | null;
         const a = target?.closest?.('a') as HTMLAnchorElement | null;
@@ -5030,6 +5961,10 @@ export default class ReelLudicPlugin extends Plugin {
      * （不抢焦点 → 播放器留在左侧继续播）→ 结果立刻看得见、点一下就能跳回去。
      * 🔴 该口径**取代**首版的「优先最近 Markdown 编辑器光标处」（D-2 Ⓒ）：那条路有个隐性坑 ——
      * Live Preview 会把**光标所在行**渲染成源码，刚插完链接就在光标旁 → 看着是链接却**点不动**（用户实测报障）。
+     *
+     * 🔴🔴 #587（用户 2026-10-09 裁定）：**单击动作不再弹二次确认备注框** —— 顶栏按钮 / 快捷键 / 命令面板
+     * 三条入口都只写一行纯时间戳链接；备注（`[17:46](链接) 备注`）**只在用户手动编辑笔记时**出现。
+     * 写入区名 = `MARK_SECTION_STAMP`（`## 单时间戳`，见 `pure/videoMarks`）。
      */
     async insertVideoStamp(entry: MediaEntry, info: { seconds: number; ep: number }): Promise<void> {
         try {
@@ -5039,7 +5974,7 @@ export default class ReelLudicPlugin extends Plugin {
                 return;
             }
             const notePath = await this.openVideoNote(entry, false);
-            const { line } = await this.service.appendNoteSection(entry.id, link, '时间戳');
+            const { line } = await this.service.appendNoteSection(entry.id, link, MARK_SECTION_STAMP);
             if (notePath) this.scrollNoteToLine(notePath, line);
             await this.refreshPlayerMarks(entry.id);
             new Notice(`已插入时间戳 · 《${entry.title}》笔记`, 3000);
@@ -5050,9 +5985,12 @@ export default class ReelLudicPlugin extends Plugin {
 
     /**
      * #326 一键截图（用户裁定 D-3 Ⓑ 极简两行 + D-4 Ⓐ 跟随附件设置）：
-     * 抓到的帧 → `getAvailablePathForAttachment` 落盘（重名自动加序号）→ 写进**条目笔记「## 截图」**区
+     * 抓到的帧 → `getAvailablePathForAttachment` 落盘（重名自动加序号）→ 写进**条目笔记「## 截图时间戳」**区
      * （`![[图]]` + `[00:03](链接)`）。
      * ⚠️ 库外媒体也是存**库内**：Obsidian 只管理库内文件。
+     *
+     * 🔴 #587（用户 2026-10-09 裁定）：单击截图**不再弹二次确认备注框**（与 `insertVideoStamp` 同口径）
+     * ⇒ 动作一次到位、不再有「问一句再落盘」那一跳；写入区名 = `MARK_SECTION_SHOT`（`## 截图时间戳`）。
      */
     async saveVideoShot(entry: MediaEntry, info: { png: ArrayBuffer; seconds: number; ep: number }): Promise<void> {
         try {
@@ -5073,7 +6011,7 @@ export default class ReelLudicPlugin extends Plugin {
                 return;
             }
             const notePath = await this.openVideoNote(entry, false);
-            const { line } = await this.service.appendNoteSection(entry.id, block, '截图');
+            const { line } = await this.service.appendNoteSection(entry.id, block, MARK_SECTION_SHOT);
             if (notePath) this.scrollNoteToLine(notePath, line);
             await this.refreshPlayerMarks(entry.id);
             new Notice(`已截取当前帧 · 《${entry.title}》笔记`, 3000);
@@ -5274,11 +6212,11 @@ export default class ReelLudicPlugin extends Plugin {
             lastPersist = this.persistReadingPercent(entry.id, percent);
         };
         // 已打开的阅读器视图引用（摘抄保存成功后刷新书签列表；onExcerptSave 闭包捕获，先声明后赋值）
-        let view: TxtReaderView | EpubReaderView | PdfReaderView | null = null;
+        let view: TxtReaderView | EpubReaderView | PdfReaderView | ComicReaderView | null = null;
         // 打开阅读器并等待关闭：包装视图 onClose（先执行清理/落库——panel.destroy → flushSave），
         // 待最近一次 percent 落库完成后再读取最新 readingProgress（percent 真源）返回，供表单「当前进度页」自动同步。
         // 不能覆盖 onClose 而不调原实现：三个阅读器的 flushSave（关闭时进度/percent 落库）都挂在 onClose → destroy 链上，覆盖会导致进度丢失。
-        const waitReaderClosed = (v: TxtReaderView | EpubReaderView | PdfReaderView): Promise<BookProgressFields | undefined> => {
+        const waitReaderClosed = (v: TxtReaderView | EpubReaderView | PdfReaderView | ComicReaderView): Promise<BookProgressFields | undefined> => {
             return new Promise((resolve) => {
                 const origOnClose = v.onClose.bind(v);
                 v.onClose = async () => {
@@ -5296,20 +6234,49 @@ export default class ReelLudicPlugin extends Plugin {
             });
         };
         /** 在新标签页打开阅读器视图：options 直接交给视图实例（不经 setViewState 的 state —— 避免大对象序列化）；返回视图或 null */
-        const openReaderTab = async (type: string): Promise<TxtReaderView | EpubReaderView | PdfReaderView | null> => {
+        const openReaderTab = async (type: string): Promise<TxtReaderView | EpubReaderView | PdfReaderView | ComicReaderView | null> => {
             // 同一本书已在本类型标签里打开 → 复用（D-4：对齐 PDF++ 实测经验，避免同一文件堆标签）。
             // 复用前用 getLeavesOfType 校验 leaf 仍存活 —— 读者可能早已关掉它，那时走下面的新开分支。
             const prev = this.readerLeaves.get(entry.id);
             if (prev && this.app.workspace.getLeavesOfType(type).includes(prev)) {
                 this.app.workspace.setActiveLeaf(prev, { focus: true });
-                return prev.view as TxtReaderView | EpubReaderView | PdfReaderView;
+                return prev.view as TxtReaderView | EpubReaderView | PdfReaderView | ComicReaderView;
             }
             const leaf = this.app.workspace.getLeaf('tab');
             await leaf.setViewState({ type, active: true });
             const v = leaf.view;
-            const isReader = v instanceof TxtReaderView || v instanceof EpubReaderView || v instanceof PdfReaderView;
+            const isReader = v instanceof TxtReaderView || v instanceof EpubReaderView || v instanceof PdfReaderView || v instanceof ComicReaderView;
             if (isReader) this.readerLeaves.set(entry.id, leaf);
-            return isReader ? (v as TxtReaderView | EpubReaderView | PdfReaderView) : null;
+            return isReader ? (v as TxtReaderView | EpubReaderView | PdfReaderView | ComicReaderView) : null;
+        };
+        /**
+         * 🔴 #537 阅读时长：把「阅读器处于**前台且是活动页**」的时长累计进 `readMinutes`。
+         * 口径（用户 2026-10-05 点定）：扣后台（切标签页 / 切出应用即暂停）+ **单次不足 1 分钟不计入**。
+         * 算术与状态机在 `pure/readTimer`（可单测）；这里只接浏览事件、开关计时、关闭时落库。
+         * ⚠️ 只看 `document.visibilityState` **不够** —— Obsidian 切标签页时文档仍可见，故必须同时比对**活动叶**。
+         */
+        const withReadTime = (leaf: WorkspaceLeaf, wait: Promise<BookProgressFields | undefined>): Promise<BookProgressFields | undefined> => {
+            const rt = createReadTimeState();
+            const isForeground = (): boolean => document.visibilityState === 'visible' && this.app.workspace.activeLeaf === leaf;
+            const sync = (): void => setReadActive(rt, isForeground(), Date.now());
+            sync();
+            const onVis = (): void => sync();
+            const onLeafChange = (): void => sync();
+            document.addEventListener('visibilitychange', onVis);
+            const leafRef = this.app.workspace.on('active-leaf-change', onLeafChange);
+            return wait.then(async (r) => {
+                document.removeEventListener('visibilitychange', onVis);
+                this.app.workspace.offref(leafRef);
+                setReadActive(rt, false, Date.now());
+                const mins = countableMinutes(readActiveMs(rt));
+                if (mins > 0) {
+                    try {
+                        const cur = await this.service.get(entry.id);
+                        await this.service.update(entry.id, { readMinutes: addReadMinutes(cur?.readMinutes, mins) });
+                    } catch { /* 计时落库失败不影响阅读返回 */ }
+                }
+                return r;
+            });
         };
         /** 摘抄就地卡片保存（阅读器内划词 → 卡里写想法 → Enter/保存）：写回笔记「## 摘抄」区 + 刷新阅读器摘抄列表；
          *  返回是否成功 —— false 时阅读器保留卡片与输入便于重试（用户 2026-09-17 裁定 C 方案，替换原弹窗） */
@@ -5332,7 +6299,7 @@ export default class ReelLudicPlugin extends Plugin {
         const highlights = mem.store.highlights;
         // 排版调整写回设置（阅读器内 A±/行距± → settings 全局记住；saveData 轻量落盘，不重建客户端）
         const onDeleteExcerpt = (blockId: string) => this.deleteBookExcerpt(entry.id, blockId);
-        // 一键即黄即记：写入阅读数据存档（真源）→ 同步笔记镜像 → 返回新块 id（null=失败，阅读器本地据此即时 mark）
+        // 一键即黄即记：写入阅读数据存档（真源）→ 返回新块 id（null=失败，阅读器本地据此即时 mark）
         const onHighlight = (quote: string, loc: { chapter: number; pct: number }, style?: HlStyle, color?: HlColor) =>
             this.addBookHighlight(entry.id, entry.title, quote, loc, style, color);
         const onDeleteHighlight = (blockId: string) => this.deleteBookHighlight(entry.id, blockId);
@@ -5343,7 +6310,7 @@ export default class ReelLudicPlugin extends Plugin {
             t: { highlightIds: string[]; excerptIds: string[]; highlightQuotes?: string[] },
             opts?: { quiet?: boolean },
         ): Promise<number> => {
-            // 高亮：一次批量删（内部按 id + 引用文本兜底，只 flush 一次、镜像重写一次）
+            // 高亮：一次批量删（内部按 id + 引用文本兜底，只 flush 一次）
             let hlN = 0;
             try {
                 hlN = await this.removeReaderHighlights(entry.id, entry.title, t.highlightIds, t.highlightQuotes ?? []);
@@ -5369,7 +6336,7 @@ export default class ReelLudicPlugin extends Plugin {
          *  删完刷新阅读器列表（高亮由阅读器本地清、摘抄/书签列表一并重读） */
         const onPurgeAnnotations = async (kind: 'highlight' | 'excerpt', blockIds: string[]): Promise<number> => {
             if (kind === 'highlight') {
-                // 高亮走存档（一次批量删 + 一次镜像重写）
+                // 高亮走存档（一次批量删）
                 return await this.removeReaderHighlights(entry.id, entry.title, blockIds, []).catch(() => 0);
             }
             let n = 0;
@@ -5423,6 +6390,56 @@ export default class ReelLudicPlugin extends Plugin {
         };
         /** 云合成 Key 读取（#344 方案 C）：交给阅读器面板**每次现取** ⇒ 设置页刚填完就能用，不必重开阅读器 */
         const getCloudKey = (): string => (this.settings.readerSiliconflowKey ?? '').trim();
+        // ── #537 漫画分支（图片文件夹 / CBZ·ZIP / CBT·TAR）──────────────────────────
+        // 先于扩展名分支：文件夹型没有扩展名，只能靠实测；压缩包按 `pure/comicFiles` 的扩展名表判定。
+        const isComicSource = isComicArchivePath(path) || this.isDirectoryPath(path);
+        if (isComicSource) {
+            const isDir = this.isDirectoryPath(path);
+            let names: string[];
+            let loadPage: (i: number) => Promise<Blob | null>;
+            if (isDir) {
+                const dir = path.replace(/[\\/]+$/, '');
+                names = await this.listComicFolderPages(dir);
+                if (!names.length) {
+                    new Notice('这个文件夹里没有找到图片页（支持 png/jpg/jpeg/webp/gif/avif/bmp）', 4500);
+                    return undefined;
+                }
+                loadPage = (i) => (names[i] ? this.readComicPageBlob(`${dir}/${names[i]}`) : Promise.resolve(null));
+            } else {
+                const arc = await this.openComicArchive(path);
+                if (!arc) {
+                    new Notice(`书籍文件不存在或无法解包：${entry.bookFile}`, 5000);
+                    return undefined;
+                }
+                names = arc.names;
+                if (!names.length) {
+                    new Notice('这个压缩包里没有找到图片页（支持 png/jpg/jpeg/webp…）', 4500);
+                    return undefined;
+                }
+                loadPage = async (i) => {
+                    const bytes = await arc.read(i);
+                    return bytes ? new Blob([bytes], { type: comicMime(names[i] ?? '') }) : null;
+                };
+            }
+            const pageCount = names.length;
+            // 打开时校正进度基准（totalPage = 本地页数，percent 恒定重算当前页；与 PDF 同构，单位「页」）
+            void this.reconcileBookProgressOnOpen(entry.id, { format: 'comic', numPages: pageCount });
+            const reader = await openReaderTab(COMIC_READER_VIEW_TYPE) as ComicReaderView | null;
+            if (!reader) return undefined;
+            view = reader;
+            reader.openWith({
+                title: entry.title,
+                pageCount,
+                loadPage,
+                progress,
+                onOpenNote,
+                theme,
+                onThemeChange,
+                onSaveProgress,
+                onProgressPersist,
+            });
+            return withReadTime(reader.leaf, waitReaderClosed(reader));
+        }
         if (ext === 'txt') {
             const text = await this.readBookText(path);
             if (text === null) {
@@ -5468,9 +6485,9 @@ export default class ReelLudicPlugin extends Plugin {
                 // 网络搜索浮层引擎 chip → 系统浏览器（openExternalUrl 已限 http/https）
                 onOpenExternal: (url) => this.openExternalUrl(url),
             });
-            return waitReaderClosed(reader);
+            return withReadTime(reader.leaf, waitReaderClosed(reader));
         } else if (ext === 'epub') {
-            let epub: { fileMap: Record<string, string>; book: { title: string; chapters: string[]; toc: { label: string; href: string }[]; manifest: Record<string, string> } } | null = null;
+            let epub: { fileMap: Record<string, string>; book: { title: string; chapters: string[]; toc: { label: string; href: string }[]; manifest: Record<string, string> }; loadBinary: (abs: string) => Promise<Uint8Array | null> } | null = null;
             try {
                 epub = await this.unpackEpub(path);
             } catch (err) {
@@ -5480,6 +6497,40 @@ export default class ReelLudicPlugin extends Plugin {
             if (!epub) {
                 new Notice(`书籍文件不存在：${entry.bookFile}`, 5000);
                 return undefined;
+            }
+            // ── #540 漫画条目 + EPUB ⇒ 走**漫画阅读器**（用户报障：「怎么解析不了 eupb 格式的漫画」）──────
+            // 🔴 真因：EPUB 正文渲染在 `iframe.srcdoc` 里（无基准 URL）⇒ 章节里的相对路径 `image/p001.jpg`
+            //    被解析成 `app://obsidian.md/image/p001.jpg`（控制台原文 `net::ERR_FILE_NOT_FOUND`）；
+            //    且解包侧只收文本文件（图片从未进 `fileMap`）⇒ 图册型 EPUB 在文字阅读器里必然全空。
+            // ⇒ 按 **spine 序**抽出页图（`pure/epubComic`），复用与 CBZ 同一条渲染链；抽不到图再回落文字阅读器。
+            if (normalizeBookKind(entry.bookKind) === 'comic') {
+                const pages = extractEpubComicPages(epub.book.chapters, epub.fileMap);
+                if (pages.length) {
+                    const loadPage = async (i: number): Promise<Blob | null> => {
+                        const pg = pages[i];
+                        if (!pg) return null;
+                        const bytes = await epub!.loadBinary(pg.path);
+                        return bytes ? new Blob([bytes], { type: comicMime(pg.name) }) : null;
+                    };
+                    void this.reconcileBookProgressOnOpen(entry.id, { format: 'comic', numPages: pages.length });
+                    const reader = await openReaderTab(COMIC_READER_VIEW_TYPE) as ComicReaderView | null;
+                    if (!reader) return undefined;
+                    view = reader;
+                    reader.openWith({
+                        title: entry.title,
+                        pageCount: pages.length,
+                        loadPage,
+                        progress,
+                        onOpenNote,
+                        theme,
+                        onThemeChange,
+                        onSaveProgress,
+                        onProgressPersist,
+                    });
+                    return withReadTime(reader.leaf, waitReaderClosed(reader));
+                }
+                // 图册型判定失败（纯文字 EPUB / 图片走 CSS background 等）→ 交回文字阅读器，但说清缘由
+                new Notice('这本 EPUB 里没有找到图片页 — 按文字排版打开', 4000);
             }
             // EPUB 打开时同样校正进度基准（spine 章节数：totalPage=章节数，percent 恒定重算当前章；与 TXT/PDF 对称）
             void this.reconcileBookProgressOnOpen(entry.id, { format: 'epub', totalChapters: epub.book.chapters.length });
@@ -5521,7 +6572,7 @@ export default class ReelLudicPlugin extends Plugin {
                 // 网络搜索浮层引擎 chip → 系统浏览器（openExternalUrl 已限 http/https）
                 onOpenExternal: (url) => this.openExternalUrl(url),
             });
-            return waitReaderClosed(reader);
+            return withReadTime(reader.leaf, waitReaderClosed(reader));
         } else {
             // PDF：读二进制 → PdfReaderModal（无字号/行距设置，其余管道复用）
             const data = await this.readPdf(path);
@@ -5552,7 +6603,7 @@ export default class ReelLudicPlugin extends Plugin {
                     void this.reconcileBookProgressOnOpen(entry.id, { format: 'pdf', numPages });
                 },
             });
-            return waitReaderClosed(reader);
+            return withReadTime(reader.leaf, waitReaderClosed(reader));
         }
     }
 
@@ -5580,6 +6631,21 @@ export default class ReelLudicPlugin extends Plugin {
                 await this.app.workspace.getLeaf('tab').openFile(f);
                 return;
             }
+        }
+        // 🔴 #593：**没有笔记就当场生成**（用户报障：「从微信读书同步书架导入的条目点开提示
+        //    『该条目还没有笔记』」）。根因 = `service.create()` 只写 catalog、不生成笔记，而导入
+        //    路径用的就是它 ⇒ 那批条目永远没有 `notePath`。这里做**自愈**：存量条目也一并救活，
+        //    出口仍是唯一那一个 `service.writeNote`（生成 + 写盘 + 回填 `notePath` 都在它里面）。
+        try {
+            const path = await this.service.writeNote(e.id);
+            const f = this.app.vault.getAbstractFileByPath(path);
+            if (f instanceof TFile) {
+                await this.app.workspace.getLeaf('tab').openFile(f);
+                return;
+            }
+        } catch (err) {
+            new Notice(`生成笔记失败：${err instanceof Error ? err.message : String(err)}`, 5000);
+            return;
         }
         new Notice('该条目还没有笔记');
     }
@@ -5618,6 +6684,20 @@ export default class ReelLudicPlugin extends Plugin {
         for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
             (leaf.view as HomeView).setPosterGrid(this.settings.posterDensity, this.settings.posterColumns);
         }
+    }
+
+    /**
+     * 🔴 #591 Ctrl+滚轮缩放的**落盘出口**（媒体库只报告「缩到几列」，这里写设置 + 重推）。
+     *
+     * 为什么落成 `custom`：用户裁定的「两者并存」口径 —— 「海报密度」是**预设**，Ctrl+滚轮是**微调**；
+     * 微调过之后那一行就该显示为「自定义列数」，再滚就从这个自定义值继续。
+     * ⚠️ 与 `syncPosterGrid` 一样只重推 prop（不重读条目）；`saveSettings()` 是异步的、不等它。
+     */
+    applyPosterZoom(density: PosterDensity, columns: number): void {
+        this.settings.posterDensity = normalizePosterDensity(density);
+        this.settings.posterColumns = normalizePosterColumns(columns);
+        void this.saveSettings();
+        this.syncPosterGrid();
     }
 
     /** 媒体库目录变更后刷新视图标签标题（setViewState 触发 Obsidian 重算 getDisplayText；homeTab 保持） */
@@ -6116,6 +7196,25 @@ export default class ReelLudicPlugin extends Plugin {
                 if (!e) continue;
                 const merged = Array.from(new Set([...(e.tags ?? []), ...tags]));
                 await this.service.update(id, { tags: merged });
+            } catch {
+                // 单条失败不阻断其余
+            }
+        }
+        await this.refreshViews();
+    }
+
+    /**
+     * #573 批量重排序号（系列视图里「勾选若干条 → 按当前列表顺序依次编号」）。
+     *
+     * 🔴 计划（哪几条、各拿什么号）**在纯模块 `planSeriesReindex` 里算**，这里只负责落库 ——
+     *    ⛔ 别在视图层自己算号（那是要被单测钉住的规则：只编选中项、未选中不占号、步长 < 1 按 1）。
+     * ⚠️ 只写 `seriesIndex` 一个字段，**不动 `series`**：本入口只在系列视图里出现，
+     *    成员本来就有系列名（`service.update` 是「字段级补丁」，不会把别的字段抹掉）。
+     */
+    async bulkSetSeriesIndex(pairs: readonly { id: string; seriesIndex: number }[]): Promise<void> {
+        for (const p of pairs) {
+            try {
+                await this.service.update(p.id, { seriesIndex: p.seriesIndex });
             } catch {
                 // 单条失败不阻断其余
             }

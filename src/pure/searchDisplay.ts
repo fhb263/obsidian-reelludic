@@ -171,6 +171,9 @@ export const SOURCE_VIEW: Record<ProviderId | typeof SONG_LIB_ID, SourceViewEntr
     igdb: { label: 'IGDB', url: (o) => (idStr(o) ? `https://www.igdb.com/games/${idStr(o)}` : undefined) },
     // 漫画源（2026-09-30 接入）：来源直达站 = MangaDex 作品页 /title/{uuid}
     mangadex: { label: 'MangaDex', url: (o) => (idStr(o) ? `https://mangadex.org/title/${idStr(o)}` : undefined) },
+    // #580 微信读书：结果自带**在线阅读页**（`toWereadBookResult` 把 `readUrl` 写进 `sourceUrl`），
+    // 直接用它当「来源直达」；缺则无直达（⛔ 别拿 `id` 里的 `weread:` 前缀去拼别的站）。
+    weread: { label: '微信读书', url: (o) => str(o.sourceUrl) },
     // #464 在线曲库：结果自带平台歌曲网页（`pure/songLibrary` 从 `webUrl` 搬过来），直接用它；缺则无直达
     [SONG_LIB_ID]: { label: SONG_LIB_LABEL, url: (o) => str(o.sourceUrl) },
 };

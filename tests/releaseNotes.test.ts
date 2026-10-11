@@ -39,7 +39,9 @@ describe('RELEASE_NOTES 版本一句话表', () => {
     it('每条都是**一句话**：以「。」收尾，且长度收敛（⛔ 不退回成一段散文）', () => {
         for (const n of RELEASE_NOTES) {
             expect(n.summary.endsWith('。'), `${n.version} 的说明应以句号收尾`).toBe(true);
-            expect(n.summary.length, `${n.version} 的说明过长`).toBeLessThanOrEqual(80);
+            // ⚠️ 上限 #492 立时 = 80；1.3.0 由用户点名给的那句 = 99 字 ⇒ 放宽到 120（口径仍是「一行」）。
+            //    与 assert-symbols 的 #492 块保持同一数值。
+            expect(n.summary.length, `${n.version} 的说明过长`).toBeLessThanOrEqual(120);
             // ⛔ 不许出现换行 / 列表符号 —— 一句话就该是一行
             expect(/[\n\r]/.test(n.summary)).toBe(false);
         }

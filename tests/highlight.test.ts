@@ -11,8 +11,6 @@ import {
     decideHighlightToggle,
     normText,
     HIGHLIGHT_SECTION,
-    HL_MIRROR_NOTICE,
-    renderHighlightMirror,
     hlMarkTargetOf,
     type ReaderHighlight,
 } from 'pure/highlight';
@@ -314,47 +312,5 @@ describe('pure/highlight hlMarkTargetOf（选段是否落在高亮 mark 上 → 
     it('null / undefined 入参安全；mark 文本两端空白被去掉', () => {
         expect(hlMarkTargetOf(null, undefined)).toBe(null);
         expect(hlMarkTargetOf(asNode(el(mkMark('hlC', '  句子  '))))?.quote).toBe('句子');
-    });
-});
-
-describe('renderHighlightMirror 只读镜像（2026-09-18：高亮真源移到 JSON 后，笔记里那份由 JSON 单向生成）', () => {
-    it('无高亮 → 空串（调用方据此把整区删掉，不留空标题）', () => {
-        expect(renderHighlightMirror([])).toBe('');
-        expect(renderHighlightMirror([{ quote: '   ' }])).toBe('');
-    });
-
-    it('首行是自动生成提示（%% 注释），其后逐条 callout 块', () => {
-        const md = renderHighlightMirror([{ quote: '应无所住而生其心', id: 'hlAAA', loc: { chapter: 1, pct: 3 } }]);
-        expect(md.split('\n')[0]).toBe(HL_MIRROR_NOTICE);
-        expect(md).toContain('> [!quote|yellow] ');
-        expect(md).toContain('应无所住而生其心');
-        expect(md.trimEnd().endsWith('^hlAAA') || md.includes('#^hlAAA')).toBe(true);
-    });
-
-    it('🔴 镜像 ↔ 解析往返：条数不丢不增（提示行不得被当成一条高亮）', () => {
-        const src: ReaderHighlight[] = [
-            { quote: '甲', id: 'hlA', loc: { chapter: 1, pct: 10 }, style: 'wavy', color: 'green' },
-            { quote: '乙', id: 'hlB', loc: { chapter: 2, pct: 0 } },
-        ];
-        const md = ['## ' + HIGHLIGHT_SECTION, '', renderHighlightMirror(src)].join('\n');
-        const back = parseHighlightBlocks(md);
-        expect(back.map((x) => x.id)).toEqual(['hlA', 'hlB']);
-        expect(back.map((x) => x.quote)).toEqual(['甲', '乙']);
-        expect(back[0].loc).toEqual({ chapter: 1, pct: 10 });
-        expect(back[0].style).toBe('wavy');
-        expect(back[0].color).toBe('green');
-        expect(back[1].style).toBe('hl'); // 缺省档位由解析端补
-        expect(back[1].color).toBe('yellow');
-    });
-
-    it('手改/脏 JSON 来的无 loc 高亮：标签只写「高亮」，不编造「第 1 章」', () => {
-        const md = renderHighlightMirror([{ quote: '没有定位的一句', id: 'hlNoLoc' }]);
-        expect(md).toContain('没有定位的一句');
-        expect(md).not.toContain('第 1 章');
-        expect(md.split('\n')[2]).toBe('> [!quote|yellow] 高亮'); // 无 refLink 时头行只写标签
-    });
-
-    it('提示行本身不被迁移解析当成高亮（否则「删 JSON 再迁移」会把它搬进去）', () => {
-        expect(parseHighlightBlocks(['## ' + HIGHLIGHT_SECTION, '', HL_MIRROR_NOTICE].join('\n'))).toEqual([]);
     });
 });

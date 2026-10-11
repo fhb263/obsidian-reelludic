@@ -10,7 +10,9 @@ import type { ActivityEvent, BookKind, EntryType, MediaEntry, UiTheme } from 'da
 import type { HomeTab } from './tab';
 import type { SeriesGroup } from 'pure/seriesGroup';
 import { normalizeUiTheme } from 'pure/themeTokens';
-import { normalizePosterDensity, normalizePosterColumns } from 'pure/posterGrid';
+// #541：主导航布局（顶部胶囊 / 左侧侧边栏）—— 归一在 pure 侧，这里只转交
+import { normalizeNavLayout } from 'pure/navLayout';
+import { normalizePosterDensity, normalizePosterColumns, type PosterDensity } from 'pure/posterGrid';
 import { libraryDisplayName } from 'pure/libraryDir';
 import type { FeedRange } from 'pure/activityFeed';
 
@@ -71,7 +73,31 @@ export class HomeView extends ItemView {
         this.component?.$set({
             posterDensity: normalizePosterDensity(density),
             posterColumns: normalizePosterColumns(columns),
+            // 🔴 #591：Ctrl+滚轮缩放的开关走**同一条重推通道**（设置页一改就生效，⛔ 不必等下次刷新）。
+            //    直接读 settings —— 本方法没有第三个形参，且调用点（`syncPosterGrid`）本来就从设置取值。
+            ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom,
         });
+    }
+
+    /**
+     * #541/#543 主导航布局即时生效（设置页「外观与体验 › 导航布局」改动后调用）。
+     * 与 setUiTheme / setPosterGrid 同思路：只重推 prop，不重读条目。
+     * 🔴 布局是**结构分支**（图标轨那一支要增删 DOM 节点）⇒ 必须走 `$set`；纯 CSS 变不出新节点。
+     * ⚠️ #543 起**不再有 `collapsed` 参数** —— 侧边栏已改成恒定图标轨，折叠钮与折叠态一并退场
+     *    （`settings.navCollapsed` 字段按 append-only 红线保留，但不再被读取）。
+     */
+    setNavLayout(layout: unknown): void {
+        this.component?.$set({ navLayout: normalizeNavLayout(layout) });
+    }
+
+    /**
+     * #541 起始页即时切换（设置页「起始页」改动后调用）：把一个**一次性请求**推给组件。
+     * 🔴 为什么不直接 `$set({ initialTab })`：`initialTab` 只在组件**创建**时用来播种内部 `activeTab`，
+     *    之后再改这个 prop 不会让任何东西动（它不是响应式的）⇒ 「改了起始页看不到变化」。
+     *    走 `requestedTab` 这条**一次性通道**，组件消费掉就置回 null（见 HomeView.svelte 的同名 prop）。
+     */
+    setRequestedTab(tab: HomeTab): void {
+        this.component?.$set({ requestedTab: tab });
     }
 
     private async render(): Promise<void> {
@@ -86,7 +112,7 @@ export class HomeView extends ItemView {
         this.contentEl.toggleClass('rl-hide-scroll', this.plugin.settings.hideScrollbars);
         if (this.component) {
             // 增量更新：保留组件实例与本地状态（当前 Tab/视图模式/筛选），仅刷新数据，立即生效
-            this.component.$set({ entries, colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), defaultViewMode: this.plugin.settings.defaultViewMode, posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity), posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns), excerptCounts, yearReports, activityLog });
+            this.component.$set({ entries, colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), navLayout: normalizeNavLayout(this.plugin.settings.navLayout), defaultViewMode: this.plugin.settings.defaultViewMode, posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity), posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns), ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom, excerptCounts, yearReports, activityLog });
             return;
         }
         this.contentEl.empty();
@@ -100,9 +126,14 @@ export class HomeView extends ItemView {
                 initialTab: this.plugin.homeTab,
                 colorTheme: this.plugin.settings.colorTheme,
                 uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme),
+                // #541/#543 个性化：主导航布局（缺省 top ⇒ 与 1.2.0 逐像素一致）
+                navLayout: normalizeNavLayout(this.plugin.settings.navLayout),
                 defaultViewMode: this.plugin.settings.defaultViewMode,
                 posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity),
                 posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns),
+                // 🔴 #591 Ctrl+滚轮缩放：开关 + 落盘出口（MediaList 只报告「缩到几列」）
+                ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom,
+                onPosterZoom: (density: PosterDensity, columns: number) => this.plugin.applyPosterZoom(density, columns),
                 onTabChange: (tab: HomeTab) => {
                     this.plugin.homeTab = tab;
                 },
@@ -120,6 +151,8 @@ export class HomeView extends ItemView {
                 /** 折叠卡右下角那枚按钮：打开系列「季列表」弹窗
                  *  🔴 #444c：改成**应用级 Modal**（宿主 `Modal`，与「编辑条目」同构）—— 不再由视图造遮罩 + 绝对定位居中 */
                 onOpenSeriesPicker: (g: SeriesGroup) => this.plugin.openSeriesPicker(g),
+                /** 🔴 #609 折叠卡右键「排序号」：拖拽排序弹窗（落库与 `Notice` 都在宿主侧） */
+                onOpenSeriesReorder: (g: SeriesGroup) => this.plugin.openSeriesReorder(g),
                 /** 右键「动词 · 去关联」直达：无入口 → 快捷关联弹窗（书/游戏/音乐路径；影视选集网络/本地源） */
                 onQuickAssociate: (e: MediaEntry) => this.plugin.quickAssociateEntry(e),
                 onDeleteEntry: (id: string) => this.plugin.deleteEntry(id),
@@ -129,7 +162,7 @@ export class HomeView extends ItemView {
                 onAddExcerpt: (book: MediaEntry) => this.plugin.openExcerptModal(book),
                 /** 游戏卡片右键「记录游玩」：固定挂载该游戏打开游玩记录弹窗 */
                 onOpenGameSessionModal: (game: MediaEntry) => this.plugin.openGameSessionModal(game),
-                /** 批量评分 / 批量追加标签 */
+                /** 批量评分 / 批量追加标签（🔴 #609：原 `onBulkSeriesIndex` 已撤 —— 系列排序改走排序弹窗） */
                 onBulkRating: (ids: string[], rating: number) => this.plugin.bulkSetRating(ids, rating),
                 onBulkTags: (ids: string[], tags: string[]) => this.plugin.bulkAddTags(ids, tags),
                 /** 批量应用前置确认（批B）：文案由 pure/bulkConfirm 生成，这里只负责弹窗取用户意图 */

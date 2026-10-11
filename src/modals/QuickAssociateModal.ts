@@ -1,7 +1,12 @@
 // 快捷关联入口弹窗（海报墙/列表右键「阅读/观看/播放/启动 · 去关联」直达，替代先开整个编辑表单）：
 // 无关联入口时给最小关联编辑器——书/游戏/音乐 = 本地路径单行 + 浏览；影视 = movie 第 1 集 /
-// tv·anime 总集数 + 集号网格 + 选中集（集标题 → 网络地址 → 本地路径），底部一次「保存并生效」。
+// tv·anime 总集数 + 集号网格 + 选中集（集标题 → 网络地址 → 本地路径）。
 // DOM API 渲染（非 Svelte 组件，复用全局 rl-btn/rl-eps-* 等样式）；保存回调注入，由 main 落库+同步笔记+刷新。
+//
+// 🔴 #593（用户 2026-10-10）：「观看 / 去关联」弹窗底部**还留着旧的「保存并生效 / 取消」两枚按钮**，
+//    与「编辑浮层早已全面自动保存」的口径不一致 ⇒ **两枚按钮整体退场**，改成
+//    **实时保存（改动后防抖落库）+ 关窗兜底提交**，并在原按钮位置闪一条就地轻提示
+//    （文案 / 时长 / 「显示期间不重弹」判据全部复用 `pure/toast`，与编辑浮层**同一处真源**）。
 // 🔴 #446 用户裁定：选中集的**三个框与「编辑第 N 集」浮层同序同款同文案**（集标题 → 网络地址（带「粘贴」）→
 //    本地路径），⛔ 别再把网络地址排第一个 / 别另写一套占位文字（用户在两个入口之间来回切，两套必然被认成两个功能）。
 // 🔴 #454 用户裁定：单路径块的小图标按钮（音乐 = 下载 + 检索、书籍 = 下载）**挂在标签行右旁**
@@ -10,13 +15,27 @@ import { App, Modal, Notice, setIcon } from 'obsidian';
 import type { MediaEntry } from 'data/types';
 import type { BookProbeResult } from 'pure/bookProgress';
 import { buildEpisodeAssocResult, hasAnyEpisodeSource } from 'pure/quickAssociate';
+// 🔴 #593：自动保存的**文案 / 时长 / 重弹判据**与编辑浮层同一处真源（⛔ 别在这里手写「设置已保存」）
+import { TOAST_SAVED, TOAST_FAILED, TOAST_MS, shouldFlashSaved } from 'pure/toast';
+import { AUTOSAVE_DEBOUNCE_MS } from 'pure/popoverAutoSave';
 import { episodeHintLabel } from 'pure/episodeAssoc';
 import { episodeTitleFromName } from 'pure/episodeScan';
+// 🔴 #599：菜单那条常驻入口的文案与**本弹窗标题**必须一模一样 ⇒ 走同一个真源（⛔ 别在这手写第二份）
+import { associateMenuLabel } from 'pure/actionLabel';
+// 🔴 #599：单集本地检索（「本地路径」标签旁那枚）—— 查询/结果类型与编辑浮层 #563 **同一份**
+//    （含「目录没配」那句告警文案：真源在 `pure/localEpisode`，⛔ 别在这手写第二份）
+import { LOCAL_DIR_MISSING_WARN, type LocalEpisodeOutcome, type LocalEpisodeQuery } from 'pure/localEpisode';
+// 🔴 #602：本地检索的**结果形状**收在纯模块（编辑表单也要用同一份 ⇒ ⛔ 别在本模块重新定义一份）
+import type { LocalFileSearchOutcome } from 'pure/localDirs';
 import { cleanPastedText, readClipboardText } from 'services/clipboard';
+// 🔴 #601：书籍「网络地址」旁那枚在线检索（微信读书）—— 与编辑表单 `onSearchWeread` 同一个出口，
+//   检索词也用**同一个** `buildWereadQuery`（⛔ 别在这里另拼一份「书名 作者」）
+import { buildWereadQuery, type WereadCandidate } from 'pure/weread';
 // 🔴 #506：B站 候选 / 分P —— 与集编辑浮层（§16.30）**同一份纯逻辑**，⛔ 这里不判「谁勾谁不勾」
 import {
     biliCheckedRows,
     biliEpisodeQuery,
+    biliPartTitles,
     biliSelectableRows,
     buildBiliFillRows,
     buildBiliPartUrl,
@@ -30,10 +49,12 @@ import {
 import {
     BATCH_PARTS_ANCHOR,
     batchCheckedRows,
+    batchFillTitles,
     batchProgressText,
     batchSleep,
     batchStopText,
     buildBatchTargets,
+    bvidFromPaste,
     canExpandParts,
     canFillBatch,
     candidatesToMark,
@@ -60,6 +81,10 @@ export interface QuickAssociateResult {
     bookFile?: string;
     gameLaunchPath?: string;
     audioPath?: string;
+    /** 🔴 #601：单路径三类的**网络地址**（书 readUrl / 游戏 gameUrl / 音乐 audioUrl）—— 与本地路径**两条并列** */
+    readUrl?: string;
+    gameUrl?: string;
+    audioUrl?: string;
     /** 影视：压缩空位后的连续已关联序列（index 0 = 第 1 个已关联集；与 entry.episodeFiles 存储语义一致） */
     episodeFiles?: string[];
     episodeUrls?: string[];
@@ -92,32 +117,90 @@ export interface QuickAssociateCallbacks {
      */
     biliSearch?: (keyword: string) => Promise<{ videos: BiliVideo[]; error?: string }>;
     biliParts?: (bvid: string) => Promise<{ title: string; parts: BiliPart[]; error?: string }>;
+    /**
+     * 🔴 #599：影视「本地路径」标签旁那枚 **单集本地检索**（`folder-search`）——
+     * 与编辑浮层 #563 **同一条链**：宿主 `main.searchLocalEpisode`（设置页分类目录递归找当前集）。
+     * ⚠️ 没注入 ⇒ 那枚按钮**不渲染**（⛔ 不画一个点了没反应的按钮，与 B站 那枚同一条纪律）。
+     */
+    searchLocalEpisode?: (opts: LocalEpisodeQuery) => Promise<LocalEpisodeOutcome>;
+    /**
+     * 🔴 #601/#602：单路径三类（书 / 游戏 / 音乐）「本地路径」标签旁那枚**检索**（`folder-search`）——
+     *    与编辑表单**同一条链**，但三类**分流**（由宿主决定，见 `main.searchLocalForAssociate`）：
+     *    · 书籍 ⇒ 🔴 #602 起**按子分类直接检索**设置里的「文学 / 网文 / 漫画目录」（**不问用户**，
+     *      与影视那枚单集本地检索同一条链）—— 用户原话：「书籍关联入口这个小图标按钮怎么是**选文件夹**
+     *      关联的，统一成检索关联」；
+     *    · 音乐 ⇒ 音频目录；
+     *    · 游戏 ⇒ **仍是「先弹系统目录选择器」**（#562 定过游戏没有分类目录；#602 问答里裁定保持原样）。
+     *    ⛔ 这里**不判平台、不另写相似度**（与 `searchLocalEpisode` 同一条纪律）；三类的结果都只拿
+     *    `path` / `name` / `count` / `notice` 四个字段。
+     *    ⚠️ 没注入 ⇒ 那枚按钮**不渲染**（⛔ 不画一个点了没反应的按钮）。
+     */
+    searchLocalFile?: (kind: 'book' | 'game' | 'music') => Promise<LocalFileSearchOutcome>;
+    /**
+     * 🔴 #601：书籍「网络地址」标签旁那枚在线检索（`globe`）—— 检索源 = 微信读书
+     *    （宿主 `main.searchWeread`，与编辑表单 `onSearchWeread` **同一个出口**）；只**回传候选**，
+     *    挑一条的动作在弹窗里（回填后仍走自动保存）。
+     *    ⚠️ 没注入 ⇒ 不渲染；⚠️ **只有文学**才建那枚（#535 口径：网文 / 漫画不接在线源）。
+     */
+    searchOnlineBook?: (keyword: string) => Promise<{ books: WereadCandidate[]; error?: string }>;
 }
 
 /**
- * 单路径类型（书/游戏/音乐）标签与占位。
- * 🔴 #523：`label` 统一成 **『路径』**（用户：「所有类型条目下的右键编辑条目的播放标题统一改成『路径』标题」，
- *    并要求「两处一起统一」—— 编辑表单与这张快捷关联弹窗都要）。⚠️ 影视侧**不改**：那边一条是「网络地址」、
- *    一条是「本地路径」，是**两条不同的路径**，都叫「路径」会分不清。
+ * 单路径三类（书 / 游戏 / 音乐）的**两行**元数据（#601 起）。
+ *
+ * 🔴 #601 翻面 #521：那一年用户说「右键观看按钮浮窗网络链接按钮删除掉，干脆统一一下，书籍类游戏音乐也一样」
+ *    ⇒ 本弹窗只剩**一行**「启动路径」。现用户点名「关联书籍文件的标题旁没有小图标按钮…我要的是**网络地址
+ *    和本地路径**，怎么只有一个本地路径，统一一下」⇒ 改成与影视那套（#599）**同构的两行**：
+ *    「网络地址」（手填 / 粘贴，书籍另有在线检索）＋「本地路径」（浏览 / 检索）。
+ *
+ * 🔴 图标口径沿用全仓（#533）：**本地检索 = `folder-search`**、**网络检索 = `globe`**；
+ *    ⛔ 游戏 / 音乐的网络地址行**没有**检索图标 —— 游戏 #534 明确「不接在线检索源」、
+ *       音乐侧四平台都要鉴权（无可用源）⇒ 那两行只有手填 / 粘贴。
+ * ⚠️ 栏目标签**仍然叫「网络地址 / 本地路径」**（不是 #523 那年统一出来的「路径」）——
+ *    这两条本来就是**两条不同的路径**，都叫「路径」会分不清（影视侧当年就是这么留的）。
+ *
+ * 🔴 #602：「本地路径」旁那枚检索的**行为按类分流**（宿主 `main.searchLocalForAssociate`）——
+ *    书籍 = 按子分类**直接检索**设置里的分类目录（#602 起不再「先选文件夹」）、音乐 = 音频目录、
+ *    游戏 = **仍「先选一个文件夹」**（#562 定过游戏没有分类目录；#602 问答里裁定保持原样）。
+ *    ⇒ 三条 `searchTip` 必须各自说清「要不要你先挑目录」，⛔ 别三类抄同一句。
  */
-const SINGLE_LABEL: Record<'book' | 'game' | 'music', { label: string; title: string; placeholder: string; hint: string }> = {
-    book: {
-        label: '启动路径',
-        title: '关联书籍文件',
-        placeholder: '库内路径，如 书籍/书名.txt（TXT/EPUB/PDF）',
-        hint: '选择 TXT / EPUB / PDF 电子书',
+const SINGLE_ROWS: {
+    net: Record<'book' | 'game' | 'music', { label: string; placeholder: string; prefill: (e: MediaEntry) => string }>;
+    local: Record<'book' | 'game' | 'music', {
+        label: string; placeholder: string; hint: string;
+        searchTip: string; searchAria: string; prefill: (e: MediaEntry) => string;
+    }>;
+} = {
+    net: {
+        book: { label: '网络地址', placeholder: '在线阅读链接（https://…）', prefill: (e) => e.readUrl ?? '' },
+        game: { label: '网络地址', placeholder: '商店页 / 官网（https://…）', prefill: (e) => e.gameUrl ?? '' },
+        music: { label: '网络地址', placeholder: '在线页 / 试听链接（https://…）', prefill: (e) => e.audioUrl ?? '' },
     },
-    game: {
-        label: '启动路径',
-        title: '关联启动快捷方式',
-        placeholder: '库内路径，或系统绝对路径（.lnk）',
-        hint: '选择游戏启动快捷方式（.lnk）',
-    },
-    music: {
-        label: '启动路径',
-        title: '关联本地音频',
-        placeholder: '库内路径，或系统绝对路径（mp3/flac/m4a…）',
-        hint: '选择本地音频文件',
+    local: {
+        book: {
+            label: '本地路径',
+            placeholder: '库内路径，如 书籍/书名.txt（TXT/EPUB/PDF）',
+            hint: '选择 TXT / EPUB / PDF 电子书',
+            searchTip: '检索本地：在设置里的书籍目录（文学 / 网文 / 漫画）里按标题递归找同名书籍',
+            searchAria: '检索本地书籍',
+            prefill: (e) => e.bookFile ?? '',
+        },
+        game: {
+            label: '本地路径',
+            placeholder: '库内路径，或系统绝对路径（.lnk）',
+            hint: '选择游戏启动快捷方式（.lnk）',
+            searchTip: '检索本地：先选一个文件夹，再按标题在里面找同名可启动文件',
+            searchAria: '检索本地游戏',
+            prefill: (e) => e.gameLaunchPath ?? '',
+        },
+        music: {
+            label: '本地路径',
+            placeholder: '库内路径，或系统绝对路径（mp3/flac/m4a…）',
+            hint: '选择本地音频文件',
+            searchTip: '检索本地：按标题在音频文件目录里找同名音频',
+            searchAria: '检索本地音频',
+            prefill: (e) => e.audioPath ?? '',
+        },
     },
 };
 
@@ -136,10 +219,49 @@ export class QuickAssociateModal extends Modal {
     private fileInput!: HTMLInputElement;
     private titleInput!: HTMLInputElement;
     private totalInput: HTMLInputElement | null = null;
-    private singlePathInput: HTMLInputElement | null = null;
-    /** 单路径块的提示行（懒建；见 `setSingleHint`） */
-    private singleHintEl: HTMLDivElement | null = null;
-    private saveBtn!: HTMLButtonElement;
+    /** 🔴 #601：单路径三类的**两行** —— 网络地址 / 本地路径（两枚都必须建，缺一个就是「只有一条路」） */
+    private singleNetInput: HTMLInputElement | null = null;
+    private singleLocalInput: HTMLInputElement | null = null;
+    /** #599：影视「本地路径」标签旁那枚单集本地检索（宿主没注入能力 ⇒ 不建） */
+    private localBtn: HTMLButtonElement | null = null;
+    // ── #601 书籍「网络地址」旁那枚在线检索开的**候选卡**（微信读书；与 B站 卡同一套壳类、不同数据源）──
+    private bookCard: HTMLDivElement | null = null;
+    private bookQuery = '';
+    private bookBooks: WereadCandidate[] = [];
+    private bookBusy = false;
+    private bookErr = '';
+    /**
+     * 🔴 #593：**自动保存的初始快照**（打开那一刻的提交签名）—— 提交前与它比对，**没改就不写盘**
+     *    （与 `pure/popoverAutoSave.shouldAutoSave` 的「没改不存」同一语义，只是这里比的是整份结果）。
+     */
+    private initialSig = '';
+    /** 实时保存的防抖计时器 */
+    private saveTimer: number | undefined;
+    /** 原「保存并生效 / 取消」那一行现在只放**就地轻提示**（文案 / 时长复用 `pure/toast`） */
+    private hintEl: HTMLDivElement | null = null;
+    private hintTimer: number | undefined;
+    /**
+     * 🔴 #599：影视「网络地址」「本地路径」两行标签旁的**就地轻提示**（与编辑浮层 #568 同款同位）——
+     *    用户：「设置已保存提示放在网络地址和本地路径标题旁边」。
+     *    `hintEl`（窗口底部那条）**保留**：集标题 / 总集数 / 集号格子这些没有专属标签行的改动仍用它。
+     */
+    private readonly rowHints: Partial<Record<'url' | 'local', HTMLElement>> = {};
+    /**
+     * 🔴 #599：**最后一次落到哪个字段**（`url` / `local` / `other`）—— 决定保存提示闪在哪一行。
+     *    由那两个委托监听按 `event.target` 判定（⛔ 不在每个控件各挂一份）。
+     */
+    private lastField: 'url' | 'local' | 'other' = 'other';
+    /** 单集本地检索在途（按钮转圈 + 期间忽略重复点击） */
+    private localBusy = false;
+    /** 弹窗内任意输入/选择 ⇒ 算一次改动（委托监听，⛔ 不在每个控件各挂一份） */
+    private readonly onAnyEdit = (ev: Event): void => {
+        const t = ev.target;
+        this.lastField =
+            t === this.urlInput || t === this.singleNetInput ? 'url'
+                : t === this.fileInput || t === this.singleLocalInput ? 'local'
+                    : 'other';
+        this.markDirty();
+    };
     // ── #506 B站 候选 / 分P 勾选表（DOM 卡片；`biliCard` = null 表示没开）──
     private biliCard: HTMLDivElement | null = null;
     /** 卡内当前视图：`search` = 候选列表；`parts` = 分P 勾选表；`batch` = 批量搜索确认表（#519） */
@@ -187,64 +309,250 @@ export class QuickAssociateModal extends Modal {
         const { contentEl, modalEl } = this;
         contentEl.empty();
         modalEl.style.width = 'min(480px, 92vw)';
+        // 🔴 #599：本窗**隐藏滚动条**（用户点名）—— 复用设置项那套全仓类（`.rl-hide-scroll`：
+        //    自身与后代的 `scrollbar-width` / `::-webkit-scrollbar` 一并收掉，**仍可滚**）。
+        modalEl.addClass('rl-hide-scroll');
         const isVideo = this.entry.type === 'movie' || this.entry.type === 'tv' || this.entry.type === 'anime';
 
         const wrap = contentEl.createDiv({ cls: 'rl-qa' });
+        // 🔴 #599：标题措辞与右键菜单那条常驻入口**同一真源**（`associateMenuLabel`）
         wrap.createDiv({
             cls: 'rl-nc-desc rl-qa-title',
-            text: `《${this.entry.title}》 · ${isVideo ? '关联观看入口' : this.single().title}`,
+            text: `《${this.entry.title}》 · ${associateMenuLabel(this.entry.type)}`,
         });
 
         if (isVideo) this.buildVideoSection(wrap);
         else this.buildSingleSection(wrap);
 
-        const ops = wrap.createDiv({ cls: 'rl-nc-ops rl-qa-ops' });
-        this.saveBtn = ops.createEl('button', { cls: 'rl-btn rl-btn-primary', text: '保存并生效' });
-        this.saveBtn.onclick = () => void this.save();
-        const cancel = ops.createEl('button', { cls: 'rl-btn', text: '取消' });
-        cancel.onclick = () => this.close();
-        this.saveBtn.focus();
+        // 🔴 #593：底部那两枚按钮（「保存并生效」/「取消」）**整体退场**，改成自动保存 ——
+        //    这里只剩一条**就地轻提示**（默认隐藏，保存成功/失败时闪一下）。
+        //    ⚠️ 类名叫 `.rl-qa-saved`（⛔ 别用 `.rl-qa-hint` —— 那是单路径块自己的占位说明行，同名会打架）。
+        this.hintEl = wrap.createDiv({ cls: 'rl-qa-saved' });
+        this.hintEl.setAttribute('role', 'status');
+        this.hintEl.setAttribute('aria-live', 'polite');
+        // 🔴 只挂**两个委托监听**（input / change 各一）：弹窗内任何输入、勾选、下拉都覆盖到，
+        //    ⛔ 别在每个控件上各挂一份（那是「多个入口各写一套」，迟早漏一个）。
+        contentEl.addEventListener('input', this.onAnyEdit);
+        contentEl.addEventListener('change', this.onAnyEdit);
+        this.initialSig = this.sigOf(this.collectResult());
     }
 
-    /** 书/游戏/音乐：单行本地路径 + 浏览（音乐 = 「下载」「检索」两枚小按钮、书籍 = 「下载」一枚；均在标签右旁） */
+    /**
+     * 书 / 游戏 / 音乐：**两行** —— 「网络地址」＋「本地路径」（#601；由来见 `SINGLE_ROWS` 那段注释）。
+     * 🔴 图标挂在**各自的标签行右旁**（`.rl-qa-lbl-row` + `.rl-ai-btn`，与影视 #599 同款同位）：
+     *    · 网络地址行：**只有书籍（文学）**有 `globe`（检索在线书籍阅读 = 微信读书候选卡）；
+     *    · 本地路径行：三类都有 `folder-search`（宿主一步到位地检索，契约见 `searchLocalFile`）。
+     * ⚠️ 两枚按钮都在**没注入能力时不渲染**（⛔ 不画点了没反应的按钮）。
+     * 🔴 就地保存提示**各挂各的标签行**（`rowHints.url` / `rowHints.local`）—— 与影视那两行同一套路由。
+     */
     private buildSingleSection(wrap: HTMLElement): void {
-        const e = this.entry;
-        const meta = this.single();
-        const prefill =
-            e.type === 'book' ? (e.bookFile ?? '') : e.type === 'game' ? (e.gameLaunchPath ?? '') : (e.audioPath ?? '');
+        const t = this.singleType();
+        const net = SINGLE_ROWS.net[t];
+        const local = SINGLE_ROWS.local[t];
 
-        // 🔴 #454 用户裁定：小图标按钮挂**标签行**（「本地文件路径」右旁），⛔ 不再挤在输入框那行 ——
-        //    与编辑表单的 `.rl-lbl-row` 同款同位（表单里书籍那枚就是这样摆的），用户：
-        //    「把下载和检索小按钮放在本地路径标题右旁」。
-        // 🔴 #521：**本弹窗不再挂「下载 / 检索」小图标**（用户：「右键观看按钮浮窗网络链接按钮删除掉，
-        //    干脆统一一下，书籍类游戏音乐也一样」）—— 这两件事在**编辑表单的标签行**上都有（同一份实现），
-        //    ⛔ 不在两处重复提供。⇒ 那三个回调（`openMusicDownloader`/`listLibraryAudio`/`openBookDownloader`）
-        //    连同 `buildMusicQuickButtons` / `buildBookQuickButton` / `findLibraryAudio` **一并撤掉**
-        //    （⛔ 不留死代码；主程序那三个方法**保留** —— `EntryModal` 那侧还在用）。
-        const lblRow = wrap.createDiv({ cls: 'rl-qa-lbl-row' });
-        lblRow.createDiv({ cls: 'rl-qa-lbl', text: meta.label });
-
-        const row = wrap.createDiv({ cls: 'rl-qa-row' });
-        this.singlePathInput = row.createEl('input', {
+        // ── 网络地址（手填 / 粘贴；书籍另有在线检索）─────────────────────────────
+        const netLbl = wrap.createDiv({ cls: 'rl-qa-lbl-row' });
+        netLbl.createDiv({ cls: 'rl-qa-lbl', text: net.label });
+        if (t === 'book' && this.cbs.searchOnlineBook && this.entry.bookKind === 'book') {
+            const b = netLbl.createEl('button', { cls: 'rl-ai-btn' });
+            b.setAttribute('data-tip', '检索在线书籍阅读（微信读书）');
+            try {
+                setIcon(b, 'globe');
+            } catch {
+                b.setText('🌐');
+            }
+            b.createSpan({ cls: 'rl-sr', text: '检索在线书籍阅读' });
+            b.onclick = () => void this.openOnlineBookPicker();
+        }
+        this.rowHints.url = netLbl.createSpan({ cls: 'rl-saved-hint' });
+        const netRow = wrap.createDiv({ cls: 'rl-qa-row' });
+        this.singleNetInput = netRow.createEl('input', {
             cls: 'rl-qa-input',
-            attr: { type: 'text', placeholder: meta.placeholder, spellcheck: 'false' },
+            attr: { type: 'text', placeholder: net.placeholder, spellcheck: 'false' },
         });
-        this.singlePathInput.value = prefill;
+        this.singleNetInput.value = net.prefill(this.entry);
+        const paste = netRow.createEl('button', { cls: 'rl-btn rl-link-act', text: '粘贴' });
+        paste.setAttribute('data-tip', '读剪贴板并清洗后填入');
+        paste.onclick = () => void this.pasteInto(this.singleNetInput!);
 
-        const browse = row.createEl('button', { cls: 'rl-btn rl-link-act', text: '浏览' });
-        browse.setAttribute('data-tip', meta.hint);
-        browse.onclick = () => void this.pickInto(this.singlePathInput!, this.pickKind());
-        if (prefill) this.setSingleHint(`已关联：${prefill}（直接修改可更换）`);
+        // ── 本地路径（浏览 / 检索）───────────────────────────────────────────────
+        const locLbl = wrap.createDiv({ cls: 'rl-qa-lbl-row' });
+        locLbl.createDiv({ cls: 'rl-qa-lbl', text: local.label });
+        if (this.cbs.searchLocalFile) {
+            const b = locLbl.createEl('button', { cls: 'rl-ai-btn' });
+            b.setAttribute('data-tip', local.searchTip);
+            try {
+                setIcon(b, 'folder-search');
+            } catch {
+                b.setText('📁');
+            }
+            b.createSpan({ cls: 'rl-sr', text: local.searchAria });
+            b.onclick = () => void this.searchLocalInto(t);
+        }
+        this.rowHints.local = locLbl.createSpan({ cls: 'rl-saved-hint' });
+        const locRow = wrap.createDiv({ cls: 'rl-qa-row' });
+        this.singleLocalInput = locRow.createEl('input', {
+            cls: 'rl-qa-input',
+            attr: { type: 'text', placeholder: local.placeholder, spellcheck: 'false' },
+        });
+        this.singleLocalInput.value = local.prefill(this.entry);
+        const browse = locRow.createEl('button', { cls: 'rl-btn rl-link-act', text: '浏览' });
+        browse.setAttribute('data-tip', local.hint);
+        browse.onclick = () => void this.pickInto(this.singleLocalInput!, this.pickKind());
     }
 
-    /** 单路径块的提示行（懒建；目前只有「已关联」这一条反馈 —— ⚠️ #521 起下载/检索不在本弹窗了） */
-    private setSingleHint(text: string): void {
-        if (!this.singleHintEl) {
-            const wrap = this.singlePathInput?.parentElement?.parentElement;
-            if (!wrap) return;
-            this.singleHintEl = wrap.createDiv({ cls: 'rl-qa-hint' });
+    /** 单路径三类的窄类型（`pickKind` 与 `SINGLE_ROWS` 共用同一把口径） */
+    private singleType(): 'book' | 'game' | 'music' {
+        return this.entry.type === 'book' ? 'book' : this.entry.type === 'game' ? 'game' : 'music';
+    }
+
+    /** 「粘贴」：读剪贴板 → 清洗 → 填入给定输入框（与视频那条 `pasteUrl` 同一套；只填框，落库靠自动保存） */
+    private async pasteInto(input: HTMLInputElement): Promise<void> {
+        const raw = await readClipboardText();
+        const v = raw ? cleanPastedText(raw) : '';
+        if (!v) {
+            new Notice('读取剪贴板失败或为空，请手动粘贴');
+            return;
         }
-        this.singleHintEl.setText(text);
+        input.value = v;
+        this.markDirty();
+        this.flashHint(false);
+    }
+
+    /**
+     * 「本地路径」标签旁那枚**检索**：宿主一步到位（弹目录选择器 → 列候选 → 按标题匹配）。
+     * ⚠️ 程序填入也算一次改动 ⇒ 填完**当场走一次自动保存**（用户「拉取到的路径要自动保存」的既有口径），
+     *    与 #563/#599 那条单集本地检索**同一条纪律**（在途去重、命中就填、取消只提示）。
+     */
+    private async searchLocalInto(kind: 'book' | 'game' | 'music'): Promise<void> {
+        const fn = this.cbs.searchLocalFile;
+        if (!fn || this.localBusy) return;
+        this.localBusy = true;
+        try {
+            const out = await fn(kind);
+            if (out.path && this.singleLocalInput) {
+                this.singleLocalInput.value = out.path;
+                this.lastField = 'local';
+                this.markDirty();
+                this.flashHint(false);
+                new Notice(`${(out.count ?? 0) > 1 ? `命中 ${out.count} 个，已` : '已'}填入「${out.name ?? out.path}」`);
+            } else if (out.notice) {
+                new Notice(out.notice, 5000);
+            }
+        } catch (e) {
+            new Notice(`检索失败：${e instanceof Error ? e.message : String(e)}`, 5000);
+        } finally {
+            this.localBusy = false;
+        }
+    }
+
+    // ── #601 书籍「网络地址」旁的在线检索（微信读书候选卡；与 B站 卡同壳类、独立状态）──────
+
+    /** 开/重画那张候选卡（DOM 卡片没有响应式 ⇒ 状态一变就整卡重画） */
+    private openOnlineBookPicker(): void {
+        this.bookQuery = buildWereadQuery(this.entry.title, this.entry.author);
+        this.bookBooks = [];
+        this.bookErr = '';
+        if (!this.bookCard) this.bookCard = this.contentEl.createDiv({ cls: 'rl-bili-card' });
+        this.renderBookCard();
+        if (this.bookQuery.trim()) void this.runBookSearch();
+    }
+
+    /** 按当前检索词搜一次（错误折成一句人话，⛔ 不抛给用户看堆栈） */
+    private async runBookSearch(): Promise<void> {
+        const fn = this.cbs.searchOnlineBook;
+        if (!fn || this.bookBusy) return;
+        const kw = this.bookQuery.trim();
+        this.bookBooks = [];
+        this.bookErr = '';
+        if (!kw) {
+            this.bookErr = '先填检索词（默认取书名 + 作者）';
+            this.renderBookCard();
+            return;
+        }
+        this.bookBusy = true;
+        this.renderBookCard();
+        try {
+            const out = await fn(kw);
+            this.bookBooks = out.books ?? [];
+            this.bookErr = out.error ?? '';
+        } catch (e) {
+            this.bookErr = `检索出错：${e instanceof Error ? e.message : String(e)}`;
+        } finally {
+            this.bookBusy = false;
+        }
+        this.renderBookCard();
+    }
+
+    /** 点一条候选 ⇒ 填进「网络地址」框（仍走自动保存）+ 收卡 */
+    private pickBookCandidate(c: WereadCandidate): void {
+        if (this.singleNetInput && c.readUrl) {
+            this.singleNetInput.value = c.readUrl;
+            this.lastField = 'url';
+            this.markDirty();
+            this.flashHint(false);
+        }
+        this.closeBookCard();
+        new Notice(`已填入《${c.title}》的阅读链接（改动会自动保存）`);
+    }
+
+    private closeBookCard(): void {
+        this.bookCard?.remove();
+        this.bookCard = null;
+        this.bookBooks = [];
+        this.bookErr = '';
+        this.bookBusy = false;
+    }
+
+    /** 整卡重绘（🔴 复用全仓那套 `.rl-bili-*` 壳类 —— 与 B站 卡同款外观，只是数据源换成微信读书） */
+    private renderBookCard(): void {
+        const card = this.bookCard;
+        if (!card) return;
+        card.empty();
+
+        const head = card.createDiv({ cls: 'rl-bili-head' });
+        head.createDiv({ cls: 'rl-bili-card-title', text: '检索在线书籍阅读（微信读书）' });
+        const close = head.createEl('button', { cls: 'rl-bili-close', text: '✕' });
+        close.setAttribute('data-tip', '关闭');
+        close.onclick = () => this.closeBookCard();
+
+        const row = card.createDiv({ cls: 'rl-bili-searchrow' });
+        const inp = row.createEl('input', { cls: 'rl-qa-input', attr: { type: 'text', placeholder: '书名（或书名 + 作者）' } });
+        inp.value = this.bookQuery;
+        inp.oninput = () => (this.bookQuery = inp.value);
+        const go = row.createEl('button', { cls: 'rl-btn rl-link-act', text: this.bookBusy ? '搜索中…' : '搜索' });
+        go.disabled = this.bookBusy;
+        go.onclick = () => void this.runBookSearch();
+
+        if (this.bookErr) card.createDiv({ cls: 'rl-hint-note is-error', text: this.bookErr });
+        if (this.bookBusy) card.createDiv({ cls: 'rl-hint-note', text: '正在检索…' });
+
+        const list = card.createDiv({ cls: 'rl-bili-list' });
+        for (const bk of this.bookBooks) {
+            const r = list.createEl('button', { cls: 'rl-bili-row' });
+            r.disabled = this.bookBusy;
+            r.setAttribute('data-tip', `填入阅读链接：${bk.title}`);
+            r.onclick = () => this.pickBookCandidate(bk);
+            if (bk.coverUrl) {
+                const img = r.createEl('img', { cls: 'rl-bili-cover' });
+                img.src = bk.coverUrl;
+                img.alt = '';
+                img.setAttribute('referrerpolicy', 'no-referrer');
+            } else {
+                const ph = r.createSpan({ cls: 'rl-bili-cover rl-bili-cover-ph' });
+                try {
+                    setIcon(ph, 'book-open');
+                } catch {
+                    /* 图标不可用：忽略 */
+                }
+            }
+            const main = r.createSpan({ cls: 'rl-bili-main' });
+            main.createSpan({ cls: 'rl-bili-name', text: bk.title });
+            main.createSpan({ cls: 'rl-bili-artist', text: bk.author || '未知作者' });
+        }
+        if (!this.bookBusy && !this.bookErr && this.bookBooks.length === 0 && this.bookQuery.trim()) {
+            card.createDiv({ cls: 'rl-hint-note', text: '没搜到，换个检索词试试' });
+        }
     }
 
     /** 影视：movie=第 1 集输入区；tv/anime=总集数 + 集号网格 + 选中集输入区 */
@@ -308,8 +616,25 @@ export class QuickAssociateModal extends Modal {
         // 🔴 #506：B站 搜索小按钮挂在**「网络地址」标签行右旁**（`.rl-qa-lbl-row` + `.rl-ai-btn`）——
         //    与集编辑浮层 §16.28③ 同款同位；⛔ 别塞进下面那个输入框行（那是「粘贴」的位置，
         //    两枚挤一行会被认成两个功能）。
+        // 🔴 #599：这枚**回潮**（#521/#523 曾按「浮窗内小图标一律不显示」撤掉）—— 用户本轮点名
+        //    「在网络地址和本地路径标题旁边**复用**小图标按钮 - 单集网络检索和本地检索」。
+        //    ⚠️ 与编辑浮层同一条门控：**电影不挂**（只有一个链接位、且总集数行那枚已覆盖，见 #536）。
         const urlLblRow = div.createDiv({ cls: 'rl-qa-lbl-row' });
         urlLblRow.createDiv({ cls: 'rl-qa-lbl', text: '网络地址' });
+        if (e.type !== 'movie') {
+            const biliBtn = urlLblRow.createEl('button', { cls: 'rl-ai-btn' });
+            biliBtn.setAttribute('data-tip', '在 B 站搜这一集，点候选把链接填进来');
+            biliBtn.onclick = () => void this.openBiliPicker();
+            try {
+                setIcon(biliBtn, 'globe');
+            } catch {
+                biliBtn.setText('🔍');
+            }
+            // 读屏名走隐藏文本（⛔ 不用 aria-label：与 data-tip 同元素会叠两层气泡，UI-GUIDE §3）
+            biliBtn.createSpan({ cls: 'rl-sr', text: '在 B 站搜索这一集' });
+        }
+        // 🔴 #599：就地轻提示挂**本行标签旁**（⚠️ 必须在按钮**之后** —— 与编辑浮层 #568 同序）
+        this.rowHints.url = urlLblRow.createSpan({ cls: 'rl-saved-hint' });
         const urow = div.createDiv({ cls: 'rl-qa-row' });
         this.urlInput = urow.createEl('input', {
             cls: 'rl-qa-input',
@@ -318,7 +643,16 @@ export class QuickAssociateModal extends Modal {
         const paste = urow.createEl('button', { cls: 'rl-btn rl-link-act', text: '粘贴' });
         paste.setAttribute('data-tip', '粘贴链接');
         paste.onclick = () => void this.pasteUrl();
-        div.createDiv({ cls: 'rl-qa-lbl', text: '本地路径' });
+        // ── 本地路径（#599：标签旁多一枚**单集本地检索**；提示就地挂本行）────────────────────
+        const localLblRow = div.createDiv({ cls: 'rl-qa-lbl-row' });
+        localLblRow.createDiv({ cls: 'rl-qa-lbl', text: '本地路径' });
+        if (this.cbs.searchLocalEpisode) {
+            this.localBtn = localLblRow.createEl('button', { cls: 'rl-ai-btn' });
+            this.localBtn.setAttribute('data-tip', '检索本地：按设置页的分类目录递归找当前集');
+            this.localBtn.onclick = () => void this.searchLocalNow();
+            this.paintLocalBtn();
+        }
+        this.rowHints.local = localLblRow.createSpan({ cls: 'rl-saved-hint' });
         const frow = div.createDiv({ cls: 'rl-qa-row' });
         this.fileInput = frow.createEl('input', {
             cls: 'rl-qa-input',
@@ -328,6 +662,63 @@ export class QuickAssociateModal extends Modal {
         browse.setAttribute('data-tip', '选择本地视频');
         browse.onclick = () => void this.pickInto(this.fileInput, 'video');
         this.populateCur();
+    }
+
+    /** #599：单集本地检索按钮的两态（在途 = 转圈占位；常态 = `folder-search`） */
+    private paintLocalBtn(): void {
+        const b = this.localBtn;
+        if (!b) return;
+        b.empty();
+        b.disabled = this.localBusy;
+        if (this.localBusy) {
+            b.createSpan({ cls: 'rl-spinner' });
+            b.createSpan({ cls: 'rl-sr', text: '正在检索本地' });
+            return;
+        }
+        try {
+            setIcon(b, 'folder-search');
+        } catch {
+            b.setText('📁');
+        }
+        b.createSpan({ cls: 'rl-sr', text: '单集本地检索' });
+    }
+
+    /**
+     * 🔴 #599：**单集本地检索**（「本地路径」标签旁）—— 与编辑浮层 #563 逐条同口径：
+     *   · 根目录 = **设置页的分类目录**（剧集 / 动画 / 电影各一份，⛔ 不是让用户每次现挑）；
+     *   · 三态提示**分开**：`nodir` ⇒ 去配置目录；`notfound` ⇒ 只说没找到这一集；
+     *   · 命中 ⇒ 填进**当前集**的本地路径框，并**当场走一次自动保存**（用户「填入即保存」的既有口径）；
+     *   · 在途去重（fs 递归可能几百毫秒到数秒，⛔ 别排队跑两遍）。
+     */
+    private async searchLocalNow(): Promise<void> {
+        const fn = this.cbs.searchLocalEpisode;
+        if (!fn || this.localBusy) return;
+        this.localBusy = true;
+        this.paintLocalBtn();
+        try {
+            const isMovie = this.entry.type === 'movie';
+            const res = await fn({
+                type: this.entry.type,
+                epIndex: this.curEp,
+                epTitle: this.titles[this.curEp] ?? '',
+                title: this.entry.title,
+                isMovie,
+            });
+            if (!res.ok) {
+                if (res.reason === 'nodir') new Notice(LOCAL_DIR_MISSING_WARN, 6000);
+                else new Notice(isMovie ? '目录里没找到这个视频文件' : `目录里没找到第 ${this.curEp + 1} 集`, 5000);
+                return;
+            }
+            this.fileInput.value = res.path;
+            // 程序填入也算一次改动（用户「拉取到的路径要自动保存」）—— 提示落「本地路径」那一行
+            this.lastField = 'local';
+            this.flushCurIntoArrays();
+            this.renderEpGrid();
+            this.markDirty();
+        } finally {
+            this.localBusy = false;
+            this.paintLocalBtn();
+        }
     }
 
     // ────────────────────── #506 B站 候选 / 分P 勾选表（DOM 卡片）──────────────────────
@@ -536,6 +927,46 @@ export class QuickAssociateModal extends Modal {
     }
 
     /**
+     * 🔴 #542 批量卡「粘贴链接」：把**手里已有的 B站 合集链接**直接变成分P 勾选表。
+     *
+     * 与「搜索」的分工：搜索 = 「我不知道是哪一条」；粘贴 = 「我已经有那条链接了，别再替我搜一轮」。
+     *
+     * 🔴 **走现成的那条链**（⛔ 不另写一套）：`bvidFromPaste`（从剪贴板文本认号）
+     *    → `openBiliParts(v, BATCH_PARTS_ANCHOR, null)` —— 与批量卡某行的「展开分P」
+     *    **同一个实现、同一个锚**（用户 2026-10-07 裁定：带 `?p=` 也**忽略 p**，一律当整季合集）。
+     * ⚠️ 与 `expandBatchParts` 的差别只有「候选从哪来」：那枚从行里取 `pickedCandidate`，
+     *    这枚从剪贴板认号 —— 之后的流程（`flushCurIntoArrays` → 切 `curEp` → `openBiliParts`）**逐字同款**。
+     * ⚠️ 宿主集 = **第一个未填集**（不是第 1 集）：第 1 集可能本来就已填好，
+     *    而 `curEp` 在这里只是「当前正在编辑哪一集」的容器（填完 `applyBiliParts` 会收掉卡片）。
+     */
+    private async pasteBatchLink(): Promise<void> {
+        if (this.batchRunning) return;
+        const raw = await readClipboardText();
+        const text = raw ? cleanPastedText(raw) : '';
+        if (!text) {
+            new Notice('读不到剪贴板内容（请手动复制后重试）');
+            return;
+        }
+        const bvid = bvidFromPaste(text);
+        if (!bvid) {
+            new Notice(/b23\.tv/i.test(text)
+                ? '这是 b23.tv 短链 —— 请在浏览器里打开后复制完整链接（带 BV 号）'
+                : '剪贴板里没找到 B 站视频号（需含 BV 号）');
+            return;
+        }
+        const webUrl = buildBiliPartUrl(bvid, 1);
+        if (!webUrl) {
+            new Notice('这个 BV 号看起来不合法');
+            return;
+        }
+        this.flushCurIntoArrays();
+        this.curEp = this.batchAllTargets[0]?.epIndex ?? 0;
+        this.renderEpGrid();
+        this.populateCur();
+        await this.openBiliParts({ bvid, title: '', author: '', durationSec: 0, play: 0, webUrl }, BATCH_PARTS_ANCHOR, null);
+    }
+
+    /**
      * #517：**单P 直填**前的一句重复提示后缀 —— 这条链接若已被别的集占用，回「（注意：这条链接第 N 集已在用）」。
      * 🔴 2026-10-04 用户裁定：**只提示、不拦截**（用户可能就是要复用同一条链接）；
      *    ⛔ 别改成拒绝填入 —— 那是另一档选项，用户没挑。
@@ -547,7 +978,8 @@ export class QuickAssociateModal extends Modal {
 
     /**
      * 把勾中的分P **批量写进本弹窗的集链接数组**。
-     * 🔴 写入的只是**弹窗内的副本**（`this.urls`），**仍要点「保存并生效」才落库** ——
+     * 🔴 写入的只是**弹窗内的副本**（`this.urls`），落库交给**自动保存**（#593：改动后防抖自动提交，
+     *    关窗再兜一次 —— 原来那句「仍要点『保存并生效』」随按钮退场一并作废）——
      *    与浮层「只写表单状态」**同一条纪律**，⛔ 这里不直接改条目。
      * 🔴 写完**关掉卡片**（批量填的对象已经不是「当前这一集」了，让「网络地址」框继续显示
      *    一个可能刚被覆盖的旧值会自相矛盾）—— 与浮层「填完收起集编辑浮层」同一个理由。
@@ -562,12 +994,21 @@ export class QuickAssociateModal extends Modal {
             this.urls[r.epIndex] = url;
             n += 1;
         }
+        // 🔴 #601：**分P 标题一起写进集标题**（用户报障「拉取的网络 p1-52 都没有集标题显示」）——
+        //    口径唯一真源 `biliPartTitles`（**只填空位**，与编辑表单同一次调用形态，⛔ 别在这里判一遍）。
+        // 🔴 #607：`samePartUrl` —— 早先关联过（已有链接、默认不勾）的集也能补上标题，
+        //     判据是「该集现存的网络地址 === 本合集第 r.page 个分P 的链接」（⛔ 别放宽成「有链接就算」）。
+        const titleFills = biliPartTitles(this.biliRows, this.titles, (r) => {
+            const cur = String(this.urls[r.epIndex] ?? '').trim();
+            return !!cur && cur === buildBiliPartUrl(this.biliPickBvid, r.page);
+        });
+        for (const [idx, t] of titleFills) this.titles[idx] = t;
         if (n === 0) return;
         this.closeBiliCard();
         this.renderEpGrid();
         // 当前集可能刚被写入 ⇒ 把输入框同步成数组里的新值（⛔ 别留着旧值自相矛盾）
         this.populateCur();
-        new Notice(`已把 ${n} 条链接填进对应集（点「保存并生效」落库）`);
+        new Notice(`已把 ${n} 条链接填进对应集${titleFills.length ? `、${titleFills.length} 个集标题` : ''}（改动会自动保存）`);
     }
 
     /** 整卡重绘（DOM 卡片没有响应式 ⇒ 状态一变就重画，口径才不会漂） */
@@ -705,7 +1146,7 @@ export class QuickAssociateModal extends Modal {
         const ops = card.createDiv({ cls: 'rl-bili-parts-ops' });
         const apply = ops.createEl('button', { cls: 'rl-btn', text: `填入选中的 ${picked.length} 集` });
         apply.disabled = picked.length === 0;
-        apply.setAttribute('data-tip', '填进本弹窗的集链接（仍要点「保存并生效」才落库）');
+        apply.setAttribute('data-tip', '填进本弹窗的集链接（改动会自动保存）');
         apply.onclick = () => this.applyBiliParts();
     }
 
@@ -866,6 +1307,13 @@ export class QuickAssociateModal extends Modal {
             });
         }
 
+        // 🔴 #542 与「搜索」互补的一枚：手里已经有合集链接时不必再替用户搜一轮。
+        // ⚠️ 它**常驻**（不随上面三态切换）—— 「我已经知道是哪一条」与搜到哪一步无关。
+        const pasteLink = bar.createEl('button', { cls: 'rl-bili-batch-btn is-ghost', text: '粘贴链接' });
+        pasteLink.disabled = this.batchRunning;
+        pasteLink.setAttribute('data-tip', '粘贴一条 B 站链接，按它的分P 顺序填未填的集');
+        pasteLink.onclick = () => void this.pasteBatchLink();
+
         const list = card.createDiv({ cls: 'rl-bili-batch-list' });
         this.batchRows.forEach((r, idx) => {
             const item = list.createDiv({ cls: 'rl-bili-batch-item' });
@@ -951,7 +1399,7 @@ export class QuickAssociateModal extends Modal {
         const n = batchCheckedRows(this.batchRows).length;
         const fill = ops.createEl('button', { cls: 'rl-bili-batch-btn is-primary', text: `填入勾中的 ${n} 集` });
         fill.disabled = !canFillBatch(this.batchRows);
-        fill.setAttribute('data-tip', '只填进本弹窗（仍要点「保存并生效」才落库）');
+        fill.setAttribute('data-tip', '只填进本弹窗（改动会自动保存）');
         fill.onclick = () => this.applyBatchFill();
     }
 
@@ -1027,7 +1475,7 @@ export class QuickAssociateModal extends Modal {
 
     /**
      * 把勾中的行写进**弹窗内的集链接数组**（`this.urls`）。
-     * 🔴 只写内存副本，**仍要点「保存并生效」才落库** —— 与「粘贴」/ 分P 勾选表同一条纪律。
+     * 🔴 只写内存副本，落库交给**自动保存**（#593）—— 与「粘贴」/ 分P 勾选表同一条纪律。
      * 🔴 写入按 `r.epIndex`（未填集的真实下标），**已填的集根本不在表里** ⇒ 不会跨集覆盖。
      */
     private applyBatchFill(): void {
@@ -1041,10 +1489,13 @@ export class QuickAssociateModal extends Modal {
             n += 1;
         }
         if (n === 0) return;
+        // 🔴 #607：**这批也把标题一起写进去**（批量这条链原先只写链接、从不写标题）。
+        const titleFills = batchFillTitles(this.batchRows, this.titles);
+        for (const [idx, t] of titleFills) this.titles[idx] = t;
         this.closeBiliCard();
         this.renderEpGrid();
         this.populateCur();
-        new Notice(`已把 ${n} 集的链接填进对应集（点「保存并生效」落库）`);
+        new Notice(`已把 ${n} 集的链接填进对应集${titleFills.length ? `、${titleFills.length} 个集标题` : ''}（改动会自动保存）`);
     }
 
     /** 时长文本（空 / 0 ⇒ 破折号，与浮层 `formatDuration` 的表现一致） */
@@ -1180,7 +1631,7 @@ export class QuickAssociateModal extends Modal {
         return `第 ${this.curEp + 1} 集${t ? `：${t}` : ''}`;
     }
 
-    /** 「粘贴」：读剪贴板 → 清洗 → 填入**当前集**的网络地址（与「浏览」同款：只填框，仍要点「保存并生效」） */
+    /** 「粘贴」：读剪贴板 → 清洗 → 填入**当前集**的网络地址（与「浏览」同款：只填框，落库靠自动保存） */
     private async pasteUrl(): Promise<void> {
         const raw = await readClipboardText();
         const v = raw ? cleanPastedText(raw) : '';
@@ -1196,7 +1647,7 @@ export class QuickAssociateModal extends Modal {
         const p = await this.cbs.pickFile(kind);
         if (p) {
             input.value = p;
-            new Notice('已选择，点「保存并生效」落库');
+            new Notice('已选择（改动会自动保存）');
         } else {
             new Notice('未选择文件或系统对话框不可用，可手动输入路径');
         }
@@ -1206,55 +1657,122 @@ export class QuickAssociateModal extends Modal {
         return this.entry.type === 'book' ? 'book' : this.entry.type === 'game' ? 'game' : 'music';
     }
 
-    private single(): { label: string; title: string; placeholder: string; hint: string } {
-        const t = this.entry.type;
-        if (t === 'game') return SINGLE_LABEL.game;
-        if (t === 'music') return SINGLE_LABEL.music;
-        return SINGLE_LABEL.book;
+    /**
+     * 🔴 #593 自动保存的**唯一出口**（实时保存与关窗兜底都汇到这里）。
+     *
+     * 口径三条：
+     *  ⑴ **没改不存** —— 与打开那一刻的快照（`initialSig`）比对，相同直接返回（空跑不写盘、不刷视图）；
+     *  ❷ **空值照写** —— 用户把路径/链接清空 = 要**解除关联**，必须落库（⛔ 别退回「空值不存」，
+     *     那是编辑浮层写「表单态」时的口径；这里写的是 catalog，清空就是用户的意图）；
+     *     ⚠️ 唯一例外：影视**一集都没有源、且原本也没有任何关联** ⇒ 这次没有可写的东西（返回 `null`）。
+     *  ❸ 失败**如实提示**、不关窗（还能接着改）；成功闪一条就地轻提示。
+     */
+    private async commit(): Promise<void> {
+        if (this.saveTimer !== undefined) {
+            window.clearTimeout(this.saveTimer);
+            this.saveTimer = undefined;
+        }
+        if (this.saving) return; // 上一次还在写 ⇒ 放弃本次（关窗那次会在写完后再补一刀）
+        const r = this.collectResult();
+        if (r === null) return;
+        const sig = this.sigOf(r);
+        if (sig === this.initialSig) return;
+        this.saving = true;
+        try {
+            await this.cbs.save(r);
+            this.initialSig = sig;
+            this.flashHint(false);
+        } catch (err) {
+            new Notice(`关联保存失败：${err instanceof Error ? err.message : String(err)}`, 5000);
+            this.flashHint(true);
+        } finally {
+            this.saving = false;
+        }
     }
 
-    /** 保存并生效：收集 → 校验 → 回调（main 落库+同步笔记+刷新）→ 成功后关闭 */
-    private async save(): Promise<void> {
-        if (this.saving) return;
-        this.saving = true;
-        this.saveBtn.disabled = true;
-        try {
-            const r: QuickAssociateResult = {};
-            if (this.isVideo()) {
-                this.flushCurIntoArrays();
-                const n = this.total;
-                const built = buildEpisodeAssocResult({
+    /** 有改动 ⇒ 防抖后自动落库（实时保存）；关窗时还会再兜一次（见 `onClose`） */
+    private markDirty(): void {
+        if (this.saveTimer !== undefined) window.clearTimeout(this.saveTimer);
+        this.saveTimer = window.setTimeout(() => {
+            this.saveTimer = undefined;
+            void this.commit();
+        }, AUTOSAVE_DEBOUNCE_MS);
+    }
+
+    /**
+     * 弹窗当前状态 → 提交结果；**没有可写的东西** ⇒ `null`。
+     * ⚠️ 这里**不再做「请填写路径」那类校验**：手动保存按钮已经退场，没有「点不动」这一说了 ——
+     *    用户留空 = 解除关联，照写（唯一例外见 {@link commit} ❷ 的影视分支）。
+     */
+    private collectResult(): QuickAssociateResult | null {
+        const r: QuickAssociateResult = {};
+        if (this.isVideo()) {
+            this.flushCurIntoArrays();
+            const n = this.total;
+            Object.assign(
+                r,
+                buildEpisodeAssocResult({
                     files: this.files,
                     urls: this.urls,
                     titles: this.titles,
                     total: n,
                     origTotal: this.entry.type === 'movie' ? undefined : this.entry.progress?.totalEpisodes,
                     allowTotalChange: this.entry.type !== 'movie',
-                });
-                Object.assign(r, built);
-                if (built.totalEpisodes === undefined && !hasAnyEpisodeSource(this.files, this.urls, n)) {
-                    new Notice('请至少填写一集的网络地址或本地路径');
-                    return;
-                }
-            } else if (this.singlePathInput) {
-                const v = this.singlePathInput.value.trim();
-                if (!v) {
-                    // 🔴 #523：标签已统一成「路径」⇒ 这句校验文案跟着改（⛔ 别指向一个界面上不存在的标签名）
-                    new Notice('请填写或浏览选择路径');
-                    return;
-                }
-                if (this.entry.type === 'book') r.bookFile = v;
-                else if (this.entry.type === 'game') r.gameLaunchPath = v;
-                else r.audioPath = v;
+                }),
+            );
+            const had = hasAnyEpisodeSource(this.entry.episodeFiles ?? [], this.entry.episodeUrls ?? [], n);
+            if (!hasAnyEpisodeSource(this.files, this.urls, n) && !had) return null;
+        } else if (this.singleNetInput || this.singleLocalInput) {
+            // 🔴 #601：单路径三类是**两条路** —— 网络地址（readUrl / gameUrl / audioUrl）
+            //    ＋ 本地路径（bookFile / gameLaunchPath / audioPath）。两条都**照写**（清空 = 解除那一条）。
+            const net = this.singleNetInput?.value.trim() ?? '';
+            const local = this.singleLocalInput?.value.trim() ?? '';
+            if (this.entry.type === 'book') {
+                r.bookFile = local || undefined;
+                r.readUrl = net || undefined;
+            } else if (this.entry.type === 'game') {
+                r.gameLaunchPath = local || undefined;
+                r.gameUrl = net || undefined;
+            } else {
+                r.audioPath = local || undefined;
+                r.audioUrl = net || undefined;
             }
-            await this.cbs.save(r);
-            this.close();
-        } catch (err) {
-            new Notice(`关联保存失败：${err instanceof Error ? err.message : String(err)}`, 5000);
-        } finally {
-            this.saving = false;
-            this.saveBtn.disabled = false;
         }
+        return r;
+    }
+
+    /** 提交结果的**签名**：键排序后再序列化 ⇒ 「同一份内容」不论字段写入顺序都得到同一串 */
+    private sigOf(r: QuickAssociateResult | null): string {
+        const o = (r ?? {}) as Record<string, unknown>;
+        return JSON.stringify(
+            Object.keys(o)
+                .filter((k) => o[k] !== undefined)
+                .sort()
+                .map((k) => [k, o[k]]),
+        );
+    }
+
+    /**
+     * 就地闪一条轻提示（替代原来那两枚按钮的位置）。
+     * 🔴 「显示期间不重弹」的判据走 `pure/toast.shouldFlashSaved` —— 与编辑浮层**同一处真源**
+     *    （⛔ 别在这里再写一遍 `if (正在显示) return`）。
+     * 🔴 #599：**闪在哪一行**由 `lastField` 决定 —— 网络地址 / 本地路径各有自己的行内提示
+     *    （用户：「设置已保存提示放在网络地址和本地路径标题旁边」）；其余字段（集标题 / 总集数 / 集号格子）
+     *    仍落窗口底部那条。判据逐元素各算一次（两个位置互不干扰）。
+     */
+    private flashHint(bad: boolean): void {
+        const el = (this.lastField === 'url' || this.lastField === 'local')
+            ? this.rowHints[this.lastField] ?? this.hintEl
+            : this.hintEl;
+        if (!el) return;
+        if (!shouldFlashSaved(el.hasClass('is-on'), bad)) return;
+        window.clearTimeout(this.hintTimer);
+        el.setText(bad ? TOAST_FAILED : TOAST_SAVED);
+        el.toggleClass('is-on', true);
+        el.toggleClass('rl-saved-hint-bad', bad);
+        this.hintTimer = window.setTimeout(() => {
+            el.toggleClass('is-on', false);
+        }, TOAST_MS);
     }
 
     private isVideo(): boolean {
@@ -1263,6 +1781,20 @@ export class QuickAssociateModal extends Modal {
     }
 
     onClose(): void {
+        this.contentEl.removeEventListener('input', this.onAnyEdit);
+        this.contentEl.removeEventListener('change', this.onAnyEdit);
+        if (this.saveTimer !== undefined) {
+            window.clearTimeout(this.saveTimer);
+            this.saveTimer = undefined;
+        }
+        if (this.hintTimer !== undefined) {
+            window.clearTimeout(this.hintTimer);
+            this.hintTimer = undefined;
+        }
+        // 🔴 关窗**兜底提交**：先掐掉防抖计时器，再立刻写一次（用户：「关掉弹窗即保存」）。
+        //    ⚠️ 不 await —— `close()` 是同步的；失败会在 `commit` 里 Notice（弹窗已关，但改动可见）。
+        void this.commit();
+        this.hintEl = null;
         this.contentEl.empty();
     }
 }

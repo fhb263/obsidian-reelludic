@@ -8,6 +8,7 @@
 // ⚠️ 本模块**没有 obsidian、没有 DOM、没有 Svelte**，可单测（本仓「纯逻辑下沉」红线）。
 import type { MediaEntry } from 'data/types';
 import { statusLabel } from 'pure/labels';
+import { formatPlaytime } from 'pure/playtime';
 
 /** 书籍进度单位：关联 TXT（按章节解析）→ 章，其余（PDF / 手填 / 豆瓣兜底）→ 页 */
 export function bookUnitOf(e: { bookFile?: string } | null | undefined): string {
@@ -69,6 +70,23 @@ export function listProgress(e: MediaEntry): { text: string; pct?: number } {
 export function cardPlaytimeBadge(e: MediaEntry): string {
     if (e.type !== 'game' || !e.playtimeMinutes) return '';
     return `已玩 ${Math.round(e.playtimeMinutes / 60)}h`;
+}
+
+/**
+ * 书籍**阅读时长**角标的文本（#537；仅书籍且有时长；其余一律空串）——与上方游戏角标**同一个封面角落**。
+ *
+ * 🔴 用户原话（2026-10-05）：「显示在海报墙上『已读 2h』」。
+ *   · 位置 = 封面左下角，**复用**游戏那枚 `.rl-cov-playtime` 的类与几何（同一角落只该有一套尺寸；
+ *     ⛔ 别新造 `.rl-cov-readtime` —— 那会让 #530 的「序号避让」父级 `:has()` 规则漏掉书籍卡）；
+ *   · 取值走 `pure/playtime.formatPlaytime`（与游戏时长**同一个格式化真源**）——
+ *     与游戏 `已玩 Nh`（`Math.round` 取整）有意不同：书籍时长常见半小时级（0.5h），取整会显示成 1h；
+ *   · 与 `.rl-readrow` 的「已读 X%」**不是一回事**：那条是阅读**进度**，这条是阅读**耗时**，两行并存。
+ * ⛔ 空值**不渲染角标**（封面不留空槽）。
+ */
+export function cardReadBadge(e: MediaEntry): string {
+    if (e.type !== 'book' || !e.readMinutes) return '';
+    const h = formatPlaytime(e.readMinutes);
+    return h ? `已读 ${h}` : '';
 }
 
 /**

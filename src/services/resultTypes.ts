@@ -42,6 +42,12 @@ export interface BookSearchResult {
     source?: string;
     /** 数据源官方页链接（来源徽标直达） */
     sourceUrl?: string;
+    /**
+     * 🔴 #609 **微信读书的数字 bookId**（append-only）—— 只有它能喂 `/web/book/info`。
+     * 表单选中该结果时拿它按需拉一次详情，把出版年 / 出版社 / ISBN / 分类 / 完整简介 / 大图封面补齐
+     * （与「从微信读书同步书架」逐本补详情的口径一致）。其它源不产这个字段。
+     */
+    bookId?: string;
 }
 
 /** 游戏搜索结果（RAWG 时代遗留形状，现仅 Douban 产生；含豆瓣详情字段） */

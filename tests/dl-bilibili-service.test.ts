@@ -50,11 +50,14 @@ function makeTransport(opts: {
     return { t, calls, searchCalls: () => nth, viewCalls: () => vnth };
 }
 
-/** #505：详情接口的成功响应（分P 列表） */
-function okView(pages: unknown[] = [{ page: 1, part: '第 1 集', duration: 100 }]): DlTextResponse {
+/** #505：详情接口的成功响应（分P 列表）；🔴 #577 真响应里还带 `pic`（封面），一并放着 */
+function okView(
+    pages: unknown[] = [{ page: 1, part: '第 1 集', duration: 100 }],
+    pic = '//i0.hdslb.com/bfs/archive/abc.jpg',
+): DlTextResponse {
     return {
         status: 200,
-        text: JSON.stringify({ code: 0, message: 'OK', data: { title: '示例合集', pages } }),
+        text: JSON.stringify({ code: 0, message: 'OK', data: { title: '示例合集', pages, pic } }),
     };
 }
 
@@ -174,7 +177,26 @@ describe('dlBiliView', () => {
         const { t, viewCalls } = makeTransport({});
         const out = await dlBiliView(t, '   ');
         expect(out.error).toContain('bvid');
+        expect(out.cover).toBe('');
         expect(viewCalls()).toBe(0);
+    });
+
+    // 🔴 #577：选集弹窗的缩略图**复用这一次响应**，⛔ 不为封面另写一条 request / cookie / 重试链
+    it('🔴 #577 顺带把**封面原图**带回去（`pic` 协议相对 ⇒ 补 `https:`），且**不额外发请求**', async () => {
+        const { t, viewCalls } = makeTransport({ view: () => okView() });
+        const out = await dlBiliView(t, 'BV1NreA6rE2L');
+        expect(out.cover).toBe('https://i0.hdslb.com/bfs/archive/abc.jpg');
+        expect(viewCalls()).toBe(1);
+    });
+
+    it('🔴 #577 失败 / 无 `pic` ⇒ `cover` 空串（调用方落统一占位图，⛔ 不把封面当失败原因报给用户）', async () => {
+        const noPic = makeTransport({ view: () => okView([], '') });
+        expect((await dlBiliView(noPic.t, 'BV1')).cover).toBe('');
+        expect((await dlBiliView(noPic.t, 'BV1')).error).toBeUndefined();
+        const bad = makeTransport({ view: () => ({ status: 200, text: JSON.stringify({ code: -412, message: '' }) }) });
+        expect((await dlBiliView(bad.t, 'BV1')).cover).toBe('');
+        const down = makeTransport({ throwOn: 'view' });
+        expect((await dlBiliView(down.t, 'BV1')).cover).toBe('');
     });
 
     it('🔴 与搜索同一条纪律：失败时**强制重取 buvid3 重试一次**', async () => {

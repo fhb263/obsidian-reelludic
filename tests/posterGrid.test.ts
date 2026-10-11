@@ -1,12 +1,12 @@
 // 海报密度（pure/posterGrid）单测
-// 口径（用户 2026-09-22 裁定）：紧凑/标准/宽松 = 最小卡片宽度档；自定义 = 目标列数（带最小卡宽保护）。
+// 口径（用户 2026-09-22 裁定）：紧凑/标准/宽松 = 最小卡片宽度档；自定义 = 目标列数。
+// 🔴 #598 起「自定义」的轨道是**纯目标宽**（1~12 列就是它的全部上下界，⛔ 没有 px 地板）。
 // 模板串的**字面形态**是本模块的对外契约 —— 产物断言与视图内联 style 都按它比对，改形态必须同步改这里。
 import { describe, it, expect } from 'vitest';
 import {
     POSTER_DENSITIES,
     POSTER_DENSITY_LABELS,
     POSTER_CARD_MIN_WIDTHS,
-    POSTER_CUSTOM_MIN_WIDTH,
     POSTER_GRID_GAP,
     POSTER_COLUMNS_DEFAULT,
     POSTER_COLUMNS_MIN,
@@ -15,6 +15,8 @@ import {
     normalizePosterDensity,
     normalizePosterColumns,
     posterGridTemplate,
+    posterZoomColumns,
+    POSTER_ZOOM_STEP,
     type PosterDensity,
 } from 'pure/posterGrid';
 
@@ -29,10 +31,9 @@ describe('posterGrid · 档位表', () => {
         });
     });
 
-    it('默认档 = 标准，且「自定义」的卡宽下限复用标准档的值（不另造数字）', () => {
+    it('默认档 = 标准', () => {
         expect(POSTER_DENSITIES.includes('standard')).toBe(true);
         expect(POSTER_CARD_MIN_WIDTHS.standard).toBe(180);
-        expect(POSTER_CUSTOM_MIN_WIDTH).toBe(POSTER_CARD_MIN_WIDTHS.standard);
     });
 
     it('三档最小卡宽递增（紧凑 < 标准 < 宽松）', () => {
@@ -114,18 +115,22 @@ describe('posterGridTemplate · 档位（最小卡宽 + 容器窄于卡宽时不
         }
     });
 
-    it('自定义列数：列宽上限 = 按列数与间距反算，下限 = 卡宽保护', () => {
+    it('🔴🔴 #597 自定义列数 = **纯目标宽**（⛔ 不再有 `max(180px, …)` 的 px 地板）——'
+        + '旧写法在宽容器下「n 变了、渲染列数没变」（1080px 下 n=12…5 全渲染成 5 列）⇒ 滚轮放大好几格没反应', () => {
         expect(posterGridTemplate('custom', 6)).toBe(
-            'repeat(auto-fill, minmax(min(max(180px, calc((100% - 60px) / 6)), 100%), 1fr))',
+            'repeat(auto-fill, minmax(min(calc((100% - 60px) / 6), 100%), 1fr))',
         );
         expect(posterGridTemplate('custom', 3)).toBe(
-            'repeat(auto-fill, minmax(min(max(180px, calc((100% - 24px) / 3)), 100%), 1fr))',
+            'repeat(auto-fill, minmax(min(calc((100% - 24px) / 3), 100%), 1fr))',
         );
+        // 反向守卫：模板里⛔ 不许再出现 px 地板（那会重新造成「n 变了、列数没变」的死区）。
+        // ⚠️ 判据用**带 px 的 max()** 正则 —— 裸 `max(` 会被 `minmax(` 里的那一段撞红（假 FAIL）。
+        expect(posterGridTemplate('custom', 6)).not.toMatch(/max\(\d+px,/);
     });
 
     it('自定义列数 1 列：间距总量为 0，且仍是单列整宽', () => {
         expect(posterGridTemplate('custom', 1)).toBe(
-            'repeat(auto-fill, minmax(min(max(180px, calc((100% - 0px) / 1)), 100%), 1fr))',
+            'repeat(auto-fill, minmax(min(calc((100% - 0px) / 1), 100%), 1fr))',
         );
     });
 
@@ -142,5 +147,35 @@ describe('posterGridTemplate · 档位（最小卡宽 + 容器窄于卡宽时不
 
     it('CSS 兜底常量与「标准」档一致（内联 style 失效时观感不变）', () => {
         expect(FALLBACK_POSTER_GRID_TEMPLATE).toBe(posterGridTemplate('standard', POSTER_COLUMNS_DEFAULT));
+    });
+});
+
+// 🔴 #591 Ctrl+滚轮缩放：方向语义与浏览器一致（向上滚 = 放大 = 列数减少）
+describe('posterZoomColumns（#591 Ctrl+滚轮缩放）', () => {
+    it('向上滚（in）列数 -1、向下滚（out）列数 +1', () => {
+        expect(posterZoomColumns(6, 'in')).toBe(6 - POSTER_ZOOM_STEP);
+        expect(posterZoomColumns(6, 'out')).toBe(6 + POSTER_ZOOM_STEP);
+    });
+
+    it('两端钳制：列数 1 再放大仍是 1、列数 12 再缩小仍是 12（边界上等于天然 no-op）', () => {
+        expect(posterZoomColumns(POSTER_COLUMNS_MIN, 'in')).toBe(POSTER_COLUMNS_MIN);
+        expect(posterZoomColumns(POSTER_COLUMNS_MAX, 'out')).toBe(POSTER_COLUMNS_MAX);
+    });
+
+    it('🔴🔴 #598 **翻面**：缩小不再按容器宽度夹上限 —— 一路能缩到 `POSTER_COLUMNS_MAX`（12 列）', () => {
+        // 用户：「是 ctrl+滚轮**缩小**失灵，怎么不能缩小到展示更多卡片」。
+        // #597 那套「按宽度算列数上限」（1080px 只给 5 列）已**整体删除** ⇒ 从 5 列再滚**不再是 no-op**。
+        expect(posterZoomColumns(4, 'out')).toBe(5);
+        expect(posterZoomColumns(5, 'out')).toBe(6);
+        expect(posterZoomColumns(POSTER_COLUMNS_MAX - 1, 'out')).toBe(POSTER_COLUMNS_MAX);
+        // 放大方向照旧（1 列 = 满宽那张就是上限）
+        expect(posterZoomColumns(4, 'in')).toBe(3);
+        expect(posterZoomColumns(POSTER_COLUMNS_MIN, 'in')).toBe(POSTER_COLUMNS_MIN);
+    });
+
+    it('入参走 normalizePosterColumns 归一（脏值 / 空值 → 缺省，不抛）', () => {
+        expect(posterZoomColumns(undefined, 'in')).toBe(normalizePosterColumns(undefined) - POSTER_ZOOM_STEP);
+        expect(posterZoomColumns('nope', 'out')).toBe(normalizePosterColumns(undefined) + POSTER_ZOOM_STEP);
+        expect(posterZoomColumns(9.4, 'out')).toBe(9 + POSTER_ZOOM_STEP);
     });
 });

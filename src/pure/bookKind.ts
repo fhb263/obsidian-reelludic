@@ -15,8 +15,12 @@ export const BOOK_KIND_LABELS: Record<BookKind, string> = {
     comic: '漫画',
 };
 
-/** 顶部概览量词（子分类 chip 选中非 all 时用；用户 2026-09-12 指定：5 本书 / 5 本网文，漫画同款「本漫画」）。
- *  「全部」chip 不用此表——回落 pure/labels.overviewUnitLabel('book') = 「本书」。 */
+/**
+ * 子分类的**顶部概览量词**（「N X」里的 X）：阅读页签锁定「书籍」且选中某个子分类时，
+ * 工具栏那枚库概览跟着换词（「12 本网文」而不是笼统的「本书」）—— 对齐影视「8 部剧集」那套。
+ * 🔴 #552（用户 2026-10-07：「把统计如 90 项媒体加回来吧」）：本表随库概览一起**恢复**（#547 曾删）。
+ * ⚠️ 三个键**必须与 `BOOK_KIND_LABELS` 同步**（加子分类时两处一起加）。
+ */
 export const BOOK_KIND_TOP_UNITS: Record<BookKind, string> = {
     book: '本书',
     novel: '本网文',

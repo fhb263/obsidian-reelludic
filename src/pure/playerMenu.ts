@@ -12,8 +12,11 @@
 
 import { SPEED_STEPS, formatSpeed, episodeLabel } from 'pure/player';
 
-/** 浮层种类（同一时刻只开一个）。'volume' 是唯一的**滑条型**浮层（点击音量图标后浮出的竖向滑条）。 */
-export type PlayerMenuKind = 'episodes' | 'speed' | 'settings' | 'volume';
+/**
+ * 浮层种类（同一时刻只开一个）。'volume' 是唯一的**滑条型**浮层（点击音量图标后浮出的竖向滑条）；
+ * 'subtitle' 是 #606 收进来的**字幕面板**（此前是一个独立的 Obsidian Modal，用户裁定「同设置面板一样上浮出来」）。
+ */
+export type PlayerMenuKind = 'episodes' | 'speed' | 'settings' | 'volume' | 'subtitle';
 
 /** 倍速项：value 直接写 `video.playbackRate` */
 export interface SpeedMenuItem {
@@ -35,50 +38,195 @@ export interface EpisodeMenuItem {
     active: boolean;
 }
 
-/** 设置项 id：前三个是**开关**（就地切换，不收起浮层），后两个是**动作**（执行一次后收起）。 */
-export type PlayerSettingId = 'bgplay' | 'epsend' | 'autonext' | 'loopone' | 'stop' | 'pip' | 'external';
-
-/** 开关型设置项 id（#337 起只剩「后台播放」—— 自动切集 / 单集循环 合并成「播完这一集」三选一框） */
-export type PlayerSwitchId = Extract<PlayerSettingId, 'bgplay'>;
-
-/** 「播完这一集」三选一（#337 用户裁定：自动切集 / 单集循环 两个会打架的开关合并成互斥选项框，
- *  并补上第三个正式选项「暂停」= 停在片尾 —— 此前只能把两个开关都关掉才达得到）。 */
-export type EpisodeEndChoice = 'autonext' | 'loopone' | 'stop';
-
-/** 三选一的展示顺序与文案（🔴 顺序即面板顺序；「暂停」= 停在片尾，不循环也不切；#338 文案改短） */
-export const EPISODE_END_CHOICES: { id: EpisodeEndChoice; label: string }[] = [
-    { id: 'autonext', label: '切集' },
-    { id: 'loopone', label: '循环' },
-    { id: 'stop', label: '暂停' },
-];
+/**
+ * 设置项 id（#605 精简成三项）：
+ *   · `playmode` **循环值行** —— 点击整行切到下一档，弹窗不关；
+ *   · `pip`      **动作行**   —— 点击进入画中画并关闭弹窗（不支持时置灰不可点）；
+ *   · `external` **动作行**   —— 点击转系统播放器打开并关闭弹窗。
+ * ⛔ #605 起**没有**「后台播放」这一项 —— 它是**全局设置**，已搬到 设置页 › 内置视频播放器 折叠分组
+ *    （用户裁定：全局项不该占播放器快捷面板）。
+ */
+export type PlayerSettingId = 'playmode' | 'pip' | 'external';
 
 /**
- * 由原有两个字段推导当前选项 —— 🔴 循环优先（与 `onEnded` 的既有优先级一致）；设置零迁移。
- * `single`（电影 / 单文件）恒不可能「切下一集」→ 显示上兜到「暂停」（`onEnded` 对 single 本来就停住）。
+ * 播放模式（#604 用户裁定：整张**剧集列表**级别 —— 取代旧的两个布尔 `autoNext` / `loopOne`）。
+ *
+ * 🔴 为什么把旧的「播完这一集」三选一框撤掉换成这一行：用户原话「『切集 / 循环 / 暂停』拆开」——
+ *    那三个词是**三个不同层级**的概念被硬塞进一个框里：「切集」= 集末行为、「循环」= 列表级模式、
+ *    「暂停」根本不是设置（底部主控制栏本来就有播放/暂停按钮）。⇒ 收成一行「播放模式」，
+ *    集末行为由模式本身承载（`nextEpisodeIndex`），「暂停」整体移出设置。
+ *
+ * 五档语义（前四档与内置音频播放器 `pure/audioQueue` 同族口径，⛔ 别各写一套）：
+ *   · `listLoop`   列表循环 —— 顺序推进，**最后一集播完回到第一集**；
+ *   · `singleLoop` 单集循环 —— 播完重播本集；
+ *   · `sequential` 顺序播放 —— 顺序推进，**最后一集播完停住**；
+ *   · `shuffle`    随机播放 —— 随机挑一集（不与当前同集）；
+ *   · `pauseAtEnd` 播完暂停 —— **播完当前这一集就停住**（⛔ 不推进下一集、也不弹连播面板）。
+ *
+ * 🔴 #606 用户点名「再加个播完暂停」—— 这正是 #604 撤掉那枚「暂停」档的语义（当初旧的三选一框里就有），
+ *    只是这次它是**播放模式的一档**而不是一个独立按钮。⚠️ 追加在**末尾**：前三档的顺序一个字没动
+ *    ⇒ 老用户点「播放模式」循环时，前四步与之前完全一致。
  */
-export function episodeEndChoice(autoNext: boolean, loopOne: boolean, single = false): EpisodeEndChoice {
-    const c = loopOne ? 'loopone' : autoNext ? 'autonext' : 'stop';
-    return single && c === 'autonext' ? 'stop' : c;
+export type PlayMode = 'listLoop' | 'singleLoop' | 'sequential' | 'shuffle' | 'pauseAtEnd';
+
+/** 模式顺序（**真源**）：即循环切换 / 选择面板的展示顺序 */
+export const PLAY_MODES: readonly PlayMode[] = ['listLoop', 'singleLoop', 'sequential', 'shuffle', 'pauseAtEnd'];
+
+/** 模式显示名（「当前值」与面板**共用**；⛔ 别在视图层再写一份，否则改口径必漏） */
+export const PLAY_MODE_LABELS: Record<PlayMode, string> = {
+    listLoop: '列表循环',
+    singleLoop: '单集循环',
+    sequential: '顺序播放',
+    shuffle: '随机播放',
+    pauseAtEnd: '播完暂停',
+};
+
+/** 脏值归一：设置文件被手改写脏值 ⇒ 回落 `listLoop`（与「缺省即列表循环」同口径） */
+export function normalizePlayMode(v: unknown): PlayMode {
+    return PLAY_MODES.includes(v as PlayMode) ? (v as PlayMode) : 'listLoop';
 }
 
-/** 把用户选的选项写回两个字段（append-only 设置不变，只是组合变化） */
-export function applyEpisodeEndChoice(choice: EpisodeEndChoice): { autoNext: boolean; loopOne: boolean } {
-    return { autoNext: choice === 'autonext', loopOne: choice === 'loopone' };
+/**
+ * #605 播放模式「整行点击循环」：按 `PLAY_MODES` 顺序取**下一档**，最后一档回到第一档。
+ * 🔴 循环顺序 == 展示顺序（同一个真源）—— ⛔ 别在这里另写一份顺序表；脏值先归一（保证一定能前进一档，
+ *    否则 `indexOf` 得 `-1` 会停在原地，看上去像「点了没反应」）。
+ */
+export function nextPlayMode(cur: PlayMode): PlayMode {
+    return PLAY_MODES[(PLAY_MODES.indexOf(normalizePlayMode(cur)) + 1) % PLAY_MODES.length];
 }
 
-/** 设置项：id 即动作名；`toggle` 为真时是开关框（点高亮/关则不亮）；`choices` 非空时是三选一框组 */
-export interface SettingMenuItem {
+/**
+ * 旧数据迁移（**零写入**）：`playerPlayMode` 缺省时由旧的两个布尔推导。
+ *   `loopOne` → `singleLoop`；否则「自动切集」开 → `listLoop`、关 → `sequential`。
+ * ⚠️ 旧口径「自动切集开 + 播到最后一集停住」与新口径「列表循环回到第一集」**不同**（有意）——
+ *    想保留旧行为请选「顺序播放」。这是本批**唯一**的行为变化（见 CHANGELOG）。
+ */
+export function playModeFromLegacy(autoNext: boolean, loopOne: boolean): PlayMode {
+    if (loopOne) return 'singleLoop';
+    return autoNext ? 'listLoop' : 'sequential';
+}
+
+/**
+ * 集末推进：返回下一集下标；`null` = **停住**（不弹连播面板）；等于 `cur` = **重播本集**。
+ * `rng` 注入 ⇒ 随机模式可断言、可复现（与 `pure/audioQueue` 同款纪律，⛔ 别在这里直接调 `Math.random`）。
+ * ⚠️ 单文件（电影）不归本函数管 —— 调用方先按 `single` 早退（一集没有「下一集」可言）。
+ */
+export function nextEpisodeIndex(
+    mode: PlayMode,
+    cur: number,
+    count: number,
+    rng: () => number = Math.random,
+): number | null {
+    if (count <= 0) return null;
+    switch (mode) {
+        case 'singleLoop':
+            return cur;
+        // count === 1 时 `(0+1)%1 = 0 = cur` ⇒ 回到本集（列表只有一集，循环就是重播它）
+        case 'listLoop':
+            return (cur + 1) % count;
+        case 'sequential':
+            return cur + 1 < count ? cur + 1 : null;
+        // #606「播完暂停」：任何一集播完都**停住**（不推进、也不弹连播面板）
+        case 'pauseAtEnd':
+            return null;
+        case 'shuffle': {
+            if (count <= 1) return null;
+            // 🔴 **有界重试 + 确定性回退**（与 `pure/audioQueue` 同款）：恒定/退化的随机源是**合法输入**，
+            //    `while (n === cur)` 会死循环。次数用完就顺序推一个，绝不返回 `cur`（那是「重播」语义）。
+            for (let i = 0; i < 24; i += 1) {
+                const n = Math.floor(rng() * count);
+                if (n >= 0 && n < count && n !== cur) return n;
+            }
+            return cur + 1 < count ? cur + 1 : 0;
+        }
+    }
+}
+
+/**
+ * 设置弹窗里的行种类（#605 只剩两种）：
+ *   · `cycle` 循环值行 —— 右侧只显示**当前值文字**（🔴 无箭头），点击就地切到下一档（弹窗不关）；
+ *   · `nav`   动作行   —— 右侧只有右箭头（⛔ 无值、无开关），点击**立即执行并关闭**弹窗。
+ * ⛔ 旧的 `select`（点开二级列表）与 `switch`（行内小开关）已随「后台播放搬走 / 播放模式改循环」退场。
+ */
+export type SettingRowKind = 'cycle' | 'nav';
+
+export interface SettingRow {
     id: PlayerSettingId;
     label: string;
+    kind: SettingRowKind;
+    /** `cycle`：右缘显示的当前值文案 */
+    value?: string;
+    /** 置灰（不可用）：整行变暗、点击无反应 */
+    disabled?: boolean;
+    /** 置灰时右缘的说明文案（如「当前设备不支持」）—— 取代箭头出现 */
+    note?: string;
+}
+
+/** 一组（组间有 1px 分割线） */
+export interface SettingGroup {
+    title?: string;
+    rows: SettingRow[];
+}
+
+/** 弹窗标题（小号灰字那一行；与「分组标题」共用一套样式口径） */
+export const SETTING_HEAD = '播放设置';
+
+// ── #606 字幕面板（**播放器内上浮面板**，与设置面板同容器同开合规则）────────────────
+
+/** 面板里那枚开关的文案 */
+export const SUBTITLE_SWITCH_LABEL = '显示字幕';
+/** 开关下方的提示（支持的字幕格式） */
+export const SUBTITLE_HINT = '支持 .srt / .vtt';
+/** 同目录没有候选时的说明 */
+export const SUBTITLE_EMPTY_TEXT = '同目录没有找到字幕文件';
+/** 底部动作行文案 */
+export const SUBTITLE_BROWSE_LABEL = '从文件选择字幕';
+
+/** 字幕候选行（`active` = 当前已挂载的那条，UI 高亮它） */
+export interface SubtitleMenuCandidate {
+    /** 候选文件名（选中后回传给视图去加载） */
+    fileName: string;
+    /** 语言标签（`pure/subtitle.subtitleLangLabel` 的结果；认不出时为空串 ⇒ UI 显示「字幕」） */
+    lang: string;
     active: boolean;
-    /** 开关框（点击就地切换、点亮/熄灭、点击不收起浮层） */
-    toggle?: boolean;
-    /** 开关当前状态（仅 toggle 项有意义） */
-    on?: boolean;
-    /** 三选一框组（仅 `id === 'epsend'` 有意义；label 为组名） */
-    choices?: { id: EpisodeEndChoice; label: string }[];
-    /** 当前选中的选项（仅 choices 项有意义） */
-    picked?: EpisodeEndChoice;
+}
+
+/** 字幕面板模型：结构与文案全在这一份里，视图只做 DOM + 回传 */
+export interface SubtitleMenuModel {
+    title: string;
+    /** 「显示字幕」开关态 */
+    visible: boolean;
+    hint: string;
+    /** 同目录候选（空 ⇒ UI 显示 `emptyText`） */
+    candidates: SubtitleMenuCandidate[];
+    emptyText: string;
+    browseLabel: string;
+}
+
+/**
+ * #606 字幕面板模型。`active` 由 `current` 推出来 —— ⛔ 别让视图自己比对文件名
+ * （两处判据迟早会漂；这正是「面板内容全部来自 pure」这条纪律的意义）。
+ */
+export function buildSubtitleMenu(opts: {
+    title: string;
+    /** 同目录候选（`lang` 是**已本地化的显示名**，由调用方经 `subtitleLangLabel` 得到） */
+    candidates: readonly { fileName: string; lang?: string }[];
+    /** 当前已挂载的字幕文件名（外部文件挂载时为 null ⇒ 没有一条高亮） */
+    current: string | null;
+    visible: boolean;
+}): SubtitleMenuModel {
+    return {
+        title: `选择字幕：《${opts.title}》`,
+        visible: !!opts.visible,
+        hint: SUBTITLE_HINT,
+        candidates: opts.candidates.map((c) => ({
+            fileName: c.fileName,
+            lang: c.lang ?? '',
+            active: opts.current === c.fileName,
+        })),
+        emptyText: SUBTITLE_EMPTY_TEXT,
+        browseLabel: SUBTITLE_BROWSE_LABEL,
+    };
 }
 
 /** 倍速选项：档位与顺序完全来自 SPEED_STEPS；当前值不在档位内时**不亮任何一条**（不假装归一到 1×） */
@@ -107,35 +255,53 @@ export function buildEpisodeOptions(
 }
 
 /**
- * 设置齿轮选项：**设置区（后台播放开关 + 「播完这一集」三选一框）在前，动作区（画中画 / 用系统播放器打开）在后**。
- * #337 起「自动切集 / 单集循环」两个开关合并为 `epsend` 三选一框（互斥选项用单选，冲突从根上消失）。
- * 缺省值：后台播放视为关、播完行为视为「暂停」—— 调用方（视图）总会显式传真实状态，这里只是不让测试/旧调用炸掉。
- * 不支持画中画时该项**整条不出现** —— 不给一个点了只会报错的入口。
+ * 设置齿轮选项（🔴 #605 用户裁定的**三组三行**结构，与线框图逐行对应）：
+ *
+ * ```
+ * 播放设置             ← SETTING_HEAD（小号灰字）
+ * ──────────────
+ * 播放模式   列表循环   ← cycle 循环值行（右侧当前值、⛔ 无箭头；点击整行切下一档）
+ * ──────────────
+ * 画中画          ›     ← nav 动作行（点击进画中画并关窗；不支持 ⇒ 置灰 + 右缘「当前设备不支持」）
+ * ──────────────
+ * 用系统播放器打开  ›    ← nav 动作行（点击转系统播放器并关窗）
+ * ```
+ *
+ * 🔴 组标题**一律留空**（`title` 不填）：三组各只有一行，给一行起组名只会多出三行噪音；
+ *    用户要的「小号灰字标题」由**弹窗标题** `SETTING_HEAD` 承担（同一套样式）。
+ * 🔴 #605 起**每项各占一组**（三组 == 三行、组间两条分割线）—— 与用户「保留三段分割线」的裁定一致。
+ * ⛔ 别在这里塞「暂停」—— 用户明确「暂停 从设置页移除，保留在底部主控制栏」。
+ * ⛔ 别在这里塞「后台播放」—— 它是全局设置，已搬到设置页（见 `PlayerSettingId` 顶部注释）。
+ * ⛔ 别把 `pip` 也做成「点开才出现」—— 用户要的是**置灰可见**（「不可用项置灰」）：
+ *    看得见、但点不动，才知道这台设备没有这个能力。
  */
 export function buildSettingOptions(opts: {
     pip: boolean;
-    bgPlay?: boolean;
-    /** 当前「播完这一集」选项（调用方用 `episodeEndChoice(autoNext, loopOne, single)` 推导；缺省 = 暂停） */
-    episodeEnd?: EpisodeEndChoice;
-    /** 单集（电影 / 单文件）：不显示「切集」框（一集没法切） */
-    single?: boolean;
-}): SettingMenuItem[] {
-    const list: SettingMenuItem[] = [
-        { id: 'bgplay', label: '后台播放', active: false, toggle: true, on: !!opts.bgPlay },
+    /** 当前播放模式（缺省 = 列表循环；调用方总会传真值） */
+    playMode?: PlayMode;
+}): SettingGroup[] {
+    return [
         {
-            id: 'epsend',
-            label: '播完这一集',
-            active: false,
-            choices: opts.single
-                ? EPISODE_END_CHOICES.filter((c) => c.id !== 'autonext')
-                : EPISODE_END_CHOICES,
-            // 🔴 单集把「切集」兜到「暂停」—— 防调用方传了未夹取的推导值（onEnded 对 single 本来就停住）
-            picked: opts.single && (opts.episodeEnd ?? 'stop') === 'autonext' ? 'stop' : opts.episodeEnd ?? 'stop',
+            rows: [
+                {
+                    id: 'playmode',
+                    kind: 'cycle',
+                    label: '播放模式',
+                    value: PLAY_MODE_LABELS[normalizePlayMode(opts.playMode)],
+                },
+            ],
+        },
+        {
+            rows: [
+                opts.pip
+                    ? { id: 'pip', kind: 'nav', label: '画中画' }
+                    : { id: 'pip', kind: 'nav', label: '画中画', disabled: true, note: '当前设备不支持' },
+            ],
+        },
+        {
+            rows: [{ id: 'external', kind: 'nav', label: '用系统播放器打开' }],
         },
     ];
-    if (opts.pip) list.push({ id: 'pip', label: '画中画', active: false });
-    list.push({ id: 'external', label: '用系统播放器打开', active: false });
-    return list;
 }
 
 /** 浮层开合：同一入口再点一次 = 关；点另一个入口 = 切过去（永远只有一个开着） */

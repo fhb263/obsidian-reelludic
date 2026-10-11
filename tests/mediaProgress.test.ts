@@ -4,7 +4,7 @@
 //    #444c 把季列表弹窗改成应用级 Modal 之后，弹窗**不再长在 MediaList 组件里**，
 //    那行小字只能在纯模块里共用 —— 一旦口径漂了（卡面说「已读 40%」、弹窗说「存档」），用户一眼就看出来。
 import { describe, it, expect } from 'vitest';
-import { bookUnitOf, readPercent, listProgress, cardPlaytimeBadge, seasonRowMeta } from 'pure/mediaProgress';
+import { bookUnitOf, readPercent, listProgress, cardPlaytimeBadge, cardReadBadge, seasonRowMeta } from 'pure/mediaProgress';
 import type { MediaEntry } from 'data/types';
 
 function e(o: Record<string, unknown>): MediaEntry {
@@ -81,6 +81,23 @@ describe('cardPlaytimeBadge · 封面左下角「已玩 Nh」角标（#471 从�
     });
     it('游戏没填时长 ⇒ 空串（角标**不渲染**；封面不是元信息区，⛔ 不留「-」空槽）', () => {
         expect(cardPlaytimeBadge(e({ type: 'game' }))).toBe('');
+    });
+});
+
+describe('cardReadBadge · 封面左下角「已读 Nh」角标（#537，与游戏同一角落）', () => {
+    it('书籍有时长 ⇒ 「已读 Nh」（走 `formatPlaytime`：半小时级显示 0.5h，不取整成 1h）', () => {
+        expect(cardReadBadge(e({ type: 'book', readMinutes: 120 }))).toBe('已读 2h');
+        expect(cardReadBadge(e({ type: 'book', readMinutes: 150 }))).toBe('已读 2.5h');
+        expect(cardReadBadge(e({ type: 'book', readMinutes: 30 }))).toBe('已读 0.5h');
+    });
+    it('🔴 非书籍一律空串（游戏走自己的 `cardPlaytimeBadge`，两者同角互斥）', () => {
+        expect(cardReadBadge(e({ type: 'game', readMinutes: 120 }))).toBe('');
+        expect(cardReadBadge(e({ type: 'movie', readMinutes: 120 }))).toBe('');
+        expect(cardReadBadge(e({ type: 'book' }))).toBe('');
+    });
+    it('阅读时长 0 / 非法 ⇒ 空串（角标不渲染，封面不留空槽）', () => {
+        expect(cardReadBadge(e({ type: 'book', readMinutes: 0 }))).toBe('');
+        expect(cardReadBadge(e({ type: 'book', readMinutes: -5 }))).toBe('');
     });
 });
 

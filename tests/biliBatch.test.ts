@@ -9,21 +9,26 @@ import {
     BATCH_PARTS_ANCHOR,
     applyBatchResult,
     batchCheckedRows,
+    batchFillTitles,
     batchProgressText,
     batchSleep,
     batchStopText,
     buildBatchTargets,
+    bvidFromPaste,
     canExpandParts,
     canFillBatch,
     candidatesToMark,
+    candidatesToProbe,
     epRangeOf,
     filterTargetsByRange,
+    hoistCollections,
     isSinglePartCandidate,
     makeBatchRows,
     normalizeEpRange,
     partCountLabel,
     pickedCandidate,
     pickedUrl,
+    probePartsUntilCollection,
     runBatchSearch,
     titleMatchesWork,
     unfilledEpIndexes,
@@ -52,6 +57,7 @@ function row(patch: Partial<BatchRow> = {}): BatchRow {
         epIndex: 1,
         epNo: 2,
         query: '熊出没 第2集',
+        altQueries: ['熊出没 2'],
         workTitle: '',
         videos: [],
         partCounts: {},
@@ -103,17 +109,24 @@ describe('unfilledEpIndexes（范围只认总集数）', () => {
 });
 
 describe('buildBatchTargets（检索词与单集搜索同一份真源）', () => {
-    it('集标题为空 ⇒ 用「第N集」补位（与单集搜索同一份 `biliEpisodeQuery`）', () => {
+    // 🔴 #575：目标上多了 `altQueries`（备用词 = 「作品名 + 裸数字」，主词 0 命中时才试）
+    it('集标题为空 ⇒ 主词用「第N集」补位、备用词给**裸数字**（与单集搜索同一份 `biliEpisodeQuery`）', () => {
         const t = buildBatchTargets('熊出没', [undefined, undefined], 2, ['', '']);
         expect(t).toEqual([
-            { epIndex: 0, epNo: 1, query: '熊出没 第1集' },
-            { epIndex: 1, epNo: 2, query: '熊出没 第2集' },
+            { epIndex: 0, epNo: 1, query: '熊出没 第1集', altQueries: ['熊出没 1'] },
+            { epIndex: 1, epNo: 2, query: '熊出没 第2集', altQueries: ['熊出没 2'] },
         ]);
     });
 
-    it('有集标题 ⇒ 作品标题 + 集标题（⛔ 不追加集号）', () => {
+    it('有集标题 ⇒ 作品标题 + 集标题（⛔ 不追加集号）；备用词仍是裸数字', () => {
         const t = buildBatchTargets('熊出没', [undefined], 1, ['新邻居']);
-        expect(t).toEqual([{ epIndex: 0, epNo: 1, query: '熊出没 新邻居' }]);
+        expect(t).toEqual([{ epIndex: 0, epNo: 1, query: '熊出没 新邻居', altQueries: ['熊出没 1'] }]);
+    });
+
+    it('🔴 #575 电影态（single）⇒ **没有备用词**：电影没有「第几集」这回事，裸数字只会搜出无关投稿', () => {
+        const t = buildBatchTargets('让子弹飞', [undefined], 1, [''], true);
+        expect(t[0].query).toBe('让子弹飞');
+        expect(t[0].altQueries).toEqual([]);
     });
 
     it('⛔ 只列**未填**的集（已填的不搜、不动）', () => {
@@ -325,6 +338,33 @@ describe('选中与勾选', () => {
     });
 });
 
+// 🔴 #607：批量这条链原先**只写链接、从不写标题**（用户报障「关联网络的 52 集一集标题都没显示」）
+describe('#607 batchFillTitles（批量填入 → 集标题「只填空位」）', () => {
+    it('🔴 只取**已勾中且有链接**的行（与写链接那批同一批行），标题取选中候选的', () => {
+        const ok = row({ epIndex: 0, videos: [vid('BV1', '熊出没 第1集')], picked: 0, checked: true });
+        const unchecked = row({ epIndex: 1, videos: [vid('BV2', '熊出没 第2集')], picked: 0, checked: false });
+        const noUrl = row({ epIndex: 2, videos: [], picked: -1, checked: true });
+        expect(batchFillTitles([ok, unchecked, noUrl], [])).toEqual([[0, '熊出没 第1集']]);
+    });
+
+    it('🔴 **只填空位**：该集已有（手填）标题 ⇒ 跳过、⛔ 不覆盖；纯空格视作空位', () => {
+        const a = row({ epIndex: 0, videos: [vid('BV1', '甲')], picked: 0, checked: true });
+        const b = row({ epIndex: 1, videos: [vid('BV2', '乙')], picked: 0, checked: true });
+        expect(batchFillTitles([a, b], ['我手填的', undefined])).toEqual([[1, '乙']]);
+        expect(batchFillTitles([a, b], ['   ', undefined])).toEqual([[0, '甲'], [1, '乙']]);
+    });
+
+    it('候选标题为空 / 纯空格 ⇒ 那一格跳过（⛔ 不写空标题）', () => {
+        const r = row({ epIndex: 0, videos: [vid('BV1', '   ')], picked: 0, checked: true });
+        expect(batchFillTitles([r], [])).toEqual([]);
+    });
+
+    it('空表 / undefined ⇒ 空结果（不抛）', () => {
+        expect(batchFillTitles([], [])).toEqual([]);
+        expect(batchFillTitles(undefined, [])).toEqual([]);
+    });
+});
+
 describe('进度与停下文案（两入口共用一份）', () => {
     it('跑动中：带上已处理集数与当前集号', () => {
         expect(batchProgressText(11, 52, 12)).toBe('正在搜索 11/52 · 第 12 集…');
@@ -401,21 +441,37 @@ describe('runBatchSearch（唯一一份跑批循环）', () => {
         return h;
     }
 
-    it('🔴 串行跑完：逐集搜索 + 只给**第一条**标分P 数；`nextIndex` 落在末尾、`done = true`', async () => {
+    it('🔴 串行跑完：逐集搜索 + 给候选探分P；`nextIndex` 落在末尾、`done = true`'
+        + '｜🔴 #575 翻面（原为「只给第一条标」）：夹具候选都是**单P** ⇒ 探到下一条（早退条件不成立）'
+        + '⇒ 每集 2 次 parts（第一条已不再是唯一次数）',
+        async () => {
         const h = hooks();
         const out = await runBatchSearch(makeBatchRows(targets(3)), h);
         expect(out.done).toBe(true);
         expect(out.reason).toBe('');
         expect(out.nextIndex).toBe(3);
         expect(out.lastEpNo).toBe(3);
-        // 每集恰好 search 一次 + parts 一次（⛔ 不问第二条）
+        // 每集 search 一次 +（两条候选都探）parts 两次
         expect(h.calls.filter((c) => c.startsWith('search:'))).toHaveLength(3);
-        expect(h.calls.filter((c) => c.startsWith('parts:'))).toHaveLength(3);
+        expect(h.calls.filter((c) => c.startsWith('parts:'))).toHaveLength(6);
         expect(h.calls[1]).toBe('parts:BV-熊出没 第1集-1');
         // 行：默认选中第一条 + 勾上 + 分P 数已标（单P ⇒ 不触发 #526 的「多P 取消自动勾」）
         expect(out.rows.every((r) => r.picked === 0 && r.checked)).toBe(true);
         expect(out.rows.every((r) => r.partCounts[r.videos[0].bvid] === 1)).toBe(true);
     });
+
+    it('🔴 #575 早退：**第一条就是多P 合集** ⇒ 该集只探 1 次 parts（请求量与旧实现完全一样）',
+        async () => {
+            const h = hooks({
+                parts: async (bvid: string) => {
+                    h.calls.push(`parts:${bvid}`);
+                    return { parts: Array.from({ length: 52 }, (_, i) => ({ page: i + 1, title: '', durationSec: 1 })) };
+                },
+            });
+            const out = await runBatchSearch(makeBatchRows(targets(2)), h);
+            expect(h.calls.filter((c) => c.startsWith('parts:'))).toHaveLength(2); // 2 集 × 1 次
+            expect(out.rows.every((r) => r.partCounts[r.videos[0].bvid] === 52)).toBe(true);
+        });
 
     it('🔴 #526 跑批里标出**多P** ⇒ 该行自动勾选被取消（静默填 P1 会指向第 1 集）', async () => {
         const h = hooks({
@@ -432,23 +488,40 @@ describe('runBatchSearch（唯一一份跑批循环）', () => {
         expect(out.rows.every((r) => r.picked === 0)).toBe(true);
     });
 
-    it('🔴 全程**串行**（不是并发）：calls 必定是「search, parts, search, parts…」交替', async () => {
+    it('🔴 全程**串行**（不是并发）：calls 必定是「search, parts…, search, parts…」交替'
+        + '｜🔴 #575 翻面：每集多出「第二条候选」那次探测（夹具两条都是单P）',
+        async () => {
         const h = hooks();
         await runBatchSearch(makeBatchRows(targets(2)), h);
         expect(h.calls).toEqual([
             'search:熊出没 第1集',
             'parts:BV-熊出没 第1集-1',
+            'parts:BV-熊出没 第1集-2',
             'search:熊出没 第2集',
             'parts:BV-熊出没 第2集-1',
+            'parts:BV-熊出没 第2集-2',
         ]);
     });
 
-    it('限速：N 集之间 sleep **N-1** 次（⛔ 最后一集后面不再等）', async () => {
+    it('限速：**每两次请求之间都等一次**（#575 前 = N 集之间 N-1 次；现含集内探分P 的间隔）',
+        async () => {
         let sleeps = 0;
         const h = hooks({ sleep: async () => { sleeps += 1; } });
         await runBatchSearch(makeBatchRows(targets(4)), h);
-        expect(sleeps).toBe(3);
+        // 4 集 × 集内探分P 间隔 1 次（两条候选）+ 集间 3 次 = 7
+        expect(sleeps).toBe(7);
     });
+
+    it('🔴 #575 早退时**集内一次都不 sleep**：第一条多P ⇒ 4 集只有集间那 3 次',
+        async () => {
+            let sleeps = 0;
+            const h = hooks({
+                parts: async () => ({ parts: [{ page: 1, title: '', durationSec: 1 }, { page: 2, title: '', durationSec: 1 }] }),
+                sleep: async () => { sleeps += 1; },
+            });
+            await runBatchSearch(makeBatchRows(targets(4)), h);
+            expect(sleeps).toBe(3);
+        });
 
     it('🔴 **遇错即停**：第 2 集失败 ⇒ 立刻结束、`nextIndex` 落回**出错那一集**（好重试）、后面的集一次没搜', async () => {
         const h = hooks({
@@ -610,5 +683,265 @@ describe('#526 展开分P 的入口条件与锚点', () => {
         const r = withPartCount(applyBatchResult(row({ workTitle: '熊出没' }), { videos: [vid('BV1', '熊出没 全52集')] }), 'BV1', 52);
         expect(canExpandParts(r)).toBe(true);
         expect(r.checked).toBe(false);
+    });
+});
+
+// ── 🔴 #542「粘贴链接」：从剪贴板文本里认 BV 号 ──────────────────────────────
+describe('biliBatch · #542 粘贴链接认号（bvidFromPaste）', () => {
+    it('完整视频页链接（带 ?p=）⇒ 认出 BV 号（p 忽略，由锚口径决定填法）', () => {
+        expect(bvidFromPaste('https://www.bilibili.com/video/BV1xx411c7mD?p=5')).toBe('BV1xx411c7mD');
+        expect(bvidFromPaste('https://www.bilibili.com/video/BV1xx411c7mD/')).toBe('BV1xx411c7mD');
+        expect(bvidFromPaste('http://bilibili.com/video/BV1xx411c7mD')).toBe('BV1xx411c7mD');
+    });
+
+    it('裸号 / 带分享文案 / 前后有空白都能认（剪贴板内容不可控）', () => {
+        expect(bvidFromPaste('BV1xx411c7mD')).toBe('BV1xx411c7mD');
+        expect(bvidFromPaste('  BV1xx411c7mD  ')).toBe('BV1xx411c7mD');
+        expect(bvidFromPaste('【熊出没】https://bilibili.com/video/BV1xx411c7mD 复制打开')).toBe('BV1xx411c7mD');
+        expect(bvidFromPaste('看这个 BV1xx411c7mD 全52集')).toBe('BV1xx411c7mD');
+    });
+
+    it('🔴 短链 b23.tv **明确不认**（短链里没有 BV 号 —— 硬抠只会给出「没找到链接」这种误导提示）', () => {
+        expect(bvidFromPaste('https://b23.tv/abcdefg')).toBe('');
+        expect(bvidFromPaste('https://B23.TV/abcdefg')).toBe('');
+    });
+
+    it('认不出就回空串（⛔ 不抛错、不返回半截）', () => {
+        expect(bvidFromPaste('')).toBe('');
+        expect(bvidFromPaste('   ')).toBe('');
+        expect(bvidFromPaste('https://www.youtube.com/watch?v=abc')).toBe('');
+        expect(bvidFromPaste('https://bilibili.com/video/av12345')).toBe(''); // av 号不认（需转换，本批不做）
+        expect(bvidFromPaste('BV1xx411c7m')).toBe(''); // 少一位 ⇒ 不是合法 BV 号
+        expect(bvidFromPaste(undefined as unknown as string)).toBe('');
+    });
+
+    it('⚠️ `BV` 前缀区分大小写（放开 /i 会把普通文本里的 bv+数字也吃进来）', () => {
+        expect(bvidFromPaste('bv1xx411c7md')).toBe('');
+        expect(bvidFromPaste('BV1xx411c7md')).toBe('BV1xx411c7md'); // 后 10 位大小写不敏感
+    });
+
+    it('只取**第一处**（一条文本里出现两个号时，取先出现的那个）', () => {
+        expect(bvidFromPaste('BV1xx411c7mD and BV1yy411c7mE')).toBe('BV1xx411c7mD');
+    });
+});
+
+// ────────────────────── #575 多P 合集优先（排序靠前）＋ 检索词变体 ──────────────────────
+
+describe('#575 candidatesToProbe（依序探、遇多P 停、跳过已标）', () => {
+    const vs = [vid('BV1'), vid('BV2'), vid('BV3'), vid('BV4')];
+
+    it('全都**没标过** ⇒ 取前 limit 条（上限是硬约束：B 站风控）', () => {
+        expect(candidatesToProbe(row({ videos: vs }), 3).map((v) => v.bvid)).toEqual(['BV1', 'BV2', 'BV3']);
+    });
+
+    it('🔴 **已经知道某条是多P** ⇒ 立刻返回空（不再往下问）', () => {
+        expect(candidatesToProbe(row({ videos: vs, partCounts: { BV1: 52 } }), 3)).toEqual([]);
+    });
+
+    it('跳过**已标过**的（含已知单P），但已知单P **不早退**（还要继续找多P）', () => {
+        expect(candidatesToProbe(row({ videos: vs, partCounts: { BV1: 1 } }), 3).map((v) => v.bvid))
+            .toEqual(['BV2', 'BV3']);
+    });
+
+    it('limit 非法 / 0 ⇒ 空列表（⛔ 不越界）', () => {
+        expect(candidatesToProbe(row({ videos: vs }), 0)).toEqual([]);
+        expect(candidatesToProbe(undefined)).toEqual([]);
+    });
+});
+
+describe('#575 hoistCollections（多P 挪到最前 + picked 跟着走）', () => {
+    const vs = [vid('BV1'), vid('BV2'), vid('BV3')];
+
+    it('已知多P 的候选排到最前，`picked` 落到排序后第一条（未知居中、已知单P 沉底）', () => {
+        const r = hoistCollections(
+            row({ videos: vs, partCounts: { BV3: 52, BV1: 1 }, picked: 0, matched: true, checked: true }),
+        );
+        expect(r.videos.map((v) => v.bvid)).toEqual(['BV3', 'BV2', 'BV1']);
+        expect(r.picked).toBe(0);
+    });
+
+    it('🔴 与 #526 同口径：排到最前的多P 合集**不自动勾**（勾了等于把 P1 写进每一集）', () => {
+        const r = hoistCollections(
+            row({ videos: vs, partCounts: { BV3: 52 }, workTitle: '熊出没', picked: 0, matched: true, checked: true }),
+        );
+        expect(r.videos[0].bvid).toBe('BV3');
+        expect(r.checked).toBe(false);
+    });
+
+    it('顺序：已知多P → **未知** → 已知单P（⛔ 别把「没来得及问」当负面证据沉底）', () => {
+        const r = hoistCollections(row({ videos: vs, partCounts: { BV1: 1, BV3: 7 } }));
+        expect(r.videos.map((v) => v.bvid)).toEqual(['BV3', 'BV2', 'BV1']);
+    });
+
+    it('组内保持 B 站原序；顺序**已满足** ⇒ 原对象返回（⛔ 不无谓重建对象）', () => {
+        const same = row({ videos: vs, partCounts: {} });
+        expect(hoistCollections(same)).toBe(same);
+        const two = hoistCollections(row({ videos: vs, partCounts: { BV1: 4, BV2: 9 } }));
+        expect(two.videos.map((v) => v.bvid)).toEqual(['BV1', 'BV2', 'BV3']);
+    });
+
+    it('🔴 `manual` 为真 ⇒ **原样返回**（用户手动换选过的行，后台排序不许覆盖他的决定）', () => {
+        const m = row({ videos: vs, partCounts: { BV3: 52 }, manual: true });
+        expect(hoistCollections(m)).toBe(m);
+    });
+
+    it('候选 < 2 条 ⇒ 原样返回（排序没有意义）', () => {
+        const one = row({ videos: [vid('BV1')], partCounts: { BV1: 3 } });
+        expect(hoistCollections(one)).toBe(one);
+    });
+});
+
+describe('#575 probePartsUntilCollection（早退 + 取不到不算失败）', () => {
+    const partsOf = (n: number) =>
+        ({ parts: Array.from({ length: n }, (_, i) => ({ page: i + 1, title: '', durationSec: 1 })) });
+
+    it('第一条就是多P ⇒ **只问一次**（早退 ⇒ 请求量与旧实现完全一样）', async () => {
+        const asked: string[] = [];
+        const r = await probePartsUntilCollection(
+            row({ videos: [vid('BV1'), vid('BV2'), vid('BV3')] }),
+            async (bvid) => { asked.push(bvid); return partsOf(52); },
+            async () => { /* 单测不等 */ },
+        );
+        expect(asked).toEqual(['BV1']);
+        expect(r.partCounts.BV1).toBe(52);
+    });
+
+    it('前两条单P ⇒ 一直问到出现多P 为止（第三条多P ⇒ 问满 3 次后停）', async () => {
+        const asked: string[] = [];
+        const r = await probePartsUntilCollection(
+            row({ videos: [vid('BV1'), vid('BV2'), vid('BV3'), vid('BV4')] }),
+            async (bvid) => { asked.push(bvid); return partsOf(bvid === 'BV3' ? 52 : 1); },
+            async () => { /* 单测不等 */ },
+        );
+        expect(asked).toEqual(['BV1', 'BV2', 'BV3']);
+        expect(r.partCounts.BV3).toBe(52);
+    });
+
+    it('🔴 取分P **抛错不算失败**：继续问下一条，行照样有候选、链接可用', async () => {
+        const asked: string[] = [];
+        const r = await probePartsUntilCollection(
+            row({ videos: [vid('BV1'), vid('BV2')] }),
+            async (bvid) => {
+                asked.push(bvid);
+                if (bvid === 'BV1') throw new Error('boom');
+                return partsOf(9);
+            },
+            async () => { /* 单测不等 */ },
+        );
+        expect(asked).toEqual(['BV1', 'BV2']);
+        expect(r.partCounts.BV1).toBeUndefined();
+        expect(r.partCounts.BV2).toBe(9);
+        expect(r.videos).toHaveLength(2);
+    });
+
+    it('🔴 没有候选 / 已手动操作过 ⇒ **一次请求都不发**', async () => {
+        const asked: string[] = [];
+        const probe = async (b: string) => { asked.push(b); return partsOf(5); };
+        await probePartsUntilCollection(row({ videos: [] }), probe, async () => {});
+        await probePartsUntilCollection(row({ videos: [vid('BV1')], manual: true }), probe, async () => {});
+        expect(asked).toEqual([]);
+    });
+});
+
+describe('#575 runBatchSearch：主词 0 命中时回落备用词', () => {
+    function hooks2(over: Record<string, unknown> = {}) {
+        const calls: string[] = [];
+        const h = {
+            calls,
+            // 主词（含「第」）一律 0 条；备用词（裸数字「熊出没 2」）给一条
+            search: async (kw: string) => {
+                calls.push(`search:${kw}`);
+                return { videos: /熊出没 2$/.test(kw) ? [vid('BV-alt', '熊出没 2')] : [] };
+            },
+            parts: async (bvid: string) => {
+                calls.push(`parts:${bvid}`);
+                return { parts: [{ page: 1, title: '', durationSec: 1 }] };
+            },
+            onUpdate: () => { /* 本组不关心进度 */ },
+            shouldContinue: () => true,
+            sleep: async () => { /* 单测不等 */ },
+            ...over,
+        };
+        return h;
+    }
+    const targets1 = [{ epIndex: 0, epNo: 2, query: '熊出没 第2集', altQueries: ['熊出没 2'] }];
+
+    it('主词 0 条 ⇒ 按序试备用词、**命中即停**；行上保留的仍是**主词**（给用户看的是他那一集）', async () => {
+        const h = hooks2();
+        const out = await runBatchSearch(makeBatchRows(targets1), h);
+        expect(h.calls.filter((c) => c.startsWith('search:'))).toEqual(['search:熊出没 第2集', 'search:熊出没 2']);
+        expect(out.rows[0].videos).toHaveLength(1);
+        expect(out.rows[0].query).toBe('熊出没 第2集');
+    });
+
+    it('🔴 主词**有结果** ⇒ 一次备用词都不试（#520：弱判据 + 交给人挑，不丢已拿到的候选）', async () => {
+        const h = hooks2({
+            search: async (kw: string) => { h.calls.push(`search:${kw}`); return { videos: [vid('BV1', '熊出没')] }; },
+        });
+        await runBatchSearch(makeBatchRows(targets1), h);
+        expect(h.calls.filter((c) => c.startsWith('search:'))).toEqual(['search:熊出没 第2集']);
+    });
+
+    it('🔴 主词**失败**（error 非空）⇒ 也不试备用词（换了词一样连不上，还会多打一次站）', async () => {
+        const h = hooks2({
+            search: async (kw: string) => {
+                h.calls.push(`search:${kw}`);
+                return { videos: [], error: 'B 站返回 412（风控）' };
+            },
+        });
+        const out = await runBatchSearch(makeBatchRows(targets1), h);
+        expect(h.calls.filter((c) => c.startsWith('search:'))).toEqual(['search:熊出没 第2集']);
+        expect(out.rows[0].error).toContain('412');
+    });
+
+    it('备用词也 0 条 ⇒ 保持「没搜到」那条结论（⛔ 不报错、行内仍无候选）', async () => {
+        const h = hooks2({
+            search: async (kw: string) => { h.calls.push(`search:${kw}`); return { videos: [] }; },
+        });
+        const out = await runBatchSearch(makeBatchRows(targets1), h);
+        expect(h.calls.filter((c) => c.startsWith('search:'))).toHaveLength(2);
+        expect(out.rows[0].error).toBe('');
+        expect(out.rows[0].videos).toEqual([]);
+    });
+
+    // ── #589：放宽「什么时候才试备用词」 ────────────────────────────────────────────
+    it('🔴 #589 主词**有结果、但没有一条标题含作品名** ⇒ 也试备用词；备用词给出含作品名的一条 ⇒ **采纳**它', async () => {
+        const h = hooks2({
+            search: async (kw: string) => {
+                h.calls.push(`search:${kw}`);
+                // 主词：有结果，但标题里没有「熊出没」⇒ 按 #520 一条都不会被自动勾上（等于白搜）
+                if (/熊出没 2$/.test(kw)) return { videos: [vid('BV-alt', '熊出没 2 新邻居')] };
+                return { videos: [vid('BV-x', '某综艺搞笑合集')] };
+            },
+        });
+        const out = await runBatchSearch(makeBatchRows(targets1, '熊出没'), h);
+        expect(h.calls.filter((c) => c.startsWith('search:'))).toEqual(['search:熊出没 第2集', 'search:熊出没 2']);
+        expect(out.rows[0].videos.map((v) => v.bvid)).toEqual(['BV-alt']);
+        expect(out.rows[0].matched).toBe(true);
+    });
+
+    it('🔴 #589 主词无一条匹配、备用词**也不匹配** ⇒ **保留主词结果**（⛔ 别为「更精确」把候选整批换掉）', async () => {
+        const h = hooks2({
+            search: async (kw: string) => {
+                h.calls.push(`search:${kw}`);
+                if (/熊出没 2$/.test(kw)) return { videos: [vid('BV-alt', '别的动画 2')] };
+                return { videos: [vid('BV-x', '某综艺搞笑合集')] };
+            },
+        });
+        const out = await runBatchSearch(makeBatchRows(targets1, '熊出没'), h);
+        expect(h.calls.filter((c) => c.startsWith('search:'))).toHaveLength(2);
+        expect(out.rows[0].videos.map((v) => v.bvid)).toEqual(['BV-x']);
+        expect(out.rows[0].matched).toBe(false);
+    });
+
+    it('🔴 #589 主词**已有**一条含作品名 ⇒ 一次备用词都不试（与 #575 同一口径：有「好」结果就不动）', async () => {
+        const h = hooks2({
+            search: async (kw: string) => {
+                h.calls.push(`search:${kw}`);
+                return { videos: [vid('BV1', '熊出没 第2集 上')] };
+            },
+        });
+        await runBatchSearch(makeBatchRows(targets1, '熊出没'), h);
+        expect(h.calls.filter((c) => c.startsWith('search:'))).toEqual(['search:熊出没 第2集']);
     });
 });

@@ -22,6 +22,8 @@
      *    胶囊 / 设置页 / 推荐歌单都按它遍历，B站没有歌单也没有试听）。
      */
     import { onDestroy, onMount } from 'svelte';
+    /** 滚动加载（#556）：分批渲染 + 节流判定全在纯模块里（⛔ 别在这里再写一份时间比较） */
+    import { LIST_BATCH, canGrow, nextShown, shouldGrow } from 'pure/incremental';
     /**
      * 🔴 图标必须用**本仓自己的** `./Icon.svelte`（`setIcon` 渲染、随主题变色）。
      *    ⛔ 绝不能写 `import { Icon } from 'obsidian'` —— 那条 API **并不导出 `Icon`**
@@ -201,6 +203,51 @@
     function inputVal(ev: Event): string {
         return (ev.target as HTMLInputElement).value;
     }
+
+    // ── 滚动加载（#556，用户 2026-10-08：「疯狂滚动加载卡片，限制每 200ms 才执行一次加载判断」）──
+    /**
+     * 分批渲染：四个列表（推荐歌单 / 搜索结果 / 歌单曲目 / B站视频）共用**同一个**已显示条数 ——
+     * 它们互斥（同一时刻只渲染一个视图）⇒ 各存一份只会多出三处要同步的状态。
+     * ⚠️ 换列表必须**回到第一批**：靠下面那条 `listKey` 响应式重置，⛔ 别在每处赋值点各写一遍。
+     */
+    let shown = LIST_BATCH;
+    let lastListKey = '';
+    /** 上次执行「加载判定」的时刻（节流用；0 = 还没执行过 ⇒ 第一次滚动必须放行） */
+    let lastGrowAt = 0;
+    let bodyEl: HTMLElement | null = null;
+    const GROW_GAP_MS = 200;
+    /**
+     * 列表身份键：视图 / 平台 / 关键词 / 三个列表长度 / 歌单名。
+     * 🔴 长度也进 key：搜索结果**渐进填充**（任一平台先回来就先画）⇒ 长度会变，那正是「换了内容」。
+     * ⚠️ 只放进 key、**不放进 `$:` 的赋值侧**，所以它不会和 `shown` 形成自环。
+     */
+    $: listKey = [view, source, query, playlists.length, songs.length, biliVideos.length,
+        detail ? `${detail.name}:${detail.songs.length}` : ''].join('\u0001');
+    $: if (listKey !== lastListKey) {
+        lastListKey = listKey;
+        shown = LIST_BATCH;
+        lastGrowAt = 0;
+    }
+    /**
+     * 滚动处理：**节流 200ms**（滚动会连发几十个事件；防抖在这里会判成「从没停下」而一次都不加载）。
+     * ⚠️ 判据全在 `pure/incremental`，这里只做「读 DOM → 问纯函数 → 写状态」。
+     */
+    function onBodyScroll(): void {
+        if (!bodyEl) return;
+        const now = Date.now();
+        if (!canGrow(lastGrowAt, now, GROW_GAP_MS)) return;
+        if (!shouldGrow(bodyEl.scrollTop, bodyEl.clientHeight, bodyEl.scrollHeight)) return;
+        lastGrowAt = now;
+        shown = nextShown(shown, Math.max(playlists.length, songs.length, biliVideos.length,
+            detail ? detail.songs.length : 0));
+    }
+    onMount(() => {
+        // 元素常驻（`{.rl-dl-body}` 不在任何 `{#if}` 里）⇒ 挂一次即可；passive 只读不拦滚动。
+        bodyEl?.addEventListener('scroll', onBodyScroll, { passive: true });
+    });
+    onDestroy(() => {
+        bodyEl?.removeEventListener('scroll', onBodyScroll);
+    });
 
     async function runSearch(): Promise<void> {
         const q = query.trim();
@@ -573,7 +620,7 @@
         </div>
     {/if}
 
-    <div class="rl-dl-body">
+    <div class="rl-dl-body" bind:this={bodyEl}>
         {#if view === 'playlists'}
             <div class="rl-dl-head">
                 <span class="rl-dl-head-t">推荐歌单</span>
@@ -587,7 +634,7 @@
             {:else if playlists.length === 0}
                 <div class="rl-hint">暂无推荐歌单，可在上方直接搜索歌名</div>
             {:else}
-                {#each playlists as p (p.source + ':' + p.id)}
+                {#each playlists.slice(0, shown) as p (p.source + ':' + p.id)}
                     <!-- 🔴 #402 结构改动：卡片外层从按钮换成 **div 容器**（类名仍叫 `rl-dl-card`）——
                          原因是卡片里要放一枚**外链 `<a>`**（「歌单支持直接跳转到歌单网页」），
                          而 HTML 不允许 `<a>` 嵌在 `<button>` 里（嵌了浏览器会把按钮拆开、点击全乱）。
@@ -631,7 +678,7 @@
                 <span class="rl-dl-head-t">搜索结果</span>
                 <span class="rl-dl-head-m">{searchMeta}</span>
             </div>
-            {#each songs as s (s.source + ':' + s.id)}
+            {#each songs.slice(0, shown) as s (s.source + ':' + s.id)}
                 <!-- 歌曲行 = **卡片**（2026-09-28 #401 照正本搬）：有底色 + 圆角，而不是一行行贴在弹窗底上。
                      🔴 #402：右侧三件固定为「来源标签 → 试听 → 下载」（VIP 行也给下载按钮，只压暗）⇒ 逐行对齐。
                      ⚠️ 与歌单视图那一行**必须同款**（同一行的两次渲染）；改一处务必同步另一处。 -->
@@ -703,7 +750,7 @@
                 <span class="rl-dl-head-t">B站视频</span>
                 <span class="rl-dl-head-m">{biliMeta}</span>
             </div>
-            {#each biliVideos as v (v.bvid)}
+            {#each biliVideos.slice(0, shown) as v (v.bvid)}
                 <div class="rl-dl-row" class:is-busy={downloadingId === `bili:${v.bvid}`}>
                     <!-- 🔴 `referrerpolicy="no-referrer"` 是**必需的、不是装饰**：B站图床
                          （`i0.hdslb.com`）按 Referer 防盗链 —— 实测同一张图无 Referer `200`、
@@ -756,7 +803,7 @@
                     共 {detail?.songs.length ?? 0} 首 · {downloadable(detail?.songs ?? [])} 首可下载
                 </span>
             </div>
-            {#each detail?.songs ?? [] as s (s.source + ':' + s.id)}
+            {#each (detail?.songs ?? []).slice(0, shown) as s (s.source + ':' + s.id)}
                 <div class="rl-dl-row" class:is-vip={s.vip} class:is-busy={downloadingId === s.id}>
                     {#if cover(s)}
                         <img class="rl-dl-cover" src={cover(s)} alt="" loading="lazy" />

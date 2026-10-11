@@ -4,9 +4,9 @@
 //   视频区 = 白底舞台 + 点画面播放/暂停、双击全屏、暂停时中央播放按钮；点黑边**不关闭**（2026-09-17 裁定）；
 //   底部控制条 = **单行三段式**（左组：上一集 / 播放暂停 / 下一集 ｜ 中段：进度条 + 时间 ｜
 //        右组：选集 / 倍速 / 字幕 / 音量 / 设置齿轮 / 全屏）；进度条含缓冲段、已播段、悬停「落点 / 总长」预览与拖动；
-//   浮层 = 选集 / 倍速 / 设置**共用同一容器**，贴触发按钮右缘向上浮出（内容与定位全在 pure/playerMenu）；
+//   浮层 = 选集 / 倍速 / 设置 / 字幕**共用同一容器**，贴触发按钮右缘向上浮出（内容与定位全在 pure/playerMenu）；
 //   低频项（画中画、用系统播放器打开）收进设置齿轮。Esc 一级优先关浮层，但仍**不退出播放器**。
-// 增强：字幕（同目录自动挂载 + 手动选，见 SubtitlePickerModal）、连播（播完倒计时切下一集）、记忆播放位置
+// 增强：字幕（同目录自动挂载 + 面板手动选，见 renderSubtitleMenu）、连播（播完倒计时切下一集）、记忆播放位置
 // 沉浸：鼠标移入浮出、移出/静止 3s 淡出（暂停时不隐藏，见 pokeIdle）
 // 省电（用户 2026-09-18）：不可见（切走页签 / 窗口最小化 / 元素不在视口）→ 停渲染释放 GPU；
 //       不可见超 5 分钟 → 连解码缓冲一起放掉（clearSource），回来按落盘位置重建
@@ -38,21 +38,36 @@ import {
     type PlayerKeyAction,
 } from 'pure/player';
 import {
-    applyEpisodeEndChoice,
+    activeMarkIndex,
+    MARK_TABS,
+    MARK_TAB_LABELS,
+    markEmptyHint,
+    markTabCounts,
+    markTabOf,
+    marksOfTab,
+    sortMarksByTime,
+    type MarkTab,
+} from 'pure/videoDrawer';
+import {
     buildEpisodeOptions,
     buildSettingOptions,
     buildSpeedOptions,
-    episodeEndChoice,
+    buildSubtitleMenu,
     menuAnchor,
+    nextEpisodeIndex,
     nextMenuState,
-    type EpisodeEndChoice,
+    nextPlayMode,
+    normalizePlayMode,
+    SETTING_HEAD,
+    SUBTITLE_SWITCH_LABEL,
+    type PlayMode,
     type PlayerMenuKind,
-    type PlayerSwitchId,
+    type SettingGroup,
+    type SettingRow,
 } from 'pure/playerMenu';
 // 进度条打点/标记（#333）：标记的**解析与过滤全在纯模块**里，视图只负责画 + 命中判定 + 分发。
 import { hitMark, inBarBand, markCaption, markPct, marksForEpisode, pointerOnCard, MARK_DENSE_THRESHOLD, type VideoMark } from 'pure/videoMarks';
 import { dirOfPath, fileNameOfPath, subtitleLangLabel, subtitleLangTag, type SubtitleCandidate } from 'pure/subtitle';
-import { SubtitlePickerModal } from 'modals/SubtitlePickerModal';
 
 /** 视图类型（main 层 registerView 与打开入口共用） */
 export const VIDEO_PLAYER_VIEW_TYPE = 'reelludic-video-player';
@@ -118,14 +133,21 @@ export interface VideoPlayerOptions {
     onOpenMarkNote?: (mark: VideoMark) => Promise<void>;
     /** 截图的资源 URL（#333：卡片里显示缩略图用）—— 视图不碰 vault，由宿主解析；取不到返回 null */
     markImageUrl?: (image: string) => string | null;
-    /** 播放器开关 · 后台播放（缺省 false）：不可见时继续播放，不暂停也不释放解码 */
+    /**
+     * 后台播放（缺省 false）：不可见时继续播放，不暂停也不释放解码。
+     * 🔴 #605 起它是**只读快照** —— 开关本体已搬到 设置页 › 内置视频播放器 折叠分组（全局设置），
+     *    播放器内不再改它；本视图只在打开时读一次，用于可见性/省电判定。
+     */
     backgroundPlay?: boolean;
-    /** 播放器开关 · 自动切集（缺省 true = 历史行为）：关掉则播完停在结尾 */
-    autoNextEpisode?: boolean;
-    /** 播放器开关 · 单集循环（缺省 false）：播完重播当前集，优先级高于自动切集 */
-    loopSingleEpisode?: boolean;
-    /** 播放器开关写回（main 落 settings；缺省则只在本视图会话内生效） */
-    onToggleSetting?: (key: 'bgPlay' | 'autoNext' | 'loopOne', value: boolean) => void;
+    /**
+     * 🔴 #604 播放模式（四档，见 `pure/playerMenu.PlayMode`；缺省 = 列表循环）。
+     * ⛔ 旧的「自动切集 / 单集循环」两个布尔选项**已撤** —— 迁移在 main 层做一次
+     * （`playModeFromLegacy`），视图只认 `PlayMode` 这一种形态。
+     */
+    playMode?: PlayMode;
+    /** 🔴 #604 播放模式写回（main 落 settings；缺省则只在本视图会话内生效）。
+     *  #605 起弹窗里改模式 = 整行点击循环，每次切换回传一次。 */
+    onSetPlayMode?: (mode: PlayMode) => void;
 }
 
 /** 顶部操作文案（纯展示）：剧集 = 「第 N 集 · 集标题」；电影 / 单文件 = 集标题本身（无集数）。
@@ -158,6 +180,26 @@ export class VideoPlayerView extends ItemView {
     /** 当前集过滤后的标记 + 其百分比（命中判定与画点共用同一份，免得两处各算一遍漂掉） */
     private markList: VideoMark[] = [];
     private markPcts: number[] = [];
+    // ── #579 时间戳侧边栏（抽屉）──────────────────────────────────────────────
+    /** 抽屉容器（挂 root，**绝对定位**；收起 = `hidden` ⇒ `display:none`，零占用、零溢出） */
+    private drawerEl: HTMLElement | null = null;
+    /** 抽屉是否展开（默认收起 —— 用户口径「侧边栏默认收起」） */
+    private drawerOpen = false;
+    /** 当前 Tab（默认第一个 = 截图笔记） */
+    private drawerTab: MarkTab = MARK_TABS[0];
+    /** Tab 按钮（重建时要换 `is-on` / 数字，存一份免得每次 querySelector） */
+    private drawerTabEls = new Map<MarkTab, HTMLButtonElement>();
+    private drawerListEl: HTMLElement | null = null;
+    /** 列表行（与 `drawerRows` 一一对应；点跳转与高亮都按同一份下标走） */
+    private drawerRowEls: HTMLElement[] = [];
+    private drawerRows: VideoMark[] = [];
+    /** 当前高亮的行下标（`-1` = 无）；**只在变化时才改 DOM**（`timeupdate` 每秒 4 次，别白刷） */
+    private drawerActive = -1;
+    /** 抽屉开关（顶栏那枚）：开合时换图标 `panel-right-open` / `panel-right-close` */
+    private drawerBtn: HTMLButtonElement | null = null;
+    /** 大图预览（截图笔记专用）：整块遮罩 + 居中大图 */
+    private lightboxEl: HTMLElement | null = null;
+    private lightboxImgEl: HTMLImageElement | null = null;
     /** 视图是否已完成 onOpen（未完成时 openWith 只记 opts，由 onOpen 负责建 UI）
      *  ⚠️ 不能用 rootEl 判「是否已挂载」：占位态也算已挂载但当时 rootEl 为空 →
      *  曾因此让 `if (this.rootEl) buildUi()` 恒假，点「观看」只挂 opts 不建界面（2026-09-15 用户报「根本播放不了」）。*/
@@ -197,8 +239,10 @@ export class VideoPlayerView extends ItemView {
     /** 播放器开关的**可变副本**：用户当场切换必须立即生效，不能回读 opts 快照（那是打开时的值）。
      *  初值在 openWith 里从 opts 取；缺省与「设置字段缺省」保持一致。 */
     private bgPlay = false;
-    private autoNext = true;
-    private loopOne = false;
+    /** 🔴 #604 播放模式（取代旧的 `autoNext` / `loopOne` 两个布尔） */
+    private playMode: PlayMode = 'listLoop';
+    /** 🔴 #604 连播面板当前倒计时的**目标集下标**（列表循环会绕回第一集，⛔ 不能再假设是 `cur+1`） */
+    private nextTarget: number | null = null;
     /** 画面中央的极简播放按钮（用户 2026-09-18 替换旧的 64px 深色圆钮；显隐由 CSS 表达，这里只管图标） */
     private centerPlayEl: HTMLElement | null = null;
     private toastEl: HTMLElement | null = null;
@@ -222,6 +266,8 @@ export class VideoPlayerView extends ItemView {
     private subUrl: string | null = null;
     /** 当前挂载的字幕标识（候选文件名 / 外部文件名；用于弹窗高亮） */
     private subFile: string | null = null;
+    /** #605「显示字幕」开关态（false = 隐藏但**保留**已挂载轨道，再打开即原样点亮） */
+    private subVisible = true;
     /** 连播：倒计时定时器 + 截止时间戳 */
     private nextTimer: number | null = null;
     private nextDeadline = 0;
@@ -292,6 +338,14 @@ export class VideoPlayerView extends ItemView {
         this.opened = true;
     }
 
+    /** 窗口 / 面板尺寸变化：抽屉的上下边距是**量出来的**（顶栏与控制条高度随字号、全屏、分屏而变）
+     *  ⇒ 这里跟着重算一次；同时把「当前那条」重新滚进视野（列表高度变了）。收起时什么都不做。 */
+    onResize(): void {
+        if (!this.drawerOpen) return;
+        this.syncDrawerInset();
+        this.syncDrawerActive(true);
+    }
+
     async onClose(): Promise<void> {
         // 位置落盘（关闭立即写，防最后一次进度丢失）
         this.savePosition(true);
@@ -316,10 +370,11 @@ export class VideoPlayerView extends ItemView {
      *  注：方法名不能叫 load —— ItemView 基类已占用 load()（视图生命周期），签名不同会编译失败 */
     openWith(opts: VideoPlayerOptions): void {
         this.opts = opts;
-        // 三个播放器开关：取一份可变副本（用户当场切换要立即生效；opts 只是「打开那一刻」的快照）
+        // 打开那一刻的快照：后台播放（#605 起只读，开关在设置页）/ 播放模式（单值，旧的两个布尔已在 main 层迁移掉）。
+        // 🔴 播放模式取一份可变副本（用户当场点「播放模式」循环切换要立即生效）。
         this.bgPlay = !!opts.backgroundPlay;
-        this.autoNext = opts.autoNextEpisode !== false;
-        this.loopOne = !!opts.loopSingleEpisode;
+        this.playMode = opts.playMode ? normalizePlayMode(opts.playMode) : 'listLoop';
+        this.nextTarget = null;
         const n = opts.items.length;
         this.cur = Math.max(0, Math.min(opts.startIndex, n - 1));
         // 时间戳链接定位（#326）：opts 只是「打开那一刻」的快照，故取一份可变副本，消费后置 null
@@ -350,6 +405,10 @@ export class VideoPlayerView extends ItemView {
         this.buildControls(root);
         this.buildToast(root);
         this.buildNextPanel(root);
+        // #579 时间戳侧边栏（抽屉）：挂在 root 上、**绝对定位**，收起时 `display:none`。
+        // 收起态**不参与布局也不溢出**（⛔ 不用 `transform: translateX(100%)` 那种「推出去」写法 ——
+        // 它会撑出横向滚动；#553 那条「transform 建层叠上下文」的账也就跟着来了）。
+        this.buildDrawer(root);
         // 闲置自动隐藏：鼠标在播放器内活动即浮出控制条
         root.addEventListener('mousemove', () => this.pokeIdle());
         root.addEventListener('mousedown', () => this.pokeIdle());
@@ -403,6 +462,16 @@ export class VideoPlayerView extends ItemView {
             const shotBtn = tools.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '截取当前帧（S）' } });
             safeSetIcon(shotBtn, 'camera');
             shotBtn.addEventListener('click', () => void this.takeShot());
+            // 🔴 #579 时间戳侧边栏入口：放在**两枚标记按钮之后、打开笔记之前** ——
+            //    ⑴ 与「时间戳 / 截图」同属标记那条线（就近读得懂）；
+            //    ⑵ 既有判据钉着「打开笔记」必须**最右**（`截取当前帧` 的 index < `打开视频笔记` 的 index），
+            //       插在这里那条判据照样成立，⛔ 别插到它后面去。
+            //    图标 `panel-right-open` / `panel-right-close` 已核实（与阅读器的 `panel-left-*` 同族，
+            //    一眼看得出是「侧栏」而不是「书签」）。
+            const drawerBtn = tools.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '时间戳 / 截图列表' } });
+            safeSetIcon(drawerBtn, 'panel-right-open');
+            drawerBtn.addEventListener('click', () => this.toggleDrawer());
+            this.drawerBtn = drawerBtn;
             // 顶栏**最右**（用户 2026-09-19 指定）：打开这条视频的笔记（缺笔记自动生成，分屏打开并聚焦）
             const noteBtn = tools.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '打开视频笔记' } });
             safeSetIcon(noteBtn, 'notebook-text');
@@ -446,6 +515,8 @@ export class VideoPlayerView extends ItemView {
         });
         this.videoEl.addEventListener('timeupdate', () => {
             if (!this.dragging) this.updateProgressUi();
+            // #579 双向联动：当前所处的那一条自动高亮（未展开时直接返回，零开销）
+            this.syncDrawerActive();
             this.savePosition();
         });
         this.videoEl.addEventListener('progress', () => this.updateProgressUi());
@@ -546,7 +617,8 @@ export class VideoPlayerView extends ItemView {
         if (opts?.listSubtitles) {
             const subBtn = right.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '字幕' } });
             safeSetIcon(subBtn, 'captions');
-            subBtn.addEventListener('click', () => void this.openSubtitlePicker());
+            // #606：字幕面板 = 与设置面板同款的**上浮浮层**（同一个容器、同一套开合与外点关闭规则）
+            subBtn.addEventListener('click', () => this.toggleMenu('subtitle', subBtn));
             this.subBtn = subBtn;
         }
 
@@ -586,11 +658,197 @@ export class VideoPlayerView extends ItemView {
         const ops = panel.createDiv({ cls: 'rl-vp-next-ops' });
         const go = ops.createEl('button', { cls: 'rl-btn rl-vp-btn', text: '立即播放' });
         go.addEventListener('click', () => {
+            // 🔴 #604：目标集由 `nextTarget` 给（列表循环会绕回第一集 —— ⛔ 不能再写 `cur + 1`）
+            const target = this.nextTarget;
             this.hideNextPanel();
-            this.goto(this.cur + 1);
+            if (target !== null) this.goto(target);
         });
         const cancel = ops.createEl('button', { cls: 'rl-btn rl-vp-btn', text: '取消' });
         cancel.addEventListener('click', () => this.hideNextPanel());
+    }
+
+    // ── #579 时间戳侧边栏（抽屉：截图笔记 / 时间戳笔记 两栏）──────────────────────────
+
+    /**
+     * 抽屉骨架。**默认收起**（用户口径「侧边栏默认收起」），展开后**不挤压主视频区域** ——
+     * 它是绝对定位的浮层，盖在画面右侧，视频的尺寸与位置一个字不动。
+     *
+     * ⚠️ 上 / 下边距在**每次展开时按顶栏与控制条的真实高度算**（`syncDrawerInset`）：
+     * 顶栏与底栏都是 `position: absolute` 的渐变浮条；抽屉若从 0 铺到 100% 就会**盖住顶栏那几枚按钮**
+     * （含它自己的开关）⇒ 展开后没法关，是个死局。硬编码高度在全屏 / 换字号时会错位，所以量。
+     */
+    private buildDrawer(root: HTMLElement): void {
+        const drawer = root.createDiv({ cls: 'rl-vp-drawer hidden' });
+        this.drawerEl = drawer;
+        const tabs = drawer.createDiv({ cls: 'rl-vp-dtabs' });
+        for (const tab of MARK_TABS) {
+            const b = tabs.createEl('button', { cls: 'rl-vp-dtab', text: MARK_TAB_LABELS[tab] });
+            b.addEventListener('click', () => {
+                if (this.drawerTab === tab) return;
+                this.drawerTab = tab;
+                this.renderDrawer();
+                this.syncDrawerActive(true);
+            });
+            this.drawerTabEls.set(tab, b);
+        }
+        this.drawerListEl = drawer.createDiv({ cls: 'rl-vp-dlist' });
+        // 大图预览（截图笔记专用）：整块遮罩 + 居中大图。在播放器内，⛔ 不是新窗口 / 不是系统查看器。
+        const lb = root.createDiv({ cls: 'rl-vp-lightbox hidden' });
+        this.lightboxEl = lb;
+        lb.addEventListener('click', () => this.closeLightbox());
+        const img = lb.createEl('img', { cls: 'rl-vp-lightbox-img', attr: { alt: '' } });
+        this.lightboxImgEl = img;
+        // 点图片本身不关（「想放大看细节」时点到图上不该把预览关掉）
+        img.addEventListener('click', (ev) => ev.stopPropagation());
+    }
+
+    /** 抽屉上下边距 = 顶栏 / 控制条的**真实高度**（为什么必须量见 `buildDrawer` 的注释） */
+    private syncDrawerInset(): void {
+        const d = this.drawerEl;
+        if (!d) return;
+        const bar = this.rootEl?.querySelector<HTMLElement>('.rl-vp-bar');
+        d.style.top = `${bar?.offsetHeight ?? 0}px`;
+        d.style.bottom = `${this.controlsEl?.offsetHeight ?? 0}px`;
+    }
+
+    private toggleDrawer(): void {
+        if (this.drawerOpen) this.closeDrawer();
+        else this.openDrawer();
+    }
+
+    private openDrawer(): void {
+        const d = this.drawerEl;
+        if (!d) return;
+        this.drawerOpen = true;
+        this.syncDrawerInset();
+        d.removeClass('hidden');
+        if (this.drawerBtn) safeSetIcon(this.drawerBtn, 'panel-right-close');
+        this.renderDrawer(true);
+        this.syncDrawerActive(true);
+    }
+
+    private closeDrawer(): void {
+        const d = this.drawerEl;
+        if (!d) return;
+        this.drawerOpen = false;
+        this.closeLightbox(); // 大图预览属于抽屉那条线：抽屉收起时一并收掉，不留一层悬浮的遮罩
+        d.addClass('hidden');
+        if (this.drawerBtn) safeSetIcon(this.drawerBtn, 'panel-right-open');
+    }
+
+    /** 当前集该看的标记（进度条圆点与抽屉**同一份口径**：多集时间轴不同，混着画就是画错位置） */
+    private episodeMarks(): VideoMark[] {
+        const item = this.opts?.items[this.cur];
+        return item ? marksForEpisode(this.opts?.marks ?? [], { ep: item.index, fileName: item.path }) : [];
+    }
+
+    /**
+     * 重画抽屉（Tab 数字 + **当前 Tab** 的行）。
+     *
+     * 🔴 **懒加载 = 不展开就不建任何行**（用户「列表项做懒加载」）：抽屉收起时这里一共 0 行 DOM，
+     *    展开时也只建有内容的**当前 Tab**（另一栏的行根本不建）—— 这正是「避免列表过长」的一半。
+     *    缩略图另有 `loading="lazy"` + `decoding="async"`（按需取图交给浏览器）。
+     *    ⚠️ 单集标记数是**几十**的量级（不是几百条），⛔ 不做虚拟列表 —— 那是过度设计。
+     *
+     * @param reset 展开时的那次重画：当前栏为空而另一栏有内容 ⇒ **自动落到有内容的那栏**
+     *              （否则点开抽屉看到「空」，用户会以为整条视频没有标记）。
+     */
+    private renderDrawer(reset = false): void {
+        const list = this.drawerListEl;
+        if (!list) return;
+        const marks = this.episodeMarks();
+        const counts = markTabCounts(marks);
+        if (reset && counts[this.drawerTab] === 0) {
+            const other = MARK_TABS.find((t) => t !== this.drawerTab);
+            if (other && counts[other] > 0) this.drawerTab = other;
+        }
+        for (const [tab, el] of this.drawerTabEls) {
+            el.setText(`${MARK_TAB_LABELS[tab]} ${counts[tab]}`);
+            el.toggleClass('is-on', tab === this.drawerTab);
+        }
+        list.empty();
+        this.drawerRows = sortMarksByTime(marksOfTab(marks, this.drawerTab));
+        this.drawerRowEls = [];
+        this.drawerActive = -1;
+        if (this.drawerRows.length === 0) {
+            list.createDiv({ cls: 'rl-vp-dempty', text: markEmptyHint(this.drawerTab) });
+            return;
+        }
+        for (let i = 0; i < this.drawerRows.length; i++) this.renderDrawerRow(list, i);
+    }
+
+    /**
+     * 一行 = 「缩略图（只有截图那栏有）」+「时间 + 说明」。
+     *
+     * 🔴 **缩略图必须是行的兄弟节点**，⛔ 不能塞进行里 —— 行本身是 `<button>`，
+     *    button 里嵌 button 是**非法内容模型**（与 #564 / #576「去关联」那条同源）。
+     *    于是这一行有两个真按钮、各管一件事：**点行 = 跳到那一秒；点缩略图 = 看大图**。
+     */
+    private renderDrawerRow(list: HTMLElement, i: number): void {
+        const mark = this.drawerRows[i];
+        const row = list.createDiv({ cls: 'rl-vp-ditem' });
+        const src = mark.image ? (this.opts?.markImageUrl?.(mark.image) ?? null) : null;
+        if (src) {
+            const thumb = row.createEl('button', {
+                cls: 'rl-vp-dthumb',
+                attr: { 'data-tip': `查看大图 · ${formatTime(mark.seconds)}` },
+            });
+            const img = thumb.createEl('img', { attr: { alt: '' } });
+            img.src = src;
+            img.loading = 'lazy';
+            img.decoding = 'async';
+            thumb.addEventListener('click', () => this.openLightbox(src));
+        }
+        const go = row.createEl('button', { cls: 'rl-vp-dgo', attr: { 'data-tip': `跳到 ${formatTime(mark.seconds)}` } });
+        go.createSpan({ cls: 'rl-vp-dtime', text: formatTime(mark.seconds) });
+        // 兜底文字 = 该标记所属那一栏的显示名（真源 `MARK_TAB_LABELS`，⛔ 视图里不另写一份中文）
+        go.createSpan({ cls: 'rl-vp-dtext', text: markCaption(mark.text) || MARK_TAB_LABELS[markTabOf(mark)] });
+        go.addEventListener('click', () => this.jumpToMark(i));
+        this.drawerRowEls[i] = row;
+    }
+
+    /** 点列表项 = **精准跳转对应时间戳**（复用 `applySeek`：夹取 + 播放 + 「已跳到 …」提示，一字不另写） */
+    private jumpToMark(i: number): void {
+        const mark = this.drawerRows[i];
+        if (!mark) return;
+        this.applySeek(mark.seconds);
+    }
+
+    /**
+     * 🔴 #579 **双向联动**：播放时把「当前所处的那一条」自动高亮，并滚到可视区。
+     *  - 只在**抽屉展开**时做（收起时零开销）；
+     *  - **下标没变就一个 DOM 都不碰**（`timeupdate` 每秒约 4 次，白刷会让列表反复重排）；
+     *  - 滚动用 `block: 'nearest'`：条目**本来就在视野内就完全不动** —— 这样才不会和用户的手动滚动打架。
+     */
+    private syncDrawerActive(force = false): void {
+        if (!this.drawerOpen || this.drawerRowEls.length === 0) return;
+        const idx = activeMarkIndex(this.drawerRows, this.videoEl?.currentTime ?? 0);
+        if (!force && idx === this.drawerActive) return;
+        this.drawerRowEls[this.drawerActive]?.removeClass('is-active');
+        this.drawerActive = idx;
+        const next = this.drawerRowEls[idx];
+        if (!next) return;
+        next.addClass('is-active');
+        next.scrollIntoView({ block: 'nearest' });
+    }
+
+    /** 大图预览：整块遮罩 + 居中大图（Esc / 点遮罩关；点图本身不关） */
+    private openLightbox(src: string): void {
+        if (!this.lightboxEl || !this.lightboxImgEl) return;
+        this.lightboxImgEl.src = src;
+        this.lightboxEl.removeClass('hidden');
+    }
+
+    private closeLightbox(): void {
+        const lb = this.lightboxEl;
+        if (!lb || lb.hasClass('hidden')) return;
+        lb.addClass('hidden');
+        this.lightboxImgEl?.removeAttribute('src');
+    }
+
+    /** 大图预览是否开着（Esc 的优先顺序要看它） */
+    private lightboxOpen(): boolean {
+        return !!this.lightboxEl && !this.lightboxEl.hasClass('hidden');
     }
 
     // ── 浮层（选集 / 倍速 / 设置，2026-09-18 按 B 站口径新增）──
@@ -619,8 +877,14 @@ export class VideoPlayerView extends ItemView {
         this.hideNextPanel();
         menu.empty();
         this.fillMenu(kind, menu);
-        // 音量滑条是唯一的窄浮层：去掉列表菜单的最小宽度，免得竖条两侧空出一大片
+        // 音量滑条是唯一的窄浮层：去掉列表菜单的最小宽度，免得竖条两侧空出一大片。
+        // #604 设置弹窗是**宽行**（左标签 / 右值 / 右箭头）⇒ 另加一个类撑宽并加分割线。
         menu.toggleClass('rl-vp-menu-volume', kind === 'volume');
+        menu.toggleClass('rl-vp-menu-set', kind === 'settings');
+        // #606 字幕面板与设置面板同构（宽行 + 组分割线），只是内容不同
+        menu.toggleClass('rl-vp-menu-sub', kind === 'subtitle');
+        // #607 倍速面板：条目是「1× / 1.25×」这类短词，左对齐在一列里歪得明显 ⇒ 整列居中
+        menu.toggleClass('rl-vp-menu-speed', kind === 'speed');
         // 🔴 先撤 hidden 再量宽：display:none 的元素 getBoundingClientRect 恒为 0
         menu.removeClass('hidden');
         this.placeMenu(btn, kind === 'volume' ? 'center' : 'right');
@@ -651,6 +915,11 @@ export class VideoPlayerView extends ItemView {
             }
             return;
         }
+        if (kind === 'subtitle') {
+            // #606 字幕面板（结构与文案全来自 `pure/playerMenu.buildSubtitleMenu`）
+            this.renderSubtitleMenu(menu);
+            return;
+        }
         if (kind === 'volume') {
             // 音量浮层（用户 2026-09-18 第三次指示：照参考图自绘）—— **顶部数值 + 竖向细轨 + 大圆滑块**。
             // 拖动仍走原生 range（键盘可达、拖动逻辑免费），只把外观整体盖掉；
@@ -668,28 +937,9 @@ export class VideoPlayerView extends ItemView {
             this.syncVolumePop();
             return;
         }
-        // 设置：是否支持画中画要**这一刻**才知道（与创建控件时无关），故在这里判定后交给纯函数筛项；
-        // 三个开关的当前状态也从视图内的**可变副本**取（用户刚切过就要反映出来，不回读 opts 快照）。
-        const pipOk = typeof document.pictureInPictureEnabled === 'boolean' && document.pictureInPictureEnabled;
-        for (const item of buildSettingOptions({
-            pip: pipOk,
-            bgPlay: this.bgPlay,
-            episodeEnd: episodeEndChoice(this.autoNext, this.loopOne),
-            single: this.opts?.single === true,
-        })) {
-            if (item.toggle) {
-                this.menuBoxToggleItem(menu, item.label, !!item.on, () => this.toggleSetting(item.id as PlayerSwitchId));
-                continue;
-            }
-            if (item.choices) {
-                this.menuChoiceGroup(menu, item.label, item.choices, item.picked ?? 'stop', (c) => this.setEpisodeEnd(c));
-                continue;
-            }
-            this.menuItem(menu, item.label, false, () => {
-                if (item.id === 'pip') void this.togglePip();
-                else this.openExternal();
-            });
-        }
+        // 设置（#604 三组结构）：结构与文案全来自 `pure/playerMenu.buildSettingOptions`，
+        // 这里只做 DOM + 回传。⛔ 别在视图里再拼一份「三组」—— 那正是「两处必然漂」的老路。
+        this.renderSettingMenu(menu);
     }
 
     /** 单条浮层项：点完一律收浮层（切集 / 改倍速 / 跳系统播放器都是「选完就走」） */
@@ -702,55 +952,91 @@ export class VideoPlayerView extends ItemView {
         });
     }
 
-    /** 开关框（#337：「点高亮、关则不亮」；点击**不收起浮层**，就地点亮/熄灭） */
-    private menuBoxToggleItem(menu: HTMLElement, label: string, on: boolean, onPick: () => boolean): void {
-        const btn = menu.createEl('button', { cls: 'rl-vp-menu-box', text: label });
-        btn.toggleClass('is-on', on);
-        btn.addEventListener('click', () => btn.toggleClass('is-on', onPick()));
-    }
+    // ── #604 设置弹窗（三组；#605 精简为 循环值行 / 动作行 两种）────────────────────
 
-    /** 三选一框组（#337）：组名一行（不可点）+ 一行三个互斥框 —— 选中的亮，其余不亮 */
-    private menuChoiceGroup(
-        menu: HTMLElement,
-        label: string,
-        choices: { id: EpisodeEndChoice; label: string }[],
-        picked: EpisodeEndChoice,
-        onPick: (c: EpisodeEndChoice) => void,
-    ): void {
-        menu.createDiv({ cls: 'rl-vp-menu-group-label', text: label });
-        const row = menu.createDiv({ cls: 'rl-vp-menu-box-row' });
-        const boxes = choices.map((c) => {
-            const b = row.createEl('button', { cls: 'rl-vp-menu-box', text: c.label });
-            b.toggleClass('is-on', c.id === picked);
-            b.addEventListener('click', () => {
-                onPick(c.id);
-                for (const x of boxes) x.removeClass('is-on');
-                b.addClass('is-on');
-            });
-            return b;
-        });
-    }
-
-    /** 「播完这一集」三选一：把选择写回原有两个字段（append-only 设置不变；点选不收浮层） */
-    private setEpisodeEnd(choice: EpisodeEndChoice): void {
-        const { autoNext, loopOne } = applyEpisodeEndChoice(choice);
-        this.autoNext = autoNext;
-        this.loopOne = loopOne;
-        this.opts?.onToggleSetting?.('autoNext', autoNext);
-        this.opts?.onToggleSetting?.('loopOne', loopOne);
-    }
-
-    /** 切换播放器开关：**就地生效** + 回调写回 settings（写回失败也无妨，本次会话已经生效）。返回新状态供 UI 刷新 */
-    private toggleSetting(id: PlayerSwitchId): boolean {
-        if (id === 'bgplay') {
-            this.bgPlay = !this.bgPlay;
-            // 打开时作废可能正在跑的「彻底释放」计时 —— 否则它到点会把源清掉，后台就断了
-            if (this.bgPlay) this.cancelDeepRelease();
-            this.opts?.onToggleSetting?.('bgPlay', this.bgPlay);
-            return this.bgPlay;
+    /** 设置弹窗内容：标题（小号灰字）+ 三组；组间由 CSS 画 1px 分割线（见 `.rl-vp-set-group`）。 */
+    private renderSettingMenu(menu: HTMLElement): void {
+        menu.createDiv({ cls: 'rl-vp-set-head', text: SETTING_HEAD });
+        for (const group of this.settingGroups()) {
+            const box = menu.createDiv({ cls: 'rl-vp-set-group' });
+            for (const row of group.rows) this.renderSettingRow(box, row);
         }
-        // #337 起「自动切集 / 单集循环」不再走开关：由 `setEpisodeEnd`（三选一框）统一写回这两个字段。
-        return this.bgPlay;
+    }
+
+    /**
+     * 三组结构（拉起纯函数）。🔴 画中画能力在这里**当场取**（`document.pictureInPictureEnabled`）——
+     * 它是「与创建控件时无关」的实时量，⛔ 别缓存进字段（缓存了置灰判定就会与真实能力脱节）。
+     */
+    private settingGroups(): SettingGroup[] {
+        const pipOk = typeof document.pictureInPictureEnabled === 'boolean' && document.pictureInPictureEnabled;
+        return buildSettingOptions({ pip: pipOk, playMode: this.playMode });
+    }
+
+    /** 画一行的两种形态（置灰 / 循环值行 / 动作行） */
+    private renderSettingRow(box: HTMLElement, row: SettingRow): void {
+        // 置灰：**看得见但点不动**（用户口径「不可用项置灰，例如系统不支持画中画时显示 当前设备不支持」）。
+        // ⛔ 不用 `<button disabled>` —— 禁用按钮仍会收 mouseover，本仓既有规矩是「禁用态提示走 data-tip」，
+        //    而这一行的说明直接写出来，比气泡更直白。做成 div ⇒ 天然不可聚焦、不可点。
+        if (row.disabled) {
+            const dead = box.createDiv({ cls: 'rl-vp-set-row is-disabled' });
+            dead.createDiv({ cls: 'rl-vp-set-lbl', text: row.label });
+            if (row.note) dead.createDiv({ cls: 'rl-vp-set-note', text: row.note });
+            return;
+        }
+        if (row.kind === 'cycle') {
+            // #605 循环值行：右侧只有**当前值文字**（⛔ 无箭头），点击整行切到下一档、弹窗不关。
+            const btn = box.createEl('button', {
+                cls: 'rl-vp-set-row rl-vp-set-cycle',
+                attr: { 'data-row': row.id },
+            });
+            btn.createDiv({ cls: 'rl-vp-set-lbl', text: row.label });
+            btn.createDiv({ cls: 'rl-vp-set-val', text: row.value ?? '' });
+            btn.addEventListener('click', () => this.cyclePlayMode());
+            return;
+        }
+        // 动作行：右侧只有 ›，点击**立即执行并关窗**（画中画 / 系统播放器各自自己收尾）
+        const nav = box.createEl('button', {
+            cls: 'rl-vp-set-row rl-vp-set-nav',
+            attr: { 'data-row': row.id },
+        });
+        nav.createDiv({ cls: 'rl-vp-set-lbl', text: row.label });
+        const chev = nav.createSpan({ cls: 'rl-vp-set-chev' });
+        safeSetIcon(chev, 'chevron-right');
+        nav.addEventListener('click', () => void this.onSettingNav(row.id as 'pip' | 'external'));
+    }
+
+    /**
+     * #605 动作行点击：**执行一次后关窗**。
+     * 🔴 两条动作的收尾方式不同，别合并：`external` 由 `openExternal` 自己收掉**整个播放器标签页**；
+     *    `pip` 只关**弹窗**（播放器还在，画中画窗接管画面）。
+     * 🔴 画中画是**异步且可能失败**（`requestPictureInPicture` 会 reject）⇒ 先 `await`，成不成都要关弹窗
+     *    —— 失败时 `togglePip` 自己弹 Notice，弹窗留着反而像「点了没反应」。
+     */
+    private async onSettingNav(id: 'pip' | 'external'): Promise<void> {
+        if (id === 'pip') {
+            this.closeMenu();
+            await this.togglePip();
+            return;
+        }
+        this.openExternal();
+    }
+
+    /** #605 播放模式：**整行点击循环**（按 `PLAY_MODES` 顺序取下一档）+ 就地重画（弹窗不关）+ 写回设置 */
+    private cyclePlayMode(): void {
+        this.playMode = nextPlayMode(this.playMode);
+        this.opts?.onSetPlayMode?.(this.playMode);
+        this.refreshSettingMenu();
+    }
+
+    /** 就地在**不关窗**的前提下重画设置弹窗（#605 只剩「播放模式循环切换」一处会走它），并重新贴一次锚点 */
+    private refreshSettingMenu(): void {
+        const menu = this.menuEl;
+        if (!menu || this.menuKind !== 'settings') return;
+        menu.empty();
+        this.renderSettingMenu(menu);
+        if (this.menuTriggerBtn) this.placeMenu(this.menuTriggerBtn, 'right');
+        this.syncMenuButtons();
+        this.pokeIdle();
     }
 
     /** 定位：右对齐到触发按钮右缘（音量滑条改居中）、浮在控制条上方；越界夹取在纯函数 menuAnchor 里 */
@@ -778,6 +1064,8 @@ export class VideoPlayerView extends ItemView {
         this.epBtn?.toggleClass('is-on', this.menuKind === 'episodes');
         this.speedBtn?.toggleClass('is-on', this.menuKind === 'speed');
         this.gearBtn?.toggleClass('is-on', this.menuKind === 'settings');
+        // 字幕那枚还兼「已挂载」态 ⇒ 走它自己那条合成判据（见 syncSubBtn）
+        this.syncSubBtn();
     }
 
     /**
@@ -854,8 +1142,18 @@ export class VideoPlayerView extends ItemView {
         // 2026-09-18 补一级优先：浮层开着时 Esc 先收浮层（否则「想关浮层却把全屏退了」）；
         // 全屏中返回 true = 交回浏览器退全屏（否则「想退全屏却把播放器关了」）；其余返回 false 阻止传播。
         scope.register([], 'Escape', () => {
+            // #579：大图预览是**最外面那一层**（它盖着抽屉与画面）⇒ 优先关它
+            if (this.lightboxOpen()) {
+                this.closeLightbox();
+                return false;
+            }
             if (this.menuKind) {
                 this.closeMenu();
+                return false;
+            }
+            // 抽屉比浮层「轻」：先关浮层再关抽屉（浮层是临时挑选项，抽屉是常驻视图）
+            if (this.drawerOpen) {
+                this.closeDrawer();
                 return false;
             }
             if (document.fullscreenElement) return true;
@@ -874,6 +1172,9 @@ export class VideoPlayerView extends ItemView {
         this.hideNextPanel();
         // 换集一律收掉浮层：连播自动切集时浮层还开着的话，选集列表的「当前集」会停在旧的一集上
         this.closeMenu();
+        // #579：换集 ⇒ 大图预览必须收（那张图属于上一集）+ 抽屉按**新集**重画（时间轴不同，混着列就是错位）
+        this.closeLightbox();
+        if (this.drawerOpen) this.renderDrawer(true);
         this.clearSubtitle();
         const label = episodeLabel(item, !!opts.single);
         this.titleTextEl.setText(label ? `${opts.entryTitle} · ${label}` : opts.entryTitle);
@@ -973,19 +1274,25 @@ export class VideoPlayerView extends ItemView {
     private onEnded(): void {
         this.savePosition(true);
         this.rootEl?.removeClass('rl-vp-idle');
-        // 单集循环**优先**（用户 2026-09-18 第四次指示：齿轮里可开）
-        if (this.loopOne) {
+        // 单文件（电影）：一集没有「下一集」可言 ⇒ 播完就停住，⛔ 不参与播放模式
+        if (this.opts?.single) {
+            this.syncPlayState();
+            return;
+        }
+        const items = this.opts?.items ?? [];
+        // 🔴 #604：集末推进交给纯函数（四档模式全在 `pure/playerMenu.nextEpisodeIndex` 里钉着）。
+        //    null = 停住（顺序播放的最后一集）；=== cur = 重播本集（单集循环，与旧 `loopOne` 同形态）。
+        const next = nextEpisodeIndex(this.playMode, this.cur, items.length);
+        if (next === null) {
+            this.syncPlayState();
+            return;
+        }
+        if (next === this.cur) {
             this.videoEl.currentTime = 0;
             void this.videoEl.play().catch(() => undefined);
             return;
         }
-        const items = this.opts?.items ?? [];
-        // 最后一集 / 单文件 / 「自动切集」被关掉 → 停住并显式收尾（不弹连播）
-        if (this.opts?.single || this.cur >= items.length - 1 || !this.autoNext) {
-            this.syncPlayState();
-            return;
-        }
-        this.showNextPanel();
+        this.showNextPanel(next);
     }
 
     // ── 控制条 ──
@@ -1099,7 +1406,7 @@ export class VideoPlayerView extends ItemView {
         tip.addClass('rl-vp-tip-mark');
         tip.createDiv({
             cls: 'rl-vp-mark-head',
-            text: `${mark.kind === 'shot' ? '截图' : '时间戳'} · ${formatTime(mark.seconds)}`,
+            text: `${MARK_TAB_LABELS[markTabOf(mark)]} · ${formatTime(mark.seconds)}`,
         });
         const caption = markCaption(mark.text);
         if (caption) tip.createDiv({ cls: 'rl-vp-mark-text', text: caption });
@@ -1132,6 +1439,12 @@ export class VideoPlayerView extends ItemView {
         this.markList = mine;
         this.markPcts = mine.map((m) => markPct(m.seconds, dur));
         this.hoverMark = null;
+        // #579：圆点重画的同时把抽屉也同步一遍（新标记 = 列表要长一条）。
+        // ⚠️ 只在展开时重建 —— 收起时连一行 DOM 都不该存在（「懒加载」那条口径）。
+        if (this.drawerOpen) {
+            this.renderDrawer();
+            this.syncDrawerActive(true);
+        }
     }
 
     /** 宿主在插入时间戳 / 截图后把新标记推进来（#333：不必重开播放器就能看到新点） */
@@ -1400,9 +1713,11 @@ export class VideoPlayerView extends ItemView {
 
     // ── 连播 ──
 
-    private showNextPanel(): void {
-        const next = this.opts?.items[this.cur + 1];
+    private showNextPanel(target: number): void {
+        const next = this.opts?.items[target];
         if (!next || !this.nextPanelEl) return;
+        // 🔴 #604：目标集记下来 —— 「立即播放」与倒计时到点都读它（列表循环绕回第一集时 cur+1 是错的）
+        this.nextTarget = target;
         const label = episodeLabel(next, false) || '下一集';
         this.nextPanelTextEl?.setText(label);
         this.nextDeadline = Date.now() + NEXT_EP_SECONDS * 1000;
@@ -1417,8 +1732,9 @@ export class VideoPlayerView extends ItemView {
         const labelEl = this.nextPanelEl?.querySelector('.rl-vp-next-label');
         if (labelEl instanceof HTMLElement) labelEl.setText(nextEpisodeText(left));
         if (left <= 0) {
+            const target = this.nextTarget;
             this.hideNextPanel();
-            this.goto(this.cur + 1);
+            if (target !== null) this.goto(target);
         }
     }
 
@@ -1427,6 +1743,7 @@ export class VideoPlayerView extends ItemView {
             window.clearInterval(this.nextTimer);
             this.nextTimer = null;
         }
+        this.nextTarget = null;
         this.nextPanelEl?.addClass('hidden');
     }
 
@@ -1451,22 +1768,75 @@ export class VideoPlayerView extends ItemView {
         if (this.subCandidates.length > 0) await this.applySubtitle(this.subCandidates[0].fileName, true);
     }
 
-    /** 字幕入口：弹窗列候选（像选剧集）→ 选候选 / 从文件选择 / 关闭字幕 */
-    private async openSubtitlePicker(): Promise<void> {
-        const opts = this.opts;
-        if (!opts?.listSubtitles) return;
-        const res = await new SubtitlePickerModal(this.app, opts.entryTitle, this.subCandidates, this.subFile).open();
-        if (!res) return;
-        if (res.kind === 'off') {
-            this.clearSubtitle();
-            this.showToast('已关闭字幕');
-            return;
+    /**
+     * #606 字幕面板内容（🔴 与设置面板**同一个浮层容器**，因此自动继承「上浮 / 贴按钮右缘 / 外点关闭 /
+     * Esc 关 / 闲置淡出」全套规则 —— 这正是用户说的「同设置面板一样上浮出来，不是弹窗」）。
+     *
+     * 结构：标题 → 「显示字幕」开关 + 提示 → 同目录候选 → 分割线 → 「从文件选择字幕 ›」。
+     * 结构与文案全来自 `pure/playerMenu.buildSubtitleMenu`，这里只做 DOM + 回传。
+     */
+    private renderSubtitleMenu(menu: HTMLElement): void {
+        const model = buildSubtitleMenu({
+            title: this.opts?.entryTitle ?? '',
+            // ⚠️ 语言标签在**这里**本地化（`playerMenu` 不依赖 `pure/subtitle`）
+            candidates: this.subCandidates.map((c) => ({ fileName: c.fileName, lang: subtitleLangLabel(c.lang) })),
+            current: this.subFile,
+            visible: this.subVisible && !!this.subFile,
+        });
+        menu.createDiv({ cls: 'rl-vp-set-head', text: model.title });
+        // 组容器：让「候选区 → 动作行」之间由 `.rl-vp-set-group + .rl-vp-set-group` 画出那条分割线
+        const body = menu.createDiv({ cls: 'rl-vp-set-group' });
+
+        // ① 显示字幕开关（就地生效、面板不关）
+        const swRow = body.createEl('button', {
+            cls: `rl-vp-set-row rl-vp-switch-row${model.visible ? ' is-on' : ''}`,
+            attr: { role: 'switch', 'aria-checked': model.visible ? 'true' : 'false', 'data-row': 'subtitle' },
+        });
+        swRow.createDiv({ cls: 'rl-vp-set-lbl', text: SUBTITLE_SWITCH_LABEL });
+        const sw = swRow.createSpan({ cls: 'rl-vp-switch' });
+        sw.createSpan({ cls: 'rl-vp-switch-knob' });
+        swRow.addEventListener('click', () => {
+            const on = !this.subVisible;
+            swRow.toggleClass('is-on', on);
+            swRow.setAttribute('aria-checked', on ? 'true' : 'false');
+            void this.setSubtitleVisible(on);
+        });
+        body.createDiv({ cls: 'rl-vp-sub-hint', text: model.hint });
+
+        // ② 同目录候选（点一条即挂载 + 收面板）
+        if (model.candidates.length === 0) {
+            body.createDiv({ cls: 'rl-vp-sub-empty', text: model.emptyText });
+        } else {
+            const list = body.createDiv({ cls: 'rl-vp-sub-list' });
+            for (const c of model.candidates) {
+                const row = list.createEl('button', {
+                    cls: c.active ? 'rl-vp-sub-row is-on' : 'rl-vp-sub-row',
+                    attr: { 'data-tip': c.lang ? `${c.lang} · ${c.fileName}` : c.fileName },
+                });
+                row.createSpan({ cls: 'rl-vp-sub-lang', text: c.lang || '字幕' });
+                row.createSpan({ cls: 'rl-vp-sub-file', text: c.fileName });
+                row.addEventListener('click', () => {
+                    this.closeMenu();
+                    void this.applySubtitle(c.fileName);
+                });
+            }
         }
-        if (res.kind === 'pick') {
-            await this.applySubtitle(res.fileName);
-            return;
-        }
-        const picked = await opts.pickSubtitleFile?.();
+
+        // ③ 底部动作行：从文件选择字幕（右侧 ›，与设置面板的动作行同款）
+        const group = menu.createDiv({ cls: 'rl-vp-set-group' });
+        const nav = group.createEl('button', { cls: 'rl-vp-set-row rl-vp-set-nav' });
+        nav.createDiv({ cls: 'rl-vp-set-lbl', text: model.browseLabel });
+        const chev = nav.createSpan({ cls: 'rl-vp-set-chev' });
+        safeSetIcon(chev, 'chevron-right');
+        nav.addEventListener('click', () => {
+            this.closeMenu();
+            void this.browseSubtitleFile();
+        });
+    }
+
+    /** 「从文件选择字幕」：系统选择器挑一个 → 读入转 VTT → 挂载（失败 / 取消都不动现状） */
+    private async browseSubtitleFile(): Promise<void> {
+        const picked = await this.opts?.pickSubtitleFile?.();
         if (!picked) return;
         const vtt = await this.loadVtt(picked);
         if (!vtt) {
@@ -1476,6 +1846,36 @@ export class VideoPlayerView extends ItemView {
         const name = fileNameOfPath(picked);
         this.mountTrack(vtt, subtitleLangLabel(subtitleLangTag(name)) || name);
         this.subFile = name;
+    }
+
+    /**
+     * #605「显示字幕」开关（用户裁定：**仅隐藏、保留已挂载字幕，打开即恢复**）。
+     * 🔴 隐藏 = 把轨道 mode 打回 `disabled`（⛔ **不撤轨道、不 revoke Blob URL**）—— 打开时原样点亮即可，
+     *    不必重读文件、也不会丢「当前挂的是哪一条」。
+     * 🔴 打开时若手上**没有**任何轨道（= 从没挂过 / 之前失败），退回「自动挂同目录第一条」；
+     *    连候选都没有就如实提示（⛔ 别让开关看着像点了没反应）。
+     */
+    private async setSubtitleVisible(on: boolean): Promise<void> {
+        this.subVisible = on;
+        this.syncTrackModes();
+        if (on && !this.subFile) {
+            if (this.subCandidates.length > 0) await this.applySubtitle(this.subCandidates[0].fileName, true);
+            else {
+                this.showToast('同目录没有字幕文件，可从文件选择');
+                this.syncSubBtn();
+                return;
+            }
+        }
+        this.syncSubBtn();
+    }
+
+    /**
+     * 控制条「字幕」按钮的亮起态 = **正在显示字幕** 或 **字幕面板开着**。
+     * 🔴 #606：面板改挂这个按钮后，「打开态」与「已挂载态」落在同一枚按钮上 ⇒ 两个条件合成一条
+     *    （⛔ 别写成两处 toggleClass 互相覆盖 —— 关面板那一下会把「已挂载」的亮起一起抹掉）。
+     */
+    private syncSubBtn(): void {
+        this.subBtn?.toggleClass('is-on', this.menuKind === 'subtitle' || (this.subVisible && !!this.subFile));
     }
 
     /** 按候选文件名加载（同目录） */
@@ -1502,7 +1902,8 @@ export class VideoPlayerView extends ItemView {
         }
     }
 
-    /** 挂载字幕轨道（Blob URL + 显式 showing，避免部分环境 default 不生效） */
+    /** 挂载字幕轨道（Blob URL + 显式 showing，避免部分环境 default 不生效）。
+     *  🔴 挂载即「显示」（`subVisible = true`）—— 用户选了一条字幕就是要看它。 */
     private mountTrack(vtt: string, label: string): void {
         this.clearSubtitle();
         const url = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
@@ -1514,9 +1915,19 @@ export class VideoPlayerView extends ItemView {
         track.src = url;
         this.videoEl.appendChild(track);
         this.subUrl = url;
-        const tracks = this.videoEl.textTracks;
-        for (let i = 0; i < tracks.length; i++) tracks[i].mode = i === tracks.length - 1 ? 'showing' : 'disabled';
-        this.subBtn?.addClass('is-on');
+        this.subVisible = true;
+        this.syncTrackModes();
+        this.syncSubBtn();
+    }
+
+    /** 按 `subVisible` 点亮 / 熄灭所有字幕轨道（切源重生 / 开关切换共用一份判定）。 */
+    private syncTrackModes(): void {
+        const tracks = this.videoEl?.textTracks;
+        if (!tracks) return;
+        for (let i = 0; i < tracks.length; i++) {
+            // 只认最后挂上来的那一条为字幕源；其余历史轨道一律 disabled
+            tracks[i].mode = i === tracks.length - 1 && this.subVisible ? 'showing' : 'disabled';
+        }
     }
 
     private clearSubtitle(): void {
@@ -1527,7 +1938,7 @@ export class VideoPlayerView extends ItemView {
             this.subUrl = null;
         }
         this.subFile = null;
-        this.subBtn?.removeClass('is-on');
+        this.syncSubBtn();
     }
 
     // ── 可见性 / 省电（用户 2026-09-18：后台或不可见时自动停止渲染，释放 GPU 与内存）──
@@ -1649,9 +2060,8 @@ export class VideoPlayerView extends ItemView {
         this.pendingResume = Math.floor(st.pos);
         v.src = item.url;
         v.playbackRate = vpSpeed;
-        // 清源重生会把字幕轨道打回 disabled → 重新点亮（轨道元素与 Blob URL 都还在，不必重扫目录）
-        const tracks = v.textTracks;
-        for (let i = 0; i < tracks.length; i++) tracks[i].mode = i === tracks.length - 1 ? 'showing' : 'disabled';
+        // 清源重生会把字幕轨道打回 disabled → 按当前「显示字幕」态重新点亮（轨道与 Blob URL 都还在，不必重扫目录）
+        this.syncTrackModes();
         if (st.playing) void v.play().catch(() => this.showToast('已恢复到前台，点画面继续播放'));
         this.pokeIdle();
     }

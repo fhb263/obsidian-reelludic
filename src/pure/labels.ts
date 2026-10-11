@@ -40,11 +40,13 @@ export function isTrackingType(type: EntryType): boolean {
 
 // 顶部概览量词（「N X」里的 X）。单类型（锁定页签或类型筛选）用专属量词；
 // 无类型（总库 / 影视聚合）回落「项媒体」。
-// ⚠️ 每个 EntryType 都必须在此登记 —— 漏登记会静默落到兜底，页签顶部就会显示成「N 项媒体」。
-// （曾漏 music：音乐页签顶部写「8 项媒体」而非「8 首音乐」。tests/labels.test.ts 有穷举锁。）
+// 🔴 #552（用户 2026-10-07 上手后改主意：「把统计如 90 项媒体**加回来**吧」）：本函数与它那张
+//    按类型映射的量词表**恢复**（#547 曾随库概览一起删除；用户当时的说法是「去除了没用」）。
+// ⚠️ 每个 EntryType 都必须在此登记 —— 漏登记会静默落到兜底，页签顶部就显示成「N 项媒体」
+//    （曾漏 music：音乐页签写「8 项媒体」而非「8 首音乐」）⇒ `tests/labels.test.ts` 有穷举锁钉着。
 const OVERVIEW_UNIT_BY_TYPE: Record<EntryType, string> = {
     movie: '部电影',
-    tv: '部电视剧',
+    tv: '部剧集',
     anime: '部动画',
     book: '本书',
     game: '款游戏',

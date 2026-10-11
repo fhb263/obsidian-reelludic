@@ -7,9 +7,15 @@ import {
     seriesIndexValue,
     sortSeriesItems,
     foldSeries,
+    listTreeRows,
+    listDisplayRows,
+    compareSeriesGroups,
     seriesYearSpan,
     seriesGenres,
     parseSeriesIndexInput,
+    planSeriesReindex,
+    planSeriesReindexAll,
+    moveItem,
     nextSeriesEntry,
     seriesStatus,
     seriesPanelCols,
@@ -87,7 +93,7 @@ describe('pure/seriesGroup 组名（§4.2 单一真源）', () => {
     it('组名 = `${系列名} ${类型}系列`，类型名取 ENTRY_TYPE_LABELS', () => {
         expect(seriesTitleOf('海绵宝宝', 'movie')).toBe('海绵宝宝 电影系列');
         expect(seriesTitleOf('海绵宝宝', 'anime')).toBe('海绵宝宝 动画系列');
-        expect(seriesTitleOf('熊出没', 'tv')).toBe('熊出没 电视剧系列');
+        expect(seriesTitleOf('熊出没', 'tv')).toBe('熊出没 剧集系列');
         expect(seriesTitleOf('基地', 'book')).toBe('基地 书籍系列');
         expect(seriesTitleOf('原神', 'game')).toBe('原神 游戏系列');
         expect(seriesTitleOf('某专辑', 'music')).toBe('某专辑 音乐系列');
@@ -276,6 +282,138 @@ describe('pure/seriesGroup.parseSeriesIndexInput（数字框三态收口）', ()
         expect(parseSeriesIndexInput([])).toBeUndefined();
         expect(parseSeriesIndexInput(true)).toBeUndefined();
         expect(() => parseSeriesIndexInput({} as unknown)).not.toThrow();
+    });
+});
+
+// ── #573：按「选中集合」依次编号（#608 起入口只剩折叠卡右键，见下方第二个 describe）──
+// 用户原话：「给系列合集卡视图内添加个批量重排序号的功能」。
+describe('pure/seriesGroup.planSeriesReindex（批量重排序号的计划）', () => {
+    const ids = ['a', 'b', 'c', 'd', 'e'];
+    const pick = (...ks: string[]) => new Set(ks);
+
+    it('按**传进来的顺序**依次编号（1 起步；顺序就是当前视图的显示顺序）', () => {
+        expect(planSeriesReindex(ids, pick('a', 'b', 'c'))).toEqual([
+            { id: 'a', seriesIndex: 1 },
+            { id: 'b', seriesIndex: 2 },
+            { id: 'c', seriesIndex: 3 },
+        ]);
+    });
+
+    it('🔴 只编选中项、未选中的**跳过且不占号**（勾 b 与 e ⇒ 它们拿 1 / 2，中间没跳号）', () => {
+        expect(planSeriesReindex(ids, pick('b', 'e'))).toEqual([
+            { id: 'b', seriesIndex: 1 },
+            { id: 'e', seriesIndex: 2 },
+        ]);
+    });
+
+    it('起始值可选：从 10 开始依次 10 / 11 / 12', () => {
+        expect(planSeriesReindex(ids, pick('a', 'b', 'c'), 10)).toEqual([
+            { id: 'a', seriesIndex: 10 },
+            { id: 'b', seriesIndex: 11 },
+            { id: 'c', seriesIndex: 12 },
+        ]);
+    });
+
+    it('步长可选：起始 1、步长 2 ⇒ 1 / 3 / 5', () => {
+        expect(planSeriesReindex(ids, pick('a', 'b', 'c'), 1, 2).map((p) => p.seriesIndex)).toEqual([1, 3, 5]);
+    });
+
+    it('🔴 起始值缺失 / 非法 ⇒ 兜底 1（⛔ 不落 NaN、不落 0）', () => {
+        for (const bad of [undefined, null, '', 'abc', NaN, Infinity]) {
+            expect(planSeriesReindex(ids, pick('a'), bad)[0]?.seriesIndex).toBe(1);
+        }
+    });
+
+    it('🔴 步长 < 1 一律按 1（步长 0 会让整组同号 ⇒ 序号立刻失去「第几部」的含义）', () => {
+        expect(planSeriesReindex(ids, pick('a', 'b', 'c'), 1, 0).map((p) => p.seriesIndex)).toEqual([1, 2, 3]);
+        expect(planSeriesReindex(ids, pick('a', 'b', 'c'), 1, -5).map((p) => p.seriesIndex)).toEqual([1, 2, 3]);
+        expect(planSeriesReindex(ids, pick('a', 'b', 'c'), 1, 'x').map((p) => p.seriesIndex)).toEqual([1, 2, 3]);
+    });
+
+    it('小数走同一口径（起始 / 步长都取整，⛔ 别出 1.5 这种序号）', () => {
+        expect(planSeriesReindex(ids, pick('a', 'b'), '1.4', '2.6').map((p) => p.seriesIndex)).toEqual([1, 4]);
+    });
+
+    it('空选中 / 空顺序 ⇒ 空计划（调用点据此早退，⛔ 不产生空写库）', () => {
+        expect(planSeriesReindex(ids, pick())).toEqual([]);
+        expect(planSeriesReindex([], pick('a'))).toEqual([]);
+    });
+
+    it('🔴 顺序完全由入参决定：同一批选中项，入参倒序 ⇒ 编号跟着倒过来（⛔ 本函数不自己排序）', () => {
+        expect(planSeriesReindex(['c', 'b', 'a'], pick('a', 'b', 'c'))).toEqual([
+            { id: 'c', seriesIndex: 1 },
+            { id: 'b', seriesIndex: 2 },
+            { id: 'a', seriesIndex: 3 },
+        ]);
+    });
+});
+
+// ── #608：海报墙「系列折叠卡」右键 → 「排序号」（整组重排）──────────────────────
+// 用户原话：「系列合集卡支持批量重排序号，右键菜单排序号」→ 三处裁定：入口挂**折叠卡右键**、
+// 编号口径 = **整组全部按当前顺序 1..N**、**批量条那组整体删除**（只留右键这一条入口）。
+describe('pure/seriesGroup.planSeriesReindexAll（折叠卡「排序号」· 整组重排）', () => {
+    it('🔴 整组全部成员依次编号：1 / 2 / 3 / 4 / 5（没有「跳过不占号」这一说）', () => {
+        expect(planSeriesReindexAll(['a', 'b', 'c', 'd', 'e'])).toEqual([
+            { id: 'a', seriesIndex: 1 },
+            { id: 'b', seriesIndex: 2 },
+            { id: 'c', seriesIndex: 3 },
+            { id: 'd', seriesIndex: 4 },
+            { id: 'e', seriesIndex: 5 },
+        ]);
+    });
+
+    it('🔴 起始恒 1、步长恒 1（折叠卡上没有那两个输入框 ⇒ 口径写死）', () => {
+        expect(planSeriesReindexAll(['x', 'y', 'z']).map((p) => p.seriesIndex)).toEqual([1, 2, 3]);
+    });
+
+    it('🔴 把「带空洞的序号」压回 1..N：传进来什么顺序就照什么顺序编（本函数不排序）', () => {
+        // 例：某系列的序号是 3 / 7 / 9（历史遗留），按当前显示顺序重排 ⇒ 1 / 2 / 3
+        expect(planSeriesReindexAll(['c', 'a', 'b'])).toEqual([
+            { id: 'c', seriesIndex: 1 },
+            { id: 'a', seriesIndex: 2 },
+            { id: 'b', seriesIndex: 3 },
+        ]);
+    });
+
+    it('空组 ⇒ 空计划（调用点据此早退，⛔ 不产生空写库）', () => {
+        expect(planSeriesReindexAll([])).toEqual([]);
+    });
+});
+
+// ── #609：排序号弹窗「拖拽排序」────────────────────────────────────────────
+// 🔴 #609 是对 #608 的**翻面**：那版「右键 → 点一下自动整组重排」，用户裁定改成
+//    「右键 → 弹窗里**拖拽手动排**」。编号规则仍走 `planSeriesReindexAll`（未变），
+//    新增的只有 `moveItem`（把拖的那条搬到落点）—— 排序算法必须纯、可单测，
+//    ⛔ 别把「搬数组」写进 Svelte 组件（组件里写就测不到，且两处必然漂）。
+describe('pure/seriesGroup.moveItem（#609 拖拽排序 · 纯搬移）', () => {
+    it('🔴 往后拖：把第 1 条搬到下标 3 ⇒ 其余整体前移一格，条数不变', () => {
+        expect(moveItem(['a', 'b', 'c', 'd', 'e'], 0, 3)).toEqual(['b', 'c', 'd', 'a', 'e']);
+    });
+
+    it('🔴 往前拖：把末条搬到下标 0 ⇒ 其余整体后移一格', () => {
+        expect(moveItem(['a', 'b', 'c', 'd', 'e'], 4, 0)).toEqual(['e', 'a', 'b', 'c', 'd']);
+    });
+
+    it('🔴 不修改入参（返回**新数组**）—— 组件靠「整体换新数组」触发响应式', () => {
+        const src = ['a', 'b', 'c'];
+        const out = moveItem(src, 0, 2);
+        expect(src).toEqual(['a', 'b', 'c']);
+        expect(out).not.toBe(src);
+    });
+
+    it('🔴 越界 / 非整数 / 原地 ⇒ **原样副本**（弹窗里拿不到「拖出界」这种下标，但键盘 ↑↓ 会撞到边界）', () => {
+        const src = ['a', 'b', 'c'];
+        expect(moveItem(src, -1, 1)).toEqual(src);
+        expect(moveItem(src, 3, 1)).toEqual(src);
+        expect(moveItem(src, 0, 3)).toEqual(src);
+        expect(moveItem(src, 1, 1)).toEqual(src);
+        expect(moveItem(src, 1.5, 0)).toEqual(src);
+        expect(moveItem(src, 0, Number.NaN)).toEqual(src);
+    });
+
+    it('单元素 / 空数组都不会炸（弹窗不会出现，但纯函数不该假设调用方）', () => {
+        expect(moveItem(['a'], 0, 0)).toEqual(['a']);
+        expect(moveItem([], 0, 0)).toEqual([]);
     });
 });
 
@@ -608,3 +746,122 @@ describe('#444 弹窗列数随视口分档（6 / 9 / 4 / 3）', () => {
         );
     });
 });
+
+describe('pure/seriesGroup 列表视图树形行序（#592：合集整体置顶 + 组间按代表值）', () => {
+    /** 造一条带「更新时间 / 评分 / 个人分 / 年份」的条目（`listTreeRows` 的代表值全靠它们） */
+    function rich(id: string, series: string | undefined, opt: {
+        updatedAt?: string; communityScore?: number; rating?: number; year?: number; type?: EntryType;
+    } = {}): MediaEntry {
+        return {
+            id,
+            type: opt.type ?? 'movie',
+            title: `作品${id}`,
+            series,
+            updatedAt: opt.updatedAt ?? '2026-01-01T00:00:00.000Z',
+            communityScore: opt.communityScore,
+            rating: opt.rating ?? 0,
+            year: opt.year,
+            links: [],
+            progress: {},
+        } as unknown as MediaEntry;
+    }
+
+    it('🔴🔴 合集恒在单集之前（不论单集的排序多么「新」—— 用户点名「绝不混排」）', () => {
+        const rows = listTreeRows(
+            [
+                rich('a1', undefined, { updatedAt: '2026-10-09T00:00:00.000Z' }), // 单集，最新
+                rich('s1', '熊出没', { updatedAt: '2020-01-01T00:00:00.000Z' }),
+                rich('s2', '熊出没', { updatedAt: '2020-02-01T00:00:00.000Z' }),
+            ],
+            'recent',
+        );
+        expect(rows.map((r) => (r.kind === 'series' ? 'S' : 's'))).toEqual(['S', 's']);
+        expect(rows[0].kind === 'series' && rows[0].group.items.map((i) => i.id)).toEqual(['s1', 's2']);
+    });
+
+    it('只有 1 条的组**不成合集**（与 foldSeries 同口径）—— 它并进单集、按原序留在后面', () => {
+        const rows = listTreeRows([rich('a1', '独苗'), rich('b1', undefined)], 'recent');
+        expect(rows.every((r) => r.kind === 'single')).toBe(true);
+        expect(rows.map((r) => (r.kind === 'single' ? r.entry.id : ''))).toEqual(['a1', 'b1']);
+    });
+
+    it('🔴 单集**保持传入顺序**（入口 filterAndSort 已排好，这里只搬运、不再排一遍）', () => {
+        const rows = listTreeRows([rich('x', undefined), rich('y', undefined), rich('z', undefined)], 'recent');
+        expect(rows.map((r) => (r.kind === 'single' ? r.entry.id : ''))).toEqual(['x', 'y', 'z']);
+    });
+
+    it('🔴 组间代表值 · 最近更新：↓ 取组内**最新**、↑ 取组内**最旧**', () => {
+        const old = [rich('o1', 'A', { updatedAt: '2020-01-01T00:00:00.000Z' }), rich('o2', 'A', { updatedAt: '2020-06-01T00:00:00.000Z' })];
+        const neu = [rich('n1', 'B', { updatedAt: '2026-01-01T00:00:00.000Z' }), rich('n2', 'B', { updatedAt: '2026-02-01T00:00:00.000Z' })];
+        const order = (sortBy: 'recent' | 'recent-asc') =>
+            listTreeRows([...old, ...neu], sortBy).map((r) => (r.kind === 'series' ? r.group.name : ''));
+        expect(order('recent')).toEqual(['B', 'A']);
+        expect(order('recent-asc')).toEqual(['A', 'B']);
+    });
+
+    it('🔴 组间代表值 · 评分 = 组内**按部平均**，且缺值的部**按 0 计入分母**（⛔ 不 skip）', () => {
+        // A：1 部 9 分 + 1 部没分 ⇒ 平均 4.5；B：2 部都 5 分 ⇒ 平均 5 ⇒ B 在前
+        const gA = [rich('a1', 'A', { communityScore: 9 }), rich('a2', 'A', {})];
+        const gB = [rich('b1', 'B', { communityScore: 5 }), rich('b2', 'B', { communityScore: 5 })];
+        const order = (sortBy: 'score-desc' | 'score-asc') =>
+            listTreeRows([...gA, ...gB], sortBy).map((r) => (r.kind === 'series' ? r.group.name : ''));
+        expect(order('score-desc')).toEqual(['B', 'A']);
+        expect(order('score-asc')).toEqual(['A', 'B']);
+    });
+
+    it('🔴 组间代表值 · 标题：按**组名** zh 排序（组名走 seriesTitleOf 单一真源）', () => {
+        const gA = [rich('a1', '阿凡达'), rich('a2', '阿凡达')];
+        const gB = [rich('b1', '熊出没'), rich('b2', '熊出没')];
+        const names = listTreeRows([...gB, ...gA], 'title-asc').map((r) => (r.kind === 'series' ? r.group.name : ''));
+        expect(names).toEqual(['阿凡达', '熊出没']);
+    });
+
+    it('🔴 组间代表值 · 发布日期 = 组内**最大**年份（与 filterAndSort 的 `year ?? 0` 同口径）', () => {
+        const gA = [rich('a1', 'A', { year: 2019 }), rich('a2', 'A', { year: 2015 })];
+        const gB = [rich('b1', 'B', { year: 2021 }), rich('b2', 'B', { year: 2016 })];
+        const order = (sortBy: 'release-desc' | 'release-asc') =>
+            listTreeRows([...gA, ...gB], sortBy).map((r) => (r.kind === 'series' ? r.group.name : ''));
+        expect(order('release-desc')).toEqual(['B', 'A']);
+        expect(order('release-asc')).toEqual(['A', 'B']);
+    });
+
+    it('主判据相等 ⇒ 按分组键兜底（同一份数据两次渲染**不会换位**）', () => {
+        const gA = [rich('a1', 'A', { year: 2020 }), rich('a2', 'A', { year: 2020 })];
+        const gB = [rich('b1', 'B', { year: 2020 }), rich('b2', 'B', { year: 2020 })];
+        const once = listTreeRows([...gA, ...gB], 'release-desc').map((r) => (r.kind === 'series' ? r.group.name : ''));
+        const twice = listTreeRows([...gB, ...gA], 'release-desc').map((r) => (r.kind === 'series' ? r.group.name : ''));
+        expect(once).toEqual(twice);
+    });
+
+    it('海报墙用的 foldSeries **一字未改**（仍把折叠卡落在组内首个成员的位置）', () => {
+        const rows = foldSeries([rich('a1', undefined), rich('s1', '熊出没'), rich('s2', '熊出没')]);
+        expect(rows.map((r) => (r.kind === 'series' ? 'S' : 's'))).toEqual(['s', 'S']);
+    });
+    it('🔴 显示行：折叠的合集只出父级行；展开后才把它那批成员**插在父级之后**（子行带 child 标记）', () => {
+        const rows = listTreeRows([rich('s1', '熊出没'), rich('s2', '熊出没'), rich('a1', undefined)], 'recent');
+        const key = rows.find((r) => r.kind === 'series');
+        expect(key).toBeTruthy();
+        const k = key && key.kind === 'series' ? key.group.key : '';
+
+        const collapsed = listDisplayRows(rows, []);
+        expect(collapsed.map((r) => (r.kind === 'group' ? 'G' : r.child ? 'c:' + r.entry.id : 'e:' + r.entry.id)))
+            .toEqual(['G', 'e:a1']);
+
+        const open = listDisplayRows(rows, [k]);
+        expect(open.map((r) => (r.kind === 'group' ? 'G' : r.child ? 'c:' + r.entry.id : 'e:' + r.entry.id)))
+            .toEqual(['G', 'c:s1', 'c:s2', 'e:a1']);
+    });
+
+    it('🔴 单集行与子行共用同一段行 markup ⇒ 单集的 child 恒为 false（⛔ 别把它也缩进）', () => {
+        const rows = listTreeRows([rich('s1', '熊出没'), rich('s2', '熊出没'), rich('a1', undefined)], 'recent');
+        const open = listDisplayRows(rows, rows[0].kind === 'series' ? [rows[0].group.key] : []);
+        const singles = open.filter((r) => r.kind === 'entry' && !r.child);
+        expect(singles.map((r) => (r.kind === 'entry' ? r.entry.id : ''))).toEqual(['a1']);
+    });
+
+    it('展开键里混入**已不成组**的旧键 ⇒ 静默忽略（不抛错、不多出行）', () => {
+        const rows = listTreeRows([rich('a1', undefined)], 'recent');
+        expect(listDisplayRows(rows, ['movie\u0001不存在的系列'])).toHaveLength(1);
+    });
+});
+
