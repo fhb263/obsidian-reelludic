@@ -58,35 +58,6 @@ const WHEEL_THRESHOLD = 40;
 const THUMB_RADIUS = 6;
 /** 🔴 #636 连续模式里「视野附近保留几页的图」（超出即卸载，防大漫画吃光内存） */
 const SCROLL_KEEP = 3;
-/**
- * 🔴 #642：滚动停多久才算「停下来了」（ms）—— 补缩略图等重活等过这段时间再做。
- * 依据：滚动防抖是 90ms，再加一点余量 ⇒ 连续滚动（每 ~16~50ms 一次事件）期间**永远不触发**，
- * 手一停约 220ms 后补齐。正文插图**不受此限**（用户正看的就是它）。
- */
-const SCROLL_IDLE_MS = 220;
-
-/**
- * 🔴 #642：让出**一帧**再做下一步（补缩略图/插图时用）。
- *
- * 为什么必须让帧：这些循环每步都在做「zip 解压 + 造 Blob + 图片解码」，全部在**主线程**。
- * 连着跑十几步 = 连续十几帧都没有机会渲染 ⇒ 界面**完全不动**（用户报障原文「卡住了完全动不了」）。
- * ⚠️ 用 `requestAnimationFrame` 而不是 `setTimeout(0)`：前者与**渲染帧对齐**
- *   （浏览器保证这一帧画完才回调），后者只是让出任务队列、仍可能积压在同一帧里。
- * ⚠️ 面板后台化（标签页不可见）时 rAF **不触发** ⇒ 加超时兜底，⛔ 不能把补图永久挂起。
- */
-function nextFrame(): Promise<void> {
-    return new Promise((resolve) => {
-        let done = false;
-        const finish = (): void => {
-            if (done) return;
-            done = true;
-            resolve();
-        };
-        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(finish);
-        // 后台标签页 rAF 暂停 ⇒ 兜底（16ms 后无论有没有帧都继续，避免卡住不补）
-        window.setTimeout(finish, 16);
-    });
-}
 
 export interface ComicReaderOptions {
     /** 书籍标题（标签页标题） */
@@ -198,27 +169,15 @@ export class ComicReaderPanel {
     /** #540 下一页预取（单槽）：压缩包逐页解压有延迟，预取后翻页**零等待**（⛔ 只留一页，别攒缓存） */
     private nextBlob: { index: number; blob: Blob } | null = null;
     /**
-     * 🔴🔴 #642：缩略图补图的**重入守卫**。
-     *
-     * 由来（用户报障「阅读 eupb 漫画时卡住了完全动不了」，且**缩略图栏是开着的**）：
-     *   `fillThumbs()` 由**每次滚动落定**（`onScrollView` 的防抖回调）与**每次挂载/改模式**调用，
-     *   而它内部是 `for (…) await loadPage(i)` —— **没有重入守卫** ⇒ 连续滚动会**叠起多条**并发补图，
-     *   每条各自对窗口内最多 13 页发起解压（`loadBinary` = zip 解压，实测单张 8ms、13 张 >100ms）。
-     *   多条叠起来就把主线程彻底占满 ⇒ 界面**完全不动**。
-     * ⇒ 同一时刻**只允许一条**补图在跑；跑完若期间又有人叫过（`thumbsDirty`），**再补一轮**。
-     *   ⚠️ 用「置脏 + 收尾复查」而不是「直接 return 丢弃」：否则滚动停下后最后一批缩略图会**永远不补**。
+     * ⛔ #642 复盘（已整体回退，这里曾有两枚重入守卫 `thumbsBusy`/`scrollBusy` + 让帧 + 滚动期延迟补图）：
+     *   那套改动**把阅读器改坏了**（用户报「完全改的看不了」）—— 守卫让滚动中发起的补图/插图
+     *   全部只置脏就返回，而唯一在跑的那轮复查时 `pageIndex` 已变、窗口已换
+     *   ⇒ **正文图与缩略图都大面积为空**。
+     *   🔴 卡顿的真凶是**重复解压**（同一页被反复 zip 解压，实测单张 8ms、串行 20 张 310ms），
+     *      已在 `main.unpackEpub` 的 `loadBinary` 里用「缓存 + 并发去重 + 64MB LRU」根治。
+     *   ⛔ 别再往 `fillThumbs` / `mountScrollImages` 里加守卫或让帧：那两条链的「每次滚动重跑」
+     *      本身就是正确语义（靠 `thumbDone` / `querySelector('img')` 去重），加闸门反而饿死它。
      */
-    private thumbsBusy = false;
-    /** 有人在补图期间又叫过 `fillThumbs`（收尾时要再补一轮） */
-    private thumbsDirty = false;
-    /** 🔴 #642：连续模式插图的**重入守卫**（与缩略图各一枚，见 `mountScrollImages`） */
-    private scrollBusy = false;
-    /** 🔴 #642：插图期间又叫过 `mountScrollImages` ⇒ 收尾再插一轮 */
-    private scrollDirty = false;
-    /** 🔴 #642：最近一次滚动事件时刻（判「用户是否还在滚」，见 `scheduleThumbsFill`） */
-    private scrollActiveAt = 0;
-    /** 🔴 #642：延迟补缩略图的单一定时器（连续滚动时不断顺延，⛔ 不攒多条） */
-    private thumbsIdleTimer: number | null = null;
     /** 加载序号：翻页快于取图时，旧结果作废（防「乱序回填」把新页盖回旧页） */
     private loadSeq = 0;
     private destroyed = false;
@@ -288,12 +247,6 @@ export class ComicReaderPanel {
         // 🔴 #636：连续模式的滚动防抖与右键菜单也要清（⛔ 别留悬着的定时器 / 孤儿菜单）
         if (this.scrollSyncTimer !== null) window.clearTimeout(this.scrollSyncTimer);
         this.scrollSyncTimer = null;
-        // 🔴 #642：两枚重入守卫的「置脏」标记一并复位（面板销毁后不该再有任何一轮补图/插图）
-        this.thumbsDirty = false;
-        this.scrollDirty = false;
-        // 🔴 #642：延迟补缩略图的定时器一并清（⛔ 别让已关掉的面板再补图）
-        if (this.thumbsIdleTimer !== null) window.clearTimeout(this.thumbsIdleTimer);
-        this.thumbsIdleTimer = null;
         this.hideCtx();
         // 连续模式里所有已挂的 objectURL 逐个撤（只靠 `revokeUrl` 只管单页制那一张）
         if (this.scrollEl) {
@@ -476,35 +429,16 @@ export class ComicReaderPanel {
     /**
      * 给**窗口内**还没做过的页补缩略图；滚远了的丢缓存（`pruneThumbs` 的保留窗口更宽，防抖动）。
      *
-     * 🔴 #642 三条一起修（原注释写着「串行 + 每张做完让出一帧」，但**代码里根本没有让帧**）：
-     *   ⑴ **重入守卫**（`thumbsBusy`）—— 见字段注释：连续滚动会把补图叠成多条并发，把主线程占满；
-     *   ⑵ **真正让帧**：每张缩略图做完 `await` 一次 rAF ⇒ 解压/解码不会连着堵住同一帧；
-     *   ⑶ **收尾复查**（`thumbsDirty`）—— 补图期间被叫过就再补一轮，否则最后一批永远不补。
+     * ⚠️ #642 复盘：这里曾加过「重入守卫 + 每张 await 一帧」，**把缩略图栏改坏了** ——
+     *   守卫让「滚动中发起的补图」全部变成只置脏就返回，而唯一那轮跑完后复查 dirty 时
+     *   `pageIndex` 已变、窗口已换，缩略图**大面积为空**。已整体回退到本形态。
+     *   🔴 卡顿的真凶是**重复解压**，已在 `main.unpackEpub` 的 `loadBinary` 里根治
+     *      （缓存 + 并发去重）—— ⛔ 别再往本方法里加守卫/让帧。
      * ⚠️ 阈值不动：仍是 `thumbWindow(current, total, THUMB_RADIUS)`（用户已验收的窗口语义）。
      */
     private async fillThumbs(): Promise<void> {
         const col = this.thumbsEl;
         if (!col) return;
-        // ⑴ 重入守卫：已在补图 ⇒ 只置脏，等它收尾时再补（⛔ 别并发再开一条）
-        if (this.thumbsBusy) {
-            this.thumbsDirty = true;
-            return;
-        }
-        this.thumbsBusy = true;
-        try {
-            do {
-                this.thumbsDirty = false;
-                if (!(await this.fillThumbsOnce())) return; // 中途被关掉 / 收起
-            } while (this.thumbsDirty && !this.destroyed);
-        } finally {
-            this.thumbsBusy = false;
-        }
-    }
-
-    /** 补图**一轮**；返回 false = 面板已销毁（调用方据此收手） */
-    private async fillThumbsOnce(): Promise<boolean> {
-        const col = this.thumbsEl;
-        if (!col) return false;
         // 丢远的（只丢**缓存标记**，格子还在 —— 再滚回来重新生成）
         const keep = new Set(pruneThumbs([...this.thumbDone], this.pageIndex, this.total));
         for (const i of [...this.thumbDone]) if (!keep.has(i)) this.thumbDone.delete(i);
@@ -515,19 +449,15 @@ export class ComicReaderPanel {
             const cell = this.thumbCells.get(i);
             if (!cell) continue;
             const blob = await this.options.loadPage(i);
-            if (this.destroyed || !this.thumbsEl) return false; // 中途被关掉 / 收起
+            if (this.destroyed || !this.thumbsEl) return; // 中途被关掉 / 收起
             if (!blob) continue;
             const url = URL.createObjectURL(blob);
             const img = cell.createEl('img', { cls: 'rl-comic-thumb-img', attr: { alt: '' } });
             img.src = url;
             img.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
             img.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
-            // ⑵ 真正让出一帧（解压/解码不连着堵同一帧 —— 这是原注释承诺、实现却漏掉的那一步）
-            await nextFrame();
-            if (this.destroyed) return false;
         }
         this.syncThumbsActive();
-        return true;
     }
 
     /** 当前页那格高亮（加粗黑边 + 滚进视野）。⚠️ 用 `block:'nearest'`：本来在视野里就不动 */
@@ -568,9 +498,6 @@ export class ComicReaderPanel {
     /** 连续模式：按滚动位置刷新「当前页」+ 惰性插图 / 卸载视野外的图 */
     private onScrollView = (): void => {
         if (this.viewMode !== 'scroll' || !this.scrollEl) return;
-        // 🔴 #642：记下「用户正在滚」——重活（补缩略图）推迟到滚动停下来再做，
-        //   否则每滚一格就解 13 张图，滚轮/触控板连续滚动时永远抢不到主线程（用户报「完全动不了」）。
-        this.scrollActiveAt = Date.now();
         if (this.scrollSyncTimer !== null) window.clearTimeout(this.scrollSyncTimer);
         this.scrollSyncTimer = window.setTimeout(() => {
             this.scrollSyncTimer = null;
@@ -582,28 +509,11 @@ export class ComicReaderPanel {
                 this.scheduleSave();
                 this.updateFooter();
                 this.syncThumbsActive();
-                // 缩略图是**装饰性**的 ⇒ 滚动刚停的 220ms 内先不做（正文插图优先，见下）
-                this.scheduleThumbsFill();
+                void this.fillThumbs();
             }
-            // 正文插图**立即做**（用户正在看的就是它，不能等）
             void this.mountScrollImages();
         }, 90);
     };
-
-    /**
-     * 🔴 #642：把补缩略图**推迟到滚动真正停下来**之后。
-     * 判据 = `scrollActiveAt` 距现在超过 `SCROLL_IDLE_MS`；期间反复滚动只会**不断顺延**（不累积多条）。
-     * ⚠️ 用「重排单一定时器」而不是多条 setTimeout：连续滚动不会攒出一串补图任务。
-     */
-    private scheduleThumbsFill(): void {
-        if (this.thumbsIdleTimer !== null) window.clearTimeout(this.thumbsIdleTimer);
-        const wait = Math.max(0, SCROLL_IDLE_MS - (Date.now() - this.scrollActiveAt));
-        this.thumbsIdleTimer = window.setTimeout(() => {
-            this.thumbsIdleTimer = null;
-            if (this.destroyed) return;
-            void this.fillThumbs();
-        }, wait);
-    }
 
     /** 量各页顶部偏移（页图加载完成会改变高度 ⇒ 每次滚动重算一遍，成本可忽略） */
     private measureScrollTops(): void {
@@ -617,31 +527,16 @@ export class ComicReaderPanel {
      * 连续模式按需插图：只给「当前页前后各 `SCROLL_KEEP` 页」取图，
      * 视野外的**卸载图片**（把 `src` 清掉并撤掉 objectURL），但**保留容器高度**（防滚动位置跳）。
      *
-     * 🔴 #642：同样加了**重入守卫 + 让帧**（与 `fillThumbs` 同族问题）——
-     *   本方法由 `mount`、`onScrollView`（每次滚动落定）、`setViewMode` 三处调用，
-     *   而体内是 `await loadPage(i)` 串行取图（最多 7 页 × zip 解压）⇒ 连续滚动会叠成多条并发。
-     *   ⚠️ 与缩略图各用一枚守卫：两条链的窗口不同，互相阻塞会让正文出图变慢。
+     * ⚠️ #642 复盘：这里曾加过「重入守卫 + 每张图 await 一帧」，**结果把阅读器改坏了** ——
+     *   连续滚动时每次调用都只置脏就返回，而在跑的那一轮要等跑完
+     *   **整整一遍**才会复查 dirty；期间 `pageIndex` 已变、上一窗口的图又被卸载
+     *   ⇒ 正文图**补不上来**（用户报「完全改的看不了」）。已整体回退到本形态。
+     *   🔴 卡顿的真凶是**重复解压**（同一页被反复 zip 解压），那条已在 `main.unpackEpub`
+     *      的 `loadBinary` 里用「缓存 + 并发去重」根治 —— ⛔ 别再往本方法里加让帧/守卫。
      */
     private async mountScrollImages(): Promise<void> {
-        if (this.scrollBusy) {
-            this.scrollDirty = true;
-            return;
-        }
-        this.scrollBusy = true;
-        try {
-            do {
-                this.scrollDirty = false;
-                if (!(await this.mountScrollImagesOnce())) return;
-            } while (this.scrollDirty && !this.destroyed);
-        } finally {
-            this.scrollBusy = false;
-        }
-    }
-
-    /** 插图**一轮**；返回 false = 面板已销毁 / 已离开连续模式（调用方据此收手） */
-    private async mountScrollImagesOnce(): Promise<boolean> {
         const col = this.scrollEl;
-        if (!col) return false;
+        if (!col) return;
         const shouldUnload = pagesToUnload(this.pageIndex, this.total, SCROLL_KEEP);
         const kids = Array.from(col.children) as HTMLElement[];
         for (let i = 0; i < kids.length; i++) {
@@ -658,7 +553,7 @@ export class ComicReaderPanel {
             if (box.querySelector('img') || box.dataset.loading === '1') continue;
             box.dataset.loading = '1';
             const blob = await this.options.loadPage(i);
-            if (this.destroyed || this.viewMode !== 'scroll') return false;
+            if (this.destroyed || this.viewMode !== 'scroll') return;
             box.dataset.loading = '';
             if (!blob) continue;
             const url = URL.createObjectURL(blob);
@@ -669,11 +564,7 @@ export class ComicReaderPanel {
             img.addEventListener('load', () => {
                 this.measureScrollTops();
             }, { once: true });
-            // 让出一帧：解压 + 解码不连着堵同一帧（#642）
-            await nextFrame();
-            if (this.destroyed) return false;
         }
-        return true;
     }
 
     /**

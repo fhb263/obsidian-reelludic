@@ -12,9 +12,6 @@ import {
     baseNameOf,
     thumbsVisible,
     comicViewModeOptions,
-    shouldFillThumbs,
-    thumbsFillDelay,
-    nextFillStep,
 } from 'pure/comicViewer';
 
 describe('#636 阅读模式（单页 / 连续滚动）', () => {
@@ -174,69 +171,3 @@ describe('#636 缩略图栏默认隐藏（用户裁定）', () => {
     });
 });
 
-// ── 🔴 #642：「EPUB 漫画卡住完全动不了」的调度判据（纯逻辑部分）──────────────────
-//    实测依据（_probe_642_zip.cjs）：zip 单张解压 8ms、串行 20 张 310ms；
-//    而补图函数**没有重入守卫** ⇒ 连续滚动会叠成多条并发，把主线程占满 = 界面完全不动。
-describe('#642 重活调度（滚动期间推迟补图 / 重入守卫）', () => {
-    describe('shouldFillThumbs · 何时该补缩略图', () => {
-        it('缺省 idleMs=0 ⇒ 永远该补（挂载 / 切模式 / 展开缩略图栏那一路）', () => {
-            expect(shouldFillThumbs({ now: 1000, lastScrollAt: 999 })).toBe(true);
-            expect(shouldFillThumbs({ now: 1000, lastScrollAt: 0 })).toBe(true);
-        });
-
-        it('🔴 滚动中（距上次滚动不足 idleMs）⇒ 说不该（主线程留给滚动与正文）', () => {
-            expect(shouldFillThumbs({ now: 1000, lastScrollAt: 950, idleMs: 220 })).toBe(false);
-            expect(shouldFillThumbs({ now: 1000, lastScrollAt: 999, idleMs: 220 })).toBe(false);
-        });
-
-        it('手停下满 idleMs ⇒ 该补（否则最后一批缩略图永远不补）', () => {
-            expect(shouldFillThumbs({ now: 1300, lastScrollAt: 1000, idleMs: 220 })).toBe(true);
-            // 边界取等：正好过去 idleMs 也算「停稳了」
-            expect(shouldFillThumbs({ now: 1220, lastScrollAt: 1000, idleMs: 220 })).toBe(true);
-        });
-
-        it('从没滚过（lastScrollAt=0）⇒ 该补（页面刚打开，别干等）', () => {
-            expect(shouldFillThumbs({ now: 5, lastScrollAt: 0, idleMs: 220 })).toBe(true);
-        });
-
-        it('脏值安全（NaN / 负数不抛，按「该补」处理 —— 宁可多补一次也别卡住不出图）', () => {
-            expect(shouldFillThumbs({ now: NaN, lastScrollAt: NaN, idleMs: 220 })).toBe(true);
-            expect(shouldFillThumbs({ now: 100, lastScrollAt: -50, idleMs: -10 })).toBe(true);
-        });
-    });
-
-    describe('thumbsFillDelay · 还要等多久才补', () => {
-        it('滚动刚发生 ⇒ 等满 idleMs 的剩余部分', () => {
-            expect(thumbsFillDelay({ now: 1000, lastScrollAt: 900, idleMs: 220 })).toBe(120);
-        });
-
-        it('已超过 idleMs ⇒ 0（立刻补）', () => {
-            expect(thumbsFillDelay({ now: 2000, lastScrollAt: 900, idleMs: 220 })).toBe(0);
-        });
-
-        it('idleMs=0 ⇒ 0；从没滚过 ⇒ 0', () => {
-            expect(thumbsFillDelay({ now: 1, lastScrollAt: 0, idleMs: 0 })).toBe(0);
-            expect(thumbsFillDelay({ now: 1, lastScrollAt: 0, idleMs: 220 })).toBe(0);
-        });
-    });
-
-    describe('nextFillStep · 重入守卫的真值表', () => {
-        it('不忙 ⇒ start（开一轮）', () => {
-            expect(nextFillStep({ busy: false, dirty: false, first: true })).toBe('start');
-            expect(nextFillStep({ busy: false, dirty: true, first: false })).toBe('start');
-        });
-
-        it('🔴 忙 + 首次进入 ⇒ markDirty（绝不并发再开一条 —— 那正是卡死的成因）', () => {
-            expect(nextFillStep({ busy: true, dirty: false, first: true })).toBe('markDirty');
-            expect(nextFillStep({ busy: true, dirty: true, first: true })).toBe('markDirty');
-        });
-
-        it('忙 + 收尾复查：期间被叫过 ⇒ again（把最后一批补上）', () => {
-            expect(nextFillStep({ busy: true, dirty: true, first: false })).toBe('again');
-        });
-
-        it('忙 + 期间没人叫 ⇒ done（收工）', () => {
-            expect(nextFillStep({ busy: true, dirty: false, first: false })).toBe('done');
-        });
-    });
-});
