@@ -4,7 +4,7 @@
  * 责任：把条目元数据组装成 chat/completions 请求体（prompt 设计在此）、解析模型返回的 JSON、
  * 以及「看点数组 ↔ 表单多行框」的互转。网络请求与 Key 注入由 services/aiSummary.ts 完成。
  *
- * prompt 可在设置页「AI 翻译与总结 → 服务提示词」覆盖（留空/改回默认文本即用 DEFAULT_SUMMARY_PROMPT）；
+ * prompt 可在设置页「AI 翻译 / 总结 / 搜索 → 服务提示词」覆盖（留空/改回默认文本即用 DEFAULT_SUMMARY_PROMPT）；
  * 默认 prompt 设计要点（避免模型自由发挥）：
  *  - 一句话总结 ≤40 字，只讲「是什么 + 最突出特点」，禁剧透结局、禁「本片讲述了」套话；
  *  - 核心看点 3 条、每条 ≤20 字、以具体名词短语开头，禁「值得一看 / 非常精彩」空泛评价；
@@ -13,7 +13,9 @@
  */
 import type { EntryType } from 'data/types';
 import { ENTRY_TYPE_LABELS } from 'data/types';
-import { modelFor, normalizeProvider, type TranslateProvider, type TranslateRequestBody } from 'pure/translate';
+import { resolveModel, type TranslateProvider, type TranslateRequestBody } from 'pure/translate';
+// #499：「模型爱加围栏 / 爱在 JSON 前后解释两句」这套容错与「AI 预填」共用一份（见纯模块注释）
+import { parseAiJsonObject, stripFence } from 'pure/aiJson';
 
 /** 一句话总结建议字数上限（提示文案与 UI 计数用；解析侧另有安全上限防病态输出） */
 export const AI_SUMMARY_MAX_CHARS = 40;
@@ -64,7 +66,12 @@ function clip(s: string, n: number): string {
 }
 
 /** 构造 AI 摘要请求体；无标题 → null（信息量为零，不该发请求） */
-export function buildAiSummaryBody(input: AiSummaryInput, provider?: TranslateProvider, prompt?: string): TranslateRequestBody | null {
+export function buildAiSummaryBody(
+    input: AiSummaryInput,
+    provider?: TranslateProvider,
+    prompt?: string,
+    model?: string,
+): TranslateRequestBody | null {
     const title = input.title?.trim();
     if (!title) return null;
 
@@ -78,45 +85,13 @@ export function buildAiSummaryBody(input: AiSummaryInput, provider?: TranslatePr
     if (input.summary?.trim()) lines.push(`简介：\n${clip(input.summary, SUMMARY_INPUT_LIMIT)}`);
 
     return {
-        model: modelFor(normalizeProvider(provider)),
+        model: resolveModel(provider, model),
         messages: [
             { role: 'system', content: prompt?.trim() || DEFAULT_SUMMARY_PROMPT },
             { role: 'user', content: lines.join('\n') },
         ],
         stream: false,
     };
-}
-
-/** 剥掉 ```json … ``` 围栏（模型爱加） */
-function stripFence(text: string): string {
-    const t = text.trim();
-    const m = /^```[a-zA-Z]*\s*\n?([\s\S]*?)\n?```$/.exec(t);
-    return m ? m[1].trim() : t;
-}
-
-/** 提取首个平衡的 {...} 对象（容忍前后解释文字） */
-function extractFirstJsonObject(text: string): string | null {
-    const start = text.indexOf('{');
-    if (start < 0) return null;
-    let depth = 0;
-    let inStr = false;
-    let escaped = false;
-    for (let i = start; i < text.length; i++) {
-        const ch = text[i];
-        if (inStr) {
-            if (escaped) escaped = false;
-            else if (ch === '\\') escaped = true;
-            else if (ch === '"') inStr = false;
-            continue;
-        }
-        if (ch === '"') inStr = true;
-        else if (ch === '{') depth++;
-        else if (ch === '}') {
-            depth--;
-            if (depth === 0) return text.slice(start, i + 1);
-        }
-    }
-    return null;
 }
 
 function asString(v: unknown): string {
@@ -135,23 +110,16 @@ function asHighlights(v: unknown): string[] {
  */
 export function parseAiSummaryResult(text: string | null | undefined): AiSummaryResult | null {
     if (typeof text !== 'string' || !text.trim()) return null;
-    const raw = stripFence(text);
 
-    const jsonText = extractFirstJsonObject(raw);
-    if (jsonText) {
-        try {
-            const obj = JSON.parse(jsonText) as Record<string, unknown>;
-            if (obj && typeof obj === 'object') {
-                const summary = clip(asString(obj.summary), SUMMARY_HARD_LIMIT);
-                const highlights = asHighlights(obj.highlights);
-                if (summary || highlights.length) return { summary, highlights };
-            }
-        } catch {
-            /* 落到下方降级判断 */
-        }
+    // #499：JSON 提取那套容错下沉到 `pure/aiJson`（与 AI 预填共用一份）
+    const obj = parseAiJsonObject(text);
+    if (obj) {
+        const summary = clip(asString(obj.summary), SUMMARY_HARD_LIMIT);
+        const highlights = asHighlights(obj.highlights);
+        if (summary || highlights.length) return { summary, highlights };
     }
 
-    const plain = raw.trim();
+    const plain = stripFence(text).trim();
     if (!plain || plain.startsWith('{')) return null; // 坏 JSON 不当总结
     return { summary: clip(plain, SUMMARY_HARD_LIMIT), highlights: [] };
 }

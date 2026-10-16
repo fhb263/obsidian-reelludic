@@ -4,6 +4,7 @@ import { App, Modal, Notice, setIcon } from 'obsidian';
 import type ReelLudicPlugin from '../../main';
 import type { MediaEntry } from 'data/types';
 import { renderExcerptBlock } from 'pure/excerpt';
+import { applyScrollPref, markScrollInside } from 'services/scrollPref';
 
 export class ExcerptModal extends Modal {
     /** 当前选中的挂载书目（从书籍表单/右键菜单进入时由调用方固定传入；命令入口为 null 需搜索选择） */
@@ -20,6 +21,13 @@ export class ExcerptModal extends Modal {
     }
 
     async onOpen(): Promise<void> {
+        applyScrollPref(this.modalEl);
+        // 🔴 #634：**命令入口这一档**（`book` 为空 ⇒ 渲染可搜索的 `.rl-ex-book-list`）实测有双滚动条嵌套
+        //    （外层 632/585 可滚 + 内层 840/180 可滚）⇒ 标记「滚动只在内部」。
+        //    ⚠️ **必须与 `.rl-ex-book-list` 是否真的渲染同条件** —— 从书籍表单/右键进来的那一档
+        //    绑定的是固定书目（没有那个列表），此时若把外层 `overflow` 去掉，长内容会被**直接裁掉**
+        //    （内容看不见，比两条滚动条严重得多）。判据同 `if (!this.book)` 那支，见下方 `else`。
+        if (!this.book) markScrollInside(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
 
@@ -35,13 +43,13 @@ export class ExcerptModal extends Modal {
             attr: { rows: '3', placeholder: '粘贴摘抄的原文片段…' },
         });
 
-        // 页码 + 心得
+        // 页码 + 想法（页码 → 头行标签「第 N 页」；想法 → callout 内 `---div---` 之后的正文）
         const metaRow = contentEl.createDiv({ cls: 'rl-ex-row' });
         const pageField = metaRow.createDiv({ cls: 'rl-ex-field' });
         pageField.createEl('label', { cls: 'rl-ex-label', text: '页码（可选）' });
         const pageEl = pageField.createEl('input', { cls: 'rl-ex-input', type: 'number', attr: { min: '0', placeholder: '如 128' } });
         const noteField = metaRow.createDiv({ cls: 'rl-ex-field rl-ex-grow' });
-        noteField.createEl('label', { cls: 'rl-ex-label', text: '心得（可选，支持 [[双链]]）' });
+        noteField.createEl('label', { cls: 'rl-ex-label', text: '想法（可选，支持 [[双链]]）' });
         const noteEl = noteField.createEl('input', { cls: 'rl-ex-input', placeholder: '写下此刻的想法…' });
 
         // 挂载书目：命令入口需搜索选择；从书籍表单/右键菜单进入时固定绑定（隐藏搜索区）
@@ -109,7 +117,10 @@ export class ExcerptModal extends Modal {
                 return;
             }
             const page = pageEl.value ? parseInt(pageEl.value, 10) : undefined;
-            const md = renderExcerptBlock({ quote, page, note: noteEl.value.trim() || undefined });
+            const md = renderExcerptBlock(
+                { quote, page, note: noteEl.value.trim() || undefined },
+                { callout: true, refLink: this.plugin.excerptRefLink(this.selected), entryId: this.selected.id },
+            );
             previewEl.removeClass('rl-ex-preview-muted');
             previewEl.empty();
             const lbl = previewEl.createDiv({ cls: 'rl-ex-preview-lbl', text: `将追加到《${this.selected.title}》摘抄区` });

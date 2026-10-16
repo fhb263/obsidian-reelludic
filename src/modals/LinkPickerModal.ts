@@ -3,6 +3,7 @@
 // open() 返回所选链接 URL；取消/关闭返回 null（安全方向：不打开任何链接）
 import { App, Modal } from 'obsidian';
 import type { WatchLink } from 'data/types';
+import { applyScrollPref, markScrollInside } from 'services/scrollPref';
 
 export class LinkPickerModal extends Modal {
     private resolve: ((url: string | null) => void) | null = null;
@@ -17,6 +18,11 @@ export class LinkPickerModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
+        // 🔴 #634：本窗有内层自滚列表（`.rl-linkpick-list`）+ 底部操作行 ⇒ 实测**双滚动条嵌套**
+        //    （`_probe_634_nestscroll.cjs`：外层 scroll=682 client=585 可滚、内层 840/320 也可滚）
+        //    ⇒ 标记「滚动只在内部」，外层不再滚。
+        markScrollInside(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
         contentEl.createDiv({ cls: 'rl-nc-desc rl-linkpick-title', text: `选择观看来源：《${this.entryTitle}》` });

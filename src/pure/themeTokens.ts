@@ -46,3 +46,24 @@ export function indicatorTransform(offsetLeft: number, width: number, pad: numbe
     const x = Math.max(0, Math.round(num(offsetLeft) - num(pad)));
     return `transform:translateX(${x}px);width:${Math.max(0, Math.round(num(width)))}px`;
 }
+
+/**
+ * 指示器样式（视图层**唯一入口**）—— 在 indicatorTransform 之上加一道「测量就绪」门。
+ *
+ * 🔴 为什么必须有这道门（2026-09-23 用户报障，截图实证）：
+ *   Obsidian 的后台 leaf / 首帧里，页签容器与按钮的 `offsetWidth` 会读到 **0**（视图不可见 ⇒ 无布局）。
+ *   视图层若把这个 0 直接交给 indicatorTransform，得到 `width:0px` 的“药丸”——
+ *   它仍画着左右两条 1.5px 描边 ⇒ 渲染成**一条竖线**（实测 x=29..32、高 30px），
+ *   且 `translateX(0)` 把它钉在容器最左；同时选中项失去描边（描边本来就由指示器承担），
+ *   用户看到的就是「只剩文字变蓝 + 一条竖线钉在最左」。
+ *   ⚠️ 且它**不会自愈**：重算时机只有 window resize 与 activeTab 变化，
+ *   而用户点「已经选中的那一项」时 `activeTab = t` 赋同值、Svelte 不标记脏 ⇒ 重算不触发。
+ *   ⇒ 判定“未就绪”时返回空串，由视图层**跳过本次提交**并安排重测（可见性变化另有 ResizeObserver 兜住）。
+ *
+ * @returns 合法样式串；**测量未就绪（宽度非有限值或 ≤ 0）时返回 ''**。
+ */
+export function indicatorStyle(offsetLeft: number, width: number, pad: number): string {
+    // ⚠️ 两个条件缺一不可：`NaN <= 0` 为 false，只判 `<= 0` 会让 NaN 溜过去产出 `width:0px`。
+    if (!Number.isFinite(width) || width <= 0) return '';
+    return indicatorTransform(offsetLeft, width, pad);
+}

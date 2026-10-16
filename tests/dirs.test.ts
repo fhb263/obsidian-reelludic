@@ -1,8 +1,9 @@
 // 目录命名中枢测试：类型子目录英文名（movie/teleplay/animation/book/game/music）
+// + 书籍子分类目录（1.0.3.1：文学 book/、网文 novel/）
 // + 旧版中文类型目录 notePath 的英文化迁移（relocateLegacyNotePath，幂等防误伤）
 import { describe, it, expect } from 'vitest';
-import { typeDir, relocateLegacyNotePath } from 'pure/dirs';
-import { ENTRY_TYPES } from 'data/types';
+import { typeDir, noteSubDir, BOOK_KIND_DIRS, relocateLegacyNotePath, LEGACY_TYPE_DIR_ZH } from 'pure/dirs';
+import { ENTRY_TYPES, ENTRY_TYPE_LABELS } from 'data/types';
 
 describe('typeDir 类型 → 笔记子目录英文名', () => {
     it('六类目录名 = movie/teleplay/animation/book/game/music（tv→teleplay、anime→animation 非内部键）', () => {
@@ -21,6 +22,24 @@ describe('typeDir 类型 → 笔记子目录英文名', () => {
     });
 });
 
+describe('noteSubDir 笔记子目录裁决（书籍按子分类分，其余按类型）', () => {
+    it('书籍：文学 → book/、网文 → novel/、漫画 → comic/（漫画 2026-09-30 加回）', () => {
+        expect(noteSubDir({ type: 'book', bookKind: 'book' })).toBe('book');
+        expect(noteSubDir({ type: 'book', bookKind: 'novel' })).toBe('novel');
+        expect(noteSubDir({ type: 'book', bookKind: 'comic' })).toBe('comic');
+    });
+    it('书籍缺省 → book/（存量未标分类的书不落空目录）', () => {
+        expect(noteSubDir({ type: 'book' })).toBe('book');
+    });
+    it('非书籍类型忽略 bookKind（分类残留不影响目录）', () => {
+        expect(noteSubDir({ type: 'movie', bookKind: 'novel' })).toBe('movie');
+        expect(noteSubDir({ type: 'music' })).toBe('music');
+    });
+    it('BOOK_KIND_DIRS 与 noteSubDir 一致（单一真相表）', () => {
+        expect(BOOK_KIND_DIRS).toEqual({ book: 'book', novel: 'novel', comic: 'comic' });
+    });
+});
+
 describe('relocateLegacyNotePath 中文类型目录段 → 英文（迁移）', () => {
     it('默认库路径：笔记/电影|电视剧|动画|书籍|游戏|音乐 → 英文目录段', () => {
         expect(relocateLegacyNotePath('ReelLudic/笔记/电影/三体.md')).toBe('ReelLudic/笔记/movie/三体.md');
@@ -29,6 +48,14 @@ describe('relocateLegacyNotePath 中文类型目录段 → 英文（迁移）', 
         expect(relocateLegacyNotePath('ReelLudic/笔记/书籍/活着.md')).toBe('ReelLudic/笔记/book/活着.md');
         expect(relocateLegacyNotePath('ReelLudic/笔记/游戏/部落冲突.md')).toBe('ReelLudic/笔记/game/部落冲突.md');
         expect(relocateLegacyNotePath('ReelLudic/笔记/音乐/七里香.md')).toBe('ReelLudic/笔记/music/七里香.md');
+    });
+
+    // 🔴 #555 冻结锁：UI 标签 `tv` 已改名「剧集」，但**历史目录名表**必须停在旧文案 ——
+    //    它一旦跟着 UI 改名，`笔记/电视剧/` 就再也搬不到 `笔记/teleplay/`（且静默不报错）。
+    it('🔴 历史目录名表与 UI 标签**解耦**（UI 已改「剧集」，表仍认「电视剧」）', () => {
+        expect(ENTRY_TYPE_LABELS.tv).toBe('剧集');
+        expect(LEGACY_TYPE_DIR_ZH.tv).toBe('电视剧');
+        expect(relocateLegacyNotePath('ReelLudic/笔记/电视剧/老友记.md')).toBe('ReelLudic/笔记/teleplay/老友记.md');
     });
 
     it('自定义库目录同样替换（任意前缀 + 笔记/ 父层）', () => {

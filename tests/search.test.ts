@@ -150,24 +150,9 @@ describe('filterAndSort 综合筛选 + 排序', () => {
         expect(out.map((x) => x.id)).toEqual(['b1']);
     });
 
-    it('musicKind 筛选：other 只留显式其他（有声书/播客）', () => {
-        const musics = [
-            e({ id: 'mu1', type: 'music', title: '歌曲A' }),
-            e({ id: 'mu2', type: 'music', title: '有声书B', musicKind: 'other' }),
-            e({ id: 'b1', type: 'book', title: '图书C' }),
-        ];
-        const out = filterAndSort(musics, { status: 'all', type: 'all', query: '', sortBy: 'recent', musicKind: 'other' });
-        expect(out.map((x) => x.id)).toEqual(['mu2']);
-    });
+    // 音乐子分类过滤项随【音乐】页签子分类行下线（1.0.3.1，用户 2026-09-13 裁定）：filterAndSort 不再有 musicKind 选项
 
-    it('musicKind 筛选：music 含缺省条目（缺省归音乐，存量音乐不丢失）', () => {
-        const musics = [
-            e({ id: 'mu1', type: 'music', title: '歌曲A' }),
-            e({ id: 'mu2', type: 'music', title: '有声书B', musicKind: 'other' }),
-        ];
-        const out = filterAndSort(musics, { status: 'all', type: 'all', query: '', sortBy: 'recent', musicKind: 'music' });
-        expect(out.map((x) => x.id)).toEqual(['mu1']);
-    });
+    // ⚠️ #435 的 `filterAndSort` 的 `series` 选项已随「系列筛选」整块退场（用户：「删除这个筛选系列框」）
 
     it('title-asc 排序（A-Z，zh locale）', () => {
         const out = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'title-asc' });
@@ -231,5 +216,103 @@ describe('filterAndSort 综合筛选 + 排序', () => {
         const before = data.map((d) => d.id);
         filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'title-asc' });
         expect(data.map((d) => d.id)).toEqual(before);
+    });
+
+    // 题材维度（视图级题材筛选，用户 2026-09-22）：新增可选选项，缺省/空选必须完全不过滤（老调用零影响）
+    it('题材缺省 / 空选 → 不过滤（老调用行为不变）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', genres: ['科幻'] }),
+            e({ id: 'b', genres: [] }),
+            e({ id: 'c', genres: ['推理', '悬疑'] }),
+        ];
+        const base = { status: 'all' as const, type: 'all' as const, query: '', sortBy: 'title-asc' as const };
+        expect(filterAndSort(g, base).map((x) => x.id)).toEqual(['a', 'b', 'c']);
+        expect(filterAndSort(g, { ...base, genres: [] }).map((x) => x.id)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('题材多选是 OR（命中任一已选题材即保留）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', genres: ['科幻'] }),
+            e({ id: 'b', genres: ['历史'] }),
+            e({ id: 'c', genres: ['推理', '悬疑'] }),
+        ];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'title-asc', genres: ['推理', '科幻'] });
+        expect(out.map((x) => x.id)).toEqual(['a', 'c']);
+    });
+
+    it('题材与状态 / 类型 / 关键词是 AND 关系（叠加生效）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', title: '沙丘', type: 'movie', status: 'watched', genres: ['科幻'] }),
+            e({ id: 'b', title: '沙丘2', type: 'book', status: 'watched', genres: ['科幻'] }),
+            e({ id: 'c', title: '沙丘3', type: 'movie', status: 'want', genres: ['科幻'] }),
+        ];
+        const out = filterAndSort(g, {
+            status: 'watched',
+            type: 'movie',
+            query: '沙丘',
+            sortBy: 'title-asc',
+            genres: ['科幻'],
+        });
+        expect(out.map((x) => x.id)).toEqual(['a']);
+    });
+
+    it('题材筛选与 bookKind 叠加（阅读子视图内再按题材收窄）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', type: 'book', bookKind: 'book', genres: ['科幻'] }),
+            e({ id: 'b', type: 'book', bookKind: 'novel', genres: ['科幻'] }),
+        ];
+        const out = filterAndSort(g, {
+            status: 'all',
+            type: 'book',
+            query: '',
+            sortBy: 'title-asc',
+            bookKind: 'novel',
+            genres: ['科幻'],
+        });
+        expect(out.map((x) => x.id)).toEqual(['b']);
+    });
+
+    it('题材值 trim 后比对（笔记里带空格的题材照常命中）', () => {
+        const g: MediaEntry[] = [e({ id: 'a', genres: [' 科幻 '] }), e({ id: 'b', genres: ['科幻 '] })];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'title-asc', genres: ['科幻'] });
+        expect(out.map((x) => x.id)).toEqual(['a', 'b']);
+    });
+});
+
+/**
+ * #441 新增的两个「系列序号」排序档（视图里默认用 series-asc；比较逻辑借 `seriesGroup` 那份单一真源）。
+ * 数据形态照抄真库：序号可以有小数（3.5）、也可以没填。
+ */
+describe('filterAndSort · 系列序号排序（#441）', () => {
+    const idx = (n: number | undefined, id: string, title: string, year?: number) =>
+        e({ id, title, year, seriesIndex: n, series: '示例系列' });
+
+    it('series-asc：**按序号升序**，小数序号照样排得进去（3 < 3.5 < 5）', () => {
+        const g = [idx(5, 'c', '第五部'), idx(3, 'a', '第三部'), idx(3.5, 'b', '三点五部')];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-asc' });
+        expect(out.map((x) => x.id)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('series-asc：🔴 **没填序号的置后**（不是置前 —— 它们还没归类，不该压住排好序的那些）', () => {
+        const g = [idx(undefined, 'z', '没序号'), idx(2, 'b', '第二部'), idx(1, 'a', '第一部')];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-asc' });
+        expect(out.map((x) => x.id)).toEqual(['a', 'b', 'z']);
+    });
+
+    it('series-desc：**按序号降序**，但没填序号的**仍然置后**（⛔ 不是简单把整个比较器取反）', () => {
+        const g = [idx(1, 'a', '第一部'), idx(undefined, 'z', '没序号'), idx(3, 'c', '第三部'), idx(2, 'b', '第二部')];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-desc' });
+        expect(out.map((x) => x.id)).toEqual(['c', 'b', 'a', 'z']);
+    });
+
+    it('序号相同 ⇒ 年份兜底（升序档取早的先；降序档取晚的先）', () => {
+        const g = [idx(1, 'b', '乙', 2020), idx(1, 'a', '甲', 2010)];
+        expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-asc' }).map((x) => x.id)).toEqual(['a', 'b']);
+        expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-desc' }).map((x) => x.id)).toEqual(['b', 'a']);
+    });
+
+    it('都不填序号 ⇒ 退回年份 → 标题（与组内排序同一口径）', () => {
+        const g = [idx(undefined, 'b', '乙', 2020), idx(undefined, 'a', '甲', 2010)];
+        expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-asc' }).map((x) => x.id)).toEqual(['a', 'b']);
     });
 });

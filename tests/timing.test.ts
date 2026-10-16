@@ -5,13 +5,21 @@ import { measure, withTimeout, timingLevel, TimedError, NORMAL_MS, SLOW_MS, TIME
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe('measure 耗时测量', () => {
+    /**
+     * 🔴 计时断言的容差：Node 的 `setTimeout` 允许**提前不到 1ms** 触发，而 `measure` 用
+     * `Math.round(performance.now() - start)` 取整 ⇒ 睡眠 20ms 会偶尔量到 19ms
+     * （全量并行跑、机器繁忙时更明显，2026-09-27 实测一次）。
+     * ⛔ 别把下界写死成睡眠时长本身 —— 那会让「全量 0 失败」这个门禁**偶发变红**。
+     */
+    const SLACK_MS = 1;
+
     it('成功路径：返回结果与 elapsedMs', async () => {
         const { elapsedMs, result } = await measure(async () => {
             await sleep(20);
             return 'ok';
         });
         expect(result).toBe('ok');
-        expect(elapsedMs).toBeGreaterThanOrEqual(20);
+        expect(elapsedMs).toBeGreaterThanOrEqual(20 - SLACK_MS);
         expect(elapsedMs).toBeLessThan(2000);
     });
 
@@ -25,7 +33,7 @@ describe('measure 耗时测量', () => {
             expect.unreachable();
         } catch (e) {
             expect(e).toBeInstanceOf(TimedError);
-            expect((e as TimedError).elapsedMs).toBeGreaterThanOrEqual(15);
+            expect((e as TimedError).elapsedMs).toBeGreaterThanOrEqual(15 - SLACK_MS);
             expect((e as TimedError).message).toBe('boom');
         }
     });

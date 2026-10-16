@@ -1,6 +1,6 @@
 // 搜索结果统一展示模型（pure/searchDisplay）单测
 import { describe, it, expect } from 'vitest';
-import { describeSearchResult, sourceIdOf, coverHue } from 'pure/searchDisplay';
+import { SYNOPSIS_MAX_CHARS, describeSearchResult, sourceIdOf, coverHue, synopsisOf } from 'pure/searchDisplay';
 import type { SearchResult } from 'pure/searchDisplay';
 import type { TmdbSearchResult } from 'services/tmdb';
 import type { BookSearchResult, GameSearchResult, MusicSearchResult } from 'services/resultTypes';
@@ -486,5 +486,71 @@ describe('sourceIdOf 结果来源 id 解析（分栏分组键）', () => {
 
     it('缺 source 的影视兜底默认 movie → tmdb（与 describeSearchResult 语义一致）', () => {
         expect(sourceIdOf({ title: '老片' } as unknown as SearchResult)).toBe('tmdb');
+    });
+});
+
+// #464：在线曲库（四平台搜歌结果）。它不是元数据源（不进注册表/不进源链），但**展示层必须完整认它**：
+//   形状走音乐、徽标是「在线曲库」、直达 = 平台歌曲页、分栏键 = songlib（⛔ 否则这批结果会被整批丢掉）。
+describe('describeSearchResult / sourceIdOf：#464 在线曲库（songlib）', () => {
+    const song = (over: Partial<MusicSearchResult> = {}): MusicSearchResult => ({
+        id: 'songlib:netease:347230',
+        title: '海阔天空',
+        artist: 'BEYOND',
+        album: '乐与怒',
+        source: 'songlib',
+        sourceUrl: 'https://music.163.com/#/song?id=347230',
+        ...over,
+    });
+
+    it('走音乐形状：sub = 歌手、meta = 专辑、徽标 = 在线曲库、直达 = 平台歌曲页', () => {
+        const d = describeSearchResult(song());
+        expect(d.title).toBe('海阔天空');
+        expect(d.sub).toBe('BEYOND');
+        expect(d.meta).toBe('乐与怒');
+        expect(d.source).toBe('在线曲库');
+        expect(d.sourceUrl).toBe('https://music.163.com/#/song?id=347230');
+    });
+
+    it('无专辑 / 无直达链接：meta 缺省（undefined，卡片不画那一行）、sourceUrl 空，但形状仍是音乐（sub 还是歌手）', () => {
+        const d = describeSearchResult(song({ album: undefined, sourceUrl: undefined }));
+        expect(d.sub).toBe('BEYOND');
+        expect(d.meta).toBeUndefined();
+        expect(d.sourceUrl).toBeUndefined();
+        expect(d.source).toBe('在线曲库');
+    });
+
+    it('分栏键 = songlib（结果打什么 source，就必须有同名的那一栏 —— #458 的整批丢结果就是这么来的）', () => {
+        expect(sourceIdOf(song())).toBe('songlib');
+    });
+});
+
+// ──────────── #499E 作品简介原文（AI 预填的工具要照搬它）────────────
+describe('synopsisOf 取数据源记录里的作品简介原文', () => {
+    it('🔴 三个字段名都要认（各源叫法不同：豆瓣/Bangumi=s summary、TMDB/OMDb=overview、GB/OL=description）', () => {
+        expect(synopsisOf({ summary: '豆瓣那套' })).toBe('豆瓣那套');
+        expect(synopsisOf({ overview: 'TMDB 那套' })).toBe('TMDB 那套');
+        expect(synopsisOf({ description: 'Google Books 那套' })).toBe('Google Books 那套');
+    });
+
+    it('优先级 summary → description → overview（先命中先用，⛔ 不拼接）', () => {
+        expect(synopsisOf({ overview: 'o', description: 'd', summary: 's' })).toBe('s');
+        expect(synopsisOf({ overview: 'o', description: 'd' })).toBe('d');
+    });
+
+    it('🔴 带 HTML 的原文要过还原（Google Books 常整段 `<p>`、豆瓣带 `<br>`）', () => {
+        expect(synopsisOf({ description: '<p>第一段</p><br><p>第二段 &amp; 结尾</p>' })).toBe('第一段 第二段 & 结尾');
+    });
+
+    it('空白 / 类型不对 / 空对象 ⇒ undefined（⛔ 不吐空串，那会让「照搬」把简介清空）', () => {
+        expect(synopsisOf({ summary: '   ' })).toBeUndefined();
+        expect(synopsisOf({ summary: 123 })).toBeUndefined();
+        expect(synopsisOf({})).toBeUndefined();
+        expect(synopsisOf(null)).toBeUndefined();
+        expect(synopsisOf(undefined)).toBeUndefined();
+    });
+
+    it('超长截断到 SYNOPSIS_MAX_CHARS（防病态长文）', () => {
+        const long = '甲'.repeat(SYNOPSIS_MAX_CHARS + 200);
+        expect(synopsisOf({ summary: long })?.length).toBe(SYNOPSIS_MAX_CHARS);
     });
 });

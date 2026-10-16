@@ -83,3 +83,39 @@ export function estimatePercent(chapterSizes: number[], chapterIndex: number, sc
     done += sizes[chapterIndex] * r;
     return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
 }
+
+/**
+ * 章内比例取值（#469）—— TXT / EPUB 两个阅读器**共用这一份**（⛔ 别各写一套）。
+ *
+ * 🔴 为什么必须把「拿不到测量值」与「位置在章头」分成两档 —— **不可测量 ≠ 章头**（用户 2026-10-01 报障：
+ *    「TXT/EUPB阅读器定位阅读进度怎么只能到章头，上次看到章中间具体段落现在打开还是到章头」）：
+ *    阅读器保存进度走 `flushSave()`（挂在关闭阅读器的 destroy 链上），它直接取「当前比例」；
+ *    而「当前比例」= `scrollTop / (scrollHeight − clientHeight)`。
+ *    **元素不在布局里时**（标签页被切走 → `display:none`、leaf 被 detach、Obsidian 退出）
+ *    `scrollHeight` 与 `clientHeight` 会**双双变成 0** —— 真 Chrome 实测（`_shot/rd468.html`）：
+ *    可见态 `sh=9936 / ch=398`，元素或祖先 `display:none` 后 `sh=0 / ch=0`，
+ *    而 `visibility:hidden` 不受影响（仍有布局盒）。
+ *    旧实现在那一刻 `return 0` ⇒ 把「读到章中间」的进度**静默抹成「章头」**并落库
+ *    ⇒ 下次打开恢复到 0 ⇒ 永远回章头（活动库里多本 `scrollRatio: 0` 就是这么来的）。
+ *
+ * 口径（两档，⛔ 别合并成一档）：
+ *   · `clientHeight <= 0` ⇒ **元素没有布局盒** ⇒ 拿不到位置 ⇒ 返回 `last`（上次已知比例）；
+ *   · `clientHeight > 0 && max <= 0` ⇒ 元素在布局里、只是内容不足一屏 ⇒ **位置确实在章头** ⇒ 返回 0。
+ *
+ * `measured` 传 `null`（元素尚未渲染 / iframe 未就绪 / scroller 取不到）同样按「拿不到」处理。
+ * `last` 由调用方维护：可测量时随手更新、人为定位后用目标值、**切章时重置 0**。
+ */
+export function readerRatio(
+    measured: { scrollTop: number; scrollHeight: number; clientHeight: number } | null | undefined,
+    last: number,
+): number {
+    const safeLast = Number.isFinite(last) ? Math.max(0, Math.min(1, last)) : 0;
+    if (!measured) return safeLast;
+    const { scrollTop, scrollHeight, clientHeight } = measured;
+    if (!Number.isFinite(scrollTop) || !Number.isFinite(scrollHeight) || !Number.isFinite(clientHeight)) return safeLast;
+    // 无布局盒（display:none / 未挂载）⇒ sh 与 ch 都是 0 ⇒ 拿不到位置，沿用上次已知
+    if (clientHeight <= 0) return safeLast;
+    const max = scrollHeight - clientHeight;
+    if (max <= 0) return 0;
+    return Math.max(0, Math.min(1, scrollTop / max));
+}

@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
     buildSearchUrl,
+    buildDetailUrl,
     parseSteamResults,
+    parseAppDetails,
     toGameResult,
     SteamClient,
     type RawSteamItem,
@@ -102,12 +104,138 @@ describe('toGameResult 字段映射', () => {
         });
     });
 
-    it('搜索级不填 summary/developer（深度字段 B3 回填范围外，undefined 不出现）', () => {
+    it('搜索级不填 summary/developer/year（这三个走 `fetchDetail` 按需补）', () => {
         const r = toGameResult({ type: 'app', name: 'Hades II', id: 1145350 });
         expect(r.summary).toBeUndefined();
         expect(r.developer).toBeUndefined();
-        expect(r.platform).toBeUndefined();
         expect(r.year).toBeUndefined();
+    });
+
+    it('🔴🔴 #623 `platform` 键**必须存在**（值可以是 undefined）—— 它是表单的类型判别键', () => {
+        const r = toGameResult({ type: 'app', name: 'Hades II', id: 1145350 });
+        // ⛔ 删掉这个键，就复现用户 2026-10-13 的报障：结果掉进**影视兜底分支** ⇒ 拿 appid 去打 TMDB 详情
+        //    （`api.themoviedb.org/3/undefined/{appid}`）⇒ HTTP 404 ⇒ 整个 `pick` 抛错、**条目根本加不进去**。
+        // ⚠️ TS 帮不上忙：`platform` 是**可选**属性 ⇒ `'platform' in r` 编译期永远合法、运行时才为 false。
+        expect('platform' in r).toBe(true);
+        expect(r.platform).toBeUndefined();
+        // 对照组：豆瓣与 IGDB 的同类结果都带这个键（本函数曾是唯一漏的）
+        expect('platform' in toGameResult({ type: 'app', name: 'x', id: 1 })).toBe(true);
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #623 appdetails 详情（选中结果时按需拉取）
+// fixture 按 store.steampowered.com/api/appdetails 真实响应结构手写（2026-10-13 实测 HTTP 200）
+// ══════════════════════════════════════════════════════════════════════════════
+const fullDetailJson = JSON.stringify({
+    '570': {
+        success: true,
+        data: {
+            type: 'game',
+            name: 'Dota 2',
+            developers: ['Valve'],
+            publishers: ['Valve'],
+            platforms: { windows: true, mac: true, linux: true },
+            release_date: { coming_soon: false, date: 'Jul 9, 2013' },
+            genres: [
+                { id: '1', description: 'Action' },
+                { id: '2', description: 'Strategy' },
+                { id: '3', description: 'Free to Play' },
+                { id: '4', description: 'MOBA' },
+            ],
+            short_description: 'Every day, millions of players worldwide enter battle as one of over a hundred Dota heroes.',
+            detailed_description: '<strong>The most-played game on Steam.</strong><br>Every day, millions…',
+            header_image: 'https://cdn.cloudflare.steamstatic.com/steam/apps/570/header.jpg',
+        },
+    },
+});
+
+describe('🔴 #623 buildDetailUrl', () => {
+    it('含 appids + 与搜索**同一组** cc/l 参数（两处口径不同会让详情的年/题材与搜索结果对不上）', () => {
+        const url = buildDetailUrl(1245620);
+        expect(url).toContain('https://store.steampowered.com/api/appdetails?appids=1245620');
+        expect(url).toContain('cc=US');
+        expect(url).toContain('l=english');
+    });
+});
+
+describe('🔴 #623 parseAppDetails', () => {
+    it('逐字段映射：platform 拼组 / developer 取首个 / year 从 `Jul 9, 2013` 取 / genres 截 3 / summary 取 short', () => {
+        const d = parseAppDetails(fullDetailJson, 570);
+        expect(d).not.toBeNull();
+        expect(d!.platform).toBe('Windows / macOS / Linux');
+        expect(d!.developer).toBe('Valve');
+        expect(d!.year).toBe(2013);
+        // 🔴 前 3 个（与豆瓣回填同一截断口径）；第 4 个 `MOBA` 丢弃
+        expect(d!.genres).toEqual(['Action', 'Strategy', 'Free to Play']);
+        // ⚠️ 取 `short_description`（纯文本），⛔ 不是 `detailed_description`（HTML 长文）
+        expect(d!.summary?.startsWith('Every day')).toBe(true);
+    });
+
+    it('🔴 只取**表单里真有框**的字段：发布商不映射（游戏表单没有「出品方」框 ⇒ 取了就是幽灵字段）', () => {
+        const d = parseAppDetails(fullDetailJson, 570) as Record<string, unknown>;
+        expect('publisher' in d).toBe(false);
+        expect('cover' in d).toBe(false);
+    });
+
+    it('🔴 `success !== true` ⇒ null（下架 / 区域不可见 / 非游戏；⛔ 不是空对象 —— 那会让上层以为拉到了详情）', () => {
+        const fail = JSON.stringify({ '999999999': { success: false } });
+        expect(parseAppDetails(fail, 999999999)).toBeNull();
+    });
+
+    it('响应里没有该 appid 的键 ⇒ null（不炸）', () => {
+        expect(parseAppDetails(fullDetailJson, 123456)).toBeNull();
+    });
+
+    it('平台全 false / 缺 platforms ⇒ platform undefined（⛔ 不返回空串）', () => {
+        const none = JSON.stringify({
+            '1': { success: true, data: { platforms: { windows: false, mac: false, linux: false } } },
+        });
+        expect(parseAppDetails(none, 1)?.platform).toBeUndefined();
+        const missing = JSON.stringify({ '2': { success: true, data: {} } });
+        expect(parseAppDetails(missing, 2)?.platform).toBeUndefined();
+    });
+
+    it('发行日期形态很杂：`2024` / `Q1 2025` 取年；`Coming soon` 无年 ⇒ undefined', () => {
+        const of = (date: string) =>
+            parseAppDetails(JSON.stringify({ '7': { success: true, data: { release_date: { date } } } }), 7)?.year;
+        expect(of('2024')).toBe(2024);
+        expect(of('Q1 2025')).toBe(2025);
+        expect(of('Coming soon')).toBeUndefined();
+        expect(of('')).toBeUndefined();
+    });
+
+    it('genres 缺失 / 空 ⇒ undefined；全空 data ⇒ 各字段 undefined（⛔ 不炸）', () => {
+        const bare = JSON.stringify({ '3': { success: true, data: { genres: [] } } });
+        const d = parseAppDetails(bare, 3);
+        expect(d?.genres).toBeUndefined();
+        expect(d?.developer).toBeUndefined();
+        expect(d?.summary).toBeUndefined();
+    });
+
+    it('genres 里混入非字符串 description 时过滤（⛔ 不许出现 "undefined" 字面量）', () => {
+        const messy = JSON.stringify({
+            '4': { success: true, data: { genres: [{ description: 'Action' }, {}, { description: 42 }] } },
+        });
+        expect(parseAppDetails(messy, 4)?.genres).toEqual(['Action']);
+    });
+});
+
+describe('🔴 #623 SteamClient.fetchDetail', () => {
+    it('用注入的 http 拉详情并按 appid 解析', async () => {
+        const calls: string[] = [];
+        const client = new SteamClient(async (url) => {
+            calls.push(url);
+            return fullDetailJson;
+        });
+        const d = await client.fetchDetail(570);
+        expect(d?.developer).toBe('Valve');
+        expect(calls[0]).toContain('appids=570');
+    });
+
+    it('success=false ⇒ null（调用方静默保留搜索级字段，⛔ 不抛错）', async () => {
+        const client = new SteamClient(async () => JSON.stringify({ '570': { success: false } }));
+        await expect(client.fetchDetail(570)).resolves.toBeNull();
     });
 });
 

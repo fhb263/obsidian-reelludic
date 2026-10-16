@@ -5,17 +5,27 @@ import type { Rating } from 'pure/rating';
 // 六库扩展点：movie/tv/anime 影视动画，book/game 预留，music 已落地（平铺单选，schema 只增不改）
 export type EntryType = 'movie' | 'tv' | 'anime' | 'book' | 'game' | 'music';
 
-/** 书籍子分类（1.0.3）：book 文学（缺省，原「出版」）/ novel 网文 / comic 漫画——阅读页签【全部/文学/网文/漫画】chips 维度（schema append-only） */
+/** 书籍子分类（1.0.3）：book 文学（缺省，原「出版」）/ novel 网文 / comic 漫画 —— 阅读页签【全部/文学/网文/漫画】chips 维度（schema append-only）。
+ *  🔴 2026-09-30 用户裁定**加回**「漫画」：阅读页签子分类恢复四桶，且漫画**独立成一个源链组**（主源豆瓣，见 pure/sourceRegistry）。
+ *     ⚠️ comic 在 1.0.3.1 曾下线过（2026-09-13 裁定），本次是**加回** —— ⛔ 别再把 comic 当「已下线值」归一掉（旧注释已翻面）。 */
 export type BookKind = 'book' | 'novel' | 'comic';
 
-/** 音乐子分类（1.0.3）：music 音乐（缺省）/ other 其他（有声书 / 播客等）——收听页签【全部/音乐/其他】chips 维度（schema append-only） */
-export type MusicKind = 'music' | 'other';
+/** 音乐子分类：1.0.3.1 起音乐不再分子类（用户 2026-09-13 裁定删除「其他」）——合法值仅 music，
+ *  收听页签子分类行与表单「音乐分类」选择已下线；字段按 schema append-only 保留，存量 other 读取时归一为 music，见 pure/musicKind。 */
+export type MusicKind = 'music';
 
 export const ENTRY_TYPES: readonly EntryType[] = ['movie', 'tv', 'anime', 'book', 'game', 'music'];
 
+/**
+ * 类型显示名（全仓唯一真源）。**改这里的字会连带**：合并视图「媒体类型」下拉 / 类型 chips /
+ * 添加表单类型下拉 / 空态文案 / 库概览量词 / 系列折叠卡标题（`N 剧集系列`）/ 笔记「类型」行。
+ * 🔴 2026-10-08（#555）：`tv` 由「电视剧」改为**「剧集」**（用户裁定，全局统一）。
+ *    ⚠️ **历史笔记目录名不受影响** —— 那个走 `pure/dirs.LEGACY_TYPE_DIR_ZH`（已冻结为旧文案），
+ *       ⛔ 不要再让任何「历史识别」逻辑引用本表（改了会让老目录搬不动）。
+ */
 export const ENTRY_TYPE_LABELS: Record<EntryType, string> = {
     movie: '电影',
-    tv: '电视剧',
+    tv: '剧集',
     anime: '动画',
     book: '书籍',
     game: '游戏',
@@ -23,7 +33,8 @@ export const ENTRY_TYPE_LABELS: Record<EntryType, string> = {
 };
 
 /** 类型 → 笔记子目录英文目录名（目录结构用：movie/teleplay/animation/book/game/music）。
- *  与 UI 中文标签 ENTRY_TYPE_LABELS 解耦（界面展示仍走中文，勿混用）。 */
+ *  与 UI 中文标签 ENTRY_TYPE_LABELS 解耦（界面展示仍走中文，勿混用）。
+ *  ⚠️ 书籍另有子分类分目录（文学 book/ 网文 novel/），由 pure/dirs.noteSubDir 统一裁决，勿在本表按 bookKind 分裂。 */
 export const ENTRY_TYPE_DIRS: Record<EntryType, string> = {
     movie: 'movie',
     tv: 'teleplay',
@@ -102,10 +113,18 @@ export interface MediaEntry {
     aliases?: string[];
     /** 书籍子分类（缺省视为 'book'，展示为「文学」；分类唯一入口 = 搜索框类型下拉，归一见 pure/bookKind） */
     bookKind?: BookKind;
-    /** 音乐子分类（缺省视为 'music'，展示为「音乐」；表单「音乐分类」两颗 chip 选择，归一见 pure/musicKind） */
+    /** 音乐子分类（1.0.3.1 起恒 'music'；页签子分类行与表单选择已下线，保留字段兼容存量 other，归一见 pure/musicKind） */
     musicKind?: MusicKind;
-    /** 书籍作者 */
+    /** 书籍作者（🔴 漫画里 = **原作 / 编剧**，画师另见 `artist`） */
     author?: string;
+    /**
+     * **画师**（漫画的作画；#444g 新增，append-only 可选字段）。
+     * 🔴 用户原话（2026-09-30）：「漫画的自动拉取和手动填写表单界面把 ISBN、元数据页数、作者简介框删除掉，**加个画师框**」。
+     *    动机：漫画里「作者（原作）」与「画师（作画）」常常是**两个人** —— MangaDex 就分成两条 relationship
+     *    （`author` / `artist`）、Bangumi 书籍 infobox 也分「作者」/「作画」。共用一个 `author` 会把其中一个丢掉。
+     * ⚠️ **只有漫画会写**：表单只在漫画态渲染「画师」框，其余 bookKind 保存时显式清空。
+     */
+    artist?: string;
     /** 书籍译者（豆瓣详情回填） */
     translator?: string;
     /** 书籍出版社 */
@@ -118,8 +137,21 @@ export interface MediaEntry {
     binding?: string;
     /** 书籍定价（豆瓣详情回填） */
     price?: string;
-    /** 书籍丛书（豆瓣详情回填） */
+    /** 书籍丛书（豆瓣详情回填）
+     *  🔴 **#434 起放开到全部 6 类型**（原来只有书籍会写）：它同时是海报墙「系列」分组的分组名。
+     *    分组口径见 `pure/seriesGroup`（🔴 **分组键 = `type` + 归一化系列名** —— 同名不同类**不合并**，
+     *    用户 2026-09-30 裁定「不做跨类型」）。书籍侧仍由豆瓣「丛书」自动回填，其余类型手填。 */
     series?: string;
+    /**
+     * **系列序号**（#434；append-only 可选字段；🔴 #443 起**锁定整数**）。
+     *
+     * 🔴 语义**由用户自定**（阅读序 / 上映序 / 季序都行）。🔴 #443（2026-09-30）起**锁定为整数**
+     *    （用户裁定「只能填整数不能填小数」）：真库里出现过 `3.5` / `8.5`，结果「第七季 8.5 排在第八季 8
+     *    后面」—— 序号一旦允许小数，「排序」就不再等于用户心里的「第几部」。小数**读时按四舍五入归一**。
+     *    只在折叠卡的组内排序里用它（`seriesIndex` 升序 → 无值时回落年份 → 标题）。
+     * ⚠️ 只在 `series` 有值时才有意义（没填系列名的孤立序号不参与任何分组）。
+     */
+    seriesIndex?: number;
     /** 游戏平台（如 PC / Switch） */
     platform?: string;
     /** 游戏开发商 */
@@ -128,10 +160,31 @@ export interface MediaEntry {
     album?: string;
     /** 音乐本地音频路径（music 类型；vault 相对路径优先，库外绝对路径兼容；lrc source 行来源） */
     audioPath?: string;
+    /**
+     * 音乐**网络地址**（#601；append-only 可选字段）。
+     * 语义 = 「这首没有本地音频时，去这里听 / 这是它的在线页」。手填 / 粘贴，**没有检索按钮**
+     * —— 与 `gameUrl` 同一条口径：音乐侧没有可用的在线检索源（实测四平台都需鉴权 / 签名）。
+     * ⚠️ 与 `sourceUrl`（数据来源平台页，搜索回填自动记录）不是一回事：那是出处，这是手填的入口。
+     */
+    audioUrl?: string;
     /** 游戏启动快捷方式（.lnk）路径（game 类型；vault 相对优先，库外绝对兼容；「▶ 启动」打开） */
     gameLaunchPath?: string;
+    /**
+     * 游戏**网络路径**（#534；append-only 可选字段）。
+     * 用户裁定「游戏**不接**在线检索源 —— 仅在右键弹窗加网络路径框（加粘贴文字按钮）」⇒
+     * 它只在游戏「启动路径」浮层里手填 / 粘贴（商店页 / 官网 / 攻略链接都行），**没有检索按钮**。
+     * ⚠️ 与 `sourceUrl`（数据来源平台页，搜索回填自动记录）不是一回事：那是出处，这是手填的入口。
+     */
+    gameUrl?: string;
     /** 书籍文件路径（TXT/EPUB，阅读器打开入口；vault 相对路径，复用 audioPath 模式） */
     bookFile?: string;
+    /**
+     * 书籍**在线阅读**链接（#529；append-only 可选字段）。
+     * 形如微信读书网页版 `https://weread.qq.com/web/reader/<hash>`（由「检索在线书籍阅读」回填，
+     * 也可手填）。语义 = 「这本没有本地文件时，去这里读」⇒ 表单「阅读」按钮**本地优先、无本地才开它**。
+     * ⚠️ 与 `sourceUrl`（数据来源平台页）不是一回事：它是**阅读入口**，不是来源出处。
+     */
+    readUrl?: string;
     /** 已弃用（#159 删除追番表本地文件夹监控）：字段保留兼容旧数据，不再读写 */
     localWatchDir?: string;
     /** 开播日期 YYYY-MM-DD（动画：Bangumi 放送时间回填；追番表「开播季度」列数据源） */
@@ -154,6 +207,15 @@ export interface MediaEntry {
     plannedDate?: string;
     /** 书籍阅读进度（页码/总页，可选；percent = 阅读器进度百分比估算 0-100，书架进度条优先读） */
     readingProgress?: { page?: number; totalPage?: number; percent?: number };
+    /**
+     * 书籍**阅读时长**（分钟，可选；1.2.1 #537，append-only）。
+     * 🔴 两个来源：① **内置阅读器**打开期间按「前台且为活动页」累计，关闭时叠加（不足 1 分钟不计）；
+     *    ② 编辑表单**手填**（小时录入 → 分钟落库，**覆盖**总数 —— ⛔ 不与阅读器自动累计同时写同一笔）。
+     * 语义与游戏 `playtimeMinutes` 同构；海报墙封面左下角显示「已读 2h」（复用 `.rl-cov-playtime` 角标）。
+     */
+    readMinutes?: number;
+    /** 本地视频播放位置（key = 剧集下标字符串，value = 秒）：内置播放器打开时续播、暂停/切集/关闭时写回 */
+    videoPositions?: Record<string, number>;
     /** 书籍元数据页数（豆瓣实体书；仅展示与统计，不参与进度换算——进度基准 totalPage 以本地文件为准） */
     pageCount?: number;
     /** 游戏游玩时长（分钟，可选；playSessions 的快捷累计，两者保持同步） */
@@ -164,6 +226,14 @@ export interface MediaEntry {
     source?: string;
     /** 数据源官方页链接（搜索回填自动记录，笔记「来源」行用） */
     sourceUrl?: string;
+    /**
+     * **手填的来源名**（#430；append-only 可选字段）。
+     * 🔴 用途：手工新建的条目**没有数据源**（`source` 空）⇒ 封面角标只能显示「8.4★」、标题栏链接只能显示「来源」；
+     *    填了它就能显示「番茄8.4★」。**手填优先于数据源键**，裁决入口是 `pure/sourceMeta.entrySourceLabel`。
+     * ⚠️ 只有**新增条目**时能填（与 `communityScore` / `sourceUrl` 同一条「仅第一次填写有效」的口径）；
+     *    编辑态只读展示。⛔ 它不是 `source`：`source` 是**数据源键**（douban/tmdb/…），决定走哪条搜索链。
+     */
+    sourceName?: string;
     /** 大众评分（数据源评分，搜索回填自动记录；分制随数据源：豆瓣/TMDB/Bangumi 10 分制、Google Books 5 分制） */
     communityScore?: number;
     /** 大众评分评价人数（豆瓣「评分（N人评价）」展示；搜索/详情回填） */

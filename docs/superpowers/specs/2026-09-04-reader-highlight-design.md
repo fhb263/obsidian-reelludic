@@ -41,6 +41,7 @@
 - `main.ts`：读笔记高亮区（loadEntryHighlights 同 loadEntryExcerpts 模式）→ 注入阅读器 options
 - 阅读器 options：新增 `highlights?: ReaderHighlight[]` + `onHighlight?: (quote, loc) => Promise<{ok,id}>`（追加写笔记）+ `onDeleteHighlight?: (blockId) => Promise<boolean>`；onSaved/变更后重读刷新
 - 动作条「🖍高亮」：addSelHighlight — 立即把选区标 mark（不重渲染整章）+ 调 onHighlight 写笔记
+  - **2026-09-16 变更**：动作条「高亮」改为 **toggle**（`toggleSelHighlight` → `decideHighlightToggle`），再次选中同一段即取消；决策新增 `blocked` 态（命中同文本但块缺 `^hl…` id → 提示手动删除，不重复新增）。见 UI-GUIDE §7.4 与进度表 #279。
 - TXT renderContent：每章渲染后 `applyHighlights()` 走 textEl 段落，把本章高亮 quote 命中段内的子串包 `<mark class="rl-hl-persist">`
 - EPUB onFrameLoad：`applyHighlights()` 走 contentDocument.body 段落同理
 - styles.css：`.rl-hl-persist`（黄底 mark）+ `.rl-reader-hl-item` 等列表样式

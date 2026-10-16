@@ -1,7 +1,9 @@
 # AGENTS.md — ReelLudic 工作手册
 
 > 本文档面向 AI Agent 和人类开发者。每次新会话开始时，**必须先读本文档**。
-> 版本：v1.0.2（2026-09-10 发布）| 最后更新：2026-09-11（EntryType 六态 / 11 源 / 依赖图补全）
+> 版本：**v1.4.0 期**（最近发布版 v1.3.0 / 2026-10-11，见 `CHANGELOG.md` 的 `## [1.3.0]` 节；**当前开发版 1.4.0 / 2026-10-16**；更早：原 1.2.1 期**从未发布** ⇒ 整体改定 1.3.0、1.1.1 期内容并入 1.2.0、1.0.4 期并入 1.1.0）| **最后更新：2026-10-16**
+> 1.1.0 期累计（截至 2026-09-23）：阅读器三件（顶栏章标题 / 六档阅读主题 / 标注）+ 海报墙密度 + 视图级题材筛选 + 封面评分角标 + 统计页三层重构 + 设置页顶栏 Tab + 阅读器顶栏标题居中 + 设置页「媒体库目录」搜索式选择 + 若干修复。
+> 1.1.1 期累计（截至 2026-09-27）：主视图显示名取叶子段 + 新增条目手动填写「大众评分 / 平台链接」（仅新增态）+「笔记表格」关闭时顶部块去 callout 残留（#384）。**④ 并入 LyricFlux 音频播放器已按 `docs/superpowers/plans/2026-09-27-1.1.1-design.md` §5.5 推进到 ④-4**：④-1 `pure/lrc.ts`（LRC 解析 / 时间轴 / 二分定位）、④-2 `pure/lrcSource.ts`（` ```lrc ` 块契约 / 四路歌词源优先级 / 引用形态）、④-3 `pure/audioQueue.ts`（播放模式 / 队列推进 / 乱序 / 互斥真源）、**④-4 视图层落装 `AudioPlayerView` + 三档自适应（判容器宽度，非媒体查询）+ 笔记 ` ```lrc ` 块内联播放器（#389）** —— 三个纯模块至此**首次接线**、符号进产物；**#390 修 P0**（`lrc` 语言重复注册 ⇒ 整个插件加载失败：Obsidian 全局静态语言表 + throw 点在 `onload`）；**#391 接上第 4 路歌词源**（音频内嵌标签 `pure/embeddedLyrics.ts`，用户库 118 首里 52 首有内嵌 LRC）；**#392 补「倍速」+「音量浮层」**（照视频播放器既有口径，⛔ 不搬 LyricFlux 的 `playbackUtils`）；**#393 细节定稿**：标签页标题改「关联笔记名」（切歌跟着变）、两浮层改**横向滑条**、音量标度 **0–200% 每 10% 一档**（>100% 走 `GainNode`）；**#394 修正**：倍速按钮定稿为**纯文字**（= 当前倍速）、拖动时已填充段随手柄同步（单一同步口）、音量滑条**颜色随当前值渐变**（0% 无填充 → 0–100% 淡→实 → >100% 偏橙；**倍速滑条不换色**）、浮层随容器尺寸重定位。**仍待推进**：④-5 收口（右侧边栏入口属 UI 增改 ⇒ 待用户过目象形稿；双层 CHANGELOG / 进度表 / UI-GUIDE 已随 ④-4 一并收口）、⑤ 书籍与音乐下载 —— 其中 **⑤-c-1（音乐 · 网易云免费通道）的公共基建 + 纯逻辑 + 服务层已落（#397）**：`pure/downloadPlan`（目标路径决策 / 文件名净化 / 重名去重 / 扩展名白名单 / 大小上限）、`pure/songDownload`（免密外链 `song/media/outer/url` + `isNeteaseDownloadable(fee)` + 魔数嗅探 + 64 KB 门槛）、`services/downloader`（注入式下载落盘）、`services/musicDownload`（搜索复用 #396 端点 + 免费通道下载），**+69 例 / 单元级突变 24/24 `[RED ok]`**；**UI 入口（设置项 / 条目表单下载入口 / 下载弹窗）归 ⑤-c-2**，按 UI 约定须先出象形待裁定。另：**#395 音量滑条配色改判**（按「值」渐变，推翻 #394 的「固定位置摆异色」；倍速滑条不换色）、**#396 音乐条目 LRC 歌词框 + 在线获取歌词**（三源免配置；歌词正文落笔记 ` ```lrc ` 块并纳入重写保留区 ⇒ 保存条目不再静默吞歌词）。**#397 ⑤-c-1**（公共基建 + 网易云免费通道纯逻辑与服务层，+69 例 / 单元级突变 24/24）与 **#398 ⑤-c-2 接线**（下载歌曲弹窗【三段视图：推荐歌单 / 搜索 / 歌单曲目】+ 设置页 **「音乐集成」** 分组【位置固定在「数据源凭据」之下】+ 表单「下载」入口 + **LRC 框上移到「总结摘要」之上**；产物断言 1861 / 产物级突变 15/15）均已落地。🔴 **⑤ 的能力边界（D-13(a)）**：只做网易云**免费通道**（`fee=0` 或缺失）—— 实测热歌榜 200 首只有 **1 首**可下 ⇒ 弹窗**逐首标可下载性**、⛔ 不做「下载全部」、⛔ **不静默过滤**（过滤会让用户以为「搜不到」）；其余平台胶囊**保留但禁用**。⛔ **不碰 `neteaseCrypto`**（源自 AGPL 的 `go-music-dl`）—— 歌单走**公开 `/api/` 端点**即可，无需加密。**⑤-a 网文（Legado 子集）/ ⑤-b Z-Library（用户给定 URL → 落盘）仍未开工。** **#399 音乐面三点收口（2026-09-27）**（用户：「音乐编辑条目界面在本地音频旁加个同款小按钮用于下载歌曲并自动关联，把设置页-音乐集成分组和其下项都删除掉，笔记内 lrc 代码块显示播放器占位的地方改成『启用内置音乐播放器』【其上的也统一文案改成启用内置阅读器/视频播放器】，开启后始终有 LRC 显示播放器、下载歌曲功能，关闭后不显示下载按钮」）：设置页**「音乐集成」分组整体删除**（含 `启用歌曲下载`/`下载目录` ⇒ `数据源配置` 页恰 2 组；下载目录回落 `pure/downloadPlan.DOWNLOAD_ROOT_DEFAULT`；字段按红线保留，`musicDownloadEnabled` **不再被任何地方读取**）｜实验性功能三条**统一命名** `启用内置阅读器` / `启用内置视频播放器` / `启用内置音乐播放器`｜🔴 **`audioInlinePlayer` 成为音乐面唯一开关**：开 ⇒ 笔记内 lrc 块出 LRC 播放器 **且** 音乐编辑表单给「下载」按钮，关 ⇒ 两者都没有｜「下载」按钮与「▶ 播放」**同款**（`.rl-ep-btn-book, .rl-ep-btn-dl` 共用 auto 宽规则；原先裸 `.rl-ep-btn` 是集号方块 36px 固定宽，图标+文字会挤出去）。产物断言 1869 / 产物级突变 15/15。****用户裁定：下载面全是实验功能，版本号锁定 1.1.1，不因新面推进而升版。** 逐条见 `current-progress.md` 进度表与双层 CHANGELOG。
 
 ---
 
@@ -14,9 +16,10 @@
 | 3 | `Project-Rule/current-progress.md` | 了解当前进度、门禁状态和待办 |
 | 4 | `Project-Rule/DESIGN.md` | 数据 schema、视图 ID、抓取流程（实现依据） |
 | 5 | `Project-Rule/PRODUCT.md` | 第一版做什么/不做什么（需求边界） |
-| 6 | `src/main.ts` | 插件入口 + 命令/视图注册 |
-| 7 | `src/data/types.ts` | 核心类型 + entryType 枚举 |
-| 8 | `docs/full-cycle/ReelLudic/` | 阶段产出物（需求澄清/可行性结论） |
+| 6 | `main.ts`（**在仓库根目录，不在 `src/`**） | 插件入口 + 命令/视图注册 + 迁移编排 |
+| 7 | `src/data/types.ts` | 核心类型 + entryType / 子分类枚举 |
+| 8 | `src/pure/dirs.ts` | 目录命名中枢（笔记子目录唯一裁决入口 `noteSubDir`） |
+| 9 | `docs/full-cycle/ReelLudic/` | 阶段产出物（需求澄清/可行性结论） |
 
 ---
 
@@ -27,27 +30,61 @@
 | `npm install` | 安装依赖 |
 | `npm run dev` | 开发模式（esbuild watch） |
 | `npm run build` | 生产构建（tsc + esbuild） |
-| `npm test` | 跑单测（vitest run） |
+| `npm test` ⚠️ **必须先 `cd` 到项目根** | 跑单测（vitest run）。**不带 `cd` 会报误导性的 `TypeError: … reading 'config'` + `(0 test)`**，且"既有测试也会假挂" —— 详见「已知坑点」表第一行 |
 | `npm run version` | 版本号同步（version-bump.mjs） |
-| 双击 `build.bat` | 构建 + 拷贝产物到 `build/` |
-| `powershell -NoProfile -ExecutionPolicy Bypass -File "build/sync_plugin.ps1"` | 同步到测试库 `临时测试库\.obsidian\plugins\obsidian-reelludic` |
+| 双击 `build.bat` | 构建 + 拷贝产物到 `build/`（含 `pause`，脚本化时不适用） |
 
 ### 部署流程（⚠️ Agent 必做）
 
-> 每次改动 `src/`、`styles.css`、`manifest.json` 后，**必须依次执行「构建 → 刷新 build/ → 同步测试库」**，否则 Obsidian 测试库加载的是旧产物。构建产物只在项目根目录，不会自动更新 `build/`。
+> 每次改动 `src/`、`styles.css`、`manifest.json` 后，**必须走完「构建 → 受影响单测（动公共纯逻辑则全量）→ 产物断言 → 突变验证 → 部署测试库 → 镜像同步」**，否则 Obsidian 测试库加载的是旧产物。
+> **旧的 `build/sync_plugin.ps1`、`build.bat` 已废弃不用**（2026-09-12 起）。
 
-1. 双击 `build.bat`（或 `npm run build` + 拷贝 main.js/styles.css/manifest.json 到 build/）
-2. `powershell -NoProfile -ExecutionPolicy Bypass -File "build/sync_plugin.ps1"`
-3. Obsidian 中 Ctrl+P → `Reload app without restarting`
+1. 构建：`node node_modules/typescript/bin/tsc -noEmit -skipLibCheck` + `node esbuild.config.mjs production`（**告警数要与基线一致**：当前基线 = **87 warnings**，2026-10-13 实测；⚠️ 变化沿革：2026-09 期是 87 → 2026-10-07 起 89 → **2026-10-13（#619）回到 87**，原因是星控件补上 `role`/`tabindex` 修掉 2 条 A11y 警告（已实测复核，⛔ 不是漏报）；判定时以**当次构建末尾那行 `N warnings`** 为准；只为更快的日常迭代直跑 esbuild 时，**收口前必须补跑一次 tsc**）
+2. 部署：`node _deploy.cjs`（= 拷三产物到测试库 + **md5 三方一致**校验 + 写 `_deploy_sum.txt`）
+3. 断言：`node C:/Users/kest/.workbuddy/binaries/node/workspace/assert-symbols.cjs`。🔴 **判绿只看 `exit` + 逐行 `FAIL`，⛔ 不看横幅**；PASS 计数用 node `spawnSync` 点算（PowerShell 管道会把输出并成一行）
+4. 突变：`node _mut<批次>.cjs`（每条须 `[RED ok]`；`[SKIP]` = 没验，⛔ 不算通过）
+5. 镜像：见下节
+6. Obsidian 中 Ctrl+P → `Reload app without restarting`
+
+---
+
+## 公开镜像同步（`E:/备份0621/Obsidian集合/Obsidian插件开发/obsidian-reelludic`）
+
+> 镜像 = 面向公开仓库的**源码快照**（含 `.git`），**只同步文件，不代 commit / 不代 push**（提交与推送归用户）。
+
+**成员 = 17 项（source-only，其余一律不进镜像）**
+
+| 类别 | 成员 |
+|------|------|
+| 根文件（14） | `.gitignore`、`.github/`、`CHANGELOG.md`、`LICENSE`、`README.md`、`esbuild.config.mjs`、`package.json`、`package-lock.json`、`manifest.json`、`versions.json`、`tsconfig.json`、`vitest.config.ts`、`version-bump.mjs`、`styles.css` |
+| 源码/测试（3） | `main.ts`、`src/`、`tests/` |
+
+**不进镜像**（判据 = 产物 / 私有 / 临时 / 开发工具，**按判据判，⛔ 不按文件名枚举**）：`main.js`（构建产物）、`build/`、`build.bat`、`Project-Rule/`、`docs/`、`_*.cjs`（一次性探针 / 突变器 / 审计脚本）、`_tools_old/`（**已消费的一次性探针归档**，#381 起）、`_mirror_out.txt`（工具产物）、`_shot/`（复现页与截图）、`.workbuddy/`、`node_modules*`、`Bangumi-Bridge-Obsidian/`、`RELEASE-NOTES-*.md`、`.obsidian/`、`.superpowers/`、`.git-backup-corrupt/`。
+⚠️ **2026-09-23 更正**：旧名单里列的 `_p9.json` / `_probe.py` / `go-music-dl-analysis/` / `.code-review-task2.md` **均已不存在**（枚举式清单必烂）⇒ 改成上面的「判据 + 排除类」写法。
+
+**同步步骤（幂等）—— 首选正统工具 `_mirror.cjs`**
+
+```bash
+node _mirror.cjs          # DRY-RUN：报告写进 _mirror_out.txt（不打印到 stdout，别看漏）
+node _mirror.cjs apply    # 执行拷贝
+```
+
+该工具用**白名单**（`FILES` + `DIRS`）遍历 —— 所以新增的根文件/目录**必须同时写进它的 `FILES`/`DIRS`**，否则不会被同步；反过来它**绝不会**把 `_*.cjs` / `_tools_old/` 之类带进公开快照 ✓。它顺带做 LICENSE 只读核对（红线 10）。
+🔴 **判绿口径**：报告里「待拷贝 0 项」「镜像无多余文件」「LICENSE 一致」，且独立全量比对必须**真实差异 = 0**（逐字节；仅 CRLF 差异也算差异 —— 2026-09-23 用它重拷修掉了 `.github/*` 的 4 处 CRLF 不一致）。
+
+手工兜底（工具不可用时）：`cmp -s` 单文件、`diff -rq` 目录（`Only in 源` = 新增待拷，`Only in 镜像` = 待删）；拷贝目录注意 `cp -rf "src/." "$DST/src/"` 的 **`/.` 形态**（写成 `cp -rf src "$DST/"` 会嵌套）。
+
+**🔴 LICENSE 例外**：只允许 `cmp` 只读核对，**禁止 `cp` / 写入 / 归一**（红线 10）。不一致时停下报告，等用户裁定。
 
 ---
 
 ## 🔴 红线 — 不能破坏的功能
 
-### 1. 视图类型 ID（`src/main.ts`）
+### 1. 视图类型 ID（`src/views/HomeView.ts`）
 
-- `MEDIA_VIEW_TYPE = 'reelludic-media'`、`TRACKING_VIEW_TYPE = 'reelludic-tracking'`
+- `HOME_VIEW_TYPE = 'reelludic-home'`（统一视图：页签容器，计划/阅读/影视/游戏/音乐/统计共用一个 ItemView）
 - **不要修改**，否则工作区布局（workspace.json）中已保存的视图位置全部失效
+- 历史遗留：`reelludic-media` / `reelludic-tracking` 两个视图 ID 已在统一视图改造中合并，**勿再新建同名视图**
 
 ### 2. catalog.json schema（`src/data/types.ts` + `catalog.ts`）
 
@@ -60,11 +97,20 @@
 - `MediaStatus` 四态 `want / watching / watched / archived` **不能改名**（存入 JSON/MD，改名即数据损坏；v0.5 已移除 `dropped` 增 `archived`，存量 `dropped` 数据在 normalizeEntry 自动迁移为 `archived`，勿再引用 dropped）
 - `EntryType` 枚举值 `movie / tv / anime / book / game / music` 六态平铺，**不要移除**
 - 评分范围 1~5（0=未评分），边界校验不能放宽
+- **子分类枚举**（append-only 可选字段，只增不改）：
+  - `BookKind = 'book' | 'novel' | 'comic'`（book 展示名「文学」原「出版」；漫画 1.0.3.1 曾下线，**#444e / 2026-09-30 已加回** —— 独立源链组 + 独立 `笔记/comic/` 目录，归一/匹配/计数与其他子类**零特判**）
+  - `MusicKind = 'music'`（**原 `'other'` 已于 1.0.3.1 下线**，存量值归 music；音乐不再分子类）
+  - 合法值集合以 `BOOK_KIND_LABELS` / `MUSIC_KINDS` 为准，归一函数用 `Object.keys`/`includes` 校验（**禁用 `in`**，会沿原型链误判 `toString` 合法）
+  - 新增子分类值时必须三件套同步：`MediaEntry` 字段注释 + `normalizeEntry` 白名单（`src/data/catalog.ts`）+ `catalog.test.ts` 回归
 
-### 4. 条目笔记 frontmatter（`noteGenerator.ts`）
+### 4. 条目笔记路径与 frontmatter（`noteGenerator.ts` + `pure/dirs.ts`）
 
-- 字段名（id/type/title/status/rating/year/genres/progress_season/progress_episode）**不能改**
-- 生成模板的章节结构（基本信息/个人评语/观看链接）为公共约定，重命名会破坏既有笔记的可读性
+- **笔记子目录唯一裁决入口 = `pure/dirs.noteSubDir(e)`**：书籍按子分类分（文学 `笔记/book/`、网文 `笔记/novel/`、漫画 `笔记/comic/`），其余类型按类型目录（`笔记/movie|teleplay|animation|game|music/`）。**新增/改路径一律走它**，勿散落硬编码 `ENTRY_TYPE_DIRS`
+- 存量网文笔记迁移 = `services/novelMigration.migrateNovelNotes(vault, opts)`（挂在 `main.migrateDirectories` 第 4 步）：幂等、目标冲突不覆盖、源缺只补引用、失败静默
+- frontmatter 键名**不能改**：核心 `id/type/title/status/rating`；Dataview 对齐 `tags/created/updated/progress_percent`；其余按类型可选（`year/genres/director/cast/author/publisher/platform/album/banner/…`，见 `entryFrontmatter`）
+- 生成模板的章节结构（`基本信息 / 内容简介 / 个人评语 / 一句话总结 / 核心看点 / 游玩记录 / 相关链接·观看链接`）为公共约定，重命名会破坏既有笔记的可读性与回填解析（`pure/noteEditable.ts`）
+- 🔴 **空评语那行是解析哨兵**（`## 个人评语` 下、评语为空时写入）：文本真源 = `pure/noteEditable.NOTES_PLACEHOLDER`（现行 `（在这里写下你的感想）`），判定只走 **`isNotesPlaceholder()`** —— **新旧形态都算「未写」**（旧文本存在 `LEGACY_NOTES_PLACEHOLDERS`，⛔ 别删：删了旧条目一打开就把占位符当成用户评语回填）。`noteGenerator` 写入侧必须取该常量，⛔ 不许内联第二份字面量（#453 收敛过）
+- **`## 观看链接` 的内容**（#448 立）：影视（movie/tv/anime）的**逐集网络链接**要写成 `- [第 1 集 集标题](url)`（`noteGenerator.episodeWatchLines`；标签走 `pure/episodeAssoc.episodeHintLabel` 同一份真源；电影不出「第 N 集」、多资源电影用「文件 N」）；**本地路径不写进笔记**（绝对路径又长又不可点）。⛔ 别退回「只读 `e.links`」——影视的链接早已迁到 `episodeUrls`（提交时 `links` 清空），那样写等于一条集链接都不落笔记
 
 ### 5. 构建链
 
@@ -77,7 +123,8 @@
 
 ### 7. 版本三文件同步
 
-- `package.json` / `manifest.json` / `versions.json` 的 version 必须一致，`npm run version` 统一回写
+- `package.json` / `manifest.json` / `versions.json` 的 version 必须一致。
+- ⚠️ **实践口径（用户裁定）：改版本号是手改这三处**，⛔ 不走 `npm version` / `npm run version` —— 该脚本（`version-bump.mjs`）确实存在、也能用，但它内含 `git add manifest.json versions.json`，与「提交归用户」相冲。本仓也不打 `v*` tag、不跑 CI 发版。
 
 ### 8. 部署三步
 
@@ -97,6 +144,14 @@
 - **2026-09-12 用户裁定**：以 **GNU 官方 GPL-3.0 全文**为准（`https://www.gnu.org/licenses/gpl-3.0.txt`，35149 字节 / 674 行），**源与镜像统一为全文**。本工作区源 `LICENSE` 已于当日由短版替换为全文（经用户明确授权，属红线 10 记录在案的唯一例外）；**此后本红线恢复常规效力：LICENSE 只读，不得再改写/替换/重新生成/格式化**。版权归属仍以 `ReelLudic — Copyright (C) 2026 fhb263` 为准（全文末尾惯例附注，或由仓库 README / `package.json` 承载）。
 
 ---
+
+## 🔒 当前版本策略（2026-09-16 立；2026-09-22 / 2026-10-04 / 2026-10-11 / 2026-10-16 用户补充裁定）
+
+- **当前在 1.4.0 期**：版本三文件（`package.json` / `manifest.json` / `versions.json`）均为 **1.4.0**（手改，见红线 7）。⚠️ 发版时 `versions.json` 要**加键**（不是改既有键），并同步 `package-lock.json` 根版本（顶层 + `packages[""]`）**与 `src/services/mangadex.ts` 的 `MANGADEX_UA` 版本段** —— #473 断言会逐条核对「UA 版本段 == `package.json` version」与「三处一致」。
+- **沿革**：正式发布的更新日志止于 1.0.3 → 原 1.0.4 期并入 **1.1.0** → 1.1.1 期**改定 1.2.0**（2026-10-04）→ 原 1.2.1 期（**从未发布**）**整体改定 1.3.0**（2026-10-11；装的是实打实的新功能面：微信读书同步 / 搜索、内置阅读器本地漫画、播放器时间戳·截图侧边栏、导航布局与时间线视图、失效链接检测等，按语义化版本属 **minor**）→ **1.4.0**（2026-10-16）。
+- **1.4.0 期**（用户 2026-10-16 点名「插件版本号定级为 1.4.0」）：EPUB 阅读器正文插图恢复显示（`srcdoc` 无基准地址 ⇒ 包内相对路径全 404 的老问题）、EPUB 首屏/开章提速（目录字数惰性化，实测省 ~95% 同步时间）、Steam 凭据行两处 UI 修正（副标题取消并入说明、按钮间距 16px → 8px）。⚠️ 定级说明：本批**主要是体验优化与修复**，按 2026-09-22 那条「体验优化不算新增功能」的口径本可留在 1.3.x；**是用户显式点名定为 1.4.0**，故照办（⛔ 别据本条反推「以后优化都能升 minor」—— 判不准时**先问用户**）。
+- 🔴 **2026-09-22 用户裁定（仍然有效）：体验优化（如「视图级题材筛选」这类现有功能的完善）不算「新增功能」**，可继续留在同版本；只有**全新的能力面**才需另开版本。判断不清时**先问用户**，⛔ 别自行归类后闷头做。
+- 发版流程照旧：三文件同步（手改）+ UA 版本段 → 构建 → 受影响/全量单测 → 产物断言 → 突变 → 部署测试库 → 公开镜像同步（只同步文件，commit/push 归用户）。
 
 ## 🟡 谨慎修改的文件
 
@@ -122,12 +177,13 @@
 | `src/services/tmdb.ts` | 网络层，可独立修改（mock 单测） |
 | `src/services/douban.ts` | **全类型主力源**（书籍/游戏单源，影视/动画与 TMDB/Bangumi 并存）：已适配反爬（Node 传输层 + PoW + 拦截页防护 + 封面本地化 + 详情小节解析），可独立修改（mock 单测） |
 | `src/services/nodeHttp.ts` | Node 原生 http/https 传输层（桌面端专用，惰性 require 防移动端崩），可独立修改 |
-| `src/services/resultTypes.ts` | 书籍/游戏搜索结果类型（Douban 单源后独立于此文件，勿再依赖已删的 googleBooks/rawg） |
+| `src/services/resultTypes.ts` | 书籍/游戏搜索结果类型（形状源自 Google Books / RAWG 两代实现，**现仅 Douban 产生**；⛔ 别据此以为这两个服务已从仓库删除 —— 见下方「数据源」口径） |
+| `src/services/novelMigration.ts` | 网文笔记目录迁移（结构性 vault 接口 + 内存假 vault 单测 10 例，幂等；改判定条件需同步测试） |
 | `src/pure/noteEditable.ts` | 笔记可编辑字段解析（正文章节 + frontmatter + 来源行），改动需同步 EntryModal 回填逻辑与测试 |
 | `src/views/`、`src/modals/` | 视图 UI，逻辑下沉纯模块后可安全改样式 |
 | `tests/` | vitest 单测 |
 | `Project-Rule/`、`docs/` | 纯文档 |
-| `build.bat` / `build/sync_plugin.ps1` | 构建/同步脚本 |
+| `build.bat` / `build/sync_plugin.ps1` | ⚠️ **均已废弃**（2026-09-12 起）—— 构建走 `node esbuild.config.mjs production`，部署走 `node _deploy.cjs`。保留文件仅为历史，⛔ 别再引用 |
 
 ---
 
@@ -152,7 +208,9 @@
 | **Svelte 4 模板不支持 `as` 类型断言** | 模板表达式里写 `{s as MediaStatus}` 报 `Unexpected token`（esbuild-svelte 解析错误） | 预类型化常量（`const STATUS_OPTIONS: MediaStatus[] = [...]`）后在模板 each；断言只放在 `<script>` 内。**同族限制：模板内 `!` 非空断言（`{arr[i]!}`）、`bind:value` 数组下标（`bind:value={arr[i]}`）同样编译报 Unexpected token**——改用事件驱动 + helper（`inputVal(ev)` 取值、`arr.map` 重建数组触发响应式）、函数签名收 `string | undefined`。已踩坑：2026-08-25 EntryForm 状态 chips / 2026-08-30 观看链接双路径 |
 | **双悬停提示（title / aria-label / Obsidian tooltip）→ v3 已定规则** | 旧坑：按钮同时写 `title`（原生黄条）与 `aria-label`（Obsidian 对带 aria-label 元素自绘 tooltip）→ 悬停两个提示文本。v3 修订（2026-09-09）：**Obsidian 会因 `aria-label`（含祖先就近匹配）自动弹官方气泡** → 它与 `data-tip` 自绘气泡**同元素/祖先链并存必叠双层**（官方后出覆盖自绘）。已踩坑：2026-08-30 海报墙等 8 处（v2 title→data-tip）；2026-09-09 EntryForm 4 浮层 aria-label 容器内 11 子按钮 + 观看/检索 2 按钮（13 处双气泡） | **v3 规则（见 UI-GUIDE §3）**：悬停视觉提示一律 `data-tip`，禁 `title` 黄条；**`aria-label` 不放在带 `data-tip` 的元素或祖先链上**。读屏命名分流：有可见文字直接删 aria；纯图标按钮用可见/隐藏文本或 `aria-labelledby` 指向文本元素（不触发官方气泡）；`role="dialog"` 等容器命名一律 `aria-labelledby` 指向可见标题。新写 hover 提示照此执行 |
 | **Bangumi infobox value 双形态** | `/v0/search/subjects` 的 infobox 项 value 可能是字符串或 `{v:...}` 结构；`s.infobox` 类型是 unknown | infoboxValue 用 `Array.isArray` 收窄 + 同时处理两种 value 形态。已踩坑：2026-08-25 |
-| **设置页 DOM 样式须写 styles.css** | Settings.ts 用 DOM API 创建的元素（折叠行等）不经 Svelte 编译，样式不会注入 main.js | 自定义类样式（rl-src-*）写入 styles.css 并随部署同步。已踩坑：2026-08-25 |
+| **设置页 DOM 样式须写 styles.css** | Settings.ts 用 DOM API 创建的元素（折叠行等）不经 Svelte 编译，样式不会注入 main.js | 自定义类样式（如 `rl-srcchk-*`）写入 styles.css 并随部署同步。已踩坑：2026-08-25 |
+| 🔴 **本机跑 vitest ⛔ 不能省 `cd`** | 不带 `cd` 时 vitest 把 root 解析成**小写盘符** `c:/…`，而 `vitest.config.ts` 的别名是 `resolve(__dirname,'src/pure')`（大写）⇒ **别名全废**；报错却是**误导性**的 `TypeError: Cannot read properties of undefined (reading 'config')` + `(0 test)`，连**既有测试也会假挂**（只有不依赖别名的独立模块能过，极易误判成环境坏） | 一律 `cd C:/Users/kest/Desktop/obsidian-reelludic && node node_modules/vitest/vitest.mjs run …`；跑前瞄一眼横幅里的 root 是否为大写盘符。已踩坑：2026-09-23（当时连 `tests/sourceRegistry.test.ts` 35 例都假挂） |
+| ⚠️ **带反引号 / `$` / 反斜杠的脚本 ⛔ 别放进 `node -e "…"`** | bash 先解析双引号字符串：`` `code` `` 会做**命令替换**（整段被吃成空）、`$VAR` 会展开、`\\` 层数被削（正则静默变义或语法报错） | 这类脚本（含中文长文案 / 正则 / 模板串）**落成 `.cjs` 文件再 `node 文件`**（本仓根的 `_*.cjs` 就是此用途）。已踩坑：2026-09-23（UI-GUIDE 一条历史行被吃掉一半） |
 | **Svelte 4 裸 `onclick` 全部无反应（静默失败）** | Svelte 4 把 `onclick={fn}` 当普通属性编译为 `attr(el,"onclick",fn)` → setAttribute 把函数转字符串 → 浏览器当内联脚本执行（函数声明但不调用），点击无反应且**无任何报错** | **必须用 `on:click={fn}`**（Svelte 4 事件指令 → addEventListener）；`onkeydown` → `on:keydown`。Svelte 5 才支持裸 `onclick`。已踩坑：2026-08-25 v0.0.1 全部按钮失效（提交 2d95ead 修复） |
 | **Obsidian `vault.create` 不自动建父目录（ENOENT）** | 首次写 `ReelLudic/catalog.json` 时目录不存在 → `ENOENT: no such file or directory`；`vault.create` 不会递归建目录 | 写入前逐层 `getAbstractFileByPath` + `createFolder`（见 `src/services/vaultIO.ts` 的 `ensureParentFolder`）。已踩坑：2026-08-25 保存报 ENOENT（提交 8bf0345，vaultIO.test.ts 锁定） |
 | **修复后未重建部署 = 测试库跑旧版** | 代码/提交已修复，但 build/ 与测试库 main.js 是修复前构建 → 用户实测仍是 Bug 表现，误判"没修好" | 每次改代码后必须重建 + 部署，并**比对测试库 main.js 时间戳与提交时间**、检查编译产物特征（如 listen vs attr）。已踩坑：2026-08-25 onclick 修复后仍不能点击 |
@@ -169,7 +227,7 @@
 | 豆瓣反爬 | 无 Cookie 时 j/search 返回 403 JSON（`{"r":1,"code":403}`） | 已适配：Node 传输层 + 完整浏览器头 + dbcl2 登录态 Cookie + PoW 自动求解 + 拦截页三态检测；书籍/游戏搜索已完全依赖 Douban，不配置 Cookie 则无结果并提示 |
 | 中文路径编码 | PowerShell 同步中文路径 | 沿用 lyricflux 的 Unicode 方案（sync_plugin.ps1 已处理） |
 | 封面大图内存 | 海报墙一次性渲染大量大图卡顿 | 封面缩放存储；MVP 百级条目可接受，预留懒加载 |
-| **flex column + min-height 100% 容器内 sticky 布局错位** | 在 `.rl-home`（display:flex; flex-direction:column; min-height:100%）内给页签/筛选栏设 `position:sticky; top:0/34/72px`，内容滚动时**首行卡片被推到页签栏上方**（sticky 元素 layout 占位与 flex 布局在内容溢出时计算错位） | **避免在 flex column + min-height 容器内使用 sticky**；如需顶栏固定改用：①固定区放 `.rl-home` 之外的独立 sticky 容器；②JS 滚动监听手动 `position:fixed`。已踩坑：2026-08-29 回退 sticky 改动（commit 5642c65），改为右下角「回到顶部」按钮（commit dbe349c） |
+| **吸顶 sticky：别直接给内部行加 sticky，且警惕定位声明被覆盖** | 两种真失效方式：⑴**属性被级联压掉**——`.rl-tabs{position:sticky}` 被更具体的 `.rl-tabs.rl-tabs-modern{position:relative}` 覆盖（两个类 > 一个类且后者在后），**不报错、不提示**，表现为「从上线起从未吸顶」；⑵**内部行仅部分宽度 + margin 区不参与吸附** → 吸顶时滚动内容从栏的上方/两侧露出（2026-08-29 观察到的「首行卡片被推到页签栏上方」属此类） | **吸顶只做在「拉满宽度 + 同色底」的外层容器**（`.rl-sticky-head`）；间距用 `padding` 收进容器、**不要用 `margin`**；同一元素不得被两条规则同时设 `position`。⚠️ **本条早前记为「flex column + min-height:100% 会破坏 sticky」——2026-09-14 以 Chrome 无头忠实复现（照抄 obsidian.asar 祖先链 + `contain:strict`）已推翻**：K1–K4 全变体吸附，真因只有上面两条。详见内部 CHANGELOG ⑳。⚠️ **1.0.4 曾按此实现页签吸顶，同日经用户上手裁定「放弃吸顶」并已整体回撤 —— 当前项目无吸顶**，本条保留为「将来若做」的须知。 |
 | **textarea auto-grow：scrollHeight 不小于渲染高度** | 简介框 auto-grow 用 `height:'auto'` 复位再取 scrollHeight——textarea 的 scrollHeight **不会小于当前渲染高度**，`height:auto` 后仍停 `rows=6` 基线，文字少时框缩不回去 | **先 `el.style.height='0px'` 再取 `el.scrollHeight`**（强制按内容重算）+ CSS `min-height` 控制少文字基线。已踩坑：2026-08-29 修复（commit c8ba585） |
 | **Obsidian 视图滚动容器是 `.view-content`（非 window）** | 视图内容滚动发生在 view-content，`svelte:window`/window 的 scroll 事件**不触发**；滚动容器可能是 contentEl 或其祖先 | 从组件根元素向上找第一个 `scrollHeight > clientHeight + 1` 的祖先绑 `scroll` 监听（passive）。已踩坑：2026-08-29 回到顶部按钮实现 |
 | **`.svelte` 文件不经 tsc 检查 → Svelte 内 TS 类型错误静默放行** | tsconfig `include: ["**/*.ts"]` **不含 .svelte**，esbuild-svelte 只转译不查类型——`.svelte` 里对 number 调 `.replace` 等类型错误 tsc 全绿、运行时才炸（被 try/catch 吞掉后表现为「功能静默不生效」） | Svelte 内对跨类型值操作保持防御：`String(x)` 包一层再 `.replace`；改完 Svelte 后**必须 grep 编译产物**（main.js）验证目标代码形态。已踩坑：2026-08-31 游戏条目豆瓣回填全空（`GameSearchResult.id` 是 number 却调 `r.id.replace('douban:','')` → TypeError 静默吞 → 详情拉取从未发生） |
@@ -178,42 +236,48 @@
 | **产物 CSS 断言：scoped 选择器带 hash、minify 折叠空白但保留函数内空格** | Svelte scoped 样式在 main.js 里是 `.rl-xxx.svelte-<hash>.svelte-<hash>{…}`（搜 `.rl-xxx:hover` 必假阴性）；esbuild css minify 折叠非关键空白但**保留 `minmax(0, 1fr)` 等函数内空格**（搜无空格形态也假阴性） | 断言前先 dump 产物实际片段确认形态；CSS 规则断言用宽松子串/正则（分隔关键词各自 includes），别按源码书写形态猜。已踩坑：2026-09-05 追番表 hover（#220）与排期表等高（#223）断言各一次 |
 | **按钮 hover 语言（全项目约定）** | 操作按钮此前颜色/缩放/反馈各写各的（常驻主题色、无 hover 反馈、两档 scale） | 成对操作按钮统一：**默认灰 → hover accent（文字或底）+ `transform: scale(1.12)` + transition**；primary CTA（常驻主题色）与封面 overlay 快操例外。已落地：2026-09-05 #218-221 列表/追番表/音乐行/海报墙 |
 
+| **高亮 `<mark>` 的文字色依赖 UA 默认 → 深色模式下黑字隐形** | `<mark>` 的 UA 默认文字色是 `MarkText`＝**纯黑 `rgb(0,0,0)`**；Obsidian 核心只覆写 `.markdown-rendered mark { color: var(--text-normal) }`，**而阅读器正文不在那个作用域里** → 底色 / 划线 / 波浪三种样式的文字**全落黑**。色块档靠 42% 黄底遮挡才「看着正常」，划线 / 波浪档 `background: transparent` → 深色主题下黑字无遮挡 = 看不见（2026-09-18 用户报障；浅色下同样偏黑，只是不明显） | `.rl-hl-persist` **基类必须显式写 `color: inherit`**（口径：高亮只加底色 / 划线、**不改文字颜色**；⛔ 不要写死任何色值，否则与「换肤只改容器变量」的机制打架）。🔴 **两处真源必须同步改**：`styles.css`（TXT/PDF）与 `src/pure/highlight.ts` 的 `highlightMarkCss()`（EPUB `srcdoc` 注入的**独立文档**，收不到插件样式表）。已加双向断言（css 基类 inherit + 反向守卫「只准 inherit」、js 注入版同步 + 反向守卫「不得退回旧形态」）+ 突变 3/3 验证。⚠️ 断言写法坑：`color:\s*(?!inherit)` 会因 `\s*` **回溯到零长度**而对合规写法假红 → 改「取值后比对」，并用 `(?<![\w-])` 排除 `text-decoration-color` |
+
 ---
 
 ## 依赖关系图
 
 ```
-main.ts（入口 + 命令注册 + 视图注册 + 事件中枢 + homeTab 页签状态）
-  ├── Settings.ts（服务集成：11 源注册表凭据 + 每类型源链 + 翻译双 Key + 库目录 + 播放/阅读开关 + 外观）
+main.ts（入口 + 命令注册 + 视图注册 + 事件中枢 + homeTab 页签状态 + 库目录迁移）
+  ├── Settings.ts（服务集成：12 源注册表凭据 + 6 组源链勾选（书籍/漫画/游戏/音乐/影视/动画）+ AI 翻译与总结双 Key + 库目录 + 播放/阅读开关 + 外观）
   ├── views/HomeView.ts（统一视图 reelludic-home，页签容器）
-  │     └── components/HomeView.svelte（页签栏：计划表/书籍/影视/游戏/音乐/统计 + 回到顶部按钮）
-  │           ├── components/MediaList.svelte（书架：海报墙/列表/瀑布流 + 筛选排序 + 观看按钮/右键菜单）
+  │     └── components/HomeView.svelte（页签栏：计划/阅读/影视/游戏/音乐/统计 + 回到顶部按钮）
+  │           ├── components/MediaList.svelte（书架：海报墙/列表/瀑布流/按歌手分组 + 筛选排序 + 观看按钮/右键菜单 + 书籍子分类 chips）
   │           ├── components/TrackingBoard.svelte（追更表：更新检测串行限流 + 结果落库）
   │           ├── components/CalendarBoard.svelte（排期表：月历/周历 + 拖拽 + 到期横幅 + 日期点击弹详情）
-  │           └── components/StatsBoard.svelte（统计 1.0：KPI 行 + 月度趋势×今年动态 + 四库分区 + 快捷行 + 往年报告）
+  │           └── components/StatsBoard.svelte（统计页**三层倒金字塔**：核心指标 1 主 4 辅 → 动态 → 趋势 → 概览 Tab；纯逻辑全在 pure/statOverview.ts，主 CTA 在主指标卡内）
   ├── modals/EntryModal.ts（添加/编辑弹窗：双套 UI + 笔记回填 + 孤儿封面清理 + 双写冲突）
-  │     └── components/EntryForm.svelte（Douban 版 / TMDB·Bangumi 版，formMode 按 source 切换；音乐含本地音频单行）
+  │     └── components/EntryForm.svelte（Douban 版 / TMDB·Bangumi 版，formMode 按 source 切换；搜索框类型下拉 = 书籍分类唯一入口）
   ├── modals/*（ConfirmModal 通用确认 / LinkPickerModal 多链接选源 / EpisodePickerModal 集数选择 /
   │     NoteConflictModal 双写冲突 / ExcerptModal 摘抄 / GameSessionModal 游玩记录 / CalendarDayModal 排期日 / 
-  │     PosterMigrateModal 封面迁移 / PosterCleanupModal 孤儿清理 / VaultFileSuggest 文件建议）
+  │     PosterMigrateModal 封面迁移 / PosterCleanupModal 孤儿清理 /
+  │     VaultFileSuggest 文件建议 / VaultFolderSuggest 文件夹建议（后者兼作旧版 Obsidian 的降级入口））
   ├── services/EntryService.ts（增删改查编排 + 状态流转 + 笔记生成/双写冲突检测）
   │     ├── services/vaultIO.ts（VaultIO 适配：writeText 前 ensureParentFolder）
+  │     ├── services/novelMigration.ts（网文笔记迁入 笔记/novel/：结构性 vault 接口，幂等，10 例单测）
   │     ├── services/tmdb.ts（TMDB 搜索/详情：电影/电视剧，vote_count→ratingCount）
-  │     ├── services/bangumi.ts（Bangumi 搜索/详情补全：subjects + persons）
+  │     ├── services/bangumi.ts（Bangumi 搜索/详情补全：subjects + persons；服务**动画 + 漫画**两链，漫画走 `subjectType=1` 书籍类目）
   │     ├── services/resultTypes.ts（BookSearchResult/GameSearchResult 类型定义）
   │     ├── services/douban.ts（全类型主力源：反爬适配 + Cookie 失效提示 + 详情小节）
   │     ├── services/nodeHttp.ts（Node 原生传输层，桌面端专用，惰性 require）
   │     └── services/aiSummary.ts（AI 总结摘要：复用阅读器翻译凭据，依赖全注入）
   │   另有按需注册的补充源：openLibrary / googleBooks / steam / musicbrainz / itunes /
-  │     omdb / anilist / igdb（11 源注册表见 src/pure/sourceRegistry.ts，各组默认链见 DEFAULT_CHAINS）
+  │     omdb / anilist / igdb / mangadex（12 源注册表见 src/pure/sourceRegistry.ts，各组默认链见 DEFAULT_CHAINS）
   ├── data/catalog.ts（catalog.json 读写；normalizeEntry 为落库唯一关口）
-  ├── data/noteGenerator.ts（.md 笔记生成，按类型渲染，含图书小节 + 指纹）
-  ├── pure/*（47 个无 obsidian 依赖纯模块：status/labels/rating/dirs/cardMeta/stats/report/
-  │     搜索链 search*+resultMerge+searchCache/进度 bookProgress+readingProgress+pdfProgress+
-  │     epubParse+txtParse+bookmark+highlight/翻译 translate+aiSummary/源注册 sourceRegistry/
-  │     追更 tracking+updateCheck+episodeScan/界面辅助 menuPlacement+mediaFileUrl+virtualWindow+
-  │     bulkConfirm+dailyLog+activityFeed 等，逐一有对应 tests/）
-  └── data/types.ts（MediaEntry / EntryType：movie|tv|anime|book|game|music）
+  ├── data/noteGenerator.ts（.md 笔记生成，按类型渲染 + 指纹；路径走 pure/dirs.noteSubDir）
+  ├── pure/*（134 个无 obsidian 依赖纯模块；**#369 之后新增批次**：posterGrid / genreFilter / statOverview /
+  │     settingNav / searchIcons / focusType / libraryDir 等。其余：status/labels/rating/dirs/cardMeta/stats/report/
+  │     搜索链 search*+resultMerge+searchCache/子分类 bookKind+musicKind+searchTypeSel/
+  │     进度 bookProgress+readingProgress+pdfProgress+epubParse+txtParse+bookmark+highlight/
+  │     翻译 translate+aiSummary/源注册 sourceRegistry/追更 tracking+updateCheck+episodeScan/
+  │     界面辅助 menuPlacement+mediaFileUrl+virtualWindow+bulkConfirm+dailyLog+activityFeed 等，
+  │     逐一有对应 tests/）
+  └── data/types.ts（MediaEntry / EntryType：movie|tv|anime|book|game|music；BookKind：book|novel|comic；MusicKind：music）
 ```
 
 ### 数据流
@@ -229,10 +293,22 @@ EntryModal 提交 → EntryService.create()
 
 ```
 EntryModal 输入标题 → 按类型分流（并行 + 进度上报）
-  书/游戏   → Douban 单源（游戏另有 Steam 补充源，默认关）
+  书籍      → Douban 主源 + Open Library（Google Books 可选加入）；文学/网文同链，仅落库 bookKind 不同
+  漫画      → Douban 主源 + Bangumi（subjectType=1 书籍类目）+ MangaDex；缺 Bangumi Token 时静默降级
+  游戏      → Douban 单源（+ Steam 补充源，默认关）
   音乐      → Douban + MusicBrainz + iTunes 满链
   影视      → TMDB + Douban 并行 → mergeBySource/sortByRelevance 按相似度排序
   动画      → Bangumi + Douban 并行
   → 候选列表（豆瓣前 3 条已预补详情）→ 用户选择（豆瓣封面下载到本地）
   → 按命中源切换表单 UI（douban/tmdb/bangumi）→ 保存
 ```
+
+> **#444e / 2026-09-30 起「漫画」源链组加回**：`SourceGroup` **六组** = `book | comic | game | music | movieTv | anime`；漫画**独立成组**（主源豆瓣 + Bangumi 书籍类目 + MangaDex），Bangumi 同时服务 `anime` 与 `comic`。⚠️ comic 不是 `EntryType`（是 book 的 `bookKind` 子类），路由走 `sourceGroupForBookKind`（⛔ 不改 `sourceGroupForType`）。
+
+### 🔴 数据源口径（唯一真源 = `src/pure/sourceRegistry.ts` 的 `PROVIDERS`）
+
+**12 个源全部在册**：`douban` / `tmdb` / `bangumi` / `openLibrary` / `googleBooks` / `steam` / `musicbrainz` / `itunes` / `omdb` / `anilist` / `igdb` / `mangadex`。
+
+- ⛔ **「已移除 Open Library / Google Books / RAWG」是错的**：`openLibrary`、`googleBooks` **都在注册表里**，只是**默认链里关着**（用户可在设置页加入）；**`RAWG` 从未注册过**（历史上提过、没落地 —— `services/resultTypes.ts` 里那句「RAWG 时代遗留形状」说的是**类型形状**的来历，不是说该服务还在或曾注册）。
+- **默认链**（`DEFAULT_CHAINS`）：book = `douban + openLibrary`｜comic = `douban + bangumi + mangadex`｜game = `douban + steam`｜music = `douban + musicbrainz + itunes`｜movieTv = `douban + tmdb`｜anime = `douban + bangumi`。
+- 🔴 **凡涉源清单**（文档、UI 文案、测试、断言）**一律以 `PROVIDERS` 为准去 grep / 遍历**，⛔ 别信云备忘、旧 CHANGELOG、或本文件上方依赖图里那份手抄名（那份只为便于阅读，抄漏过）。

@@ -9,6 +9,13 @@ export function normalizeScrollMode(v: unknown): ScrollMode {
     return v === 'paged' ? 'paged' : 'continuous';
 }
 
+/** 阅读行宽：strict = 固定版心（默认）/ full = 铺满可用宽度；非法值回落 strict */
+export type ReaderLineWidth = 'strict' | 'full';
+
+export function normalizeLineWidth(v: unknown): ReaderLineWidth {
+    return v === 'full' ? 'full' : 'strict';
+}
+
 /** 钳制到 [0,1] */
 export function clampRatio(ratio: number): number {
     if (!Number.isFinite(ratio)) return 0;

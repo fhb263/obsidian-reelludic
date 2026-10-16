@@ -5,6 +5,7 @@ import { App, Modal, Notice } from 'obsidian';
 import type ReelLudicPlugin from '../../main';
 import type { MediaEntry } from 'data/types';
 import { formatPlaytime, hoursToMinutes } from 'pure/playtime';
+import { applyScrollPref } from 'services/scrollPref';
 
 export class GameSessionModal extends Modal {
     constructor(
@@ -22,6 +23,7 @@ export class GameSessionModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
 

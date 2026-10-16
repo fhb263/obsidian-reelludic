@@ -87,14 +87,14 @@ describe('pure/dailyLog renderJournalBlock', () => {
     it('无动态 → null（调用方据此提示、不写文件）', () => {
         expect(renderJournalBlock(dateStr, collectDayActivity(entries, log, '2026-01-01'))).toBeNull();
     });
-    it('区块格式：标题 + callout 头 + 状态行（按类型换文案）+ 新增行', () => {
+    it('区块格式：标题 + callout 头 + 状态行（统一状态名，不按类型分化）+ 新增行', () => {
         const block = renderJournalBlock(dateStr, collectDayActivity(entries, log, dateStr));
         expect(block).toBe(
             [
                 `${JOURNAL_HEADING_PREFIX}${dateStr}`,
                 '> [!reelludic] 今日 3 条动态',
                 '> - 14:32 已看《三体》',
-                '> - 20:15 在读《沙丘》',
+                '> - 20:15 在看《沙丘》',
                 '> 新增条目 1：三体',
             ].join('\n'),
         );

@@ -8,12 +8,20 @@ export interface NodeHttpResponse {
     status: number;
     text: string;
     headers: Record<string, string | string[] | undefined>;
+    /**
+     * **跟随重定向之后**的最终地址（#420 追加，append-only 可选字段）。
+     * 🔴 为什么要它：书源的「搜索命中唯一结果时站点直接跳到书籍页」这一场景里，
+     *    我们发的是 `/search?key=x`，而真正的书籍地址是**跳到之后**那一页 ⇒ 不拿最终 URL 就没法记账。
+     */
+    finalUrl?: string;
 }
 
 export interface NodeHttpBufferResponse {
     status: number;
     buffer: Buffer;
     headers: Record<string, string | string[] | undefined>;
+    /** 同 `NodeHttpResponse.finalUrl` */
+    finalUrl?: string;
 }
 
 const TIMEOUT_MS = 30_000;
@@ -49,7 +57,26 @@ export function mergeCookies(existing: string, setCookies: string[]): string {
 function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: string): Promise<NodeHttpResponse & { buffer: Buffer }> {
     return new Promise((resolve, reject) => {
         const mod = url.startsWith('https') ? require('https') : require('http');
-        const req = mod.request(url, { method, headers }, (res: { statusCode: number; headers: Record<string, string | string[] | undefined>; on: (e: string, cb: (...a: never[]) => void) => void }) => {
+        /**
+         * 🔴🔴 #424：POST **必须显式给 `Content-Type` 与 `Content-Length`**。
+         *
+         * 实测教训（用户报「10 个源都没能连上」的根因之一）：只调 `req.write(body)` 再 `req.end()`
+         * 而没有 `Content-Length` 时，Node 会用 **`Transfer-Encoding: chunked`** 发出去 ——
+         * 而大量老书源站（PHP）**不认 chunked 的表单体**，于是回一个 `200` + 一个「没搜到」的页面：
+         *   · 悠久小说网 `searchbooks.php`：chunked ⇒ **5,502 字节**；带 `Content-Length` ⇒ **32,693 字节**。
+         * ⇒ 表面上「连上了」，实际每条源的搜索都是空的。
+         *
+         * 对齐参考实现 so-novel 的 OkHttp `FormBody`（它同时给 Content-Type 与 Content-Length）。
+         * ⚠️ 这里是**复制一份再补**：`requestOnce` 的 `currentHeaders` 在重定向间复用，
+         *    直接改它会把这俩头带到重定向后的 GET 上（GET 带 Content-Length 会让部分服务端直接 400）。
+         */
+        const h = { ...headers };
+        const hasHeader = (name: string): boolean => Object.keys(h).some((k) => k.toLowerCase() === name);
+        if (method === 'POST') {
+            if (!hasHeader('content-type')) h['Content-Type'] = 'application/x-www-form-urlencoded';
+            h['Content-Length'] = String(Buffer.byteLength(body ?? '', 'utf8'));
+        }
+        const req = mod.request(url, { method, headers: h }, (res: { statusCode: number; headers: Record<string, string | string[] | undefined>; on: (e: string, cb: (...a: never[]) => void) => void }) => {
             const chunks: Buffer[] = [];
             let size = 0;
             res.on('data', (chunk: Buffer) => { chunks.push(Buffer.from(chunk)); size += chunk.length; });
@@ -61,14 +88,14 @@ function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<string,
         });
         req.on('error', reject);
         req.setTimeout(TIMEOUT_MS, () => req.destroy(new Error(`Request timed out after ${TIMEOUT_MS}ms: ${url}`)));
-        if (body) req.write(body);
-        req.end();
+        // ⚠️ 用 `end(body)` **一次写完**（不是 write + end）：配合上面的 Content-Length 才是固定长度发；
+        //    漏了它会退回 chunked、前面那些头也白设。
+        req.end(method === 'POST' ? (body ?? '') : undefined);
     });
 }
 
 /** 单次请求 + 手动跟随重定向 + Set-Cookie 续传（3xx 最多 MAX_REDIRECTS 跳） */
-async function requestOnce(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: string): Promise<NodeHttpResponse & { buffer: Buffer }> {
-    let currentUrl = url;
+async function requestOnce(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: string): Promise<NodeHttpResponse & { buffer: Buffer }> {    let currentUrl = url;
     let currentMethod: 'GET' | 'POST' = method;
     let currentBody = body;
     const currentHeaders = { ...headers };
@@ -95,7 +122,8 @@ async function requestOnce(url: string, method: 'GET' | 'POST', headers: Record<
             currentUrl = new URL(location, currentUrl).toString();
             continue;
         }
-        return res;
+        // 🔴 `currentUrl` 到这里已经是**最后一次跳转之后**的地址 ⇒ 一并回报（调用方按需使用）
+        return { ...res, finalUrl: currentUrl };
     }
     throw new Error(`Too many redirects: ${url}`);
 }
@@ -103,13 +131,13 @@ async function requestOnce(url: string, method: 'GET' | 'POST', headers: Record<
 /** 桌面端 GET（幂等，自动重试 GET_RETRY 次） */
 export async function nodeHttpGet(url: string, headers?: Record<string, string>): Promise<NodeHttpResponse> {
     const r = await retry(() => requestOnce(url, 'GET', sanitizeHeaders(headers)), GET_RETRY);
-    return { status: r.status, text: r.text, headers: r.headers };
+    return { status: r.status, text: r.text, headers: r.headers, finalUrl: r.finalUrl };
 }
 
 /** 桌面端 GET 二进制下载（图片等，幂等重试）：返回 Buffer 供 vault.createBinary 写入 */
 export async function nodeHttpGetBuffer(url: string, headers?: Record<string, string>): Promise<NodeHttpBufferResponse> {
     const r = await retry(() => requestOnce(url, 'GET', sanitizeHeaders(headers)), GET_RETRY);
-    return { status: r.status, buffer: r.buffer, headers: r.headers };
+    return { status: r.status, buffer: r.buffer, headers: r.headers, finalUrl: r.finalUrl };
 }
 
 /** 桌面端 POST（非幂等，不重试） */

@@ -8,8 +8,19 @@ import type ReelLudicPlugin from '../../main';
 import type { MediaStatus } from 'pure/status';
 import type { ActivityEvent, BookKind, EntryType, MediaEntry, UiTheme } from 'data/types';
 import type { HomeTab } from './tab';
+import type { SeriesGroup } from 'pure/seriesGroup';
 import { normalizeUiTheme } from 'pure/themeTokens';
+// #541：主导航布局（顶部胶囊 / 左侧侧边栏）—— 归一在 pure 侧，这里只转交
+import { normalizeNavLayout } from 'pure/navLayout';
+import { normalizePosterDensity, normalizePosterColumns, type PosterDensity } from 'pure/posterGrid';
+import { libraryDisplayName } from 'pure/libraryDir';
+// 1.3.1 ①：海报墙卡片「显示哪些属性」（高级设置 › 海报墙卡片）
+import { resolveCardFieldsByType } from 'pure/cardMeta';
+import { resolveTableColumnsByType } from 'pure/tableColumns';
 import type { FeedRange } from 'pure/activityFeed';
+// 🔴 #635 ④：评分看板的评分载荷类型（与存储口径同源）
+import type { Rating } from 'pure/rating';
+import { applyScrollPref } from 'services/scrollPref';
 
 export const HOME_VIEW_TYPE = 'reelludic-home';
 
@@ -27,8 +38,10 @@ export class HomeView extends ItemView {
     }
 
     getDisplayText(): string {
-        // 顶部名称动态跟随「媒体库目录」设置（v0.4 持续优化）；空值回退默认名
-        return this.plugin.settings.libraryDir?.trim() || 'ReelLudic';
+        // 顶部名称动态跟随「媒体库目录」设置（v0.4 持续优化）；空值回退默认名。
+        // 1.1.1：只显示**叶子段**（`3-资源 Resource/媒体库` → `媒体库`）——显示名与存储路径解耦，
+        // 否则标签页标题会拖出整条路径（用户 2026-09-27 ①）。
+        return libraryDisplayName(this.plugin.settings.libraryDir ?? '');
     }
 
     getIcon(): string {
@@ -58,6 +71,47 @@ export class HomeView extends ItemView {
         this.component?.$set({ uiTheme: theme });
     }
 
+    /**
+     * 海报密度即时生效（用户 2026-09-22）：与 setUiTheme 同思路 —— 只重推几个 prop，不重读条目。
+     * 设置页改档位/列数后调用，否则要等下次 refresh() 才看到新密度。
+     *
+     * 🔴 #626 第 3 个形参 `wallColumns`：海报墙**自己的**列数（`undefined` = 跟随 `density`）。
+     * 🔴 传的是**设置里的原始值**（⛔ 不在这里归一）—— 归一/裁决只在
+     *    `pure/posterGrid.posterGridTemplateForWall` 一处：脏值（`null` / 字符串 / `NaN`）
+     *    必须按「没配过」处理，若在这儿先归一成 6 列就**静默改掉了「跟随」的语义**。
+     */
+    setPosterGrid(density: unknown, columns: unknown, wallColumns?: unknown): void {
+        this.component?.$set({
+            posterDensity: normalizePosterDensity(density),
+            posterColumns: normalizePosterColumns(columns),
+            wallColumns,
+            // 🔴 #591：Ctrl+滚轮缩放的开关走**同一条重推通道**（设置页一改就生效，⛔ 不必等下次刷新）。
+            //    直接读 settings —— 调用点（`syncPosterGrid` / `applyWallZoom`）本来就从设置取值。
+            ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom,
+        });
+    }
+
+    /**
+     * #541/#543 主导航布局即时生效（设置页「外观与体验 › 导航布局」改动后调用）。
+     * 与 setUiTheme / setPosterGrid 同思路：只重推 prop，不重读条目。
+     * 🔴 布局是**结构分支**（图标轨那一支要增删 DOM 节点）⇒ 必须走 `$set`；纯 CSS 变不出新节点。
+     * ⚠️ #543 起**不再有 `collapsed` 参数** —— 侧边栏已改成恒定图标轨，折叠钮与折叠态一并退场
+     *    （`settings.navCollapsed` 字段按 append-only 红线保留，但不再被读取）。
+     */
+    setNavLayout(layout: unknown): void {
+        this.component?.$set({ navLayout: normalizeNavLayout(layout) });
+    }
+
+    /**
+     * #541 起始页即时切换（设置页「起始页」改动后调用）：把一个**一次性请求**推给组件。
+     * 🔴 为什么不直接 `$set({ initialTab })`：`initialTab` 只在组件**创建**时用来播种内部 `activeTab`，
+     *    之后再改这个 prop 不会让任何东西动（它不是响应式的）⇒ 「改了起始页看不到变化」。
+     *    走 `requestedTab` 这条**一次性通道**，组件消费掉就置回 null（见 HomeView.svelte 的同名 prop）。
+     */
+    setRequestedTab(tab: HomeTab): void {
+        this.component?.$set({ requestedTab: tab });
+    }
+
     private async render(): Promise<void> {
         const [entries, excerptCounts, yearReports, activityLog] = await Promise.all([
             this.plugin.service.list(),
@@ -66,11 +120,13 @@ export class HomeView extends ItemView {
             this.plugin.listActivity(),
         ]);
         this.entries = entries;
-        // 隐藏插件内滚动条（外观设置）：类挂容器，CSS 隐藏内部滚动条
-        this.contentEl.toggleClass('rl-hide-scroll', this.plugin.settings.hideScrollbars);
+        // 🔴 #630：隐藏插件内滚动条（外观设置）—— 走 `services/scrollPref` 那一处真源（跟随开关）
+        applyScrollPref(this.contentEl);
         if (this.component) {
             // 增量更新：保留组件实例与本地状态（当前 Tab/视图模式/筛选），仅刷新数据，立即生效
-            this.component.$set({ entries, colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), defaultViewMode: this.plugin.settings.defaultViewMode, excerptCounts, yearReports, activityLog });
+            // ⚠️ #626 新 prop（`wallColumns`）**必须也在这条增量刷新里** —— 漏了就会
+            //    「改了列数要重开视图才生效」（与 #621 的 `tableColumnsByType` 同一条坑）。
+            this.component.$set({ entries, tableColumnsByType: resolveTableColumnsByType(this.plugin.settings.tableColumnsByType), colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), navLayout: normalizeNavLayout(this.plugin.settings.navLayout), defaultViewMode: this.plugin.settings.defaultViewMode, posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity), posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns), wallColumns: this.plugin.settings.wallColumns, ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom, excerptCounts, yearReports, activityLog });
             return;
         }
         this.contentEl.empty();
@@ -83,8 +139,24 @@ export class HomeView extends ItemView {
                 activityLog,
                 initialTab: this.plugin.homeTab,
                 colorTheme: this.plugin.settings.colorTheme,
+                // 1.3.1 ①（#617 起按类型各一份）：卡片显示哪几行（六键齐全传下去）。
+                // 缺哪一类 ⇒ 走**该类型自己的预填**；老键 `cardFields` 自 #617 追加件起已不参与（见 pure/cardMeta）
+                cardFieldsByType: resolveCardFieldsByType(this.plugin.settings.cardFieldsByType),
                 uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme),
+                // #541/#543 个性化：主导航布局（缺省 top ⇒ 与 1.2.0 逐像素一致）
+                navLayout: normalizeNavLayout(this.plugin.settings.navLayout),
                 defaultViewMode: this.plugin.settings.defaultViewMode,
+                posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity),
+                posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns),
+                // 🔴 #626 海报墙自己的列数（**原始值**，归一在 pure/posterGrid 收口；缺省 = 跟随海报密度）
+                wallColumns: this.plugin.settings.wallColumns,
+                // 🔴 #591 Ctrl+滚轮缩放：开关 + 落盘出口（MediaList 只报告「缩到几列」）
+                // 🔴 #626 落盘出口按**视图**分流：墙上滚动只写 `wallColumns`，⛔ 不连带改掉卡片网格。
+                ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom,
+                onPosterZoom: (density: PosterDensity, columns: number, view: 'grid' | 'wall') =>
+                    view === 'wall'
+                        ? this.plugin.applyWallZoom(columns)
+                        : this.plugin.applyPosterZoom(density, columns),
                 onTabChange: (tab: HomeTab) => {
                     this.plugin.homeTab = tab;
                 },
@@ -94,15 +166,22 @@ export class HomeView extends ItemView {
                 /** 月历拖拽排期：待排卡片拖到日期格 → 设置计划观看日期 */
                 onPlanDate: (id: string, dateStr: string) => this.plugin.planEntry(id, dateStr),
                 onEditEntry: (id: string) => void this.plugin.openEditModal(id),
+                /** #621 表格列配置变更（表头拖序 / 列菜单勾选）⇒ 落盘 + 刷视图 */
+                onTableColumnsChange: (type: EntryType, keys: string[]) => void this.plugin.setTableColumns(type, keys),
+                /** #621 一格提交 ⇒ 写回条目 + 同步笔记 + 刷视图（解析与 patch 都在组件侧算好） */
+                onCellCommit: (id: string, patch: Partial<MediaEntry>) => this.plugin.commitTableCell(id, patch),
                 onOpenEntry: (id: string) => this.plugin.openEntryNote(id),
                 onOpenLink: (url: string) => this.plugin.openExternalUrl(url),
-                /** 海报墙「观看/播放/启动」按钮：书籍 → 阅读器；游戏 → 启动 .lnk；音乐 → 播放音频；影视 → 单链接直接打开/多链接弹窗选择播放源 */
-                onWatch: (e: MediaEntry) => {
-                    if (e.type === 'book') void this.plugin.openBookReader(e);
-                    else if (e.type === 'game') void this.plugin.launchGame(e);
-                    else if (e.type === 'music') void this.plugin.playAudioEntry(e);
-                    else void this.plugin.openWatchLinkPicker(e);
-                },
+                /** 海报墙「观看/播放/启动」按钮：书籍 → 阅读器；游戏 → 启动 .lnk；音乐 → 播放音频；影视 → 单链接直接打开/多链接弹窗选择播放源
+                 *  🔴 #444c：分流**下沉到 `plugin.runEntryAction`**（系列选择弹窗也要执行同一件事 —— ⛔ 别两处各写一套分流） */
+                onWatch: (e: MediaEntry) => this.plugin.runEntryAction(e),
+                /** 折叠卡右下角那枚按钮：打开系列「季列表」弹窗
+                 *  🔴 #444c：改成**应用级 Modal**（宿主 `Modal`，与「编辑条目」同构）—— 不再由视图造遮罩 + 绝对定位居中 */
+                onOpenSeriesPicker: (g: SeriesGroup) => this.plugin.openSeriesPicker(g),
+                /** 🔴 #609 折叠卡右键「排序号」：拖拽排序弹窗（落库与 `Notice` 都在宿主侧） */
+                onOpenSeriesReorder: (g: SeriesGroup) => this.plugin.openSeriesReorder(g),
+                /** 🔴 #629 折叠卡右键「批量关联」：整个系列的逐条关联清单（宿主侧应用级 Modal） */
+                onOpenSeriesAssociate: (g: SeriesGroup) => this.plugin.openSeriesAssociate(g),
                 /** 右键「动词 · 去关联」直达：无入口 → 快捷关联弹窗（书/游戏/音乐路径；影视选集网络/本地源） */
                 onQuickAssociate: (e: MediaEntry) => this.plugin.quickAssociateEntry(e),
                 onDeleteEntry: (id: string) => this.plugin.deleteEntry(id),
@@ -112,7 +191,7 @@ export class HomeView extends ItemView {
                 onAddExcerpt: (book: MediaEntry) => this.plugin.openExcerptModal(book),
                 /** 游戏卡片右键「记录游玩」：固定挂载该游戏打开游玩记录弹窗 */
                 onOpenGameSessionModal: (game: MediaEntry) => this.plugin.openGameSessionModal(game),
-                /** 批量评分 / 批量追加标签 */
+                /** 批量评分 / 批量追加标签（🔴 #609：原 `onBulkSeriesIndex` 已撤 —— 系列排序改走排序弹窗） */
                 onBulkRating: (ids: string[], rating: number) => this.plugin.bulkSetRating(ids, rating),
                 onBulkTags: (ids: string[], tags: string[]) => this.plugin.bulkAddTags(ids, tags),
                 /** 批量应用前置确认（批B）：文案由 pure/bulkConfirm 生成，这里只负责弹窗取用户意图 */
@@ -166,6 +245,13 @@ export class HomeView extends ItemView {
                 onRecordJournal: (range: FeedRange) => this.plugin.recordTodayJournal(range),
                 /** 打开某份年度报告（统计页「往年报告」入口） */
                 onOpenReport: (path: string) => void this.plugin.openReport(path),
+                /**
+                 * 🔴 #635 ④：评分看板「拖入即改评分」——落库 + 重写笔记 + 刷新视图。
+                 * 🔴 复用 `commitTableCell`（同一出口：`update` → `writeNote` → `refreshViews`）——
+                 *    ⛔ 别另写一条「只改内存」的近路：那会让笔记里的 frontmatter 与界面不一致。
+                 * ⚠️ 失败**向上抛**（组件据它回滚乐观更新并显示红字），⛔ 不在这里静默吞。
+                 */
+                onSetRating: (id: string, rating: Rating) => this.plugin.commitTableCell(id, { rating }),
             },
         });
     }

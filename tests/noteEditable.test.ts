@@ -1,6 +1,6 @@
 // 笔记可编辑字段解析（用户直接编辑笔记后，编辑表单回填覆盖 catalog）
 import { describe, expect, it } from 'vitest';
-import { extractEditableFromNote, extractFrontmatterFromNote, NOTES_PLACEHOLDER } from 'pure/noteEditable';
+import { extractEditableFromNote, extractFrontmatterFromNote, isNotesPlaceholder, NOTES_PLACEHOLDER } from 'pure/noteEditable';
 
 describe('pure/noteEditable 从笔记提取可编辑字段', () => {
     it('提取个人评语与观看链接（影视笔记）', () => {
@@ -36,6 +36,25 @@ describe('pure/noteEditable 从笔记提取可编辑字段', () => {
         const out = extractEditableFromNote(md);
         expect(out.notes).toBeUndefined();
         expect(out.links).toBeUndefined();
+    });
+
+    it('🔴 #453 占位符去掉「，支持 [[双链]]」；**旧形态仍算未写**（已存笔记兼容，⛔ 别删这条分支）', () => {
+        // ⑴ 新文本：本体不含「双链」
+        expect(NOTES_PLACEHOLDER).toBe('（在这里写下你的感想）');
+        expect(NOTES_PLACEHOLDER).not.toContain('双链');
+        // ⑵ 旧文本（已存笔记里那行）仍判为「没写」—— 判据不认它 ⇒ 用户一打开旧条目，
+        //    那句占位符会被当成他亲手写的评语回填进表单（幽灵内容）
+        const legacy = ['## 个人评语', '', '（在这里写下你的感想，支持 [[双链]]）'].join('\n');
+        expect(extractEditableFromNote(legacy).notes).toBeUndefined();
+        // ⑶ 新文本同样
+        const fresh = ['## 个人评语', '', NOTES_PLACEHOLDER].join('\n');
+        expect(extractEditableFromNote(fresh).notes).toBeUndefined();
+        // ⑷ 判定入口只此一处（新旧都认、真感想不认）
+        expect(isNotesPlaceholder(NOTES_PLACEHOLDER)).toBe(true);
+        expect(isNotesPlaceholder('（在这里写下你的感想，支持 [[双链]]）')).toBe(true);
+        expect(isNotesPlaceholder('  ' + NOTES_PLACEHOLDER + '  ')).toBe(true);
+        expect(isNotesPlaceholder('真的感想')).toBe(false);
+        expect(isNotesPlaceholder('')).toBe(false);
     });
 
     it('无链接（暂无链接）与无评语时返回空', () => {
@@ -129,6 +148,7 @@ describe('pure/noteEditable 从笔记提取可编辑字段', () => {
     });
 
     it('章节为空/缺失时对应字段为 undefined（不覆盖 catalog 已有值）', () => {
+        // ⚠️ 这里刻意用**旧形态**占位符（带「，支持 [[双链]]」）—— 顺带锁「已存笔记兼容」（#453）
         const md = ['## 内容简介', '', '', '## 个人评语', '', '（在这里写下你的感想，支持 [[双链]]）'].join('\n');
         const out = extractEditableFromNote(md);
         expect(out.summary).toBeUndefined();

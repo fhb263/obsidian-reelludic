@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
     parseDoubanItem,
     parseDoubanSearchItems,
+    extractDoubanCastLine,
     extractJsonLd,
     parseDoubanJsonLd,
     parseDoubanInfo,
@@ -163,8 +164,61 @@ describe('豆瓣搜索 items 解析（全类型通用）', () => {
         expect(r?.developer).toBeUndefined();
     });
 
-    it('解析 j/search JSON：items 数组转 DoubanSubject[]', () => {
-        const text = JSON.stringify({ items: [SAMPLE_ITEM, '<li>bad</li>'] });
+    // 🔴 #461（2026-10-01 实测）：豆瓣把创作者行的类名从 `from` 换成了 `subject-cast`（四个类目全换）
+    //    —— 只认旧类名会让「作者 / 年份」一起消失（用户报障「豆瓣返回的搜索条目没有标作者」）。
+    describe('#461 类名 `from` → `subject-cast`（旧类名继续认，两个都取）', () => {
+        const wrap = (h3: string, cast: string, cls = 'subject-cast') =>
+            '<div class="result"><div class="pic"><a><img src="c.jpg"></a></div>'
+            + `<div class="content"><div class="title"><h3>${h3}</h3>`
+            + '<div class="rating-info"><span class="allstar45"></span><span class="rating_nums">8.9</span><span>(518412人评价)</span>'
+            + `<span class="${cls}">${cast}</span></div></div></div></div>`;
+
+        it('extractDoubanCastLine：`from` 与 `subject-cast` 都认', () => {
+            expect(extractDoubanCastLine('<span class="from">张悬 / 2007-07</span>')).toBe('张悬 / 2007-07');
+            expect(extractDoubanCastLine('<span class="subject-cast">张悬 / 摇滚 / 2007</span>')).toBe('张悬 / 摇滚 / 2007');
+        });
+
+        it('extractDoubanCastLine 结构兜底：类名再改（两个都不在）也能从 `.rating-info` 取到那一行', () => {
+            const html = '<div class="rating-info"><span class="allstar45"></span><span class="rating_nums">8.9</span>'
+                + '<span>(518412人评价)</span><span class="cast-line-v9">刘慈欣 / 重庆出版社 / 2008</span></div>';
+            expect(extractDoubanCastLine(html)).toBe('刘慈欣 / 重庆出版社 / 2008');
+        });
+
+        it('书籍（新类名）：作者 + 年份照旧提取（这就是用户报障的那条）', () => {
+            const r = parseDoubanItem(wrap('<span>[书籍]</span>&nbsp;<a onclick="moreurl(this,{sid: 2567698})">三体</a>', '刘慈欣 / 重庆出版社 / 2008'));
+            expect(r?.author).toBe('刘慈欣');
+            expect(r?.year).toBe(2008);
+            expect(r?.ratingCount).toBe(518412);
+        });
+
+        it('音乐（新类名）：歌手 + 年份照旧提取', () => {
+            const r = parseDoubanItem(wrap('<span>[音乐]</span>&nbsp;<a onclick="moreurl(this,{sid: 1})">海阔天空</a>', 'Beyond / 摇滚 / 1993'));
+            expect(r?.author).toBe('Beyond');
+            expect(r?.year).toBe(1993);
+        });
+
+        it('影视（新类名 `原名:… / 导演 / 演员 / 年份`）：年份提取到，⛔ 不把「原名:…」当作者', () => {
+            const r = parseDoubanItem(wrap('<span>[电影]</span>&nbsp;<a onclick="moreurl(this,{sid: 1292052})">肖申克的救赎</a>', '原名:The Shawshank Redemption / 弗兰克·德拉邦特 / 蒂姆·罗宾斯 / 1994'));
+            expect(r?.year).toBe(1994);
+            expect(r?.author).toBeUndefined();
+            expect(r?.developer).toBeUndefined();
+        });
+
+        it('🔴 游戏（新类名 `游戏 / 冒险 / 动作 平台…`）：首段是**类型词**，⛔ 不许当成开发商', () => {
+            const r = parseDoubanItem(wrap('<span>[游戏]</span>&nbsp;<a onclick="moreurl(this,{sid: 1})">塞尔达传说 旷野之息</a>', '游戏 / 冒险 / 动作 Nintendo Switch / Wii U'));
+            expect(r?.developer).toBeUndefined();
+            expect(r?.author).toBeUndefined();
+        });
+
+        it('旧类名 `from` 的既有形态仍照原样解析（书籍 / 游戏两个字型都过一遍）', () => {
+            const book = parseDoubanItem(wrap('<span>[图书]</span>&nbsp;<a onclick="moreurl(this,{sid: 1})">三体</a>', '刘慈欣 / 重庆出版社 / 2008-01', 'from'));
+            expect(book?.author).toBe('刘慈欣');
+            const game = parseDoubanItem(wrap('<span>[游戏]</span>&nbsp;<a onclick="moreurl(this,{sid: 1})">少女前线</a>', '上海散爆网络科技 / 2016-05', 'from'));
+            expect(game?.developer).toBe('上海散爆网络科技');
+        });
+    });
+
+    it('解析 j/search JSON：items 数组转 DoubanSubject[]', () => {        const text = JSON.stringify({ items: [SAMPLE_ITEM, '<li>bad</li>'] });
         const rs = parseDoubanSearchItems(text);
         expect(rs).toHaveLength(1);
         expect(rs[0].title).toBe('肖申克的救赎');

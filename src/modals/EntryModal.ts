@@ -6,11 +6,25 @@ import type { TmdbSearchResult } from 'services/tmdb';
 import type { EntryType, MediaEntry } from 'data/types';
 import { SOURCE_VIEW } from 'pure/searchDisplay';
 import { extractEditableFromNote, extractFrontmatterFromNote } from 'pure/noteEditable';
+// 1.3.1 ① 字段映射：笔记里的键名可能被用户改过，读回时要按同一份配置反查
+import { compileFieldMapText } from 'pure/fieldMap';
+import { lrcBlockLyrics } from 'pure/lrcSource';
 import { orphanedDownloadedPosters } from 'pure/posterFile';
 import { NoteConflictModal } from 'modals/NoteConflictModal';
+import { PosterSearchModal } from 'modals/PosterSearchModal';
+import type { PosterCandidate } from 'pure/posterSearch';
+import type { PosterSource } from 'pure/posterSources';
 import type { SearchProgressCb } from 'pure/searchProgress';
 import type { BookKind } from 'data/types';
 import type { AiSummaryInput } from 'pure/aiSummary';
+import type { AiPrefillInput } from 'pure/aiPrefill';
+import type { LyricSourceId } from 'pure/lyricOnline';
+import type { LocalEpisodeQuery } from 'pure/localEpisode';
+// 🔴 #602：书籍本地检索的查询形状（与关联弹窗**同一份**，收在纯模块 —— ⛔ 别在组件侧另立一个）
+import type { LocalBookSearchQuery } from 'pure/localDirs';
+import { applyScrollPref } from 'services/scrollPref';
+// 🔴 #632 连续添加：序号 +1 的唯一算法（另见 `EntryForm.repeatAddState` —— 会话状态的产出方）
+import { nextSeriesIndexLabel, type RepeatAddState } from 'pure/repeatAdd';
 
 export class EntryModal extends Modal {
     private form: EntryForm | null = null;
@@ -20,6 +34,13 @@ export class EntryModal extends Modal {
     private saved = false;
     /** 保存成功时条目实际引用的封面相对路径（未保存/封面被清空时为 undefined） */
     private savedPoster?: string;
+    /**
+     * 🔴 #632 连续添加的会话状态（**新建态**保存成功后更新一次，重建表单时注回去）。
+     * ⚠️ 编辑态永不写它 —— 「保存后不关窗」只属于新增（用户要的是「接着加下一条」）。
+     */
+    private repeat: RepeatAddState = { results: [], query: '', addedKey: null, series: '', seriesIndex: '' };
+    /** 「已添加」标记键集：本次会话里**建成过条目**的候选（`pure/repeatAdd.resultKeyOf`）—— 跨重建累积 */
+    private addedHits = new Set<string>();
 
     constructor(
         app: App,
@@ -51,19 +72,23 @@ export class EntryModal extends Modal {
         this.applyResultCols(0);
         // 编辑表单适配 Obsidian 正文字体（--font-text），与视图内容区一致
         this.contentEl.addClass('rl-form-root');
-        // 设置「隐藏插件内滚动条」开启时，编辑弹窗内部滚动条一并隐藏（rl-hide-scroll 作用于自身及后代）
-        if (this.plugin.settings.hideScrollbars) this.modalEl.addClass('rl-hide-scroll');
+        // 🔴 #630：滚动条偏好走 `services/scrollPref` 那一处真源（**跟随设置开关**）——
+        //    原先这里自己判 `settings.hideScrollbars`，与另外二十多个弹窗各写各的 ⇒ 口径一改全仓找。
+        applyScrollPref(this.modalEl);
         // 编辑模式：catalog 是结构化数据源，但用户可能直接在笔记里手动编辑过
         // 「个人评语/观看·相关链接/简介/作者简介/目录」与顶部 frontmatter（评分/状态/年份/进度等）——
         // 打开表单时读笔记覆盖 catalog 值，避免内容"消失"（全类型通用）
         let effective = this.entry;
+        /** 打开音乐条目时从笔记 ` ```lrc ` 块读回的歌词正文（#396；表单 LRC 框初值） */
+        let initialLrc = '';
         if (this.entry?.notePath) {
             try {
                 const f = this.app.vault.getAbstractFileByPath(this.entry.notePath);
                 if (f instanceof TFile) {
                     const text = await this.app.vault.read(f);
+                    initialLrc = lrcBlockLyrics(text);
                     const ext = extractEditableFromNote(text);
-                    const fm = extractFrontmatterFromNote(text);
+                    const fm = extractFrontmatterFromNote(text, compileFieldMapText(this.plugin.settings.fieldMap ?? ''));
                     if (ext.notes !== undefined || ext.links || ext.summary !== undefined || ext.authorIntro !== undefined || ext.toc !== undefined || ext.aiSummary !== undefined || ext.aiHighlights !== undefined || ext.sourceUrl !== undefined || Object.keys(fm).length > 0) {
                         // banner（frontmatter 为库内完整路径，如 媒体库/封面/xx.jpg）→ poster（相对路径 封面/xx.jpg）
                         let poster = fm.poster;
@@ -95,10 +120,34 @@ export class EntryModal extends Modal {
                 // 笔记不可读：忽略，沿用 catalog 值
             }
         }
+        this.mountForm(effective ?? null, initialLrc);
+    }
+
+    /**
+     * 🔴 #632 连续添加 —— **建 / 重建**表单组件（新建态保存成功后走一遍，见 `repeatAdd()`）。
+     *
+     * 为什么重建而不是「把字段一个个复位」：表单有 60+ 个 state（各源 UI 模式、进度、浮层开关、
+     * 下载态……），逐个复位迟早漏一个 —— 而漏掉的那个会**带着上一条的脏值落库**。
+     * 重建 = 所有初值回到 `entry: null` 那一套，天然干净。
+     * 而「跨次还要用」的四样（候选列表 / 关键词 / 已添加标记 / 系列两栏）由宿主拿着、经 `preset*` 注回。
+     *
+     * ⚠️ 重建 **≠ 重开弹窗**：Modal 外壳与 `contentEl` 都留着 ⇒ 这里**不碰** `onOpen` 里那套
+     *    （`titleEl` / 宽度初值 / 滚动条偏好），只换里面的组件实例。
+     * ⚠️ 顺带 `applyResultCols(0)` 把宽度收回常规值：上一条可能是在三栏（宽屏 1200）态保存的。
+     */
+    private mountForm(effective: MediaEntry | null, initialLrc: string): void {
+        this.form?.$destroy();
+        this.applyResultCols(0);
         this.form = new EntryForm({
             target: this.contentEl,
             props: {
                 entry: effective,
+                // 🔴 #632 连续添加的会话状态（新建态才有值；编辑态恒为空 ⇒ 与旧行为逐字一致）
+                presetResults: this.repeat.results,
+                presetQuery: this.repeat.query,
+                addedHits: this.addedHits,
+                initialSeries: this.repeat.series,
+                initialSeriesIndex: this.repeat.seriesIndex,
                 initialType: this.entry?.type ?? this.initialType ?? 'movie',
                 initialBookKind: this.entry?.bookKind ?? this.initialBookKind,
                 canSearch: !!this.plugin.settings.tmdbApiKey,
@@ -106,7 +155,8 @@ export class EntryModal extends Modal {
                 canSearchGame: true, // 游戏仅 Douban 源，始终可搜
                 /** 结果栏数变化 → 动态宽度（仅三栏加宽） */
                 onResultCols: (cols: number) => this.applyResultCols(cols),
-                /** 该类型本次搜索实际会发起的源集合（固定占栏用） */
+                /** 该类型本次搜索实际会发起的源集合（固定占栏用）—— 🔴 2026-09-30 起带 `kind`：
+                 *  漫画独立成组后，书籍态必须按子分类问（否则漫画态会多报一个源、栏位数跟着错）。 */
                 onSourcesForType: (type: EntryType, kind?: BookKind) => this.plugin.sourcesForType(type, kind),
                 onSearch: (q: string, t: 'movie' | 'tv', onProgress?: SearchProgressCb) => this.plugin.searchWithFallback(q, t, onProgress),
                 onSearchBook: (q: string, kind?: BookKind, onProgress?: SearchProgressCb) => this.plugin.searchBook(q, kind, onProgress),
@@ -116,18 +166,31 @@ export class EntryModal extends Modal {
                 onFetchDetail: (r: TmdbSearchResult) => this.plugin.fetchTmdbDetail(r),
                 // 豆瓣兜底结果：点击时按需拉详情补全表单字段（搜索仅前 3 条预补全）
                 onFetchDoubanDetail: (id: string, type: EntryType) => this.plugin.fetchDoubanDetailForEntry(id, type),
+                // 🔴 #623 Steam 游戏选中结果按需补全（appdetails 公开端点 → 平台/开发商/发行年/题材/简介；
+                //    失败 null 静默）。⚠️ 与上面的 TMDB 详情**是两条独立回调** —— 别为了省一个 prop 把
+                //    Steam 的 appid 塞进 `onFetchDetail`（那条只通 TMDB，会拼出 /undefined/{appid} 打 404）。
+                onFetchSteamDetail: (appid: number) => this.plugin.fetchSteamDetailForEntry(appid),
                 // Bangumi 选中结果按需补全（persons+subjects API → 导演/评分/主演）
                 onFetchBangumiDetail: (id: number) => this.plugin.fetchBangumiDetailForEntry(id),
                 // Open Library 书籍选中结果按需补全（works.json → 简介/页数/出版社；失败 null 静默）
                 onFetchOpenLibraryDetail: (key: string) => this.plugin.fetchOpenLibraryDetailForEntry(key),
+                // 🔴 #609 微信读书书籍选中结果按需补全（/web/book/info → 出版年/出版社/ISBN/分类/完整简介/大图封面；
+                //    与「从微信读书同步书架」逐本补详情同一端点、同一解析、同一闸门；失败 null 静默）
+                onFetchWereadDetail: (bookId: string) => this.plugin.fetchWereadDetailForEntry(bookId),
                 // OMDb（IMDb）影视选中结果按需补全（i= 详情 → Plot/导演/演员/评分；失败 null 静默）
                 onFetchOmdbDetail: (imdbID: string) => this.plugin.fetchOmdbDetailForEntry(imdbID),
-                onSubmit: async (input: Record<string, unknown>) => {
+                onSubmit: async (raw: Record<string, unknown>) => {
                     // 数据保存成功才关弹窗；笔记生成失败不阻断（条目已落库，仍刷新视图）
+                    // 🔴 `lrc`（LRC 歌词正文）**不是 catalog 字段**：它住在笔记的 ` ```lrc ` 块里，
+                    //    必须从落库字段里剥掉，稍后经 `service.setNoteLrc` 单独写回笔记（#396）。
+                    const { lrc, ...input } = raw;
+                    let targetId = '';
+                    let noteWritten = false;
                     let saved = false;
                     try {
                         if (this.entry) {
                             const updated = await this.plugin.service.update(this.entry.id, input);
+                            targetId = updated.id;
                             // 封面本地化开关开启且封面是 URL → 下载到 covers/ 并更新引用（失败静默，不影响保存）
                             if (this.plugin.settings.localizePosters && updated.poster && /^https?:\/\//.test(updated.poster)) {
                                 await this.plugin.localizeEntryPoster(updated.id);
@@ -136,9 +199,19 @@ export class EntryModal extends Modal {
                                 // G 双写冲突：笔记被外部修改（手动编辑过）→ 弹窗二选一；「保留」跳过重写（catalog 已保存）
                                 if (await this.plugin.service.noteWasExternallyModified(updated.id)) {
                                     const choice = await new NoteConflictModal(this.app, updated.title).open();
-                                    if (choice === 'overwrite') await this.plugin.service.writeNote(updated.id);
+                                    // 🔴 两种情况都必须让指纹跟上，否则该条目**下次保存还会再问一遍**
+                                    //    （用户 2026-09-21 报「总会有外部修改提示」的真因之一）：
+                                    //    「覆盖」= writeNote 用库数据重写（自带刷指纹）；
+                                    //    「保留」= 认可当前笔记为新基线（旧实现这里什么也没做 ⇒ 永远问不完）。
+                                    if (choice === 'overwrite') {
+                                        await this.plugin.service.writeNote(updated.id);
+                                        noteWritten = true;
+                                    } else {
+                                        await this.plugin.service.adoptNoteAsBaseline(updated.id);
+                                    }
                                 } else {
                                     await this.plugin.service.writeNote(updated.id);
+                                    noteWritten = true;
                                 }
                                 new Notice(`已更新：${updated.title}`);
                             } catch (e) {
@@ -146,15 +219,23 @@ export class EntryModal extends Modal {
                             }
                         } else {
                             const entry = await this.plugin.service.create(input);
+                            targetId = entry.id;
                             if (this.plugin.settings.localizePosters && entry.poster && /^https?:\/\//.test(entry.poster)) {
                                 await this.plugin.localizeEntryPoster(entry.id);
                             }
                             try {
                                 await this.plugin.service.writeNote(entry.id);
+                                noteWritten = true;
                                 new Notice(`已添加：${entry.title}`);
                             } catch (e) {
                                 new Notice(`已添加，但笔记生成失败：${e instanceof Error ? e.message : String(e)}`);
                             }
+                        }
+                        // LRC 歌词写回笔记（#396）：只在**本次真的写过笔记**时写 ——
+                        // 冲突弹窗选「保留笔记文件」= 用户要求保留笔记现状，此时连歌词框一起尊重（⛔ 别覆盖）。
+                        // `setNoteLrc` 自带「内容无变化不写盘 / 不刷无谓指纹」，所以未改歌词时空跑一次没有代价。
+                        if (noteWritten && targetId && lrc !== undefined) {
+                            await this.plugin.service.setNoteLrc(targetId, String(lrc));
                         }
                         // 保存成功：记录实际引用的封面（onClose 清理时保留它，只删本次会话的其他下载）
                         this.saved = true;
@@ -164,7 +245,12 @@ export class EntryModal extends Modal {
                         new Notice('保存失败：' + (e instanceof Error ? e.message : String(e)));
                     } finally {
                         // 无论成败都刷新：数据可能已变更（如 writeNote 部分成功），界面必须反映最新状态
-                        if (saved) this.close();
+                        if (saved) {
+                            // 🔴 #632：**编辑态照旧关窗**（改完就走）；新建态不关 —— 回到候选列表接着挑下一条
+                            //    （用户：「新增一个条目后搜索源出来的窗口不消失可继续添加」）。
+                            if (this.entry) this.close();
+                            else this.repeatAdd();
+                        }
                         await this.plugin.refreshViews();
                     }
                 },
@@ -185,14 +271,41 @@ export class EntryModal extends Modal {
                 onPickLocalVideo: () => this.plugin.pickLocalVideoPath(),
                 /** 编辑表单「本地音频」：系统文件选择器选音频，返回 vault 相对路径（库外绝对路径） */
                 onPickLocalAudio: () => this.plugin.pickLocalAudioPath(),
+                /** #462 编辑表单「播放」按钮的悬停提示：探关联音频的**体积 + 时长**（拿不到的那项不显示） */
+                onProbeAudioInfo: (path: string) => this.plugin.probeAudioInfo(path),
                 /** 编辑表单「总结摘要」小标题右侧 ✨：AI 生成一句话总结 + 核心看点（复用阅读器翻译的服务商与 Key；失败返回 null 且已提示） */
                 onAiSummarize: (input: AiSummaryInput) => this.plugin.aiSummarizeEntry(input),
+                /** #499 新增条目标题行 ✨：AI 预填客观字段（返回字段表 + 工具来源；失败返回 null 且已提示）。⚠️ 只表字段，不落库 —— 预览确认后由表单回填
+                 *  #499D 第二参 `onStep`：agent 工具回路里每次调工具的进度回执（宿主执行工具，表单只显示） */
+                onAiPrefill: (input: AiPrefillInput, onStep?: (label: string) => void) =>
+                    this.plugin.aiPrefillEntry(input, onStep),
                 /** 编辑表单游戏「启动快捷方式」：系统文件选择器选 .lnk，返回 vault 相对路径（库外绝对路径） */
                 onPickGameLaunch: () => this.plugin.pickGameLaunchPath(),
-                /** 编辑表单书籍「浏览…」：系统文件选择器选 TXT/EPUB，返回 vault 相对路径 */
+                /** 编辑表单书籍「浏览」：系统文件选择器选 TXT/EPUB/PDF/CBZ/CBT，返回 vault 相对路径 */
                 onPickBookFile: () => this.plugin.pickBookFilePath(),
+                /**
+                 * 🔴 #539 编辑表单书籍「选文件夹」：**漫画「散装文件夹型」**把**文件夹本身**关联成书。
+                 * ⚠️ 与 `onPickBookFile`（`openFile`）**分开两枚** —— Electron 在 Windows/Linux 上不能
+                 *    同时选文件与目录（组合形态会退化成只能选文件，实测报障即此）。
+                 * 三态透传：`string` 选中 / `null` 取消 / `undefined` 本环境无系统对话框。
+                 */
+                onPickBookFolder: () => this.plugin.pickBookFolderPath(),
                 onPickVideoDir: () => this.plugin.pickVideoDirPath(),
+                /**
+                 * 🔴 #602 编辑表单「检索本地书籍」：**与影视那枚单集本地检索同一条链** —— 宿主按子分类
+                 * 取设置里的「文学 / 网文 / 漫画目录」，递归扫 + 按标题匹配（`main.searchLocalBookFile`）。
+                 * ⚠️ #524 那套「先弹系统目录选择器」的 `onPickBookDir` / `onListBookFilesInDir` 连同
+                 *    只服务它们的 `onListLibraryBooks` **一并退场**（用户：那枚图标「怎么是选文件夹关联的，
+                 *    统一成检索关联」+ 问答裁定「两处一起改」）⇒ 三个 prop 与对应宿主方法都已删。
+                 */
+                onSearchLocalBook: (q: LocalBookSearchQuery) => this.plugin.searchLocalBookFile(q),
+                /** 🔴 #534 游戏「检索本地」：同样**先弹系统目录选择器**，再在选中目录里找同名**可启动文件**（.lnk/.exe/.bat…） */
+                onPickGameDir: () => this.plugin.pickGameDirPath(),
+                onListGameLaunchFilesInDir: (dir: string) => this.plugin.listGameLaunchFilesInDir(dir),
                 onScanEpisodeDir: (dir: string) => this.plugin.scanEpisodeDir(dir),
+                /** 🔴 #563 编辑浮层「本地路径」旁那枚**单集本地检索**：按条目类型去设置里的分类目录递归找当前集
+                 *  （与上面几条「先选目录再找」不同 —— 它**不问用户**，目录来自设置页） */
+                onSearchLocalEpisode: (o: LocalEpisodeQuery) => this.plugin.searchLocalEpisode(o),
                 /** 书籍「进度页数」自动关联：探针本地书籍文件基准（PDF → numPages；TXT → 按章节解析 totalChapters；EPUB/失败 → undefined） */
                 onProbeBookPages: (path: string) => this.plugin.probeBookPages(path),
                 /** 编辑表单「阅读」：打开书籍阅读器（TXT 立即读入；EPUB 后置），关闭后返回最新阅读进度供表单同步 */
@@ -207,6 +320,112 @@ export class EntryModal extends Modal {
                     if (this.entry) void this.plugin.playAudioEntry(this.entry);
                     else new Notice('保存后可播放音频', 3000);
                 },
+                /** 编辑表单 LRC 框初值：从笔记 ` ```lrc ` 块读回（#396；真源 `pure/lrcSource`，与播放器同一份口径） */
+                initialLrc,
+                /** 编辑表单「获取歌词」：在线检索四个源（桌面端；移动端宿主返回空档） */
+                onSearchLyrics: (t: string, a: string) => this.plugin.searchOnlineLyrics(t, a),
+                /** 编辑表单候选「填入」：取该源该条的歌词正文 */
+                onLoadLyric: (source: LyricSourceId, id: string) => this.plugin.fetchOnlineLyric(source, id),
+                /**
+                 * 🔴 #507 LRC 双语歌词（用户：「为当前 LRC 歌词 AI 搜索并生成双语歌词
+                 * `[00:15.16]hello | 你好` 格式，入口排在**搜歌词图标按钮旁边**」）。
+                 * 走「AI集成 › 用途 · 翻译服务」的服务商与 Key（⛔ 不为它单开一套凭据）——
+                 * 与 `onAiSummarize` 同款：只把调用包一层传进组件，门控/提示都在宿主那侧。
+                 * ⚠️ 返回**合并后的整份 LRC**（时间标签原样保留）；写回表单由组件负责。
+                 */
+                onAiBilingualLrc: (lrc: string, meta?: { title?: string; artist?: string }) =>
+                    this.plugin.aiBilingualLyrics(lrc, meta),
+                /**
+                 * #500③ 集编辑浮层「网络地址」旁的「B站」：搜索候选（复用**音乐下载那条 B 站搜索链** ——
+                 * 同一个 `pure/dl/bilibili` 解析、同一个 `services/dl/bilibili` 两步请求与 `buvid3` 缓存）。
+                 * ⛔ 只取候选，**不下载**（下载是音乐下载弹窗那条路的职责）。
+                 * 🔴 门控在宿主那侧（`dlBiliSearch` 自己判 `Platform.isDesktopApp` 并给「仅桌面端支持」），
+                 *    组件里不重复判断。
+                 */
+                onBiliSearch: (keyword: string) => this.plugin.dlBiliSearch(keyword),
+                /**
+                 * #505 分P 勾选表：拿一条视频的**分P 列表**（用户 2026-10-03 选的是「入口 C」——
+                 * 点候选不是直接填，而是**展开它的分P 让用户勾**）。
+                 * 🔴 实测驱动：搜索接口**不返回分P 数** ⇒「这一条是单P 还是 52P」只能点开才知道；
+                 *    实测「熊出没」前 10 条里 6 条是多P（3 条正是 52P），所以这条路是真用得上的。
+                 * ⚠️ 读不到分P（失败 / 单P）时组件**回落到「直接填这一条」**，⛔ 不把能用的路堵死。
+                 */
+                onBiliParts: (bvid: string) => this.plugin.dlBiliView(bvid),
+                /**
+                 * #529 书籍「检索在线书籍阅读」：搜**微信读书**网页版，回填在线阅读链接。
+                 * ⛔ 只取候选（书名/作者/封面/评分 + `web/reader/<hash>`），**不下载、不解析正文**。
+                 * 🔴 门控在宿主那侧（`searchWeread` 自判 `Platform.isDesktopApp` 并给文案），组件不重复判断。
+                 */
+                onSearchWeread: (keyword: string) => this.plugin.searchWeread(keyword),
+                /**
+                 * 🔴 #527 / #531 链接失效状态（**只读注入**）：从宿主内存缓存读一次 ——
+                 * 缓存由「设置 › 基本设置 › 封面与清理 › 失效链接检测」扫**全库**时写入。
+                 * ⛔ 本弹窗不再提供检测入口（用户 2026-10-05 指令：按钮挪到设置页）。
+                 */
+                linkStatuses: this.entry ? this.plugin.getLinkStatuses(this.entry.id) : [],
+                /**
+                 * ⑤-c 下载歌曲：**仅桌面端 + 「启用内置音乐播放器」开启时**才给按钮。
+                 * 移动端没有 Node http ⇒ 显示了也必然失败，不如不给（与「获取歌词」同口径）。
+                 * 🔴 #399 起门控真源由 `musicDownloadEnabled` 换成 `audioInlinePlayer` ——
+                 *    一个开关同时管「笔记内 lrc 播放器」与「下载按钮」，用户要求「关闭后不显示下载按钮」。
+                 * 🔴 #464：门控口径上移到宿主 `canUseAudioDownload()`（**单一真源**）——
+                 *    同一枚开关现在还管「在线曲库」结果栏（音乐搜索里的歌曲栏，走的正是下载那条四平台链），
+                 *    两处各写一遍 `Platform.isDesktopApp && settings.audioInlinePlayer` ⇒ 必然出现
+                 *    「按钮亮着、曲库栏却永远空」这类不一致。
+                 */
+                canDownload: this.plugin.canUseAudioDownload(),
+                /* 🔴 #538 在线曲库栏的**独立开关**（用户：「设置项可选择开启或关闭新增音乐条目『在线曲库』的搜索，
+                   默认关闭」）。与 `canDownload` **不是同一件事**：
+                   · `canDownload` = 能力（桌面端 + 内置音乐播放器）⇒ 管表单「下载歌曲」按钮；
+                   · `songLibraryEnabled` = 能力 ∧ 用户开关（`canUseSongLibrary()`，单一真源）⇒ 管「在线曲库」那一栏。
+                   ⛔ 别再让曲库栏共用 `canDownload`。 */
+                songLibraryEnabled: this.plugin.canUseSongLibrary(),
+                onOpenDownloader: (t: string, a: string, onPicked: (relPath: string) => void) =>
+                    this.plugin.openMusicDownloader(t, a, onPicked),
+                /* 🔴 #523：书籍下载那一套接线（两个门控 prop + 一个写回回调）按用户 2026-10-04 裁定
+                   「下载只保留音乐」**整块撤除** —— 书籍「路径」旁不再有下载按钮（门控真源 `pure/featureGate`
+                   的封禁清单已同步改写）。⚠️ 下载实现本体（`BookDownload.svelte` / 插件那支 open…Downloader
+                   方法 / 书源服务）与两条命令面板入口原样保留；「库内同名书籍检索」照旧注入。
+                   ⚠️ 被删那三处标识符的全名**刻意不写**：注释会进产物，抄了会撞红反向守卫（本仓老坑）。 */
+                /**
+                 * #404：**库内音乐目录**下的音频清单（「本地音频」浮层里那枚「检索同名音频」按钮用）。
+                 * 🔴 目录与扩展名真源都在宿主（`listLibraryAudioFiles`）—— 组件只拿去和条目标题比对，
+                 *    ⛔ 组件不碰 vault、也不自己拼目录。
+                 */
+                onListLibraryAudio: () => this.plugin.listLibraryAudioFiles(),
+                /**
+                 * #497 改关联音频文件的名字（用户：「再添加在音乐条目上修改关联的音频文件名称的功能」）。
+                 * 🔴 全部动作在宿主（`main.renameEntryAudio`：库内/库外分流 + 同名 `.lrc` 一起改 + 回写条目与笔记），
+                 *    这里只做两件**界面侧**的事：把当前条目 id 传下去（新增态传 `null`）、成功后把
+                 *    `this.entry.audioPath` 同步成新路径 —— 否则弹窗侧缓存的条目还指着旧路径，
+                 *    后续任何基于它的判断（外部改过没有 / 冲突比对）都拿的是过期的关联。
+                 */
+                onRenameAudio: async (currentPath: string, newStem: string) => {
+                    const r = await this.plugin.renameEntryAudio(this.entry?.id ?? null, currentPath, newStem);
+                    if (r.ok && r.path && this.entry) this.entry.audioPath = r.path;
+                    return r;
+                },
+                /**
+                 * 🔴 #402 下载后**自动关联到条目**（用户：「下载后的音频需能自动关联到对应的音乐类型条目」）。
+                 * 编辑态直接写回 catalog 的 `audioPath`；`service.update` 是**按字段合并**（`{...prev, ...patch}`），
+                 * 不会冲掉用户在表单里还没提交的其它改动。新增态还没有条目可写 ⇒ 静默返回（仍走「保存」提交）。
+                 * ⚠️ 笔记被外部改过时**不重写**（与 `onSubmit` 的冲突口径一致）—— 那只更新字段，别覆盖用户手改。
+                 */
+                onApplyAudio: async (relPath: string) => {
+                    const target = this.entry;
+                    if (!target) return;
+                    try {
+                        await this.plugin.service.update(target.id, { audioPath: relPath });
+                        target.audioPath = relPath;
+                        if (target.notePath && !(await this.plugin.service.noteWasExternallyModified(target.id))) {
+                            await this.plugin.service.writeNote(target.id);
+                        }
+                        await this.plugin.refreshViews();
+                        new Notice(`已关联到「本地音频」：${relPath}`, 4000);
+                    } catch (e) {
+                        new Notice(`音频已下载，但写回条目失败：${e instanceof Error ? e.message : String(e)}`, 5000);
+                    }
+                },
                 /** 拖入本地图片上传为封面：返回相对路径（covers/xxx） */
                 onUploadPoster: (file: File) => this.plugin.uploadPoster(file),
                 /** 解析封面字符串为可显示地址（http 直用 / 本地路径映射 vault 资源） */
@@ -216,6 +435,40 @@ export class EntryModal extends Modal {
                     const rel = await this.plugin.downloadPosterToLocal(url, title);
                     if (rel) this.downloadedPosters.add(rel);
                     return rel;
+                },
+                /**
+                 * #498「从网络搜索封面」（用户：「再添加在所有编辑条目的封面右键加个从网络上搜索下载封面图片的功能」）。
+                 * 🔴 两条纪律：
+                 *  ⑴ 下载下来的封面要进 `downloadedPosters` —— 与「豆瓣封面本地化」「更换本地图片」**同一本账**：
+                 *     用户最后**取消弹窗 / 换掉封面**时，`cleanupOrphanedPosters` 才会把它清掉，
+                 *     ⛔ 不记账 = 每次点一张就在 `封面/` 里留一个没人引用的文件。
+                 *  ⑵ `apply(relPath)` 是**表单侧传进来的写入口**（改 `poster` 字段），⛔ 弹窗不直接碰表单。
+                 */
+                onOpenPosterSearch: (
+                    query: string,
+                    title: string,
+                    apply: (relPath: string) => void,
+                    platformQuery?: string,
+                    sources?: PosterSource[],
+                ) => {
+                    new PosterSearchModal(
+                        this.app,
+                        {
+                            search: (source: PosterSource, q: string, page: number) =>
+                                this.plugin.searchPosterCandidatesBySource(source, q, page),
+                            download: (c: PosterCandidate) => this.plugin.downloadSearchedPoster(c, title),
+                        },
+                        {
+                            // 🔴 #509 两套默认词**分开给**：必应要「标题 + 类型词」、平台要「标题 + 作者」
+                            queries: { bing: query, netease: platformQuery, qq: platformQuery, kugou: platformQuery, kuwo: platformQuery },
+                            // 表单侧决定可用来源（音乐 = 五个；其它类型只有网络搜索）
+                            sources: sources?.length ? sources : ['bing'],
+                            onPicked: (relPath: string) => {
+                                this.downloadedPosters.add(relPath);
+                                apply(relPath);
+                            },
+                        },
+                    ).open();
                 },
             },
         });
@@ -236,6 +489,27 @@ export class EntryModal extends Modal {
             }
         }
         this.downloadedPosters.clear();
+    }
+
+    /**
+     * 🔴 #632 连续添加：**新建**条目保存成功后的收口 —— 弹窗不关，回到候选列表继续挑（替代 #631 那套独立批量弹窗）。
+     *
+     * 三步（顺序有讲究）：
+     *   ① 从**旧实例**收下会话状态（候选 / 关键词 / 刚挑的那条 / 系列两栏）—— `$destroy()` 之后就取不到了；
+     *   ② 把刚建的那条记为「已添加」，并把序号 +1（系列名留着：一次填好连编 13 部）；
+     *   ③ 重建表单（`mountForm`）⇒ `picked=false`，直接回到候选列表。
+     *
+     * ⚠️ 只在**新建态**被调用（编辑态走 `close()`）—— 所以不需要判 `this.entry`。
+     */
+    private repeatAdd(): void {
+        const st = this.form?.repeatAddState();
+        if (st) {
+            if (st.addedKey) this.addedHits.add(st.addedKey);
+            // 序号跨次继承 + 自动 +1（`'2'` → `'3'`；空 / 非纯数字原样返回 —— 见 `tests/repeatAdd.test.ts`）
+            this.repeat = { ...st, seriesIndex: nextSeriesIndexLabel(st.seriesIndex) };
+        }
+        new Notice('已保存，可继续挑下一条', 2000);
+        this.mountForm(null, '');
     }
 
     onClose(): void {

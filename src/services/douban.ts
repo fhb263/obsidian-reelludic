@@ -29,7 +29,7 @@ export const DOUBAN_DOMAIN: Record<EntryType, string> = {
 };
 
 /** 浏览器 UA：豆瓣反爬对 UA/Referer 敏感 */
-const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+export const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 /** 浏览器特征头（参考 obsidian-douban DEFAULT_DOUBAN_HEADERS）：缺这些即使有 Cookie 也可能被拦 */
 function browserHeaders(): Record<string, string> {
@@ -232,6 +232,35 @@ export function buildChallengeBody(c: DoubanChallenge, solution: number): string
     return p.toString();
 }
 
+/**
+ * 取「创作者 / 年份行」的文本（书籍 `作者 / 出版社 / 年份`、音乐 `歌手 / 流派 / 年份`、
+ * 影视 `原名:… / 导演 / 演员 / 年份`、游戏 `游戏 / 冒险 / 动作 平台…`）。
+ *
+ * 🔴 #461（2026-10-01 **实测**）：豆瓣把这一行的类名从 **`from`** 换成了 **`subject-cast`**
+ *    —— 四个类目全换（影视 1002 / 书籍 1001 / 音乐 1003 / 游戏 3114，抓真实响应逐条比对过）。
+ *    只认旧类名 ⇒ `fromStr` 恒空 ⇒ **书目作者、年份、音乐歌手、游戏开发商一起消失**
+ *    （用户报的「豆瓣返回的搜索条目没有标作者」就是这条；连年份也没了，只剩评分）。
+ *    ⇒ **两个类名都认**（旧响应 / 缓存 / 其它镜像仍可能是 `from`），⛔ 别只留新的。
+ * ⚠️ **结构兜底**：两个类名都没命中时，取 `.rating-info` 里除「星级 / 评分 / (N人评价)」以外的那个 span
+ *    —— 这一行是作者 / 年份的**唯一来源**，豆瓣已经改过一次类名，第三次改名不该再打穿一次。
+ */
+export function extractDoubanCastLine(html: string): string {
+    const byClass = /class="(?:from|subject-cast)"[^>]*>([^<]*)</.exec(html);
+    if (byClass) return byClass[1].trim();
+    const info = /<div class="rating-info">([\s\S]*?)<\/div>/.exec(html);
+    if (!info) return '';
+    const spans = [...info[1].matchAll(/<span(?:\s+class="([^"]*)")?[^>]*>([^<]*)</g)];
+    const cand = spans.filter((m) => {
+        const cls = m[1] ?? '';
+        const text = (m[2] ?? '').trim();
+        if (!text) return false;
+        if (/^allstar\d*$/.test(cls) || cls === 'rating_nums') return false;
+        if (/人评价/.test(text)) return false;
+        return true;
+    });
+    return cand.length ? (cand[cand.length - 1][2] ?? '').trim() : '';
+}
+
 /** 解析 j/search items 中的单个 li HTML 片段：id/标题（去 from span）/年份/封面/评分 */
 export function parseDoubanItem(html: string): DoubanSubject | null {
     // id 提取：真实响应 href 为 link2 编码跳转（不含明文路径），明文 id 在 onclick 的 sid 字段；
@@ -255,12 +284,15 @@ export function parseDoubanItem(html: string): DoubanSubject | null {
     if (!title) return null;
     // 类型前缀（h3 内 [电影]/[电视剧]/[动画]/[图书]/[音乐]/[游戏] 等）：from span 首段创作者归属 author（书籍/音乐）或 developer（游戏）
     const typeM = /<h3[^>]*>\s*<span>\[([^\]]+)\]<\/span>/.exec(html);
-    // 附加信息行：`作者 / 出版社 / 年份`（书籍）、`歌手 / 年份`（音乐）、`开发商 / 年份`（游戏）、`年份 / 地区 / 类型`（影视）
-    const fromM = /class="from">([^<]*)<\/span>/.exec(html);
-    const fromStr = fromM?.[1]?.trim() ?? '';
+    // 附加信息行：`作者 / 出版社 / 年份`（书籍）、`歌手 / 流派 / 年份`（音乐）、`开发商 / 年份`（游戏）、
+    // `原名:… / 导演 / 演员 / 年份`（影视）—— ⚠️ 类名 `from` / `subject-cast` 两个都认（#461，见该函数注释）
+    const fromStr = extractDoubanCastLine(html);
     const yearM = /\d{4}/.exec(fromStr);
     // 首段（/ 分隔，空格不断段；去 [国籍] 前缀；· 是作者名一部分不可作分隔符）：非纯年份、非「流派：」类键值 → 创作者（书籍/音乐作者、游戏开发商）
-    const head = fromStr.split('/')[0].replace(/^\[[^\]]*\]\s*/, '').trim();
+    const headRaw = fromStr.split('/')[0].replace(/^\[[^\]]*\]\s*/, '').trim();
+    // 🔴 #461：首段**等于类型括号词**时不是创作者 —— 实测豆瓣游戏那类现在是 `游戏 / 冒险 / 动作 平台…`
+    //    （`[游戏]` 括号 + 首段「游戏」），照旧判会把「游戏」当成开发商写进卡片。
+    const head = headRaw && headRaw !== typeM?.[1] ? headRaw : '';
     const creator = head && !/^\d{4}$/.test(head) && !/[:：]/.test(head) ? head : undefined;
     const imgM = /<img[^>]*src="([^"]+)"/.exec(html);
     // 豆瓣搜索结果 img src 形态多样：完整 URL `https://img2.doubanio.com/...`、协议相对 `//img2.doubanio.com/...`、站内相对 `/s/pics/...`

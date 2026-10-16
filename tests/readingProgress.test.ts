@@ -9,6 +9,7 @@ import {
     bookmarksFileName,
     readingProgressFilePath,
     matchLegacyProgressFile,
+    readerRatio,
 } from 'pure/readingProgress';
 
 describe('阅读进度存储 createEmptyProgress 空进度', () => {
@@ -177,6 +178,42 @@ describe('readingProgressFilePath 进度文件路径', () => {
         expect(readingProgressFilePath('e1', '书', 'MyLib//')).toBe('MyLib/阅读进度/书-阅读进度-e1.json');
         expect(readingProgressFilePath('e1', '书', '')).toBe('ReelLudic/阅读进度/书-阅读进度-e1.json');
         expect(readingProgressFilePath('e1', '书', '/')).toBe('ReelLudic/阅读进度/书-阅读进度-e1.json');
+    });
+});
+
+// ── #469 章内比例取值 readerRatio：**不可测量 ≠ 章头** ──
+// 由来（用户 2026-10-01）：「TXT/EUPB阅读器定位阅读进度怎么只能到章头，上次看到章中间具体段落现在打开还是到章头」。
+// 🔴 根因：阅读器关闭时 `flushSave` 直接取「当前比例」，而当前比例 = scrollTop / (scrollHeight − clientHeight)；
+//    元素被隐藏（标签页被切走 / leaf 被 detach）时 **sh 与 ch 双双为 0**（真 Chrome 实测，`_shot/rd468.html`）
+//    ⇒ 旧实现 `return 0` ⇒ 把「读到章中间」**静默抹成「章头」**并写进存档，下次打开自然回章头。
+describe('章内比例取值 readerRatio（#469）', () => {
+    it('可测量 → 返回实测比例 scrollTop / (scrollHeight − clientHeight)', () => {
+        expect(readerRatio({ scrollTop: 1200, scrollHeight: 9936, clientHeight: 398 }, 0)).toBeCloseTo(1200 / 9538, 10);
+    });
+
+    it('🔴 元素没有布局盒（clientHeight = 0：display:none / 未挂载）→ 沿用上次已知，⛔ 绝不返回 0', () => {
+        expect(readerRatio({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, 0.46)).toBe(0.46);
+    });
+
+    it('拿不到元素（未渲染 / iframe 未就绪）→ 沿用上次已知', () => {
+        expect(readerRatio(null, 0.32)).toBe(0.32);
+        expect(readerRatio(undefined, 0.32)).toBe(0.32);
+    });
+
+    it('有布局但内容不足一屏（max ≤ 0 且 clientHeight > 0）→ **真的是章头**，返回 0', () => {
+        expect(readerRatio({ scrollTop: 0, scrollHeight: 380, clientHeight: 398 }, 0.46)).toBe(0);
+    });
+
+    it('实测比例与 last 都钳制到 0–1（脏数据不入档）', () => {
+        expect(readerRatio({ scrollTop: 99999, scrollHeight: 1000, clientHeight: 200 }, 0)).toBe(1);
+        expect(readerRatio({ scrollTop: -50, scrollHeight: 1000, clientHeight: 200 }, 0.5)).toBe(0);
+        expect(readerRatio(null, 5)).toBe(1);
+        expect(readerRatio(null, -2)).toBe(0);
+    });
+
+    it('非有限数一律回退 last（NaN 不能污染进度）', () => {
+        expect(readerRatio({ scrollTop: NaN, scrollHeight: NaN, clientHeight: NaN }, 0.2)).toBe(0.2);
+        expect(readerRatio(null, NaN)).toBe(0);
     });
 });
 

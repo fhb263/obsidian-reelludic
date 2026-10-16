@@ -1,21 +1,29 @@
 // 条目服务层：增删改查 + 状态流转 + 追更标记 + 笔记生成编排
 // 纯逻辑：文件 IO 通过注入的 VaultIO 完成（obsidian 适配器在插件侧提供）
-import type { ActivityEvent, Catalog, MediaEntry } from 'data/types';
+import type { ActivityEvent, BookKind, Catalog, EntryType, MediaEntry } from 'data/types';
 import { CatalogStore, normalizeEntry, type VaultIO } from 'data/catalog';
 import { canTransition, type MediaStatus } from 'pure/status';
 import { entryFrontmatter, entryNotePath, generateNoteMarkdown, hashNoteContent } from 'data/noteGenerator';
 import {
     appendExcerptToNote,
     countExcerpts,
-    extractExcerptSection,
-    generateBlockId,
+    extractAnnotationSections,
     mergeExcerptSection,
     removeExcerptBlock,
+    replaceAnnotationSection,
     renderExcerptBlock,
     type ParsedExcerpt,
 } from 'pure/excerpt';
+import { dropsReadingProgress } from 'pure/bookProgress';
+import { parseNoteMarks, type VideoMark } from 'pure/videoMarks';
 import { HIGHLIGHT_SECTION } from 'pure/highlight';
+import { lrcBlockLyrics, withLrcLyrics } from 'pure/lrcSource';
 import { DIR_NOTES } from 'pure/dirs';
+// 1.3.1 ① 字段映射：写笔记时按用户配置改名（缺省恒等）
+import { EMPTY_FIELD_MAP, compileFieldMapText, type CompiledFieldMap } from 'pure/fieldMap';
+// 1.3.1 ① 第 3 件：各类型笔记属性顺序（按 `e.type` 取值后传给 entryFrontmatter）
+import { resolveAllKindOrders, resolveAllOrders } from 'pure/fieldOrder';
+import { normalizeBookKind } from 'pure/bookKind';
 
 function notFound(id: string): Error {
     return new Error('entry not found: ' + id);
@@ -23,13 +31,71 @@ function notFound(id: string): Error {
 
 export class EntryService {
     private store: CatalogStore;
+    /** 1.3.1 ①：编译好的字段映射（构造时算一次）。设置一变 `main.rebuildService()` 就重建实例 ⇒ 不会过期。 */
+    private fieldMap: CompiledFieldMap = EMPTY_FIELD_MAP;
+    /** 1.3.1 ① 第 3 件：六个类型各自的属性写出顺序（同样构造时算一次）。 */
+    private fieldOrders: Record<EntryType, string[]>;
+    /**
+     * 🔴🔴 #640e：**书籍三个子分类各自的顺序**（文学 / 网文 / 漫画）。
+     * 书籍条目按自己的 `bookKind` 取；非书籍条目**用不到它**（走 `fieldOrders`）。
+     * ⚠️ 回落链（`kind → fieldOrder.book → 缺省`）在 `pure/fieldOrder.orderForBookKind` 里，
+     *    这里只负责**按 e 取用**。
+     */
+    private kindOrders: Record<BookKind, string[]>;
 
     constructor(
         private io: VaultIO,
         private catalogPath: string = 'ReelLudic/catalog.json',
         private entriesDir: string = 'ReelLudic/笔记',
+        /** 笔记是否渲染属性表格（设置页「笔记表格」开关）。
+         *  🔴🔴 #596 **翻面**：缺省由 `true` 改成 **`false`** —— 用户点名「默认全部关闭」；
+         *  由 `main.rebuildService()` 每次 saveSettings 时按设置重建服务传入，故改开关即时生效。 */
+        private noteTable: boolean = false,
+        /** 1.3.1 ① 字段映射**原文**（每行一条 `[原] -> [新]`）；空 / 缺省 = 恒等映射。
+         *  ⚠️ 传原文而不是编译结果：设置页里存的就是这段文本，编译只在这里做一次。 */
+        fieldMapText: string = '',
+        /** 1.3.1 ① 第 3 件：**各类型笔记属性顺序**（`settings.fieldOrder` 原文；缺省 = 全部走缺省顺序）。 */
+        fieldOrderCfg: unknown = {},
+        /** 🔴 #640e：**书籍子分类各自的顺序**（`settings.fieldOrderByKind` 原文；缺省 = 回落 `fieldOrder.book`）。 */
+        fieldOrderKindCfg: unknown = {},
     ) {
         this.store = new CatalogStore(io, catalogPath);
+        this.fieldMap = compileFieldMapText(fieldMapText);
+        this.fieldOrders = resolveAllOrders(fieldOrderCfg);
+        this.kindOrders = resolveAllKindOrders(fieldOrderCfg, fieldOrderKindCfg);
+    }
+
+    /**
+     * 🔴 #640e：取某条目该用的**属性写出顺序**。
+     * **书籍**按自己的 `bookKind`（文学/网文/漫画各一份）；**其余类型**按 `type`。
+     * ⚠️ 书籍的 `bookKind` 缺省归 `book`（文学）—— 与 `normalizeEntry` 同一口径
+     *    （用 `normalizeBookKind`，⛔ 别自己写 `?? 'book'`：脏值归一只有那一个真源）。
+     */
+    private orderForEntry(e: MediaEntry): string[] {
+        if (e.type === 'book') return this.kindOrders[normalizeBookKind(e.bookKind)];
+        return this.fieldOrders[e.type];
+    }
+
+    /**
+     * 🔴 写笔记的**唯一出口**：写盘 + 同步刷新 `noteFingerprint`（两件事必须成对）。
+     *
+     * 为什么必须成对：`noteWasExternallyModified()` 的判据只是「文件内容 hash ≠ 落库指纹」，
+     * 对**是谁**改的一无所知 ⇒ 插件自己的写入若不同步刷指纹，下次保存该条目必然被判成
+     * 「笔记被外部修改」并弹二选一框（用户 2026-09-21 实测报障：「为什么总会有……提示」）。
+     * 历史上 `addExcerpt`／`deleteExcerpt`／`appendNoteSection` 三条正是「各自 `io.writeText` +
+     * 只刷自己那份缓存」的写法 ⇒ 三条全是误报源。⛔ 新增写笔记功能一律走这里。
+     *
+     * @param patch 除指纹外还要一起落库的字段（如 `notePath` / `excerptCount`）；
+     *              只想刷 `updatedAt` 时传空对象即可（`update()` 自己会写时间）。
+     */
+    private async writeNoteRaw(
+        id: string,
+        notePath: string,
+        content: string,
+        patch: Partial<MediaEntry> = {},
+    ): Promise<void> {
+        await this.io.writeText(notePath, content);
+        await this.update(id, { ...patch, noteFingerprint: hashNoteContent(content) });
     }
 
     private async load(): Promise<Catalog> {
@@ -71,13 +137,17 @@ export class EntryService {
         await this.save(c);
         return entry;
     }
-
     async update(id: string, patch: Partial<MediaEntry>): Promise<MediaEntry> {
         const c = await this.load();
         const idx = c.entries.findIndex((e) => e.id === id);
         if (idx < 0) throw notFound(id);
         const prev = c.entries[idx];
-        const merged = normalizeEntry({ ...prev, ...patch, updatedAt: this.now() });
+        // 🔴 #609：本次**清空本地书籍文件**（解除关联）⇒ 阅读进度失去载体，一并清掉（用户裁定「直接清数据」）。
+        //    ⚠️ **单点收口**：右键「关联入口」、编辑表单、书籍浮层三条清空路径都经 `update` ⇒ ⛔ 别在别处再判一次。
+        const effective: Partial<MediaEntry> = dropsReadingProgress(patch)
+            ? { ...patch, readingProgress: undefined }
+            : patch;
+        const merged = normalizeEntry({ ...prev, ...effective, updatedAt: this.now() });
         c.entries[idx] = merged;
         if (merged.status !== prev.status) this.pushActivity(c, id, merged.status); // 编辑表单改状态也要进日志
         await this.save(c);
@@ -177,27 +247,40 @@ export class EntryService {
     }
 
     /** 生成/覆写条目详情笔记，回填 notePath。
-     *  合并写入策略 C：模板重写时按「## 摘抄」标记行提取旧笔记摘抄区，原样回填（防覆写清空用户摘抄）。 */
+     *  合并写入策略 C：模板重写时按「## 摘抄」「## 时间戳」「## 截图」等标记行提取旧笔记**用户标注区**，
+     *  原样回填（防覆写清空用户标注）。⚠️ 只搬「摘抄」会把其它区整段吞掉 —— 2026-09-18 实测：
+     *  重写后块全丢，正文里还显示着却删不掉；各区按旧笔记里的先后顺序搬回。
+     *  🔴🔴 #528（2026-10-05）：「## 高亮」**已移出**搬回名单（`ANNOTATION_SECTIONS` 不含它）——
+     *  高亮真源只在阅读数据 JSON，笔记里那份镜像不再生成；模板重写会把旧笔记里的高亮区**顺手覆盖掉**
+     *  （这正是存量清理的惰性路径）。
+     *  🔴 2026-09-27 增第三处：**` ```lrc ` 块内的歌词正文**（非指令行）。模板只按 `audioPath` 写出
+     *  `source` 指令行 ⇒ 不搬回就等于「用户填过 / 在线获取的歌词，保存一次全没了」（静默丢数据）。
+     *  指令行仍由模板决定（`formatLrcSourceDirective`），歌词正文归用户 —— 两者分工不能混。 */
     async writeNote(id: string): Promise<string> {
         const e = await this.get(id);
         if (!e) throw notFound(id);
         const path = entryNotePath(e, this.entriesDir);
         // 库目录（去掉末尾笔记目录名）：供 banner 拼接本地封面路径
         const libraryDir = this.entriesDir.replace(/\/+$/, '').replace(new RegExp(`/${DIR_NOTES}$`), '') || 'ReelLudic';
-        const md = entryFrontmatter(e, libraryDir) + '\n\n' + generateNoteMarkdown(e, libraryDir);
+        // 🔴 #640e：顺序按条目取 —— **书籍走 `bookKind` 那一份**（文学/网文/漫画各存各的），
+        //    其余类型走 `type`。⛔ 别退回 `this.fieldOrders[e.type]`（那会让书籍三者共用一份，
+        //    用户拆出来的三个子类分组当场失效）。
+        const md = entryFrontmatter(e, libraryDir, this.fieldMap, this.orderForEntry(e)) + '\n\n' + generateNoteMarkdown(e, libraryDir, { table: this.noteTable });
         let final = md;
         if (e.notePath) {
             try {
                 const old = await this.io.readText(e.notePath);
-                const sec = extractExcerptSection(old);
-                if (sec) final = mergeExcerptSection(md, sec);
+                for (const sec of extractAnnotationSections(old)) {
+                    final = mergeExcerptSection(final, sec.body, sec.section);
+                }
+                // 歌词正文：整段搬回（`withLrcLyrics` 自己处理「无块 / 无歌词 / 无变化」三种情况）
+                final = withLrcLyrics(final, lrcBlockLyrics(old));
             } catch {
                 // 旧笔记不存在/不可读：跳过合并（首次写入或文件被外部移除）
             }
         }
-        await this.io.writeText(path, final);
-        // 记录笔记内容指纹（G 双写冲突）：下次写前比对，检测外部手动修改
-        await this.update(id, { notePath: path, noteFingerprint: hashNoteContent(final) });
+        // 记录笔记路径 + 内容指纹（G 双写冲突）：下次写前比对，检测外部手动修改
+        await this.writeNoteRaw(id, path, final, { notePath: path });
         return path;
     }
 
@@ -215,8 +298,32 @@ export class EntryService {
         }
     }
 
+    /**
+     * 采纳**当前笔记内容**为新的指纹基线（用户 2026-09-21 报「总会有外部修改提示」的后半）。
+     *
+     * 场景：冲突弹窗里用户选「保留笔记改动」⇒ 笔记不重写、库数据也不动，但**指纹必须跟上**。
+     * 旧实现选「保留」时什么都不做 ⇒ 指纹永远停在冲突前那一版 ⇒ 该条目**每次保存都会再问一遍**
+     * （用户实感就是「总会有这个提示」）。
+     *
+     * 语义：认可「文件现在这个内容」为基线 ⇒ 之后只有**再发生变化**才会重新提示 ——
+     * 这不是把保护关掉（`noteWasExternallyModified()` 照旧比对），而是「一次外改只问一次」。
+     * 无笔记 → `false`（无基线可采纳）；读不到 → `false`（不抛：确认框已关，失败不该打断保存流程）。
+     */
+    async adoptNoteAsBaseline(id: string): Promise<boolean> {
+        const e = await this.get(id);
+        if (!e) throw notFound(id);
+        if (!e.notePath) return false;
+        try {
+            const content = await this.io.readText(e.notePath);
+            await this.update(id, { noteFingerprint: hashNoteContent(content) });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     /** 向书目笔记追加一条摘抄（仅书籍）：无笔记时先生成；返回更新后的摘抄数。 */
-    async addExcerpt(id: string, excerpt: ParsedExcerpt): Promise<{ count: number }> {
+    async addExcerpt(id: string, excerpt: ParsedExcerpt, opts: { refLink?: string } = {}): Promise<{ count: number }> {
         const e = await this.get(id);
         if (!e) throw notFound(id);
         if (e.type !== 'book') throw new Error('excerpt only for book');
@@ -228,12 +335,113 @@ export class EntryService {
             if (!notePath) throw new Error('note path missing');
         }
         const old = await this.io.readText(notePath);
-        const final = appendExcerptToNote(old, renderExcerptBlock(excerpt));
-        await this.io.writeText(notePath, final);
-        // 刷新 updatedAt + 落库摘抄数（P1 性能缓存：书架徽标/年度总结读 catalog 不读笔记）
+        // entryId 进渲染 → 头行追加「回到原文」深链（用户 2026-09-19；库外书也能点回）
+        const final = appendExcerptToNote(old, renderExcerptBlock(excerpt, { callout: true, refLink: opts.refLink, entryId: id }));
+        // 刷新 updatedAt + **指纹** + 落库摘抄数（P1 性能缓存：书架徽标/年度总结读 catalog 不读笔记）
         const count = countExcerpts(final);
-        await this.update(id, { excerptCount: count });
+        await this.writeNoteRaw(id, notePath, final, { excerptCount: count });
         return { count };
+    }
+
+    /**
+     * 读条目笔记**正文**（④-4 音频播放器取歌词用）。
+     * **无笔记 / 读不到 → `null`**（不是错误：还没写过笔记的条目就是没有笔记）。
+     * 🔴 笔记只经 `EntryService` 读写（`io.readText` 走红线 11 的二进制 + 编码嗅探）⇒
+     *    消费方（播放器）⛔ 不要自己去 `vault.read`，否则「笔记被外部修改」的指纹判断会被绕过。
+     */
+    async readNoteText(id: string): Promise<string | null> {
+        const e = await this.get(id);
+        if (!e?.notePath) return null;
+        try {
+            return await this.io.readText(e.notePath);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * 读条目笔记 ` ```lrc ` 块里的**歌词正文**（#396：条目表单的 LRC 框用它回填）。
+     * **无笔记 / 无块 / 只有指令行 → `''`**（不是错误：没歌词就是没歌词，框里就该是空的）。
+     * 🔴 与播放器侧的读取**同源**：都走 `pure/lrcSource.lrcBlockLyrics` ⇒ 表单里看到的就是播放器唱的那份。
+     */
+    async readNoteLrc(id: string): Promise<string> {
+        return lrcBlockLyrics((await this.readNoteText(id)) ?? '');
+    }
+
+    /**
+     * 写条目笔记 ` ```lrc ` 块的歌词正文（#396）。返回**是否真的写了盘**。
+     *
+     * 🔴 必须经 `writeNoteRaw`（笔记 + 指纹的唯一出口）：否则下次编辑条目会被
+     *    `noteWasExternallyModified()` 判成「笔记被外部修改」，用户又要面对一次冲突弹窗。
+     * 🔴 语义是**整段替换**：传空串就是清空歌词（这是「清了框还能生效」的实现，
+     *    与 `writeNote` 的保留区配合才有意义 —— 保留区搬回的是**旧**歌词，本方法负责把它换成新的）。
+     * 无笔记 → `false`（不凭空造笔记：歌词是笔记里的一段，没有笔记就没有可写的块）。
+     * 内容无变化 → `false` 且**不写盘**（逐字比对，避免每次保存都白写一遍并刷指纹）。
+     */
+    async setNoteLrc(id: string, lyrics: string): Promise<boolean> {
+        const e = await this.get(id);
+        if (!e?.notePath) return false;
+        let old: string;
+        try {
+            old = await this.io.readText(e.notePath);
+        } catch {
+            return false;
+        }
+        const text = String(lyrics ?? '').trim();
+        if (lrcBlockLyrics(old) === text) return false;
+        const final = withLrcLyrics(old, text);
+        if (final === old) return false;
+        await this.writeNoteRaw(id, e.notePath, final);
+        return true;
+    }
+
+    /**
+     * 读条目笔记 → 进度条标记（#333）。
+     * **无笔记 / 读不到 → 空数组**（不是错误：还没写过笔记的视频就是没有点）。
+     * ⚠️ 笔记只经 `EntryService` 读写 ⇒ 解析入口也放这里（视图不碰 vault）。
+     * 解析本身在纯模块 `pure/videoMarks`（只扫 `## 时间戳` / `## 截图` 两区、认链接目标不认文字）。
+     */
+    async readNoteMarks(id: string): Promise<VideoMark[]> {
+        const e = await this.get(id);
+        if (!e?.notePath) return [];
+        try {
+            return parseNoteMarks(await this.io.readText(e.notePath));
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * 向条目笔记追加一段 markdown 到指定区段（`## <section>`；区段不存在则创建）。
+     * 复用 `appendExcerptToNote` 的**泛型 section** 机制（建区段 / 追加到区段末尾 / 保序 / 不动别的区段）。
+     *
+     * **返回追加内容的起始行号（0 基）** —— 调用方据此把笔记视图滚到插入处
+     * （用户 2026-09-19：「插入后应定位到时间戳的位置显示，而不是又从笔记开头显示」）。
+     *
+     * 🔴 笔记只能从这里写（笔记文件与 `noteFingerprint` 的唯一拥有者是 EntryService）——
+     * 调用方直接 `vault.modify` 会让指纹过期、下次误报「笔记被外部修改」。
+     * 与 `addExcerpt` 的分工：摘抄要维护**摘抄计数缓存**（书架徽标/年度总结读它）故单独一条；
+     * 视频时间戳 / 截图这类「只写不数」的走这里。
+     */
+    async appendNoteSection(id: string, markdown: string, section: string): Promise<{ line: number }> {
+        const e = await this.get(id);
+        if (!e) throw notFound(id);
+        const body = (markdown ?? '').trim();
+        if (!body) return { line: 0 };
+        let notePath = e.notePath;
+        if (!notePath) {
+            await this.writeNote(id);
+            notePath = (await this.get(id))?.notePath;
+            if (!notePath) throw new Error('note path missing');
+        }
+        const old = await this.io.readText(notePath);
+        const final = appendExcerptToNote(old, body, section);
+        // 🔴 指纹必须跟着刷：否则下次保存该条目必然误报「笔记被外部修改」（用户 2026-09-21 报障）。
+        //    顺带刷 updatedAt（与摘抄一致：笔记改了，条目时间跟着走）。
+        await this.writeNoteRaw(id, notePath, final);
+        // 起始行 = 该文本最后一次出现之前有多少个换行（用 lastIndexOf：笔记里可能早就有同样的文本）
+        const at = final.lastIndexOf(body);
+        return { line: at < 0 ? 0 : final.slice(0, at).split('\n').length - 1 };
     }
 
     /** 删除一条摘抄（仅书籍）：按块 id 从笔记摘抄区移除该块；块不存在抛错；更新摘抄数缓存 */
@@ -245,46 +453,34 @@ export class EntryService {
         const old = await this.io.readText(e.notePath);
         const final = removeExcerptBlock(old, blockId);
         if (final === old) throw new Error('摘抄不存在或已删除');
-        await this.io.writeText(e.notePath, final);
         const count = countExcerpts(final);
-        await this.update(id, { excerptCount: count });
+        await this.writeNoteRaw(id, e.notePath, final, { excerptCount: count });
         return { count };
     }
 
-    /** 添加一条高亮（仅书籍）：复用摘抄块格式写入笔记「## 高亮」区（^hl 前缀块 id），返回新块 id + 区内块数。
-     *  高亮不落 catalog 计数缓存（阅读器打开/保存后实时读笔记解析），故仅返回 count 供即时提示。 */
-    async addHighlight(id: string, quote: string, loc: { chapter: number; pct: number }): Promise<{ id: string; count: number }> {
+    /**
+     * 删除笔记里的「## 高亮」区（#528 清理历史镜像用；幂等）。
+     *
+     * 🔴 2026-10-05 用户裁定「高亮数据仅保存在阅读进度文件里」⇒ 笔记里那份「## 高亮」区
+     *    **不再生成**（原「镜像同步」方法已删）。本方法只为**清掉存量笔记里的残留**：
+     *    真源是高亮 JSON（`pure/readerStore`），笔记区只是历史镜像，删掉不丢任何数据。
+     * 🔴 必须经 `writeNoteRaw`（笔记 + 指纹的唯一出口）：否则下次编辑该条目会被
+     *    `noteWasExternallyModified()` 误判成「笔记被外部修改」并弹二选一冲突框。
+     * 无笔记 / 无该区 / 删后无变化 → 返回 `false`（不写盘）。
+     */
+    async removeHighlightSection(id: string): Promise<boolean> {
         const e = await this.get(id);
         if (!e) throw notFound(id);
-        if (e.type !== 'book') throw new Error('highlight only for book');
-        let notePath = e.notePath;
-        if (!notePath) {
-            await this.writeNote(id);
-            const updated = await this.get(id);
-            notePath = updated?.notePath;
-            if (!notePath) throw new Error('note path missing');
+        if (!e.notePath) return false;
+        try {
+            const old = await this.io.readText(e.notePath);
+            const next = replaceAnnotationSection(old, HIGHLIGHT_SECTION, '');
+            if (next === old) return false;
+            await this.writeNoteRaw(id, e.notePath, next);
+            return true;
+        } catch {
+            return false;
         }
-        const blockId = generateBlockId('hl');
-        const blockMd = renderExcerptBlock({ quote: quote.trim(), loc, id: blockId });
-        const old = await this.io.readText(notePath);
-        const final = appendExcerptToNote(old, blockMd, HIGHLIGHT_SECTION);
-        await this.io.writeText(notePath, final);
-        const count = countExcerpts(final, HIGHLIGHT_SECTION);
-        return { id: blockId, count };
-    }
-
-    /** 删除一条高亮（仅书籍）：按块 id 从笔记「## 高亮」区移除该块；块不存在抛错；返回区内剩余块数 */
-    async deleteHighlight(id: string, blockId: string): Promise<{ count: number }> {
-        const e = await this.get(id);
-        if (!e) throw notFound(id);
-        if (e.type !== 'book') throw new Error('highlight only for book');
-        if (!e.notePath) throw new Error('note not found');
-        const old = await this.io.readText(e.notePath);
-        const final = removeExcerptBlock(old, blockId);
-        if (final === old) throw new Error('高亮不存在或已删除');
-        await this.io.writeText(e.notePath, final);
-        const count = countExcerpts(final, HIGHLIGHT_SECTION);
-        return { count };
     }
 
     /** 追加游玩记录（仅游戏）：明细追加 + 同步重写笔记「游玩记录」章节（记录立即可见）。

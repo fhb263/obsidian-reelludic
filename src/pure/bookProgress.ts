@@ -11,11 +11,13 @@ export interface BookProgressFields {
     pageCount?: number;
 }
 
-/** 本地书籍文件探针结果（表单自动关联用）：PDF → 页数基准；TXT → 章节基准（按章节解析）；EPUB → spine 章节基准 */
+/** 本地书籍文件探针结果（表单自动关联用）：PDF → 页数基准；TXT → 章节基准（按章节解析）；EPUB → spine 章节基准；
+ *  漫画（#537，图片文件夹 / CBZ / CBT）→ 页数基准（与 PDF 同构，都是「页」制） */
 export type BookProbeResult =
     | { format: 'pdf'; numPages: number }
     | { format: 'txt'; totalChapters: number }
-    | { format: 'epub'; totalChapters: number };
+    | { format: 'epub'; totalChapters: number }
+    | { format: 'comic'; numPages: number };
 
 /** 无探针信息的 EPUB 占位（兼容旧调用/旧数据：不校正）；null = 无本地文件 */
 export type BookFileInfo = BookProbeResult | { format: 'epub' } | null;
@@ -25,6 +27,28 @@ export interface BookProgressReconcile {
     readingProgress?: { page?: number; totalPage?: number; percent?: number };
     /** 惰性迁移回填的元数据页数（旧 totalPage 来自豆瓣且 pageCount 为空时） */
     pageCount?: number;
+}
+
+/**
+ * 🔴 #609：本次写入 patch 是否**清空了本地书籍文件** ⇒ 该书的阅读进度也该一并清掉。
+ *
+ * 起因（用户报障）：「阅读进度条取消本地文件关联后，应该清除海报墙封面的阅读进度条样式」。
+ * 真根因：解除关联只清 `bookFile`，`readingProgress` 留着；而海报墙的进度行判据
+ * （`pure/mediaProgress.readPercent`）**只看 `readingProgress`**、完全不看 `bookFile`
+ * ⇒ 文件没了、进度条照画。用户裁定 = **直接清掉数据**（不是「只不显示」）。
+ *
+ * 🔴 判据两条，缺一不可：
+ *   ⑴ `'bookFile' in patch` —— 只有**本次真的动了这个字段**才算（否则「改个标题」这类不带 `bookFile`
+ *      的 patch 会因为在原型上没有该键而被误判成「清空」）；
+ *   ⑵ 清空后的值是**空/空白**（统一走 trim ⇒ `''` 与 `'   '` 同口径）。
+ * ⚠️ 纯函数、无 obsidian 依赖（本仓「纯逻辑下沉」红线）；调用点只有 `EntryService.update` 一处
+ *    —— ⛔ 别在右键弹窗 / 编辑表单里各判一次（那正是本仓反复踩的「两份必然漂」）。
+ * ⚠️ 形参写成 `object`（而不是 `{ bookFile?: unknown }`）—— 调用点传的是 `Partial<MediaEntry>`
+ *    （带一堆别的键），窄形参会让**对象字面量**在调用处撞「多余属性检查」（测试里就是这么撞的）。
+ */
+export function dropsReadingProgress(patch: object): boolean {
+    if (!('bookFile' in patch)) return false;
+    return !String((patch as { bookFile?: unknown }).bookFile ?? '').trim();
 }
 
 /** 百分比 → 页码（等比例取整，钳制 0..totalPage；totalPage 非法返回 0） */
@@ -47,8 +71,8 @@ export function reconcileBookProgress(current: BookProgressFields, file: BookFil
     if (!file) return {};
     // EPUB 旧占位（无 totalChapters 字段 = 未探知章节数）：不校正
     if (file.format === 'epub' && !('totalChapters' in file)) return {};
-    // 进度基准：PDF=本地页数；TXT/EPUB=本地章节数（spine 解析）
-    const base = file.format === 'pdf' ? file.numPages : file.totalChapters;
+    // 进度基准：PDF / 漫画（#537）= 本地页数；TXT / EPUB = 本地章节数（spine 解析）
+    const base = file.format === 'pdf' || file.format === 'comic' ? file.numPages : file.totalChapters;
     if (!Number.isInteger(base) || base <= 0) return {};
 
     const out: { page?: number; totalPage?: number; percent?: number } = { totalPage: base };

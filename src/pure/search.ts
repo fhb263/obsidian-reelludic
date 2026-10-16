@@ -1,10 +1,13 @@
 // 关键词过滤（纯逻辑，可单测）：按当前 Tab 维度（types）筛后再按搜索词筛
 // 用于 MediaList 的实时标题/原名模糊匹配（不区分大小写、去首尾空白）
-import type { EntryType, MediaEntry, BookKind, MusicKind } from 'data/types';
+import type { EntryType, MediaEntry, BookKind } from 'data/types';
 import type { MediaStatus } from 'pure/status';
 import { MEDIA_STATUSES } from 'pure/status';
 import { matchesBookKind } from 'pure/bookKind';
-import { matchesMusicKind } from 'pure/musicKind';
+import { matchesGenres } from 'pure/genreFilter';
+// 🔴 #441：系列序号排序档（series-asc / series-desc）的比较逻辑借 `seriesGroup` 那份**单一真源**。
+//    ⚠️ 依赖方向是单向的（seriesGroup 不反过来依赖 search），不会成环。
+import { compareSeriesIndex, compareSeriesIndexDesc } from 'pure/seriesGroup';
 
 /** 状态排序基准（想看 0 < 在看 1 < 已看 2 < 存档 3） */
 const STATUS_RANK: Record<MediaStatus, number> = Object.fromEntries(MEDIA_STATUSES.map((s, i) => [s, i])) as Record<MediaStatus, number>;
@@ -36,8 +39,10 @@ export function matchesStatus(e: MediaEntry, statusFilter: MediaStatus | 'all'):
  *  release-desc=发布日期新→旧 / release-asc=旧→新 /
  *  score-desc=大众评分高→低 / score-asc=低→高 / title-desc=标题 Z-A / title-asc=A-Z /
  *  myrating-desc=个人评分 5★→1★ / myrating-asc=1★→5★ /
- *  status-asc=状态 想看→在看→已看→存档 / status-desc=反之 */
-export type SortBy = 'recent' | 'recent-asc' | 'release-desc' | 'release-asc' | 'score-desc' | 'score-asc' | 'title-desc' | 'title-asc' | 'myrating-desc' | 'myrating-asc' | 'status-asc' | 'status-desc';
+ *  status-asc=状态 想看→在看→已看→存档 / status-desc=反之
+ *  🔴 #441 追加 series-asc=系列序号 小→大（**没填序号的置后**）/ series-desc=反之 ——
+ *     比较逻辑的单一真源是 `pure/seriesGroup.compareSeriesIndex`，⛔ 别在这里另写一份。 */
+export type SortBy = 'recent' | 'recent-asc' | 'release-desc' | 'release-asc' | 'score-desc' | 'score-asc' | 'title-desc' | 'title-asc' | 'myrating-desc' | 'myrating-asc' | 'status-asc' | 'status-desc' | 'series-asc' | 'series-desc';
 
 /** 综合筛 + 排序：filter → sort；保持原数组不被外部 mutate */
 export function filterAndSort(
@@ -47,17 +52,19 @@ export function filterAndSort(
         type: 'all' | EntryType;
         query: string;
         sortBy: SortBy;
-        /** 书籍子分类（1.0.3）：仅阅读页签传入（'all' = 不过滤）；缺省/undefined 不过滤（聚合页签与旧调用不受影响） */
+        /** 书籍子分类（1.0.3）：仅阅读页签传入（'all' = 不过滤）；缺省/undefined 不过滤（聚合页签与旧调用不受影响）。
+         *  音乐子分类维度已于 1.0.3.1 下线（用户 2026-09-13 裁定），不再有此过滤项。 */
         bookKind?: 'all' | BookKind;
-        /** 音乐子分类（1.0.3）：仅收听页签传入（'all' = 不过滤）；缺省/undefined 不过滤 */
-        musicKind?: 'all' | MusicKind;
+        /** 题材（视图级题材筛选，用户 2026-09-22）：已选题材值数组（含「未分类」保留键）；缺省/空数组不过滤。
+         *  多选内部是 OR；与状态/类型/分类/关键词是 AND。判定见 pure/genreFilter.matchesGenres */
+        genres?: readonly string[];
     },
 ): MediaEntry[] {
     return entries
         .filter((e) => matchesStatus(e, opts.status))
         .filter((e) => matchesType(e, opts.type))
         .filter((e) => matchesBookKind(e, opts.bookKind ?? 'all'))
-        .filter((e) => matchesMusicKind(e, opts.musicKind ?? 'all'))
+        .filter((e) => matchesGenres(e, opts.genres ?? []))
         .filter((e) => matchesSearch(e, opts.query))
         .slice()
         .sort((a, b) => {
@@ -82,6 +89,12 @@ export function filterAndSort(
                     return STATUS_RANK[a.status] - STATUS_RANK[b.status];
                 case 'status-desc':
                     return STATUS_RANK[b.status] - STATUS_RANK[a.status];
+                // 🔴 #441 系列序号：比较逻辑走 `pure/seriesGroup.compareSeriesIndex`（**单一真源**），
+                //    ⛔ 别在这里复述一遍「序号 → 年份 → 标题、无序号置后」。
+                case 'series-asc':
+                    return compareSeriesIndex(a, b);
+                case 'series-desc':
+                    return compareSeriesIndexDesc(a, b);
                 case 'recent':
                 default:
                     return b.updatedAt.localeCompare(a.updatedAt);
