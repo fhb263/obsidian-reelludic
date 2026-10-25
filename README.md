@@ -42,7 +42,7 @@ ReelLudic是一个 Obsidian 插件，把六类收藏（电影 / 剧集 / 动画 
   </tr>
   <tr>
     <td><img src="https://github.com/user-attachments/assets/495f79f3-fc63-45cc-83e7-5342c2cd3b0b" alt="书籍阅读器" width="600"></td>
-    <td><img src="" alt="漫画阅读器" width="600"></td>
+    <td><img src="https://github.com/user-attachments/assets/794e5da5-c4b3-4de5-a81c-dfa59468a861" alt="漫画阅读器" width="600"></td>
   </tr>
   <tr>
     <td align="center">书籍阅读器</td>
