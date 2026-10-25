@@ -12,6 +12,7 @@
 //    自建而不是复用 plugin 实例 —— 弹窗关了就把子组件（链接 / 嵌入块）一并释放，⛔ 别挂到插件生命周期上。
 import { App, Component, MarkdownRenderer, Modal } from 'obsidian';
 import { RELEASE_NOTES, RELEASES_URL, releaseNotesMd } from 'pure/releaseNotes';
+import { applyScrollPref } from 'services/scrollPref';
 
 export class ReleaseNotesModal extends Modal {
     /** 承载 markdown 渲染的子组件（`onOpen` 装载 / `onClose` 卸载） */
@@ -22,6 +23,7 @@ export class ReleaseNotesModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl, titleEl } = this;
         contentEl.empty();
         // ⚠️ 挂 `modalEl`（不是 contentEl）：宽度那条规则要写 `.modal.rl-notes-modal`（同 `AiPickerModal` 的 `.rl-pick-modal`）

@@ -8,7 +8,7 @@
 import { Notice, requestUrl, setIcon, type Scope } from 'obsidian';
 import { estimatePercent, readerRatio } from 'pure/readingProgress';
 import { chapterTextLength, epubTocCharCounts, xhtmlToText } from 'pure/epubParse';
-import { attachTocResizer, formatCharCount } from 'pure/readerToc';
+import { attachScrollFades, resyncScrollFade, attachTocResizer, formatCharCount } from 'pure/readerToc';
 import { attachHeadDensity } from 'pure/readerHead';
 import { createReadingUnitCounter } from 'pure/readingUnits';
 import {
@@ -85,6 +85,9 @@ import { locateQuoteSpan } from 'pure/anchor';
 import { normalizeLineWidth, normalizeScrollMode, pageToRatio, ratioToPage, isFirstPage, isLastPage, type ReaderLineWidth, type ScrollMode } from 'pure/paged';
 import { footerReadout } from 'pure/readerFooter';
 import { excerptCardLocLabel, excerptCardKeyAction, needsQuoteExpand, placeCard } from 'pure/excerptCard';
+// 2026-10-23 区域截图：面板只交矩形 + 定位，取像素/落盘/写笔记在宿主（`saveReaderShot`）。
+import type { ShotLoc, ShotRect } from 'pure/readerShot';
+import { ShotOverlay } from 'modals/ShotOverlay';
 import { SEARCH_ENGINE_GROUPS, searchEngineUrl, type SearchEngineId } from 'pure/readerSearch';
 import { SEARCH_ENGINE_ICONS } from 'pure/searchIcons';
 
@@ -119,6 +122,13 @@ import { formatChapterTitle } from 'pure/chapterTitle';
 import { READER_THEMES, normalizeReaderTheme, readerThemeClass, type ReaderThemeId } from 'pure/readerTheme';
 // 🔴 #603：底栏图标组里「描述行为」的悬停轻提示真源（Txt / Epub / Pdf / Comic 四件共用）
 import { READER_FOPS } from 'pure/readerFops';
+// 🔴 #641：正文插图/样式的包内引用重写（srcdoc 无基准 URL ⇒ 相对路径全 404，见该模块头注释）
+import {
+    collectEpubResourceRefs,
+    epubResourceMime,
+    isEpubResourcePath,
+    rewriteEpubResourceUrls,
+} from 'pure/epubResource';
 
 export interface EpubReaderOptions {
     /** 书籍标题（弹窗标题） */
@@ -153,6 +163,13 @@ export interface EpubReaderOptions {
     getCloudKey?: () => string;
     /** 摘抄保存（就地卡片 → 写回笔记「## 摘抄」区）；返回是否成功（false 保留卡片与输入便于重试） */
     onExcerptSave?: (quote: string, note: string | undefined, loc: { chapter: number; pct: number }) => Promise<boolean>;
+    /**
+     * 区域截图（2026-10-23 用户指令：TXT/EPUB/PDF 三阅读器加「区域截图回填笔记」）。
+     * 面板只交**视口矩形 + 定位**；取像素/落盘/写笔记全在宿主 `main.ts:saveReaderShot`。
+     * 🔴 EPUB 正文在 iframe 里，但 `capturePage` 抓的是**窗口合成像素** ⇒ 天然覆盖 iframe，
+     *    面板这边只需要把框选区定成 iframe 的外层 wrapper（`.rl-reader-frame`）。
+     */
+    onShotSave?: (rect: ShotRect, loc?: ShotLoc) => void;
     /** 摘抄书签数据源（笔记「## 摘抄」区解析；打开阅读器时读取） */
     excerpts?: ParsedExcerpt[];
     /** 删除摘抄回调（书签右键 → main 层确认删除；返回是否成功，成功则面板刷新书签列表） */
@@ -187,6 +204,17 @@ export interface EpubReaderOptions {
     onConfirmClear?: (message: string) => Promise<boolean>;
     /** 批量删除标注（「清除全部」用；已一次性确认 → **不再逐条弹窗**）；kind 区分高亮/摘抄；返回删除条数 */
     onPurgeAnnotations?: (kind: 'highlight' | 'excerpt', blockIds: string[]) => Promise<number>;
+    /**
+     * 🔴 #641：按包内路径取**二进制资源**（图片 / 样式表 / 字体）。
+     *
+     * 由来（用户报障「EPUB 阅读卡顿，还有优化加载图片速度」）：正文渲染在 `iframe.srcdoc` 里，
+     * 而 srcdoc 文档**没有基准 URL** ⇒ 章节里的 `image/p001.jpg` 被解析成
+     * `app://obsidian.md/image/p001.jpg` ⇒ 一律 404（插图全裂 + 每张一次失败请求）。
+     * 本回调由宿主（`main.unpackEpub` 的 `loadBinary`）提供，阅读器据此把包内引用换成 `blob:` URL。
+     *
+     * 未注入（宿主没给）= **不做资源替换**，行为与本批之前逐字一致（⛔ 不能报错、不能阻塞正文）。
+     */
+    loadEpubResource?: (path: string) => Promise<Uint8Array | null>;
 }
 
 /** 会话级字号（px，跨面板共享；null=未初始化，首次打开取设置默认） */
@@ -196,6 +224,9 @@ let readerLineHeight: number | null = null;
 /** 字号调节范围（px） */
 const FONT_MIN = 12;
 const FONT_MAX = 30;
+/** Ctrl/⌘+滚轮一次调多少（2026-10-23 用户指令：三阅读器统一支持滚轮改显示大小）。
+ *  取 2 = 滑条一格的两倍 —— 滚轮手感上「一滚就看得见变化」，但仍能在 12–30 区间内微调。 */
+const FONT_STEP = 2;
 /** 行距调节范围（倍数） */
 const LINE_MIN = 1.2;
 const LINE_MAX = 2.4;
@@ -260,6 +291,8 @@ export class EpubReaderPanel {
     private morePanelEl: HTMLDivElement | null = null;
     private moreOpen = false;
     private disposeHeadDensity: (() => void) | null = null;
+    /** 侧栏溢出渐隐的解绑器（见 `pure/readerToc.attachScrollFades`） */
+    private disposeFade: (() => void) | null = null;
     private quickBtns: Partial<Record<ReaderQuickMode, HTMLButtonElement>> = {};
     /** 翻页模式当前页 index / 总页数 / 单页横向位移（列宽+gap；仅 paged 用） */
     private pageIndex = 0;
@@ -332,6 +365,8 @@ export class EpubReaderPanel {
     private exHeadRef: AnnoHeadHandles | null = null;
     /** 正文 iframe（srcdoc 每章重建） */
     private frameEl!: HTMLIFrameElement;
+    /** 区域截图的框选层（存在即「正在框选」；销毁阅读器时必须一并收掉） */
+    private shotOverlay: ShotOverlay | null = null;
     /** 头部条元素（auto-hide 显示/隐藏目标） */
     private headEl: HTMLElement | null = null;
     /** 顶栏居中标题元素（显示当前章，切章时刷新；EPUB 无目录条目时回退文件名，全空回退书名） */
@@ -472,6 +507,31 @@ export class EpubReaderPanel {
     private pendingHighlightHint: number | null = null;
     /** 各章字符数（百分比估算加权；懒计算） */
     private chapterSizesCache: number[] | null = null;
+    /**
+     * 🔴 #641：包内资源（插图 / 样式表 / 字体）的 **blob URL 缓存**：包内路径 → objectURL。
+     *
+     * 为什么缓存：
+     *   · 同一张图常被多章引用（章首装饰、章节间插图）—— 重复取二进制是纯浪费（用户点名「图片加载速度」）；
+     *   · 切字号 / 行宽 / 翻页模式都会**重建整章 srcdoc**，若每次都重取，改一次排版就要把全章插图
+     *     重下一遍 ⇒ 那正是「卡顿」；
+     *   · `blob:` URL 由浏览器**内存持有**，主文档存活期间对 iframe 一直有效（srcdoc 重建不失效）。
+     * ⚠️ 必须在 `destroy()` 里逐个 `revokeObjectURL` —— 否则一本大图册会一直占着内存（与漫画阅读器同款纪律）。
+     */
+    private resourceUrls = new Map<string, string>();
+    /** 进行中的资源取用 Promise（同帧内多个 <img> 指向同一路径时**只取一次**） */
+    private resourcePending = new Map<string, Promise<string | null>>();
+    /** 本章已解析好的「包内路径 → blob URL」表（渲染 srcdoc 前算好，供同步的 rewrite 回调查） */
+    private chapterResourceMap = new Map<string, string>();
+    /** 🔴 #641：章渲染令牌 —— 快速切章时作废「迟到的」那次异步渲染（见 `renderChapterBody`） */
+    private renderToken = 0;
+    /** 🔴 #641：面板已销毁 —— 异步资源取用回来时据此丢弃（⛔ 别往已 empty 的容器写东西） */
+    private destroyed = false;
+    /** 🔴 #641：目录字数的**惰性填充**（toc 下标 → 字数 span）—— 滚到可视区才补，见 `observeTocCharCounts` */
+    private tocCharsSlot: Map<number, HTMLElement> | null = null;
+    /** 🔴 #641：目录字数的观察器（进可视区即算一次并停止观察；destroy 时断开） */
+    private tocCharsObserver: IntersectionObserver | null = null;
+    /** 🔴 #641：目录字数**每次补算的批量上限**（首屏一次补太多会重新变回同步卡顿） */
+    private tocCharsQueue: number[] = [];
     /** 会话行距（倍数，初始取设置默认 1.8） */
     private lineHeight: number;
     /** 全屏态变化：同步菜单全屏标签文案 */
@@ -640,9 +700,12 @@ export class EpubReaderPanel {
 
     /** 销毁清理（替代原 Modal.onClose）：刷新未落盘进度 + 清空容器 */
     destroy(): void {
+        this.destroyed = true; // 🔴 #641：先立旗 —— 之后回来的异步资源取用/章渲染一律作废
         this.flushSave();
         this.disposeHeadDensity?.(); // #345 顶栏窄屏收纳的 ResizeObserver 随面板注销
         this.disposeHeadDensity = null;
+        this.disposeFade?.(); // 侧栏溢出渐隐的 scroll/RO/MO 监听随面板注销
+        this.disposeFade = null;
         this.ttsSvc?.destroy(); // 朗读随面板一并停止（cancel + 清高亮 + 摘 voiceschanged）
         this.resetAnnotate(); // 关面板复位标注模式
         if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
@@ -664,6 +727,20 @@ export class EpubReaderPanel {
             window.clearTimeout(this.switchTimer);
             this.switchTimer = null;
         }
+        // 框选层是 fixed 遮罩、挂在 document.body 上 —— 面板没了它必须一起收（否则整窗点不动）
+        this.shotOverlay?.destroy();
+        this.shotOverlay = null;
+        // 🔴 #641：目录字数的观察器随面板注销（行元素随容器一起被删，不断开会让它持有孤儿节点）
+        this.tocCharsObserver?.disconnect();
+        this.tocCharsObserver = null;
+        this.tocCharsSlot = null;
+        // 🔴 #641：包内资源的 blob URL **逐个撤销** —— 它们由浏览器内存持有，
+        //    不撤销会让「开一本大图册 → 关掉」留下几十 MB（与漫画阅读器同一套纪律）。
+        //    ⚠️ 清空表本身也必须做：面板实例若被复用，残留的旧 URL 指着一个已 revoke 的 blob（裂图）。
+        for (const url of this.resourceUrls.values()) URL.revokeObjectURL(url);
+        this.resourceUrls.clear();
+        this.resourcePending.clear();
+        this.chapterResourceMap.clear();
         this.container.empty();
     }
 
@@ -710,6 +787,14 @@ export class EpubReaderPanel {
         // 图标名≠模式 id（netsearch / aisearch 不是图标名），故 mkQuick 显式收 icon。
         mkQuick('netsearch', 'globe', '网络搜索模式：拖选文字后选搜索引擎，再点退出');
         mkQuick('aisearch', 'sparkles', 'AI 搜索模式：拖选文字后由 AI 作答，再点退出');
+        // 区域截图（2026-10-23 用户指令）：一次性动作，⛔ 不走 toggleAnnotate（点一次框一次）；
+        //   EPUB 正文在 iframe 里，框选区取 iframe 外层 wrapper —— 宿主 capturePage 抓窗口合成像素，天然覆盖。
+        if (this.options.onShotSave) {
+            const shotBtn = quickWrap.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '区域截图：框选区域截图回填笔记内' } });
+            safeSetIcon(shotBtn, 'image');
+            shotBtn.addEventListener('mousedown', (ev) => ev.stopPropagation());
+            shotBtn.addEventListener('click', () => this.startShot());
+        }
 
         // 目录/书签/摘抄 切换改由侧栏 tab 行承担（顶部仅渲染一次）；ops 仅保留 ≡ 设置
         const titleWrap = head.createDiv({ cls: 'rl-reader-title-wrap' });
@@ -2064,25 +2149,32 @@ export class EpubReaderPanel {
         // href（去 #fragment）→ 章节索引，目录点击定位章节
         const byPath = new Map<string, number>();
         this.options.book.chapters.forEach((c, i) => byPath.set(c, i));
-        // 每条目录的字数（#338；#345 改「阅读量单位」口径：中文按字、英文按词）：
-        // fileMap 打开时已在内存，按 toc 逐条算（锚点分段 / 缺失不显示）。
-        // ⚠️ 只计数、不把 segmenter 迭代器 spread 成数组；counter 复用同一个 segmenter。
-        const countUnits = createReadingUnitCounter();
-        const tocChars = epubTocCharCounts(this.options.book, this.options.fileMap, (html) =>
-            countUnits(xhtmlToText(html)),
-        );
+        // 每条目录的字数（#338；#345 改「阅读量单位」口径：中文按字、英文按词）。
+        // 🔴🔴 #641（用户点名「打开章节慢 / 首次加载慢」）：**改为惰性算** —— 原来在这里对
+        //    **全书每条**目录同步跑一遍 `xhtmlToText` + `Segmenter`（`epubTocCharCounts`），
+        //    实测（`_probe_641_perf.cjs`，合成书）：
+        //      50 章 9ms / 200 章 27ms / **500 章 66ms** / 1000 章 142ms —— 全部发生在**首屏之前**、
+        //      且随正文 markup 复杂度上升；而首屏真正看得见的只有前十几条。
+        //    ⇒ 行**先建出来**（正文立即可读），字数交给 IntersectionObserver **滚动到才补**。
+        //    实测收益：只算前 30 条 = 3ms（省 ~95% 同步时间）。
+        //    ⚠️ 计数口径一字未改（仍是 `createReadingUnitCounter` + `xhtmlToText`）——
+        //      变的只是**何时算**，⛔ 别顺手改数字。
+        const tocCharsSlot = new Map<number, HTMLElement>();
+        this.tocCharsSlot = tocCharsSlot;
         this.tocEntries.forEach((t, i) => {
             const item = this.tocListEl.createEl('button', { cls: 'rl-reader-toc-item', attr: { 'data-tip': t.label } });
             item.createSpan({ cls: 'rl-reader-toc-label', text: t.label });
-            const n = tocChars[i];
-            if (n !== undefined) item.createSpan({ cls: 'rl-reader-toc-chars', text: formatCharCount(n) });
+            // 字数占位：先留空 span（宽度 0 不占位），滚到可视区再填文本
+            const slot = item.createSpan({ cls: 'rl-reader-toc-chars' });
+            tocCharsSlot.set(i, slot);
             item.addEventListener('click', () => {
                 const idx = byPath.get(t.href.split('#')[0]);
                 if (idx !== undefined) this.switchChapter(idx);
             });
         });
+        this.observeTocCharCounts();
         // 目录侧栏可拖宽（#338：为显示字数；记忆宽度在 localStorage，拖动期间关掉宽度过渡）
-        attachTocResizer(this.tocEl);
+        attachTocResizer(this.tocEl, 'epub');
         // 标注 pane（原「摘抄」页）：书签 / 高亮 / 摘抄三区上下叠放，各区自带「计数 + 选择」头
         // （#345 用户裁定：「清除全部」这种不可逆的一键清空改为**选择模式** —— 能看见具体条目、
         //   可勾选单条或多条后「删除所选」。三区结构同构，共用 pure/annoSelection.buildAnnoHead。）
@@ -2130,6 +2222,9 @@ export class EpubReaderPanel {
         this.buildExcerptToc();
         tocTab.addEventListener('click', () => this.activatePane('toc'));
         exTab.addEventListener('click', () => this.activatePane('ex'));
+        // 侧栏滚动条刻意隐藏 ⇒ 溢出时没有线索（末行被裁一半，用户读作「显示不全」）。
+        // 门控渐隐挂两个**真正会滚**的容器：目录页 = tocListEl，标注页 = exPane 本人。
+        this.disposeFade = attachScrollFades([this.tocListEl, exPane]);
 
         // 右侧 iframe 渲染区（srcdoc = 章节 HTML + 注入基础 CSS）
         // 右侧栏：正文 + 底栏同处一栏（目录栏因而独立成一整列，用户 2026-09-16）
@@ -3183,6 +3278,71 @@ export class EpubReaderPanel {
 
     // ── 章节渲染 ──
 
+    // ── 🔴 #641 包内资源（正文插图 / 样式表）──────────────────────────────────
+    //
+    // 由来（用户报障「EPUB 阅读卡顿，还有优化加载图片速度」）：正文在 `iframe.srcdoc` 里，
+    // srcdoc 文档**没有基准 URL** ⇒ 章节里的 `image/p001.jpg` 被解析成 `app://obsidian.md/image/p001.jpg`
+    // ⇒ 一律 404（插图全裂），且每张裂图都是一次**必然失败**的请求 ⇒ 长章节就是几十次往返（卡顿）。
+    // ⇒ 把包内相对引用换成 `blob:` URL（由宿主 `loadEpubResource` 按需从 zip 取二进制）。
+
+    /** 该包内路径的 blob URL（命中缓存直接返回；取不到 → null） */
+    private async resourceUrl(path: string): Promise<string | null> {
+        const cached = this.resourceUrls.get(path);
+        if (cached) return cached;
+        const inflight = this.resourcePending.get(path);
+        if (inflight) return inflight;
+        const load = this.options.loadEpubResource;
+        if (!load) return null;
+        const task = (async (): Promise<string | null> => {
+            try {
+                const bytes = await load(path);
+                if (!bytes || bytes.length === 0) return null;
+                // ⚠️ 造 Blob 要复制成独立的 ArrayBuffer 视图：宿主给的 Uint8Array 可能只是
+                //    整包 buffer 的一个视图（`new Blob([bytes])` 会按视图切，这点是对的），
+                //    但若后续有人复用同一 buffer 就可能被改；这里保守复制一份（一页图几 MB，值）。
+                const copy = new Uint8Array(bytes.length);
+                copy.set(bytes);
+                const url = URL.createObjectURL(new Blob([copy], { type: epubResourceMime(path) }));
+                if (this.destroyed) {
+                    // 面板已销毁：别把 URL 泄漏在一个没人再读的 map 里
+                    URL.revokeObjectURL(url);
+                    return null;
+                }
+                this.resourceUrls.set(path, url);
+                return url;
+            } catch {
+                return null; // 取不到 ⇒ 该引用保持原样（照旧裂图，比静默删掉好排查）
+            } finally {
+                this.resourcePending.delete(path);
+            }
+        })();
+        this.resourcePending.set(path, task);
+        return task;
+    }
+
+    /**
+     * 为本章收集并**并行预取**包内资源 → 返回「包内路径 → blob URL」表。
+     *
+     * 🔴 为什么先整章预取、而不是让 `<img>` 各自 onerror 再补：
+     *   `srcdoc` 是**一次性字符串**，iframe 一旦 load 就无法再改已解析的 `src`（改属性会触发新请求）。
+     *   所以必须在**写 srcdoc 之前**把 URL 备齐 —— 这也是本批「加载图片速度」的关键：
+     *   整章一次 `Promise.all` 并行取（zip 是内存解压，几乎立刻完成），比逐张串行快一个量级。
+     * ⚠️ 取不到的路径**不进表**（`rewriteEpubResourceUrls` 会保留原引用）。
+     */
+    private async loadChapterResources(html: string, baseDir: string): Promise<Map<string, string>> {
+        const map = new Map<string, string>();
+        if (!this.options.loadEpubResource) return map;
+        const paths = collectEpubResourceRefs(html, baseDir).filter(isEpubResourcePath);
+        if (paths.length === 0) return map;
+        await Promise.all(
+            paths.map(async (p) => {
+                const url = await this.resourceUrl(p);
+                if (url) map.set(p, url);
+            }),
+        );
+        return map;
+    }
+
     private renderChapter(): void {
         // 正文重建（切章 / 切模式 / 改字号）→ 摘抄卡片的位置与引用都失效，先收起
         this.hideExcerptCard();
@@ -3210,9 +3370,35 @@ export class EpubReaderPanel {
         this.firstRender = false;
         // 章节文件缺失：占位提示
         const body = html !== undefined ? html : `<p style="color:#999">（章节文件缺失：${escapeHtml(path)}）</p>`;
-        this.frameEl.addEventListener('load', this.onFrameLoad, { once: true });
-        this.frameEl.srcdoc = this.buildFrameDoc(body);
+        void this.renderChapterBody(path, body);
         this.highlightToc();
+    }
+
+    /**
+     * 写章节 srcdoc —— **先备齐包内资源再写**（见 `loadChapterResources` 的口径说明）。
+     *
+     * 🔴 快速连点目录 / 连续滚动的自动翻章会让本方法**并发进入**：
+     *    用一个自增 token 作废过期的那次（旧的迟到回来时既不能覆盖新章，也不能写 srcdoc）。
+     * ⚠️ 无 `loadEpubResource`（宿主没注入）时**同步**走原路径 —— 行为与本批之前逐字一致。
+     */
+    private async renderChapterBody(path: string, body: string): Promise<void> {
+        const token = ++this.renderToken;
+        if (!this.options.loadEpubResource) {
+            this.chapterResourceMap = new Map();
+            this.frameEl.addEventListener('load', this.onFrameLoad, { once: true });
+            this.frameEl.srcdoc = this.buildFrameDoc(body);
+            return;
+        }
+        const baseDir = path.split('/').slice(0, -1).join('/');
+        const resources = await this.loadChapterResources(body, baseDir);
+        // 资源取用期间用户又切了章 / 关了面板 ⇒ 本次作废（⛔ 别写 srcdoc：那会把新章盖掉）
+        if (this.destroyed || token !== this.renderToken) return;
+        this.chapterResourceMap = resources;
+        const rewritten = resources.size > 0
+            ? rewriteEpubResourceUrls(body, baseDir, (p) => resources.get(p) ?? null)
+            : body;
+        this.frameEl.addEventListener('load', this.onFrameLoad, { once: true });
+        this.frameEl.srcdoc = this.buildFrameDoc(rewritten);
     }
 
     /** iframe 章节加载完成：注入布局样式 + 绑 frame 内事件 + 恢复进度 */
@@ -3250,6 +3436,18 @@ export class EpubReaderPanel {
         }, { capture: true });
         doc.addEventListener('wheel', this.onUserInterrupt, { passive: true });
         doc.addEventListener('touchstart', this.onUserInterrupt, { passive: true });
+        // Ctrl/⌘+滚轮调字号（2026-10-23 用户指令：三阅读器统一支持滚轮改显示大小）。
+        // 🔴 必须挂在 **iframe 内文档**上：正文在 iframe 里，宿主容器的 wheel 收不到 frame 内事件。
+        // 🔴 用 passive:false + preventDefault —— 否则 Obsidian 会把 Ctrl+滚轮当整页缩放。
+        doc.addEventListener(
+            'wheel',
+            (ev) => {
+                if (!ev.ctrlKey && !ev.metaKey) return;
+                ev.preventDefault();
+                this.adjustFont(ev.deltaY < 0 ? FONT_STEP : -FONT_STEP);
+            },
+            { passive: false },
+        );
         const scroller = doc.scrollingElement || doc.documentElement;
         if (!scroller) return;
         // iframe 内滚动监听：标准模式视口滚动（scrollingElement=html）的 scroll 事件 target 是 document，
@@ -3404,6 +3602,68 @@ ${highlightMarkCss()}`;
         if (style) style.textContent = this.buildFrameCss();
     }
 
+    /**
+     * 🔴 #641：目录字数的**惰性填充**（用户点名「打开章节慢 / 首次加载慢」）。
+     *
+     * 原来在 `buildToc` 里对**全书每条**目录同步跑 `epubTocCharCounts`（每章一遍 `xhtmlToText`
+     * + `Segmenter`）—— 实测 500 章 66ms / 1000 章 142ms，全部花在**首屏之前**，
+     * 而首屏真正看得见的只有前十几条。
+     *
+     * 本方法：只给「滚进可视区」的行补字数（IntersectionObserver，`rootMargin` 留一屏余量
+     * 让滚动时**提前**算好，不会看到数字一个个跳出来）。
+     *  · 补完即 `unobserve`（每行只算一次）；
+     *  · **每条独立算**：用 `epubTocCharCounts({toc:[一条]}, ...)` —— 锚点分段口径与原来**逐字一致**
+     *    （原来也是按「本条起点 → 下一条起点」切片；单条走同一条代码路径）。
+     *  · 容器被隐藏（目录收起时 pane 在 display:none 里）IO 不会触发 ⇒ 展开目录时自然补齐。
+     *
+     * ⚠️ 观察器必须在 `destroy()` 里断开（行元素随容器一起被删，不断开会让观察器持有孤儿节点）。
+     */
+    private observeTocCharCounts(): void {
+        const slots = this.tocCharsSlot;
+        const list = this.tocListEl;
+        if (!slots || slots.size === 0 || !list) return;
+        // 环境无 IntersectionObserver（极老 Electron）→ 回落到旧行为（一次全算，保证功能不缺）
+        if (typeof IntersectionObserver === 'undefined') {
+            this.fillTocCharCounts([...slots.keys()]);
+            return;
+        }
+        const items = Array.from(list.querySelectorAll('.rl-reader-toc-item')) as HTMLElement[];
+        this.tocCharsObserver = new IntersectionObserver(
+            (entries) => {
+                const batch: number[] = [];
+                for (const e of entries) {
+                    if (!e.isIntersecting) continue;
+                    const idx = items.indexOf(e.target as HTMLElement);
+                    if (idx >= 0) batch.push(idx);
+                    this.tocCharsObserver?.unobserve(e.target);
+                }
+                if (batch.length > 0) this.fillTocCharCounts(batch);
+            },
+            // 上下各留一屏：滚动时提前算好，用户看不到「数字迟一拍才出现」
+            { rootMargin: '100% 0px' },
+        );
+        for (const el of items) this.tocCharsObserver.observe(el);
+    }
+
+    /** 补算指定 toc 下标的字数并写进对应 span（缺失 / 算不出 → 留空，与旧行为一致） */
+    private fillTocCharCounts(indexes: readonly number[]): void {
+        const slots = this.tocCharsSlot;
+        if (!slots || indexes.length === 0) return;
+        const countUnits = createReadingUnitCounter();
+        for (const i of indexes) {
+            const slot = slots.get(i);
+            if (!slot) continue;
+            const entry = this.tocEntries[i];
+            if (!entry) continue;
+            // 每条独立算：与全量口径同一条代码路径（`epubTocCharCounts` 内部按起点→下一条起点切片）
+            const n = epubTocCharCounts({ toc: [entry] }, this.options.fileMap, (html) =>
+                countUnits(xhtmlToText(html)),
+            )[0];
+            if (n !== undefined) slot.setText(formatCharCount(n));
+            slots.delete(i); // 算过就不再算（IO 也已 unobserve）
+        }
+    }
+
     /** 目录高亮当前章（按 href 匹配，而非按 items 下标对齐 —— toc 条目与 spine 章节非 1:1
      *  （nav 可含 landmarks 前的多余链接 / 缺章）时，items[chapterIndex] 会滑到错行）。
      *  🔴 **一次只点亮一项**（`tocIndexFor` 取首个匹配）：多条目录项指向同一文件时全量比对会一次亮好几章。 */
@@ -3473,6 +3733,13 @@ ${highlightMarkCss()}`;
         if (idx < 0) return;
         this.tocEl.querySelectorAll('.rl-reader-toc-tab').forEach((el, i) => el.toggleClass('active', i === idx));
         this.tocEl.querySelectorAll('.rl-reader-toc-pane').forEach((el, i) => el.toggleClass('hidden', i !== idx));
+        // pane 由 display:none 恢复显示时 ROS 未必回调 ⇒ 补一枪，否则首次切页签没有渐隐提示
+        // 🔴 补的对象必须是挂过渐隐的容器（目录页是 tocListEl，标注页是 pane 本身；见 buildSidebar 的 attachScrollFades）
+        resyncScrollFade(
+            pane === 'toc'
+                ? this.tocListEl
+                : this.tocEl.querySelectorAll<HTMLElement>('.rl-reader-toc-pane')[idx],
+        );
     }
 
     // ── 摘抄 ──
@@ -3839,6 +4106,39 @@ ${highlightMarkCss()}`;
         } catch {
             return { chapter: this.chapterIndex + 1, pct: 0 };
         }
+    }
+
+    /**
+     * 进入区域截图框选态（2026-10-23 用户指令）。
+     *
+     * 🔴 三个要点：
+     *   ① 框选区 = **iframe 外层 wrapper**（`.rl-reader-frame`），⛔ 别用 `frameEl` 自身 ——
+     *      `getBoundingClientRect()` 对 iframe 元素给的是它的外框，语义没错，但 wrapper 的
+     *      内边距/圆角会挡住正文，用 wrapper 更贴合用户看到的「正文区域」。
+     *   ② 矩形是**视口坐标**（`ShotOverlay` 用 fixed 遮罩），`capturePage` 抓的是窗口合成像素
+     *      ⇒ EPUB 的 iframe 内容天然被覆盖，不需要跨文档取像素。
+     *   ③ 定位与摘抄同一口径（`currentLoc()`），截图块落进笔记「## 阅读截图」区。
+     */
+    private startShot(): void {
+        const save = this.options.onShotSave;
+        if (!save) return;
+        if (this.shotOverlay) return;
+        this.hideSelbar();
+        this.hideMenu();
+        const host = (this.frameEl?.closest('.rl-reader-frame') as HTMLElement | null) ?? this.frameEl;
+        if (!host) return;
+        const overlay = new ShotOverlay(
+            host,
+            (rect) => {
+                this.shotOverlay = null;
+                save(rect, this.currentLoc());
+            },
+            () => {
+                this.shotOverlay = null;
+            },
+        );
+        this.shotOverlay = overlay;
+        overlay.start('拖拽框选要截图的区域 · Esc 取消');
     }
 
     /** 切换行宽（严格/全宽）：写回设置 + 重建当前章（连续模式 applyLayout 按新行宽设限宽；翻页模式需按新列宽重排分页） */

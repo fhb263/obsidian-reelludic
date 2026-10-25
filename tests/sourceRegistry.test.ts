@@ -43,7 +43,11 @@ describe('注册表元数据', () => {
     it('T1 keyField 矩阵：凭据源带 settings 字段名，其余免 Key null', () => {
         const keyed: Array<[ProviderId, string | null]> = [
             ['douban', 'doubanCookie'], ['tmdb', 'tmdbApiKey'], ['bangumi', 'bangumiToken'],
-            ['openLibrary', null], ['googleBooks', 'googleBooksApiKey'], ['steam', null],
+            ['openLibrary', null], ['googleBooks', 'googleBooksApiKey'],
+            // 🔴 #639 ⑥：Steam 由 `null` 改为带凭据字段 —— **搜索/详情仍免 Key**（storefront API），
+            //    但「同步库与游玩时长」走 Web API 的 `GetOwnedGames`，**实测无 Key 直接 401**
+            //    ⇒ 挂上字段设置页才渲染凭据行（用户要的「新增 steam 凭据入口」）。
+            ['steam', 'steamApiKey'],
             ['musicbrainz', null], ['itunes', null], ['omdb', 'omdbApiKey'], ['anilist', null],
             ['igdb', 'igdbClientId'], ['weread', 'wereadCookie'], // #580：微信读书凭据是 Cookie 不是 Key，但同样走 keyField
         ];
@@ -52,11 +56,19 @@ describe('注册表元数据', () => {
         }
     });
 
-    it('igdb 双凭据源：keyField=Client ID + keyField2=Client Secret（已配置需两字段）', () => {
+    it('双凭据源：igdb（Client ID + Secret）、tmdb（API Key + Session ID，#665 账号同步）——已配置需两字段', () => {
         expect(PROVIDER_META.igdb.keyField2).toBe('igdbClientSecret');
         expect(PROVIDER_META.igdb.groups).toEqual(['game']);
+        // 🔴 #665：tmdb 也升级为双凭据 —— 搜索只用 API Key，账号同步（watchlist / favorite）要 session_id
+        expect(PROVIDER_META.tmdb.keyField2).toBe('tmdbSessionId');
+        expect(PROVIDER_META.tmdb.groups).toEqual(['movieTv']);
+        // 🔴🔴 #690（用户报障 2026-10-20：「tmdb 填了 API 连接成功但未填 id，显示未配置」）：
+        //    tmdb 的 Session ID **只服务同步**（搜索只用 API Key）⇒ 已配置判定只要求主凭据；
+        //    而 igdb 缺 Secret 连 token 都换不出来 ⇒ 仍按「两字段同有值」。
+        expect(PROVIDER_META.tmdb.keyField2OptionalForConfigured).toBe(true);
+        expect(PROVIDER_META.igdb.keyField2OptionalForConfigured).toBeUndefined();
         // 其余源不应误带 keyField2（单凭据源不受影响）
-        for (const pid of PROVIDERS.filter((p) => p.id !== 'igdb').map((p) => p.id)) {
+        for (const pid of PROVIDERS.filter((p) => p.id !== 'igdb' && p.id !== 'tmdb').map((p) => p.id)) {
             expect(PROVIDER_META[pid].keyField2, pid).toBeUndefined();
         }
     });
@@ -189,7 +201,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             group: 'book', chain: ['douban'],
             douban: { reachable: false, cookieInvalid: false }, aux: {},
         });
-        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
+        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据搜索源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
         expect(err).toContain('Douban 兜底不可用');
     });
 
@@ -199,7 +211,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: false, cookieInvalid: true },
             aux: { tmdb: 'unconfigured' },
         });
-        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 元数据源配置 › 元数据源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
+        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 元数据源配置 › 元数据搜索源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
         expect(err).toContain('豆瓣 Cookie 已失效或过期');
     });
 
@@ -287,7 +299,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             aux: { tmdb: 'unconfigured' },
         });
         expect(err).toContain('未配置凭据');
-        expect(err).toContain('设置 → 元数据源配置 › 元数据源凭据');
+        expect(err).toContain('设置 → 元数据源配置 › 元数据搜索源凭据');
         expect(err).toContain('测试连接');
     });
 
@@ -328,7 +340,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: true, cookieInvalid: false },
             aux: { bangumi: 'unconfigured' },
         });
-        expect(err).toContain('设置 → 元数据源配置 › 元数据源凭据');
+        expect(err).toContain('设置 → 元数据源配置 › 元数据搜索源凭据');
         expect(err).toContain('Bangumi Token');
     });
 });

@@ -13,6 +13,7 @@
 import { Modal, Notice, type App } from 'obsidian';
 import type { WereadShelfBook } from 'pure/wereadShelf';
 import { shelfLastReadLabel } from 'pure/wereadShelf';
+import { applyScrollPref } from 'services/scrollPref';
 
 /** 列表一行（`imported` = 库里已有同名书，由宿主用 `partitionShelfBooks` 预先算好） */
 export interface WereadShelfRow extends WereadShelfBook {
@@ -36,7 +37,7 @@ export interface WereadShelfSyncModalOptions {
     onImport: (
         books: WereadShelfBook[],
         onProgress: (done: number, total: number, label: string) => void,
-    ) => Promise<{ added: number; skipped: number }>;
+    ) => Promise<{ added: number; skipped: number; overridden: number; sameName?: number }>;
 }
 
 interface RowRef {
@@ -53,6 +54,7 @@ export class WereadShelfSyncModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass('rl-wshelf-modal');
@@ -62,7 +64,7 @@ export class WereadShelfSyncModal extends Modal {
             cls: 'rl-wshelf-hint',
             text:
                 '读取你微信读书书架里的电子书，勾选后导入本库（只读微信读书，不会改动那边的内容）。' +
-                '库里已有同名的书会跳过、不会被覆盖。需要先在「设置 › 元数据源配置 › 元数据源凭据 › 微信读书」里粘贴 Cookie。',
+                '库里已有同名的书会跳过、不会被覆盖。需要先在「设置 › 元数据源配置 › 元数据搜索源凭据 › 微信读书」里粘贴 Cookie。',
         });
 
         const status = contentEl.createDiv({ cls: 'rl-wshelf-status', text: '正在读取书架…' });
@@ -73,17 +75,17 @@ export class WereadShelfSyncModal extends Modal {
         const note = contentEl.createDiv({ cls: 'rl-wshelf-note' });
 
         const ops = contentEl.createDiv({ cls: 'rl-wshelf-ops' });
-        const cancelBtn = ops.createEl('button', { cls: 'rl-btn', text: '取消' });
-        cancelBtn.addEventListener('click', () => this.close());
+        // ⛔ 不放「取消」：右上角 ✕ 就是关闭（用户 2026-10-25：「底部把“取消”按钮去掉，因为与顶部的叉关闭冲突了」）
         const goBtn = ops.createEl('button', { cls: 'rl-btn mod-cta', text: '导入' });
         goBtn.disabled = true;
 
         let rows: RowRef[] = [];
 
         /** 只统计**可导入**（未导入且被勾）的行 —— 禁用的行即使被程序勾上也不算 */
-        const picked = (): WereadShelfRow[] => rows.filter((r) => r.box.checked && !r.book.imported).map((r) => r.book);
+        // 🔴 #664：勾选**不再排除库里已有的** —— 勾上它就是「覆盖」
+        const picked = (): WereadShelfRow[] => rows.filter((r) => r.box.checked).map((r) => r.book);
         const refresh = (): void => {
-            const importable = rows.filter((r) => !r.book.imported).length;
+            const importable = rows.length;
             const n = picked().length;
             countEl.setText(`书架 ${rows.length} 本 · 可导入 ${importable} 本 · 已选 ${n} 本`);
             goBtn.setText(n ? `导入 ${n} 本` : '导入');
@@ -92,9 +94,10 @@ export class WereadShelfSyncModal extends Modal {
         };
 
         allBtn.addEventListener('click', () => {
-            const importable = rows.filter((r) => !r.book.imported);
-            const turnOn = picked().length < importable.length;
-            for (const r of importable) r.box.checked = turnOn;
+            // 🔴 #664：全选也包含「库里已有」的行（勾上 = 覆盖）
+            const targets = rows;
+            const turnOn = picked().length < targets.length;
+            for (const r of targets) r.box.checked = turnOn;
             refresh();
         });
 
@@ -108,7 +111,12 @@ export class WereadShelfSyncModal extends Modal {
                     const res = await this.opts.onImport(books, (done, total, label) =>
                         status.setText(`${label}（${done}/${total}）`),
                     );
-                    new Notice(`已导入 ${res.added} 本微信读书书架书籍${res.skipped ? `，跳过 ${res.skipped} 本` : ''}`);
+                    const parts = [`已导入 ${res.added} 本微信读书书架书籍`];
+                    if (res.overridden) parts.push(`覆盖 ${res.overridden} 本`);
+                    if (res.skipped) parts.push(`跳过 ${res.skipped} 本`);
+                    // 🔴 2026-10-21（用户需求 4）：同名条目**必须**让用户看见（笔记路径按标题派生，会覆盖）
+                    if (res.sameName) parts.push(`库内存在同名文件 ${res.sameName} 本，已跳过`);
+                    new Notice(parts.join('，'));
                     this.close();
                 } catch (e) {
                     status.setText(`导入失败：${e instanceof Error ? e.message : String(e)}`);
@@ -120,7 +128,6 @@ export class WereadShelfSyncModal extends Modal {
         /** 导入中：整条列表锁住（⛔ 别让用户在落库途中再改勾选） */
         const setBusy = (busy: boolean): void => {
             goBtn.disabled = busy;
-            cancelBtn.disabled = busy;
             allBtn.disabled = busy;
             for (const r of rows) r.box.disabled = busy || r.book.imported;
             if (!busy) refresh();
@@ -158,15 +165,19 @@ export class WereadShelfSyncModal extends Modal {
 
     /**
      * 一行：`<label>` 包住 checkbox + 封面 + 书名/副行 + 徽标 —— 点哪都能勾（⛔ 不给「只能点小方块」的手感）。
-     * 库里已有的行：勾选框 **disabled + 不勾**，并挂一枚「库里已有」标（原因写在用户看得见的地方）。
+     * 🔴🔴 #664（用户：「无法勾选库内已有的覆盖（微信读书同步也是）」）：库里已有的行**不再 disabled** ——
+     *    默认仍不勾（避免误覆盖），**勾上 = 覆盖库里那条**（覆盖口径见 `importWereadShelf`：
+     *    只换书架/详情来源的字段，⛔ 不动用户的评语 / 进度 / 摘抄 / 标签）。
      */
     private renderRow(list: HTMLDivElement, book: WereadShelfRow, onChange: () => void): HTMLInputElement {
         const row = list.createEl('label', { cls: 'rl-wshelf-row' });
         if (book.imported) row.addClass('is-dup');
         const box = row.createEl('input', { cls: 'checkbox', attr: { type: 'checkbox' } });
         box.checked = !book.imported;
-        box.disabled = book.imported;
-        box.addEventListener('change', onChange);
+        box.addEventListener('change', () => {
+            row.toggleClass('is-override', book.imported && box.checked);
+            onChange();
+        });
 
         if (book.coverUrl) {
             row.createEl('img', {

@@ -2,6 +2,7 @@
 // 关闭后与 Obsidian Modal 关闭动画竞争导致下一个弹窗失焦/被遮罩拦截，无法输入）
 // DOM API 渲染，样式复用 rl-nc-*（NoteConflictModal 同款）
 import { App, Modal } from 'obsidian';
+import { applyScrollPref } from 'services/scrollPref';
 
 export class ConfirmModal extends Modal {
     private resolve: ((v: boolean) => void) | null = null;
@@ -16,6 +17,7 @@ export class ConfirmModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
         // 警告 emoji 圆形底（用户 2026-09-09 拍板：Obsidian 各版本 lucide 矢量图标不可见 → 回退 emoji 保证显示）

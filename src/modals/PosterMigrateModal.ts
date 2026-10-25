@@ -1,5 +1,6 @@
 // 封面迁移结果弹窗（v0.4 持续优化：一键迁移结束后弹出，明确成功/失败与失败原因）
 import { Modal } from 'obsidian';
+import { applyScrollPref } from 'services/scrollPref';
 
 export interface PosterMigrateResult {
     /** 成功张数 */
@@ -20,6 +21,7 @@ export class PosterMigrateModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
 

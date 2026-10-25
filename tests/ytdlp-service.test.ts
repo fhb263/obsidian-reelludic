@@ -124,7 +124,7 @@ describe('fetchBiliAudioWithYtDlp', () => {
         const out = await fetchBiliAudioWithYtDlp(h.deps, { exe: '', url: 'u' });
         expect(out.ok).toBe(false);
         expect(out.message).toContain('未找到 yt-dlp');
-        expect(out.message).toContain('音乐源凭据');
+        expect(out.message).toContain('音乐下载源凭据');
         expect(h.rmrfCalls).toHaveLength(1);
     });
 

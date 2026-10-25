@@ -33,6 +33,15 @@ export interface ReleaseNote {
  * ⚠️ 顺序即展示顺序；`RELEASE_NOTES[0]` = 当前版本（弹窗第一行）。
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
+    // 🔴 1.4.0 的 summary 是**用户 2026-10-25 给定的原文**（关于页 › 更新日志窗口的【更新说明】），
+    //    逐字照抄、别按自己的口味改写：他明确写了「改成」这句。日期随之从 10-22 改成 10-25（本版实际收尾日）。
+    //    ⚠️ 注释**不许插在 `version`/`date`/`summary` 三行之间** —— 断言脚本用
+    //    /version: '…',\s*date: '…',\s*summary: '…'/ 抽这张表，插一行注释就会漏掉本条（本批实测）。
+    {
+        version: '1.4.0',
+        date: '2026-10-25',
+        summary: '列表改可编辑表格；新增元数据批量导入、评分看板、Bases模板与高级设置；增强PDF/漫画阅读；修复同步覆盖、漫画进度；右键“编辑条目”更名“编辑属性”。',
+    },
     {
         version: '1.3.0',
         date: '2026-10-11',

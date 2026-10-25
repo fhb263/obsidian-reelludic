@@ -21,6 +21,7 @@ import {
 } from 'pure/seriesGroup';
 import type { MediaEntry } from 'data/types';
 import SeriesPicker from 'views/components/SeriesPicker.svelte';
+import { applyScrollPref } from 'services/scrollPref';
 
 export class SeriesPickerModal extends Modal {
     private instance: SeriesPicker | null = null;
@@ -35,6 +36,7 @@ export class SeriesPickerModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         // 壳的微调**只有一件**：清空宿主自带的标题文字（标题改由内容里的「组名 + N 部」承担，
         // 两份并存会把头部挤下去）。

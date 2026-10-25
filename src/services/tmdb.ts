@@ -51,6 +51,17 @@ export interface TmdbDetail {
 
 export type HttpGet = (url: string) => Promise<string>;
 
+// 🔴 #665：账号同步的 URL 构造 / 解析 / 判重键（纯模块，⛔ 别在这里另写一份）
+import {
+    tmdbAccountSelfUrl,
+    tmdbAccountUrl,
+    parseTmdbAccountId,
+    parseTmdbAccountPage,
+    type TmdbAccountItem,
+    type TmdbAccountPage,
+    type TmdbSyncList,
+} from 'pure/tmdbSync';
+
 /** 可插拔元数据源（豆瓣兜底实现此接口，默认关闭） */
 export interface MetadataSource {
     readonly name: string;
@@ -152,5 +163,39 @@ export class TmdbClient implements MetadataSource {
         const creditsUrl = `${base}/credits?api_key=${this.apiKey}&language=${this.lang}`;
         const [detailText, creditsText] = await Promise.all([this.http(detailUrl), this.http(creditsUrl)]);
         return parseDetail(detailText, creditsText, mediaType);
+    }
+
+    // ── 🔴 #665 账号同步（watchlist / favorite；需要 session_id）──────────────────
+
+    /** 当前账号（拿 account_id；同步入口用，用户 ⛔ 不用单独填 account id） */
+    async accountId(sessionId: string): Promise<string> {
+        const text = await this.http(tmdbAccountSelfUrl(sessionId, this.apiKey));
+        return parseTmdbAccountId(text);
+    }
+
+    /** 拉账号清单的一页（watchlist / favorite × movie / tv） */
+    async accountPage(sessionId: string, accountId: string, list: TmdbSyncList, mediaType: 'movie' | 'tv', page: number): Promise<TmdbAccountPage> {
+        const text = await this.http(tmdbAccountUrl(accountId, list, mediaType, sessionId, this.apiKey, page, this.lang));
+        return parseTmdbAccountPage(text, mediaType);
+    }
+
+    /** 拉某一份清单的**全部**条目（翻页直到够 total；TMDB 每页 20 条） */
+    async accountItems(sessionId: string, list: TmdbSyncList, mediaType: 'movie' | 'tv'): Promise<TmdbAccountItem[]> {
+        const sid = sessionId.trim();
+        if (!sid) throw new Error('未配置 TMDB Session ID —— 到 themoviedb.org「设置 → API」生成后填入，账号同步需要它');
+        const accountId = await this.accountId(sid);
+        const all: TmdbAccountItem[] = [];
+        const seen = new Set<number>();
+        for (let page = 1; page <= 500; page++) {
+            const p = await this.accountPage(sid, accountId, list, mediaType, page);
+            for (const it of p.items) {
+                if (seen.has(it.id)) continue;
+                seen.add(it.id);
+                all.push(it);
+            }
+            // 翻页判定用 total_results（⛔ 不靠"这页不满 20"猜——同 #662 豆瓣那条教训）
+            if (p.items.length === 0 || all.length >= p.totalResults) break;
+        }
+        return all;
     }
 }

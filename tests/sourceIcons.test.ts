@@ -20,8 +20,15 @@ const MUST_STAY_BUILTIN_MUSIC = ['qq', 'kugou'] as const;
 const isBrand = (i: SourceIcon): i is Extract<SourceIcon, { kind: 'brand' }> => i.kind === 'brand';
 
 describe('pure/sourceIcons 元数据源图标表', () => {
-    it('与设置页「需 Key 源」同一批（七个，一个不多一个不少）', () => {
-        expect(Object.keys(SOURCE_ICON).sort()).toEqual(['bangumi', 'douban', 'googleBooks', 'igdb', 'omdb', 'tmdb', 'weread']);
+    it('与设置页「需 Key 源」同一批（**八个**，一个不多一个不少）', () => {
+        // 🔴🔴 #640（1.4.0）翻面：7 → 8，补 **steam** ——
+        //    #639 给 Steam 挂了 `keyField: steamApiKey`（搜索免 Key、同步库/愿望单要 Key），
+        //    但 `KEY_SOURCE_ORDER` 与 `KeySourceId` 都还把它当「免 Key 源」⇒ 设置页凭据行**压根没渲染**
+        //    （用户上手第一句：「没有显示啊」）。
+        //    ⚠️ 这条判据就是**那个 bug 的哨兵**：源表与定序表必须同一批，少一个就红。
+        expect(Object.keys(SOURCE_ICON).sort()).toEqual([
+            'bangumi', 'douban', 'googleBooks', 'igdb', 'omdb', 'steam', 'tmdb', 'weread',
+        ]);
     });
 
     it('音乐平台与设置页 Cookie 行同一批（三行：网易云 / QQ / 酷狗）', () => {
@@ -33,6 +40,8 @@ describe('pure/sourceIcons 元数据源图标表', () => {
         const pairs: [SourceIcon, string][] = [
             [SOURCE_ICON.douban, 'douban'],
             [SOURCE_ICON.igdb, 'igdb'],
+            // 🔴 #640：Steam 品牌标（与 `pure/searchIcons` 那张**同源同值**，来自 simple-icons v16）
+            [SOURCE_ICON.steam, 'steam'],
             [MUSIC_COOKIE_ICON.netease, 'neteasecloudmusic'],
         ];
         for (const [icon, slug] of pairs) {

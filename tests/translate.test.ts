@@ -8,6 +8,7 @@ import {
     buildTranslatePingBody,
     PING_MAX_TOKENS,
     pickPingModel,
+    noChatModelHint,
     DEFAULT_TRANSLATE_PROMPT,
     translateChatUrl,
     modelFor,
@@ -35,6 +36,14 @@ import {
     SILICONFLOW_CHAT_URL,
     SILICONFLOW_MODEL_ID,
     aiChoiceLabel,
+    aiProviderOptions,
+    customSlotName,
+    normalizeCustomName,
+    isCustomSlot,
+    isBuiltinProvider,
+    aiKeyField,
+    CUSTOM_SLOTS,
+    CUSTOM_SLOT_FIELDS,
     aiPickText,
     isAiOff,
     ZHIPU_MODEL,
@@ -175,10 +184,57 @@ describe('normalizeAiChoice（服务商 or 不启用）', () => {
         expect(normalizeAiChoice('constructor')).toBe('zhipu');
         expect(normalizeAiChoice(0)).toBe('zhipu');
     });
-    it('下拉选项四项（#478 加「自定义」）且「不启用」在最后（防误选）', () => {
-        // #480：硅基流动升为一等 chat 提供商
-        expect(AI_PROVIDER_OPTIONS.map((o) => o.value)).toEqual(['zhipu', 'deepseek', 'siliconflow', 'custom', 'off']);
+    it('下拉选项六项（#634 起两个自定义槽位）且「不启用」在最后（防误选）', () => {
+        // #480：硅基流动升为一等 chat 提供商；#634：`custom2` = 第二个自定义槽位（用户裁定「总共两个」）
+        expect(AI_PROVIDER_OPTIONS.map((o) => o.value)).toEqual(['zhipu', 'deepseek', 'siliconflow', 'custom', 'custom2', 'off']);
         expect(AI_PROVIDER_OPTIONS[AI_PROVIDER_OPTIONS.length - 1].label).toBe('不启用');
+    });
+    it('🔴 #634 两个槽位的**显示名可被用户改**：`aiProviderOptions(names)` 只替换那两项，其余逐字不变', () => {
+        // 没传 names ⇒ 与静态常量**逐字相同**（缺省路径零变化）
+        expect(aiProviderOptions().map((o) => o.label)).toEqual(AI_PROVIDER_OPTIONS.map((o) => o.label));
+        expect(aiProviderOptions({}).map((o) => o.label)).toEqual(AI_PROVIDER_OPTIONS.map((o) => o.label));
+        // 传了 ⇒ 只动 custom / custom2 两项
+        // 🔴🔴 #640e 翻面（用户：「选择AI模型服务窗口两个标签(OpenAI 兼容)去掉」）：
+        //   改名后**只有用户填的那个名**，⛔ 不再拼「（OpenAI 兼容）」后缀
+        //   （旧口径 #478/#634 是「新名 + 后缀」，已被本批推翻）。
+        const named = aiProviderOptions({ custom: '公司中转', custom2: '本机 Ollama' });
+        expect(named.map((o) => o.label)).toEqual([
+            '智谱 GLM', 'DeepSeek', '硅基流动', '公司中转', '本机 Ollama', '不启用',
+        ]);
+        // 空白 / 非字符串 ⇒ 回落默认选项名（⛔ 别把空串画成只剩后缀的半截名字）
+        expect(aiProviderOptions({ custom: '   ', custom2: 123 }).map((o) => o.label)).toEqual([
+            '智谱 GLM', 'DeepSeek', '硅基流动', '自定义', '自定义 2', '不启用',
+        ]);
+        // 🔴 #640e 反向守卫：⛔ 全仓（含改名路径）不许再出现「（OpenAI 兼容）」这个后缀
+        expect(aiProviderOptions().some((o) => o.label.includes('OpenAI 兼容'))).toBe(false);
+        expect(named.some((o) => o.label.includes('OpenAI 兼容'))).toBe(false);
+    });
+    it('🔴 #634 `customSlotName` / `normalizeCustomName`：trim、空 ⇒ 默认名、**超 20 字截断**', () => {
+        expect(customSlotName('custom')).toBe('自定义端点');
+        expect(customSlotName('custom2')).toBe('自定义端点 2');
+        expect(customSlotName('custom', '  中转站  ')).toBe('中转站');
+        expect(customSlotName('custom2', '')).toBe('自定义端点 2');
+        expect(customSlotName('custom2', undefined)).toBe('自定义端点 2');
+        expect(normalizeCustomName('  x  ')).toBe('x');
+        expect(normalizeCustomName('   ')).toBe(undefined);
+        expect(normalizeCustomName(42)).toBe(undefined);
+        // 超长截断（名字要进下拉选项与行头，过长会把设置页那行撑变形）
+        expect(normalizeCustomName('a'.repeat(30))).toBe('a'.repeat(20));
+    });
+    it('🔴 #634 两个槽位**各认各的字段**（`CUSTOM_SLOT_FIELDS` 是唯一真源，⛔ 不是写死槽位 1）', () => {
+        expect(CUSTOM_SLOTS).toEqual(['custom', 'custom2']);
+        expect(CUSTOM_SLOT_FIELDS.custom.base).toBe('readerCustomBaseUrl');
+        // 🔴 关键判据：槽位 2 的**每一个**字段都必须与槽位 1 不同 —— 撞了就是「填了槽位 2 却打槽位 1」
+        for (const k of ['base', 'key', 'model', 'name'] as const) {
+            expect(CUSTOM_SLOT_FIELDS.custom2[k]).not.toBe(CUSTOM_SLOT_FIELDS.custom[k]);
+        }
+        expect(aiKeyField('custom')).toBe('readerCustomKey');
+        expect(aiKeyField('custom2')).toBe('readerCustom2Key');
+        expect(isCustomSlot('custom')).toBe(true);
+        expect(isCustomSlot('custom2')).toBe(true);
+        expect(isCustomSlot('zhipu')).toBe(false);
+        expect(isBuiltinProvider('custom2')).toBe(false);
+        expect(isBuiltinProvider('zhipu')).toBe(true);
     });
 });
 
@@ -446,8 +502,9 @@ describe('AI 服务商合并控件与硅基流动（#480）', () => {
         // 选了「不启用」，即便字段里还留着旧模型名，也**不许**显示
         expect(aiPickText('off', 'GLM-4-Flash')).toBe('不启用');
         // 模型空（custom 没填）⇒ 只显示服务商名，不出现孤零零的分隔点
-        expect(aiPickText('custom', '')).toBe('自定义（OpenAI 兼容）');
-        expect(aiPickText('custom', '   ')).toBe('自定义（OpenAI 兼容）');
+        // 🔴 #640e：服务商名已去掉「（OpenAI 兼容）」后缀
+        expect(aiPickText('custom', '')).toBe('自定义');
+        expect(aiPickText('custom', '   ')).toBe('自定义');
     });
 
     it('isAiOff：只有「不启用」为真（用归一口径，脏数据不会误判成 off）', () => {
@@ -482,5 +539,17 @@ describe('#486 ping：限制输出长度 + 「测哪家就用哪家的模型」'
         expect(pickPingModel(['video-01', 'image-02'])).toBe('video-01');
         expect(pickPingModel([], 'glm-4')).toBe('glm-4');
         expect(pickPingModel(['', '  ', 'gpt-4'])).toBe('gpt-4');
+    });
+
+    it('🔴 #634 noChatModelHint：**只在真的退回了第一个**时才说话（用户问「怎么是连第一个模型的」）', () => {
+        // 没有一个文本对话模型 ⇒ 给一句说明（点明「已退回第一个试打」）
+        const hint = noChatModelHint(['video-01', 'image-02']);
+        expect(hint).toContain('没有任何文本对话模型');
+        expect(hint).toContain('退回第一个');
+        // 有文本模型 ⇒ 恒空串（⛔ 别在正常路径上多说一句废话）
+        expect(noChatModelHint(['MiniMax-Hailuo-2.3', 'gpt-5.6'])).toBe('');
+        expect(noChatModelHint(['glm-4'])).toBe('');
+        // 空列表不归它管（那是「这条端点没返回任何模型」，另有文案）⇒ 空串
+        expect(noChatModelHint([])).toBe('');
     });
 });

@@ -9,6 +9,7 @@
 //  ⑶ 用户取消 → resolve `null`，宿主**什么都不做**（⛔ 不产出「半个删除」）。
 import { App, Modal } from 'obsidian';
 import { ENTRY_ASSET_LABEL, type EntryAsset } from 'pure/orphanAssets';
+import { applyScrollPref, markScrollInside } from 'services/scrollPref';
 
 export class DeleteEntryModal extends Modal {
     private resolve: ((v: EntryAsset[] | null) => void) | null = null;
@@ -36,6 +37,11 @@ export class DeleteEntryModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
+        // 🔴 #634：实测双滚动条嵌套（外层 662/585 可滚 + 内层 `.rl-pc-list` 1050/300 可滚）
+        //    ⇒ 标记「滚动只在内部」。⚠️ 只在**真的渲染了那个列表**时标记 —— 没有列表的那一档
+        //    （`assets.length === 0`，只有几行说明）若去掉外层滚动，高内容会被裁掉。
+        if (this.assets.length) markScrollInside(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
         contentEl.createEl('h2', { text: this.heading });

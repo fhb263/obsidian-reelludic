@@ -16,6 +16,7 @@ import { Modal, type App } from 'obsidian';
 import type ReelLudicPlugin from '../../main';
 import { planSeriesReindexAll, type SeriesGroup } from 'pure/seriesGroup';
 import SeriesReorder from 'views/components/SeriesReorder.svelte';
+import { applyScrollPref } from 'services/scrollPref';
 
 export class SeriesReorderModal extends Modal {
     private instance: SeriesReorder | null = null;
@@ -32,6 +33,7 @@ export class SeriesReorderModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         this.titleEl.setText('');
         contentEl.empty();

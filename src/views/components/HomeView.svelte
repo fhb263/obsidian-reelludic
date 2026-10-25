@@ -4,6 +4,8 @@
     import CalendarBoard from './CalendarBoard.svelte';
     import TrackingBoard from './TrackingBoard.svelte';
     import StatsBoard from './StatsBoard.svelte';
+    // 🔴 #657：统计页区块顺序的缺省值与类型（真源在 pure/statsLayout）
+    import { STATS_BLOCK_DEFAULTS, type StatsBlockKey } from 'pure/statsLayout';
     // #546：导航本体（大字 + 面板 + 键盘）抽成独立组件 —— **两个挂载点共用同一份实现**：
     //   有工具栏的页签经 MediaList 的 `nav-entry` 插槽放进搜索框那一行，计划/统计由本组件包一行。
     import NavMenu from './NavMenu.svelte';
@@ -14,9 +16,12 @@
     // 🔴 #603：合并视图那块的**读屏名**要用页名真源（原先写死「媒体库」—— 追更 / 统计两页也叫这个名）
     import { mergedPageLabel } from 'pure/mergedPages';
     // #570「回到顶部」的显隐判据 + 「只认本视图滚动容器」的归属判定（纯模块，配单测）
-    import { shouldShowTop, wrapsRoot } from 'pure/topButton';
+    // 🔴 #624：`shouldShowTop` 不再直接引用 —— 显隐统一走 `topVisible`（它内部就是 `shouldShowTop` + 静止/悬停两条）
+    import { topVisible, wrapsRoot, TOP_IDLE_MS } from 'pure/topButton';
     import { type ColorTheme, type EntryType } from 'data/types';
-    import type { ActivityEvent, BookKind, MediaEntry, MediaStatus } from 'data/types';
+    import type { ActivityEvent, BookKind, MediaEntry, MediaStatus, EntryLogKind, EntryTextKind } from 'data/types';
+    // 🔴 #635：评分看板「拖入即改评分」的载荷类型（与存储口径同源 `pure/rating`）
+    import type { Rating } from 'pure/rating';
     import type { FeedRange } from 'pure/activityFeed';
     import { MEDIA_TYPES, type HomeTab } from '../tab';
     // 🔴 #541：页签的**顺序 / 显示名 / 图标 / 归一全部来自 `pure/homeTabs`** —— 那是唯一真源
@@ -29,6 +34,9 @@
     import { mergedLockType, type MergedScope } from 'pure/mergedScope';
     import type { SortBy } from 'pure/search';
     import { POSTER_COLUMNS_DEFAULT, type PosterDensity } from 'pure/posterGrid';
+    // 1.3.1 ①：海报墙卡片显示哪几行（高级设置 › 海报墙卡片）
+    import { DEFAULT_CARD_FIELDS_BY_TYPE, type CardFieldKey } from 'pure/cardMeta';
+    import { DEFAULT_TABLE_COLUMNS_BY_TYPE } from 'pure/tableColumns';
     import type { SeriesGroup } from 'pure/seriesGroup';
     import Icon from './Icon.svelte';
 
@@ -40,6 +48,7 @@
     export let excerptCounts: Record<string, number> = {};
     export let initialTab: HomeTab = 'media';
     export let onTabChange: (tab: HomeTab) => void = () => {};
+    /** 🔴 #632：`onBatchAdd` 已随「批量添加」整体退场（连续添加改走新建条目表单自身的收口） */
     export let onAdd: (t?: EntryType, kind?: BookKind) => void = () => {};
     export let onEditEntry: (id: string) => void = () => {};
     export let onOpenEntry: (id: string) => void = () => {};
@@ -51,6 +60,8 @@
     export let onOpenSeriesPicker: (g: SeriesGroup) => void = () => {};
     /** 🔴 #609 折叠卡右键「排序号」→ 拖拽排序弹窗（同样是宿主侧的应用级 Modal） */
     export let onOpenSeriesReorder: (g: SeriesGroup) => void = () => {};
+    /** 🔴 #629 折叠卡右键「批量关联」→ 系列逐条关联清单（宿主侧应用级 Modal） */
+    export let onOpenSeriesAssociate: (g: SeriesGroup) => void = () => {};
     /** 右键「动词 · 去关联」直达快捷关联弹窗（无入口时主操作不再跳整编辑表单） */
     export let onQuickAssociate: (e: MediaEntry) => void = () => {};
     export let onSetStatus: (id: string, s: MediaStatus) => Promise<void> = async () => {};
@@ -60,8 +71,10 @@
     export let onBulkDelete: (ids: string[]) => Promise<void> = async () => {};
     /** 书籍卡片右键「添加摘抄」：固定挂载该书打开摘抄弹窗 */
     export let onAddExcerpt: (book: MediaEntry) => void = () => {};
-    /** 游戏卡片右键「记录游玩」：固定挂载该游戏打开游玩记录弹窗 */
-    export let onOpenGameSessionModal: (game: MediaEntry) => void = () => {};
+    /** #685 右键「记录时长 / 记录重温 / 记录周目」：固定挂载该条目打开记录弹窗 */
+    export let onOpenEntryLogModal: (e: MediaEntry, kind: EntryLogKind) => void = () => {};
+    /** #685 右键「添加短评 / 添加攻略」：固定挂载该条目打开文本记录弹窗 */
+    export let onOpenEntryTextModal: (e: MediaEntry, kind: EntryTextKind) => void = () => {};
     /** 批量设置个人评分 */
     export let onBulkRating: (ids: string[], rating: number) => Promise<void> = async () => {};
     /** 批量追加标签 */
@@ -93,6 +106,43 @@
     export let posterUrl: (e: MediaEntry) => string | undefined = () => undefined;
     /** 色彩主题（设置页配置）：彩色显示类型色条 / 单色关闭 */
     export let colorTheme: ColorTheme = 'colorful';
+    /** 1.3.1 ①：海报墙卡片显示哪几行（高级设置 › 海报墙卡片）。
+     *  🔴 #617 起**按条目类型各一份**（六键齐全）；缺省 = 三类全显（与 1.3.1 前一致） */
+    export let cardFieldsByType: Record<EntryType, CardFieldKey[]> = DEFAULT_CARD_FIELDS_BY_TYPE;
+    /** 1.3.1 ②（#621）表格视图的列（按类型各一份；六键齐全，宿主已归一） */
+    export let tableColumnsByType: Record<EntryType, string[]> = DEFAULT_TABLE_COLUMNS_BY_TYPE;
+    /** 列配置变更（表头拖序 / 列菜单勾选）⇒ 回推宿主落盘 */
+    export let onTableColumnsChange: (type: EntryType, keys: string[]) => void = () => {};
+    /** 表格格子提交 ⇒ 宿主写回条目 + 笔记 + 刷新视图 */
+    export let onCellCommit: (id: string, patch: Partial<MediaEntry>) => Promise<void> = async () => {};
+    /**
+     * 🔴 #668 用户：「切换视图按钮也支持**自由排序并持久化**」。
+     * 顺序原样传给 `MediaList`（⛔ 两处不各归一一次），归一只在 `pure/viewModes.normalizeViewOrder`。
+     */
+    export let viewOrder: string[] = [];
+    /** 拖完 ⇒ 宿主落盘 + 刷视图 */
+    export let onViewOrderChange: (order: string[]) => void = () => {};
+    /** 🔴 #668：时间线自己的缩放档（⛔ 与海报列数**分开存**，见设置里那条注释） */
+    export let timelineZoom: number = 3;
+    /** 时间线缩放 ⇒ 宿主落盘 + 刷视图 */
+    export let onTimelineZoomChange: (zoom: number) => void = () => {};
+    /**
+     * 🔴 需求 9（用户 2026-10-21）：**列表视图**「展示分组 / 不并组展示」的单循环口径。
+     *  `true`（含缺省 = 老库没这个键）= 展示分组（同系列折成合集行、可展开）；`false` = 不并组展示（每条独立一行）。
+     *  ⚠️ 只作用于列表视图 —— 海报墙 / 卡片网格 / 瀑布流 / 时间线的排布与行为一律不变。
+     */
+    export let listGrouping = true;
+    /**
+     * 上面那枚切换按钮的回推出口（受控口径：值与落盘都归宿主，⛔ 组件不自己存设置）。
+     * ⚠️ `null` = 宿主没接线 ⇒ `MediaList` 里**整枚按钮不渲染**（不画点了没反应的按钮）。
+     */
+    export let onToggleGrouping: ((next: boolean) => void) | null = null;
+    /**
+     * 🔴 #635 ④：评分看板「拖入即改评分」⇒ 宿主写回条目 + 笔记 + 刷新视图。
+     * ⚠️ 与 `onCellCommit` **分开**（那是通用 patch、这是评分专用）：看板要的是「明确的评分数」，
+     *    复用一个泛 patch 通道会让「拖错了怎么办」的失败回滚判据失去抓手。
+     */
+    export let onSetRating: (id: string, rating: Rating) => Promise<void> = async () => {};
     /**
      * 界面主题（1.0.3）：native 原生（默认，页签保持 1.0.2 下划线形态）/
      * modern 现代（分段控件 + 滑动指示器；图标两主题恒渲染——2026-09-12 用户裁定恢复）。
@@ -122,13 +172,23 @@
     export let posterDensity: PosterDensity = 'standard';
     /** 自定义列数的目标列数（仅 posterDensity === 'custom' 生效；实际列数仍由容器宽度决定） */
     export let posterColumns: number = POSTER_COLUMNS_DEFAULT;
+    /**
+     * 🔴 用户 2026-10-20 删除「海报墙列数」⇒ 墙**没有第二套列数**了，与卡片网格共用 `posterColumns`。
+     *    （原 #626 的 `wallColumns` prop 已随之整条下线，⛔ 别再补回来。）
+     */
     /** 🔴 #591 媒体库内 Ctrl+滚轮缩放开关（设置页配置；缺省关 —— 要接管系统手势） */
     export let ctrlWheelZoom: boolean = false;
+    /** 🔴 #657 统计页区块顺序（`settings.statsOrder` 归一后的值；缺省 = 原视觉顺序）。 */
+    export let statsOrder: StatsBlockKey[] = [...STATS_BLOCK_DEFAULTS];
+    /** 🔴 #657 顺序变化 → 宿主落盘（与缺省一致时宿主会删键）。 */
+    export let onStatsOrderChange: (next: StatsBlockKey[]) => void = () => {};
     /**
-     * 🔴 #591 缩放**回推出口**：MediaList 只报告「缩到几列」，落盘与重推由宿主承担
-     * （`plugin.applyPosterZoom` → 写 `posterColumns` + `posterDensity='custom'` → `syncPosterGrid()`）。
+     * 🔴 #591 缩放**回推出口**：MediaList 只报告「缩到几列 + 哪个视图」，落盘与重推由宿主承担。
+     * 🔴 #626 第 3 参 `view`：`grid` / `wall` —— 用户 2026-10-20 删除「海报墙列数」后
+     *    两条路写的是**同一对**共享键（`applyWallZoom` 也只写 posterColumns），
+     *    这个参数只剩「标明缩的是哪个视图」的语义，⛔ 别再拿它分流到第二套列数键。
      */
-    export let onPosterZoom: (density: PosterDensity, columns: number) => void = () => {};
+    export let onPosterZoom: (density: PosterDensity, columns: number, view: 'grid' | 'wall') => void = () => {};
 
     let activeTab: HomeTab = initialTab;
     /** 计划页签视图：追更表 / 月历 */
@@ -229,9 +289,26 @@
         }
         return null;
     }
+    /**
+     * 🔴 #624 自动隐藏的两个状态（用户 2026-10-13：「添加鼠标无上下滑动动作则自动隐藏的机制」）：
+     *   · `topHovering` —— 鼠标是否停在按钮上（**悬停时不许隐藏**，否则想点的那一刻它刚好淡出）；
+     *   · `topIdle` —— 是否已「静止」够久（滚动时清零，停够 `TOP_IDLE_MS` 才置位）。
+     *   判据收在纯模块 `topVisible`（可单测），这里只管状态与计时。
+     */
+    let topHovering = false;
+    let topIdle = false;
+    let topIdleTimer: ReturnType<typeof setTimeout> | undefined;
+    /** 重新计时：每次滚动都调用（等价于防抖 —— 滚一下就把「静止」从头数） */
+    function armTopIdle(): void {
+        clearTimeout(topIdleTimer);
+        topIdleTimer = setTimeout(() => {
+            topIdle = true;
+            syncTop();
+        }, TOP_IDLE_MS);
+    }
     /** 同步显隐（判据在纯模块；找不到容器时按 0 处理 —— 首帧不该谎报「已经滚下去了」） */
     function syncTop(): void {
-        showTop = shouldShowTop(scrollEl?.scrollTop ?? 0);
+        showTop = topVisible(scrollEl?.scrollTop ?? 0, { hovering: topHovering, idle: topIdle });
     }
 
     onMount(() => {
@@ -249,6 +326,9 @@
             const t = ev.target;
             const cand = t === document ? document.documentElement : t;
             if (wrapsRoot(cand, rootEl)) scrollEl = cand as HTMLElement;
+            // 🔴 #624：滚一下就说明用户还在动 ⇒ 清掉「静止」并重新计时（按钮立刻回来）
+            topIdle = false;
+            armTopIdle();
             syncTop();
         };
         document.addEventListener('scroll', onAnyScroll, { capture: true, passive: true });
@@ -285,7 +365,10 @@
             syncTop();
         }, 0);
     }
-    onDestroy(() => clearTimeout(topSyncTimer));
+    onDestroy(() => {
+        clearTimeout(topSyncTimer);
+        clearTimeout(topIdleTimer);
+    });
 
 
     // 指示器重算时机：首帧渲染后、主题切换时、activeTab 变化时。
@@ -307,6 +390,10 @@
         const el = scrollEl ?? findScroller();
         if (el) el.scrollTo({ top: 0, behavior: 'smooth' });
         else window.scrollTo({ top: 0, behavior: 'smooth' });
+        // 🔴 #624：回顶后把「静止」一并清掉 —— 否则它在 3 秒后又把按钮的隐藏态前置一次，
+        //    而那时位置已经到顶、本就该是隐藏的（两个判据打架没有意义）。
+        topIdle = false;
+        clearTimeout(topIdleTimer);
         showTop = false;   // 乐观置位：平滑滚动的第一帧之前按钮就该开始退场
     }
 
@@ -455,12 +542,29 @@
                     {onImportBangumi} />
             {/if}
         {:else if effPage === 'stats'}
-            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} />
+            <!-- 🔴 #635 ④：评分看板要「封面 + Ctrl 滚轮缩放 + 拖入落库」三样 ——
+                 `posterUrl` / `ctrlWheelZoom` 本组件已有（与主视图同源，⛔ 不新造），
+                 只多传一个 `onSetRating`（拖入即改评分 → 宿主落库）。
+                 🔴 #657：另传统计页**区块顺序**与其落盘回调（自由排序，自适应 —— 见 `pure/statsLayout`）。 -->
+            <!-- 🔴🔴 #659：prop 名必须与 `StatsBoard` 的 `export let` **逐字一致** ——
+                 上一版 StatsBoard 里叫 `onOrderChange`、这里传的是 `onStatsOrderChange`，
+                 Svelte 4 对「多传的 prop」**静默忽略** ⇒ 拖动后回调永远是默认空函数 ⇒ **拖了没反应**（零报错）。 -->
+            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} order={statsOrder} onOrderChange={onStatsOrderChange} />
         {:else}
             <MediaList
                 entries={listEntries}
                 {posterUrl}
                 {colorTheme}
+                {cardFieldsByType}
+                {tableColumnsByType}
+                {onTableColumnsChange}
+                {onCellCommit}
+                {onViewOrderChange}
+                {onTimelineZoomChange}
+                {viewOrder}
+                {timelineZoom}
+                {listGrouping}
+                {onToggleGrouping}
                 {defaultViewMode}
                 {posterDensity}
                 {posterColumns}
@@ -473,13 +577,15 @@
                 {onWatch}
                 {onOpenSeriesPicker}
                 {onOpenSeriesReorder}
+                {onOpenSeriesAssociate}
                 {onQuickAssociate}
                 {onSetStatus}
                 {onMarkUpdated}
                 {onDeleteEntry}
                 {onBulkDelete}
                 {onAddExcerpt}
-                {onOpenGameSessionModal}
+                {onOpenEntryLogModal}
+                {onOpenEntryTextModal}
                 {onBulkRating}
                 {onBulkTags}
                 {onConfirmBulk}
@@ -512,12 +618,22 @@
         {/if}
     </div>
 
-    <!-- 回到顶部：下滑超过页签+筛选栏后右下角浮现，点击平滑回顶 -->
-    <button
-        class="rl-to-top"
-        class:show={showTop}
-        data-tip="回到顶部"
-        on:click={scrollToTop}>↑<span class="rl-sr">回到顶部</span></button>
+    <!-- 回到顶部：下滑超过页签+筛选栏后，钉在**本视图滚动可见区**的右下角浮现，点击平滑回顶。
+         🔴 2026-10-13（用户报障「按钮不保持在底部」）：外层改成 `position: sticky; bottom: 0` 的
+         **0 高度锚点**、按钮 `absolute` 挂在它右下角 —— ⛔ 不再用 `position: fixed`。
+         原因：Obsidian 的视图外层带 `transform`（本仓 `.rl-ctx-anchor` 的注释里已记过这条），
+         `fixed` 会被重定向到那个祖先 ⇒ 按钮被钉到**内容底部**（表现为「不滚到底就看不见」）。
+         `sticky` 的参照系是**滚动容器**（`.view-content`），与本视图绑定、不受 transform 影响，
+         也不会跑到别的面板上去。 -->
+    <div class="rl-to-anchor">
+        <button
+            class="rl-to-top"
+            class:show={showTop}
+            data-tip="回到顶部"
+            on:mouseenter={() => { topHovering = true; syncTop(); }}
+            on:mouseleave={() => { topHovering = false; syncTop(); }}
+            on:click={scrollToTop}>↑<span class="rl-sr">回到顶部</span></button>
+    </div>
 </div>
 
 <style>
@@ -551,9 +667,16 @@
     .rl-tracking-switch button + button { border-left: 1px solid var(--background-modifier-border); }
     .rl-tracking-switch button.on { background: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
 
-    /* 回到顶部按钮：右下角 fixed 圆形，下滑超过阈值后淡入（class:show 控制） */
+    /* 回到顶部按钮：钉在**本视图可见区**的右下角，下滑超过阈值后淡入（class:show 控制）。
+       🔴 定位拆两件（用户 2026-10-13 报障「不保持在底部」）：
+          · `.rl-to-anchor` = **0 高度**的 `sticky; bottom: 0` 盒子 —— 它是「可见区右下角」这个位置的载体；
+          · `.rl-to-top` = 挂在锚点右下角的 absolute 按钮。
+       ⛔ 别退回 `position: fixed`：Obsidian 视图外层有 transform 祖先，fixed 会被重定向到那个祖先
+          （内容高度的盒子）⇒ 按钮跑到**内容底部**去了。sticky 的参照系是滚动容器，天生免疫。
+       ⚠️ 锚点 `height: 0` ⇒ 不占版面（`.rl-home` 的底部内距仍是 10px + 按钮的 22px 偏移）。 */
+    .rl-to-anchor { position: sticky; bottom: 0; height: 0; z-index: 1000; }
     .rl-to-top {
-        position: fixed; right: 22px; bottom: 22px; z-index: 1000;
+        position: absolute; right: 22px; bottom: 22px;
         width: 40px; height: 40px; border-radius: 50%;
         border: none; cursor: pointer;
         background: var(--interactive-accent); color: var(--text-on-accent);

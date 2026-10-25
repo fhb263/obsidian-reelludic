@@ -264,7 +264,7 @@
                                 {#if e.links.length > 0}
                                     <button class="rl-tr-btn" data-tip="打开观看链接" on:click={() => onOpenLink(e.links[0].url)}><Icon icon="play" size={12} /> 观看</button>
                                 {/if}
-                                <button class="rl-tr-btn" data-tip="编辑条目" on:click={() => onEditEntry(e.id)}><Icon icon="pencil" size={12} /> 编辑</button>
+                                <button class="rl-tr-btn" data-tip="编辑属性" on:click={() => onEditEntry(e.id)}><Icon icon="pencil" size={12} /> 编辑</button>
                             </span>
                         </td>
                     </tr>

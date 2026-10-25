@@ -1,11 +1,12 @@
 // catalog.json 读写（纯逻辑：文件 IO 通过注入的 VaultIO 完成，可单测）
-import type { ActivityEvent, BookKind, Catalog, MediaEntry, MusicKind, PlaySession, WatchLink } from 'data/types';
+import type { ActivityEvent, BookKind, Catalog, CommentLog, MediaEntry, MusicKind, PlaySession, RoundLog, WatchLink } from 'data/types';
 import { ACTIVITY_LOG_LIMIT, createEntryId, ENTRY_TYPES } from 'data/types';
 import { isMediaStatus } from 'pure/status';
 import { storeEpisodeList } from 'pure/episodeAssoc';
 import { normalizeRating } from 'pure/rating';
 import { BOOK_KINDS } from 'pure/bookKind';
 import { MUSIC_KINDS } from 'pure/musicKind';
+import { normalizeRelatedList } from 'pure/relatedGraph';
 import {
     BACKUP_FILE,
     BACKUP_KEEP,
@@ -158,6 +159,37 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
                       note: isString((s as PlaySession).note) ? (s as PlaySession).note : undefined,
                   }))
             : undefined,
+        // #685 音乐收听时长（分钟，append-only）：有限正数才透传（取整），与 readMinutes / playtimeMinutes 同口径。
+        listenMinutes: typeof raw.listenMinutes === 'number' && Number.isFinite(raw.listenMinutes) && raw.listenMinutes > 0
+            ? Math.round(raw.listenMinutes)
+            : undefined,
+        // #685 重温 / 周目记录（append-only）：kind 只收两种合法值、round 收正整数、date 收非空字符串。
+        roundLogs: Array.isArray(raw.roundLogs)
+            ? raw.roundLogs
+                  .filter((r): r is RoundLog => typeof r === 'object' && r !== null && ((r as RoundLog).kind === 'rewatch' || (r as RoundLog).kind === 'playthrough') && typeof (r as RoundLog).date === 'string' && typeof (r as RoundLog).round === 'number')
+                  .map((r) => ({
+                      kind: (r as RoundLog).kind,
+                      date: (r as RoundLog).date,
+                      round: Math.max(1, Math.round((r as RoundLog).round)),
+                      note: isString((r as RoundLog).note) ? (r as RoundLog).note : undefined,
+                  }))
+            : undefined,
+        // #685 游戏攻略（append-only）：空串不落库（与 summary / aiSummary 同一口径）。
+        guide: isString(raw.guide) && raw.guide.trim() ? raw.guide : undefined,
+        // 短评流水（append-only）：date 收非空字符串、text 收非空（trim 后）——与 roundLogs 同款
+        // 「只增不改」白名单。⚠️ 漏了这条 = 用户存的短评保存即消失（本仓踩过 bookKind/summary 多次）。
+        commentLog: Array.isArray(raw.commentLog)
+            ? raw.commentLog
+                  .filter(
+                      (c): c is CommentLog =>
+                          typeof c === 'object' &&
+                          c !== null &&
+                          typeof (c as CommentLog).date === 'string' &&
+                          isString((c as CommentLog).text) &&
+                          (c as CommentLog).text.trim().length > 0,
+                  )
+                  .map((c) => ({ date: (c as CommentLog).date.trim(), text: (c as CommentLog).text.trim() }))
+            : undefined,
         source: isString(raw.source) ? raw.source : undefined,
         // #430 手填来源名：append-only 可选字段 ⇒ ⚠️ 必须进这张白名单，否则**静默丢**（本仓踩过多次）
         sourceName: isString(raw.sourceName) ? raw.sourceName : undefined,
@@ -182,6 +214,10 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
         episodeTitles: storeEpisodeList(raw.episodeTitles), // 集标题（hover 显示）
         notes: isString(raw.notes) ? raw.notes : '',
         tags: Array.isArray(raw.tags) ? raw.tags.filter(isString) : [],
+        // #635 手动关联（append-only）：🔴 只增不改红线 —— 新增 schema 字段**必须**同步本白名单，
+        // 漏了就是「保存后关联全没了」（本仓踩过 bookKind / summary / readUrl 多次）。
+        // 逐项校验 / 去重 / 丢自环的唯一收口点是 `pure/relatedGraph.normalizeRelatedList`（读取端同一份判据）。
+        related: normalizeRelatedList(raw.related, isString(raw.id) ? raw.id : undefined),
         notePath: isString(raw.notePath) ? raw.notePath : undefined,
         noteFingerprint: isString(raw.noteFingerprint) ? raw.noteFingerprint : undefined, // 笔记指纹（G 双写冲突）
         excerptCount: typeof raw.excerptCount === 'number' ? raw.excerptCount : undefined, // 摘抄数（P1 性能缓存）

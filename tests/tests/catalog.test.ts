@@ -1,0 +1,483 @@
+import { describe, it, expect, vi } from 'vitest';
+import { parseCatalog, serializeCatalog, CatalogStore, DEFAULT_CATALOG, normalizeEntry, isCatalogTextConsistent } from 'data/catalog';
+import type { VaultIO } from 'data/catalog';
+import type { Catalog, MediaEntry } from 'data/types';
+import { BACKUP_FILE, BACKUP_KEEP, parseBackupFile } from 'pure/catalogBackup';
+
+function memIO(initial?: Record<string, string>): VaultIO & { files: Record<string, string> } {
+    const files: Record<string, string> = { ...(initial || {}) };
+    return {
+        files,
+        async readText(path: string) {
+            if (!(path in files)) throw new Error(`ENOENT: ${path}`);
+            return files[path];
+        },
+        async writeText(path: string, content: string) {
+            files[path] = content;
+        },
+        async deleteFile(path: string) {
+            delete files[path];
+        },
+        async listFiles(folder: string) {
+            const prefix = folder.endsWith('/') ? folder : folder + '/';
+            return Object.keys(files)
+                .filter((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes('/'))
+                .map((p) => p.slice(prefix.length));
+        },
+    };
+}
+
+describe('parseCatalog', () => {
+    it('解析合法 catalog', () => {
+        const c = parseCatalog('{"version":1,"entries":[{"id":"e1","title":"沙丘","status":"want"}]}');
+        expect(c.version).toBe(1);
+        expect(c.entries).toHaveLength(1);
+        expect(c.entries[0].title).toBe('沙丘');
+    });
+
+    it('非法 JSON 回退默认空库', () => {
+        expect(parseCatalog('not json{{{')).toEqual(DEFAULT_CATALOG);
+        expect(parseCatalog('')).toEqual(DEFAULT_CATALOG);
+    });
+
+    it('entries 非数组时回退空数组', () => {
+        const c = parseCatalog('{"version":1,"entries":"oops"}');
+        expect(c.entries).toEqual([]);
+    });
+
+    it('过滤缺 id 的条目，非法 status 容错归一为 want', () => {
+        const text = JSON.stringify({
+            version: 1,
+            entries: [
+                { id: 'e1', title: 'OK', status: 'want' },
+                { title: 'no-id' },
+                { id: 'e3', title: 'bad-status', status: 'nope' },
+            ],
+        });
+        const c = parseCatalog(text);
+        expect(c.entries).toHaveLength(2);
+        expect(c.entries[0].id).toBe('e1');
+        expect(c.entries[1].id).toBe('e3');
+        expect(c.entries[1].status).toBe('want'); // 容错归一
+    });
+});
+
+describe('normalizeEntry 缺字段兜底', () => {
+    it('缺失字段填充默认值', () => {
+        const e = normalizeEntry({ title: '沙丘' } as Partial<MediaEntry>);
+        expect(e.id).toBeTruthy();
+        expect(e.status).toBe('want');
+        expect(e.rating).toBe(0);
+        expect(e.genres).toEqual([]);
+        expect(e.cast).toEqual([]);
+        expect(e.links).toEqual([]);
+        expect(e.tags).toEqual([]);
+        expect(e.notes).toBe('');
+        expect(e.createdAt).toBeTruthy();
+        expect(e.updatedAt).toBeTruthy();
+    });
+
+    it('type 预留枚举（book/game）保留，非法值归一为 movie', () => {
+        expect(normalizeEntry({ type: 'tv' as const }).type).toBe('tv');
+        expect(normalizeEntry({ type: 'book' as const }).type).toBe('book'); // 三库扩展点预留
+        expect(normalizeEntry({ type: 'xxx' as never }).type).toBe('movie');
+    });
+
+    it('弃剧迁移为存档（存量 dropped 归一 archived，归档语义兼容）', () => {
+        expect(normalizeEntry({ title: 'x', status: 'dropped' as never }).status).toBe('archived');
+        expect(normalizeEntry({ title: 'x', status: 'archived' }).status).toBe('archived');
+        expect(normalizeEntry({ title: 'x', status: 'xxx' as never }).status).toBe('want');
+    });
+
+    it('rating 越界被钳制', () => {
+        expect(normalizeEntry({ rating: 99 as never }).rating).toBe(5);
+    });
+
+    it('plannedDate 透传/缺失兜底 undefined（月历排期字段）', () => {
+        expect(normalizeEntry({ plannedDate: '2026-09-01' }).plannedDate).toBe('2026-09-01');
+        expect(normalizeEntry({ plannedDate: 123 as never }).plannedDate).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).plannedDate).toBeUndefined();
+    });
+
+    it('bookKind/musicKind 子分类透传（合法值保留；非法/缺省/已下线值 → undefined，读取端 normalizeBookKind 兜底）——回归锁定：normalizeEntry 白名单曾缺这两字段，搜索保存的网文条目被静默丢分类落错视图', () => {
+        expect(normalizeEntry({ title: 'x', bookKind: 'book' }).bookKind).toBe('book');
+        expect(normalizeEntry({ title: 'x', bookKind: 'novel' }).bookKind).toBe('novel');
+        expect(normalizeEntry({ title: 'x', bookKind: 'xxx' as never }).bookKind).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).bookKind).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', musicKind: 'music' }).musicKind).toBe('music');
+        expect(normalizeEntry({ title: 'x', musicKind: 'xxx' as never }).musicKind).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).musicKind).toBeUndefined();
+    });
+
+    it('子分类白名单：bookKind 收三值（comic 于 2026-09-30 加回 ⇒ **要落库**）、musicKind 仍只收 music（other 剔除）', () => {
+        // 🔴 翻面：comic 曾是「已下线值」（1.0.3.1 起被白名单剔除），2026-09-30 用户裁定加回 ⇒ 现在是合法值。
+        //    ⚠️ 只认精确值：'comicx' 仍要被剔除（别写成前缀/包含匹配）。
+        expect(normalizeEntry({ title: 'x', bookKind: 'comic' }).bookKind).toBe('comic');
+        expect(normalizeEntry({ title: 'x', bookKind: 'comicx' as never }).bookKind).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', musicKind: 'other' as never }).musicKind).toBeUndefined();
+    });
+
+    it('🔴 #444g 画师 `artist` 在白名单里（⚠️ 漏加会被静默丢弃 —— 历史踩坑：bookKind 就这么丢过）', () => {
+        expect(normalizeEntry({ title: 'x', type: 'book', artist: '作画君' }).artist).toBe('作画君');
+        // ⚠️ 归一层**不 trim**（`isString('')` 算合法 ⇒ 空串会原样留）—— 空串由**表单层** `trim() || undefined` 拦掉；
+        //    这里只钉「非字符串不落库」（与 author / publisher 等既有字段同一条口径）。
+        expect(normalizeEntry({ title: 'x', artist: 123 as never }).artist).toBeUndefined();
+    });
+
+    it('#434 seriesIndex 走白名单：**有限数**才落库（允许小数/0/负数 —— 语义由用户定），NaN/Infinity/字符串一律丢 —— 回归锁定：漏加白名单会让系列序号被静默丢弃、折叠卡组内排序全乱', () => {
+        expect(normalizeEntry({ title: 'x', seriesIndex: 3 }).seriesIndex).toBe(3);
+        expect(normalizeEntry({ title: 'x', seriesIndex: 2.5 }).seriesIndex).toBe(2.5); // 小数必须能存（Calibre 口径）
+        expect(normalizeEntry({ title: 'x', seriesIndex: 0 }).seriesIndex).toBe(0);
+        expect(normalizeEntry({ title: 'x', seriesIndex: -1 }).seriesIndex).toBe(-1);
+        expect(normalizeEntry({ title: 'x', seriesIndex: NaN }).seriesIndex).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', seriesIndex: Infinity }).seriesIndex).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', seriesIndex: '3' as never }).seriesIndex).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).seriesIndex).toBeUndefined();
+    });
+
+    it('#635 手动关联 `related` 走白名单（🔴 漏加 = 保存即静默丢弃，本仓 bookKind / summary 踩过）', () => {
+        // ① 有字段 + 口径正确：合法项逐项透传
+        const e = normalizeEntry({ title: 'x', related: [{ id: 'e_b', label: '翻唱' }, { id: 'e_c' }] });
+        expect(e.related).toEqual([{ id: 'e_b', label: '翻唱' }, { id: 'e_c' }]);
+        // ② 脏项单丢，不整批废
+        expect(normalizeEntry({ title: 'x', related: [null, { id: 'e_b' }, { id: '' }] as never }).related).toEqual([{ id: 'e_b' }]);
+        // ③ 非数组 / 空数组 ⇒ 字段缺省（⛔ 不落 []）
+        expect(normalizeEntry({ title: 'x' }).related).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', related: [] }).related).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', related: 'oops' as never }).related).toBeUndefined();
+        // ④ 指向自己 ⇒ 丢（自环在图上没有意义，且会让「点节点」变成「切到自己」）
+        const self = normalizeEntry({ id: 'e_self', title: 'x', related: [{ id: 'e_self' }, { id: 'e_o' }] });
+        expect(self.related).toEqual([{ id: 'e_o' }]);
+        // ⑤ 同 id 重复 ⇒ 后写的赢
+        expect(normalizeEntry({ title: 'x', related: [{ id: 'e_a', label: '原唱' }, { id: 'e_a', label: '同曲' }] }).related)
+            .toEqual([{ id: 'e_a', label: '同曲' }]);
+        // ⑥ label 空 ⇒ 不落这个键（不是落空串）
+        const blank = normalizeEntry({ title: 'x', related: [{ id: 'e_a', label: '   ' }] });
+        expect(blank.related).toEqual([{ id: 'e_a' }]);
+        expect(Object.prototype.hasOwnProperty.call(blank.related?.[0], 'label')).toBe(false);
+    });
+
+    it('#635 related 经 parseCatalog 全链路不丢（写入 → 序列化 → 读回）', () => {
+        const cat: Catalog = {
+            version: 1,
+            entries: [{ ...normalizeEntry({ id: 'e_a', title: 'A' }), related: [{ id: 'e_b', label: '前作' }] }],
+        };
+        const back = parseCatalog(serializeCatalog(cat));
+        expect(back.entries[0].related).toEqual([{ id: 'e_b', label: '前作' }]);
+    });
+
+    it('豆瓣适配字段归一化：字符串透传、数组过滤、空数组归 undefined', () => {
+        const e = normalizeEntry({
+            screenwriter: ['诺兰', '弟弟'],
+            country: '美国',
+            language: '英语',
+            durationMin: 148,
+            aliases: ['星际穿越', 'Interstellar'],
+            translator: '某译',
+            isbn: '9781234',
+            producer: '华纳',
+            binding: '精装',
+            price: '68.00元',
+            series: '某某丛书',
+        });
+        expect(e.screenwriter).toEqual(['诺兰', '弟弟']);
+        expect(e.country).toBe('美国');
+        expect(e.language).toBe('英语');
+        expect(e.durationMin).toBe(148);
+        expect(e.aliases).toEqual(['星际穿越', 'Interstellar']);
+        expect(e.translator).toBe('某译');
+        expect(e.isbn).toBe('9781234');
+        expect(e.producer).toBe('华纳');
+        expect(e.binding).toBe('精装');
+        expect(e.price).toBe('68.00元');
+        expect(e.series).toBe('某某丛书');
+        // 空数组 → undefined；非法类型 → undefined
+        expect(normalizeEntry({ screenwriter: [] }).screenwriter).toBeUndefined();
+        expect(normalizeEntry({ aliases: [] }).aliases).toBeUndefined();
+        expect(normalizeEntry({ screenwriter: [1, 'ok'] as never }).screenwriter).toEqual(['ok']);
+        expect(normalizeEntry({ country: 42 as never }).country).toBeUndefined();
+        expect(normalizeEntry({ durationMin: 'x' as never }).durationMin).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).isbn).toBeUndefined();
+        // 数据源字段透传/兜底
+        expect(normalizeEntry({ source: 'douban', sourceUrl: 'https://movie.douban.com/subject/1/' }).source).toBe('douban');
+        expect(normalizeEntry({ source: 'douban', sourceUrl: 'https://movie.douban.com/subject/1/' }).sourceUrl).toBe('https://movie.douban.com/subject/1/');
+        expect(normalizeEntry({ source: 42 as never, sourceUrl: 'x' as never }).source).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).sourceUrl).toBeUndefined();
+        // 简介/评价人数/作者简介/目录（豆瓣回填）透传与兜底——回归锁定：summary 曾被 normalizeEntry 丢弃导致笔记无简介
+        expect(normalizeEntry({ summary: '地球往事三部曲' }).summary).toBe('地球往事三部曲');
+        expect(normalizeEntry({ title: 'x' }).summary).toBeUndefined();
+        expect(normalizeEntry({ ratingCount: 517685 }).ratingCount).toBe(517685);
+        expect(normalizeEntry({ title: 'x' }).ratingCount).toBeUndefined();
+        expect(normalizeEntry({ authorIntro: '刘慈欣' }).authorIntro).toBe('刘慈欣');
+        expect(normalizeEntry({ toc: '第一章' }).toc).toBe('第一章');
+        // 追更检测已知最新集（v0.5 A2 落库）：数值透传、非法类型/缺失兜底 undefined——回归锁定：增字段必须同步 normalizeEntry
+        expect(normalizeEntry({ latestKnownEpisode: 12 }).latestKnownEpisode).toBe(12);
+        expect(normalizeEntry({ latestKnownEpisode: 0 }).latestKnownEpisode).toBe(0);
+        expect(normalizeEntry({ latestKnownEpisode: 'x' as never }).latestKnownEpisode).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).latestKnownEpisode).toBeUndefined();
+        // 笔记内容指纹（G 双写冲突）：字符串透传、缺失兜底 undefined
+        expect(normalizeEntry({ noteFingerprint: 'a1b2c3' }).noteFingerprint).toBe('a1b2c3');
+        expect(normalizeEntry({ noteFingerprint: 42 as never }).noteFingerprint).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).noteFingerprint).toBeUndefined();
+        // 摘抄数（P1 性能缓存）：数值透传、非法类型/缺失兜底 undefined
+        expect(normalizeEntry({ excerptCount: 3 }).excerptCount).toBe(3);
+        expect(normalizeEntry({ excerptCount: 0 }).excerptCount).toBe(0);
+        expect(normalizeEntry({ excerptCount: 'x' as never }).excerptCount).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).excerptCount).toBeUndefined();
+        // 本地剧集视频路径（集按钮关联）：字符串数组透传、非法项过滤、缺失兜底 undefined——回归锁定：增字段必须同步 normalizeEntry
+        expect(normalizeEntry({ episodeFiles: ['C:/videos/ep01.mp4', 'C:/videos/ep02.mp4'] }).episodeFiles).toEqual(['C:/videos/ep01.mp4', 'C:/videos/ep02.mp4']);
+        expect(normalizeEntry({ episodeFiles: 'x' as never }).episodeFiles).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).episodeFiles).toBeUndefined();
+        // 剧集网络地址（每集与 episodeFiles 同下标）：字符串数组透传、非法项过滤、缺失兜底 undefined
+        expect(normalizeEntry({ episodeUrls: ['https://a.com/1', 'https://b.com/2'] }).episodeUrls).toEqual(['https://a.com/1', 'https://b.com/2']);
+        expect(normalizeEntry({ episodeUrls: 'x' as never }).episodeUrls).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).episodeUrls).toBeUndefined();
+        // 集标题（hover 显示）：字符串数组透传、非法项过滤、缺失兜底 undefined
+        expect(normalizeEntry({ episodeTitles: ['p1 开始', '第二集'] }).episodeTitles).toEqual(['p1 开始', '第二集']);
+        expect(normalizeEntry({ episodeTitles: 'x' as never }).episodeTitles).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).episodeTitles).toBeUndefined();
+        // 🔴 #446 三个集数组一律**保位**（index i 恒 = 第 i+1 集）：空位留洞、非法项/空串 → 该位未关联、
+        //    尾部空位去掉、整段空 → 字段缺省。旧口径是 `filter` 压缩空位 ⇒ 集标题会前移一格，
+        //    用户看到的是「在第 2 集填的标题跑到第 1 集」（2026-10-01 报障）—— 下面这条就是那个场景。
+        const posFiles = normalizeEntry({ episodeFiles: ['ok.mp4', 42 as never, '', 'bad'] }).episodeFiles;
+        expect(posFiles?.length).toBe(4);
+        expect(posFiles?.[0]).toBe('ok.mp4');
+        expect(posFiles?.[1]).toBeUndefined();
+        expect(posFiles?.[2]).toBeUndefined();
+        expect(posFiles?.[3]).toBe('bad');
+        const posUrls = normalizeEntry({ episodeUrls: ['https://a.com', 42 as never, '', 'x'] }).episodeUrls;
+        expect(posUrls?.[1]).toBeUndefined();
+        expect(posUrls?.[3]).toBe('x');
+        const posTitles = normalizeEntry({ episodeTitles: ['ok', 42 as never, '', 'bad'] }).episodeTitles;
+        expect(posTitles?.[1]).toBeUndefined();
+        expect(posTitles?.[3]).toBe('bad');
+        // 尾部空位去掉（第 3 集填标题 → 长度 3，不写一长串 null）
+        const tail = normalizeEntry({ episodeTitles: ['a', undefined as never, 'c'] }).episodeTitles;
+        expect(tail?.length).toBe(3);
+        // 纯空白视同未填（旧口径 `length > 0` 会把它当有值留下来）
+        expect(normalizeEntry({ episodeTitles: ['   '] }).episodeTitles).toBeUndefined();
+        // 落盘 → 读回**不移位**（JSON 把洞写成 null）
+        const roundTitles = normalizeEntry({ episodeTitles: [undefined as never, '标题'] }).episodeTitles;
+        expect(roundTitles?.[0]).toBeUndefined();
+        expect(roundTitles?.[1]).toBe('标题');
+        const backTitles = normalizeEntry(JSON.parse(JSON.stringify({ episodeTitles: roundTitles })) as never).episodeTitles;
+        expect(backTitles?.length).toBe(2);
+        expect(backTitles?.[0]).toBeUndefined();
+        expect(backTitles?.[1]).toBe('标题');
+        // 音乐专辑/本地音频路径（music 类型）：字符串透传、空串过滤、缺失兜底 undefined——回归锁定：增字段必须同步 normalizeEntry
+        expect(normalizeEntry({ album: '犹豫' }).album).toBe('犹豫');
+        expect(normalizeEntry({ album: '' }).album).toBeUndefined();
+        expect(normalizeEntry({ audioPath: 'ReelLudic/music/不再犹豫.mp3' }).audioPath).toBe('ReelLudic/music/不再犹豫.mp3');
+        expect(normalizeEntry({ audioPath: 42 as never }).audioPath).toBeUndefined(); // 非法类型兜底（与 country/noteFingerprint 等字符串字段惯例一致）
+        // 追番表重构新字段：开播日期（airDate 字符串透传；localWatchDir 已于 #159 随功能删除，不再透传）
+        expect(normalizeEntry({ airDate: '2024-10-03' }).airDate).toBe('2024-10-03');
+        expect(normalizeEntry({ airDate: 'x' as never }).airDate).toBeUndefined();
+        // 书籍文件路径（阅读器入口）：字符串透传、空串过滤、非法类型兜底 undefined（复用 audioPath 模式）
+        expect(normalizeEntry({ bookFile: '书籍/三体.txt' }).bookFile).toBe('书籍/三体.txt');
+        expect(normalizeEntry({ bookFile: '' }).bookFile).toBeUndefined();
+        expect(normalizeEntry({ bookFile: 42 as never }).bookFile).toBeUndefined();
+    });
+
+    it('readingProgress / playtimeMinutes 透传与兜底（书籍/游戏进度字段）', () => {
+        const rp = normalizeEntry({ readingProgress: { page: 123, totalPage: 456 } });
+        expect(rp.readingProgress).toEqual({ page: 123, totalPage: 456 });
+        expect(normalizeEntry({ readingProgress: { page: 'x' as never } }).readingProgress?.page).toBeUndefined();
+        expect(normalizeEntry({ readingProgress: 'bad' as never }).readingProgress).toBeUndefined();
+        expect(normalizeEntry({ playtimeMinutes: 720 }).playtimeMinutes).toBe(720);
+        expect(normalizeEntry({ playtimeMinutes: 'x' as never }).playtimeMinutes).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).playtimeMinutes).toBeUndefined();
+    });
+
+    it('readingProgress.percent 透传与区间校验（阅读器进度百分比）', () => {
+        expect(normalizeEntry({ readingProgress: { page: 12, totalPage: 300, percent: 34 } }).readingProgress)
+            .toEqual({ page: 12, totalPage: 300, percent: 34 });
+        expect(normalizeEntry({ readingProgress: { percent: 100 } }).readingProgress?.percent).toBe(100);
+        expect(normalizeEntry({ readingProgress: { percent: 0 } }).readingProgress?.percent).toBe(0);
+        // 越界/非法类型丢弃
+        expect(normalizeEntry({ readingProgress: { percent: 101 } }).readingProgress?.percent).toBeUndefined();
+        expect(normalizeEntry({ readingProgress: { percent: -1 } }).readingProgress?.percent).toBeUndefined();
+        expect(normalizeEntry({ readingProgress: { percent: 'x' as never } }).readingProgress?.percent).toBeUndefined();
+        // 无 percent 旧数据 → undefined（兼容）
+        expect(normalizeEntry({ readingProgress: { page: 12 } }).readingProgress?.percent).toBeUndefined();
+    });
+
+    it('gameLaunchPath 透传与兜底（游戏启动快捷方式）', () => {
+        expect(normalizeEntry({ gameLaunchPath: '游戏/塞尔达.lnk' }).gameLaunchPath).toBe('游戏/塞尔达.lnk');
+        expect(normalizeEntry({ gameLaunchPath: '' }).gameLaunchPath).toBeUndefined();
+        expect(normalizeEntry({ gameLaunchPath: 123 as never }).gameLaunchPath).toBeUndefined();
+        expect(normalizeEntry({ title: 'x' }).gameLaunchPath).toBeUndefined();
+    });
+});
+
+describe('CatalogStore', () => {
+    it('文件缺失时 load 返回默认空库', async () => {
+        const io = memIO();
+        const store = new CatalogStore(io, 'ReelLudic/catalog.json');
+        const c = await store.load();
+        expect(c).toEqual(DEFAULT_CATALOG);
+    });
+
+    it('save 后 load 往返一致', async () => {
+        const io = memIO();
+        const store = new CatalogStore(io, 'ReelLudic/catalog.json');
+        await store.save({
+            version: 1,
+            entries: [normalizeEntry({ id: 'e1', title: '沙丘', status: 'watched', rating: 5 })],
+        });
+        const c = await store.load();
+        expect(c.entries).toHaveLength(1);
+        expect(c.entries[0].title).toBe('沙丘');
+        expect(c.entries[0].status).toBe('watched');
+        expect(c.entries[0].rating).toBe(5);
+    });
+
+    it('serializeCatalog 输出可解析且字段归一', () => {
+        const text = serializeCatalog({
+            version: 1,
+            entries: [{ id: 'e1', title: 'T', status: 'nope' }],
+        } as unknown as Catalog);
+        const parsed = parseCatalog(text);
+        expect(parsed.entries[0].status).toBe('want');
+    });
+});
+
+describe('parseCatalog / serializeCatalog 活动日志（今日记录数据源）', () => {
+    it('合法记录保留，脏数据逐条丢弃', () => {
+        const c = parseCatalog(JSON.stringify({
+            version: 1,
+            entries: [],
+            activityLog: [
+                { at: '2026-09-10T06:32:00.000Z', id: 'e1', status: 'watched' },
+                { at: 'not-a-date', id: 'e2', status: 'watched' }, // 时间非法 → 丢
+                { at: '2026-09-10T06:32:00.000Z', id: 'e3' }, // 缺 status → 丢
+                { at: '2026-09-10T06:32:00.000Z', id: 'e4', status: 'nope' }, // 状态非法 → 丢
+                'nope', // 非对象 → 丢
+            ],
+        }));
+        expect(c.activityLog).toEqual([{ at: '2026-09-10T06:32:00.000Z', id: 'e1', status: 'watched' }]);
+    });
+
+    it('无 activityLog → undefined；空数组 → []', () => {
+        expect(parseCatalog('{"version":1,"entries":[]}').activityLog).toBeUndefined();
+        expect(parseCatalog('{"version":1,"entries":[],"activityLog":[]}').activityLog).toEqual([]);
+    });
+
+    it('serializeCatalog 保留活动日志（load 返回也要带上）', async () => {
+        const log = [{ at: '2026-09-10T06:32:00.000Z', id: 'e1', status: 'watched' }] as const;
+        const text = serializeCatalog({ version: 1, entries: [], activityLog: [...log] });
+        expect(JSON.parse(text).activityLog).toHaveLength(1);
+        const io = memIO({ 'ReelLudic/catalog.json': text });
+        const c = await new CatalogStore(io, 'ReelLudic/catalog.json').load();
+        expect(c.activityLog).toEqual([...log]);
+    });
+});
+
+describe('CatalogStore 写前备份与自检（数据安全 · 单文件备份）', () => {
+    const PATH = 'ReelLudic/catalog.json';
+    const BACKUP_PATH = `ReelLudic/${BACKUP_FILE}`;
+    /** 单文件备份里的快照数（文件不存在 = 0） */
+    const snapshotCount = (io: { files: Record<string, string> }) =>
+        io.files[BACKUP_PATH] ? parseBackupFile(io.files[BACKUP_PATH]).snapshots.length : 0;
+    const snapshots = (io: { files: Record<string, string> }) => parseBackupFile(io.files[BACKUP_PATH]).snapshots;
+
+    it('首次写入不产生备份（没有可备份的旧数据）', async () => {
+        const io = memIO();
+        await new CatalogStore(io, PATH).save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A' })] });
+        expect(io.files[BACKUP_PATH]).toBeUndefined();
+        expect(io.files[PATH]).toBeTruthy();
+    });
+
+    it('覆盖已有文件时先留一份**旧**内容备份（单文件内，新的在前）', async () => {
+        const io = memIO();
+        const store = new CatalogStore(io, PATH);
+        await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A' })] });
+        const first = io.files[PATH];
+        await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'B' })] });
+        expect(snapshotCount(io)).toBe(1);
+        expect(snapshots(io)[0].text).toBe(first);
+        expect(io.files[PATH]).not.toBe(first);
+    });
+
+    it('内容无变化时不重复备份（避免反复切状态刷一堆同内容快照）', async () => {
+        const io = memIO();
+        const store = new CatalogStore(io, PATH);
+        const c: Catalog = { version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A', status: 'watched', rating: 5 })] };
+        await store.save(c);
+        await store.save(c);
+        await store.save({ version: 1, entries: c.entries.map((e) => ({ ...e })) });
+        expect(snapshotCount(io)).toBe(0);
+        expect(io.files[BACKUP_PATH]).toBeUndefined();
+    });
+
+    it('备份只落在一个文件里：8 次改动 → 仍是 1 个备份文件、内含最新 5 版（最旧被挤掉）', async () => {
+        vi.useFakeTimers();
+        try {
+            const io = memIO();
+            const store = new CatalogStore(io, PATH);
+            for (let i = 0; i < 8; i++) {
+                vi.setSystemTime(new Date(2026, 8, 14, 20, 15, i));
+                await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: `T${i}` })] });
+            }
+            // 用户诉求：文件数要少 → 备份相关文件恒为 1 个（不再是 5 个）
+            expect(Object.keys(io.files).filter((p) => p.includes('backup') || p.includes('.backups'))).toEqual([BACKUP_PATH]);
+            expect(snapshotCount(io)).toBe(BACKUP_KEEP);
+            expect(snapshots(io).map((s) => JSON.parse(s.text).entries[0].title)).toEqual(['T6', 'T5', 'T4', 'T3', 'T2']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('适配层未实现 listFiles：单文件备份照常轮转（不再依赖列目录）', async () => {
+        vi.useFakeTimers();
+        try {
+            const base = memIO();
+            const io = { ...base, listFiles: undefined } as unknown as VaultIO & { files: Record<string, string> };
+            const store = new CatalogStore(io, PATH);
+            for (let i = 0; i < 7; i++) {
+                vi.setSystemTime(new Date(2026, 8, 14, 20, 15, i));
+                await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: `T${i}` })] });
+            }
+            expect(snapshotCount(io)).toBe(BACKUP_KEEP);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('备份文件与 catalog.json 同级（自定义路径亦然）', async () => {
+        const io = memIO();
+        const store = new CatalogStore(io, 'MyLib/data/catalog.json');
+        await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A' })] });
+        await store.save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'B' })] });
+        expect(io.files['MyLib/data/catalog-backups.json']).toBeTruthy();
+    });
+
+    it('旧 .backups/ 多文件备份：一次性并入单文件，回读校验通过后清理旧文件', async () => {
+        const old1 = serializeCatalog({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'OLD1' })] });
+        const old2 = serializeCatalog({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'OLD2' })] });
+        const base = serializeCatalog({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'BASE' })] });
+        const io = memIO({
+            [PATH]: base,
+            'ReelLudic/.backups/catalog-20260914-201500.json': old1,
+            'ReelLudic/.backups/catalog-20260914-201530.json': old2,
+            'ReelLudic/.backups/别的文件.txt': 'x',
+        });
+        await new CatalogStore(io, PATH).save({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'NEW' })] });
+        const texts = snapshots(io).map((s) => s.text);
+        expect(texts).toContain(old1);
+        expect(texts).toContain(old2);
+        expect(texts).toContain(base);
+        // 旧文件（规范命名）已清理；非本插件命名的文件**不导入也不删**
+        expect(io.files['ReelLudic/.backups/catalog-20260914-201500.json']).toBeUndefined();
+        expect(io.files['ReelLudic/.backups/catalog-20260914-201530.json']).toBeUndefined();
+        expect(io.files['ReelLudic/.backups/别的文件.txt']).toBe('x');
+    });
+
+    it('写前自检：条目数一致才通过（回读不通 → 拦截）', () => {
+        const text = serializeCatalog({ version: 1, entries: [normalizeEntry({ id: 'e1', title: 'A' })] });
+        expect(isCatalogTextConsistent(text, 1)).toBe(true);
+        expect(isCatalogTextConsistent(text, 2)).toBe(false); // 数量不符
+        expect(isCatalogTextConsistent('not json', 0)).toBe(false); // 无法回读
+        expect(isCatalogTextConsistent('{"version":1}', 0)).toBe(false); // entries 缺失
+        expect(isCatalogTextConsistent('[]', 0)).toBe(false); // 非对象
+    });
+});

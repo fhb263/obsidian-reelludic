@@ -80,15 +80,81 @@ export interface WatchLink {
     url: string;
 }
 
-/** 单次游玩记录（游戏；编辑表单记录 → 映射笔记「游玩记录」章节，playtimeMinutes 由明细累计） */
+/**
+ * 手动关联（#635）：指向另一条条目的 id + 自由关系词
+ * （「原唱」/「翻唱」/「改编」…；留空 = 普通「关联」）。
+ * 🔴 **只存出边**：B 侧的「被关联」由 `pure/relatedGraph.collectRelated` 渲染时算，⛔ 不写进 B 的数据。
+ */
+export interface RelatedLink {
+    /** 目标条目 id（trim 后非空；指向自己不落库） */
+    id: string;
+    /** 关系词（自由文本，非白名单；trim 后为空则不落这个键 —— 缺省即「关联」） */
+    label?: string;
+}
+
+/**
+ * 单次**时长明细**（#685 泛化：游戏游玩 / 书籍阅读 / 音乐收听共用一套结构）。
+ * 编辑表单 / 右键菜单「记录时长」录入 → 映射笔记对应章节：
+ * 游戏 →「游玩记录」、书籍 →「阅读记录」、音乐 →「收听记录」。
+ *
+ * 🔴 字段名沿用 `PlaySession`（不重命名）：老数据里的 `playSessions` 数组直接可用，
+ *    重命名会逼出一次数据迁移（这仓踩过 bookKind / summary / readUrl / gameUrl 静默丢弃的坑）。
+ *    ⛔ 别把它当「游戏专属」——它现在是**跨类型的时长明细**。
+ */
 export interface PlaySession {
-    /** 游玩日期 YYYY-MM-DD */
+    /** 记录日期 YYYY-MM-DD */
     date: string;
-    /** 本次游玩时长（分钟） */
+    /** 本次时长（分钟） */
     minutes: number;
     /** 心得/备注（可选） */
     note?: string;
 }
+
+/**
+ * 重温 / 周目记录（#685）：影视「重刷次数 + 感想」、游戏「周目序号 + 感想」。
+ * 写入笔记「重温记录」/「周目记录」章节（**感想放笔记内**，用户原话）。
+ * 🔴 与 `PlaySession`（时长明细）**分开存**：语义不同（次数 ≠ 时长），混在一起会让两种记录都读不懂。
+ */
+export interface RoundLog {
+    /** 重温（影视重刷） / 周目（游戏通关轮次） */
+    kind: 'rewatch' | 'playthrough';
+    /** 记录日期 YYYY-MM-DD */
+    date: string;
+    /** 第几次（重刷次数 / 周目序号；从 1 起） */
+    round: number;
+    /** 感想（可选） */
+    note?: string;
+}
+
+/**
+ * #685 记录形态（**结构化记录**：日期 + 数字 + 心得）：
+ * - `time` = 时长明细（游戏游玩 / 书籍阅读 / 音乐收听，共用 `PlaySession`）
+ * - `rewatch` = 影视重温（`RoundLog.kind` 同源）
+ * - `playthrough` = 游戏周目（`RoundLog.kind` 同源）
+ * 🔴 唯一真源放这儿（⛔ 别在弹窗 / 视图里各写一份联合类型 —— 漂移过一次就得靠 grep 救火）。
+ */
+export type EntryLogKind = 'time' | RoundLog['kind'];
+
+/**
+ * **短评**（append-only 流水）：右键「添加短评」写入 → 笔记独立 `## 短评` 章节（日期倒序）。
+ * 🔴 用户 2026-10-25：「添加短评不要追加到个人评语，另起个标题追加」。
+ * ⚠️ 与 `RoundLog` 分开：那边是「第几次重刷/周目 + 感想」的结构，这边是纯一段文字 + 日期。
+ * ⚠️ 与 `MediaEntry.notes`（个人评语正文）分开：`notes` 是用户手写的整段评语、可被表单与
+ *    笔记回填双向维护；`commentLog` 只增不改，由模板重画。
+ */
+export interface CommentLog {
+    /** 记录日期 YYYY-MM-DD（本地口径，与 `todayLocal` 一致） */
+    date: string;
+    /** 短评正文（多行原样保留） */
+    text: string;
+}
+
+/**
+ * #685 文本记录形态：**一段文字**（没有日期 / 数字那一套）
+ * - `comment` = 短评 → 落 `commentLog`（笔记「短评」章节，**不再进个人评语**）
+ * - `guide` = 攻略 → 落 `guide`（笔记「攻略」章节，仅游戏）
+ */
+export type EntryTextKind = 'comment' | 'guide';
 
 export interface MediaEntry {
     id: string;
@@ -209,8 +275,10 @@ export interface MediaEntry {
     readingProgress?: { page?: number; totalPage?: number; percent?: number };
     /**
      * 书籍**阅读时长**（分钟，可选；1.2.1 #537，append-only）。
-     * 🔴 两个来源：① **内置阅读器**打开期间按「前台且为活动页」累计，关闭时叠加（不足 1 分钟不计）；
-     *    ② 编辑表单**手填**（小时录入 → 分钟落库，**覆盖**总数 —— ⛔ 不与阅读器自动累计同时写同一笔）。
+     * 🔴 三个来源：① **内置阅读器**打开期间按「前台且为活动页」累计，关闭时叠加（不足 1 分钟不计）；
+     *    ② 编辑表单**手填**（小时录入 → 分钟落库，**覆盖**总数）；
+     *    ③ #685 右键菜单「**记录时长**」补记（追加一条明细 ⇒ **累加**到本总数）。
+     * ⚠️ ② 是覆盖、①③ 是累加：同一段时间若既被阅读器累计又被手动补记，会**算两遍**（用户自己把关）。
      * 语义与游戏 `playtimeMinutes` 同构；海报墙封面左下角显示「已读 2h」（复用 `.rl-cov-playtime` 角标）。
      */
     readMinutes?: number;
@@ -220,8 +288,38 @@ export interface MediaEntry {
     pageCount?: number;
     /** 游戏游玩时长（分钟，可选；playSessions 的快捷累计，两者保持同步） */
     playtimeMinutes?: number;
-    /** 游戏游玩记录（明细，日期倒序展示；可选） */
+    /**
+     * **时长明细**（可选；日期倒序展示）。
+     * 🔴 #685 起**不再只属于游戏**：书籍 = 阅读时长明细、音乐 = 收听时长明细（共用 `PlaySession` 结构）。
+     * 笔记章节按类型分名：游戏「游玩记录」/ 书籍「阅读记录」/ 音乐「收听记录」。
+     */
     playSessions?: PlaySession[];
+    /**
+     * 音乐**收听时长**（分钟，#685，append-only）。
+     * 🔴 内置播放器累计 + 右键菜单「记录时长」手动补记（累加）—— 与 `readMinutes` / `playtimeMinutes` 同构。
+     * ⚠️ 必须进 `normalizeEntry` 白名单，否则保存即被静默丢弃（本仓踩过多次）。
+     */
+    listenMinutes?: number;
+    /**
+     * 重温 / 周目记录（#685，append-only）：影视重刷（rewatch）+ 游戏周目（playthrough）。
+     * 写入笔记「重温记录」/「周目记录」章节。
+     */
+    roundLogs?: RoundLog[];
+    /**
+     * 游戏**攻略**（#685，append-only）：右键菜单「添加攻略」写入 → 笔记「攻略」章节。
+     * ⚠️ 必须进 `normalizeEntry` 白名单，否则保存即被静默丢弃（本仓踩过多次）。
+     */
+    guide?: string;
+    /**
+     * **短评流水**（append-only）：右键「添加短评」写入 → 笔记独立的 `## 短评` 章节。
+     * 🔴 用户 2026-10-25 指令：「添加短评不要追加到个人评语，另起个标题追加」——
+     *    以前短评往 `notes` 里追，会和用户手写的「个人评语」混成一段：
+     *    分不清哪句是评语哪句是流水，还把评语正文越拖越长。
+     * ⚠️ 与 `notes` **分开存**：`notes` 是用户手写的整段评语（表单可改、笔记手改会回填）；
+     *    `commentLog` 是只增不改的带日期流水（模板按日期倒序重画，与 `roundLogs` 同一口径）。
+     * ⚠️ 必须进 `normalizeEntry` 白名单，否则保存即被静默丢弃（本仓踩过多次）。
+     */
+    commentLog?: CommentLog[];
     /** 数据源标识（douban/tmdb/bangumi/openlibrary/google/steam/musicbrainz/itunes/omdb/anilist/igdb；搜索回填自动记录） */
     source?: string;
     /** 数据源官方页链接（搜索回填自动记录，笔记「来源」行用） */
@@ -251,6 +349,11 @@ export interface MediaEntry {
     links: WatchLink[];
     notes: string;
     tags: string[];
+    /**
+     * 手动关联条目（#635，append-only）：缺省 = 无关联（老条目零迁移）。
+     * ⚠️ 必须进 `normalizeEntry` 白名单，否则保存即被静默丢弃（本仓踩过多次）。
+     */
+    related?: RelatedLink[];
     notePath?: string;
     /** 笔记内容指纹（G 双写冲突）：writeNote 落盘后记录，检测外部手动修改用 */
     noteFingerprint?: string;

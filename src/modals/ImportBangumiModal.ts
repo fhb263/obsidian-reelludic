@@ -1,6 +1,7 @@
 // 追番表「从 Bangumi 导入」弹窗：输入用户 ID（可选，留空自动获取） + 勾选收藏列表 → 逐项导入
 // DOM API 渲染，样式写入 styles.css rl-import-* / rl-btn
 import { Modal, Notice, type App } from 'obsidian';
+import { applyScrollPref } from 'services/scrollPref';
 
 interface ImportResult {
     added: number;
@@ -20,6 +21,7 @@ export class ImportBangumiModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass('rl-import-modal');
@@ -27,7 +29,7 @@ export class ImportBangumiModal extends Modal {
         contentEl.createEl('h2', { text: '从 Bangumi 导入追番' });
         contentEl.createEl('div', {
             cls: 'rl-import-hint',
-            text: '拉取你的 Bangumi 收藏列表为动画条目（按标题+类型去重，已存在的跳过）。需已配置 Bangumi Token（设置 → 元数据源配置 › 元数据源凭据）。',
+            text: '拉取你的 Bangumi 收藏列表为动画条目（按标题+类型去重，已存在的跳过）。需已配置 Bangumi Token（设置 → 元数据源配置 › 元数据搜索源凭据）。',
         });
 
         // 用户 ID 输入（可选）

@@ -1,4 +1,4 @@
-// 进度条打点 / 标记的纯逻辑（无 obsidian 依赖，可单测）。
+﻿// 进度条打点 / 标记的纯逻辑（无 obsidian 依赖，可单测）。
 //
 // 需求（用户 2026-09-19）：「在进度条上显示小圆点 —— 当用户在视频任意时间点写下笔记时，进度条对应位置
 // 自动生成一个标记；点击标记可以快速定位到该时间点对应的笔记内容」。
@@ -44,8 +44,18 @@ export const MARK_SECTIONS = [MARK_SECTION_STAMP, MARK_SECTION_SHOT, ...MARK_SEC
 /** 算「截图」的那两区（新名 + 旧名）—— 只有它们走 `![[图]]` + 上一行的取图逻辑 */
 const SHOT_SECTIONS: readonly string[] = [MARK_SECTION_SHOT, MARK_SECTION_SHOT_LEGACY];
 
-/** 标记多于这个数量 → 视图加「密集」态（圆点缩小变淡，D-5 Ⓐ）—— 免得进度条变成一条花边 */
-export const MARK_DENSE_THRESHOLD = 12;
+/**
+ * 🔴 #634：本模块**不再提供进度条命中判定**（`hitMark` / `inBarBand` / `pointerOnCard`）与
+ * 「密集态阈值」（`MARK_DENSE_THRESHOLD`）—— 它们随进度条上的标记圆点一起退场。
+ *
+ * 由来：用户裁定「播放器上的进度条不再显示标记，并取消该跳转笔记功能，仅在抽屉侧边栏可点击跳转
+ * 对应视频进度和关联时间戳笔记」。那三件套的**唯一用途**就是「悬停圆点出卡片 / 右键圆点开笔记」
+ * 这条通路（`hitMark` 横向 8px 容差 + `inBarBand` 纵向 ±40px 把右键夹回条附近 + `pointerOnCard`
+ * 护住卡片里的按钮）⇒ 圆点与卡片都没了，它们就是**死码**（本仓「死码不留」）。
+ *
+ * ⛔ 别因为「将来可能还要打点」把它们加回来 —— 需要时连判别口径一起重新论证；
+ *    现在抽屉的「跳到那一秒」用的是**行下标**（`jumpToMark(i)`），不经过任何命中判定。
+ */
 
 /** 进度条上的一个标记 */
 export interface VideoMark {
@@ -55,7 +65,7 @@ export interface VideoMark {
     kind: 'stamp' | 'shot';
     /** 笔记里的**行号（0 基）** —— 「在笔记中打开」靠它定位（截图块取**图片那一行**，整块都在视野里） */
     line: number;
-    /** 该行原文（悬停摘要用；截图块含图片行） */
+    /** 该行原文（抽屉列表里显示它；截图块含图片行） */
     text: string;
     /** 链接目标（库内 = 路径 / 库外 = 深链）—— 用来判「属于哪一集」 */
     dest: string;
@@ -63,7 +73,7 @@ export interface VideoMark {
     ep?: number;
     /** 库内链接的**文件名**（basename：库内链接只有路径、没有集号） */
     file?: string;
-    /** 截图文件名（`![[图]]`）—— 悬停可显示缩略图 */
+    /** 截图文件名（`![[图]]`）—— 抽屉列表用它取缩略图 */
     image?: string;
 }
 
@@ -156,7 +166,7 @@ export function markPct(seconds: number, duration: number): number {
 }
 
 /**
- * 该标记行里**除链接与图片以外**的文字 —— 即用户**手写的补充说明**（悬停卡片显示它，没有则空串）。
+ * 该标记行里**除链接与图片以外**的文字 —— 即用户**手写的补充说明**（抽屉列表显示它，没有则空串）。
  * 纯展示用：`![[图]]` 与 `[文字](目标)` 都剥掉，再把空白压成一个空格。
  */
 export function markCaption(text: string): string {
@@ -168,67 +178,3 @@ export function markCaption(text: string): string {
         .trim();
 }
 
-/**
- * 点击位置（`ratio` = 0~1）命中了第几个标记？容差内**取最近的一个**；都没命中 → -1
- * （**点空白处不跳** —— 否则用户想拖进度会莫名其妙被吸到某个点上）。
- */
-export function hitMark(pcts: readonly number[], ratio: number, tol: number): number {
-    const list = Array.isArray(pcts) ? pcts : [];
-    const limit = Number.isFinite(tol) ? Math.max(0, tol) : 0;
-    let best = -1;
-    let bestD = Infinity;
-    for (let i = 0; i < list.length; i++) {
-        const d = Math.abs((Number.isFinite(list[i]) ? list[i] : 0) - ratio);
-        if (d <= limit && d < bestD) {
-            best = i;
-            bestD = d;
-        }
-    }
-    return best;
-}
-
-/** 矩形（`getBoundingClientRect()` 的结构子集 —— 不引 DOM 类型，纯模块保持可单测） */
-export interface Rect {
-    left: number;
-    top: number;
-    right: number;
-    bottom: number;
-}
-
-/**
- * 指针是否停在**已展开的标记卡片**上（含 `pad` 容差）—— 「从圆点向上移进卡片去按按钮」的判据。
- *
- * 🔴 为什么必须有它（2026-09-19 用户实测报障：「小圆点悬浮后，点『在笔记中打开』点不动」）：
- *    卡片画在**进度条上方**（`.rl-vp-tip { bottom: 22px }`），指针必须从条上**向上**移进卡片才按得到按钮，
- *    而这段位移全程都会给进度条发 `pointermove`、并触发 `pointerleave`：
- *      · `pointerleave` 若照旧收卡片 → 卡片在眼前消失（够不到按钮）；
- *      · `pointermove` 若照旧重算并 `tip.empty()` **重建卡片** → 按钮在 `mousedown` 与 `mouseup` 之间
- *        被换成新节点 ⇒ 浏览器**不合成 `click`**（按钮永远点不动）。
- *    ⇒ 命中本判据时**既不重算、也不收起**。
- * ⚠️ `display:none` 时 `getBoundingClientRect()` 全 0 —— 这种退化矩形必须返回 false，
- *    否则「整条进度条」都会被当成卡片（那样普通悬停就再也看不到时间气泡了）。
- */
-export function pointerOnCard(card: Rect | null, x: number, y: number, pad = 4): boolean {
-    if (!card) return false;
-    const p = Number.isFinite(pad) ? Math.max(0, pad) : 0;
-    const { left, top, right, bottom } = card;
-    if (![left, top, right, bottom, x, y].every((v) => Number.isFinite(v))) return false;
-    if (right <= left || bottom <= top) return false;
-    return x >= left - p && x <= right + p && y >= top - p && y <= bottom + p;
-}
-
-/**
- * 指针是否落在**进度条所属的竖向带**内（含上下 `pad`）—— 右键命中判定的**纵向**门控。
- *
- * 🔴 为什么需要它（2026-09-19 用户改判：打开方式从「卡片里的按钮」换成「悬停出卡片 → 右键打开」）：
- *    右键必须挂在播放器 **root** 上，不能挂在进度条上 —— 因为卡片是 `pointer-events: none`，
- *    **卡片空白处的命中目标是底层 video**（无头 Chrome 实测 `elementFromPoint` 返回 `VIDEO`），
- *    事件根本不经过进度条 ⇒ 只有挂 root 才收得到「右键卡片」。代价是**画面任何位置右键都会进来**，
- *    于是必须用两道门控把它夹回进度条附近：横向 = `hitMark` 的 8px 容差，纵向 = 本函数。
- *    ⛔ **门控不通过时一律不 `preventDefault`** —— 绝不吞掉用户在画面别处的正常右键菜单。
- */
-export function inBarBand(y: number, top: number, bottom: number, pad = 40): boolean {
-    if (![y, top, bottom].every((v) => Number.isFinite(v))) return false;
-    const p = Number.isFinite(pad) ? Math.max(0, pad) : 0;
-    return y >= top - p && y <= bottom + p;
-}

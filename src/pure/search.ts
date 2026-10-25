@@ -12,15 +12,31 @@ import { compareSeriesIndex, compareSeriesIndexDesc } from 'pure/seriesGroup';
 /** 状态排序基准（想看 0 < 在看 1 < 已看 2 < 存档 3） */
 const STATUS_RANK: Record<MediaStatus, number> = Object.fromEntries(MEDIA_STATUSES.map((s, i) => [s, i])) as Record<MediaStatus, number>;
 
-/** 命中判定：标题/原名小写后包含搜索词；书籍/音乐额外匹配作者、游戏额外匹配开发商（与占位文案字段一致）；空搜索词视为不过滤 */
+/** 命中判定：标题/原名小写后包含搜索词；书籍/音乐额外匹配作者、游戏额外匹配开发商（与占位文案字段一致）；空搜索词视为不过滤
+ *
+ *  🔴🔴 #689（用户 2026-10-19）：「列表视图**全局搜索框可按导演筛选**显示条目」。
+ *    ⇒ 影视/动画再加两路命中：**导演**（`director`，单个字符串）与**演员**（`cast`，数组）。
+ *    为什么不只加导演：用户在搜索框里敲一个演员名却搜不到，同样会以为「这个功能坏了」——
+ *    而演员与导演在数据里本就是同一档「主创」信息（豆瓣详情一起回填），只放一半显得莫名其妙。
+ *    ⚠️ 判定仍以**整条数据**为范围（跨类型）：搜「张艺谋」时电影/剧集/动画都能命中，
+ *      与原先「作者跨书籍/音乐生效」的口径一致（⛔ 别退化成「只有当前页签才生效」）。
+ *    ⚠️ 字段可能是 `undefined` / 空数组 ⇒ 一律先兜底再 `toLowerCase`（`cast` 在旧数据里可能缺失）。
+ */
 export function matchesSearch(e: MediaEntry, query: string): boolean {
     const q = query.trim().toLowerCase();
     if (!q) return true;
     const title = e.title.toLowerCase();
     const orig = (e.originalTitle ?? '').toLowerCase();
     if (title.includes(q) || orig.includes(q)) return true;
-    if (e.type === 'book' || e.type === 'music') return (e.author ?? '').toLowerCase().includes(q);
-    if (e.type === 'game') return (e.developer ?? '').toLowerCase().includes(q);
+    const hit = (s: string | undefined): boolean => !!s && s.toLowerCase().includes(q);
+    if (e.type === 'book' || e.type === 'music') return hit(e.author);
+    if (e.type === 'game') return hit(e.developer);
+    // 🔴 #689：影视 / 动画 —— 导演 + 演员（含编剧：同属「主创」，在详情里也常被当成导演一起搜）
+    if (e.type === 'movie' || e.type === 'tv' || e.type === 'anime') {
+        if (hit(e.director)) return true;
+        if ((e.cast ?? []).some((c) => hit(c))) return true;
+        if ((e.screenwriter ?? []).some((c) => hit(c))) return true;
+    }
     return false;
 }
 

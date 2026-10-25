@@ -4,6 +4,7 @@ import { App, Modal, Notice, setIcon } from 'obsidian';
 import type ReelLudicPlugin from '../../main';
 import type { MediaEntry } from 'data/types';
 import { renderExcerptBlock } from 'pure/excerpt';
+import { applyScrollPref, markScrollInside } from 'services/scrollPref';
 
 export class ExcerptModal extends Modal {
     /** 当前选中的挂载书目（从书籍表单/右键菜单进入时由调用方固定传入；命令入口为 null 需搜索选择） */
@@ -20,6 +21,13 @@ export class ExcerptModal extends Modal {
     }
 
     async onOpen(): Promise<void> {
+        applyScrollPref(this.modalEl);
+        // 🔴 #634：**命令入口这一档**（`book` 为空 ⇒ 渲染可搜索的 `.rl-ex-book-list`）实测有双滚动条嵌套
+        //    （外层 632/585 可滚 + 内层 840/180 可滚）⇒ 标记「滚动只在内部」。
+        //    ⚠️ **必须与 `.rl-ex-book-list` 是否真的渲染同条件** —— 从书籍表单/右键进来的那一档
+        //    绑定的是固定书目（没有那个列表），此时若把外层 `overflow` 去掉，长内容会被**直接裁掉**
+        //    （内容看不见，比两条滚动条严重得多）。判据同 `if (!this.book)` 那支，见下方 `else`。
+        if (!this.book) markScrollInside(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
 
@@ -66,8 +74,8 @@ export class ExcerptModal extends Modal {
         const previewEl = contentEl.createDiv({ cls: 'rl-ex-preview', text: this.selected ? '填写引用文本后显示预览' : '选择书目后显示生成预览' });
 
         // 操作
+        // 🔴 #（用户 m00002）：弹窗底部「取消」与右上角 ✕ 重复 ⇒ 只留「生成摘抄」。
         const foot = contentEl.createDiv({ cls: 'rl-ex-foot' });
-        const cancelBtn = foot.createEl('button', { cls: 'rl-ex-btn', text: '取消' });
         const submitBtn = foot.createEl('button', { cls: 'rl-ex-btn rl-ex-btn-primary', text: '生成摘抄', attr: { disabled: '' } });
 
         const allBooks = this.book ? [] : (await this.plugin.service.list()).filter((e) => e.type === 'book');
@@ -154,8 +162,6 @@ export class ExcerptModal extends Modal {
                 updatePreview();
             }
         };
-
-        cancelBtn.onclick = () => this.close();
 
         // 剪贴板带入（Electron 支持；无权限/失败静默）
         void navigator.clipboard?.readText?.().then((t) => {

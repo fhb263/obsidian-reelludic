@@ -7,6 +7,7 @@
 //    静态继承时基类在旧版本上是 `undefined` ⇒ **模块加载期就抛 TypeError** ⇒
 //    后果不是「这个功能不可用」，而是**整个插件起不来**。所以基类运行时读、读不到就返回 null 走降级。
 import { AbstractInputSuggest, App, FuzzySuggestModal, TFolder } from 'obsidian';
+import { applyScrollPref } from 'services/scrollPref';
 
 /**
  * 库内文件夹候选（**唯一入口**：输入建议与降级弹层共用，⛔ 别各写一份过滤）。
@@ -32,6 +33,13 @@ export class VaultFolderSuggest extends FuzzySuggestModal<TFolder> {
             { command: '↵', purpose: '确认' },
             { command: 'esc', purpose: '取消' },
         ]);
+    }
+
+    /** 🔴 #630：滚动条偏好（跟随设置开关）—— 降级弹层的候选列表也算「插件内的滚动条」。
+     *  ⚠️ 必须 `super.onOpen()`：输入框与结果列表都在基类那个方法里建。 */
+    onOpen(): void {
+        applyScrollPref(this.modalEl);
+        super.onOpen();
     }
 
     getItems(): TFolder[] {

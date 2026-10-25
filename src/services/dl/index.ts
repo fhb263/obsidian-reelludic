@@ -788,7 +788,7 @@ async function resolveAudio(
     if (song.source === 'qq') {
         const cookie = (cookies?.qq ?? '').trim();
         if (!cookie) {
-            return { error: `QQ 需先在 设置 → 元数据源配置 › 音乐源凭据 粘贴登录 Cookie` };
+            return { error: `QQ 需先在 设置 → 元数据源配置 › 音乐下载源凭据 粘贴登录 Cookie` };
         }
         const mid = song.songmid ?? song.id;
         if (!mid) return { error: '缺少 QQ 歌曲 songmid' };

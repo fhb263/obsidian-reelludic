@@ -316,3 +316,46 @@ describe('filterAndSort · 系列序号排序（#441）', () => {
         expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-asc' }).map((x) => x.id)).toEqual(['a', 'b']);
     });
 });
+
+// 🔴 #689（用户 2026-10-19）：「列表视图全局搜索框可按导演筛选显示条目」
+//   —— 影视/动画额外命中 导演 / 演员 / 编剧。
+describe('matchesSearch · 导演 / 演员（#689）', () => {
+    it('影视按导演命中', () => {
+        const m = e({ type: 'movie', title: '活着', director: '张艺谋' });
+        expect(matchesSearch(m, '张艺谋')).toBe(true);
+        expect(matchesSearch(m, '艺谋')).toBe(true);
+        expect(matchesSearch(m, '陈凯歌')).toBe(false);
+    });
+
+    it('剧集 / 动画同样按导演命中', () => {
+        expect(matchesSearch(e({ type: 'tv', title: 'X', director: '孔笙' }), '孔笙')).toBe(true);
+        expect(matchesSearch(e({ type: 'anime', title: 'Y', director: '新海诚' }), '新海诚')).toBe(true);
+    });
+
+    it('按演员命中（cast 数组任一命中即可）', () => {
+        const m = e({ type: 'movie', title: 'Z', cast: ['葛优', '巩俐'] });
+        expect(matchesSearch(m, '巩俐')).toBe(true);
+        expect(matchesSearch(m, '周迅')).toBe(false);
+    });
+
+    it('按编剧命中', () => {
+        expect(matchesSearch(e({ type: 'movie', title: 'W', screenwriter: ['芦苇'] }), '芦苇')).toBe(true);
+    });
+
+    it('大小写不敏感 + 首尾空白容忍（与其他字段同口径）', () => {
+        expect(matchesSearch(e({ type: 'movie', title: 'Dune', director: 'Denis Villeneuve' }), '  denis ')).toBe(true);
+    });
+
+    it('导演/演员为空或缺失时不误命中', () => {
+        const bare = e({ type: 'movie', title: '空数据' });
+        expect(matchesSearch(bare, '张艺谋')).toBe(false);
+        expect(matchesSearch(e({ type: 'movie', title: 'A', cast: [] }), '任何人')).toBe(false);
+    });
+
+    it('书籍/音乐/游戏的字段口径不受影响（反向守卫）', () => {
+        // 电影上的 director 不应让「游戏/书」的字幕匹配规则串味
+        expect(matchesSearch(e({ type: 'game', title: 'G', developer: '米哈游' }), '米哈游')).toBe(true);
+        expect(matchesSearch(e({ type: 'book', title: 'B', author: '余华' }), '余华')).toBe(true);
+        expect(matchesSearch(e({ type: 'movie', title: 'M', author: '余华' }), '余华')).toBe(false);
+    });
+});

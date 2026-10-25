@@ -389,8 +389,12 @@ export function extractExcerptSection(markdown: string, section = '摘抄'): str
  *     本名单必须**同时列上新名与两个历史名**（`时间戳` / `截图`）：
  *     改名**不迁移已有笔记**（用户没要求动笔记文件）⇒ 老笔记里那两个区仍是**真实用户数据**，
  *     少了它们 = 条目一保存就被模板重写抹掉（**静默丢数据**，2026-09-19 已实测过一次）。
- *     本名单与 `pure/videoMarks.MARK_SECTIONS`（读取名单）**改区名时两处都要动**。 */
-export const ANNOTATION_SECTIONS = ['摘抄', '单时间戳', '截图时间戳', '时间戳', '截图'] as const;
+ *     本名单与 `pure/videoMarks.MARK_SECTIONS`（读取名单）**改区名时两处都要动**。
+ *  🔴🔴 **2026-10-23 新增 `阅读截图`**（用户指令：TXT/EPUB/PDF 三阅读器加「区域截图回填笔记」）：
+ *     截图块（`![[图]]` + 斜体出处）写进条目笔记的 `## 阅读截图` 区（常量 `pure/readerShot.SHOT_SECTION_READER`）。
+ *     **不加进本名单 = 用户一保存条目，整区截图就被模板重写抹掉**（附件还在、笔记里的嵌入没了）。
+ *     ⚠️ 它与视频的 `截图时间戳` / `截图`（带时间跳转链接）是**两个不同区**，别合并。 */
+export const ANNOTATION_SECTIONS = ['摘抄', '阅读截图', '单时间戳', '截图时间戳', '时间戳', '截图'] as const;
 
 /** 按旧笔记里的出现顺序抽取标注区的**非空**内容（空区 / 不存在的区不返回）。 */
 export function extractAnnotationSections(

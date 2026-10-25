@@ -7,6 +7,13 @@ import {
     filterModels,
     splitPinned,
     togglePin,
+    hiddenKey,
+    isHidden,
+    toggleHidden,
+    canHideModel,
+    visibleModels,
+    hiddenCount,
+    clearHiddenFor,
     type ModelFilter,
 } from 'pure/aiPick';
 import type { AiModelCandidate } from 'pure/translate';
@@ -88,5 +95,61 @@ describe('模型筛选与置顶（#484）', () => {
     it('全部档位 = 不过滤（顺序保持原样）', () => {
         const all: ModelFilter[] = ['all'];
         expect(filterModels(ITEMS, all[0], [])).toHaveLength(ITEMS.length);
+    });
+});
+
+// ───── 2026-10-23：「插件内置候选列出来给我决定删除哪个」⇒ 删除（隐藏）判定 ─────
+describe('内置候选的删除 / 隐藏', () => {
+    const builtin = (value: string, extra: Partial<AiModelCandidate> = {}): AiModelCandidate => ({
+        value,
+        label: value,
+        fromApi: false,
+        ...extra,
+    });
+
+    it('hiddenKey 带服务商 ⇒ 同 id 跨家不串（deepseek-chat 在两家互不影响）', () => {
+        expect(isHidden([hiddenKey('zhipu', 'glm-4')], 'zhipu', 'glm-4')).toBe(true);
+        expect(isHidden([hiddenKey('zhipu', 'glm-4')], 'deepseek', 'glm-4')).toBe(false);
+    });
+
+    it('toggleHidden：有则摘、无则追加；空值 / 空服务商原样复制（⛔ 不改入参）', () => {
+        const init = [hiddenKey('zhipu', 'a')];
+        const added = toggleHidden(init, 'zhipu', 'b');
+        expect(added).toHaveLength(2);
+        expect(isHidden(added, 'zhipu', 'b')).toBe(true);
+        expect(toggleHidden(init, 'zhipu', 'a')).toEqual([]);
+        expect(init).toHaveLength(1); // 入参未被改
+        expect(toggleHidden(init, 'zhipu', '')).toEqual(init);
+        expect(toggleHidden(init, '', 'a')).toEqual(init);
+    });
+
+    it('canHideModel：只删**本仓预置**；`/models` 拉回来的、默认模型、当前在用的都不给删', () => {
+        expect(canHideModel(builtin('glm-4'))).toBe(true);
+        expect(canHideModel({ ...builtin('glm-4'), fromApi: true })).toBe(false);
+        expect(canHideModel(builtin('glm-4', { isDefault: true }))).toBe(false);
+        expect(canHideModel(builtin('glm-4'), 'glm-4')).toBe(false); // 当前在用的
+        expect(canHideModel(builtin('glm-4'), 'glm-5')).toBe(true);
+    });
+
+    it('visibleModels：摘掉隐藏项，但**当前在用那一项永远保留**（否则用户找不到自己选的）', () => {
+        const items = [builtin('a'), builtin('b'), builtin('c')];
+        const hidden = [hiddenKey('zhipu', 'b')];
+        expect(visibleModels(items, hidden, 'zhipu').map((i) => i.value)).toEqual(['a', 'c']);
+        // 在用的是 b ⇒ b 还得在（不然弹窗里没有 ✓ 落在哪一行）
+        expect(visibleModels(items, hidden, 'zhipu', 'b').map((i) => i.value)).toEqual(['a', 'b', 'c']);
+        // 别的服务商的隐藏键不影响这一家
+        expect(visibleModels(items, [hiddenKey('deepseek', 'b')], 'zhipu')).toHaveLength(3);
+        // 空名单 ⇒ 原样（且是新数组）
+        const same = visibleModels(items, [], 'zhipu');
+        expect(same).toEqual(items);
+        expect(same).not.toBe(items);
+    });
+
+    it('hiddenCount / clearHiddenFor 只算、只清**该服务商**的', () => {
+        const hidden = [hiddenKey('zhipu', 'a'), hiddenKey('zhipu', 'b'), hiddenKey('deepseek', 'c')];
+        expect(hiddenCount(hidden, 'zhipu')).toBe(2);
+        expect(hiddenCount(hidden, 'deepseek')).toBe(1);
+        expect(clearHiddenFor(hidden, 'zhipu')).toEqual([hiddenKey('deepseek', 'c')]);
+        expect(hidden).toHaveLength(3); // 入参未被改
     });
 });

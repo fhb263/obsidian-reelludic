@@ -6,7 +6,9 @@
     import { statusLabel, statusVerb } from 'pure/labels';
     import { reconcileBookProgress, pageFromPercent, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
     import { parseSeriesIndexInput } from 'pure/seriesGroup';
-    import { episodeHintLabel, storeEpisodeList } from 'pure/episodeAssoc';
+    // 🔴 #632 连续添加（新建条目保存后**回候选列表**继续挑）：候选键 / 序号 +1 / 两处文案的唯一真源
+    import { repeatHint, resultKeyOf, submitLabel, type RepeatAddState } from 'pure/repeatAdd';
+    import { episodeHintLabel, storeEpisodeList, episodeSectionSize, episodeSections, clampTabIndex, tabIndexOfEpisode } from 'pure/episodeAssoc';
     import { episodeTitleFromName } from 'pure/episodeScan';
     import { cleanPastedText, readClipboardText } from 'services/clipboard';
     import { normalizeBookKind, BOOK_KIND_LABELS } from 'pure/bookKind';
@@ -93,15 +95,24 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import { pickLibraryBook, type LibraryBookFile } from 'pure/libraryBooks';
     /** #464 在线曲库：音乐态结果区的那一栏（id 从纯模块取，⛔ 别写字面量） */
     import { SONG_LIB_ID } from 'pure/songLibrary';
+    // 🔴 #685 音乐「网络地址」在线检索：候选形状与**快捷关联弹窗同一份**（⛔ 别在组件里另写一个形状）
+    import type { PlayableCand, PlayableCandOutcome } from 'modals/QuickAssociateModal';
     import type { LyricFetchOutcome, LyricSearchOutcome } from 'services/lyricSearch';
     import { communityScoreIssue, entrySourceLabel, parseCommunityScore, parseRatingCount, parseSourceName, ratingCountIssue, sourceNameIssue, sourceUrlIssue, splitScoreCount } from 'pure/sourceMeta';
+    // #619 半星：存储恒为 0~5 步长 0.5；界面按 10 分制显示与输入（`ratingToTenths` / `tenthsToRating`）
+    import { isHalfStarClick, ratingToTenths, stepRating, tenthsToRating } from 'pure/rating';
     import type { SearchProgressCb, SearchProgress } from 'pure/searchProgress';
     // 🔴 #559：模拟进度条的**时间线**（五段曲线 + 慢网络提示 + 重试阈值）全在 `pure/simProgress`
     // ⛔ 别在本组件里再写一套「每 N ms 随机加几」——那正是本批要换掉的旧形态。
     import { simPctAt, simVisibleAt, simSlowTextAt, simShowRetryAt } from 'pure/simProgress';
     import type { MediaStatus } from 'pure/status';
     import Icon from './Icon.svelte';
-    import type { MediaEntry, BookKind, MusicKind } from 'data/types';
+    // 🔴 #668 关联功能区（关联图谱 / 关联条目）**已按用户裁定整体下线归档**：
+    //    「编辑条目的关联功能区全部给我移除掉吧归档下未来实现」。
+    //    ⚠️ 只是**没有入口**，数据层（`MediaEntry.related` / `normalizeEntry` 白名单 / 笔记 `## 关联` 章节）
+    //       与 `pure/relatedGraph.ts` + 它那套单测**全部原样保留** —— 重新上线时把入口接回来即可。
+    import type { RelatedLink } from 'data/types';
+    import type { MediaEntry, BookKind, MusicKind, EntryLogKind } from 'data/types';
 
     type SearchResult = TmdbSearchResult | OmdbSearchResult | BookSearchResult | GameSearchResult | BangumiSearchResult | MusicSearchResult;
 
@@ -126,6 +137,21 @@ const TYPE_OPTIONS: ReadonlyArray<{ value: SearchTypeSel; label: string }> = [
 /** 新增模式初始书籍分类：书籍页签聚焦子分类（漫画/网文）点「＋ 添加」传入（漫画态下拉选中「漫画」） */
 export let initialBookKind: BookKind | undefined = undefined;
     export let entry: MediaEntry | null = null;
+    /**
+     * 🔴 #632 连续添加：本窗是**新建**态、且上一次刚保存过 ⇒ 宿主把会话状态注回来，于是
+     * 「保存后窗口不消失」的落点是**回到候选列表**（而不是停在一张空表单上）。
+     * ⚠️ 这几个 prop **只在组件重建时**由宿主注入（见 `EntryModal.mountForm`）——
+     *    ⛔ 别指望它们随 `$set` 变化实时生效（初值语义）。
+     */
+    /** 上一次的候选列表（原样带回；空数组 = 首次打开） */
+    export let presetResults: SearchResult[] = [];
+    /** 搜索框里保留的关键词（接着挑下一条通常还要用它） */
+    export let presetQuery = '';
+    /** 已经建成条目的候选键集（`resultKeyOf`）—— 命中的卡片压暗 + 标「已添加」 */
+    export let addedHits: Set<string> = new Set();
+    /** 新建态的「系列名称 / 系列序号」初值（序号已由宿主 +1；见 `pure/repeatAdd.nextSeriesIndexLabel`） */
+    export let initialSeries = '';
+    export let initialSeriesIndex = '';
     export let canSearch: boolean = false;
     export let canSearchBook: boolean = true;
     export let canSearchGame: boolean = false;
@@ -134,9 +160,27 @@ export let initialBookKind: BookKind | undefined = undefined;
     export let onSearchGame: (q: string, onProgress?: SearchProgressCb) => Promise<GameSearchResult[]> = async () => [];
     export let onSearchAnime: (q: string, onProgress?: SearchProgressCb) => Promise<BangumiSearchResult[]> = async () => [];
     export let onSearchMusic: (q: string, onProgress?: SearchProgressCb) => Promise<MusicSearchResult[]> = async () => [];
+    /**
+     * 🔴 ⑬ 搜索累积（用户 2026-10-22：「给搜索添加条目返回的如上限20条可再搜索突破，可存储持久化上次搜索已有的」）。
+     *
+     * 各源自己的截断（豆瓣 30 / TMDB 30 / Bangumi 30 / IGDB 30 / MangaDex 20 / AniList 20）是**单次请求**
+     * 的天花板，改不动接口；能突破的是**跨多次搜索的累积** —— 换个关键词再搜，新结果去重后并进旧池。
+     *
+     * 宿主侧实现 = `main.mergeSearchPool`（合并 + 落盘 `{lib}/search-pool.json`，口径在 `pure/searchAccum`）。
+     * ⛔ 组件不碰 vault、不碰磁盘：这里只是个回调，拿合并后的完整列表回去渲染。
+     * ⚠️ 缺省实现 = **不累积**（直接返回本次结果），保证单测里裸挂组件时行为与旧版逐字一致。
+     */
+    export let onMergeSearchPool: (type: EntryType, bookKind: BookKind | undefined, fresh: SearchResult[]) => Promise<SearchResult[]> = async (_t, _k, fresh) => fresh;
     export let onFetchDetail: (r: TmdbSearchResult) => Promise<Partial<TmdbDetail> & { posterPath?: string }> = async () => ({});
     /** 豆瓣兜底详情按需补全：选中搜索结果时动态拉取 JSON-LD + #info（仅前 3 条搜索时预补全） */
     export let onFetchDoubanDetail: (id: string, type: EntryType) => Promise<Record<string, unknown> | null> = async () => null;
+    /**
+     * 🔴 #623 Steam 游戏详情按需补全（选中 Steam 结果时调用：appdetails → 平台 / 开发商 / 发行年 / 题材 / 简介）。
+     * ⚠️ 与 `onFetchDetail`（只通 TMDB）**是两条独立回调**，⛔ 别合并：把 Steam 的 appid 交给 TMDB 客户端
+     *    会拼出 `.../undefined/{appid}` 打 404（本批修的就是这个）。
+     * 返回的键名与豆瓣详情同形 ⇒ 回填复用同一支 `applyDoubanDetail`；失败 `null` 静默。
+     */
+    export let onFetchSteamDetail: (appid: number) => Promise<Record<string, unknown> | null> = async () => null;
     /** Bangumi 详情按需补全（选中搜索结果时调用：persons+subjects API → 导演/评分/主演） */
     export let onFetchBangumiDetail: (id: number) => Promise<{ rating?: number; ratingCount?: number; director?: string; cast?: string[] }> = async () => ({});
     /** Open Library 书籍详情按需补全（选中搜索书籍时调用：works.json → 简介/页数/出版社；失败返回 null 静默） */
@@ -265,6 +309,19 @@ export let initialBookKind: BookKind | undefined = undefined;
     });
 
     /**
+     * 🔴 #685（用户：「音乐也要加网络检索小图标按钮，参考弹出搜索b站视频链接回填就行了」）：
+     * 音乐「网络地址」标签行那枚 globe 的检索通道（宿主 `main.searchSongLibraryForAssociate` → **在线曲库**）。
+     * · 检索源 = 在线曲库（与「快捷关联」弹窗里那枚同一条链：dlSearchSongs → songLibraryResults）；
+     * · 只**返回候选**（歌名 / 歌手·专辑 / 平台试听页链接），⛔ 不下载、不解析正文；
+     * · 回填目标 = 音乐「网络地址」输入框（程序填入 ⇒ 与「粘贴」同口径当场落库）；
+     * · 宿主那侧按 `canUseSongLibrary()` 门控并给文案 ⇒ 组件不重复判断。
+     */
+    export let onSearchSongLibrary: (keyword: string) => Promise<PlayableCandOutcome> = async () => ({
+        cands: [],
+        error: '在线曲库检索不可用',
+    });
+
+    /**
      * 🔴 #527 / #531：本条目各集的**链接失效状态**（与 `episodeUrls` 下标对齐；`'ok' | 'dead' | 'unknown'`）。
      * · 由 `EntryModal` 从宿主**内存缓存**读一次注入（缓存由设置页那枚「失效链接检测」扫全库时写入）；
      * · 本组件只**显示**：失效集按钮标红 + 悬停提示加一句「⚠ 链接可能已失效」。
@@ -351,8 +408,8 @@ export let initialBookKind: BookKind | undefined = undefined;
      */
     export let onSearchLocalEpisode: (opts: LocalEpisodeQuery) => Promise<LocalEpisodeOutcome> =
         async () => ({ ok: false, reason: 'nodir' });
-    /** 游戏编辑表单「记录游玩」：弹窗侧打开游玩记录弹窗（固定挂载当前游戏） */
-    export let onRecordPlaySession: () => void = () => {};
+    /** #685 编辑表单「记录时长 / 记录周目」：弹窗侧打开记录弹窗（固定挂载当前条目） */
+    export let onOpenEntryLogModal: (kind: EntryLogKind) => void = () => {};
     /** 拖入本地图片上传为封面：返回相对路径（covers/xxx） */
     export let onUploadPoster: (file: File) => Promise<string> = async () => '';
     /** 解析封面字符串为可显示地址（http 直用 / 本地路径映射 vault 资源） */
@@ -379,10 +436,10 @@ export let initialBookKind: BookKind | undefined = undefined;
 
     // ── 编辑模式：用既有条目初始化字段 ──
     let type: EntryType = entry?.type ?? initialType;
-    let query = '';
+    let query = presetQuery;
     let searching = false;
     let searchError = '';
-    let results: SearchResult[] = [];
+    let results: SearchResult[] = presetResults;
     /** 搜索进度（确定性进度条 + 预计耗时）：done/total/label/etaSec */
     let progDone = 0;
     let progTotal = 0;
@@ -474,6 +531,8 @@ export let initialBookKind: BookKind | undefined = undefined;
     }
     /** 编辑模式默认已"选/填"（picked=true 直接渲染字段区）；新增需搜索点结果才置 true */
     let picked: boolean = entry !== null;
+    /** 🔴 #632 连续添加：本次点选的那条候选（保存成功后宿主拿 `resultKeyOf(它)` 标「已添加」） */
+    let lastPicked: SearchResult | null = null;
     /** 编辑模式「重新拉取」展开态：true 时显示搜索区（预填当前标题），选结果回填客观字段 */
     let refetchOpen = false;
 
@@ -726,6 +785,12 @@ export let initialBookKind: BookKind | undefined = undefined;
     let readUrlBusy = false;
     let readUrlBooks: WereadCandidate[] = [];
     let readUrlErr = '';
+    // 🔴 #685 音乐「网络地址」在线检索（在线曲库候选卡）的状态
+    let songUrlOpen = false;
+    let songUrlQuery = '';
+    let songUrlBusy = false;
+    let songUrlCands: PlayableCand[] = [];
+    let songUrlErr = '';
     /** 游戏启动快捷方式右键编辑浮层开关 + 编辑缓冲值（保存才写回 gameLaunchPath） */
     let gameEditOpen = false;
     let gameLaunchVal = '';
@@ -862,7 +927,8 @@ export let initialBookKind: BookKind | undefined = undefined;
     let isbn = entry?.isbn ?? '';
     let binding = entry?.binding ?? '';
     let price = entry?.price ?? '';
-    let series = entry?.series ?? '';
+    /** #632：新建态若刚从「保存并继续」回来，系列名沿用上一次（跨次继承 = 一次填好连着建一部系列） */
+    let series = entry?.series ?? initialSeries;
     /**
      * 系列序号（#434）。🔴🔴 **这个变量的运行时类型会变**：`<input type="number" bind:value>` 走 Svelte 的
      * `to_number` —— 用户一敲键盘，它就从 `string` 变成 `number`（清空 ⇒ `null`），
@@ -874,7 +940,7 @@ export let initialBookKind: BookKind | undefined = undefined;
      * 🔴 #443（2026-09-30）：**锁定整数**（用户裁定「只能填整数不能填小数」）—— 真库里出现过 3.5 / 8.5，
      *    结果第七季 8.5 排在第八季 8 后面。语义由用户定（阅读序 / 上映序 / 季序都行），本插件不解释含义。
      */
-    let seriesIndexVal = entry?.seriesIndex !== undefined ? String(entry.seriesIndex) : '';
+    let seriesIndexVal = entry?.seriesIndex !== undefined ? String(entry.seriesIndex) : initialSeriesIndex;
     let platform = entry?.platform ?? '';
     let developer = entry?.developer ?? '';
     let poster = entry?.poster ?? '';
@@ -946,6 +1012,10 @@ export let initialBookKind: BookKind | undefined = undefined;
     let toc = entry?.toc ?? '';
     let status: MediaStatus = entry?.status ?? 'want';
     let rating = entry?.rating ?? 0;
+    /** #619：评分数值当前是不是「输入框」形态（点数值那一下切过去，失焦/回车切回来） */
+    let ratingEditing = false;
+    /** 切到输入框后要聚焦选中它（`{#if}` 新挂的节点得等一拍） */
+    let ratingInputEl: HTMLInputElement | null = null;
     /**
      * 季号（#440 起**不再手填**）：表单里已经没有 S 输入框，这个值只做**原样透传** ——
      * 提交时照旧写回 `progress.season`，⛔ 别顺手删掉（删了等于把老数据里的季号**静默抹成默认值**）。
@@ -959,6 +1029,60 @@ export let initialBookKind: BookKind | undefined = undefined;
     }
     // 影视条目默认总集数：电影固定语义为单集（默认 1，编辑表单不显示总集数框；观看链接渲染单集 ▶ 播放钮，关联第 1 集）；剧集/动画由输入框决定
     let totalEpisodes = entry?.progress?.totalEpisodes ? String(entry.progress.totalEpisodes) : type === 'movie' ? '1' : '';
+    /* 🔴 2026-10-23 用户：「填 1000 集会一次性铺开 1000 行，滚动困难」⇒ 集号网格**按每 10 行分区**、
+       分区标题吸顶。真实分区大小要看**容器宽度**（一行能放几个 36px 按钮），量不到就回落 13 列
+       ⇒ 纯算法在 `pure/episodeAssoc.ts`（含单测），这里只负责把宽度喂进去并渲染。
+       ⛔ 别写死 130：换了栏宽（窄侧栏 / 双栏 / 手机）分区就该跟着变。 */
+    let epGridW = 0; // `.rl-ep-grid` 的内容宽度（px）；0 = 还没量到
+    let epGridEl: HTMLDivElement | null = null;
+    let epGridRO: ResizeObserver | null = null;
+    /** 每区集数：列数 × 10 行，按实测宽度算 */
+    $: epPerSection = episodeSectionSize(epGridW);
+    /** 分区列表（1 基闭区间 + 上屏标题）；电影态不走分区 */
+    $: epSecs = episodeSections(Number(totalEpisodes) || 0, epPerSection);
+    /* 🔴 2026-10-25 用户：「编辑属性窗口的总选集如 1000 集，分区应该按选项卡切换而不是平铺」
+       ⇒ 分区**一屏只显示一个**，用顶部选项卡条切换；⛔ 别再 `{#each epSecs}` 平铺全部区块。
+       · `epTab` 是**分区下标**（不是集号）；`epSecs` 会随栏宽重算变长变短 ⇒ 每次都要钳制，
+         否则拖窄侧栏后下标越界会渲染出一片空白。
+       · 默认落在**「已看到」那一集所在的分区**（改第 500 集的人不该被丢回第 1 集），
+         量不到 / 无进度就落第 0 区。 */
+    let epTab = 0;
+    /** 把 `epTab` 钳到合法区间（0 基）—— 纯逻辑在 `pure/episodeAssoc`（有单测），⛔ 别在这里重写 */
+    const clampEpTab = clampTabIndex;
+    /** 「已看到」那一集落在第几个分区（1 基集号 → 0 基下标）；无进度/非法 → 0 */
+    const epTabOfEpisode = tabIndexOfEpisode;
+    // 首次进表单 / 总集数变化 ⇒ 跳到「已看到」那一区（`epSecs` 首帧还没算出来时不做）
+    let epTabInited = false;
+    $: if (!epTabInited && epSecs.length > 0) {
+        epTabInited = true;
+        epTab = epTabOfEpisode(Number(episode) || 1, epSecs);
+    }
+    // 分区数变化（拖宽窄栏 / 改总集数）⇒ 钳制，别让下标越界
+    $: if (epTab > epSecs.length - 1) epTab = clampEpTab(epTab, epSecs.length);
+    /** 当前显示的分区（可能为 undefined：总集数 0 / 电影态） */
+    $: epCurSec = epSecs.length > 0 ? epSecs[clampEpTab(epTab, epSecs.length)] : undefined;
+    /** 挂 ResizeObserver：拖侧栏 / 切窗 / 弹窗缩放都要重算列数（只挂一次，元素换了就重挂） */
+    function watchEpGrid(el: HTMLDivElement) {
+        epGridEl = el;
+        epGridRO?.disconnect();
+        epGridRO = null;
+        if (typeof ResizeObserver === 'function') {
+            epGridRO = new ResizeObserver(() => {
+                const w = epGridEl?.clientWidth ?? 0;
+                if (w > 0 && w !== epGridW) epGridW = w;
+            });
+            epGridRO.observe(el);
+        }
+        const w = el.clientWidth;
+        if (w > 0) epGridW = w;
+        return {
+            destroy() {
+                epGridRO?.disconnect();
+                epGridRO = null;
+                epGridEl = null;
+            },
+        };
+    }
     /** 观看链接双路径（index 0 = 第 1 集）：本地路径 episodeFiles + 网络地址 episodeUrls + 集标题 episodeTitles，随条目保存 */
     let episodeFiles: (string | undefined)[] = [];
     let episodeUrls: (string | undefined)[] = [];
@@ -1039,6 +1163,9 @@ export let initialBookKind: BookKind | undefined = undefined;
      *  这里手填 = **覆盖**总数。保留 1 位小数（90 分钟 → 「1.5」），与海报墙「已读 1.5h」同一口径。 */
     let readHours = entry?.readMinutes ? String(Math.round((entry.readMinutes / 60) * 10) / 10) : '';
     let notes = entry?.notes ?? '';
+    // 🔴 #668 关联功能已下线归档（见文件头 import 处的说明）：表单不再持有 `related` state。
+    //    ⚠️ 提交时**不再带** `input.related` ⇒ `EntryService.update` 的浅合并会**保留 catalog 里原有的值**
+    //    （既有数据不会因为这条入口没了而被清空 —— 删字段才是红线 2 禁止的事）。
     /** 搜索框引用（添加模式自动聚焦） */
     let queryInput: HTMLInputElement | null = null;
     /** 封面：网络图片 URL 输入；previewUrl 供预览区显示（poster 变化自动刷新） */
@@ -1187,7 +1314,7 @@ export let initialBookKind: BookKind | undefined = undefined;
 
     $: sourceReady = true; // 全部类型均可搜（Douban 单源/并存；影视/动画未配 Key 时仅 Douban 结果）
     $: sourceHint = (type === 'movie' || type === 'tv') && !canSearch
-        ? 'TMDB API Key 未配置 — 电影/剧集仅显示 Douban 结果（可在 设置 → 元数据源配置 › 元数据源凭据 · TMDB 配置后叠加）'
+        ? 'TMDB API Key 未配置 — 电影/剧集仅显示 Douban 结果（可在 设置 → 元数据源配置 › 元数据搜索源凭据 · TMDB 配置后叠加）'
         : '';
 
     /**
@@ -1227,11 +1354,100 @@ export let initialBookKind: BookKind | undefined = undefined;
     })();
 
     function resultKey(r: SearchResult): string {
-        return ('id' in r ? String(r.id) : r.title) + '|' + r.title;
+        // 🔴 #632：实现已搬到 `pure/repeatAdd.resultKeyOf`（宿主也要拿它做「已添加」标记键）——
+        //    ⛔ 别在这里再写一份：两处一旦漂移，「已添加」会标错行或整片标不上。
+        return resultKeyOf(r);
     }
 
-    /** 分栏展示用的单栏（id+列头文本+该来源结果；items 空时渲染占位文案而非整栏消失） */
-    interface ResultColumn {
+    /**
+     * 🔴 #632 连续添加：把「下一次还要用到的会话状态」交回宿主
+     * （宿主重建本组件时，用 `presetResults` / `addedHits` / `initialSeries*` 再注回来）。
+     *
+     * ⚠️ 只交**会话状态**（候选 / 关键词 / 刚挑的那条 / 系列那两栏），表单字段一概不带 ——
+     *    「保存后回到候选列表」本来就是要一张干净的表单。
+     * ⚠️ `seriesIndexVal` 的运行时类型会变（`<input type="number">` 的 `to_number` 把用户一敲就变成
+     *    `number`，清空变 `null`；TS 仍以为它是 `string`）⇒ 这里必须**显式判空**，
+     *    ⛔ 别直接 `String(seriesIndexVal)`（会得到字面量 `"null"` 这种脏值）。
+     */
+    export function repeatAddState(): RepeatAddState {
+        const raw = seriesIndexVal as unknown as string | number | null | undefined;
+        return {
+            results,
+            query,
+            addedKey: lastPicked ? resultKeyOf(lastPicked) : null,
+            series,
+            seriesIndex: raw === null || raw === undefined ? '' : String(raw),
+        };
+    }
+
+    /**
+     * 🔴 #635 切条目之前判「表单脏不脏」要看的字段（**唯一真源** = `DIRTY_KEYS`）。
+     * ⚠️ 与 `dirtyNow()` 必须同步改：新增字段别忘了往这两个地方各加一行
+     *   （断言按「两处键集合一致」钉住，漏一处即红）。
+     */
+    const DIRTY_KEYS = [
+        'title', 'type', 'bookKind', 'status', 'rating', 'notes', 'genres',
+        'year', 'aliases', 'director', 'cast', 'screenwriter', 'country', 'language', 'durationMin',
+        'author', 'artist', 'translator', 'publisher', 'producer', 'isbn', 'binding', 'price',
+        'series', 'seriesIndexVal', 'platform', 'developer', 'album',
+        'audioPath', 'audioUrl', 'gameLaunchPath', 'gameUrl', 'bookFileVal', 'readUrl',
+        'summary', 'authorIntro', 'toc', 'aiText', 'communityScore', 'sourceName', 'sourceUrl',
+        'watchedDate', 'plannedDate', 'lastWatchedDate', 'season', 'episode', 'totalEpisodes',
+        'readingPage', 'readingTotalPage', 'pageCountVal', 'readHours', 'playtimeHours',
+        'episodeFiles', 'episodeUrls', 'episodeTitles', 'poster',
+    ] as const;
+    /** 打开表单那一刻的基线快照（`onMount` 取一次；切条目会重建组件 ⇒ 基线自动跟着换） */
+    let dirtySnapshot: Record<string, unknown> = {};
+    onMount(() => {
+        dirtySnapshot = dirtyNow();
+    });
+
+    export function isDirty(): boolean {
+        return DIRTY_KEYS.some((k) => {
+            const a = (dirtySnapshot as Record<string, unknown>)[k];
+            const b = (dirtyNow() as Record<string, unknown>)[k];
+            return !sameValue(a, b);
+        });
+    }
+
+    /**
+     * 当前值的快照（**只收表单自己管的东西**）。
+     * ⚠️ 刻意不收的几类：搜索结果 / 浮层开关 / 忙碌态 / `preset*` —— 它们不是「改动」，
+     *    收进来会让「点开一次搜索没选」也算脏，确认框就会在不该问的时候问。
+     */
+    function dirtyNow(): Record<string, unknown> {
+        return {
+            title, type, bookKind, status, rating, notes, genres,
+            year, aliases, director, cast, screenwriter, country, language, durationMin,
+            author, artist, translator, publisher, producer, isbn, binding, price,
+            series, seriesIndexVal, platform, developer, album,
+            audioPath, audioUrl, gameLaunchPath, gameUrl, bookFileVal, readUrl,
+            summary, authorIntro, toc, aiText, communityScore, sourceName, sourceUrl,
+            watchedDate, plannedDate, lastWatchedDate, season, episode, totalEpisodes,
+            readingPage, readingTotalPage, pageCountVal, readHours, playtimeHours,
+            episodeFiles, episodeUrls, episodeTitles, poster,
+        };
+    }
+
+    /** 值比较：数组按键值与长度**深比**（关联 / 集数组都是对象数组，浅比恒不相等） */
+    function sameValue(a: unknown, b: unknown): boolean {
+        if (Array.isArray(a) && Array.isArray(b)) {
+            if (a.length !== b.length) return false;
+            for (let i = 0; i < a.length; i++) if (!deepEqual(a[i], b[i])) return false;
+            return true;
+        }
+        return deepEqual(a, b);
+    }
+    function deepEqual(a: unknown, b: unknown): boolean {
+        if (a === b) return true;
+        if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+        const ka = Object.keys(a as Record<string, unknown>);
+        const kb = Object.keys(b as Record<string, unknown>);
+        if (ka.length !== kb.length) return false;
+        return ka.every((k) => deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+    }
+
+    /** 分栏展示用的单栏（id+列头文本+该来源结果；items 空时渲染占位文案而非整栏消失） */    interface ResultColumn {
         id: string;
         label: string;
         items: SearchResult[];
@@ -1303,7 +1519,10 @@ export let initialBookKind: BookKind | undefined = undefined;
         const mySeq = ++searchSeq;
         searching = true;
         searchError = '';
-        results = [];
+        // 🔴 ⑬：**不再** `results = []`。旧行为一进场就清空，上次的结果直接蒸发，
+        //    用户只能在一个 20 条的池子里打转（他要的是「可再搜索突破」）。
+        //    现在旧结果留在屏上，等新结果回来按 `resultKeyOf` 去重后**并进**同一份列表。
+        // ⚠️ 但仍要让结果区从「已选中」回到列表态 —— 那由 `picked = false` 负责。
         picked = false;
         // 固定占栏：在发起搜索前按当前态快照参与源（栏位自此恒定，不随本次各源成败增减）。
         // ⚠️ `sourcesKind` 与头部文案同取一份（#458：这里曾漏传子分类，
@@ -1319,21 +1538,34 @@ export let initialBookKind: BookKind | undefined = undefined;
         startSimProgress();
         try {
             const q = query.trim();
+            // 🔴 ⑬：先拿本次的**新鲜结果**，再交给宿主合并进累积池（宿主那侧去重 + 落盘）。
+            //    ⚠️ 这里**不能在 await 之前把 results 清空**：合并要拿旧列表当底，
+            //    而合并算法（新的在前、按 resultKeyOf 去重、截断上限）在 `pure/searchAccum` 里——组件不做业务判断。
+            let fresh: SearchResult[];
             if (type === 'book') {
                 // 传当前子分类：文学/网文均走 book 链（豆瓣主源 + Open Library），仅落库 bookKind 不同
-                results = await onSearchBook(q, bookKind, onSearchProgress);
+                fresh = await onSearchBook(q, bookKind, onSearchProgress);
             } else if (type === 'game') {
-                results = await onSearchGame(q, onSearchProgress);
+                fresh = await onSearchGame(q, onSearchProgress);
             } else if (type === 'anime') {
                 // 动画走 Bangumi（bgm.tv，中文标题权威，需 Access Token）+ Douban 并行
-                results = await onSearchAnime(q, onSearchProgress);
+                fresh = await onSearchAnime(q, onSearchProgress);
             } else if (type === 'music') {
-                results = await onSearchMusic(q, onSearchProgress);
+                fresh = await onSearchMusic(q, onSearchProgress);
             } else {
-                results = await onSearch(q, type, onSearchProgress);
+                fresh = await onSearch(q, type, onSearchProgress);
             }
-            if (results.length === 0) {
-                searchError = '未找到相关结果，可换个关键词或直接手动填写';
+            // 在飞的那一轮被「中止重试」作废了 ⇒ 连合并都别做（否则旧请求会把作废的结果写进池子）
+            if (mySeq === searchSeq) {
+                results = await onMergeSearchPool(type, type === 'book' ? bookKind : undefined, fresh);
+                if (results.length === 0) {
+                    searchError = '未找到相关结果，可换个关键词或直接手动填写';
+                } else if (fresh.length === 0) {
+                    // 本次没搜到、但池子里还有上次的 ⇒ 别报「未找到」误导用户（列表还在屏上）
+                    searchError = '';
+                }
+            } else {
+                return;
             }
         } catch (e) {
             searchError = e instanceof Error ? e.message : String(e);
@@ -1394,6 +1626,8 @@ export let initialBookKind: BookKind | undefined = undefined;
 
     async function pick(r: SearchResult) {
         searchError = '';
+        // 🔴 #632：记住这次挑的是哪条（保存后宿主据此把这张卡片标成「已添加」）
+        lastPicked = r;
         try {
             picked = true;
             manualFill = false; // #499B：点选结果这条路**不摆** AI 预填（客观字段已由数据源填好）
@@ -1512,6 +1746,21 @@ export let initialBookKind: BookKind | undefined = undefined;
                         // 详情拉取失败静默
                     }
                 }
+                // 🔴 #623 Steam 详情兜底：Steam 的搜索级结果只有标题 / 封面 / 来源链接
+                //    （storesearch 不返回平台、开发商、简介）⇒ 选中时按需拉 appdetails 补上。
+                //    ⚠️ 判据是**来源名**（不是「有 platform 键就是豆瓣」）—— 两种源的详情端点毫无关系。
+                //    失败静默：保留搜索级字段，用户手填即可。
+                if (r.source === 'steam') {
+                    try {
+                        const d = await onFetchSteamDetail(r.id);
+                        if (d) {
+                            applyDoubanDetail(d);
+                            if (d.platform || d.developer) new Notice('已自动补全 Steam 详情', 2000);
+                        }
+                    } catch {
+                        // 详情拉取失败静默，保留搜索级字段
+                    }
+                }
             } else if ('album' in r) {
                 // 音乐：Douban 一次返回全部信息（歌手/专辑/年份/封面/简介/评分）
                 originalTitle = '';
@@ -1608,16 +1857,29 @@ export let initialBookKind: BookKind | undefined = undefined;
                             // 详情拉取失败静默，保留已有搜索级字段
                         }
                     }
-                } else {
-                    const d = await onFetchDetail(r);
-                    if (shouldAdoptCover(poster, posterUrl(d.posterPath))) poster = posterUrl(d.posterPath) ?? '';
-                    if (d.genres?.length) genres = d.genres.join(' / ');
-                    if (d.director) director = d.director;
-                    if (d.cast?.length) cast = d.cast.join(' / ');
-                    if (d.overview) summary = d.overview;
-                    // 详情补全评价人数/评分（搜索级缺失时兜底）
-                    if (d.ratingCount != null && !ratingCount) ratingCount = String(d.ratingCount);
-                    if (d.rating != null && !communityScore) communityScore = String(d.rating);
+                } else if (r.source === 'tmdb') {
+                    // 🔴🔴 #623 两道闸，缺一不可：
+                    //  ⑴ 判据必须是**来源名**（`r.source === 'tmdb'`），⛔ 不是「不是 omdb / douban 就按 tmdb 处理」：
+                    //     `onFetchDetail` 这条回调只通了 `fetchTmdbDetail`，拿别的来源的 id 去打 TMDB 必然 404。
+                    //     本次报障就是这么来的 —— Steam 结果因缺判别键掉进本支，被当成影视结果发往
+                    //     `api.themoviedb.org/3/undefined/{appid}`（见 `services/steam.ts` 的 `toGameResult`）。
+                    //  ⑵ 详情补全**失败不许阻塞条目添加** —— 与豆瓣 / Bangumi / OpenLibrary / 微信读书那几支
+                    //     同一口径（静默保留搜索级字段，用户可手填）。原来这里既没有 try/catch、也不判来源 ⇒
+                    //     任何一次详情失败都会让整个 `pick` 抛错（外层 catch 把 `picked` 复位、**条目加不进去**），
+                    //     用户看到的就是那句「回填详情失败」——明明搜索级数据已经够用了。
+                    try {
+                        const d = await onFetchDetail(r);
+                        if (shouldAdoptCover(poster, posterUrl(d.posterPath))) poster = posterUrl(d.posterPath) ?? '';
+                        if (d.genres?.length) genres = d.genres.join(' / ');
+                        if (d.director) director = d.director;
+                        if (d.cast?.length) cast = d.cast.join(' / ');
+                        if (d.overview) summary = d.overview;
+                        // 详情补全评价人数/评分（搜索级缺失时兜底）
+                        if (d.ratingCount != null && !ratingCount) ratingCount = String(d.ratingCount);
+                        if (d.rating != null && !communityScore) communityScore = String(d.rating);
+                    } catch {
+                        // 详情拉取失败静默：保留搜索级字段，不阻塞保存
+                    }
                 }
             }
             status = 'want';
@@ -2669,6 +2931,54 @@ export let initialBookKind: BookKind | undefined = undefined;
         new Notice('已填入网络地址，点「保存」生效');
     }
     /**
+     * 🔴 #685：音乐「网络地址」在线检索 —— 打开**在线曲库候选卡**，检索词按「歌名 + 歌手」预填。
+     * ⚠️ 音乐侧主表单**没有**网络地址输入框（链接只存在于关联浮层里）⇒ 这枚 globe 必须挨着
+     *    浮层里那个「网络地址」标题，⛔ 别挂到主表单「启动路径」行去（那行是本地检索 + 下载）。
+     */
+    async function openSongUrlPicker(): Promise<void> {
+        songUrlOpen = true;
+        songUrlQuery = [title.trim(), artist.trim()].filter(Boolean).join(' ');
+        songUrlCands = [];
+        songUrlErr = '';
+        if (!songUrlQuery.trim()) {
+            songUrlErr = '先填写歌名（或歌手）再检索';
+            return;
+        }
+        await runSongUrlSearch();
+    }
+    /** 跑一次在线曲库检索（宿主那侧按能力门控并给文案） */
+    async function runSongUrlSearch(): Promise<void> {
+        const q = songUrlQuery.trim();
+        if (!q || songUrlBusy) return;
+        songUrlBusy = true;
+        songUrlErr = '';
+        try {
+            const out = await onSearchSongLibrary(q);
+            songUrlCands = out.cands ?? [];
+            songUrlErr = out.error ?? '';
+        } catch (err) {
+            songUrlCands = [];
+            songUrlErr = err instanceof Error ? err.message : String(err);
+        } finally {
+            songUrlBusy = false;
+        }
+    }
+    /**
+     * 选中一条候选 → 回填音乐「网络地址」。
+     * 🔴 程序填入 ⇒ 与「粘贴」同口径**当场落库**（`force`），⛔ 别让它只停在浮层缓冲里等失焦。
+     */
+    function pickSongUrl(c: PlayableCand): void {
+        const u = (c.url ?? '').trim();
+        if (!u) {
+            new Notice('这一条没有可回填的链接，换一条试试');
+            return;
+        }
+        audioUrlVal = u;
+        autoSaveAudioUrl(true);
+        songUrlOpen = false;
+        new Notice('已填入网络地址');
+    }
+    /**
      * 失效集的悬停提示后缀（未检测 / 非 `dead` → 空串）。
      * 🔴 `dead` 才提示：`unknown`（403 / 超时）**不提示**，与不标红同口径（别把「测不动」说成「已失效」）。
      */
@@ -3360,11 +3670,55 @@ export let initialBookKind: BookKind | undefined = undefined;
             // 游玩时长：小时录入 → 落库分钟（游玩记录明细由弹窗即时落盘，submit 不再重复提交）
             input.playtimeMinutes = playtimeHours ? Math.round(Number(playtimeHours) * 60) || undefined : undefined;
         }
+        // 🔴 #668 关联功能已下线归档：**刻意不带** `input.related`。
+        //    `EntryService.update` 是浅合并 ⇒ 不带这个键 = 保留 catalog 里原有的关联数据，
+        //    ⛔ 别为了「顺手清空」在这里写 `related: undefined`（那会把用户已有的关联静默删光）。
         await onSubmit(input);
     }
 
-    function setStar(n: number) {
-        rating = rating === n ? 0 : n;
+    /**
+     * 星点击（#619 半星）：`n` = 第几颗星（1~5），`half` = 是否落在**左半边**。
+     * · 左半边 ⇒ `n - 0.5`（半星）；右半边 ⇒ `n`（整星）
+     * · 点**同一个当前值** ⇒ 清回 0（保留原先「再点一下取消」的手感）
+     */
+    function setStar(n: number, half: boolean) {
+        const next = half ? n - 0.5 : n;
+        rating = rating === next ? 0 : next;
+    }
+
+    /** 由点击位置的**水平比例**判定半星 / 整星（判定本身在 `pure/rating.isHalfStarClick`，可单测） */
+    function onStarClick(ev: MouseEvent, n: number): void {
+        const el = ev.currentTarget as HTMLElement;
+        setStar(n, isHalfStarClick(ev.offsetX, el.offsetWidth));
+    }
+
+    /**
+     * 星控件上的滚轮增减。
+     * 🔴 必须 `preventDefault` —— 否则页面跟着滚（用户口径「阻止页面滚动」）；
+     *    与 `pure/numberWheel` 是同一条纪律，只是这里的值在 Svelte 状态里、不在 `input.value` 上
+     *    （所以不复用那套「读 `el.value` 写回再派发事件」的机制，档位直接走 `RATING_STEPS`）。
+     */
+    function onStarWheel(ev: WheelEvent): void {
+        ev.preventDefault();
+        ev.stopPropagation();
+        rating = stepRating(rating, ev.deltaY < 0 ? 1 : -1);
+    }
+
+    /** 点数值 ⇒ 换成 10 分制输入框（`9/10` ⟷ `4.5` 星） */
+    function startRatingEdit(): void {
+        ratingEditing = true;
+        void tick().then(() => {
+            if (ratingInputEl) {
+                ratingInputEl.focus();
+                ratingInputEl.select();
+            }
+        });
+    }
+
+    /** 输入框落回存储（**÷2**：10 分制 → 半星）；清空 ⇒ 归 0 */
+    function commitRatingEdit(v: string): void {
+        ratingEditing = false;
+        rating = v.trim() === '' ? 0 : tenthsToRating(Number(v));
     }
 
     /** 来源徽标直达：模板属性按 JS 解析不能用 TS `!`，故在 script 端守卫 undefined */
@@ -3394,7 +3748,7 @@ export let initialBookKind: BookKind | undefined = undefined;
     }}
 >
     <div class="rl-fhd">
-        {entry ? `编辑条目：${entry.title}` : pickedTitle ? `添加条目：${pickedTitle}` : '添加条目'}
+        {entry ? `编辑属性：${entry.title}` : pickedTitle ? `添加条目：${pickedTitle}` : '添加条目'}
         <span class="rl-fsrc">类型：{type === 'book' ? BOOK_KIND_LABELS[bookKind] : ENTRY_TYPE_LABELS[type]} · {sourceListText}</span>
     </div>
 
@@ -3469,7 +3823,7 @@ export let initialBookKind: BookKind | undefined = undefined;
     {#if results.length > 0 && !picked}
         <div class="rl-res-head">
             <span class="rl-res-head-cnt">共 {results.length} 条结果</span>
-            <span class="rl-res-head-hint">点击卡片回填 · 点击空白取消 · 徽标直达来源</span>
+            <span class="rl-res-head-hint">{repeatHint(entry === null)}</span>
         </div>
         <div class="rl-res" style={`--rl-cols:${Math.max(1, resultColumns.length)}`} on:click={onResClick}>
             {#each resultColumns as col}
@@ -3480,7 +3834,8 @@ export let initialBookKind: BookKind | undefined = undefined;
                     </div>
                     {#each col.items as r (resultKey(r))}
                         {@const d = describeSearchResult(r)}
-                        <button class="rl-res-item" on:click|stopPropagation={() => pick(r)} data-tip="点击回填该条目">
+                        {@const added = addedHits.has(resultKey(r))}
+                        <button class="rl-res-item" class:is-added={added} on:click|stopPropagation={() => pick(r)} data-tip={added ? '已添加过 · 再点会再建一条' : '点击回填该条目'}>
                             {#if d.cover}
                                 <img class="rl-res-cv" src={d.cover} alt="" loading="lazy" referrerpolicy={isDoubanImage(d.cover) ? 'unsafe-url' : undefined} />
                             {:else}
@@ -3497,6 +3852,10 @@ export let initialBookKind: BookKind | undefined = undefined;
                                         {#if d.sub}{#if d.year || d.rating != null}<span class="rl-res-dot">·</span>{/if}<span class="rl-res-o">{d.sub}</span>{/if}
                                     </span>
                                 </span>
+                                <!-- 🔴 #633：角标**不再挂在标题行里**（那样它跟着标题那一行走、落在条目上部），
+                                     改成与 `.rl-res-source` **平级** —— 靠 `.rl-res-inf` 的 `align-items: center`
+                                     垂直居中于整条，且水平位置固定成一列（用户：「已添加怎么不居中对齐条目的」）。 -->
+                                {#if added}<span class="rl-res-added">已添加</span>{/if}
                                 {#if d.sourceUrl}
                                     <span
                                         class="rl-res-source"
@@ -3892,6 +4251,10 @@ export let initialBookKind: BookKind | undefined = undefined;
                     <input id="rl-f-series-index" class="rl-input" type="number" step="1" min="1" bind:value={seriesIndexVal} placeholder="可留空，填整数（第几部/季）" />
                 </div>
             </div>
+            <!-- 🔴 #668 关联功能区已按用户裁定**整体下线归档**（「全部给我移除掉吧归档下未来实现」）。
+                 数据层与笔记侧**未删除**：`MediaEntry.related` / `normalizeEntry` 白名单 / 笔记 `## 关联` 章节
+                 与 `pure/relatedGraph.ts` 及单测都还在，既有数据原样保留。重新上线 = 把组件挂回这里。 -->
+
             <!-- 🔴 #537 阅读时长（文学 / 网文 / 漫画三子类共用 —— 都是 `type === 'book'`）：位置在「内容简介」**上方**。
                  数据两来源：① 内置阅读器阅读该条目时**自动累计**（宿主 main.withReadTime，扣后台 + 单次≥1 分钟）；
                  ② 本框手填 = **覆盖**总数。海报墙封面左下角显示「已读 2h」（复用游戏 `.rl-cov-playtime` 那枚角标）。
@@ -4200,11 +4563,23 @@ export let initialBookKind: BookKind | undefined = undefined;
                                     <button class="rl-btn rl-link-act" on:click={(ev) => browseAudio(ev)} data-tip="选择音频文件">浏览</button>
                                 </div>
                                 <!-- 🔴 #601 音乐**网络地址**（append-only 新字段 `audioUrl`）：与游戏浮层那条同款
-                                     （label + 输入框 + 粘贴）。音乐侧**没有可用的在线检索源** ⇒ 只有手填 / 粘贴，
-                                     ⛔ 不挂检索按钮（与 `gameUrl` 同口径）；⚠️ label 带 `for`/`id`（裸写会多报一条
-                                     A11y 告警破 89 基线）。 -->
+                                     （label + 输入框 + 粘贴）。⚠️ label 带 `for`/`id`（裸写会多报一条
+                                     A11y 告警破 89 基线）。
+                                     🔴 #685（用户：「音乐也要加网络检索小图标按钮，参考弹出搜索b站视频链接回填就行了」）：
+                                     旧口径「音乐侧没有可用的在线检索源 ⇒ 只有手填 / 粘贴」**已作废** —— 现在有：
+                                     **在线曲库**（与快捷关联弹窗那枚同一条链）。图标挂在**这个标签旁**
+                                     （⚠️ 音乐侧主表单没有网络地址输入框 ⇒ 只能挂这里，⛔ 别搬到「启动路径」行）。 -->
                                 <div class="rl-edit-lblrow">
                                     <label class="rl-lbl-inline" for="rl-f-audiourl">网络地址</label>
+                                    {#if songLibOn}
+                                        <button
+                                            class="rl-ai-btn"
+                                            data-tip="在线曲库检索：找一首能直接试听的平台页，点一条就填进网络地址"
+                                            on:click={() => void openSongUrlPicker()}>
+                                            <span class="rl-sr">在线曲库检索</span>
+                                            <Icon icon="globe" size={13} />
+                                        </button>
+                                    {/if}
                                     {#if savedKey === AUTOSAVE_KEYS.audioUrl}
                                         {#key savedSeq}
                                             <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
@@ -4231,6 +4606,53 @@ export let initialBookKind: BookKind | undefined = undefined;
                             </div>
                         {/if}
                     </div>
+                    <!-- 🔴 #685 在线曲库候选卡（壳与列表**复用 B站 那套**：`.rl-ep-edit.rl-bili-pop` +
+                         `.rl-bili-list/-row/-cover/-main/-name/-artist/-pill`）—— ⛔ 不另写第二套候选列表样式。
+                         ⚠️ 它是**独立浮层**（与音频编辑浮层平级、DOM 更靠后 ⇒ 盖在上层）：音乐侧主表单
+                         没有网络地址输入框，只有这里能回填。 -->
+                    {#if songUrlOpen}
+                        <div class="rl-ep-edit rl-bili-pop" role="dialog" aria-labelledby="rl-song-pop-title">
+                            <div class="rl-lrc-pop-head">
+                                <span class="rl-ep-edit-title" id="rl-song-pop-title">在线曲库检索</span>
+                                <button class="rl-lrc-pop-close" on:click={() => (songUrlOpen = false)} data-tip="关闭">✕</button>
+                            </div>
+                            <div class="rl-ep-edit-row">
+                                <input
+                                    class="rl-input rl-ep-edit-input"
+                                    value={songUrlQuery}
+                                    on:input={(ev) => (songUrlQuery = inputVal(ev))}
+                                    on:keydown={(ev) => { if (ev.key === 'Enter') void runSongUrlSearch(); }}
+                                    placeholder="歌名（可补歌手，如 孤勇者 陈奕迅）" />
+                                <button class="rl-btn rl-link-act" disabled={songUrlBusy} on:click={() => void runSongUrlSearch()}>
+                                    {songUrlBusy ? '搜索中…' : '搜索'}
+                                </button>
+                            </div>
+                            {#if songUrlErr}<div class="rl-hint rl-hint-warn">{songUrlErr}</div>{/if}
+                            <div class="rl-bili-list">
+                                {#each songUrlCands as c (c.url)}
+                                    <button
+                                        class="rl-bili-row"
+                                        disabled={songUrlBusy}
+                                        on:click={() => pickSongUrl(c)}
+                                        data-tip={`填入网络地址：${c.title}`}>
+                                        {#if c.coverUrl}
+                                            <img class="rl-bili-cover" src={c.coverUrl} alt="" loading="lazy" referrerpolicy="no-referrer" />
+                                        {:else}
+                                            <span class="rl-bili-cover rl-bili-cover-ph"><Icon icon="music" size={14} /></span>
+                                        {/if}
+                                        <span class="rl-bili-main">
+                                            <span class="rl-bili-name">{c.title}</span>
+                                            <span class="rl-bili-artist">{c.sub || '未知歌手'}</span>
+                                        </span>
+                                        <span class="rl-bili-pill">♪</span>
+                                    </button>
+                                {/each}
+                            </div>
+                            {#if !songUrlBusy && !songUrlErr && songUrlCands.length === 0 && songUrlQuery.trim()}
+                                <div class="rl-hint">没搜到，换个歌名试试</div>
+                            {/if}
+                        </div>
+                    {/if}
                 </div>
             {/if}
 
@@ -4342,6 +4764,27 @@ export let initialBookKind: BookKind | undefined = undefined;
                                         （文学走微信读书、网文/漫画暂不接在线源，靠手填）那句既不准确也不客观。 -->
                                 <div class="rl-edit-lblrow">
                                     <label class="rl-lbl-inline" for="rl-f-readurl">网络地址</label>
+                                    <!-- 🔴 2026-10-21 二轮（用户：「条目…网络地址**标题旁没有**『在线网络搜索
+                                         回填链接』的小图标按钮啊」）——「网络地址」这一行也挂一枚在线检索。
+                                         图标与语义沿用 #533 全仓口径：**网络检索 = `globe`**（⛔ 别用 `search` / `book-search`，
+                                         那两款已退场）；行为与表单「启动路径」那枚**同一条链**（`openReadUrlPicker`），
+                                         ⛔ 不另写一套候选浮层。
+                                         ⚠️ 门控 `bookKind === 'book'` 的原因见 #535：在线源只有微信读书且只对文学开
+                                            （网文 / 漫画用户裁定「暂不做在线检索」，靠手填 / 粘贴），
+                                            而 `openReadUrlPicker` 里那两条守卫必须与这里同口径。
+                                         ⚠️ 已知与 #531 有重叠：那轮把同一枚按钮搬到了表单「启动路径」标签行。
+                                            本轮用户要求「网络地址标题旁」也要有 ⇒ 两处并存。
+                                            ⛔ 若要收敛成一处，删**这一处**会把用户刚提的诉求删掉；删「启动路径」
+                                               那一处又违背 #531 —— 需用户裁定，别自行挑一个删。 -->
+                                    {#if bookKind === 'book'}
+                                        <button
+                                            class="rl-ai-btn"
+                                            on:click={() => void openReadUrlPicker()}
+                                            data-tip="检索在线书籍阅读（微信读书）\n按书名搜到在线阅读页，选一条填入下面这栏">
+                                            <span class="rl-sr">检索在线书籍阅读</span>
+                                            <Icon icon="globe" size={13} />
+                                        </button>
+                                    {/if}
                                     {#if savedKey === AUTOSAVE_KEYS.bookUrl}
                                         {#key savedSeq}
                                             <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
@@ -4452,7 +4895,13 @@ export let initialBookKind: BookKind | undefined = undefined;
                              ⛔ 这里别再挂检测入口（同款功能两处 = 用户会以为两个功能）。 -->
                     </div>
                     {#if type === 'movie' || Number(totalEpisodes) > 0}
-                        <div class="rl-ep-grid">
+                        <!-- 🔴 2026-10-23 用户：「填 1000 集会一次性铺开 1000 行，滚动困难」⇒ 按**每 10 行**分区、
+                             分区标题**吸顶**（随滚动始终可见）。
+                             · 每区集数 = 实测列数 × 10（140 行处见 `epPerSection`），⛔ 不写死 130；
+                             · 标题用 `position: sticky; top` —— 吸的是**表单滚动容器**（`.rl-fields`），
+                               不是窗口 ⇒ 分区滚到头上时标题自动贴住容器顶边；
+                             · 电影态只有一个按钮，⛔ 不套分区（套了会出现一条「第 1 集」标题，纯噪音）。 -->
+                        <div class="rl-ep-grid" use:watchEpGrid>
                             {#if type === 'movie'}
                                 <span class="rl-ep-wrap" class:linked={!!episodeFiles[0] || !!episodeUrls[0]}>
                                     <button
@@ -4463,16 +4912,59 @@ export let initialBookKind: BookKind | undefined = undefined;
                                         data-tip={epLinkHint(type, 0, episodeTitles[0], !!episodeFiles[0] || !!episodeUrls[0]) + deadHint(0)}><Icon icon="play" size={12} /> 观看</button>
                                 </span>
                             {:else}
-                                {#each Array.from({ length: Number(totalEpisodes) }, (_, i) => i) as i}
-                                    <span class="rl-ep-wrap" class:linked={!!episodeFiles[i] || !!episodeUrls[i]} class:cur-ep={episode >= 1 && i + 1 === episode}>
-                                        <button
-                                            class="rl-ep-btn"
-                                            class:rl-ep-dead={linkStatuses[i] === 'dead'}
-                                            on:click={() => playOrOpenEpisode(i)}
-                                            on:contextmenu={(ev) => { ev.preventDefault(); openEpEditor(i); }}
-                                            data-tip={epLinkHint(type, i, episodeTitles[i], !!episodeFiles[i] || !!episodeUrls[i]) + deadHint(i)}><span class="rl-ep-num">{i + 1}<span class="rl-ep-dot"></span></span></button>
-                                    </span>
-                                {/each}
+                                <!-- 🔴 2026-10-25 用户：「分区应该按选项卡切换而不是平铺」⇒ 顶部选项卡 + 单选一区。
+                                     · 选项卡文案直接用 `sec.label`（「第 1-130 集」），点哪块显示哪块；
+                                     · 只渲染 `epCurSec` 一区 —— 1000 集时 DOM 从 8 块降到 1 块，
+                                       切换是纯 class 切换，⛔ 不要再退回「全铺 + 横向滚动」那套。 -->
+                                {#if epSecs.length > 1}
+                                    <div class="rl-ep-tabs" role="tablist" aria-label="集号分区">
+                                        {#each epSecs as sec, si (sec.start)}
+                                            <button
+                                                type="button"
+                                                role="tab"
+                                                aria-selected={si === epTab}
+                                                class="rl-chip rl-ep-tab"
+                                                class:on={si === epTab}
+                                                data-tip={`显示 ${sec.label}（点「上一区/下一区」或直接点这排切区）`}
+                                                on:click={() => (epTab = si)}>{sec.label}</button>
+                                        {/each}
+                                    </div>
+                                {/if}
+                                {#if epCurSec}
+                                    {@const sec = epCurSec}
+                                    <div class="rl-ep-sec">
+                                        <div class="rl-ep-sec-grid">
+                                            {#each Array.from({ length: sec.end - sec.start + 1 }, (_, k) => sec.start - 1 + k) as i (i)}
+                                                <span class="rl-ep-wrap" class:linked={!!episodeFiles[i] || !!episodeUrls[i]} class:cur-ep={episode >= 1 && i + 1 === episode}>
+                                                    <button
+                                                        class="rl-ep-btn"
+                                                        class:rl-ep-dead={linkStatuses[i] === 'dead'}
+                                                        on:click={() => playOrOpenEpisode(i)}
+                                                        on:contextmenu={(ev) => { ev.preventDefault(); openEpEditor(i); }}
+                                                        data-tip={epLinkHint(type, i, episodeTitles[i], !!episodeFiles[i] || !!episodeUrls[i]) + deadHint(i)}><span class="rl-ep-num">{i + 1}<span class="rl-ep-dot"></span></span></button>
+                                                </span>
+                                            {/each}
+                                        </div>
+                                    </div>
+                                    <!-- 翻区：长列表用鼠标滚轮翻区会被表单滚动抢走，给两枚显式按钮（首/尾区自动 disabled） -->
+                                    {#if epSecs.length > 1}
+                                        <div class="rl-ep-tab-nav">
+                                            <button
+                                                type="button"
+                                                class="rl-chip"
+                                                disabled={epTab <= 0}
+                                                data-tip="上一区"
+                                                on:click={() => (epTab = clampEpTab(epTab - 1, epSecs.length))}>‹ 上一区</button>
+                                            <span class="rl-ep-tab-count">{epTab + 1} / {epSecs.length}</span>
+                                            <button
+                                                type="button"
+                                                class="rl-chip"
+                                                disabled={epTab >= epSecs.length - 1}
+                                                data-tip="下一区"
+                                                on:click={() => (epTab = clampEpTab(epTab + 1, epSecs.length))}>下一区 ›</button>
+                                        </div>
+                                    {/if}
+                                {/if}
                             {/if}
                         </div>
                     {:else}
@@ -4921,17 +5413,47 @@ export let initialBookKind: BookKind | undefined = undefined;
                 {/if}
             </div>
             <label class="rl-lbl">个人评分</label>
-            <div class="rl-stars-input">
+            <!-- #619 半星（用户 2026-10-13）：每颗星分**左右两半** —— 左 = 半星、右 = 整星；
+                 数值按 **10 分制**显示（`9/10` ⟷ `4.5 星`），点它切成输入框；
+                 滚轮在星上增减并阻止页面滚动。半星用**伪元素裁切左半**渲染（⛔ 不用 U+2BE8 字符：字体覆盖不稳）。 -->
+            <div class="rl-stars-input" on:wheel={onStarWheel}>
                 {#each [1, 2, 3, 4, 5] as n}
-                    <span class:on={n <= rating} on:click={() => setStar(n)}>★</span>
+                    <span
+                        class="rl-star"
+                        class:on={n <= rating}
+                        class:half={n - 0.5 === rating}
+                        role="button"
+                        tabindex="0"
+                        aria-label={`${n - 0.5} 星`}
+                        on:click={(ev) => onStarClick(ev, n)}
+                        on:keydown={(ev) => {
+                            if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); setStar(n, false); }
+                        }}>★</span>
                 {/each}
-                <span class="rl-stars-val">{rating ? `${rating}/5` : '未评分'}</span>
+                {#if ratingEditing}
+                    <input
+                        class="rl-stars-num"
+                        type="number"
+                        step="1"
+                        min="0"
+                        max="10"
+                        bind:this={ratingInputEl}
+                        value={ratingToTenths(rating)}
+                        on:input={(ev) => { rating = tenthsToRating(Number(ev.currentTarget.value)); }}
+                        on:blur={(ev) => commitRatingEdit(ev.currentTarget.value)}
+                        on:keydown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); commitRatingEdit(ev.currentTarget.value); } }}
+                        aria-label="个人评分（10 分制）" />
+                    <span class="rl-stars-suffix">/10</span>
+                {:else}
+                    <button class="rl-stars-val" on:click={startRatingEdit}>{rating ? `${ratingToTenths(rating)}/10` : '未评分'}</button>
+                {/if}
             </div>
             <label class="rl-lbl">个人评语</label>
             <!-- #452：占位符改成一句**全类型统一**的引导语（用户给的字面形态，三个半角点，⛔ 别改成 `…`）——
                  旧口径是按类型拼「写下你的观后感/读后感/游玩体验/收听感受…」（`reviewLabel`），已随之退场。 -->
             <textarea class="rl-input rl-notes" rows="3" placeholder="在这里用一句话概括你的核心感受或者情绪记录..." bind:value={notes}></textarea>
 
+    
                 </div><!-- /rl-fields-col -->
             </div><!-- /rl-basic-grid -->
         </div><!-- /rl-fields -->
@@ -4942,16 +5464,22 @@ export let initialBookKind: BookKind | undefined = undefined;
             {#if entry}
                 <button class="rl-btn rl-btn-danger" on:click={onDelete}>删除条目</button>
                 <button class="rl-btn rl-btn-accent" on:click={startRefetch} data-tip="按标题重搜，回填客观字段">重新拉取</button>
-                {#if entry.type === 'book'}
+                <!-- 🔴 #685：表单底栏与右键菜单**同一套动作口径**（⛔ 别再留「记录游玩」这个游戏专属词）。
+                     摘抄 = 文学 / 网文（⛔ 漫画走「添加短评」）；时长 = 文学 / 网文 / 漫画 / 音乐 / 游戏；周目 = 游戏。 -->
+                {#if entry.type === 'book' && bookKind !== 'comic'}
                     <button class="rl-btn rl-btn-accent" on:click={onAddExcerpt} data-tip="粘贴文本生成摘抄">添加摘抄</button>
-                {:else if entry.type === 'game'}
-                    <button class="rl-btn rl-btn-accent" on:click={onRecordPlaySession} data-tip="记一次游玩（日期 + 时长 + 心得）">记录游玩</button>
+                {/if}
+                {#if entry.type === 'book' || entry.type === 'music' || entry.type === 'game'}
+                    <button class="rl-btn rl-btn-accent" on:click={() => onOpenEntryLogModal('time')} data-tip="记一次时长（日期 + 时长 + 心得）">记录时长</button>
+                {/if}
+                {#if entry.type === 'game'}
+                    <button class="rl-btn rl-btn-accent" on:click={() => onOpenEntryLogModal('playthrough')} data-tip="记一次周目（第几周目 + 感想）">记录周目</button>
                 {/if}
             {/if}
         </div>
         <div class="rl-fft-right">
             {#if picked}
-                <button class="rl-btn rl-btn-primary" disabled={!title.trim()} on:click={submitSafe}>{entry ? '更新笔记' : '保存并生成笔记'}</button>
+                <button class="rl-btn rl-btn-primary" disabled={!title.trim()} on:click={submitSafe}>{submitLabel(entry === null)}</button>
             {/if}
         </div>
     </div>
@@ -5053,6 +5581,10 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-res-inf { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: center; padding-right: 4px; }
     .rl-res-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; justify-content: center; }
     .rl-res-row1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    /* 🔴 #632 连续添加：已经建成条目的候选**压暗 + 标「已添加」**——
+       点它仍可再建一条（同名不同版本是合法需求，⛔ 这里只做提示不做拦截）。 */
+    .rl-res-item.is-added { opacity: .55; }
+    .rl-res-added { flex: none; font-size: 10px; line-height: 15px; padding: 0 5px; color: var(--interactive-accent); border: 1px solid currentColor; border-radius: var(--rl-t-radius-sm, 4px); }
     .rl-res-t { font-weight: 600; font-size: 14px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
     .rl-res-row2 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--text-normal); min-width: 0; }
     .rl-res-yr { color: var(--text-muted); flex: none; }
@@ -5243,9 +5775,29 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-tag-input { flex: 1; min-width: 90px; border: none; background: transparent; color: var(--text-normal); font-size: 12px; font-family: inherit; padding: 2px 4px; }
     .rl-tag-input:focus { outline: none; }
     .rl-tag-input::placeholder { color: var(--text-faint); }
-    .rl-stars-input { font-size: 20px; color: var(--rl-score-input); cursor: pointer; letter-spacing: 2px; }
-    .rl-stars-input span.on { color: var(--rl-score); }
-    .rl-stars-val { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
+    /* #619 半星：容器用 flex + gap（⛔ 不用 letter-spacing —— 星宽必须精确，
+       否则 `::before` 的 50% 裁切会有偏差）。 */
+    .rl-stars-input { display: flex; align-items: center; gap: 2px; font-size: 20px; color: var(--rl-score-input); }
+    /* 每颗星：默认淡色（未选）；`.on` 满星；`.half` 用伪元素裁切**左半边**画半星 */
+    .rl-star { position: relative; display: inline-block; cursor: pointer; }
+    .rl-star.on { color: var(--rl-score); }
+    .rl-star.half { color: var(--rl-score-input); }
+    .rl-star.half::before {
+        content: '★'; position: absolute; left: 0; top: 0;
+        width: 50%; overflow: hidden; color: var(--rl-score);
+    }
+    .rl-star:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; border-radius: 3px; }
+    /* 数值：点它切输入框（10 分制）。
+       🔴 它是 `<button>` ⇒ 必须压掉核心那条 `button:not(.clickable-icon)` 的灰底：
+          scoped 类 + 元素选择器 (0,2,1) 够用，但**框四件**（background/border/box-shadow/color）要齐。 */
+    .rl-stars-val {
+        margin-left: 8px; padding: 0 4px; font-size: 11px; font-family: inherit;
+        background: transparent; border: none; box-shadow: none; color: var(--text-muted);
+        cursor: pointer;
+    }
+    .rl-stars-val:hover { color: var(--text-normal); }
+    .rl-stars-num { margin-left: 8px; width: 52px; font-size: 12px; }
+    .rl-stars-suffix { margin-left: 2px; font-size: 11px; color: var(--text-muted); }
     .rl-link-row { display: flex; gap: 6px; margin-top: 5px; }
     .rl-link-label { width: 110px; flex: none; }
     /* 观看链接行操作按钮（浏览/播放/打开/复制/清除）：小图标紧凑样式，hover 高亮 */
@@ -5253,7 +5805,31 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-link-act:hover:not(:disabled) { color: var(--interactive-accent); border-color: var(--interactive-accent); }
     .rl-link-act:disabled { opacity: .4; cursor: not-allowed; }
     /* 观看链接区块：1..N 集按钮网格，左键播放/打开、右键编辑；本地绿点 / 网络蓝点双角标 */
-    .rl-ep-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .rl-ep-grid { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+    /* 🔴 2026-10-23：**每 10 行一个分区**（用户填 1000 集时不再一口气铺 1000 行）。
+       · 分区标题 `sticky`：吸的是**表单滚动容器** `.rl-fields`（`overflow-y: auto`）的顶边
+         —— 分区滚过容器顶时标题自动停住，直到本区滚完被下一区顶走（"吸顶或随滚动可见"两种读法都覆盖）。
+       · 标题必须**不透明**：底色取自表单底（`--background-primary`），否则吸顶时下面的集按钮会透出来。
+       · padding 上下各 4px = 标题与按钮之间的呼吸位；⛔ 改 `top` 时要与 `.rl-fields` 的 padding 对齐
+         （容器顶就是 `top: 0`，无需偏移）。 */
+    .rl-ep-sec { display: flex; flex-direction: column; gap: 6px; }
+    /* 🔴 2026-10-25：分区改**选项卡切换**（用户：「分区应该按选项卡切换而不是平铺」）。
+       · `.rl-ep-tabs` = 一排可横滚的胶囊（沿用全局 `.rl-chip` / `.rl-chip.on` 配色，⛔ 别另起一套皮肤）；
+       · 集数多时选项卡本身会超宽 ⇒ 横向滚动，不换行（换行会把表单顶下去两行）；
+       · 原 `.rl-ep-sec-hd`（吸顶标题）随平铺一起退场 —— 现在一次只显示一区，没有"滚过去了要贴住"的场景。 */
+    .rl-ep-tabs {
+        display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+        padding-bottom: 2px; margin-top: 2px;
+        scrollbar-width: thin;
+    }
+    .rl-ep-tabs::-webkit-scrollbar { height: 4px; }
+    .rl-ep-tabs::-webkit-scrollbar-thumb { background: var(--background-modifier-border); border-radius: 2px; }
+    .rl-ep-tab { flex: none; white-space: nowrap; }
+    /* 翻区行：上一区 / 计数 / 下一区 居中；禁用态压暗（⛔ 不用 display:none —— 会跳位） */
+    .rl-ep-tab-nav { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 2px; }
+    .rl-ep-tab-nav .rl-chip:disabled { opacity: .45; cursor: default; }
+    .rl-ep-tab-count { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+    .rl-ep-sec-grid { display: flex; flex-wrap: wrap; gap: 6px; }
     /* 「观看链接」标题行：label + 批量检索小图标（动画/剧集）并排；行内覆盖 label 底边距防图标下沉。
        🔴 #410：「从文件夹检索剧集」那枚图标按钮已并入**共用的** `.rl-ai-btn`（用户：「观看链接旁边的按钮
        也给我统一配色」）—— 原来这里另有一份（20×18 / 透明 / muted→accent），与 `.rl-ai-btn` **同形**，

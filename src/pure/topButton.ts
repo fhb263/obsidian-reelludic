@@ -37,3 +37,28 @@ export function wrapsRoot(target: unknown, root: unknown): boolean {
     const t = target as { contains?: (node: unknown) => boolean };
     return typeof t.contains === 'function' && t.contains(root);
 }
+
+/**
+ * 「滚动停下多久之后自动隐藏」的时长（#624，用户 2026-10-13：
+ * 「『回到顶部』按钮应该添加鼠标无上下滑动动作则自动隐藏的机制」）。
+ * 🔴 3 秒 —— 用户在「1.5 秒 / 3 秒」两个候选里点了 3 秒。
+ */
+export const TOP_IDLE_MS = 3000;
+
+/**
+ * 综合显隐判据（#624）＝「位置够」∧「不是（已静止 ∧ 鼠标不在按钮上）」。
+ *
+ * 🔴 为什么**悬停必须保持显示**：自动隐藏是给「用户已经不再找它」准备的；而鼠标正停在按钮上，
+ *    恰恰说明他下一秒要点 —— 这时淡出会让点击落空（比完全不自动隐藏更难用）。
+ *    ⚠️ 这条不是可选项：用户在两个候选里选的是「3 秒 + 悬停保持」。
+ * ⚠️ `idle` 由调用方的定时器给（滚一下 ⇒ 清零；停够 `TOP_IDLE_MS` ⇒ 置位）；
+ *    本函数只管判据、不碰计时器 —— 这样它能被单测（纯逻辑，无 DOM / 无定时器）。
+ */
+export function topVisible(
+    scrollTop: number,
+    opts: { hovering: boolean; idle: boolean },
+    threshold: number = TOP_SHOW_THRESHOLD,
+): boolean {
+    if (!shouldShowTop(scrollTop, threshold)) return false;
+    return !(opts.idle && !opts.hovering);
+}

@@ -238,6 +238,13 @@ export class ComicReaderView extends ReaderViewBase<ComicReaderOptions> {
         return '在书籍条目上点「阅读」即可在这个标签页里打开';
     }
 
+    /** 二次确认由视图统一注入（面板没有 app；与 TXT/EPUB/PDF 同一口径） */
+    protected prepare(opts: ComicReaderOptions): ComicReaderOptions {
+        return opts.onConfirmClear
+            ? opts
+            : { ...opts, onConfirmClear: (m: string) => new ConfirmModal(this.app, m).open() };
+    }
+
     protected mountPanel(container: HTMLElement, scope: Scope, opts: ComicReaderOptions): ReaderPanelLike {
         return new ComicReaderPanel(container, scope, opts, () => void this.leaf.detach());
     }

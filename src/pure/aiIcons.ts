@@ -60,6 +60,8 @@ export const AI_PROVIDER_ICON: Record<TranslateProvider, AiIcon> = {
     },
     /** 自定义端点：LobeHub 无此标 ⇒ 内置 `plug` */
     custom: { kind: 'builtin', id: 'plug' },
+    /** #634 槽位 2：同一个 `plug`（两个槽位是**同一种东西的两条通道**，⛔ 别给不同的标让人以为功能不同） */
+    custom2: { kind: 'builtin', id: 'plug' },
 };
 
 /**

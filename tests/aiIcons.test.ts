@@ -5,8 +5,15 @@ import { describe, it, expect } from 'vitest';
 import { AI_PROVIDER_ICON, TTS_ICON } from 'pure/aiIcons';
 
 describe('AI 服务商图标（#479 / #480）', () => {
-    it('chat 四档都有图标（编译期由 Record<TranslateProvider, AiIcon> 兜住，这里再钉一遍运行时）', () => {
-        expect(Object.keys(AI_PROVIDER_ICON).sort()).toEqual(['custom', 'deepseek', 'siliconflow', 'zhipu']);
+    it('chat 各档都有图标（编译期由 Record<TranslateProvider, AiIcon> 兜住，这里再钉一遍运行时）'
+        + '｜#634 起含第二个自定义槽位 `custom2`', () => {
+        expect(Object.keys(AI_PROVIDER_ICON).sort()).toEqual(['custom', 'custom2', 'deepseek', 'siliconflow', 'zhipu']);
+    });
+
+    it('🔴 #634 两个自定义槽位用**同一个** `plug` 标（同一种东西的两条通道，'
+        + '不同标会让人以为功能不同）', () => {
+        expect(AI_PROVIDER_ICON.custom).toEqual({ kind: 'builtin', id: 'plug' });
+        expect(AI_PROVIDER_ICON.custom2).toEqual({ kind: 'builtin', id: 'plug' });
     });
 
     it('🔴 #480：硅基流动**升为一等 chat 提供商** ⇒ 它的品牌标进了服务商表', () => {

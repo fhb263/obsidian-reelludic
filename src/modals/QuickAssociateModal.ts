@@ -45,6 +45,7 @@ import {
     type BiliPart,
     type BiliVideo,
 } from 'pure/dl/bilibili';
+import { forceHideScroll } from 'services/scrollPref';
 // 🔴 #519：批量搜索未填集（确认表）—— 循环/限速/行模型全在纯模块，⛔ 这里不自己维护游标与进度
 import {
     BATCH_PARTS_ANCHOR,
@@ -76,8 +77,29 @@ import {
 /** 系统文件选择器类别（映射 plugin.pick*Path 白名单） */
 export type QuickAssocPickKind = 'book' | 'game' | 'music' | 'video';
 
-/** 弹窗收集到的关联结果（元素均已 trim；影视数组与编辑表单同语义——压缩空位保序，空段缺省不写） */
-export interface QuickAssociateResult {
+/**
+ * 🔴 2026-10-21 二轮裁定（用户：「关联入口网络地址回填要的是**可播放的网络**，如 B站 搜索」）：
+ *    「网络地址」填的必须是**打开就能播 / 能读**的那条链接，⛔ 不是豆瓣那种资料页。
+ *    ⇒ 每一类都做成「先搜候选、再挑一条」的卡片（与 B站 卡共用 `.rl-bili-*` 壳类）：
+ *      · 电影 / 剧集 / 动画 → B站 视频（`biliSearch`，点开即播；电影这枚 2026-10-21 补上）
+ *      · 文学 / 网文 / 漫画 → 微信读书（`searchOnlineBook`，阅读链接）
+ *      · 音乐 → B站 视频页（`biliSearch`，点开即播；#686 用户原话「网络地址旁没有搜索b站的小图标按钮」）
+ *    🔴 **游戏不挂**：没有任何可播放在线源（启动路径是本地 .lnk）⇒ 按 #534 纪律「无可用源就不画假按钮」。
+ */
+export interface PlayableCand {
+    /** 候选标题（视频标题 / 书名 / 歌名） */
+    title: string;
+    /** 副标题（作者 / 歌手 · 平台） */
+    sub: string;
+    /** 要填进「网络地址」的那条链接 —— 必须是**能直接播 / 能读**的 */
+    url: string;
+    coverUrl?: string;
+}
+
+/** 在线曲库候选的返回：候选列表 or 一句人话的错误（⛔ 不把堆栈丢给用户看） */
+export type PlayableCandOutcome = { cands: PlayableCand[]; error?: string };
+
+/** 弹窗收集到的关联结果（元素均已 trim；影视数组与编辑表单同语义——压缩空位保序，空段缺省不写） */export interface QuickAssociateResult {
     bookFile?: string;
     gameLaunchPath?: string;
     audioPath?: string;
@@ -102,6 +124,14 @@ export interface QuickAssociateCallbacks {
     save: (result: QuickAssociateResult) => Promise<void>;
     /** 选视频文件夹（「从文件夹检索剧集」目录选择器；非桌面/取消 → undefined） */
     pickVideoDir?: () => Promise<string | undefined>;
+    /**
+     * 🔴🔴 #679（用户 2026-10-19：「漫画右键菜单的关联入口窗口，怎么不是专门选择漫画的窗口而是同步到了
+     * 文学/网文类选择的窗口，特点是没有能选择文件夹序列按钮」）：
+     * 漫画条目的「选文件夹」—— 把**图片文件夹本身**关联成书（散装图片序列型）。
+     * ⛔ 不能靠 `pickFile` 那枚兼做：Electron 在 Windows/Linux 上文件/目录只能二选一（#539 实测）。
+     * ⚠️ 没注入 ⇒ 那枚按钮不渲染（与上面几枚同一条纪律：不画点了没反应的按钮）。
+     */
+    pickBookFolder?: () => Promise<string | null | undefined>;
     /** 读文件夹内视频并识别集号（按集号升序；不可读/无命中 → []） */
     scanEpisodeDir?: (dir: string) => Promise<{ ep: number; path: string; name: string }[]>;
     /**
@@ -135,7 +165,8 @@ export interface QuickAssociateCallbacks {
      *    `path` / `name` / `count` / `notice` 四个字段。
      *    ⚠️ 没注入 ⇒ 那枚按钮**不渲染**（⛔ 不画一个点了没反应的按钮）。
      */
-    searchLocalFile?: (kind: 'book' | 'game' | 'music') => Promise<LocalFileSearchOutcome>;
+    /** 🔴 #679：`kind` 多出 `'comic'` 一档 —— 漫画条目按**漫画分类目录**检索（宿主侧按 kind 分流）。 */
+    searchLocalFile?: (kind: 'book' | 'comic' | 'game' | 'music') => Promise<LocalFileSearchOutcome>;
     /**
      * 🔴 #601：书籍「网络地址」标签旁那枚在线检索（`globe`）—— 检索源 = 微信读书
      *    （宿主 `main.searchWeread`，与编辑表单 `onSearchWeread` **同一个出口**）；只**回传候选**，
@@ -143,6 +174,21 @@ export interface QuickAssociateCallbacks {
      *    ⚠️ 没注入 ⇒ 不渲染；⚠️ **只有文学**才建那枚（#535 口径：网文 / 漫画不接在线源）。
      */
     searchOnlineBook?: (keyword: string) => Promise<{ books: WereadCandidate[]; error?: string }>;
+    /**
+     * ⚠️ 音乐「网络地址」行的图标是**在 B 站按歌名搜**（`biliSearch`，#686）——
+     *    与这枚「下载音频」无关：一个是「挑一条打开就能播的视频页链接」，一个是「下载音频文件并回填本地路径」，
+     *    ⛔ 别合并、也别因为「本地那行有下载」就把网络那行留空。
+     */
+    musicDownload?: (title: string, author: string, onPicked: (relPath: string) => void) => void;
+    /**
+     * 🔴 #629：**关窗且兜底提交落库完成之后**的回调（宿主可选注入）。
+     *
+     * 用途只有一个：系列「批量关联」清单（`SeriesAssociateModal`）要靠它刷新**那一行**的状态 ——
+     * 「已关联 · 本地 3 集」要在子弹窗关掉之后才变对。
+     * 🔴 时机**必须**在 `commit()` 之后 —— 早一拍会读到旧数据，清单上还写着「未关联」，用户以为没生效。
+     * ⚠️ 只在这一处调（`onClose`），⛔ 别在保存成功那条路上再调一次（会出现「关窗前就刷新」的另一种错）。
+     */
+    onClosed?: () => void;
 }
 
 /**
@@ -153,9 +199,15 @@ export interface QuickAssociateCallbacks {
  *    和本地路径**，怎么只有一个本地路径，统一一下」⇒ 改成与影视那套（#599）**同构的两行**：
  *    「网络地址」（手填 / 粘贴，书籍另有在线检索）＋「本地路径」（浏览 / 检索）。
  *
- * 🔴 图标口径沿用全仓（#533）：**本地检索 = `folder-search`**、**网络检索 = `globe`**；
- *    ⛔ 游戏 / 音乐的网络地址行**没有**检索图标 —— 游戏 #534 明确「不接在线检索源」、
- *       音乐侧四平台都要鉴权（无可用源）⇒ 那两行只有手填 / 粘贴。
+ * 🔴 图标口径沿用全仓（#533）：**本地检索 = `folder-search`**、**网络检索 = `globe`**、
+ *    **下载 = `download`**（音乐专属，非检索语义）。
+ *    🔴 **2026-10-21 二轮（用户：网络地址要「可播放的网络，如 B站 搜索」）**：
+ *       游戏 / 音乐的网络地址行此前只有手填 / 粘贴（游戏 #534 明确不接在线检索源、音乐四平台要鉴权）。
+ *       现在：**音乐**挂「在 B 站按歌名搜」（`biliSearch`，视频页可直接播）；
+ *       **游戏仍然不挂** —— 没有任何可播放在线源（启动路径是本地 .lnk），
+ *       按 #534 纪律「无可用源就不画假按钮」，⛔ 别为了「看起来每类都有」补一枚点了没用的。
+ *       文学 / 网文 / 漫画这三类书籍侧的那枚 `globe` 是微信读书候选卡（`searchOnlineBook`，阅读链接）。
+ *       ⛔ 同一行**只许一枚**网络图标（#532 记过两枚同款放大镜的教训）。
  * ⚠️ 栏目标签**仍然叫「网络地址 / 本地路径」**（不是 #523 那年统一出来的「路径」）——
  *    这两条本来就是**两条不同的路径**，都叫「路径」会分不清（影视侧当年就是这么留的）。
  *
@@ -165,14 +217,16 @@ export interface QuickAssociateCallbacks {
  *    ⇒ 三条 `searchTip` 必须各自说清「要不要你先挑目录」，⛔ 别三类抄同一句。
  */
 const SINGLE_ROWS: {
-    net: Record<'book' | 'game' | 'music', { label: string; placeholder: string; prefill: (e: MediaEntry) => string }>;
-    local: Record<'book' | 'game' | 'music', {
+    net: Record<'book' | 'comic' | 'game' | 'music', { label: string; placeholder: string; prefill: (e: MediaEntry) => string }>;
+    local: Record<'book' | 'comic' | 'game' | 'music', {
         label: string; placeholder: string; hint: string;
         searchTip: string; searchAria: string; prefill: (e: MediaEntry) => string;
     }>;
 } = {
     net: {
         book: { label: '网络地址', placeholder: '在线阅读链接（https://…）', prefill: (e) => e.readUrl ?? '' },
+        // 漫画与文学共用「在线阅读链接」（漫画不做在线源，但框要能填）
+        comic: { label: '网络地址', placeholder: '在线阅读链接（https://…）', prefill: (e) => e.readUrl ?? '' },
         game: { label: '网络地址', placeholder: '商店页 / 官网（https://…）', prefill: (e) => e.gameUrl ?? '' },
         music: { label: '网络地址', placeholder: '在线页 / 试听链接（https://…）', prefill: (e) => e.audioUrl ?? '' },
     },
@@ -183,6 +237,17 @@ const SINGLE_ROWS: {
             hint: '选择 TXT / EPUB / PDF 电子书',
             searchTip: '检索本地：在设置里的书籍目录（文学 / 网文 / 漫画）里按标题递归找同名书籍',
             searchAria: '检索本地书籍',
+            prefill: (e) => e.bookFile ?? '',
+        },
+        // 🔴🔴 #679：**漫画**单独一档 —— 文案与「选文件夹」按钮都按它分叉。
+        //    用户原话：「不是专门选择漫画的窗口，而是同步到了文学/网文类选择的窗口，特点是没有能选择文件夹序列按钮」。
+        //    ⛔ 别把它并回 `book` 那一档（那正是「看着像文学窗口」的来源）。
+        comic: {
+            label: '本地路径',
+            placeholder: '图片文件夹路径，或 .cbz / .cbt / .zip / .tar 文件',
+            hint: '选择漫画压缩包（.cbz / .cbt / .zip / .tar）',
+            searchTip: '检索本地：在设置里的漫画目录里按标题递归找同名图片文件夹 / 压缩包',
+            searchAria: '检索本地漫画',
             prefill: (e) => e.bookFile ?? '',
         },
         game: {
@@ -224,12 +289,14 @@ export class QuickAssociateModal extends Modal {
     private singleLocalInput: HTMLInputElement | null = null;
     /** #599：影视「本地路径」标签旁那枚单集本地检索（宿主没注入能力 ⇒ 不建） */
     private localBtn: HTMLButtonElement | null = null;
-    // ── #601 书籍「网络地址」旁那枚在线检索开的**候选卡**（微信读书；与 B站 卡同一套壳类、不同数据源）──
-    private bookCard: HTMLDivElement | null = null;
-    private bookQuery = '';
-    private bookBooks: WereadCandidate[] = [];
-    private bookBusy = false;
-    private bookErr = '';
+    // ── 候选卡（书籍 = 微信读书阅读链接、音乐 = B站 视频页；与 B站 卡同一套壳类、不同数据源）──
+    /** 卡的数据源：`weread` = 微信读书（文学 / 网文 / 漫画）、`bili` = B站 视频页（音乐） */
+    private candMode: 'weread' | 'bili' = 'weread';
+    private candCard: HTMLDivElement | null = null;
+    private candQuery = '';
+    private cands: PlayableCand[] = [];
+    private candBusy = false;
+    private candErr = '';
     /**
      * 🔴 #593：**自动保存的初始快照**（打开那一刻的提交签名）—— 提交前与它比对，**没改就不写盘**
      *    （与 `pure/popoverAutoSave.shouldAutoSave` 的「没改不存」同一语义，只是这里比的是整份结果）。
@@ -253,6 +320,11 @@ export class QuickAssociateModal extends Modal {
     private lastField: 'url' | 'local' | 'other' = 'other';
     /** 单集本地检索在途（按钮转圈 + 期间忽略重复点击） */
     private localBusy = false;
+    /**
+     * 🔴 2026-10-21 二轮：网络地址那几枚图标统一走候选卡（`openCandCard`），
+     * 不再有「一键回填首条命中」这种路径 —— 用户要的是**能播 / 能读**的链接，
+     * 首条命中是资料页，正是被否掉的那个语义。
+     */
     /** 弹窗内任意输入/选择 ⇒ 算一次改动（委托监听，⛔ 不在每个控件各挂一份） */
     private readonly onAnyEdit = (ev: Event): void => {
         const t = ev.target;
@@ -309,9 +381,10 @@ export class QuickAssociateModal extends Modal {
         const { contentEl, modalEl } = this;
         contentEl.empty();
         modalEl.style.width = 'min(480px, 92vw)';
-        // 🔴 #599：本窗**隐藏滚动条**（用户点名）—— 复用设置项那套全仓类（`.rl-hide-scroll`：
-        //    自身与后代的 `scrollbar-width` / `::-webkit-scrollbar` 一并收掉，**仍可滚**）。
-        modalEl.addClass('rl-hide-scroll');
+        // 🔴 #599 用户点名 / #630 收口：本窗**恒隐藏**滚动条（不看设置开关）—— 走 `services/scrollPref`
+        //    的 `forceHideScroll`（真源那一处会连自身与后代的 `scrollbar-width` / `::-webkit-scrollbar`
+        //    一并收掉，**仍可滚**）。
+        forceHideScroll(modalEl);
         const isVideo = this.entry.type === 'movie' || this.entry.type === 'tv' || this.entry.type === 'anime';
 
         const wrap = contentEl.createDiv({ cls: 'rl-qa' });
@@ -340,9 +413,13 @@ export class QuickAssociateModal extends Modal {
     /**
      * 书 / 游戏 / 音乐：**两行** —— 「网络地址」＋「本地路径」（#601；由来见 `SINGLE_ROWS` 那段注释）。
      * 🔴 图标挂在**各自的标签行右旁**（`.rl-qa-lbl-row` + `.rl-ai-btn`，与影视 #599 同款同位）：
-     *    · 网络地址行：**只有书籍（文学）**有 `globe`（检索在线书籍阅读 = 微信读书候选卡）；
-     *    · 本地路径行：三类都有 `folder-search`（宿主一步到位地检索，契约见 `searchLocalFile`）。
-     * ⚠️ 两枚按钮都在**没注入能力时不渲染**（⛔ 不画点了没反应的按钮）。
+     *    · 网络地址行：书籍侧（文学 / 网文 / 漫画）挂 `globe`（微信读书阅读链接）；
+     *      **音乐侧同样挂一枚 `globe`（B站 按歌名搜）** —— #686 用户原话：
+     *      「这个音乐类型的右键菜单-关联弹窗的网络地址旁没有搜索b站的小图标按钮啊」；
+     *      **游戏没有**（无可播放在线源）；
+     *    · 本地路径行：三类都有 `folder-search`（宿主一步到位地检索，契约见 `searchLocalFile`）；
+     *      **音乐另有 `download`**（需求 8：下载音频并回填路径，与编辑表单那枚同款同语义）。
+     * ⚠️ 按钮都在**没注入能力时不渲染**（⛔ 不画点了没反应的按钮）。
      * 🔴 就地保存提示**各挂各的标签行**（`rowHints.url` / `rowHints.local`）—— 与影视那两行同一套路由。
      */
     private buildSingleSection(wrap: HTMLElement): void {
@@ -350,20 +427,31 @@ export class QuickAssociateModal extends Modal {
         const net = SINGLE_ROWS.net[t];
         const local = SINGLE_ROWS.local[t];
 
-        // ── 网络地址（手填 / 粘贴；书籍另有在线检索）─────────────────────────────
+        // ── 网络地址（手填 / 粘贴；书籍与音乐另有**候选检索**）────────────────────
         const netLbl = wrap.createDiv({ cls: 'rl-qa-lbl-row' });
         netLbl.createDiv({ cls: 'rl-qa-lbl', text: net.label });
-        if (t === 'book' && this.cbs.searchOnlineBook && this.entry.bookKind === 'book') {
+        // 🔴 2026-10-21 二轮（用户：「网络地址回填要的是**可播放的网络**，如 B站 搜索」）：
+        //    书籍侧（文学 / 网文 / 漫画）统一挂微信读书候选卡 —— 填的是**阅读链接**（打开就能读），
+        //    ⛔ 不是豆瓣那种资料页。网文 / 漫画此前连入口都没有，现在与文学同一枚。
+        // ⚠️ 判据必须同时收 `comic`：`singleType()` 把漫画单独归成 `'comic'` 而不是 `'book'`
+        //    （只写 `t === 'book'` 会让漫画那行一枚图标都没有 —— 真机普查实测踩过）。
+        if ((t === 'book' || t === 'comic') && this.cbs.searchOnlineBook) {
             const b = netLbl.createEl('button', { cls: 'rl-ai-btn' });
-            b.setAttribute('data-tip', '检索在线书籍阅读（微信读书）');
+            b.setAttribute('data-tip', '检索在线阅读（微信读书）：点一条就填阅读链接');
             try {
                 setIcon(b, 'globe');
             } catch {
                 b.setText('🌐');
             }
-            b.createSpan({ cls: 'rl-sr', text: '检索在线书籍阅读' });
-            b.onclick = () => void this.openOnlineBookPicker();
+            b.createSpan({ cls: 'rl-sr', text: '检索在线阅读' });
+            b.onclick = () => this.openCandCard('weread');
         }
+        // 🔴 #686（用户：「音乐类型的关联弹窗，网络地址旁没有搜索b站的小图标按钮啊」）：
+        //    音乐「网络地址」行改挂 **B站 检索**（`globe`）—— 与影视侧那枚同款同语义，填**打开就能播**的视频页。
+        //    ⚠️ 同一行只留这一枚网络检索图标（#532 纪律）；⛔ 原「在线曲库检索」那枚在本弹窗撤掉（曲库检索仍在编辑浮层 / 曲库栏）。
+        if (t === 'music') this.buildMusicNetBtn(netLbl);
+        // 🔴 游戏**不挂**网络图标：没有任何可播放在线源（启动路径是本地 .lnk），
+        //    按 #534「无可用源就不画假按钮」——用户要的是可播放链接，不是元数据资料页。
         this.rowHints.url = netLbl.createSpan({ cls: 'rl-saved-hint' });
         const netRow = wrap.createDiv({ cls: 'rl-qa-row' });
         this.singleNetInput = netRow.createEl('input', {
@@ -389,6 +477,22 @@ export class QuickAssociateModal extends Modal {
             b.createSpan({ cls: 'rl-sr', text: local.searchAria });
             b.onclick = () => void this.searchLocalInto(t);
         }
+        // 🔴 需求 8：**音乐专属**的「下载音频并回填路径」—— 与编辑表单「启动路径」旁那枚**同款同语义**
+        //    （`icon = 'download'`、同样 `musicDownload` 没注入就不画）。
+        //    ⚠️ 挂在**标签行右旁**（#454 口径），⛔ 别塞进输入框那行（那是「浏览」的位置）。
+        if (t === 'music' && this.cbs.musicDownload) {
+            const dl = locLbl.createEl('button', { cls: 'rl-ai-btn' });
+            dl.setAttribute('data-tip', '下载音频并回填路径');
+            try {
+                setIcon(dl, 'download');
+            } catch {
+                dl.setText('⬇');
+            }
+            // 读屏名走隐藏文本（⛔ 不用 aria-label：与 data-tip 同元素会叠两层气泡，UI-GUIDE §3），
+            // 且**必须**在 setIcon 之后追加（setIcon 会整体替换元素内容）。
+            dl.createSpan({ cls: 'rl-sr', text: '下载歌曲' });
+            dl.onclick = () => this.downloadMusicInto(this.singleLocalInput!);
+        }
         this.rowHints.local = locLbl.createSpan({ cls: 'rl-saved-hint' });
         const locRow = wrap.createDiv({ cls: 'rl-qa-row' });
         this.singleLocalInput = locRow.createEl('input', {
@@ -399,11 +503,44 @@ export class QuickAssociateModal extends Modal {
         const browse = locRow.createEl('button', { cls: 'rl-btn rl-link-act', text: '浏览' });
         browse.setAttribute('data-tip', local.hint);
         browse.onclick = () => void this.pickInto(this.singleLocalInput!, this.pickKind());
+        // 🔴🔴 #679：**漫画专属**的「选文件夹」（散装图片序列型）—— 与编辑表单 #539 那枚**同款同语义**。
+        //    ⛔ 不能靠「浏览」兼做：Electron 在 Windows/Linux 上文件/目录只能二选一（#539 实测）。
+        //    ⚠️ 回调没注入 ⇒ 不渲染（不画点了没反应的按钮）。
+        if (t === 'comic' && this.cbs.pickBookFolder) {
+            const folder = locRow.createEl('button', { cls: 'rl-btn rl-link-act', text: '选文件夹' });
+            folder.setAttribute('data-tip', '选择图片文件夹（散装图片序列型漫画）');
+            folder.onclick = () => void this.pickFolderInto(this.singleLocalInput!);
+        }
     }
 
-    /** 单路径三类的窄类型（`pickKind` 与 `SINGLE_ROWS` 共用同一把口径） */
-    private singleType(): 'book' | 'game' | 'music' {
-        return this.entry.type === 'book' ? 'book' : this.entry.type === 'game' ? 'game' : 'music';
+    /** #679：选漫画图片文件夹 → 填进本地路径框（三态：选中 / 取消 / 本环境没有对话框） */
+    private async pickFolderInto(input: HTMLInputElement): Promise<void> {
+        const pick = this.cbs.pickBookFolder;
+        if (!pick) return;
+        let dir: string | null | undefined;
+        try {
+            dir = await pick();
+        } catch {
+            dir = null;
+        }
+        if (typeof dir === 'string' && dir.trim()) {
+            input.value = dir.trim();
+            this.markDirty(); // 与「浏览」同一条自动保存通道
+            this.flashHint(false);
+            new Notice('已选择图片文件夹（改动会自动保存）');
+        } else if (dir === undefined) {
+            new Notice('当前环境没有系统对话框，可手动输入文件夹路径');
+        } else {
+            new Notice('未选择文件夹，可手动输入路径');
+        }
+    }
+
+    /** 单路径三类的窄类型（`pickKind` 与 `SINGLE_ROWS` 共用同一把口径）。
+     *  🔴 #679：**漫画单独一档** —— 它的本地行文案 / 「选文件夹」按钮都与文学不同，
+     *  判定唯一入口 = 条目自己的 `bookKind === 'comic'`（⛔ 别在别处再判一次）。 */
+    private singleType(): 'book' | 'comic' | 'game' | 'music' {
+        if (this.entry.type === 'book') return this.entry.bookKind === 'comic' ? 'comic' : 'book';
+        return this.entry.type === 'game' ? 'game' : 'music';
     }
 
     /** 「粘贴」：读剪贴板 → 清洗 → 填入给定输入框（与视频那条 `pasteUrl` 同一套；只填框，落库靠自动保存） */
@@ -424,7 +561,7 @@ export class QuickAssociateModal extends Modal {
      * ⚠️ 程序填入也算一次改动 ⇒ 填完**当场走一次自动保存**（用户「拉取到的路径要自动保存」的既有口径），
      *    与 #563/#599 那条单集本地检索**同一条纪律**（在途去重、命中就填、取消只提示）。
      */
-    private async searchLocalInto(kind: 'book' | 'game' | 'music'): Promise<void> {
+    private async searchLocalInto(kind: 'book' | 'comic' | 'game' | 'music'): Promise<void> {
         const fn = this.cbs.searchLocalFile;
         if (!fn || this.localBusy) return;
         this.localBusy = true;
@@ -446,112 +583,217 @@ export class QuickAssociateModal extends Modal {
         }
     }
 
-    // ── #601 书籍「网络地址」旁的在线检索（微信读书候选卡；与 B站 卡同壳类、独立状态）──────
+    /**
+     * 🔴 需求 8：音乐「**下载音频并回填路径**」。
+     *
+     * 只做三件事：① 把条目名 / 作者交给宿主开「下载歌曲」窗（与编辑表单 `openDownloader` 同一个出口）；
+     * ② 用户选中后把**库内相对路径**填进「本地路径」框；③ 走本弹窗既有的
+     * **脏标记 + 自动保存**（`markDirty` / `flashHint`）—— 与「浏览」选完文件后那条通道逐字同款
+     * （程序填入也算一次改动 ⇒ 提示落「本地路径」那一行）。
+     *
+     * ⚠️ 作者取 `entry.author`（⛔ 不新增数据字段）；作者为空就传空串，由宿主那侧去兜。
+     * ⚠️ `onPicked` 可能**异步**（用户先挑歌再下载），所以回调里**不碰**任何已被关窗清空的 DOM
+     *    （`onClose` 会 `contentEl.empty()`）—— 只剩「框还在就填」这一步。
+     */
+    private downloadMusicInto(input: HTMLInputElement): void {
+        const fn = this.cbs.musicDownload;
+        if (!fn) return;
+        fn(this.entry.title, this.entry.author ?? '', (relPath: string) => {
+            const p = String(relPath ?? '').trim();
+            if (!p) return;
+            input.value = p;
+            this.lastField = 'local';
+            this.markDirty();
+            this.flashHint(false);
+            new Notice('已下载并回填音频路径（改动会自动保存）');
+        });
+    }
 
-    /** 开/重画那张候选卡（DOM 卡片没有响应式 ⇒ 状态一变就整卡重画） */
-    private openOnlineBookPicker(): void {
-        this.bookQuery = buildWereadQuery(this.entry.title, this.entry.author);
-        this.bookBooks = [];
-        this.bookErr = '';
-        if (!this.bookCard) this.bookCard = this.contentEl.createDiv({ cls: 'rl-bili-card' });
-        this.renderBookCard();
-        if (this.bookQuery.trim()) void this.runBookSearch();
+    // ── 🔴 2026-10-21 二轮：音乐「网络地址」旁的**在线曲库检索**（可试听的平台页）────────
+
+    /**
+     * 画音乐「网络地址」标签旁那枚 `globe`：打开**在线曲库候选卡**（与书籍那张同一套卡片、换数据源）。
+     *
+     * ⚠️ 位置口径 = **标签行右旁**（`.rl-qa-lbl-row`），与本地路径 `folder-search` 分处两行。
+     * ⚠️ 必须由调用方在 `rowHints` 那个提示 span **之前**调用，否则就地保存提示会跑到图标左边。
+     */
+    private buildMusicNetBtn(lblRow: HTMLElement): void {
+        if (!this.cbs.biliSearch) return;
+        const b = lblRow.createEl('button', { cls: 'rl-ai-btn' });
+        b.setAttribute('data-tip', '在 B 站按歌名搜，点一条把可播放链接填进网络地址');
+        try {
+            setIcon(b, 'globe');
+        } catch {
+            b.setText('🌐');
+        }
+        // 读屏名走隐藏文本（⛔ 不用 aria-label：与 data-tip 同元素会叠两层气泡，UI-GUIDE §3），
+        // 且**必须在** setIcon 之后追加（setIcon 会整体替换元素内容）。
+        b.createSpan({ cls: 'rl-sr', text: '在 B 站按歌名搜索' });
+        b.onclick = () => this.openCandCard('bili');
+    }
+
+    // ── 候选卡（🔴 复用全仓那套 `.rl-bili-*` 壳类）：书籍侧 = 微信读书、音乐侧 = B站 视频页 ────
+
+    /**
+     * 开/重画那张候选卡（DOM 卡片没有响应式 ⇒ 状态一变就整卡重画）。
+     * 🔴 同一张卡服务两个数据源 ——
+     *   `weread`（文学 / 网文 / 漫画，「网络地址」= 阅读链接）与 `bili`（音乐，= B站 视频页）。
+     *   两者都是**打开就能播 / 能读**的链接，⛔ 不要退回「填元数据源详情页」那种语义。
+     */
+    private openCandCard(mode: 'weread' | 'bili'): void {
+        this.candMode = mode;
+        this.candQuery = mode === 'weread'
+            ? buildWereadQuery(this.entry.title, this.entry.author)
+            : `${this.entry.title} ${this.entry.author ?? ''}`.trim();
+        this.cands = [];
+        this.candErr = '';
+        if (!this.candCard) this.candCard = this.contentEl.createDiv({ cls: 'rl-bili-card' });
+        this.renderCandCard();
+        if (this.candQuery.trim()) void this.runCandSearch();
+    }
+
+    /**
+     * 按给定检索词取一批候选（把两种数据源折成同一个 `PlayableCand[]`）。
+     * ⛔ 错误不抛，交给调用方展示。
+     */
+    private async fetchCands(kw: string): Promise<{ cands: PlayableCand[]; error: string }> {
+        if (this.candMode === 'weread') {
+            const fn = this.cbs.searchOnlineBook;
+            if (!fn) return { cands: [], error: '' };
+            const out = await fn(kw);
+            return {
+                // 微信读书候选 → 统一候选形状（`readUrl` 才是「能读」的那条，⛔ 不是详情页）
+                cands: (out.books ?? [])
+                    .filter((b) => String(b.readUrl ?? '').trim() !== '')
+                    .map((b) => ({ title: b.title, sub: b.author || '未知作者', url: String(b.readUrl), coverUrl: b.coverUrl })),
+                error: out.error ?? '',
+            };
+        }
+        const fn = this.cbs.biliSearch;
+        if (!fn) return { cands: [], error: '' };
+        const out = await fn(kw);
+        return {
+            // B站 候选 → 统一候选形状（`webUrl` = 打开就能播的视频页，⛔ 不是 bv 号裸串）
+            cands: (out.videos ?? [])
+                .filter((v) => String(v.webUrl ?? '').trim() !== '')
+                .map((v) => ({ title: v.title, sub: v.author || '未知 UP 主', url: String(v.webUrl), coverUrl: v.coverUrl })),
+            error: out.error ?? '',
+        };
     }
 
     /** 按当前检索词搜一次（错误折成一句人话，⛔ 不抛给用户看堆栈） */
-    private async runBookSearch(): Promise<void> {
-        const fn = this.cbs.searchOnlineBook;
-        if (!fn || this.bookBusy) return;
-        const kw = this.bookQuery.trim();
-        this.bookBooks = [];
-        this.bookErr = '';
+    private async runCandSearch(): Promise<void> {
+        const kw = this.candQuery.trim();
+        this.cands = [];
+        this.candErr = '';
         if (!kw) {
-            this.bookErr = '先填检索词（默认取书名 + 作者）';
-            this.renderBookCard();
+            this.candErr = this.candMode === 'weread' ? '先填检索词（默认取书名 + 作者）' : '先填检索词（默认取歌名 + 歌手）';
+            this.renderCandCard();
             return;
         }
-        this.bookBusy = true;
-        this.renderBookCard();
+        if (this.candBusy) return;
+        this.candBusy = true;
+        this.renderCandCard();
         try {
-            const out = await fn(kw);
-            this.bookBooks = out.books ?? [];
-            this.bookErr = out.error ?? '';
+            const first = await this.fetchCands(kw);
+            this.cands = first.cands;
+            this.candErr = first.error;
+            // 🔴 「书名 + 作者」搜不到时**再退一步只用标题**：
+            //    微信读书的检索是包含匹配，多带一个作者名会把结果全滤掉
+            //    （真机实测：《呆头农场》带作者 → 0 条；只搜书名 → 命中 1 条带 readUrl）。
+            const bare = (this.entry.title ?? '').trim();
+            if (!this.cands.length && !this.candErr && bare && bare !== kw) {
+                const second = await this.fetchCands(bare);
+                this.cands = second.cands;
+                this.candErr = second.error;
+                if (this.cands.length) this.candQuery = bare;
+            }
         } catch (e) {
-            this.bookErr = `检索出错：${e instanceof Error ? e.message : String(e)}`;
+            this.candErr = `检索出错：${e instanceof Error ? e.message : String(e)}`;
         } finally {
-            this.bookBusy = false;
+            this.candBusy = false;
         }
-        this.renderBookCard();
+        this.renderCandCard();
     }
 
     /** 点一条候选 ⇒ 填进「网络地址」框（仍走自动保存）+ 收卡 */
-    private pickBookCandidate(c: WereadCandidate): void {
-        if (this.singleNetInput && c.readUrl) {
-            this.singleNetInput.value = c.readUrl;
+    private pickCand(c: PlayableCand): void {
+        if (this.singleNetInput && c.url) {
+            this.singleNetInput.value = c.url;
             this.lastField = 'url';
             this.markDirty();
             this.flashHint(false);
         }
-        this.closeBookCard();
-        new Notice(`已填入《${c.title}》的阅读链接（改动会自动保存）`);
+        this.closeCandCard();
+        new Notice(`已填入《${c.title}》的${this.candMode === 'weread' ? '阅读' : '播放'}链接（改动会自动保存）`);
     }
 
-    private closeBookCard(): void {
-        this.bookCard?.remove();
-        this.bookCard = null;
-        this.bookBooks = [];
-        this.bookErr = '';
-        this.bookBusy = false;
+    private closeCandCard(): void {
+        this.candCard?.remove();
+        this.candCard = null;
+        this.cands = [];
+        this.candErr = '';
+        this.candBusy = false;
     }
 
-    /** 整卡重绘（🔴 复用全仓那套 `.rl-bili-*` 壳类 —— 与 B站 卡同款外观，只是数据源换成微信读书） */
-    private renderBookCard(): void {
-        const card = this.bookCard;
+    /** 整卡重绘（🔴 复用全仓那套 `.rl-bili-*` 壳类 —— 与 B站 卡同款外观，只是数据源换成阅读 / 曲库） */
+    private renderCandCard(): void {
+        const card = this.candCard;
         if (!card) return;
         card.empty();
+        const weread = this.candMode === 'weread';
 
         const head = card.createDiv({ cls: 'rl-bili-head' });
-        head.createDiv({ cls: 'rl-bili-card-title', text: '检索在线书籍阅读（微信读书）' });
+        head.createDiv({
+            cls: 'rl-bili-card-title',
+            text: weread ? '检索在线阅读（微信读书，点一条填阅读链接）' : '在 B 站搜歌（点一条填可播放链接）',
+        });
         const close = head.createEl('button', { cls: 'rl-bili-close', text: '✕' });
         close.setAttribute('data-tip', '关闭');
-        close.onclick = () => this.closeBookCard();
+        close.onclick = () => this.closeCandCard();
 
         const row = card.createDiv({ cls: 'rl-bili-searchrow' });
-        const inp = row.createEl('input', { cls: 'rl-qa-input', attr: { type: 'text', placeholder: '书名（或书名 + 作者）' } });
-        inp.value = this.bookQuery;
-        inp.oninput = () => (this.bookQuery = inp.value);
-        const go = row.createEl('button', { cls: 'rl-btn rl-link-act', text: this.bookBusy ? '搜索中…' : '搜索' });
-        go.disabled = this.bookBusy;
-        go.onclick = () => void this.runBookSearch();
+        const inp = row.createEl('input', {
+            cls: 'rl-qa-input',
+            attr: { type: 'text', placeholder: weread ? '书名（或书名 + 作者）' : '歌名（或歌名 + 歌手）' },
+        });
+        inp.value = this.candQuery;
+        inp.oninput = () => (this.candQuery = inp.value);
+        const go = row.createEl('button', { cls: 'rl-btn rl-link-act', text: this.candBusy ? '搜索中…' : '搜索' });
+        go.disabled = this.candBusy;
+        go.onclick = () => void this.runCandSearch();
 
-        if (this.bookErr) card.createDiv({ cls: 'rl-hint-note is-error', text: this.bookErr });
-        if (this.bookBusy) card.createDiv({ cls: 'rl-hint-note', text: '正在检索…' });
+        if (this.candErr) card.createDiv({ cls: 'rl-hint-note is-error', text: this.candErr });
+        if (this.candBusy) card.createDiv({ cls: 'rl-hint-note', text: '正在检索…' });
 
         const list = card.createDiv({ cls: 'rl-bili-list' });
-        for (const bk of this.bookBooks) {
+        for (const c of this.cands) {
             const r = list.createEl('button', { cls: 'rl-bili-row' });
-            r.disabled = this.bookBusy;
-            r.setAttribute('data-tip', `填入阅读链接：${bk.title}`);
-            r.onclick = () => this.pickBookCandidate(bk);
-            if (bk.coverUrl) {
+            r.disabled = this.candBusy;
+            r.setAttribute('data-tip', `填入链接：${c.url}`);
+            r.onclick = () => this.pickCand(c);
+            if (c.coverUrl) {
                 const img = r.createEl('img', { cls: 'rl-bili-cover' });
-                img.src = bk.coverUrl;
+                img.src = c.coverUrl;
                 img.alt = '';
                 img.setAttribute('referrerpolicy', 'no-referrer');
             } else {
                 const ph = r.createSpan({ cls: 'rl-bili-cover rl-bili-cover-ph' });
                 try {
-                    setIcon(ph, 'book-open');
+                    setIcon(ph, weread ? 'book-open' : 'music');
                 } catch {
                     /* 图标不可用：忽略 */
                 }
             }
             const main = r.createSpan({ cls: 'rl-bili-main' });
-            main.createSpan({ cls: 'rl-bili-name', text: bk.title });
-            main.createSpan({ cls: 'rl-bili-artist', text: bk.author || '未知作者' });
+            main.createSpan({ cls: 'rl-bili-name', text: c.title });
+            main.createSpan({ cls: 'rl-bili-artist', text: c.sub });
         }
-        if (!this.bookBusy && !this.bookErr && this.bookBooks.length === 0 && this.bookQuery.trim()) {
-            card.createDiv({ cls: 'rl-hint-note', text: '没搜到，换个检索词试试' });
+        if (!this.candBusy && !this.candErr && this.cands.length === 0 && this.candQuery.trim()) {
+            card.createDiv({
+                cls: 'rl-hint-note',
+                text: weread ? '没搜到可读的电子书，换个检索词试试' : '没搜到能播的视频，换个检索词试试',
+            });
         }
     }
 
@@ -580,7 +822,18 @@ export class QuickAssociateModal extends Modal {
             toolRow.createSpan({ cls: 'rl-qa-lbl-inline', text: '总集数' });
             this.totalInput = toolRow.createEl('input', { cls: 'rl-qa-input rl-qa-total-input', attr: { type: 'number', min: '1', step: '1' } });
             this.totalInput.value = String(this.total);
-            this.totalInput.onchange = () => this.changeTotal(parseInt(this.totalInput!.value, 10));
+            // 🔴 #（用户 m00002）：「关联入口窗口填写总集数怎么不失焦保存啊」——
+            //   原来只有 `onchange`（失焦 / 回车才触发）⇒ 敲完数字不点别处就**什么都没发生**。
+            //   改成 `oninput`：**输入即生效**（每键立刻改 total + 重绘集号网格，不用失焦），
+            //   并顺带 `markDirty()` 走 #593 自动保存通道（防抖落库 + 关窗兜底）——
+            //   ⛔ 别退回 `onchange`；⛔ 也别在这里手动 `commit()`（会绕开防抖，逐键写盘）。
+            //   ⚠️ 中间值（如 1 → 10 的 `1`）会把网格短暂重绘成 1 格，无妨：数组只扩不缩，不丢数据。
+            this.totalInput.oninput = () => {
+                const raw = parseInt(this.totalInput!.value, 10);
+                if (!Number.isInteger(raw) || raw <= 0) return; // 空框 / 半截输入 ⇒ 先不动，等下一个键
+                this.changeTotal(raw);
+                this.markDirty();
+            };
             // 上面那个「总集数」输入框占位后再挂两枚工具；`margin-left:auto` 把它们推到右端
         }
         // 批量检索小图标：选文件夹 → 识别集号自动填入未关联集（hover 出说明）
@@ -616,14 +869,18 @@ export class QuickAssociateModal extends Modal {
         // 🔴 #506：B站 搜索小按钮挂在**「网络地址」标签行右旁**（`.rl-qa-lbl-row` + `.rl-ai-btn`）——
         //    与集编辑浮层 §16.28③ 同款同位；⛔ 别塞进下面那个输入框行（那是「粘贴」的位置，
         //    两枚挤一行会被认成两个功能）。
-        // 🔴 #599：这枚**回潮**（#521/#523 曾按「浮窗内小图标一律不显示」撤掉）—— 用户本轮点名
+        // 🔴 #599：这枚**回潮**（#521/#523 曾按「浮窗内小图标一律不显示」撤掉）—— 用户点名
         //    「在网络地址和本地路径标题旁边**复用**小图标按钮 - 单集网络检索和本地检索」。
-        //    ⚠️ 与编辑浮层同一条门控：**电影不挂**（只有一个链接位、且总集数行那枚已覆盖，见 #536）。
+        // 🔴🔴 2026-10-21 二轮（用户：「关联入口网络地址回填要的是**可播放的网络**，如 B站 搜索」）：
+        //    **电影也挂这枚**（原 #536「电影不挂」被本轮语义覆盖）—— 电影同样需要一个
+        //    「搜一串可播放视频、挑一条填进来」的入口，而 B站 就是本仓唯一能播的视频源。
+        //    ⚠️ 检索词仍由 `openBiliPicker` 决定（电影 `epNo = 0` ⇒ 只按片名搜，不拼「第N集」）。
         const urlLblRow = div.createDiv({ cls: 'rl-qa-lbl-row' });
         urlLblRow.createDiv({ cls: 'rl-qa-lbl', text: '网络地址' });
-        if (e.type !== 'movie') {
+        {
+            const isMovie = e.type === 'movie';
             const biliBtn = urlLblRow.createEl('button', { cls: 'rl-ai-btn' });
-            biliBtn.setAttribute('data-tip', '在 B 站搜这一集，点候选把链接填进来');
+            biliBtn.setAttribute('data-tip', isMovie ? '在 B 站按片名搜，点候选把可播放链接填进来' : '在 B 站搜这一集，点候选把链接填进来');
             biliBtn.onclick = () => void this.openBiliPicker();
             try {
                 setIcon(biliBtn, 'globe');
@@ -631,7 +888,7 @@ export class QuickAssociateModal extends Modal {
                 biliBtn.setText('🔍');
             }
             // 读屏名走隐藏文本（⛔ 不用 aria-label：与 data-tip 同元素会叠两层气泡，UI-GUIDE §3）
-            biliBtn.createSpan({ cls: 'rl-sr', text: '在 B 站搜索这一集' });
+            biliBtn.createSpan({ cls: 'rl-sr', text: isMovie ? '在 B 站按片名搜索' : '在 B 站搜索这一集' });
         }
         // 🔴 #599：就地轻提示挂**本行标签旁**（⚠️ 必须在按钮**之后** —— 与编辑浮层 #568 同序）
         this.rowHints.url = urlLblRow.createSpan({ cls: 'rl-saved-hint' });
@@ -1793,7 +2050,9 @@ export class QuickAssociateModal extends Modal {
         }
         // 🔴 关窗**兜底提交**：先掐掉防抖计时器，再立刻写一次（用户：「关掉弹窗即保存」）。
         //    ⚠️ 不 await —— `close()` 是同步的；失败会在 `commit` 里 Notice（弹窗已关，但改动可见）。
-        void this.commit();
+        // 🔴 #629：提交**落库完成之后**再回调 `onClosed`（系列「批量关联」清单靠它刷新那一行）——
+        //    `commit()` 自带 try/catch（不会抛）⇒ `.then` 一定跑到；早一拍刷新会读到旧数据。
+        void this.commit().then(() => this.cbs.onClosed?.());
         this.hintEl = null;
         this.contentEl.empty();
     }

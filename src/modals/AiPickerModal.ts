@@ -15,8 +15,8 @@
 //    拉取 / 写盘 / 重渲染也都归上层（这里只负责把结果就地画出来）。
 import { App, Modal } from 'obsidian';
 import {
-    AI_PROVIDER_OPTIONS,
     AI_PROVIDER_OFF,
+    aiProviderOptions,
     isAiOff,
     modelNote,
     modelTags,
@@ -24,8 +24,19 @@ import {
     type AiModelCandidate,
     type ModelFetched,
 } from 'pure/translate';
-import { MODEL_FILTERS, filterModels, splitPinned, type ModelFilter } from 'pure/aiPick';
+import {
+    MODEL_FILTERS,
+    filterModels,
+    splitPinned,
+    canHideModel,
+    hiddenCount,
+    isHidden,
+    toggleHidden,
+    visibleModels,
+    type ModelFilter,
+} from 'pure/aiPick';
 import { aiChoiceIcon, renderAiIcon } from 'services/aiIcon';
+import { applyScrollPref } from 'services/scrollPref';
 
 /**
  * 一个模型候选 —— 🔴 直接**别名到** `pure/translate.AiModelCandidate`：
@@ -48,6 +59,8 @@ export class AiPickerModal extends Modal {
     private chipEls = new Map<AiProviderChoice, HTMLElement>();
     private listEl: HTMLElement | null = null;
     private statusEl: HTMLElement | null = null;
+    /** 2026-10-23：被删掉的内置候选提示条（「已隐藏 N 个 · 全部恢复」） */
+    private hiddenEl: HTMLElement | null = null;
     private countEl: HTMLElement | null = null;
     private searchEl: HTMLInputElement | null = null;
     private filterEl: HTMLElement | null = null;
@@ -79,6 +92,19 @@ export class AiPickerModal extends Modal {
             pinnedOf: () => readonly string[];
             onTogglePin: (model: string) => void;
             /**
+             * 2026-10-23：「插件内置候选」的**删除**。
+             * `hiddenOf` 返回隐藏名单（键见 `pure/aiPick.hiddenKey`）；缺省 ⇒ 没有删除入口（老路径零变化）。
+             * `onToggleHide` / `onClearHidden` 由上层写盘并重画。
+             */
+            hiddenOf?: () => readonly string[];
+            onToggleHide?: (provider: Exclude<AiProviderChoice, 'off'>, model: string) => void;
+            onClearHidden?: (provider: Exclude<AiProviderChoice, 'off'>) => void;
+            /**
+             * 🔴 #634：**两个自定义槽位的用户填名**（重命名）—— 左栏服务 chips 与标题要显示用户改过的名。
+             * 缺省/返回空 ⇒ 逐字用 `AI_PROVIDER_OPTIONS` 的默认文案（老路径零变化）。
+             */
+            customNamesOf?: () => { custom?: unknown; custom2?: unknown };
+            /**
              * 🔴 #484：**就地**拉一次模型列表（⛔ 不再「关弹窗 → 请求 → 成功才重开」）。
              * 弹窗只负责转圈与把结果/错误画出来；写缓存归上层。
              */
@@ -93,6 +119,7 @@ export class AiPickerModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         // 🔴 #482：标题与关闭按钮是**宿主元素**（`.modal-title` / `.modal-close-button`）——
         //    ⛔ 别去改全局那两条规则（会影响全仓所有弹窗）⇒ 只在**本弹窗**上挂个作用域类，再 scoped 地改。
         this.modalEl.addClass('rl-pick-modal');
@@ -101,8 +128,9 @@ export class AiPickerModal extends Modal {
         const wrap = this.contentEl.createDiv({ cls: 'rl-pick' });
 
         // ① 顶部：服务商横向 chip（⛔ 不再是吃掉 200px 的左栏）
+        // 🔴 #634：文案经 `aiProviderOptions(改名)` —— 两个自定义槽位显示**用户改过的名**
         const chips = wrap.createDiv({ cls: 'rl-pick-chips', attr: { role: 'tablist', 'aria-label': '服务商' } });
-        for (const o of AI_PROVIDER_OPTIONS) {
+        for (const o of aiProviderOptions(this.opts.customNamesOf?.())) {
             const chip = chips.createEl('button', {
                 cls: 'rl-pick-chip',
                 attr: { type: 'button', role: 'tab', 'aria-selected': 'false' },
@@ -129,6 +157,8 @@ export class AiPickerModal extends Modal {
 
         // ③ 筛选 chip + 右侧两个次要动作
         this.filterEl = main.createDiv({ cls: 'rl-pick-filters' });
+        /** 2026-10-23：删除内置候选后的「已隐藏 N 个 · 全部恢复」条（只在真删过时才有字） */
+        this.hiddenEl = main.createDiv({ cls: 'rl-pick-hidden' });
         this.statusEl = main.createDiv({ cls: 'rl-pick-status' });
         this.listEl = main.createDiv({ cls: 'rl-pick-list', attr: { role: 'listbox', 'aria-label': '模型' } });
 
@@ -208,7 +238,8 @@ export class AiPickerModal extends Modal {
 
         // 两个次要动作（#482 ③ 口径：灰色文字按钮，⛔ 不铺底、不用 mod-cta）
         const acts = box.createDiv({ cls: 'rl-pick-acts' });
-        const label = AI_PROVIDER_OPTIONS.find((o) => o.value === p)?.label ?? p;
+        // 🔴 #634：这里的名字也要跟重命名走（否则用户改了名，按钮上还是旧名）
+        const label = pickLabel(p, this.opts.customNamesOf?.());
         const refresh = acts.createEl('button', {
             cls: 'rl-pick-action',
             attr: { type: 'button' },
@@ -262,7 +293,7 @@ export class AiPickerModal extends Modal {
         }
         if (this.loading) {
             this.setCount('');
-            this.setStatus('loading', `正在获取模型列表（${providerLabelOf(p)}）…`);
+            this.setStatus('loading', `正在获取模型列表（${pickLabel(p, this.opts.customNamesOf?.())}）…`);
             return;
         }
         if (this.errorText) {
@@ -273,11 +304,19 @@ export class AiPickerModal extends Modal {
 
         const q = this.query.trim().toLowerCase();
         const pinned = this.opts.pinnedOf();
-        const base = this.opts.candidatesOf(p).filter(
-            (i) => !q || i.value.toLowerCase().includes(q) || (i.name ?? '').toLowerCase().includes(q),
-        );
+        const hidden = this.opts.hiddenOf?.() ?? [];
+        const cur = (this.opts.modelOf(p) ?? '').trim();
+        // 2026-10-23：先摘掉用户删过的内置候选（当前在用的那个**永远保留**，见 `visibleModels` 注释）
+        const base = visibleModels(
+            this.opts.candidatesOf(p),
+            hidden,
+            p,
+            cur,
+        ).filter((i) => !q || i.value.toLowerCase().includes(q) || (i.name ?? '').toLowerCase().includes(q));
         const filtered = filterModels(base, this.filter, pinned);
         this.setCount(`${base.length} 个`);
+        // 「已隐藏 N 个 · 全部恢复」——只在真删过的时候出现（⛔ 不占常驻版面）
+        this.renderHiddenBar(p, hidden);
 
         if (!filtered.length) {
             // 🔴 空态也要说清**为什么** —— 尤其「长上下文」：智谱 / 硅基流动的接口不返回元数据（实测），
@@ -295,7 +334,6 @@ export class AiPickerModal extends Modal {
         }
         this.setStatus('none', '');
 
-        const cur = (this.opts.modelOf(p) ?? '').trim();
         const sections =
             this.filter === 'pinned'
                 ? [{ label: '', items: filtered }]
@@ -317,6 +355,32 @@ export class AiPickerModal extends Modal {
             this.activeIndex = hit >= 0 ? hit : 0;
         }
         this.syncActive();
+    }
+
+    /**
+     * 2026-10-23 用户要「插件内置候选列出来给我决定删除哪个」⇒ 删完之后要能看见删了几个、能一键恢复。
+     * 没有删除入口（老路径 / 没传回调）或一个都没删 ⇒ 整条收起（⛔ 不留空行占版面）。
+     */
+    private renderHiddenBar(p: Exclude<AiProviderChoice, 'off'>, hidden: readonly string[]): void {
+        const bar = this.hiddenEl;
+        if (!bar) return;
+        bar.empty();
+        const n = this.opts.onClearHidden ? hiddenCount(hidden, p) : 0;
+        if (!n) {
+            bar.toggleClass('is-empty', true);
+            return;
+        }
+        bar.toggleClass('is-empty', false);
+        bar.createSpan({ cls: 'rl-pick-hidden-text', text: `已删掉 ${n} 个内置候选` });
+        const back = bar.createEl('button', {
+            cls: 'rl-pick-action',
+            attr: { type: 'button' },
+            text: '全部恢复',
+        });
+        back.addEventListener('click', () => {
+            this.opts.onClearHidden?.(p);
+            this.paintList();
+        });
     }
 
     private renderRow(
@@ -358,6 +422,22 @@ export class AiPickerModal extends Modal {
             this.opts.onTogglePin(it.value);
             this.paintList();
         });
+        // 🗑 删掉这条内置候选（2026-10-23 用户要求）。
+        // ⚠️ 只对**本仓预置**的行出现；`/models` 拉回来的与默认模型不给这个入口（见 `canHideModel`）。
+        const p = this.provider;
+        if (p && this.opts.onToggleHide && canHideModel(it, cur)) {
+            const del = row.createEl('button', {
+                cls: 'rl-pick-del',
+                attr: { type: 'button', 'data-tip': '删除这个内置候选' },
+                text: '🗑',
+            });
+            del.createSpan({ cls: 'rl-sr', text: '删除这个内置候选' });
+            del.addEventListener('click', (ev) => {
+                ev.stopPropagation(); // ⛔ 别把「删除」当成「选它」
+                this.opts.onToggleHide?.(p, it.value);
+                this.paintList();
+            });
+        }
         row.addEventListener('click', () => this.commit(row, it));
         row.addEventListener('mouseenter', () => {
             const i = this.visible.indexOf(it);
@@ -456,9 +536,15 @@ export class AiPickerModal extends Modal {
     }
 }
 
-/** 服务商显示名（与 `AI_PROVIDER_OPTIONS` 同源；⛔ 不在本文件另抄一份） */
-function providerLabelOf(p: Exclude<AiProviderChoice, 'off'>): string {
-    return AI_PROVIDER_OPTIONS.find((o) => o.value === p)?.label ?? p;
+/**
+ * 服务商显示名（与 `AI_PROVIDER_OPTIONS` 同源；⛔ 不在本文件另抄一份）。
+ * 🔴 #634：两个自定义槽位的名字可被用户改 ⇒ 传 `names` 时按 `pure/translate.customSlotName` 取。
+ */
+function pickLabel(
+    p: Exclude<AiProviderChoice, 'off'>,
+    names?: { custom?: unknown; custom2?: unknown },
+): string {
+    return aiProviderOptions(names).find((o) => o.value === p)?.label ?? p;
 }
 
 /**

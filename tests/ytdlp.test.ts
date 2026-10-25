@@ -209,7 +209,7 @@ describe('缺失与无产物文案', () => {
     it('未找到 yt-dlp：把「去哪儿配」写出来', () => {
         const m = ytDlpNotFoundMessage('yt-dlp.exe');
         expect(m).toContain('yt-dlp.exe');
-        expect(m).toContain('音乐源凭据');
+        expect(m).toContain('音乐下载源凭据');
     });
     it('无产物：说清「跑完了但没音频流」', () => {
         expect(ytDlpNoOutputMessage()).toContain('没有音频流');

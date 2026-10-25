@@ -66,7 +66,7 @@ import {
     type SettingRow,
 } from 'pure/playerMenu';
 // 进度条打点/标记（#333）：标记的**解析与过滤全在纯模块**里，视图只负责画 + 命中判定 + 分发。
-import { hitMark, inBarBand, markCaption, markPct, marksForEpisode, pointerOnCard, MARK_DENSE_THRESHOLD, type VideoMark } from 'pure/videoMarks';
+import { markCaption, markPct, marksForEpisode, type VideoMark } from 'pure/videoMarks';
 import { dirOfPath, fileNameOfPath, subtitleLangLabel, subtitleLangTag, type SubtitleCandidate } from 'pure/subtitle';
 
 /** 视图类型（main 层 registerView 与打开入口共用） */
@@ -173,11 +173,11 @@ const DBLCLICK_MS = 220;
 
 export class VideoPlayerView extends ItemView {
     private opts: VideoPlayerOptions | null = null;
-    /** 进度条标记层（#333）：一条 `.rl-vp-marks` 里若干 `.rl-vp-mark` 圆点 */
-    private marksLayerEl: HTMLElement | null = null;
-    /** 悬停时命中的标记（null = 没悬在标记上）—— 卡片内容与「在笔记中打开」都看它 */
+    /** 悬停时命中的标记（null = 没悬在标记上）—— 🔴 #634 起标记卡片已撤，
+     *  这个字段现在**没有读取方**，保留仅仅是为了 `refreshMarks` 里那次 `= null` 复位不在类型上留坑。
+     *  ⚠️ 下次清理时它应当与 `markPcts` 一起评估：抽屉的高亮用的是下标（`activeMarkIndex`），不是它。 */
     private hoverMark: VideoMark | null = null;
-    /** 当前集过滤后的标记 + 其百分比（命中判定与画点共用同一份，免得两处各算一遍漂掉） */
+    /** 当前集过滤后的标记 + 其百分比（**抽屉**的跳转下标与高亮共用同一份，免得两处各算一遍漂掉） */
     private markList: VideoMark[] = [];
     private markPcts: number[] = [];
     // ── #579 时间戳侧边栏（抽屉）──────────────────────────────────────────────
@@ -415,10 +415,11 @@ export class VideoPlayerView extends ItemView {
         // 鼠标移出即从这一刻重新计时（用户 2026-09-18：「移出 3 秒后自动隐藏」）——
         // 旧实现只在移动时重置，移出后剩的是「最后一次移动」起的残余计时，观感上「有时很快就不见了」。
         root.addEventListener('mouseleave', () => this.pokeIdle());
-        // 右键打开标记（用户 2026-09-19 改判：悬停出卡片 → **右键**在笔记中打开）。
-        // 🔴 必须挂在 **root** 上：卡片是 `pointer-events: none`，**卡片空白处的命中目标是底层 video**
-        //    （无头 Chrome 实测 `elementFromPoint`），事件不经过进度条 ⇒ 挂进度条收不到「右键卡片」。
-        root.addEventListener('contextmenu', this.onPlayerContextMenu);
+        // 🔴 #634：**进度条右键「在笔记中打开」整体撤除**（用户裁定见 `renderProgress` 那段注释）：
+        //    那条通路连着「悬停出标记卡片」，而卡片的信息（种类 + 时间 + 说明 + 截图）现在由**抽屉**承载。
+        //    ⇒ 这里连 `contextmenu` 监听一起撤（⛔ 别只删处理器 —— 留一个空监听等于留一个说不清的坑）；
+        //      `.rl-vp-tip-mark` 卡片形态、`markAtPointer` / `hitMark` / `inBarBand` 三个命中判据
+        //      与 `overCard` 一并作废（它们的唯一用途就是那条通路）。
         // 浮层外点关闭（捕获阶段，见 onDocPointerDown）：document 级监听挂一次即可，
         // 换片重建 root 时不重复挂 —— 故用 menuOutsideBound 守卫而不是无条件 addEventListener。
         if (!this.menuOutsideBound) {
@@ -529,8 +530,8 @@ export class VideoPlayerView extends ItemView {
         this.videoEl.addEventListener('volumechange', () => this.syncVolumeUi());
         this.videoEl.addEventListener('loadedmetadata', () => {
             this.consumePendingTarget();
-            // 时长要等元数据才有 → 标记圆点的位置也在这里才画得准（#333）
-            this.renderMarks();
+            // 时长要等元数据才有 → 标记百分比（抽屉跳转 / 高亮用）也在这里才算得准（#333；#634 起只剩抽屉）
+            this.refreshMarks();
         });
         this.videoEl.addEventListener('ended', () => this.onEnded());
         stage.appendChild(this.videoEl);
@@ -583,9 +584,10 @@ export class VideoPlayerView extends ItemView {
         const played = progress.createDiv({ cls: 'rl-vp-progress-played' });
         this.playedEl = played;
         played.createDiv({ cls: 'rl-vp-progress-thumb' });
-        // 标记层（#333）：**画在 played/thumb 之后**（否则已播区间是实心强调色底，圆点会被吞掉）；
-        // `pointer-events: none` → 命中判定走进度条自己的 pointermove/down（不做逐点监听）。
-        this.marksLayerEl = progress.createDiv({ cls: 'rl-vp-marks' });
+        // 🔴 #634：**进度条上不再画标记圆点**（用户裁定：「播放器上的进度条不再显示标记，并取消该跳转笔记功能，
+        //    仅在抽屉侧边栏可点击跳转对应视频进度和关联时间戳笔记」）。
+        //    ⇒ 承载圆点的 `.rl-vp-marks` 层整体退场（连 CSS 一起）；命中判定（`markHitAt`）与
+        //      「点中圆点吸附」也随之作废 —— 没有圆点可看，却还偷偷吸附，是比不画更糟的行为。
         const tip = progress.createDiv({ cls: 'rl-vp-tip hidden' });
         this.tipEl = tip;
 
@@ -593,10 +595,10 @@ export class VideoPlayerView extends ItemView {
         progress.addEventListener('pointermove', (ev) => this.onProgressMove(ev));
         progress.addEventListener('pointerup', () => this.onProgressUp());
         progress.addEventListener('pointercancel', () => this.onProgressUp());
-        progress.addEventListener('pointerleave', (ev) => {
-            // 🔴 卡片是**向上**展开的（`.rl-vp-tip { bottom: 22px }`）⇒ 指针「离开进度条」多半是去点卡片里的
-            //    「在笔记中打开」—— 这时**不能收卡片**，否则按钮还没够到就消失了（2026-09-19 用户实测报障）。
-            if (this.dragging || this.overCard(ev)) return;
+        progress.addEventListener('pointerleave', () => {
+            // 🔴 #634：原先这里有一条「指针去够卡片里的按钮时别收气泡」的例外（`overCard`）——
+            //    卡片已撤，气泡又是 `pointer-events: none` 的纯读数 ⇒ 离开进度条就该收起，规则回到最简。
+            if (this.dragging) return;
             this.tipEl?.addClass('hidden');
         });
         this.timeEl = mid.createSpan({ cls: 'rl-vp-time' });
@@ -804,6 +806,18 @@ export class VideoPlayerView extends ItemView {
         // 兜底文字 = 该标记所属那一栏的显示名（真源 `MARK_TAB_LABELS`，⛔ 视图里不另写一份中文）
         go.createSpan({ cls: 'rl-vp-dtext', text: markCaption(mark.text) || MARK_TAB_LABELS[markTabOf(mark)] });
         go.addEventListener('click', () => this.jumpToMark(i));
+        // 🔴 #634：**「在笔记中打开」搬到抽屉这一行**（用户裁定）——
+        //    进度条上那条右键通路已整体撤除（「仅在抽屉侧边栏可点击跳转对应视频进度和关联时间戳笔记」）⇒
+        //    如果这里不补，`onOpenMarkNote` 就**一个入口都不剩**（能力静默消失，而不是被挪走）。
+        //    ⚠️ 与「点行 = 跳视频」**分成两个按钮**：只跳时间却被迫开一个窗口会很烦，反之亦然。
+        //    ⚠️ 图标按钮（无可见文字）⇒ 名字走 `aria-label`（⛔ 不带 `data-tip` 的祖先链 —— UI-GUIDE §3 v3 防双气泡）。
+        //    ⚠️ 图标与顶栏那枚「打开视频笔记」**同款**（`notebook-text`）：同一种动作两处两个图标会读成两件事。
+        const open = row.createEl('button', {
+            cls: 'rl-vp-dnote',
+            attr: { 'aria-label': '在笔记中打开', 'data-tip': '在笔记中打开' },
+        });
+        safeSetIcon(open, 'notebook-text');
+        open.addEventListener('click', () => void this.opts?.onOpenMarkNote?.(mark));
         this.drawerRowEls[i] = row;
     }
 
@@ -1081,35 +1095,19 @@ export class VideoPlayerView extends ItemView {
     };
 
     /**
-     * 右键打开标记（用户 2026-09-19 改判：「悬停后鼠标右键打开」）。
-     * 🔴 挂在 **root** 上（不是进度条）—— 卡片是 `pointer-events: none`，**卡片空白处的命中目标是底层 video**
-     *    （无头 Chrome 实测 `elementFromPoint` 返回 `VIDEO`），事件根本不经过进度条；只有挂 root 才能把
-     *    「右键圆点 / 右键卡片 / 右键卡片里那张缩略图」收进同一条路。
-     * ⛔ **命中不了标记一律放行**（连 `preventDefault` 都不做）—— 绝不吞掉用户在画面别处的正常右键菜单；
-     *    横向靠 `hitMark` 的 8px 容差、纵向靠 `inBarBand` 把范围夹回进度条附近。
+     * 🔴 #634：**进度条右键「在笔记中打开」已整体撤除**（用户裁定：「播放器上的进度条不再显示标记，
+     * 并取消该跳转笔记功能，仅在抽屉侧边栏可点击跳转对应视频进度和关联时间戳笔记」）。
+     *
+     * 撤掉的是一条**整链**，⛔ 不是只关掉一个监听：
+     *   ① `root` 上的 `contextmenu` 监听（原本靠它覆盖「右键圆点 / 右键卡片 / 右键卡片里的缩略图」三处）；
+     *   ② `onPlayerContextMenu` / `markAtPointer` 两个处理器；
+     *   ③ `overCard` / `cardOpen` / `renderMarkCard`（标记卡片形态 `.rl-vp-tip-mark` 的唯一产者）；
+     *   ④ `markHitAt` + `onProgressDown` 里那段「点中圆点吸附到那一刻」——**没有圆点可看却偷偷吸附**
+     *      比不画更糟（用户按指针位置 seek，落点却跳了几秒，且屏幕上没有任何东西解释这件事）。
+     *
+     * 唯一活下来的出口 = 抽屉行右侧那枚「在笔记中打开」（`renderDrawerRow`），
+     * 以及「点行 = 跳到那一秒」（`jumpToMark`）—— 正是用户要的「仅在抽屉侧边栏可点击跳转」。
      */
-    private onPlayerContextMenu = (ev: MouseEvent): void => {
-        const mark = this.markAtPointer(ev);
-        if (!mark) return;
-        ev.preventDefault();
-        ev.stopPropagation();
-        // 打开后把卡片收掉：视野已经交给笔记，卡片留着还会让控制条一直不自动隐藏（见 `pokeIdle`）
-        this.tipEl?.addClass('hidden');
-        this.hoverMark = null;
-        void this.opts?.onOpenMarkNote?.(mark);
-    };
-
-    /** 指针此刻指着哪条标记：先看「是否在卡片范围内」（卡片可能被夹到一边，x 未必落在圆点容差内） */
-    private markAtPointer(ev: MouseEvent): VideoMark | null {
-        const tip = this.tipEl;
-        if (this.cardOpen() && tip && pointerOnCard(tip.getBoundingClientRect(), ev.clientX, ev.clientY)) {
-            return this.hoverMark;
-        }
-        const rect = this.progressEl?.getBoundingClientRect();
-        if (!rect || rect.width <= 0) return null;
-        if (!inBarBand(ev.clientY, rect.top, rect.bottom)) return null;
-        return this.markHitAt((ev.clientX - rect.left) / rect.width, rect.width);
-    }
 
     /** 键盘：只绑 pure/player 映射表里有的键（映射与实现对得上，改一处不会漂） */
     private bindKeys(scope: Scope): void {
@@ -1318,15 +1316,9 @@ export class VideoPlayerView extends ItemView {
         } catch {
             /* 捕获失败不影响拖动（pointermove 仍会在元素上触发） */
         }
-        // #333 D-3：**点中标记 → 吸附到那一刻**（否则按指针位置 seek，可能差几秒）
-        const rect = this.progressEl?.getBoundingClientRect();
-        const hit = rect && rect.width > 0 ? this.markHitAt((ev.clientX - rect.left) / rect.width, rect.width) : null;
-        if (hit) {
-            const dur = this.videoEl.duration;
-            this.videoEl.currentTime = clampSeek(hit.seconds, dur);
-            this.updateProgressUi();
-            return;
-        }
+        // 🔴 #634：**「点中圆点 → 吸附到那一刻」已撤**（圆点本身不再画，见 `renderProgress` 那段注释）。
+        //    留着它就会变成「按哪儿都跳几秒，而屏幕上没有任何东西解释为什么」—— 没有圆点可看时，
+        //    唯一的正确落点判据就是**指针位置**（`seekToEvent`）。跳时间戳走抽屉那行（`jumpToMark`）。
         this.seekToEvent(ev);
     }
 
@@ -1353,104 +1345,51 @@ export class VideoPlayerView extends ItemView {
     }
 
     /**
-     * 悬停：普通位置显示「落点 / 总长」气泡；**悬在标记上则换成标记卡片**（#333 D-3）——
-     * 卡片里有：种类 + 时间、用户手写的补充说明（`markCaption`）、截图缩略图、「在笔记中打开」。
-     * ⚠️ 拖动过程中**不显示卡片**（只在 pointerdown 吸附一次）：卡片比时间气泡宽，拖拽时跳动很吵。
+     * 悬停：显示「落点 / 总长」气泡。
+     *
+     * 🔴 #634：**「悬在标记上换成标记卡片」已撤**（用户裁定：进度条不再显示标记、取消该跳转笔记功能）。
+     *    那条分支连着 `.rl-vp-tip-mark` 卡片形态、`overCard` 的「指针停在卡片上就别重算」守卫、
+     *    以及卡片里那句「右键 → 在笔记中打开」—— 四处一起退场，因为卡片就是为那条通路存在的。
+     *    标记的信息（种类 / 时间 / 说明 / 截图缩略图）现在全在**抽屉**里，且**没有信息丢失**。
      */
     private updateTip(ev: PointerEvent | MouseEvent): void {
         const rect = this.progressEl?.getBoundingClientRect();
         if (!rect || rect.width <= 0 || !this.tipEl) return;
-        // 🔴 **指针停在卡片上时什么都不做**（2026-09-19 用户实测：「小圆点悬浮后点『在笔记中打开』点不动」）。
-        //    卡片画在进度条**上方**，指针要从条上向上移进卡片才按得到按钮，而这段位移照样给进度条发
-        //    `pointermove` → 若照常重算就会 `tip.empty()` **重建卡片**，按钮在 mousedown 与 mouseup 之间
-        //    被换成新节点 ⇒ 浏览器**不合成 `click`**（判据见 `pure/videoMarks.pointerOnCard`）。
-        if (this.overCard(ev)) return;
         const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
         const dur = this.videoEl?.duration ?? 0;
-        const hit = this.dragging ? null : this.markHitAt(ratio, rect.width);
-        this.hoverMark = hit;
-        if (hit) {
-            this.renderMarkCard(hit, ratio, rect.width);
-        } else {
-            this.tipEl.removeClass('rl-vp-tip-mark');
-            this.tipEl.setText(hoverTipText(ratioToSeconds(ratio, dur), dur));
-            this.tipEl.style.left = `${ratio * 100}%`;
-        }
+        this.tipEl.setText(hoverTipText(ratioToSeconds(ratio, dur), dur));
+        this.tipEl.style.left = `${ratio * 100}%`;
         this.tipEl.removeClass('hidden');
-    }
-
-    /** 指针是否停在**已展开的标记卡片**上（含 4px 容差）—— 是则「既不重算、也不收起」 */
-    private overCard(ev: PointerEvent | MouseEvent): boolean {
-        const tip = this.tipEl;
-        if (!tip || !this.cardOpen()) return false;
-        return pointerOnCard(tip.getBoundingClientRect(), ev.clientX, ev.clientY);
-    }
-
-    /** 标记卡片是否**正开着**（`.rl-vp-tip` 可见且已切成卡片形态）—— 空闲自动隐藏要看它 */
-    private cardOpen(): boolean {
-        const tip = this.tipEl;
-        return !!tip && !tip.hasClass('hidden') && tip.hasClass('rl-vp-tip-mark');
-    }
-
-    /** 命中判定：容差按 **8px 换算成比例**（别用固定比例 —— 窗口越窄越容易把「想拖进度」吸到点上） */
-    private markHitAt(ratio: number, width: number): VideoMark | null {
-        const i = hitMark(this.markPcts, ratio, width > 0 ? 8 / width : 0);
-        return i >= 0 ? this.markList[i] ?? null : null;
-    }
-
-    /** 画标记卡片（内容是**替换** tip 的子节点，不复用时间气泡那套 `setText`） */
-    private renderMarkCard(mark: VideoMark, ratio: number, width: number): void {
-        const tip = this.tipEl;
-        if (!tip) return;
-        tip.empty();
-        tip.addClass('rl-vp-tip-mark');
-        tip.createDiv({
-            cls: 'rl-vp-mark-head',
-            text: `${MARK_TAB_LABELS[markTabOf(mark)]} · ${formatTime(mark.seconds)}`,
-        });
-        const caption = markCaption(mark.text);
-        if (caption) tip.createDiv({ cls: 'rl-vp-mark-text', text: caption });
-        const src = mark.image ? this.opts?.markImageUrl?.(mark.image) ?? null : null;
-        if (src) tip.createEl('img', { cls: 'rl-vp-mark-img', attr: { src, alt: '' } });
-        // 打开方式 = **右键**（用户 2026-09-19 改判「悬停后鼠标右键打开」）。
-        // 🔴 卡片里**不再放按钮**：卡片本体是 `pointer-events: none`（时间气泡要跟着鼠标走、不能吃指针），
-        //    要在里面放可点元素就得再补一条 `pointer-events: auto` —— 那条路连着踩了三轮「点不动」。
-        //    右键走 root 上的 `contextmenu`（见 `onPlayerContextMenu`），链路短、不依赖卡片内命中层。
-        tip.createDiv({ cls: 'rl-vp-mark-hint', text: '右键 → 在笔记中打开' });
-        tip.removeClass('hidden');
-        // 先撤 hidden 再量宽（`display:none` 时 offsetWidth 恒 0），再把卡片夹在进度条内
-        const half = (tip.offsetWidth || 0) / 2;
-        const left = Math.max(half + 4, Math.min(Math.max(width - half - 4, half + 4), ratio * width));
-        tip.style.left = `${left}px`;
-    }
-
-    /** 重画标记圆点：按**当前集**过滤（多集时间轴不同，混画就是画错位置）+ 总时长换算百分比 */
-    private renderMarks(): void {
-        const layer = this.marksLayerEl;
-        if (!layer) return;
-        layer.empty();
-        const item = this.opts?.items[this.cur];
-        const dur = this.videoEl?.duration ?? 0;
-        const mine = item ? marksForEpisode(this.opts?.marks ?? [], { ep: item.index, fileName: item.path }) : [];
-        layer.toggleClass('rl-vp-marks-dense', mine.length > MARK_DENSE_THRESHOLD);
-        for (const m of mine) {
-            layer.createDiv({ cls: 'rl-vp-mark' }).style.left = `${markPct(m.seconds, dur) * 100}%`;
-        }
-        this.markList = mine;
-        this.markPcts = mine.map((m) => markPct(m.seconds, dur));
-        this.hoverMark = null;
-        // #579：圆点重画的同时把抽屉也同步一遍（新标记 = 列表要长一条）。
-        // ⚠️ 只在展开时重建 —— 收起时连一行 DOM 都不该存在（「懒加载」那条口径）。
-        if (this.drawerOpen) {
-            this.renderDrawer();
-            this.syncDrawerActive(true);
-        }
     }
 
     /** 宿主在插入时间戳 / 截图后把新标记推进来（#333：不必重开播放器就能看到新点） */
     setMarks(marks: VideoMark[]): void {
         if (this.opts) this.opts.marks = marks;
-        this.renderMarks();
+        this.refreshMarks();
+    }
+
+    /**
+     * 🔴 #634：标记变化后**只刷新抽屉**。
+     *
+     * 原本这个位置是 `renderMarks()` —— 它重建进度条上那层圆点（`.rl-vp-marks`）**顺带**同步抽屉。
+     * 圆点已按用户裁定撤除 ⇒ 这里只剩「抽屉要不要重建」这一件事，所以改了名：
+     * ⛔ 名字别再叫 `renderMarks`（那个名字现在会误导人去找一个不存在的渲染层）。
+     *
+     * ⚠️ 两条保留原样：
+     *   ① `markList` / `markPcts` 仍要刷（抽屉高亮与「跳到那一秒」都靠 `markList` 的下标对齐）；
+     *   ② 抽屉**只在展开时重建** —— 收起时连一行 DOM 都不该存在（#579 的「懒加载」口径）。
+     */
+    private refreshMarks(): void {
+        const item = this.opts?.items[this.cur];
+        const dur = this.videoEl?.duration ?? 0;
+        const mine = item ? marksForEpisode(this.opts?.marks ?? [], { ep: item.index, fileName: item.path }) : [];
+        this.markList = mine;
+        this.markPcts = mine.map((m) => markPct(m.seconds, dur));
+        this.hoverMark = null;
+        if (this.drawerOpen) {
+            this.renderDrawer();
+            this.syncDrawerActive(true);
+        }
     }
 
     /**
@@ -2084,9 +2023,8 @@ export class VideoPlayerView extends ItemView {
 
     /** 控制条浮出并重置闲置计时（播放中 IDLE_HIDE_MS 无操作自动淡出）
      *  🔴 浮层开着时一律不隐藏（`!this.menuKind`）—— 否则选集列到第 3 秒就被连浮层一起淡掉。
-     *  🔴 **标记卡片开着时同样不隐藏**（`!this.cardOpen()`，2026-09-19 用户实测「悬浮后点不了
-     *     『在笔记中打开』」）—— 卡片是控制条的**子元素**，`IDLE_HIDE_MS` 只有 1000ms ⇒ 指针停在
-     *     圆点上读卡片、还没移到按钮就整条淡掉了（`.rl-vp-idle .rl-vp-controls { opacity: 0 }`）。 */
+     *  🔴 #634：原先还有一条「标记卡片开着时也不隐藏」（`!this.cardOpen()`）—— 卡片已撤
+     *     （进度条不再显示标记），而它当初要护的那枚按钮现在住**抽屉**里，抽屉不随控制条淡出 ⇒ 该例外作废。 */
     private pokeIdle(): void {
         this.rootEl?.removeClass('rl-vp-idle');
         if (this.idleTimer !== null) {
@@ -2095,7 +2033,7 @@ export class VideoPlayerView extends ItemView {
         }
         this.idleTimer = window.setTimeout(() => {
             this.idleTimer = null;
-            if (!this.videoEl?.paused && !this.dragging && !this.menuKind && !this.cardOpen()) {
+            if (!this.videoEl?.paused && !this.dragging && !this.menuKind) {
                 this.rootEl?.addClass('rl-vp-idle');
             }
         }, IDLE_HIDE_MS);

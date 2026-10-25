@@ -42,6 +42,7 @@ import { App, Modal, setIcon } from 'obsidian';
 import type { LinkStatus } from 'pure/linkStatus';
 import type { EpCoverPlan } from 'pure/epCover';
 import { pageBarItems, pageCount, pageIndexOf, pageSlice, pageStep } from 'pure/epPages';
+import { forceHideScroll } from 'services/scrollPref';
 
 /** `setIcon` 遇未知名会抛 ⇒ 统一走这层（图标缺失不该让整个窗口打不开） */
 function setIconSafe(el: HTMLElement, icon: string): void {
@@ -115,8 +116,9 @@ export class EpisodePickerModal extends Modal {
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass('rl-eps-modal');
-        // 🔴 #599：本窗隐藏滚动条（用户点名）—— 复用全仓 `.rl-hide-scroll`（仍可滚，只是不画条）
-        this.modalEl.addClass('rl-hide-scroll');
+        // 🔴 #599 用户点名 / #630 收口：本窗**恒隐藏**滚动条（不看设置开关）—— 走 `services/scrollPref`
+        //    的 `forceHideScroll`（与快捷关联 / 批量关联那两处同一档）
+        forceHideScroll(this.modalEl);
         contentEl.createDiv({
             cls: 'rl-nc-desc rl-eps-title',
             text: this.single ? `选择要播放的文件：《${this.entryTitle}》` : `选择集数：《${this.entryTitle}》`,

@@ -5,6 +5,7 @@ import type ReelLudicPlugin from '../../main';
 import type { MediaEntry } from 'data/types';
 import { ENTRY_TYPE_LABELS } from 'data/types';
 import { statusLabel } from 'pure/labels';
+import { applyScrollPref } from 'services/scrollPref';
 
 export class CalendarDayModal extends Modal {
     private dayEntries: MediaEntry[];
@@ -22,6 +23,7 @@ export class CalendarDayModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
 
@@ -30,7 +32,7 @@ export class CalendarDayModal extends Modal {
         head.createSpan({ cls: 'rl-day-cnt', text: `${this.dayEntries.length} 条` });
 
         if (this.dayEntries.length === 0) {
-            contentEl.createDiv({ cls: 'rl-day-empty', text: '当天没有计划观看的条目 — 编辑条目在「想看」状态下设置计划观看日期' });
+            contentEl.createDiv({ cls: 'rl-day-empty', text: '当天没有计划观看的条目 — 编辑属性在「想看」状态下设置计划观看日期' });
             return;
         }
 

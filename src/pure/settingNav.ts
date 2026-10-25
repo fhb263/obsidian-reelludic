@@ -44,10 +44,16 @@ export interface SettingNavPage {
 export const SETTING_NAV_TABS: readonly SettingNavPage[] = [
     { id: 'basic', label: '基本设置', icon: 'sliders-horizontal' },
     // #422 改名：原「数据源配置」。用户原话「数据源配置、凭据改成元数据源配置、凭据」——
-    // 本页里只有**前两组**是元数据源（后面还有音乐源凭据 / 书籍源凭据），统称「数据源」会把
+    // 本页里只有**前两组**是元数据源（后面还有音乐下载源凭据），统称「数据源」会把
     // 「音乐、书籍也是数据源吗」这件事一直含混。
+    // ⚠️ #690 只改了页内**组名**（音乐下载源凭据 / 元数据搜索源凭据 / 元数据搜索源启用），**页签标签不动**。
     { id: 'sources', label: '元数据源配置', icon: 'folder-tree' },
     { id: 'ai', label: 'AI集成', icon: 'wand-2' },
+    // 1.3.1 ①（2026-10-12）：新增第 5 页「高级设置」。承载「字段映射」与「海报墙卡片字段」——
+    // 两者都是「改插件行为的高级开关」，与「基本设置」那批日常开关不是一类，故单独一页。
+    // ⚠️ 位置：紧邻「关于」之前（前三个 Tab 位置不动，对既有用户的手感影响最小）。
+    // 图标 `settings-2` 已用 `_probe_lucide.cjs` 在本机 asar（1.13.7，1942 个内置名）实测存在。
+    { id: 'advanced', label: '高级设置', icon: 'settings-2' },
     { id: 'about', label: '关于', icon: 'badge-info' },
 ];
 
@@ -125,6 +131,8 @@ export function tabStates(activeId: string): SettingTabState[] {
  *    两个新图标名已用 `_probe_lucide.cjs` 在 asar 白名单内核实。
  * ⚠️ **#422**：「数据源启用 / 数据源凭据」两键改名加「元」；「网文书源」→「书籍源凭据」并**首次挂图标**。
  *    旧键**一律不留**（组名已改，留着只会变成永不命中的死配置）。
+ * 🔴 **2026-10-22 书籍下载整体撤除**：「书籍源凭据」那组随之退场 ⇒ 这里那条 `书籍源凭据: 'book-marked'`
+ *    也**一并退场**（同 #483 口径：组没了还留键 = 一条永远不会命中的死配置）。
  * 🔴 **音乐源凭据**图标从 `key-round` 换成 `audio-lines`：改版前它跟「元数据源凭据 / API凭据」
  *    共用同一枚钥匙图标，三组挨着排下来**分不出哪个是哪个**（用户 2026-09-29：「把音乐源凭据图标改一下」）。
  *    ⛔ 换名之前**先实测**是否在 asar 白名单内（`setIcon` 遇未知名会静默失败）。
@@ -132,16 +140,30 @@ export function tabStates(activeId: string): SettingTabState[] {
  *    ⇒ 这里**不登记**（登记了也没人查）。
  */
 export const SETTING_GROUP_ICONS: Readonly<Record<string, string>> = {
-    元数据源启用: 'toggle-right',
-    元数据源凭据: 'key-round',
-    音乐源凭据: 'audio-lines',
-    书籍源凭据: 'book-marked',
+    // 🔴🔴 #690（1.4.1，用户 2026-10-20 点名改名）：「音乐源凭据」→「音乐下载源凭据」、
+    //    「元数据源凭据」→「元数据搜索源凭据」、「元数据源启用」→「元数据搜索源启用」。
+    //    ⚠️ 键必须与 `Settings.createGroupSection` 的组名**逐字一致**，否则静默取不到（不报错）——
+    //      改组名**必须同步改这三行**（图标不变，只是键换了名字）。旧键**一律不留**（同 #422 口径）。
+    元数据搜索源启用: 'toggle-right',
+    元数据搜索源凭据: 'key-round',
+    音乐下载源凭据: 'audio-lines',
     模型服务: 'server',
     用途: 'target',
     外观与体验: 'sliders-horizontal',
     实验性功能: 'flask-conical',
     数据与备份: 'hard-drive',
     封面与清理: 'trash-2',
+    // 1.3.1 ①（2026-10-12）：「高级设置」页的分组。图标 `arrow-left-right` 取「映射/换算」语义
+    // （已用 `_probe_lucide.cjs` 在本机 asar 实测存在）。
+    字段映射: 'arrow-left-right',
+    // 🔴 #640（1.4.0，用户报障）：「笔记属性顺序」**此前是唯一没图标的组** ——
+    //    用户原话「目前这个标题唯一没图标，建议统一加笔记属性顺序标题图标」。
+    //    原先漏登记的原因见下方注释（#619 时它改过形态，登记时被漏掉）。
+    //    图标 `list-ordered` 取「有序列表」语义（已按本仓铁律在 asar 白名单内核实存在）。
+    // ⚠️ 键必须与 `Settings.createGroupSection` 的组名**逐字一致**，否则静默取不到（不报错）。
+    笔记属性顺序: 'list-ordered',
+    // #624 随视图改名：原键「海报墙卡片」→「卡片信息栏」（⛔ 键必须与 `Settings` 里 createGroupSection 的组名逐字一致，否则图标取不到）
+    卡片信息栏: 'layout-grid',
 };
 
 /** 取子分组图标；未登记则返回 null（调用方跳过挂图标） */

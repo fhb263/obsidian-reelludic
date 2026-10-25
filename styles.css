@@ -563,6 +563,44 @@
 .rl-pick-status.is-bad { color: var(--color-red); }
 .rl-pick-status .rl-pick-action { color: var(--interactive-accent); }
 
+/* 🔴 #634：**消除「双滚动条嵌套」**（用户报障：「搜索窗口的最外层容器的原生滚动条需要做隐藏处理，
+   同时保留内部内容的自定义滚动…相关有些窗口也出现了双滚动条嵌套的问题」）。
+   结构：`.modal-content`（核心的原生滚动容器）→ `.rl-pick` → `.rl-pick-main` → `.rl-pick-list`（自带 max-height + 自滚）
+   ⇒ 列表一长（实测中转站 361 个模型），**内层列表滚**的同时 `modal-content` **也会滚** = 两条滚动条叠在一起。
+
+   修法 = **让外层不再产生滚动**，自滚权**只**留给内层列表：
+     ① `.modal-content` 在这一档下 `overflow: hidden`（⛔ 不是 removeClass `.rl-hide-scroll` —— 那只是把条藏起来、
+        容器**照样能滚**，用滚轮仍会滚外层，嵌套依旧；这里是**从根上不让它滚**）；
+     ② 弹窗高度用 `max-height` 封顶 + 内容列 `flex` 撑满 ⇒ 列表吃掉剩余高度；
+     ③ `.rl-pick` / `.rl-pick-main` 逐层 `min-height: 0`（flex 子项默认 `min-height:auto` 会被内容顶开，
+        这一条漏了 = 列表撑破容器、外层滚动条又回来）。
+   ⚠️ 只在 `.rl-pick-modal` 作用域内（⛔ 别动全局 `.modal-content` —— 会影响全仓所有弹窗）。 */
+.rl-pick-modal .modal-content {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+/* 🔴🔴 #640：**真正的「外层」是 `.modal` 本身，不是 `.modal-content`** —— 上面那条只治了后者。
+   核心 app.css 的基础规则（实测自 asar，见 `_probe_modal_rules.cjs`）：
+       .modal { max-height: 85vh; display: flex; flex-direction: column; overflow: auto; }
+   ⇒ `.modal` **自己就是 `overflow: auto`**。只把 `.modal-content` 设成 `hidden` 之后，
+     列表滚到底时**滚轮增量仍然落在 `.modal` 上**，它照样滚 —— 而 `.modal` 是宿主元素，
+     它那条滚动条又被 `applyScrollPref` 藏掉了 ⇒ 正是用户描述的症状：
+     「**外层无显示滚动条但仍可滚动**」。矮窗（< 内容高度）时必然复现。
+   ⇒ 修法 = 把 `.modal` 也一起改成不滚；高度链由它自己的 `max-height: 85vh`（宿主给的）撑住。
+   ⚠️ 只在 `.rl-pick-modal` 作用域内，⛔ 别动全局 `.modal`（会影响全仓所有弹窗）。 */
+.rl-pick-modal.modal {
+    overflow: hidden;
+    min-height: 0;
+}
+.rl-pick-modal .rl-pick,
+.rl-pick-modal .rl-pick-main {
+    min-height: 0;
+}
+.rl-pick-modal .rl-pick { flex: 1 1 auto; }
+.rl-pick-modal .rl-pick-main { flex: 1 1 auto; display: flex; flex-direction: column; }
+
 /* ⑤ 列表：段标题 + 卡片式列表项 */
 .rl-pick-list {
     flex: 1 1 auto;
@@ -651,6 +689,31 @@
 .rl-pick-list .rl-pick-star.is-on { color: var(--interactive-accent); opacity: 1; }
 /* 选中行的 ✓（装饰；读屏名走 aria-selected） */
 .rl-pick-check { flex: 0 0 auto; color: var(--interactive-accent); font-size: var(--font-ui-smaller); }
+
+/* 🗑 删掉内置候选（2026-10-23）：与 ⭐ 同款——平时不显示，悬停 / 聚焦才出现，
+   免得每行挂两个常驻图标把列表撑得吵。删的是**本仓预置**那一批（见 pure/aiPick.canHideModel） */
+.rl-pick-list .rl-pick-del {
+    flex: 0 0 auto;
+    width: auto;
+    height: auto;
+    padding: 0 2px;
+    margin: 0;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--text-faint);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    cursor: pointer;
+    opacity: 0;
+}
+.rl-pick-list .rl-pick-item:hover .rl-pick-del,
+.rl-pick-list .rl-pick-del:focus-visible { opacity: 1; }
+.rl-pick-list .rl-pick-del:hover { color: var(--text-error); }
+/* 「已删掉 N 个内置候选 · 全部恢复」条：只在真删过时出现（`.is-empty` 时整条收掉，不留空行） */
+.rl-pick-hidden { display: flex; align-items: center; gap: var(--size-2-2); flex-wrap: wrap; }
+.rl-pick-hidden.is-empty { display: none; }
+.rl-pick-hidden-text { font-size: var(--font-ui-smaller); color: var(--text-muted); }
 
 /* ══════════════════════════════════════════════════════════════════════════
    #483 AI集成页「以卡片组织」（用户 2026-10-02：「重构当前 AI 集成 UI 页面，太丑了，
@@ -826,7 +889,21 @@
          两者缺一：只给负 top ⇒ 静止时 Tab 跑到面板最上沿（没留 48px）；只给负 margin ⇒ sticky 把栏按回去（本次踩的坑）。 */
     position: sticky;
     top: calc(-1 * var(--size-4-12));
-    z-index: 1;
+    /* 🔴 #654 用户报障：「滚动时属性顺序对比表格的表头会盖住 Tab 栏」。
+       ⛔ 根因不在栏（栏本来就是 sticky + 不透明底），而在**表格自己**：
+          `.rl-fo-cmp-scroll` 写的是 `overflow-x:auto; overflow-y:visible` ⇒ 它**不是 y 向滚动口**，
+          于是表头 `th{position:sticky; top:0}` 的吸附参照一路跳到了外层真正的滚动口
+          （`.rl-set-content` / 外框），表头就这样"逃"出了表格区，凭空贴到滚动口顶端 = Tab 栏上面。
+       ⇒ 双保险，缺一不可：
+          ⑴ **本处把栏从 1 提到 40** —— 层级上压过逃逸出来的表头（表头是 2、首位次列是 3）；
+          ⑵ `.rl-fo-cmp-scroll` 上加 `isolation: isolate`（见下方该段）—— 让它自建层叠上下文，
+             把内部 z-index 全部圈进这一层，从根上不再向外冲。
+       为什么恰好是 40：它要**高于**内容区一切自增层级（本文件内容区最大到 3，另有 20/30 的浮层族），
+       又要**低于** Obsidian 自己的 `--layer-modal: 50` / `--layer-menu: 65` ——
+       否则设置页的栏会盖到弹窗与菜单上（在遮罩之上画一条 Tab 栏，比原报障更糟）。
+       ⛔ 不要改成 `overflow-y:auto` 消根因：那会把整张对比表关进一个矮滚动框里，
+          破坏这一屏「一整个表格滑动并览」的体验；⛔ 也不要降 `th` 的 z-index：横向滚动时表头必须盖住数据行。 */
+    z-index: 40;
     /* 栏是固定的，正文会从栏下穿过 ⇒ 必须给不透明底（外框底色同为一处，观感无缝） */
     background: var(--background-primary);
     /* 补回被 shell 负外边距抵消掉的那段外框顶部内距（静止时 Tab 距面板顶 = 48px，与原生一致） */
@@ -947,6 +1024,613 @@
    ⇒ 不收掉它，页顶会平白空出一段（看起来像"内容没对齐"）。 */
 .rl-set-page-body > .rl-svc-group:first-child { margin-top: 0; }
 
+/* ── 1.3.1 ①「高级设置」页：字段映射（rl-fieldmap-* / rl-fm-*）
+   #613 翻面：输入方式由 textarea 改为「逐字段一行」的表格，原来的只读清单表已合并进本表。
+   全部走主题变量（⛔ 不写死 hex），圆角与间距对齐本仓设置页既有口径。
+
+   🔴🔴 #644（用户：「也改一下字段映射的UI」）—— **先量再改**（`_shot/fm644.html` + `_probe_fm644.cjs`：
+   真核心 `input`/`button`/`table` 规则 + 本文件真规则 + `META_FIELDS` 真数据；改前快照 `_shot/rl-fm-644-old.css`）。
+   ⚠️ **列对齐本来就没问题**：表头「新属性名」与表体第三格左缘只差 **1.4px**（#640 的拆两表 + 同 colgroup 是有效的）
+   —— ⛔ 别把「丑」错记成「错位」再去拆一遍结构。量出来的三处「土」：
+     ⑴ **同一格画两层框**：格 296.9 / 输入框 280.9（左右各被吃掉 8px），而框自己还有 1px 描边 + 8px 内距；
+        「原属性名」也裹着一层 `<code>` 药丸 —— 全表 84 个框，是最花的一处；
+     ⑵ **三段说明各占一行**（说明 / 「未配置映射…」/ 表格）：未配置时那行「什么都没发生」白占 **31px**；
+     ⑶ 行高 34.5（`td` 上下仅 2px 内距，30px 输入框把行撑满）＋ 42 行全高 **1469px** ⇒ 列表要滚 4 屏，
+        而表头只有 26px、字号比表体输入框还小半档。 */
+.rl-fieldmap-help { margin: 0 0 var(--size-4-3); color: var(--text-muted); font-size: var(--font-ui-smaller); line-height: 1.6; }
+/* 未配置时的状态：折进说明行前半句（灰一档、⛔ 不再单独占一行 —— 见 `renderFieldMapStatus`） */
+.rl-fieldmap-idle { color: var(--text-faint); }
+.rl-fieldmap-feedback { margin: 0 0 var(--size-4-2); font-size: var(--font-ui-smaller); line-height: 1.6; }
+/* 🔴 #644⑵：空回执**连外距一起收掉** —— 否则 `:empty` 的元素仍带着 margin-bottom 8px（空白照样把表格往下推） */
+.rl-fieldmap-feedback:empty { display: none; }
+.rl-fieldmap-ok { color: var(--text-muted); }
+.rl-fieldmap-err { color: var(--text-error); }
+/* 有错时隐藏「已生效」那行 —— 两条回执同时出现会让用户不知道该信哪条 */
+.rl-fieldmap-feedback.is-bad .rl-fieldmap-ok { display: none; }
+
+/* 🔴 #640（1.4.0）结构翻面：**表头与表体拆成两张独立的 `<table>`** ——
+   表头在外（不参与滚动）、表体在滚动容器里。用户报障原文：「表头区域超出了自身容器的边界，
+   与上方设置页签的底部发生了视觉重叠/粘连。同时表格右侧出现了独立的滚动条，导致表格容器
+   没有合理的内边距，内容溢出到了页签区域」。
+   旧写法是「单表 + `th { position: sticky }`」，两种失效叠在一起：
+     ⑴ 表头在**滚动容器内部** ⇒ 滚到顶时它的背景方块仍受容器的 `overflow` + `border-radius`
+        裁剪边缘影响，方块顶到圆角外 = 看着像溢出去压住了页签；
+     ⑵ 内容区滚动条占宽 ~8px，而表头是 `width: 100%` ⇒ 表头比表体宽，**右侧列对不齐**。
+   修法 = 拆两张表 + **同一份 `<colgroup>`**（两处都 `table-layout: fixed` ⇒ 列宽由 col 决定、
+   与各自内容/滚动条无关）+ 滚动容器 `scrollbar-gutter: stable` **常驻预留滚动条宽度**
+   （有没有滚动条，表体内容区宽度都恒定）。
+   ⚠️ 列宽真源在 `Settings.ts` 的 `COL_WIDTHS`（写进两张表的 colgroup）；这里 ⛔ 不再复述百分比，
+   否则 CSS 与 JS 两份宽度迟早不一致（对照 `.rl-pvw-*` 那种「必须成对」的既有做法）。 */
+.rl-fieldmap-headwrap {
+    /* 与下方 `.rl-fieldmap-wrap` 的左右描边 / 圆角顶对齐；下边线由表头 th 自己给 */
+    border: 1px solid var(--background-modifier-border);
+    border-bottom: none;
+    border-radius: var(--radius-m) var(--radius-m) 0 0;
+    /* 🔴 #647：这里原来有 `padding-right: 12px`（补上表体滚动条的占宽，好让两张表列宽一致）。
+       现在滚动条已隐藏、槽位也撤了 ⇒ 再补 12px 反而让表头比表体窄、右列错位 12px ⇒ 删掉。
+       若将来恢复显示滚动条，这里必须把 12px 补回来（与 `scrollbar-gutter: stable` 成对出现）。 */
+}
+.rl-fieldmap-wrap {
+    /* #644⑶：视野 380 → **440px**（42 行共 1469px）。⛔ 不无条件拉更高 —— 小屏上它仍受
+       `.rl-set-content`（本仓设置页整页滚动容器）约束。 */
+    max-height: 440px;
+    overflow-y: auto;
+    /* 🔴 #647（用户：「还是有问题，隐藏滚动条吧」）：**隐藏滚动条**（下面那段），于是
+       ⑴ #646 的上下 6px 槽与 `content-box` **一并撤掉**（条都不显示了，留槽只是白边）；
+       ⑵ `scrollbar-gutter: stable` 也撤 —— 它占的正是「滚动条」的位置，条没了就白留 12~14px；
+       ⑶ 表头那边的 `padding-right: 12px`（为对齐滚动条预留）同步收掉，否则表头比表体窄 12px（#640 的老毛病）。
+       ⚠️ 容器**仍然可滚**：滚轮 / 触摸板 / 拖行到边缘自动滚全部照旧，只是看不见条。 */
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 0 0 var(--radius-m) var(--radius-m);
+}
+/* 🔴 #647 隐藏滚动条本体（⚠️ 三组伪元素都要给，只藏 `::-webkit-scrollbar` 在部分平台仍会露滑块）：
+   🔴 必须 `!important` —— 核心 `body.styled-scrollbars ::-webkit-scrollbar`（0,2,0 + 元素名）压得过本选择器，
+      不写的话实测滚动条照样出现。这是本仓**唯一**允许用 `!important` 的场合（压核心的滚动条钉样式）。
+   ⚠️ 浏览器没给样式化滚动条（`::-webkit-scrollbar` 不生效）时，走标准 `scrollbar-width: none` 兜底。 */
+.rl-fieldmap-wrap { scrollbar-width: none; }
+.rl-fieldmap-wrap::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
+.rl-fieldmap-wrap::-webkit-scrollbar-thumb,
+.rl-fieldmap-wrap::-webkit-scrollbar-track { display: none !important; background: transparent !important; }
+.rl-fieldmap-wrap::-webkit-scrollbar-corner { background: transparent !important; }
+/* 两张表共用几何：`table-layout: fixed` ⇒ 列宽只认 `<colgroup>`，两张表算出来的列宽逐像素相同 */
+.rl-fieldmap-table { width: 100%; margin: 0; border-collapse: collapse; table-layout: fixed; font-size: var(--font-ui-smaller); }
+/* 表头（在滚动容器**外**，⛔ 不再需要 sticky —— 它根本不滚）。
+   #644⑶：内距 4 → 8px、字号与表体同档（原来表头比输入框里的字还小半档，读着像「附注」而不是列名）。 */
+.rl-fieldmap-head th {
+    /* 🔴 #649（用户：「文本居中导致边缘参差不齐、缺乏扫读基准线」）：表头与所有列**统一左对齐**，
+       左内距 **12px** 与下方各列的格内距同值 ⇒ 表头文字、字段名、原属性名、输入框文字落在同一条竖线上。
+       ⚠️ 这一条**取代** #648 的「表头 + 字段列居中」—— 居中的代价正是边缘参差（各列文字宽度不同）。
+       层级仍保留：字重 700、字色 `--text-normal`；分隔仍保留：底色 `--background-primary-alt` + 底边 `--text-faint`。 */
+    text-align: left;
+    padding: var(--size-4-2) var(--size-4-3);
+    font-weight: 700; color: var(--text-normal);
+    background: var(--background-primary-alt);
+    border-bottom: 1px solid var(--text-faint);
+}
+/* 🔴 #644⑴：行内只留**一条发丝线**（用户点名要的「干净整洁」那一层）；格内距 2 → 3px，
+   让 30px 的输入框不再把行撑满 —— 行与行之间不然像「框贴着框」。 */
+/* 🔴 #645：这里**只给纵向内距**（左右内距交给各列自己的规则）——
+   原先写 `padding: 3px 8px` 会把 `.rl-fm-label` 的 `padding-left: 16px` 竞掉（同特异度、实测真实 Chromium 里不生效）。
+   ⚠️ 左右默认 8px 仍在，由下面 `.rl-fm-label` / `.rl-fm-key code` / `.rl-fm-name` 各自给足。 */
+/* 🔴 #649 ①：三列表体的格内距统一 **12px**（与表头 th 同值）⇒ 四个起点共线：表头 / 字段名 / 原属性名 / 输入框文字。 */
+.rl-fieldmap-table td { padding: 3px var(--size-4-3); border-bottom: 1px solid var(--background-modifier-border); }
+.rl-fieldmap-table tbody tr:last-child td { border-bottom: none; }
+/* 🔴 #646：表体的滚动条**只属于表体** —— 宽度 / 圆角 / 颜色全部走核心变量（⛔ 不写死像素与色值），
+   并用 `track: transparent` 去掉轨道底色：轨道不再像一根柱子顶到表头，只剩一枚可拖圆点。
+   ⚠️ 选择器限定在 `.rl-fieldmap-wrap` 上，⛔ 不碰全局滚动条（本仓 #560 的红线：只改插件自己的容器）。 */
+.rl-fieldmap-wrap::-webkit-scrollbar { width: var(--scrollbar-width, 12px); }
+.rl-fieldmap-wrap::-webkit-scrollbar-track { background-color: transparent; }
+.rl-fieldmap-wrap::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb-bg);
+    border-radius: var(--scrollbar-radius, var(--radius-m));
+}
+.rl-fieldmap-wrap::-webkit-scrollbar-thumb:hover,
+.rl-fieldmap-wrap::-webkit-scrollbar-thumb:active { background-color: var(--scrollbar-active-thumb-bg, var(--scrollbar-thumb-bg)); }
+/* 🔴 #645 ④：表头与第一行的接缝**只画一道线**（表头 th 的底边）。表体首行若照常画 `border-bottom`，
+   接缝会变成 2px 双线、比其它行粗一倍。 ⚠️ 首行仍**保留**它与第二行之间的那条线（那是行分隔线，不是接缝）。 */
+.rl-fieldmap-body tbody tr:first-child td { border-top: none; }
+/* 🔴 #645：格内距 8 + 这里 8 = **16px**，与表头 `padding-left: 16px` 同一条文字左缘
+   （三列都是 8+8 ⇔ 表头 16，断言把这对数钉成等式）。 */
+/* 🔴 #645 ①：左内距给到 **16px**（= 其余两列的「格内距 8 + 值元素内距 8」），三列共享同一条文字左缘。
+   ⚠️ 这里必须写**四值 padding**，⛔ 不能用 `padding-inline-start` —— 实测它被 `.rl-fieldmap-table td` 那条
+      `padding: 3px 8px` 盖住（量到仍是 8px），而显式 `padding-left` 立刻生效（文字 677 → 685 = 表头左缘）。
+   ⚠️ 与表头 `padding-left: 16px` 是**同一个数**，断言把两者钉成等式。 */
+/* 🔴 #645 ①：第 1 列的「值」是一个 `<span>`（见 `renderFieldMapRows`），**内距加在 span 上**。
+   ⚠️ 为什么不是加在 td 上：`.rl-fieldmap-table td` 的 `padding-inline` 会把 td 上的任何左内距竞掉
+      （实测真实 Chromium 里该 td 的 computed padding-left 恒为 8px，连内联简写都不动）⇒ 包一层内联元素最稳，
+      而且与另两列「元素自带 8px 内距」**同构**（code / input 都是自己带内距）。 */
+/* 🔴 #649 ①②：字段列**左对齐**；名字与徽标走 **grid 两列**。
+   ⚠️ 为什么不用行内 span：`text-align` 管不到「每个 span 从哪儿开始」，徽标一撑宽/换行，
+      那一行的中文起点就跟纯文本行错开（正是用户第 2 条报的现象）⇒ 定宽名字列才能保证**所有行名字左缘相同**。
+   12px 左内距与表头 `.rl-fieldmap-head th` 同值（断言钉成等式 ⇒ 一条垂直引导线）。 */
+/* 🔴 #650（用户：「『个人评分』和 Dataview 之间空隙太大，让文本和标签靠在一起」）：
+   字段列 = **flex 左对齐**，名字按内容宽、徽标紧跟着（空隙恒等于 `gap`）。
+   ⚠️ 上一版用 grid 定宽名字列（`6.5em auto`）是为了对齐，但代价是**每行都留一段固定空档**
+      （实测名字右缘 123 → 徽标左缘 131，短标签行看着尤其空）。
+   🔴 对齐靠「左对齐 + 同名起点」天然成立：两行（纯文本 / 带徽标）的名字都从格的内距开始，
+      ⛔ 不需要定宽列 —— 那是为对齐做的过度设计。 */
+.rl-fm-label {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    padding: var(--size-4-2) var(--size-4-3);
+    color: var(--text-normal); text-align: left;
+}
+.rl-fm-label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-fm-label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-inline-start: 0; }
+/* 🔴 #648：内缩随 #645 的对齐目标一起撤掉（居中的格子里再偏 8px 只会让文字看着歪）。
+   ⚠️ `.rl-fm-label-text` 这个**类名保留**：它是 JS 的接线点，断言也钉着它。 */
+.rl-fm-label-text { padding-inline-start: 0; }
+/* 🔴 #644⑴：「原属性名」**去掉 `<code>` 药丸**（全表 42 枚）—— 它是**只读参考值**，faint 等宽小字就够。
+   ⚠️ 与 `.rl-fo-key code`（#643 同款决定）同一观感口径。 */
+/* 🔴 #645：格内距 8 + 这里 8 = **16px**，与表头 `padding-left: 16px` 是同一个数（断言钉等式）。
+   ⚠️ 加的是 `padding-inline-start` 而不是 `margin-inline-start`：后者会让 `<code>` 的背景/下划线跟着走，
+      而这里要的是「文字起点」，且值格子里的输入框也用内距 —— 两列必须同一种手段才对得齐。 */
+/* 🔴 #649 ①：与表头同一条 12px 左缘（原来那 8px 内缩是给「左缘对齐」补的，现在格内距已统一） */
+.rl-fm-key code { background: none; padding: 0; color: var(--text-faint); font-size: 11px; }
+/* 列宽改由 colgroup 独占（`table-layout: fixed`）⇒ 这里 ⛔ 不再写 `width: 42%`，
+   否则会与 col 宽度打架（fixed 布局下 td 的 width 只在 col 缺失时才生效）。 */
+.rl-fm-input { width: auto; }
+/* 🔴 #644⑴：**去掉输入框自己的框**（无描边 + 透明底 + 无横向内距）——「格」与「框」不再各画一层。
+   只有聚焦时才给一圈主题色描边；用 `box-shadow` 而不是 `border`（后者会改变宽度、把列挤歪）。
+   ⚠️ 必须**两级选择器**才压得住核心 `input[type="text"]`（0,1,1）的描边与底色（本仓既有教训）。 */
+/* 🔴 #649 ③（用户：「目前是纯文本，恢复输入框的边框样式（或浅灰色背景），以明确可编辑属性，同时解决右侧视觉过空」）：
+   输入框**恢复自己的框** —— 浅一档底色 + 1px 描边 + 圆角，明确「这里能改」；
+   聚焦时换成主题色圈（用 `box-shadow` 而不是 `border`，⛔ 那会改宽度把列挤歪）。
+   ⚠️ 描边占用 1px ⇒ 内距用 `padding-inline` 与描边宽度相加仍是 12px，文字才与表头对齐（断言钉着）。
+   ⚠️ 仍是**两级选择器**：核心 `input[type=text]`（0,1,1）单类压不过。 */
+/* 🔴 #649 ③（用户：「目前是纯文本，恢复输入框的边框样式（或浅灰色背景），以明确可编辑属性」）：
+   输入框**恢复可见的框** —— 浅一档底色 + 一圈内嵌描边（`inset box-shadow`）+ 圆角；聚焦换主题色圈。
+   🔴 为什么用 `inset box-shadow` 而不是 `border`：`border` 要占 1px 布局宽度，
+      而 input 的内部文字排版拿不到 `Range`（`setEnd` 在 input 上不可用）⇒ 任何 ±1px 的补偿都只能靠推算、实测推不准。
+      内嵌描边**不参与盒模型** ⇒ 文字起点 = 格内距 12px = 表头文字左缘，四条竖线零误差共线（断言钉着）。
+   ⚠️ 仍是**两级选择器**：核心 `input[type=text]`（0,1,1）单类压不过。 */
+.rl-fieldmap-table .rl-fm-name {
+    width: 100%; font-size: var(--font-ui-smaller);
+    background: var(--background-primary-alt);
+    border: none;
+    box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: 3px 0;
+}
+.rl-fieldmap-table .rl-fm-name::placeholder { color: var(--text-faint); opacity: 1; }
+.rl-fieldmap-table .rl-fm-name:hover { background: var(--background-modifier-hover); }
+.rl-fieldmap-table .rl-fm-name:focus,
+.rl-fieldmap-table .rl-fm-name:focus-visible {
+    background: var(--background-primary);
+    box-shadow: inset 0 0 0 1px var(--interactive-accent);
+    outline: none;
+}
+.rl-fieldmap-table .rl-fm-name::placeholder { color: var(--text-faint); opacity: 1; }
+.rl-fieldmap-table .rl-fm-name:hover { background: var(--background-modifier-hover); }
+.rl-fieldmap-table .rl-fm-name:focus,
+.rl-fieldmap-table .rl-fm-name:focus-visible {
+    background: var(--background-primary);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+/* #644：原键名现在**只做占位提示**（空值 = 没配过，见 `renderFieldMapRows`）⇒ 占位色要与「真值」拉开 */
+.rl-fieldmap-table .rl-fm-name::placeholder { color: var(--text-faint); opacity: 1; }
+.rl-fieldmap-table .rl-fm-name:hover { background: var(--background-modifier-hover); }
+.rl-fieldmap-table .rl-fm-name:focus,
+.rl-fieldmap-table .rl-fm-name:focus-visible {
+    background: var(--background-primary);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+    outline: none;
+}
+/* Dataview 对齐键的提示徽标（#613：只提示、不拦）。#644：降成与「原属性名」同档的 faint 小字，
+   ⛔ 不再给它一块灰底 —— 42 行里只有 4 枚，灰底反而让它比字段本身更跳。 */
+/* 🔴 #650：做成**可见的小徽章**，紧挨字段名 —— 淡底 + 圆角 + 极小字号。
+   🔴 #652（用户：「字段映射还有那几个不要dataview标签了」）：**徽标整体撤掉**（连同下面这条规则）。
+   ⚠️ `pure/metaFields.dataviewAligned` 字段**保留**（语义仍在、只是不再渲染），将来要提示还能用；
+   ⛔ 别把这条规则加回样式表 —— 没有 DOM 再用那个类名了，留着就是死样式。 */
+
+/* ══ 🔴🔴 #651（2026-10-17）「字段映射」**第二次改观**：表格语汇换成 Obsidian **属性面板（Bases）**那一套 ══
+   用户原话：「这UI太丑了，改改」。前五轮（#644~#650）都在**同一个框里挪像素**（改对齐 / 改内距 / 改描边），
+   所以越改越挤。这一轮改的是**语汇**，量测见 `_shot/fm651-*.png`（#651 仿真页：真核心 app.css 变量 +
+   真规则 + `META_FIELDS` 真数据）：
+
+   | | #650 现状（实测） | #651 目标（实测） |
+   |---|---|---|
+   | 行高 | **42.5px**（30px 输入框把行撑满） | **29.5px** |
+   | 42 行总高 | 1805px（滚 4 屏） | **1267px**（滚 2.8 屏） |
+   | 输入框 | 每个格子都画一个白框（42 个框） | **没值就没有框**（占位即灰字） |
+   | 表头 | 700 字重、`--text-normal`（比表体抢眼） | 600 / `--text-muted` / 11→12px |
+   | 已映射的行 | 与未映射**长得一样** | 名字前一枚主题色小点 + 600 字重 |
+
+   🔴 **三处语义翻面**（都有 `renderFieldMapRows` 的接线配套）：
+     ⑴ 输入框改成**表格式输入**（透明底 + 无框 + 只给悬停/聚焦反馈）—— 与表头、原键名共享同一条 12px 文字左缘；
+     ⑵ 「已映射」不再是「肉眼看输入框里有没有字」，而是行上的**记号**（`tr.is-mapped`）；
+     ⑶ 说明行只占一行（未配置那句折进同一行），表格不再被三行说明往下推。
+   ⚠️ 判定口径不变：空 = 没配过（`placeholder` 只是提示），改完回车 / 失焦才落盘。 */
+/* 说明行 = 一行（flex 允许 idle 与主句同排，窄屏才折行） */
+.rl-fieldmap-help {
+    display: flex; flex-wrap: wrap; gap: 0 var(--size-4-1);
+    margin: 0 0 var(--size-4-3);
+    color: var(--text-muted); font-size: var(--font-ui-smaller); line-height: 1.6;
+}
+/* 表体滚动容器：上下各留 4px，首行/末行不贴着圆角 */
+.rl-fieldmap-wrap { padding-block: var(--size-4-1); }
+/* 表格语汇：表头走 secondary 底 + muted 字（比表体弱一档），行间只留一条发丝线 */
+.rl-fieldmap-head th { font-weight: 600; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.rl-fieldmap-table td { padding-block: 2px; }
+/* 整行悬停（一行一个字段，扫读单位是行，不是格子） */
+.rl-fieldmap-body tbody tr:hover > td { background: var(--background-modifier-hover); }
+/* 🔴 表格式输入：无框、透明，悬停给淡底、聚焦给主题色圈（⛔ 不用 border —— 会占 1px 把列挤歪，见 #649） */
+.rl-fieldmap-table .rl-fm-name {
+    background: transparent;
+    box-shadow: none;
+    padding-block: var(--size-4-1);
+}
+.rl-fieldmap-table .rl-fm-name::placeholder { font-family: var(--font-monospace); font-size: 11px; }
+.rl-fieldmap-table .rl-fm-name:hover { background: var(--background-modifier-hover); box-shadow: none; }
+/* ⚠️ 选择器要**两段 `.rl-fieldmap-table`**（特异度 0,3,0）才压得过上面 #649 那条 `.rl-fieldmap-table .rl-fm-name:focus`
+   （0,3,0）—— 只写一段（0,2,0）时旧规则胜出，聚焦又回到 #649 的浅底实心框（#651 实测踩到）。 */
+.rl-fieldmap-table.rl-fieldmap-table .rl-fm-name:focus,
+.rl-fieldmap-table.rl-fieldmap-table .rl-fm-name:focus-visible {
+    background: var(--background-primary);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+/* 🔴 已映射的行：名字前一枚主题色小点（`::before` 用 unpadded 字符 ⛔ 占位不同会让名字起点抖动） */
+.rl-fieldmap-body tr.is-mapped .rl-fm-label { font-weight: 600; }
+.rl-fieldmap-body tr.is-mapped .rl-fm-label-text::before {
+    content: ""; display: inline-block; width: 4px; height: 4px; margin-inline-end: var(--size-4-1);
+    border-radius: 50%; background: var(--interactive-accent); vertical-align: 2px;
+}
+/* 🔴 #652（用户：「字段映射还有那几个不要dataview标签了」）：`.rl-fm-badge` **整体退场**。
+   ⚠️ `pure/metaFields.dataviewAligned` 字段**保留**（语义仍在，只是不再渲染）—— 将来要提示还能用。
+   ⛔ 别把这条规则加回来：没有 DOM 再用那个类名了（留着就是死样式）。 */
+
+/* ── #652 三组的「恢复默认」（挂在组标题行右侧，只有**有配置时**才渲染）────────────── */
+.rl-svc-group-title .rl-group-reset {
+    display: inline-flex; align-items: center; gap: 4px;
+    /* 🔴 推到**标题行最右**：⛔ `margin-inline-start: auto` 在这里不生效 ——
+       标题行的 `width: fit-content`（见上方 `.rl-svc-group-title`）没有剩余空间可分配，auto 退化成 0。
+       ⇒ 用固定留白把按钮与标题拉开，既不会挤在标题字后面，也不会因为 auto 失效而失去位置感。 */
+    margin-inline-start: var(--size-4-4);
+    padding: 2px var(--size-4-2);
+    height: auto;
+    border: none; background: transparent; box-shadow: none;
+    color: var(--text-faint); font-size: var(--font-ui-smaller); font-weight: 400;
+    border-radius: var(--radius-s); cursor: pointer;
+}
+.rl-svc-group-title .rl-group-reset:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.rl-group-reset-icon { display: flex; align-items: center; }
+.rl-group-reset-icon svg { width: 13px; height: 13px; }
+/* 🔴 #653：未修改时点「恢复默认」的**轻提示**（「已经是默认值」）—— 就地浮在按钮右侧、1.5s 淡出。
+   ⚠️ 不弹 Notice：Notice 跑到右上角，用户点下去只会觉得「没反应」。 */
+.rl-group-hint {
+    display: inline-flex; align-items: center;
+    margin-inline-start: var(--size-4-1);
+    padding: 1px var(--size-4-1);
+    border-radius: var(--radius-s);
+    background: var(--background-modifier-hover);
+    color: var(--text-muted); font-size: var(--font-ui-smaller); font-weight: 400;
+    opacity: 0; transition: opacity .2s ease;
+    pointer-events: none;
+}
+.rl-group-hint.is-on { opacity: 1; }
+
+/* ── #652「卡片信息栏」条目类型：下拉 → 分段 chips（用户：「用选择不用下拉了」）────────── */
+.rl-cf-typerow { display: flex; align-items: center; gap: var(--size-4-3); flex-wrap: wrap; margin-bottom: var(--size-4-2); }
+.rl-cf-typerow-cap { color: var(--text-muted); font-size: var(--font-ui-smaller); font-weight: 600; flex: 0 0 auto; }
+.rl-cf-typebar { display: flex; flex-wrap: wrap; gap: var(--size-4-1); }
+/* ⚠️ 几何与下方字段 chip（`.rl-cf-chips .rl-cf-chip`）**同款**：同一种「选中」手势，⛔ 别让两种控件长两个样 */
+.rl-cf-type {
+    height: 26px; padding: 0 var(--size-4-2);
+    font-size: var(--font-ui-smaller); line-height: 1; white-space: nowrap;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border); box-shadow: none;
+    border-radius: var(--radius-m);
+    color: var(--text-muted); cursor: pointer;
+}
+.rl-cf-type:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+/* 选中：实心主题色（与 `.rl-cf-chip.is-on` 同一个口径 —— 两处「选中」必须一眼是同一件事） */
+.rl-cf-type.is-on { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
+.rl-cf-type:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+
+/* ── 1.3.1 ①「海报墙卡片」组（#616 改版）：卡片预览 + 信息栏字段选择 ─────────────────
+   🔴 预览卡（`.rl-pvw-*`）的几何**照抄** `MediaList.svelte` 的 scoped 卡片样式 —— 那边是
+      **scoped**（`.svelte-<hash>` 参与特异性），设置页是普通 DOM-API、拿不到那串哈希
+      ⇒ 这里必须有一份全局的等价样式。两处的同一个数字由断言钉成**等式**，⛔ 改一处必须改另一处：
+        `.rl-ttl`     13px/700  ↔  `.rl-pvw-ttl`
+        `.rl-sub`     11px      ↔  `.rl-pvw-sub`
+        `.rl-creator` 10px      ↔  `.rl-pvw-cr`
+        `.rl-tags`    10px/faint ↔ `.rl-pvw-tag`
+   ⚠️ 预览是**示意**：宽度固定 150px、不随设置页宽度伸缩 ⇒ 长文本的截断位置与真卡不同，属正常。 */
+.rl-cf-wrap { display: flex; flex-wrap: wrap; gap: var(--size-4-6); align-items: flex-start; }
+/* #617：类型下拉下方那一整块（预览 + chip）—— 与上面的下拉行拉开一档层次 */
+.rl-cf-panel { margin-top: var(--size-4-2); }
+.rl-cf-preview { flex: 0 0 auto; }
+.rl-cf-picker { flex: 1 1 280px; min-width: 260px; }
+.rl-cf-cap { color: var(--text-muted); font-size: var(--font-ui-smaller); font-weight: 600; }
+.rl-cf-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--size-4-2); margin-bottom: var(--size-4-2); }
+.rl-cf-counter { color: var(--text-muted); font-size: var(--font-ui-smaller); white-space: nowrap; }
+
+/* 🔴 #640 ⑶：「已保存」轻提示 —— 挂在**组标题行右侧**（面板每次重画都会 `empty()`，挂面板里会被擦掉）。
+   默认 `opacity: 0` 隐身，落盘成功时点亮 `.is-on`，1.5s 后由 JS 摘掉该类自动淡出。
+   ⚠️ `pointer-events: none`：它只是回执，不该拦住标题行上的点击。 */
+.rl-svc-group-title { position: relative; }
+.rl-cf-toast {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-inline-start: var(--size-4-2);
+    color: var(--text-faint); font-size: var(--font-ui-smaller); font-weight: 400;
+    opacity: 0; transition: opacity .25s ease;
+    pointer-events: none;
+}
+.rl-cf-toast svg { width: 12px; height: 12px; }
+.rl-cf-toast.is-on { opacity: 1; }
+
+/* 🔴 #640 ⑴：**已选**独立成区（可拖拽排序）。原来选中/未选混在一堆 chip 里 ——
+   用户分不清「哪几行已经在卡上」，更没法说清「拖谁、往哪儿拖」。 */
+.rl-cf-subcap { color: var(--text-faint); font-size: var(--font-ui-smaller); margin: var(--size-4-1) 0 var(--size-4-1); }
+.rl-cf-subcap.is-hidden { display: none; }
+.rl-cf-selected { display: flex; flex-direction: column; gap: 2px; min-height: 26px; }
+.rl-cf-empty { color: var(--text-faint); font-size: var(--font-ui-smaller); padding: 4px 0; }
+.rl-cf-sel {
+    display: flex; align-items: center; gap: var(--size-4-1);
+    height: 26px; padding: 0 var(--size-4-1) 0 2px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    color: var(--text-normal); font-size: var(--font-ui-smaller);
+    cursor: grab; user-select: none;
+    transition: box-shadow .12s ease, background .12s ease;
+}
+.rl-cf-sel:hover { background: var(--background-modifier-hover); }
+.rl-cf-sel.is-dragging { opacity: .5; }
+/* 🔴 「其他标签平滑让位」：拖动经过时给一条主题色上边线（`transition` 让让位有弹性感）。
+   ⚠️ 用 `inset box-shadow` 而不是 `border-top` —— 后者会改高度、把下面的行**推一下**（抖动）。 */
+.rl-cf-sel.is-over { box-shadow: inset 0 2px 0 var(--interactive-accent); }
+.rl-cf-sel:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+/* 把手：#633 同款 —— 默认隐身，悬停 / 拖动时现身；⛔ 不用 `display`（那会推文字） */
+.rl-cf-grip { display: flex; align-items: center; flex: 0 0 auto; color: var(--text-faint); opacity: 0; transition: opacity .15s ease; }
+.rl-cf-grip svg { width: 12px; height: 12px; }
+.rl-cf-sel:hover .rl-cf-grip, .rl-cf-sel.is-dragging .rl-cf-grip, .rl-cf-sel:focus-visible .rl-cf-grip { opacity: 1; }
+.rl-cf-sel-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 移除按钮：两级选择器压核心的 `button:not(.clickable-icon)`（0,1,1）—— 单类压不过 */
+.rl-cf-sel .rl-cf-sel-x {
+    display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+    width: 18px; height: 18px; padding: 0;
+    background: transparent; border: none; box-shadow: none;
+    color: var(--text-faint); border-radius: var(--radius-s); cursor: pointer;
+}
+.rl-cf-sel .rl-cf-sel-x svg { width: 12px; height: 12px; }
+.rl-cf-sel .rl-cf-sel-x:hover { background: var(--background-modifier-hover); color: var(--text-error); }
+
+/* 预览卡本体 */
+.rl-pvw-card {
+    width: 150px; margin-top: var(--size-4-2); overflow: hidden;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    display: flex; flex-direction: column;
+}
+/* 封面占位：真卡是 `aspect-ratio: 2 / 3` 的图。
+   🔴 #640 ⑵：用户报障「海报（封面的占位）高度太高，导致预览信息字段视觉比例不协调。
+      建议：减小海报占位图的整体高度。目的让下方『信息栏』的文字展示区域获得更多空间」。
+      原写法 `aspect-ratio: 2 / 3`（宽 150px ⇒ 高 225px），把预览卡压成「几乎全是封面」，
+      而本组真正要看的是**下面那 0~5 行信息栏** ⇒ 改成**固定 132px**（约原先的 59%）。
+      ⚠️ 这里**刻意不再用 `aspect-ratio`**：预览卡是示意图、宽度固定 150px，
+         「按比例缩放」对它没有意义，而固定高度能保证「不管以后卡片宽度怎么调，
+         信息区的可见高度都不缩水」—— 那正是本条诉求。
+      ⚠️ 与真卡（`MediaList` 的 `.rl-cov` 仍是 `aspect-ratio: 2/3`）**不同高**是**刻意的**：
+         预览要的是「信息区占大头」，真卡要的是「海报本来该有的比例」。⛔ 别为了"一致"改回去。 */
+.rl-pvw-cov {
+    height: 132px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--background-secondary); color: var(--text-faint);
+}
+.rl-pvw-cov svg { width: 26px; height: 26px; }
+/* 与真卡 `.rl-card-meta { padding: 7px 8px; min-height: 74px }` 对齐 */
+.rl-pvw-meta { padding: 7px 8px; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 74px; }
+.rl-pvw-ttl { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 信息栏三档：字号 / 颜色 / 行距逐条对齐真卡（见文件头那段对应表） */
+.rl-pvw-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl-pvw-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.rl-pvw-cr { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.rl-pvw-tag { font-size: 10px; color: var(--text-faint); margin-top: 3px; }
+
+/* 信息栏字段 chip。
+   🔴 两级选择器 + 框四件（background / border / box-shadow / color）：核心那条
+      `button:not(.clickable-icon)`（(0,1,1) 的灰底）只有用 (0,2,0) 才压得住 —— 单类压不过。 */
+.rl-cf-chips { display: flex; flex-wrap: wrap; gap: var(--size-4-1); }
+.rl-cf-chips .rl-cf-chip {
+    height: 26px; padding: 0 var(--size-4-2);
+    font-size: var(--font-ui-smaller); line-height: 1; white-space: nowrap;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: none;
+    color: var(--text-muted);
+    border-radius: var(--radius-m);
+    cursor: pointer;
+}
+.rl-cf-chips .rl-cf-chip:hover:not(:disabled) { background: var(--background-modifier-hover); color: var(--text-normal); }
+.rl-cf-chips .rl-cf-chip.is-on { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); }
+/* 到上限 ⇒ 未选中的置灰（让「不能再选」在点之前就看得见） */
+.rl-cf-chips .rl-cf-chip:disabled { opacity: .45; cursor: default; }
+.rl-cf-chips .rl-cf-chip:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+.rl-cf-hint { margin-top: var(--size-4-2); color: var(--text-faint); font-size: var(--font-ui-smaller); }
+
+/* ── 1.3.1 ① 第 3 件「笔记属性顺序」（rl-fo-*）：按类型配置属性的写出顺序 ───────────────
+   🔴🔴 #640（1.4.0）形态翻面：六列并排 → **左主右从**。用户报障原文：
+      「目前展示为 6 列并排导致横向空间严重不足，改成主从视图……还有当前列列都显示了几个
+       完全相同的属性（条目ID、类型、标题、状态...），这是一种视觉浪费」。
+   旧形态（#619）是 `grid-template-columns: repeat(6, …)` —— 每列只有约 1/6 宽度，
+   中文标签 + 键名挤成两行仍然放不下；而六个类型里**前 8 个字段逐字相同**，六列重复显示同一份。
+   ⇒ 左 = 属性分组导航（全局 + 六类型），右 = 当前组的有序列表。
+
+   🔴🔴 #643（用户 2026-10-16：「这个太丑了，高级设置-笔记属性顺序 UI，改改」）—— **两块各滚各的 → 一块封顶**。
+      #640 留下四件丑：
+      ⑴ **左栏高、右栏矮**：左 = 10 枚按钮**无上限**（≈308px），右 = 表头 + **340px 的框** + 脚注（≈400px），
+         两者又都是 `align-items: flex-start` ⇒ 左边拖到底、右边框外留一截，两块看着像没对齐的拼贴；
+      ⑵ 每行自带 `border-bottom` ⇒ 框里是**一排排横杠**（列表被切成条纹）；
+      ⑶ 当前分组是**实心主题色块** —— 设置页里最抢眼的元素成了导航；
+      ⑷ 键名带 `<code>` 底片，每行一个灰药丸。
+      ⇒ 改成**一个 400px 封顶的整块**：左栏 `background-secondary`、右栏 `background-primary`，
+        中间 1px 分隔线；右栏三段（表头 / 列表 / 脚注）用 flex 撑满同一高度；
+        当前分组 = **凸起的白底 + 细描边**（不是色块）；行内发丝线全撤，键名去掉底片。
+      ⚠️ 观感与本页下方「卡片信息栏」那组对齐（`background-primary` + 1px `background-modifier-border` + `radius-m`）
+        —— 同一页两块控件不该长着两套脸。
+      🔴 色值只用变量 / `color-mix` 回调，⛔ 不写死任何主题色（深色主题下由 `--background-primary` / `--background-secondary`
+        自然翻转，实测见 `_shot/fo643.html` 的 C 帧）。 */
+.rl-fo-help { margin: 0 0 var(--size-4-3); color: var(--text-muted); font-size: var(--font-ui-smaller); line-height: 1.6; }
+
+/* ── 🔴 #653「笔记属性顺序」：编辑 / 对比预览 两档切换 + 位次矩阵 ──────────────────────
+   用户：「再加个对比视图，如一整个表格滑动并览」。
+   🔴 `is-hidden` 要用 `!important` 覆盖掉 flex 的显示：`.rl-fo-view` 本身是块级容器，
+      Obsidian 核心有 `.is-hidden { display: none }`，但本仓 `.rl-fo-view` 没写 display，默认即可；
+      这里显式写一遍是为了让「哪档可见」只有一处真源（⛔ 别在 JS 里手改 style.display）。 */
+.rl-fo-view.is-hidden { display: none; }
+.rl-fo-modebar { display: flex; gap: var(--size-4-1); margin: 0 0 var(--size-4-3); }
+.rl-fo-mode {
+    height: 26px; padding: 0 var(--size-4-3);
+    font-size: var(--font-ui-smaller); line-height: 1; white-space: nowrap;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border); box-shadow: none;
+    border-radius: var(--radius-m);
+    color: var(--text-muted); cursor: pointer;
+}
+.rl-fo-mode:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+/* 选中：实心主题色 —— 与卡片信息栏的类型 chips 同一个口径（同一种「选中」手势） */
+.rl-fo-mode.is-on { background: var(--interactive-accent); border-color: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
+.rl-fo-mode:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+
+.rl-fo-cmp-cap { margin: 0 0 var(--size-4-2); color: var(--text-faint); font-size: var(--font-ui-smaller); }
+/* 横向滑动容器：宽屏铺满、窄屏可滑 —— `min-width: max-content` 让内部表格按**内容宽**撑开（不压列）。 */
+.rl-fo-cmp-scroll {
+    overflow-x: auto; overflow-y: visible;
+    /* 🔴 #654 层叠隔离（与 `.rl-set-bar` 的 `z-index: 40` 是**同一套双保险**的下半件，配套看那边注释）：
+       本容器只做横向滚动、`overflow-y` 是 visible ⇒ 它**不是** y 向滚动口，
+       内部表头 `th{position:sticky}` 的吸附参照因此跳到外层滚动口（症状 = 表头压住 Tab 栏）。
+       提栏的 z-index 只能「挡住」症状；`isolation: isolate` 才是**根治**：
+       它让本容器成为独立层叠上下文，内部那些 z-index（表头 2 / 首位次列 3）只能在这一层里比大小，
+       再也无法参与外面（Tab 栏、页签、浮层）的层级竞争。
+       ⚠️ 等价写法还有 `position: relative; z-index: 0`，但 `isolation` 不引入定位、不改盒模型，
+          对 sticky 子元素与横向滚动的副作用最小 —— 本仓优先它。 */
+    isolation: isolate;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    background: var(--background-primary);
+}
+.rl-fo-cmp-table { border-collapse: collapse; table-layout: fixed; width: 100%; min-width: max-content; font-size: var(--font-ui-smaller); }
+/* 表头：滑走时代替「列名」的记忆点 ⇒ 半透明底 + 停靠顶部 */
+.rl-fo-cmp-table thead th {
+    position: sticky; top: 0; z-index: 2;
+    padding: var(--size-4-1) var(--size-4-2);
+    text-align: left;
+    font-weight: 600; color: var(--text-muted);
+    background: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+/* 首位次列同样停靠左边（滑到右边类型时还能看到「这是第几位」） */
+.rl-fo-cmp-rank {
+    position: sticky; left: 0; z-index: 1;
+    width: 56px;
+    padding: var(--size-4-1) var(--size-4-2);
+    text-align: right;
+    color: var(--text-faint); font-weight: 400; font-variant-numeric: tabular-nums;
+    background: var(--background-primary);
+    border-right: 1px solid var(--background-modifier-border);
+}
+.rl-fo-cmp-table thead .rl-fo-cmp-rank { z-index: 3; background: var(--background-secondary); }
+/* 🔴 表头格**保持 table-cell**（⛔ 别改成 flex：一改就与数据行的列宽算不到一处，表头会塌成梯形 —— 本批实测）。
+   两行（类型名 / N 项）靠内层 span 自己竖排，格子本身仍是普通单元格。 */
+.rl-fo-cmp-col-label { display: block; color: var(--text-normal); }
+.rl-fo-cmp-col-n { display: block; color: var(--text-faint); font-size: 10px; font-weight: 400; }
+.rl-fo-cmp-cell { padding: var(--size-4-1) var(--size-4-2); border-bottom: 1px solid var(--background-modifier-border); }
+.rl-fo-cmp-cell.is-empty { background: var(--background-secondary-alt); }
+.rl-fo-cmp-table tbody tr:last-child .rl-fo-cmp-cell { border-bottom: none; }
+.rl-fo-cmp-table tbody tr:hover .rl-fo-cmp-cell { background: var(--background-modifier-hover); }
+.rl-fo-cmp-label { color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+/* 🔴 主从两栏**同一块**：高度封顶 400px、左右各自在自己的格子里滚（`overflow` 分在两栏上，外层只裁不滚）。
+   ⛔ 外层不加 `height` 以外的约束：`min-height: 0` 要留给下面对 flex 子项生效才有意义。 */
+.rl-fo-wrap {
+    display: flex; align-items: stretch; gap: 0;
+    height: 400px; overflow: hidden;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+}
+@media (max-width: 700px) { .rl-fo-wrap { flex-direction: column; height: auto; } }
+/* 左：分组导航（灰底、右缘一条分隔线）。`min-height: 0` 是让它在 flex 里**真能滚**的关键（少了它只会把父级撑高）。 */
+.rl-fo-nav {
+    flex: 0 0 116px; display: flex; flex-direction: column; gap: 1px;
+    min-height: 0; overflow-y: auto;
+    padding: 6px var(--size-4-2) 6px 6px;
+    background: var(--background-secondary);
+    border-right: 1px solid var(--background-modifier-border);
+}
+@media (max-width: 700px) {
+    .rl-fo-nav {
+        flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; overflow: visible;
+        border-right: none; border-bottom: 1px solid var(--background-modifier-border);
+    }
+}
+.rl-fo-nav-cap { padding: 2px 6px 4px; color: var(--text-faint); font-size: var(--font-ui-smaller); font-weight: 600; }
+.rl-fo-nav .rl-fo-navitem {
+    display: block; width: 100%; height: 28px; flex: 0 0 auto; text-align: left;
+    padding: 0 var(--size-4-2); margin: 0;
+    background: transparent; border: none; box-shadow: none;
+    color: var(--text-muted); font-size: var(--font-ui-smaller); font-weight: 500; line-height: 1;
+    border-radius: var(--radius-s); cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* ⚠️ 两级选择器压核心的 `button:not(.clickable-icon)`（0,1,1）—— 单类压不过（本仓既有教训） */
+.rl-fo-nav .rl-fo-navitem:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+/* 🔴 #643⑶：选中态**不再是主题色块** —— 灰底左栏里「凸起成白卡片」比「涂成主题色」更像 Obsidian 自己的选中态，
+   而且不会把视线从右侧真正要读的列表抢走。`inset` 描边是给浅色灰底与深色灰底都能分出边界的写法。 */
+.rl-fo-nav .rl-fo-navitem.is-on {
+    background: var(--background-primary); color: var(--text-normal); font-weight: 600;
+    box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+}
+.rl-fo-nav .rl-fo-navitem:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+/* 右：表头 / 列表 / 脚注三段撑满同一高度（列表 `flex: 1 1 auto` 吃掉中间，脚注永远贴底） */
+.rl-fo-pane { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.rl-fo-pane-head {
+    flex: 0 0 auto; display: flex; align-items: baseline; gap: var(--size-4-2); flex-wrap: wrap;
+    padding: var(--size-4-2) var(--size-4-3);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.rl-fo-pane-title { color: var(--text-normal); font-size: var(--font-ui-smaller); font-weight: 600; }
+.rl-fo-pane-note { color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.rl-fo-empty { color: var(--text-faint); font-size: var(--font-ui-smaller); padding: var(--size-4-4) var(--size-4-3); }
+.rl-fo-foot {
+    flex: 0 0 auto; margin: 0; padding: var(--size-4-2) var(--size-4-3);
+    border-top: 1px solid var(--background-modifier-border);
+    color: var(--text-faint); font-size: var(--font-ui-smaller); line-height: 1.5;
+}
+/* ⚠️ 「拖到底部自动滚动」是 **HTML5 DnD 的原生行为**（拖拽期间浏览器不把指针移动当滚动），
+   ⛔ 别手写定时器模拟。`overscroll-behavior` 另在文件下方那条统一规则里（防滚动穿透）。 */
+.rl-fo-list {
+    flex: 1 1 auto; min-height: 0;
+    margin: 0; padding: 4px 6px; list-style: none; overflow-y: auto;
+}
+.rl-fo-item {
+    display: flex; align-items: center; gap: var(--size-4-2);
+    height: 30px; padding: 0 6px 0 2px;
+    /* 🔴 #643⑵：行**不再自带下边框** —— 一圈横杠会把列表切成条纹；行间差异改由悬停底色给出 */
+    border: none; border-radius: var(--radius-s);
+    color: var(--text-normal); font-size: var(--font-ui-smaller);
+    cursor: grab; user-select: none;
+}
+.rl-fo-item:hover { background: var(--background-modifier-hover); }
+.rl-fo-item.is-dragging { opacity: 0.5; }
+/* 🔴 #640：拖到目标位置时给一条**主题色上边线**（「其他属性平滑让位」的视觉落点） */
+.rl-fo-item.is-over { box-shadow: inset 0 2px 0 var(--interactive-accent); }
+.rl-fo-item:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -1px; }
+/* 把手：#633 同款 —— 默认隐身（`opacity: 0`），悬停 / 拖动时才现身；⛔ 不用 `display`（那会推文字） */
+.rl-fo-grip { display: flex; align-items: center; flex: 0 0 auto; color: var(--text-faint); opacity: 0; transition: opacity .15s ease; }
+.rl-fo-grip svg { width: 12px; height: 12px; }
+.rl-fo-item:hover .rl-fo-grip, .rl-fo-item.is-dragging .rl-fo-grip, .rl-fo-item:focus-visible .rl-fo-grip { opacity: 1; }
+.rl-fo-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 🔴 #640：主从视图下右侧很宽 ⇒ 键名**回到同一行**（#619 的「独占第二行」是为六列窄栏准备的，那档已退场） */
+.rl-fo-key { flex: 0 0 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 🔴 #643⑷：键名**去掉 `<code>` 的底片** —— 每行一个灰药丸既抢注意力又把行推得七零八落，
+   降成「小一号的 faint 等宽字」即可（信息还在、噪声没了）。 */
+.rl-fo-key code { background: none; padding: 0; color: var(--text-faint); font-size: 11px; }
+
 /* ── 🔴 #553「基本设置」页：**撤销 #541 手写的分组卡**（用户上手两轮后裁定：「还是改回 Obsidian 原生吧」）──
    #541 当年照 yolo 的排版手写了一张「分组卡」（background + border + border-radius + padding）。
    现在改用**核心原生**的 `.setting-group` / `.setting-items`（口径见上面 #553 那段、实现见 `Settings.ts`）
@@ -1016,39 +1700,61 @@
       ⑴ **#565 那个「像输入框」的框退场** —— `.rl-exp-head` 的 `border / border-radius / padding`
          **一并归零**（整行读作一条列表项，容器才是那张卡）；
       ⑵ **#567 的「三项各自成卡」退场** —— 改为**一个容器卡 + 行间 hairline 分割线**（见下一条注释）。 */
-/* 🔴 #574（用户 2026-10-08）：**无缝列表组** ——
-   用户原话：「由独立卡片式改为无缝列表组。去掉投影和较大圆角，改为底部分割线（如 iOS 设置列表）」。
-   做法：容器 `.rl-exp-list` **自己就是那张卡**（小圆角 / 无投影 / 1px hairline 描边）；
-   行拍平透明、行间只留一条**上分割线**。
-   ⛔ 分割线**不许**写成 `> .rl-exp-row:not(:last-child) { border-bottom: … }` —— 子面板
-   （`.rl-exp-panel`）是行与行之间的兄弟节点，`last-child` 会判到最后那个面板上，
-   于是**最后一行下面永远多一条线**（列表底部凭空出现一道缝）。
-   ⚠️ 于是 #567 那条「gap 8px + 行 margin 0」的旧口径**作废**：现在 `gap` 归 0（卡片里不留缝）。 */
+/* 📌 编号备注（2026-10-21 收口时补）：本批（设置页 UX 改版 + 关于页「未来规划」）在注释里沿用
+   **`#655`** 这个号，但 `#655` 在 `Project-Rule/CHANGELOG.md:593` 已是 **2026-10-17 的 Steam 单**
+   （「steam 同步和测试按钮调换位置 / steamid 的显示按钮点击无反应」）。两处撞号：
+   真 #655 见 `src/Settings.ts:974 / 2631 / 2862` 与 `styles.css:1979`；本批的对外编号是 **`#681`**
+   （见 `Project-Rule/CHANGELOG.md` 的「体验优化 · #681」与 `Project-Rule/current-progress.md`）。
+   ⛔ 别用批量替换「#655 → #681」统一：上面那 4 处是真 #655，会被一起改错。 */
+/* 🔴 #655（用户 2026-10-19）：**外层包裹底色整块退场** ——
+   用户原话：「移除实验性功能下三个选项外层的深灰包裹底色……消除视觉割裂感」。
+   沿革（同一处已经改判三次，⛔ 别照着旧注释改回去）：
+     #567「三项各自成卡」→ #574「一个容器卡 + 行间 hairline」→ **#655「连容器卡都不要」**。
+   做法：「卡四件」`background / border / border-radius / overflow` **全部删除**
+   ⇒ 与上方常规设置项**平铺一致**（同一张纸；不是纸上面又贴了一张小一号的纸）。
+   层次改由「行间分割线 + 行内距」承担，不再靠底色差 —— 底色差在这一组里从来就是个伪层级：
+   三项是**平级**的开关，谁也没有比谁更"内层"。
+   ⚠️ `overflow: hidden` 必须一并去掉：它当初只为裁掉卡内圆角的毛边；卡没了还留着，
+      会把展开面板里溢出的焦点环、长目录名裁掉（= 修一个坏观感、添一个新 bug）。
+   ⚠️ 容器 `gap` 仍归 0：分割线是 `border-top`，有缝会把它和上一行分开。 */
 .rl-exp-list {
     gap: 0;
-    background: var(--setting-items-background, var(--background-secondary));
-    border: 1px solid var(--background-modifier-border);
-    border-radius: var(--rl-t-radius-md, 6px);
     box-shadow: none;
-    overflow: hidden;
 }
-/* 行内距按用户给的档：垂直 8–10px、水平 12–16px ⇒ 取 9px / 14px */
-.rl-exp-list > .rl-exp-row { margin-bottom: 0; padding: 9px 14px; border-radius: 0; }
+/* 行内距：**一格都不自己写**（2026-10-21，用户需求 3）——
+   本组改回借核心原生分组卡后，行内距/外边距的唯一正确口径是「与同级『外观与体验』
+   『数据与备份』逐值相同」，而那两组是纯核心结构（行 = 裸 `.setting-item`）⇒
+   同一套 DOM 链吃同一套核心规则，天然相同。
+   ⛔ 别再写回 `padding: 10px 0`：水平 0 的初衷是"卡没了就别留卡的内衬"，
+      卡回来后它会让文字贴到卡片边缘（用户点名「统一卡片底色与**边距**」）。 */
 /* 🔴🔴 #588（用户 2026-10-10 实机截图：「现状」里**三行各自长出一圈细框**，「想实现」没有）
    —— 行自身的「框三件」原来写在**单类** `.rl-exp-row`（0,1,0）上，与核心 `.setting-item`（0,1,0）
    **同特异性** ⇒ 全靠「插件样式表排在核心之后」赢，换个版本/主题就可能翻车。
    ⇒ 一律改走两级 `.rl-exp-list > .rl-exp-row`（0,2,0），与书写顺序无关。
-   ⚠️ 行间那条上分割线（`.rl-exp-list > .rl-exp-row:not(:first-child)`，0,3,0）比本条更高 ⇒ 不受影响。 */
-.rl-exp-list > .rl-exp-row { border: none; background: transparent; box-shadow: none; }
+   ⚠️ 行间那条上分割线（`.rl-exp-list > .rl-exp-row:not(:first-child)`，0,3,0）比本条更高 ⇒ 不受影响。
+   ⚠️ 2026-10-21 起这三条同时是「核心已给的值」的兜底（核心 `.setting-group .setting-item:not(
+      .setting-item-heading)` 同样是无框/透明底），保留它们只为抗主题与版本 —— ⛔ 别顺手删。 */
+.rl-exp-list > .rl-exp-row { border: none; background: transparent; box-shadow: none; border-radius: 0; }
 .rl-exp-row {
     /* 本组自带容器卡（`.rl-exp-list`）⇒ 行只负责布局，⛔ 别两层都画卡 */
     align-items: center;
     /* 🔴 #588：摘要框与开关之间恒定 12px（用户点名「可折叠项开关组的对齐与间距」） */
     gap: var(--size-4-3, 12px);
 }
-/* 分割线只画在「不是第一行」的那些行上（首行贴着卡的上边，不该有线）
-   ⚠️ 特异性 0,3,0 > `.rl-exp-row` 的 0,1,0 ⇒ 与书写顺序无关，`border: none` 压不掉它。 */
-.rl-exp-list > .rl-exp-row:not(:first-child) { border-top: 1px solid var(--background-modifier-border); }
+/* 🔴🔴 2026-10-21 二轮（用户：「实验性功能组选项的列表分隔线…贯穿到边缘…分隔线需增加左右两侧的缩进
+   （Inset），不要 100% 撑满整个容器」，并要「与『外观与体验』『数据与备份』视觉统一」）：
+   **那条自己画的行间分割线已整条删除** ——
+     ⑴ 它画在**行的 border box** 上（`border-top` 一格宽都缩不了），而卡片左右内距是核心的
+        `--setting-items-padding-x`（20px）⇒ 线两头必然顶到卡片边缘，正是用户看到的「撑满」；
+     ⑵ 核心**本来就有一条带了缩进的分割线**：`.setting-group .setting-item:not(.setting-item-heading)::before`
+        的 `left/right` 都是 `var(--setting-items-padding-x)`（真实 `app.css:4986-4993`），
+        `:first-child::before { content: none }` 也由核心判掉；
+     ⑶ 于是本组只要「不自绘」，就和另三组**同源同值**（它们一直是纯核心结构）—— 统一是删除出来的，
+        不是再补一条 `margin`/`inset` 出来的（⛔ 别写成 `.rl-exp-row::before` 再画一遍：两条线会叠）。
+   ⚠️ 组标题 `.rl-svc-group-title` 是 `padding: 0 0 …`（贴着卡片左缘），而 20px 的缩进对齐的是**行内文字**
+     —— 与另三组逐像素一致，这正是「视觉统一」的判据。 */
+/* 分割线**只由核心提供**（见上一条注释）；`.rl-exp-list` 这个类名下已无任何自绘边框规则。
+   ⛔ 别把 `border-top` 加回来 —— 那是 2026-10-08（#574）的历史形态，已在 2026-10-21 二轮退场。 */
 /* 🔴🔴 #566（用户实机截图「这是怎么回事，给我改好了啊」）：**框没铺满 —— 三行的框宽随说明文字长短变**
    （框只包到文字 + 箭头就停了，与开关之间吊着一大段空白）。真根因（真实 app.css 逐条核过）：
    **核心给 `.setting-item-info` 与 `.setting-item-control` 都是 `flex: 1 1 auto`（两栏各吃一半）** ——
@@ -1091,9 +1797,14 @@
 }
 .rl-exp-head:hover { color: var(--interactive-accent); }
 .rl-exp-head:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
-/* 框内左半：名称（#567 起只剩它一行 —— 说明已整体去掉，见本节顶部注释 ⑵）。 */
+/* 框内左半：名称 + 副标题（🔴 #640 起说明**回来了** —— #567 曾整体去掉，用户上手报
+   「阅读器等那几条副标题没显示」⇒ 以最新指令为准，desc 文本搬进这一列，见 `Settings.makeCollapsible`）。
+   ⚠️ 本节顶部注释 ⑴ 记的是 #567 当时的形态，已被 #640 翻面；⛔ 别照着旧注释把它删回去。 */
 .rl-exp-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .rl-exp-name { font-size: 13px; font-weight: 600; line-height: 1.4; }
+/* 副标题：与设置页其余行的 `.setting-item-description` 同档（`--font-ui-smaller` + 弱色）——
+   ⛔ 不自己发明字号：同一页里两种「副标题」看着就是两套设计（本仓「同一概念一份真源」）。 */
+.rl-exp-desc { font-size: var(--font-ui-smaller); color: var(--text-muted); line-height: 1.4; }
 /* 框内右半：箭头（`span` —— 它不再是一枚按钮，点击冒泡到摘要按钮那一个处理器） */
 .rl-exp-chev {
     display: flex; align-items: center; justify-content: center;
@@ -1110,30 +1821,72 @@
 /* 🔴 #574：展开态的「框线变强调色」随那个框一起退场 ⇒ 改为**名称变强调色**
    （纯文字线索，与 `.rl-exp-head:hover` 同一口径；⛔ 不铺底色 —— 本仓「只变色」）。 */
 .rl-exp-row.is-open .rl-exp-name { color: var(--interactive-accent); }
+/* 🔴 2026-10-21（用户需求 3）：「折叠下拉容器可**深色一点**」——
+   展开的子面板读作「卡里的抽屉」，所以底色比卡片深一档。
+   ⚠️ 取 `--background-modifier-hover` 而不是 `--background-secondary`：
+     本组现在借的是核心卡（底色 `--background-primary-alt`），`--background-secondary`
+     与它只差 4 级、几乎看不出（用户要的是"可深色一点"能看出区别）。
+   ⚠️ 左引导线从「每个子行各画一条」上移到**面板自己**：底色铺满后，
+     线画在行上会出现"一段一段的断线"（行与行之间的 8px 空隙没有线）。 */
+.rl-exp-panel.is-open {
+    display: block;
+    background: var(--background-modifier-hover);
+    border-left: 2px solid var(--background-modifier-border);
+}
 /* 收起时**不占空间**：否则每一行下面都吊着一段空白，摘要行的「紧凑」就没了 */
 .rl-exp-panel { display: none; }
-.rl-exp-panel.is-open { display: block; }
-/* 层级线索（#588 起）：**灰底 chip 本身**。
-   🔴 #574 当时把子面板里的行「一并拍平」只留「缩进 + 左侧一条竖线」；#588 用户给的「想实现」里，
-   展开后的每一项都是**一块独立的圆角块**（参考图：Claude Code / Gemini CLI 的设置面板）
-   ⇒ 撤掉 `border-left` 竖线，改为 `background + border-radius`；行高 `8px → 10px`。
-   ⚠️ 仍要拍掉核心给「裸 `.setting-item`」的那张卡（bg + border + radius），否则会在容器卡里叠成卡中卡
-      —— 我们只要「一块灰底 + 圆角」，不要核心的描边与它的 `margin-bottom: 8px` 间距。 */
+/* 子面板的行：把核心的卡四件全部压平（面板自己已经铺了底色 + 引导线）。
+   层级线索 = 「面板底色差 + 左侧 2px 线 + 缩进」，⛔ 不要再给行加框/加底色（= 需求里的「嵌套过重」）。
+   ⚠️ `border: none` 必须写在 `border-left` 之前——这里行上不留线（线在面板上），
+      保留这四行只为压核心 `.setting-item` 的描边与底色。
+   ⚠️ 左右内距照旧：左 14px = 引导线右侧的呼吸；右侧跟核心卡的内距对齐（`--size-4-4`）。 */
 .rl-exp-panel.is-open > .setting-item {
-    margin: 0 14px 8px 14px;
-    padding: 10px 12px;
+    margin: 0;
+    padding: 8px var(--size-4-4, 16px) 8px 14px;
     border: none;
-    border-radius: var(--rl-t-radius-md, 6px);
-    /* 🔴 底色用 `--background-modifier-hover` 而**不是** `--background-secondary`：
-       容器那张卡的底就是 `--setting-items-background`（= `--background-primary-alt` = base-10），
-       而 `--background-secondary` 是 base-20 ⇒ 亮色下 #f6f6f6 vs #fafafa **只差 4 级**、chip 几乎看不见
-       （仿真页实测）；`--background-modifier-hover` 在亮/暗两套下都比容器底**明显一档**。 */
-    background: var(--background-modifier-hover);
+    border-left: none;
+    border-radius: 0;
+    background: transparent;
     box-shadow: none;
 }
-/* ⚠️ #588：子面板里的行是「裸 `.setting-item`」—— 上面那条已经把它们改成灰底 chip；
-   这里只补一条「info 列可压缩」（长目录名不把 chip 撑破），⛔ 别再加框/线。 */
+/* 子面板的层级线索沿革（⛔ 别再给行加线/加底色）：
+   #574「缩进 + 左侧竖线」→ #588「灰底圆角 chip」→ #655「透明底 + 每行各画一条左侧线」
+   → **2026-10-21（用户需求 3）线搬到 `.rl-exp-panel.is-open` 上、行上不再画**。
+   搬家的唯一理由：行与行之间有空隙，线画在行上会出现"一段一段的断线"；
+   而底色既然已经铺在面板上（用户要「可深色一点」），线跟着上移才是一整条连续线索。
+   ⚠️ 因此**这里不再有 `.rl-exp-panel.is-open > .setting-item` 的第二条规则** ——
+     两条同选择器会让后一条静默盖掉前一条（本批真踩过：面板行出现 2px 线 + 6px 内距，
+     与上面那条的 8px 内距打架）。改这条口径时只改上面那条。
+   ⚠️ 核心 `.setting-item` 的 `background` / `border` 都要显式压，只压一项会残留
+      「核心描边 + 我们的透明底」这种半新半旧形态。 */
+/* ⚠️ #588：子面板里的行是「裸 `.setting-item`」—— 上面那条已把它们拍平；
+   这里只补一条「info 列可压缩」（长目录名不把行撑破），⛔ 别再加框/线。 */
 .rl-exp-panel.is-open > .setting-item .setting-item-info { min-width: 0; }
+
+/* ── 🔴 #655 `.rl-dir-row`：设置页「本地目录」行（目录输入框吃满剩余宽度）─────────────
+   需求 ③「输入框拉伸」：用户要求目录输入框**占满剩余空间，但别顶到容器边缘**。
+   归属：`src/Settings.ts` 给对应的 `.setting-item` 加 `.rl-dir-row`（设置页包产出的类名）。
+   为什么这里要写两条选择器：本行是 `.rl-exp-panel` 的子项、**不是** `.rl-exp-row`，
+   所以其实不受 `.rl-exp-row .setting-item-control { flex: 0 0 0 }`（那条把 control 的 basis 压成 0，
+   见上方 #566 注释）管辖；但写成三级 `.rl-exp-panel .rl-dir-row .setting-item-control`（0,3,0）
+   就等于把「谁该赢」写死在特异性里 —— 将来那条规则被放宽/搬位置也不会把输入框压回 0 宽。 */
+.rl-exp-panel .rl-dir-row .setting-item-control,
+.rl-dir-row .setting-item-control {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* 右侧安全边距：吃满剩余空间，但不贴到容器边缘（用户点名） */
+    margin-inline-end: 8px;
+}
+/* 输入框自己也得能缩：`width: auto` + `min-width: 0` 是「flex 子项可窄于内容宽」的前提。
+   ⛔ 留核心的 `width: 100%` 会把剩余宽算错（百分比是相对 control 自身，不是剩余空间）。 */
+.rl-dir-row .setting-item-control input[type="text"] {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+}
 
 /* ── 🔴 #553「基本设置」页：**撤销 #551 那套手写覆盖**，交给核心原生结构 ──────────────────────
    #551 用 (0,4,0) 硬压「行框」四件（边框 / 圆角 / 背景 / 外边距）—— 方向是对的（组内就该平铺），
@@ -1171,6 +1924,11 @@
 }
 .rl-key-head:hover { background: var(--background-modifier-hover); }
 .rl-key-name { font-weight: 500; }
+/* ⛔ #641：`.rl-key-text`（名字 + 副标题纵列）与 `.rl-key-sub`（副标题本体）**已删除** ——
+   用户点名「steam 凭据行上的副标题取消并移动到（获取：… 用途：…）后面」。
+   副标题取消后那一层没有存在理由（单元素纵列 = 白搭一层 flex），
+   且 Steam 行头会与其余源**结构不同**。死码不留：两条规则及其唯一使用者一起退场。
+   那条「公开可见」硬前置现在由 `pure/sourceRegistry` 的 steam.hint 承载（展开即见，位置 = 三段之后）。 */
 .rl-key-badge {
     display: inline-flex;
     align-items: center;
@@ -1243,6 +2001,50 @@
 }
 .rl-key-row.rl-key-open > .rl-key-body { display: flex; }
 .rl-key-body .rl-hint-note { padding-bottom: 0; }
+/* 🔴 #634：自定义端点折叠体内的「显示名（重命名）」输入框。
+   它是**三个输入里的第一个**（名 / 地址 / Key），与后两个同为 `.rl-input` 但形状略收一档 ——
+   用户一眼能看出「这一行改的是名字，不是地址」；⛔ 其余两家（书籍源 / 音乐源）不受影响。 */
+.rl-ai-endpoint-name {
+    font-weight: 600;
+    max-width: 260px;
+}
+
+/* 🔴 #639 ⑥：两个「同步」按钮（微信读书书架 / Steam）—— 用户裁定「**白字主题色底**」。
+   🔴 为什么必须自己声明色：核心 `button:not(.clickable-icon)`（特异性 **0,1,1**）会给按钮铺浅灰底 +
+   深色字，光挂 `mod-cta` 在部分主题下仍被压过。这里用**两级类前缀**（0,**2**,0 ⇒ 类数多者胜）
+   并显式给 `color` —— ⛔ 别只写背景（字色会跟着主题走，深色主题下变黑字看不清）。
+   ⚠️ **实测过特异性**（`_diag639b.cjs`：无头 Chrome 量 computed style）：
+      对 `button:not(.clickable-icon)`（0,1,1）本规则**赢**（bg=rgb(124,140,255) / color=白）。
+   ⚠️ 但核心另有更强形态（`button:not(.clickable-icon):not(.mod-cta)` = **0,2,1**，比本规则的 0,2,0 高）
+      —— 那条只命中「没有 `.mod-cta` 的按钮」，而两个同步按钮**都挂了 `mod-cta`** ⇒ 不与之竞争。
+      🔴 结论：**这两个按钮必须同时挂 `.mod-cta`**（只挂 `.rl-sync-btn` 会被那条更强的规则压掉）。 */
+.rl-key-actions button.rl-sync-btn {
+    background-color: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    box-shadow: none;
+}
+.rl-key-actions button.rl-sync-btn:hover {
+    background-color: var(--interactive-accent-hover, var(--interactive-accent));
+    border-color: var(--interactive-accent-hover, var(--interactive-accent));
+    color: var(--text-on-accent);
+}
+/* SteamID 输入（明文；它不是密钥 —— 与上面的密文字段区分开）。
+   🔴🔴 #654（用户：「steam 下的两个值框对齐 IGDB 凭据样式」）：这个框现在**就是** `.rl-secret` 那一行，
+   宽度与几何全部由 `.rl-secret` / `.rl-secret-input` 决定（flex:1 + 右侧「显示」）——
+   ⛔ 别再给它 `max-width: 320px`（那条正是「两个框自己都不齐」的原因：第一个跟 IGDB 等宽、第二个短一截）。 */
+/* 🔴 #641/#654 的动作行「格子」：只是 DOM 里的排序位，**不参与 flex 布局** ——
+   否则又多一个空 flex item，把 `gap: 8px` 再计一次（8 → 16px，那正是用户报过两次的那处间距）。 */
+.rl-key-actions .rl-key-syncslot { display: contents; }
+/* 明文项右侧那枚「显示」：位置照留（对齐靠它），但不可点 —— 明文没有「隐藏」可言 */
+/* 🔴 #655：`.rl-secret-eye.is-static`（明文项那枚「死」按钮）**整体退场** ——
+   用户报障「steamid 的显示按钮点击无反应」，根因就是它：为了对齐位置把按钮做成了不可点。
+   ⇒ 明文项现在也走同一个「显示 / 隐藏」切换（`fillSecretRow` 里 `apply(!masked)` 起步）。
+   ⛔ 别把这条加回来：没有 DOM 再用 `is-static` 了。
+/* ⛔ #640f：`.rl-steam-privacy`（折叠体内那条「公开可见」提示）**已删除**。
+   ⚠️ #641 起它**不再走行头副标题**（`.rl-key-sub` 也已随副标题机制一并删除）——
+   那条提示现在收在 `pure/sourceRegistry` 的 steam.hint **末尾**（展开即见）。
+   死码不留：三条规则及其唯一使用者一起退场。 */
 
 /* ── #422 书籍源小节（「网络文学源 / 经典文学源」）────────────────────────────
    行头 = 名称 + 条数徽标 + **操作组**（订阅… / 体检 / 导入…）+ ▸。三个入口全**放行头**
@@ -1287,6 +2089,15 @@
     font-size: 0;
 }
 
+/* 🔴🔴 #641 + 用户裁定（1.4.x）「结果文字显示在按钮左边、且点测试时按钮不许跳」：
+   动作行 = 「结果文字 · 同步按钮 · 测试连接」，结果槽**永远是行首**。
+   ⑴ 为什么必须行首：`gap` 对**每个** flex item 计一次，结果槽若夹在两个按钮中间，
+      非空时会把按钮间距翻倍（8 → 16px）—— 那正是 #641 用户报过两次的间距问题。
+      实测证据见 `_probe_641_gap.cjs`（改前 16px / 挪走 span 后 8px）。
+   ⑵ 为什么按钮不会跳：结果槽 `flex: 1 1 auto` 吃满行首剩余空间、文字 `text-align: end` 贴着按钮，
+      ⇒ 结果文字变长变短只改**槽内文字**的排版，不改变按钮盒子的左边界（按钮始终贴右 + 8px）。
+      ⛔ 别把结果槽挪到按钮之后：那样文字一出现就会把按钮向左推（本次要修的那类跳动）。
+   ⑶ 空槽不再占位：`:empty` 时 `display:none`，行首没有结果时按钮组照样贴右、间距不变。 */
 .rl-key-actions {
     display: flex;
     align-items: center;
@@ -1294,11 +2105,20 @@
     gap: 8px;
     margin-top: 2px;
 }
+/* 🔴🔴 2026-10-25（同上一条用户裁定）：**按钮一律不许被压缩**。
+   动作行的 flex 子项默认 `flex-shrink:1` ⇒ 窄面板（实测 330px）下按钮会被压到 53.61px、
+   文字折成两行 ⇒ 行高 25 → 44，按钮跟着下移。空间必须从**回执槽**扣，⛔ 不是从按钮扣。
+   ⚠️ 只给本行的按钮，⛔ 别写成全局 `button` 规则（会影响全仓）。 */
+.rl-key-actions > button { flex: 0 0 auto; }
 .rl-key-result {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: end;
     font-size: var(--font-ui-smaller);
     max-width: 60%;
     overflow-wrap: anywhere;
 }
+.rl-key-result:empty { display: none; }
 .rl-key-result-ok { color: var(--color-green); }
 .rl-key-result-bad { color: var(--color-red); }
 /* 密文输入（显示/隐藏切换，复用 createSecretField） */
@@ -1355,7 +2175,18 @@
 .rl-srcchk-line input[type='checkbox'] { margin: 0; }
 .rl-srcchk-name { font-size: var(--font-ui-small); }
 
-/* ── 设置页：封面迁移进度条（rl-mig-*，v0.4 持续优化） ── */
+/* ── 设置页：封面迁移进度条（rl-mig-*，v0.4 持续优化） ──
+   🔴🔴 #655（需求 ④「下载封面进度改进度弹窗」）**本段已进入待删状态，但这次先不删**：
+      迁移/下载封面的进度从「设置页内嵌一行条」改成了**独立异步弹窗**
+      （`PosterMigrateProgressModal`，类名 `.rl-pm-*`，见下方同名前缀段）。
+      按设计，改完之后 `.rl-mig-prog/-bar/-fill/-text` 应当**没有任何 DOM 产出**。
+      ⚠️ 但 `grep -rn "rl-mig-prog" src/ main.ts` 实测**仍有 4 处引用**：
+         `src/Settings.ts:4989-4992`（`const prog = parent.createDiv({ cls: 'rl-mig-prog' })` 等）
+         —— 设置页包的接线还没收口（并行施工中，属于时间差而非设计变更）。
+      ⇒ 依「⛔ 不凭猜删」的口径：**本次保留，加这条注释标记待删**；
+         等 `src/Settings.ts` 那 4 行随设置页包一起删掉后，这 4 条规则可以整段移除。
+      ⛔ 别把下面 `.rl-mig-head … .rl-mig-foot`（结果弹窗）一起删 —— 那是**另一套 DOM**
+         （`PosterMigrateModal.ts:28-50`），仍在用，与进度条无关。 */
 .rl-mig-prog {
     display: none;
     margin: 6px 0 2px;
@@ -1555,17 +2386,69 @@
 /* 编辑钮 hover 与播放钮同语言（全项目「hover → accent + 放大」约定） */
 .rl-music-edit:hover { color: var(--interactive-accent); transform: scale(1.12); }
 
-/* ── 隐藏插件内滚动条（外观设置，v0.4）：挂 rl-home 容器，隐藏内部所有滚动条，滚轮仍可滚 ── */
+/* ── 隐藏插件内滚动条（外观设置，v0.4 / #630 扩面）────────────────────────────────
+   挂点 = **插件内所有非阅读器容器**的祖先（主视图 `contentEl` + 每一个弹窗的 `modalEl`）——
+   挂点由 `services/scrollPref` 那一处真源决定（`applyScrollPref` 跟随设置开关；`forceHideScroll`
+   恒隐藏，只给选集 / 快捷关联 / 批量关联三处用户点名的弹窗）。
+   ⛔ **阅读器（TXT / EPUB / PDF / 漫画）一律不挂** —— 用户口径「除阅读器外」；
+      它们另有自己的一套（目录侧栏 `scrollbar-width: none`、正文 `thin`）。
+   ⚠️ 规则作用于**自身与后代**（`*`）—— 所以只要挂点在被隐藏容器的祖先链上就够，
+      不必逐个滚动容器加类；反过来，挂点若挂在容器**内部**则不生效。 */
 .rl-hide-scroll::-webkit-scrollbar,
 .rl-hide-scroll *::-webkit-scrollbar { display: none; }
 .rl-hide-scroll { scrollbar-width: none; }
 .rl-hide-scroll * { scrollbar-width: none; }
 
-/* 例外：统计页「今日」动态列表要求始终有滑动条（用户指示）——覆盖上面的全局隐藏（特异性 0,2,1 > 0,1,1） */
-.rl-hide-scroll .rl-today-list::-webkit-scrollbar,
-.rl-hide-scroll .rl-feed-groups::-webkit-scrollbar { display: block; }
-.rl-hide-scroll .rl-today-list,
-.rl-hide-scroll .rl-feed-groups { scrollbar-width: thin; }
+/* 🔴 #630 用户裁定：统计页「今日 / 动态」那两处**细条例外取消**（与其余滚动条一视同仁）。
+   ⛔ 别再给某个列表单开例外 —— 口径是「除阅读器外一律隐藏」，例外只会让用户再来问一次。 */
+
+/* ── 🔴 #640（1.4.0）滚动链传递（scroll chaining / 「滚动穿透」）─────────────────────
+   用户报障原文：「双滚动条嵌套，外层滚动条隐藏后仍可滚动，出现滚动穿透。当前是嵌套滚动容器：
+   外层滚动条已通过 CSS 隐藏，但外层容器仍然可以滚动。内层滚动区滚动到顶部/底部后，继续滚动
+   会触发外层滚动，形成滚动链传递，用户感觉『内层滚完外层接着滚』，但外层滚动条又看不见」。
+
+   🔴 根因 = **`scrollbar-width: none` 只把滚动条画没了，容器照样能滚**（上面那组规则只管外观）。
+      内层列表滚到底后，浏览器把**剩余的滚轮增量交给祖先**（标准行为，不是 bug）⇒ 外层跟着滚，
+      而外层的滚动条又被上面那组规则藏了 ⇒ 「看不见的容器在动」，正是用户描述的错乱感。
+   🔴 修法 = `overscroll-behavior: contain` —— 明确告诉浏览器「本容器滚到边界后**不要再传给祖先**」。
+      它是**纯 CSS、零 JS、零结构改动**的标准解法（Chrome 63+ / 本插件目标环境全支持），
+      ⛔ 不需要在滚轮事件里手写 `preventDefault`（那会把触控板惯性滚动也一并打断，手感更差）。
+
+   ⚠️ 落点选择：只给**插件自己的滚动容器**加（`[class^="rl-"]` / `[class*=" rl-"]` 里带
+      `overflow` 的那些），⛔ **不给 `.modal-content` / `.view-content` 加** ——
+      那两层是核心的容器：给它们 `contain` 会连「整页滚到底后弹动」都没了，
+      且会与 `.rl-scroll-inside`（#634 那条）的「外层根本不滚」口径打架。
+   ⚠️ `contain` 与 `none` 的区别：`none`（默认）允许传递、`contain` 禁止传递但仍可滚、
+      `auto` 允许传递并显示滚动条。这一档要的正是「**禁止传递、自己仍可滚**」= `contain`。
+   ⚠️ 本规则是**结构性**的（与「隐藏滚动条」那个开关正交）⇒ 不放进 `services/scrollPref`，
+      也⛔ 不受 `hideScrollbars` 影响：不管开关开没开，滚动都不该穿透。
+   覆盖面 = 下面逐个点名的那批「插件自建列表 / 面板 / 侧栏」容器（都是本仓自己的滚动点）。 */
+.rl-fieldmap-wrap,
+.rl-fo-nav,
+.rl-fo-list,
+.rl-ex-book-list,
+.rl-sub-skip-list,
+.rl-wshelf-list,
+.rl-linkpick-list,
+.rl-eps-grid,
+.rl-pc-list,
+.rl-day-list,
+.rl-res,
+/* #655 新增四弹窗的滚动区（附件管理 / 失效链接 / 下载封面进度 / 未来规划）——
+   它们都是弹窗内的列表，滚到底后把滚动传给背后的设置页/主页是纯负体验，与上面同一口径。 */
+.rl-am-list,
+.rl-lc-list,
+.rl-pm-fails,
+/* 2026-10-21 新增：下载封面弹窗的**逐条迁移日志**（同属弹窗内列表，同一口径） */
+.rl-pm-log,
+.rl-rm-body {
+    overscroll-behavior: contain;
+}
+/* ⛔ **阅读器**（`.rl-reader-toc-pane` / `.rl-reader-ex-list`）**不在名单里** ——
+   与 `services/scrollPref` 那条「除阅读器外一律」的既有口径保持一致：
+   阅读器侧栏与正文同屏共存，给它 `contain` 会让「滚完目录想接着滚正文」变成完全没反应
+   （那在阅读这种**长时连续滚动**的场景里是负体验，与弹窗列表的诉求相反）。
+   ⚠️ 这条是**刻意的不对称**，⛔ 别当成漏加而顺手补上。 */
 
 /* ── 海报密度设置行（用户 2026-09-22）：列数输入框窄一点，避免把设置行撑开 ──
    ⚠️ 设置页 DOM 由 Settings.ts 直接拼，样式**必须**写在本文件（不经 Svelte 编译，不写就无样式）。
@@ -1607,6 +2490,15 @@
 /* 阅读器回写弹窗：引用只读灰色块 */
 .rl-ex-quote { font-size: var(--font-ui-medium); line-height: 1.55; color: var(--text-muted); background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); padding: 7px 10px; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow-y: auto; }
 .rl-ex-quote:empty { color: var(--text-faint); }
+/* #685 记录弹窗「已有记录」列表：时长明细 / 重温 / 周目 共用一套（⛔ 别在别处另写一份） */
+.rl-ex-log-list { border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); overflow: hidden; margin-top: 4px; max-height: 180px; overflow-y: auto; }
+.rl-ex-log-item { display: flex; align-items: baseline; gap: 8px; padding: 7px 11px; border-bottom: 1px solid var(--background-modifier-border); font-size: var(--font-ui-medium); color: var(--text-normal); }
+.rl-ex-log-item:last-child { border-bottom: none; }
+.rl-ex-log-date { font-weight: 600; white-space: nowrap; }
+.rl-ex-log-note { color: var(--text-muted); font-size: var(--font-ui-smaller); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.rl-ex-log-del { margin-left: auto; flex: none; font-size: var(--font-ui-smaller); color: var(--text-faint); background: none; border: none; padding: 0 2px; cursor: pointer; }
+.rl-ex-log-del:hover { color: var(--text-error); }
+.rl-ex-log-del:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ── G 双写冲突 / 删除确认弹窗（NoteConflictModal / ConfirmModal / PosterCleanupModal） ──
    icon = ⚠️ emoji 直出无圆底（2026-09-09 用户拍板：去掉红底实心圆块、保留图标；
@@ -1656,6 +2548,38 @@
     cursor: pointer;
 }
 
+/* 弹窗内危险次级按钮（失效链接「一键清除」）：必须显式写 background / color
+   ⛔ 别指望 `.rl-btn-danger` 那条裸选择器：实测主题的 `button:not(.clickable-icon)`
+   特异性 (0,1,1) 压过它 (0,1,0) ⇒ 红边红字只剩 border 生效，底色和字色全被主题接管
+   （2026-10-22 真机实测：border 红、color rgb(15,15,15)、bg rgb(230,230,230)）。
+   ⇒ 与 `.rl-nc-danger` 同一套路，拼 `.modal` 前缀把特异性抬到 (0,2,1)。 */
+.modal-content button.rl-btn-danger,
+.modal button.rl-btn-danger {
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    border-radius: var(--rl-t-radius-md, 6px);
+    padding: 4px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-error);
+    border: 1px solid var(--text-error);
+    background: transparent;
+}
+.modal-content button.rl-btn-danger:hover,
+.modal button.rl-btn-danger:hover {
+    background: var(--text-error);
+    color: #fff;
+    border-color: var(--text-error);
+}
+.modal-content button.rl-btn-danger:disabled,
+.modal button.rl-btn-danger:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+    background: transparent;
+    color: var(--text-error);
+}
+
+
 /* ── 从 Bangumi 导入弹窗（ImportBangumiModal） ── */
 .rl-import-modal h2 { font-size: 15px; margin: 0 0 8px; }
 .rl-import-hint { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; }
@@ -1686,6 +2610,44 @@
    形态：说明一行 → 计数 + [全选] → 可滚列表（勾选框 + 封面 + 书名/副行 + 徽标）→ [取消][导入 N 本]。
    🔴 列表行是 `<label>`（点哪都能勾，⛔ 别只让那 13px 的小方块可点）；「库里已有」的行**整体降饱和**
       + 勾选框 **disabled**，原因就挂在那枚「库里已有」标上（⛔ 不做「点了没反应」的假可勾）。 */
+/* 🔴 #662：豆瓣同步弹窗的**类型 / 状态选择器**（复用 `.rl-wshelf-*` 那套视觉，只补这两条） */
+.rl-douban-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 4px 0 10px; }
+/* 🔴 #663：过滤条里的「类型 / 状态」小标签 + 分组标题 */
+.rl-douban-seg .rl-douban-seglabel { align-self: center; color: var(--text-faint); font-size: var(--font-ui-smaller); margin-inline-end: 2px; }
+.rl-douban-group { margin: 8px 0 4px; font-size: var(--font-ui-smaller); font-weight: 600; color: var(--text-muted); }
+.rl-wshelf-empty { padding: 12px 4px; color: var(--text-faint); font-size: var(--font-ui-smaller); }
+/* 🔴 #664：勾选覆盖时的行提示（淡主题底 + 左缘色条，与「已存在」区分开） */
+.rl-wshelf-row.is-override { background: var(--background-modifier-hover); box-shadow: inset 3px 0 0 var(--interactive-accent); }
+/* 🔴 #664：按钮旁的**就地轻提示**（"未配置"这类一句话，2.4s 后自动消失）
+   🔴🔴 2026-10-25 用户裁定：「立即同步按钮后出来的提示文字**也不要更改同步和连接按钮的位置**」。
+   两条硬约束，改这条规则前先读完：
+   ⑴ **不许 `position: absolute` 逃出布局流**：动作行是 `justify-content: flex-end`，
+      绝对定位会让提示叠在按钮上；且提示要跟按钮同一条基线，浮动会把基线错开。
+   ⑵ **必须单行 + 省略号**：提示活在行首回执槽（`.rl-key-result`，`max-width:60%`）里，
+      一旦允许换行，槽长高 ⇒ 行是 `align-items:center` ⇒ **两颗按钮会整体下移**（实测 2 行时 +8.5px）。
+      `nowrap + overflow:hidden + text-overflow:ellipsis` 让「长文案」只影响槽内文字，
+      槽高恒等于一行 ⇒ 按钮 X/Y 都不动。全文走 `title`（`flashInlineHint` 里设），悬停可读。
+   ⚠️ 用 `inline-block` 而不是 `inline-flex`：`text-overflow` 对 flex 容器里的匿名文本不可靠。 */
+.rl-inline-hint {
+    display: inline-block; vertical-align: middle;
+    max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 1px 6px; border-radius: var(--radius-s);
+    background: var(--background-modifier-hover); color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+.rl-douban-seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.rl-douban-seg .rl-douban-segitem {
+    height: auto; padding: 3px 10px;
+    border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m);
+    background: var(--background-primary); color: var(--text-muted);
+    font-family: inherit; font-size: var(--font-ui-smaller); box-shadow: none; cursor: pointer;
+}
+.rl-douban-seg .rl-douban-segitem:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+/* 选中 = 实心主题色（与设置页其它 chips 同一口径） */
+.rl-douban-seg .rl-douban-segitem.is-on {
+    background: var(--interactive-accent); border-color: var(--interactive-accent);
+    color: var(--text-on-accent); font-weight: 600;
+}
 .rl-wshelf-modal h2 { font-size: 15px; margin: 0 0 8px; }
 .rl-wshelf-hint { font-size: var(--font-ui-smaller); color: var(--text-muted); line-height: 1.7; margin-bottom: 10px; }
 .rl-wshelf-status { min-height: 18px; font-size: var(--font-ui-smaller); color: var(--interactive-accent); margin: 6px 0; }
@@ -1740,6 +2702,57 @@
 
 /* ── 适配 Obsidian 正文字体：插件内容区（编辑表单根）跟随 --font-text ── */
 .rl-form-root { font-family: var(--font-text); }
+
+/* ── 🔴 #634「弹窗双滚动条」统一治理 ────────────────────────────────────────────────
+   用户报障：「搜索窗口的最外层容器的**原生滚动条**需要做隐藏处理，同时保留内部内容的**自定义滚动**。
+   同时相关有些窗口也出现了**双滚动条嵌套**的问题。把最外层容器的原生滚动条隐藏掉，改成内部内容独立滚动。」
+
+   **成因（实测 `_probe_634_nestscroll.cjs`，真 Chrome 1100×700）**：
+   弹窗里有一个自带 `max-height + overflow-y:auto` 的长列表，**底部还跟着其它内容**
+   （说明行 / 底部按钮 / 预览块）⇒ 整块比视口高 ⇒ 核心的 `.modal-content`（它自己就是
+   `overflow-y: auto`，见 obsidian.asar）**也**滚起来 ⇒ **两条滚动条叠在一起**。
+
+   实测判定（`外层可滚 && 内层可滚`）—— 8 个场景里 **4 处**命中：
+     ❌ LinkPickerModal（`.rl-linkpick-list`）· ❌ 字幕逐条跳过（`.rl-sub-skip-list`）
+     ❌ AssetCleanup / DeleteEntry（`.rl-pc-list`）· ❌ 摘抄书籍列表（`.rl-ex-book-list`）
+     ✅ 选集 / 微信读书书架 / 字段映射表格 **本来就单滚动**（内层把高度吃满、外层没溢出）—— ⛔ 别顺手改它们。
+
+   **修法（统一两条，按弹窗加 `.rl-scroll-inside` 选择加入）**：
+     ① 外层 `.modal-content` 不再滚（`overflow: hidden`）—— ⛔ 不是「藏起滚动条」：`.rl-hide-scroll`
+        只是把条**画没了**，容器照样能滚（滚轮仍会滚外层，嵌套依旧）；这里是**从根上不让它滚**；
+     ② 内容列 `flex` 撑满 + 逐层 `min-height: 0` ⇒ 自滚权**只**留给内层那个列表。
+        ⚠️ `min-height: 0` 是必需的：flex 子项默认 `min-height: auto` 会被内容顶开 ⇒ 列表撑破容器、外层条又回来。
+
+   ⚠️ **为什么用「加类」而不是直接全局改 `.modal-content`**：全仓有二十多个弹窗，绝大多数**没有**内层滚动，
+      去掉它们的外层滚动 = 高内容被直接裁掉（**内容看不到了**，比两条滚动条严重得多）。
+      ⇒ 只有「确有内层自滚列表」的弹窗才加入，逐窗判定（判据 = 上面那条实测脚本）。 */
+.rl-scroll-inside .modal-content {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+/* 逐层把 `min-height` 归 0（flex 链上每一环都要，漏一环就被内容顶开） */
+.rl-scroll-inside .modal-content > * { min-height: 0; }
+/* 内层列表吃掉剩余高度：**去掉写死的 max-height 上限**（那是「外层还能滚」时代的补丁）；
+   `flex: 1 1 auto` + `min-height: 0` ⇒ 它拿到「弹窗可用高度 − 其它内容」，自己滚。 */
+.rl-scroll-inside .rl-linkpick-list,
+.rl-scroll-inside .rl-sub-skip-list,
+.rl-scroll-inside .rl-pc-list,
+.rl-scroll-inside .rl-ex-book-list,
+/* #655 新增四弹窗的列表也预先纳入：这三个弹窗**自己就带 figma 级的头部/尾部**，
+   若弹窗包将来给它们挂 `.rl-scroll-inside`，这里已经就位（不挂也没副作用 —— 选择器整体被忽略）。 */
+.rl-scroll-inside .rl-am-list,
+.rl-scroll-inside .rl-lc-list,
+.rl-scroll-inside .rl-rm-body {
+    max-height: none;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+/* ⚠️ #655 与上一段的**冲突提醒**（改 `.rl-pc-*` 时必读）：
+   `> * { min-height: 0 }` 让**所有**兄弟都可压缩 —— 列表吃饱时会把 `.rl-pc-hint` / `.rl-pc-foot`
+   一起压扁（= 用户报的「footer 被截断」）。解药在 `.rl-pc-foot` / `.rl-pc-hint` 上写了
+   `flex: 0 0 auto`（见上方 #655 那段注释），⛔ 别把 `flex: 0 0 auto` 当成"多余的一条"删掉。 */
 
 /* ── 观看来源选择弹窗（LinkPickerModal） ── */
 .rl-linkpick-title { font-weight: 600; color: var(--text-normal); }
@@ -2171,11 +3184,36 @@ body .rl-bili-batch-range input.rl-input.rl-bili-batch-num:focus { border-color:
 }
 body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 
-/* ── H 孤儿封面清理弹窗（PosterCleanupModal） ── */
+/* ── H 孤儿封面清理弹窗（PosterCleanupModal） ──
+   ⚠️ `.rl-pc-*` 这套早就不只服务「孤儿封面清理」了：`AssetCleanupModal`（附件清理）、
+      `EntryRestoreModal`（条目还原 / 附件管理）、`DeleteEntryModal` 共用同一套骨架。
+      ⇒ 下面的三条修复（#655）是**为这四个弹窗一起做**的，⛔ 别只当成"孤儿封面那一个"。
+      🔴 只加/改、不删、**不重命名任何类名** —— 用户可能用 CSS Snippet 覆写这些类（AGENTS.md 红线）。 */
 
+/* 🔴 #655 病灶一「标题与副标题重叠」：
+   四个弹窗都是 `contentEl.createEl('h2')` 紧跟 `.rl-pc-desc`，两个都是块级兄弟、各自带 margin。
+   常态下不叠，但一旦 `.modal-content` 变成 flex 容器（`.rl-scroll-inside` 就是这么干的，
+   styles.css 的 #634 段），相邻 margin **不再折叠**、且 flex 子项默认 `min-height: auto` 可被压缩
+   ⇒ 文字就在那一两个像素里挤到一起。根治 = 标题侧 margin 显式归零，间距只由副标题一侧给，
+   读起来才是「标题 + 副标题」，而不是「两段文字碰巧离得近」。
+   （用 `:has()` 限定在「后面紧跟 .rl-pc-desc 的 h2」，⛔ 不碰其它弹窗的 h2；
+     老内核不认 `:has()` 时整条被忽略 ⇒ 只是没修，不会更糟。） */
+.modal-content > h2:has(+ .rl-pc-desc) { margin: 0; }
+/* 副标题：间距只由这一侧给（标题侧已归零）；`margin-bottom` 比上间距大一档，与列表之间才有呼吸 */
 .rl-pc-desc { font-size: var(--font-ui-medium); color: var(--text-muted); margin: 8px 0 12px; line-height: 1.6; }
 .rl-pc-empty { font-size: var(--font-ui-medium); color: var(--text-faint); padding: 20px 0; text-align: center; }
-.rl-pc-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); margin-bottom: 14px; }
+
+/* 🔴 #655 病灶三「滚动条贴边」：右侧 16px = 滚动条自己的呼吸位（原来只有 1px 描边，
+   滚动条紧贴文字，长路径与滚动条糊在一起）；`scrollbar-gutter: stable` 让滚动条槽常驻，
+   开关列表（条目数变化导致有无滚动条）时行宽不跳。左侧 8px 比右侧窄，是给行内已有内距让位。 */
+.rl-pc-list {
+    max-height: 300px; overflow-y: auto;
+    padding: 4px 16px 4px 8px;
+    scrollbar-gutter: stable;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--rl-t-radius-md, 6px);
+    margin-bottom: 14px;
+}
 .rl-pc-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--background-modifier-border); }
 .rl-pc-row:last-child { border-bottom: none; }
 .rl-pc-name { font-size: var(--font-ui-small); font-family: var(--font-monospace); color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -2188,8 +3226,30 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     font-size: var(--font-ui-smaller);
     color: var(--text-muted);
 }
-.rl-pc-hint { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-bottom: 8px; }
-.rl-pc-foot { display: flex; justify-content: flex-end; gap: 8px; }
+/* 🔴 #655 病灶二「footer 被截断」：真根因不在 footer 自己，在 `.rl-scroll-inside` 那段
+   （styles.css #634：`.modal-content > * { min-height: 0 }` 把所有子项都变成**可压缩**的）。
+   列表一旦吃满高度，flex 收缩就会顺手把提示行与按钮行一起压扁 —— 按钮被裁掉半截，
+   而 `overflow: hidden` 连滚动条都不给，看上去就是"footer 没了"。
+   根治 = 给「不该被压缩的兄弟」显式 `flex: 0 0 auto`（不许缩）+ 给 footer 一个最小高度
+   （即使被算成 0 也撑得住一行按钮）。⛔ 保持 `row`：`.rl-pc-foot` 里放的是按钮，
+   改成 `column` 会把「取消 / 确认」竖着摞起来（四个弹窗全都如此）。 */
+.rl-pc-hint { flex: 0 0 auto; font-size: var(--font-ui-smaller); color: var(--text-faint); margin-bottom: 8px; }
+.rl-pc-foot {
+    flex: 0 0 auto;
+    display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+    min-height: 44px;
+    padding-top: 8px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+/* 条目还原（EntryRestoreModal）：行内补充说明 / 删除时间 / id 冲突提醒 */
+.rl-pc-hint-inline { font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.rl-pc-when { margin-left: auto; font-size: var(--font-ui-smaller); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.rl-pc-warn { font-size: var(--font-ui-smaller); color: var(--text-warning, var(--text-muted)); }
+.rl-pc-group { border-bottom: 1px solid var(--background-modifier-border); }
+.rl-pc-group > summary { display: flex; align-items: center; gap: 10px; padding: 7px 10px; cursor: pointer; font-size: var(--font-ui-small); }
+.rl-pc-group .rl-pc-row { padding-left: 30px; }
+.rl-pc-search { width: 100%; margin-bottom: 10px; }
+.rl-pc-sub { font-size: var(--font-ui-smaller); color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── 关于页「信息卡 / 支持作者」（样式参考 LyricFlux about 区） ──
    🔴 #490：本页由一块变两块（**信息卡**在上、**支持作者**在下），**共用同一套 `.rl-about` 外观**（左文右钮）——
@@ -2215,6 +3275,19 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 /* #490：作者 · 许可证那一行（再淡一档，与简介拉开层级） */
 .rl-about-meta { color: var(--text-faint); font-size: var(--font-ui-smaller); margin-top: 2px; }
 .rl-about-buttons { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+
+/* ══ 新手引导（GuideModal）已整段删除 ═══════════════════════════════════════════════════
+   🔴 #655（需求 ⑥）：`src/modals/GuideModal.ts` 被删除 ⇒ 这套以 `rl-` + `guide-` 开头的样式
+   （原 18 条规则）成了死代码，**已 grep 确认 0 引用后整段删除**（唯一使用点 GuideModal.ts:143-191 随文件一起没了）。
+   ⇒ 引导的语义位置改由「关于」页的**「未来规划」九宫格**承载（`.rl-rm-*`，见下方同名前缀段）。
+   ⚠️ 这留下的是**有意为之的墓碑**，不是漏删：留着这句是为了让后来者知道
+      「这里曾经有一套引导样式、是主动删的」，而不是在 git 历史里翻半天也找不到线索。
+   ⚠️ 这里只描述、不写死那个类名前缀 —— `assert-symbols.cjs` 有一条 `absent('css', '引导卡样式残留')`
+      守卫（判据就是那个前缀串），写进注释会把它判红。
+   ⚠️ 紧邻下方的 `.rl-tbl-colmenu` 与引导**无关**（表格列菜单），⛔ 别连带当成遗留物删掉。 */
+/* 列表工具栏那枚「批量管理」按钮处于开启态时的样子（与「列」按钮同款，只多一个主题色提示） */
+.rl-tbl-colmenu.is-on { color: var(--interactive-accent); border-color: var(--interactive-accent); }
+
 .rl-about-btn {
     padding: 6px 12px;
     border-radius: var(--rl-t-radius-md, 6px);
@@ -2235,6 +3308,558 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-about-btn-accent:hover {
     background: var(--text-accent-hover) !important;
     color: var(--text-on-accent) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+   🔴 #655 本轮新增的四个弹窗 / 一格九宫格（类名由**弹窗包**与**设置页包**产出，此处只出样式）
+
+   共同骨架（四弹窗一致，细则不再逐段重复）：
+     ① 根类 `.<prefix>-modal` 挂在 `modalEl` 上 —— 与既有 `.rl-dl-modal-shell`、
+        `.rl-notes-modal` 同一挂载惯例；选择器同时写 `.<prefix>-modal .modal-content` 与
+        `modal-content.<prefix>-modal` 两式，覆盖"类挂父、类挂自己"两种可能（见文末风险条）。
+     ② `modal-content` 一律 `display:flex; flex-direction:column` —— 这**不是**为了好看，
+        而是三条老病灶（标题重叠 / footer 截断 / 滚动条贴边）的**共同解药**：
+        只有变成 flex 列，「列表吃满剩余高度、头尾各按内容高」这件事才成立。
+     ③ 头部两件（标题 + 副标题）= **两个块级兄弟 + 显式 `margin: 0`**。
+        重叠从来不是"离得不够远"，而是两段文字挤在同一个可压缩的盒子里（见 `.rl-pc` 段 #655 注释）。
+     ④ 列表区 `flex:1 1 auto` + `max-height` + **`padding-right: 16px`**：
+        右侧 16px 是滚动条自己的呼吸位（「滚动条贴边」就是这么治的）；
+        `scrollbar-gutter: stable` 让滚动条槽常驻 ⇒ 条目数变化导致有无滚动条时行宽不跳。
+     ⑤ 尾部 `flex: 0 0 auto` = **不许缩**。`.rl-scroll-inside` 那条
+        `.modal-content > * { min-height: 0 }` 会让所有兄弟都可压缩，列表一高就把 footer 压没
+        —— `flex: 0 0 auto` 正是那句规则的解药（`.rl-pc-foot` 的截断就是这么被治好的）。
+
+   高度一律交给 Obsidian（`--dialog-max-height` = 85vh），⛔ 不给弹窗写死 `height`。
+   ⛔ 所有颜色/圆角/字号走主题变量，不写死色值（明暗两套主题 + 任意第三方主题都要能穿）。
+   ══════════════════════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 附件管理弹窗（`AssetManagerModal`，设置页包产出）─────────────────────────────
+   需求 ⑤「附件管理双层折叠」：一级 = 分类（浅灰底）、二级 = 系列（纯白 + 分割线）、
+   散件平铺。用户明确「避免嵌套过重」⇒ **二级不再加深底色**，层次靠分割线 + 缩进表达。 */
+.rl-am-modal .modal-content,
+.modal-content.rl-am-modal { display: flex; flex-direction: column; gap: 10px; }
+
+.rl-am-head { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; padding: 0 4px; }
+/* 标题/副标题 `margin: 0` 是**根治法**（不是"调小一点"）：见上方骨架 ③ */
+.rl-am-title { margin: 0; font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); }
+.rl-am-sub { margin: 0; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+
+.rl-am-list {
+    flex: 1 1 auto;
+    min-height: 160px;
+    max-height: min(56vh, 560px);
+    overflow-y: auto;
+    /* 右 16 = 滚动条呼吸位；左 8 比右窄，是给行自身的左缩进让位 */
+    padding: 4px 16px 4px 8px;
+    scrollbar-gutter: stable;
+    /* 一级块之间留 6px；`.rl-am-row.is-loose`（散件）也是一等公民，同样吃这个 gap */
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* 🔴 折叠塌陷的**真根因**（2026-10-21 用户报"点开大组其他组互斥折叠、内容挤成一条线"）：
+   本列表是 flex 列容器，而 `.rl-am-l1` 带 `overflow: hidden` ⇒ 按 flex 规范它的自动最小尺寸
+   退化为 0；再叠加 `.rl-scroll-inside .modal-content > * { min-height: 0 }`（本弹窗走
+   `markScrollInside`），内容超高时浏览器**不是滚动列表，而是把所有一级组按比例压扁**，
+   `summary` 的 8px 上下内距被压没了 —— 看着就是"其它组自己折叠了"，大组越大压得越狠。
+   修法只有一行：把一级块钉成不可收缩（`.rl-am-head` / `.rl-am-foot` 本来就钉着，唯独它漏了）。
+   ⛔ 不要改去给 `details:not([open])` 定高：折叠时保留 header 高度是原生 `<details>` 行为，
+      本仓与核心 app.css 都没有裸 `summary` 规则会干扰它。 */
+.rl-am-list > * { flex: 0 0 auto; }
+
+/* 用户同时要求「增大弹窗整体高度以展示更多内容」：真正封顶的是宿主
+   `.modal { max-height: var(--dialog-max-height) }`（85vh），列表自身的 max-height 在本弹窗
+   里已被 `.rl-scroll-inside` 改成 `none`，所以调列表没用 —— 只能抬**这一个**弹窗的天花板。
+   ⛔ 不许改全局 `.modal`（会连带影响确认框/选择器）。 */
+.modal.rl-am-modal { max-height: 92vh; }
+
+/* 一级（分类）：**浅灰**，一点描边 + 小圆角把它读成"一个可折起的组" */
+.rl-am-l1 {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    background: var(--background-secondary);
+    /* 圆角裁剪：二级的纯白底线/表格线不会从圆角处露头 */
+    overflow: hidden;
+}
+.rl-am-l1-head {
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    font-weight: 600;
+    list-style: none;   /* 去掉 `<summary>` 的默认三角（配合下一条 webkit 伪元素） */
+}
+/* 二级（系列）：**纯白/极浅** + 顶部一条分割线 ⇒ 只在"面"上抬一档，
+   ⛔ 不再往深里加底色 —— 用户原话「避免嵌套过重」，第三层底色就会开始"糊"。 */
+.rl-am-l2 {
+    background: var(--background-primary);
+    border-top: 1px solid var(--background-modifier-border);
+}
+.rl-am-l2-head {
+    padding: 6px 12px 6px 24px;   /* 左 24 = 二级缩进，与一级头部形成视觉从属 */
+    cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    color: var(--text-muted);
+    list-style: none;
+}
+/* 浏览器默认三角两种写法都要拍：`list-style` 对 Chrome 的 `<summary>` 无效，得用伪元素 */
+.rl-am-l1-head::-webkit-details-marker,
+.rl-am-l2-head::-webkit-details-marker { display: none; }
+
+.rl-am-row { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 32px; }
+/* 散件行（不属任何系列）：缩进退回到与一级内容对齐（⛔ 别保留 32px，那会让散件看起来"没有归处"）。
+   DOM 两种标记都会出现：`AssetManagerModal.ts` 给散件行**同时**加 `is-loose`，而无系列归属的
+   一级分组里行也直接是 `.rl-am-l1 > .rl-am-row` —— 两条选择器同值（12px），谁生效都对；
+   保留并列是为了将来只改一处类名时缩进不会突然跳掉。 */
+.rl-am-l1 > .rl-am-row,
+.rl-am-row.is-loose { padding-left: 12px; }
+/* 两级计数：靠 `margin-left: auto` 顶到行尾 + 等宽数字（数字对齐才不抖） */
+.rl-am-count {
+    margin-left: auto;
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+}
+
+/* footer：**固定高度 + 不溢出** = 用户第三条报障（footer 被截断）的正解。
+   ⚠️ `min-height` 而非 `height`：文案换行变多时它该长、不该裁；
+      `flex: 0 0 auto` 保证它永远不被上面的列表挤压。 */
+.rl-am-foot {
+    flex: 0 0 auto;
+    min-height: 56px;
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 8px 4px 2px;
+    border-top: 1px solid var(--background-modifier-border);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    white-space: normal;
+    overflow-wrap: anywhere;   /* 长路径/长文件名不撑破 footer */
+}
+
+/* ── ①.5 附件管理弹窗的**行内零件**（`AssetManagerModal.ts:182-303` 实际输出的 14 个类名）─────
+   为什么补这一段：上面的骨架只管「头/列表/尾」三层，行内还散着一批没人写样式的子类 ——
+   光有骨架的行会长成一串挤在一起的裸文本（条目名 / 种类 / 文件名 / 提示四件没有分工）。
+   ⚠️ 这一组全部是**行内 flex 分工 + 单行省略**：列表是定高滚动的，任何一件允许换行都会
+      把行高从 28px 抬到 40px+，一屏能看到的条目数直接腰斩。 */
+.rl-am-search { flex: 0 0 auto; padding: 0 8px 0 4px; }
+.rl-am-search input { width: 100%; }
+
+.rl-am-empty {
+    flex: 1 1 auto;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 120px;
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+}
+
+/* 一级头部的图标（`safeSetIcon` 塞进来的 svg）与名称 */
+.rl-am-ico { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--text-muted); }
+.rl-am-ico svg { width: 14px; height: 14px; }
+.rl-am-l1-name,
+.rl-am-l2-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-am-l2-name { font-weight: 400; }   /* 二级已在 `.rl-am-l2-head` 上退成 muted ⇒ 字重回到常规，避免"越往里越重" */
+
+/* 行内四件：勾选框 / 条目名 / 种类徽章 / 文件名（+ 可选提示）。
+   ⛔ 顺序不能改（DOM 里就是这么排的）：勾选框必须最左、贴住行首缩进，
+      否则用户会把它误读成"这一组"的开关。 */
+.rl-am-row > input[type="checkbox"] { flex: 0 0 auto; margin: 0; cursor: pointer; }
+.rl-am-row > input[type="checkbox"]:disabled { cursor: not-allowed; opacity: .45; }
+.rl-am-entry {
+    flex: 0 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+}
+.rl-am-kind {
+    flex: 0 0 auto;
+    padding: 0 6px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+.rl-am-name {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+.rl-am-note {
+    flex: 0 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+}
+
+/* 尾部：上段是**两行说明**（总数 / 回收站语义），下段是按钮行 ——
+   所以 `.rl-am-foot` 保持 column，而它的 `.rl-am-foot-acts` 才是 row。 */
+.rl-am-foot-hint { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rl-am-foot-line { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+/* 危险说明用错误色（与「删除选中」那枚 `.rl-nc-danger` 同义）：
+   这句话的作用就是解释"为什么那个按钮是红的"，两者不同色就失去关联。 */
+.rl-am-foot-danger {
+    color: var(--text-error, var(--text-warning, var(--text-muted)));
+    font-size: var(--font-ui-smaller);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.rl-am-foot-acts { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+
+/* ── ② 失效链接弹窗（`LinkCheckModal`，弹窗包产出；契约 `DeadLinkItem{entryId,title,label,url}`）── */
+.rl-lc-modal .modal-content,
+.modal-content.rl-lc-modal { display: flex; flex-direction: column; gap: 10px; }
+
+.rl-lc-head { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; padding: 0 4px; }
+.rl-lc-title { margin: 0; font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); }
+.rl-lc-sub { margin: 0; color: var(--text-faint); font-size: var(--font-ui-smaller); }
+
+/* ⚠️ 这个弹窗调了 `markScrollInside`（`LinkCheckModal.ts:65`）⇒ 外层 `.modal-content` 被
+   `.rl-scroll-inside` 置成 `overflow: hidden`、**不再滚动**。所以滚动能力必须由 `.rl-lc-list`
+   自己持有，否则内容多到几十条时会被整块裁掉（且没有任何滚动条提示）。 */
+.rl-lc-list {
+    flex: 1 1 auto;
+    min-height: 120px;
+    max-height: min(56vh, 560px);
+    overflow-y: auto;
+    /* 右 16 = 滚动条呼吸位；左 8 比右窄，给行内缩进让位 */
+    padding: 4px 16px 4px 8px;
+    scrollbar-gutter: stable;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+/* 一条失效链接 = 条目名 + 标签 + 完整 URL 三件（`LinkCheckModal.renderRow` 的 DOM 顺序）。
+   用 `flex-wrap` + 让 URL `flex-basis: 100%` 独占第二行：
+   URL 没有空格，和标题挤在同一行时必然二选一 ——「把标题挤扁」或「把洞窗撑宽」，独占一行两难都解。 */
+.rl-lc-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.rl-lc-row:last-child { border-bottom: none; }
+.rl-lc-entry { font-weight: 600; color: var(--text-normal); font-size: var(--font-ui-small); min-width: 0; }
+.rl-lc-label { color: var(--text-faint); font-size: var(--font-ui-smaller); }
+/* 链接本身：可点 + 下划线 + `break-all`（URL 没有空格，任何主题下都不许把容器撑宽） */
+.rl-lc-url {
+    display: block;
+    flex: 1 1 100%;   /* 独占一整行：flex 项里的 100% 基准 = 换行 */
+    min-width: 0;
+    color: var(--text-accent);
+    word-break: break-all;
+    cursor: pointer;
+    text-decoration: underline;
+    font-size: var(--font-ui-smaller);
+}
+.rl-lc-url:hover { color: var(--text-accent-hover); }
+/* 空态：不靠"什么都没有"表达 —— 居中一句说明，高度与列表同档，避免弹窗瞬间塌缩 */
+.rl-lc-empty {
+    flex: 1 1 auto;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 96px;
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+}
+/* footer = 「一行说明 + 关闭按钮」（`LinkCheckModal.ts` 的 DOM：`.rl-lc-note` 与 `.rl-lc-ops` 是**兄弟**）
+   ⇒ 必须是 row，⛔ 不能按纯文字 footer 写成 column（按钮会掉到下一行）。
+   🔴 2026-10-22：加了「一键清除」后按钮不止一个 ⇒ 按钮们收进 `.rl-lc-ops` 成组靠右，
+   ⛔ 别把两个按钮直接挂 `.rl-lc-foot` 下：`space-between` 会把它俩拆到两端、说明文字夹中间。 */
+.rl-lc-foot {
+    flex: 0 0 auto;
+    min-height: 56px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-wrap: wrap;
+    padding: 8px 4px 2px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+/* 按钮组：靠右成组，窄屏时整体换到说明下面一行（`flex-wrap` 作用在 footer 上） */
+.rl-lc-ops {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 8px;
+    margin-left: auto;
+}
+.rl-lc-note {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+/* ── ③ 下载封面进度弹窗（`PosterMigrateProgressModal`，弹窗包产出）──────────────────
+   契约：`setProgress(done,total,step?)` / `finish(result)` / `fail(message)`。
+   用户要「底部附带动效进度条」⇒ 动效落在那条 `width` 的 transition 上（⛔ 别用关键帧动画：
+   宽度是**数据**，transition 才能把"每次涨一点"连成连续运动）。 */
+/* 🔴 这个弹窗**不用** flex column，而是 1fr+auto 的两列网格 —— 因为 `.rl-pm-count`（"12/118"）
+   是 `.rl-pm-bar` 的**兄弟**节点（`PosterMigrateProgressModal.ts:64-69`），DOM 里没有包裹层。
+   在 flex column 里它只能掉到进度条**下面**；网格里给 bar 指定第 1 列、count 指定第 2 列，
+   两件就自动落在同一行（自动布局会把 count 放进「第 1 列已被 bar 占掉」的那一行），
+   于是"计数在进度条右侧"不需要 JS 改结构，也不需要绝对定位。
+   其余兄弟一律 `grid-column: 1 / -1` 跨满两列，视觉上仍是竖排。 */
+.rl-pm-modal .modal-content,
+.modal-content.rl-pm-modal {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 10px;
+}
+.rl-pm-modal .modal-content > .rl-pm-head,
+.rl-pm-modal .modal-content > .rl-pm-status,
+.rl-pm-modal .modal-content > .rl-pm-log,
+.rl-pm-modal .modal-content > .rl-pm-fails,
+.rl-pm-modal .modal-content > .rl-pm-foot,
+.modal-content.rl-pm-modal > .rl-pm-head,
+.modal-content.rl-pm-modal > .rl-pm-status,
+.modal-content.rl-pm-modal > .rl-pm-log,
+.modal-content.rl-pm-modal > .rl-pm-fails,
+.modal-content.rl-pm-modal > .rl-pm-foot { grid-column: 1 / -1; }
+.rl-pm-bar { grid-column: 1; }
+.rl-pm-count { grid-column: 2; }
+/* ⚠️ 进度条与计数必须是**同一条基线**：网格 `align-items: center` 会让它们各自居中于自己的行高，
+   而两者行高不同（8px 条 vs 一行小字）⇒ 计数会在竖直方向上"偏一点"。给这条行进 `start` 对齐，
+   让计数贴着进度条的顶边往下读（用户原话里进度条与计数是一行的配角，不该抢视觉中心）。 */
+.rl-pm-modal .modal-content > .rl-pm-bar,
+.rl-pm-modal .modal-content > .rl-pm-count,
+.modal-content.rl-pm-modal > .rl-pm-bar,
+.modal-content.rl-pm-modal > .rl-pm-count { align-self: center; }
+
+.rl-pm-head { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; padding: 0 4px; }
+.rl-pm-title { margin: 0; font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); }
+.rl-pm-sub { margin: 0; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+/* 当前步骤文案：允许换行（封面文件名很长），等宽数字让 "12/118" 不抖 */
+.rl-pm-status {
+    color: var(--text-normal);
+    font-size: var(--font-ui-smaller);
+    font-variant-numeric: tabular-nums;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+/* 条目名是状态行的"前缀"：淡一档 + 不动明度，让后面「网络封面 → xxx」先被读到；
+   两块之间留 4px，否则《书名》会和箭头粘成一串 */
+.rl-pm-step-title { color: var(--text-muted); margin-right: 4px; }
+/* 异常中断（`fail()` 会 `addClass('is-error')`，见 PosterMigrateProgressModal.ts:155）：
+   用 `--text-error` 而不是写死红 —— 主题换配色时它跟着走。⛔ 不加粗：
+   红色 + 变粗在暗色下会糊成一团，警告语义靠颜色足够。 */
+.rl-pm-status.is-error { color: var(--text-error, var(--text-warning, var(--text-muted))); }
+.rl-pm-bar {
+    height: 8px;
+    border-radius: var(--rl-t-radius-pill, 999px);
+    background: var(--background-modifier-border);
+    overflow: hidden;
+}
+.rl-pm-fill {
+    height: 100%;
+    width: 0;
+    background: var(--interactive-accent);
+    /* 用户点名的「附带动效」就在这一行：宽度是数据驱动的，transition 负责把它抹平 */
+    transition: width .18s ease;
+}
+.rl-pm-count { text-align: right; color: var(--text-faint); font-size: var(--font-ui-smaller); font-variant-numeric: tabular-nums; }
+
+/* 逐条迁移日志（2026-10-21 用户指令「完善日志：明确列出具体哪个网络封面 → 迁移到哪个本地文件名/路径」）。
+   一行 = 一条：`《条目名》 网络封面地址 → 本地相对路径`。
+   ⚠️ 定高 + 内部滚动：本库 131 个条目里有一批带网络封面，不限高会把弹窗顶出屏幕；
+      滚动条按全仓口径留 16px 呼吸位 + `stable`（内容长短变化时行不左右跳）。 */
+.rl-pm-log {
+    max-height: 200px;
+    overflow-y: auto;
+    padding-right: 16px;
+    scrollbar-gutter: stable;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+}
+/* 三段分工：条目名（定宽不缩）｜来源（可缩、超长省略）｜箭头 → 目标（可缩、超长省略）。
+   ⛔ 三段都允许换行的话，一条长 URL 就能把一行撑成四行，日志立刻失去"逐条概览"的作用。 */
+.rl-pm-log-item { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.rl-pm-log-title { flex: 0 0 auto; color: var(--text-normal); }
+.rl-pm-log-from {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--text-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rl-pm-log-arrow { flex: 0 0 auto; color: var(--text-faint); }
+.rl-pm-log-to {
+    flex: 0 1 auto;
+    min-width: 0;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* 失败行：`to` 为空串 ⇒ 组件写「下载失败」并加 `.is-fail`，整行退到错误色。
+   ⛔ 不用背景色打标：日志是连续长列表，斑马纹+彩色底会把"哪条失败"从文字里抢走。 */
+.rl-pm-log-item.is-fail { color: var(--text-error, var(--text-warning, var(--text-muted))); }
+.rl-pm-log-item.is-fail .rl-pm-log-title,
+.rl-pm-log-item.is-fail .rl-pm-log-to { color: inherit; }
+/* 失败清单：定高可滚 + 右侧 16px 滚动条呼吸位（与各弹窗列表同一口径） */
+.rl-pm-fails {
+    max-height: 160px;
+    overflow-y: auto;
+    padding-right: 16px;
+    scrollbar-gutter: stable;
+}
+/* 每条失败两行文本（文件名 / 原因）：`overflow-wrap` 兜住超长文件名 */
+.rl-pm-fail-item {
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding: 2px 0;
+}
+/* 失败超过 20 条时的那句「另有 N 条」（`PosterMigrateProgressModal.ts:186-189`）：
+   比明细再淡一档并加一条上边线 —— 它是**汇总**，不是第 21 条明细。 */
+.rl-pm-fail-more {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--background-modifier-border);
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    font-style: italic;
+}
+/* footer 里只有一枚「关闭」（`showCloseButton()`）⇒ row + 靠右；
+   `min-height` 与 `flex: 0 0 auto` 的目的同各弹窗：`.rl-scroll-inside` 的
+   `.modal-content > * { min-height: 0 }` 会压扁所有兄弟，footer 因此被裁成半截按钮。 */
+.rl-pm-foot {
+    flex: 0 0 auto;
+    min-height: 44px;
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+    padding: 8px 4px 2px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ── ④ 功能蓝图九宫格（`RoadmapModal`，弹窗包产出）───────────────────────────────────
+   需求 ⑥：关于页的「新手引导」整体退场，换成一张**按成熟度分档**的方向九宫格。
+   用户原话：「哪个方向扩展最大，颜色就越深」。四档的配色与理由写在下面单独一段。 */
+.rl-rm-modal .modal-content,
+.modal-content.rl-rm-modal { display: flex; flex-direction: column; gap: 10px; }
+
+.rl-rm-head { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; padding: 0 4px; }
+/* 标题现在是**一整句**（「ReelLudic 组成——颜色越深，完成度越高」），允许换行：
+   窄屏一行放不下时它该折成两行，而不是被 ellipsis 吃掉后半句结论。 */
+.rl-rm-title {
+    margin: 0;
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
+    color: var(--text-normal);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.rl-rm-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 4px 16px 4px 8px;
+    scrollbar-gutter: stable;
+}
+/* 3×3：`minmax(0, 1fr)` 而不是 `1fr` —— 后者下限是内容宽，长词会把列顶宽、格子就错位了 */
+.rl-rm-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+
+.rl-rm-cell {
+    position: relative;   /* 承载右上角的成熟度角标（绝对定位） */
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 10px 12px;
+    border-radius: var(--radius-m);
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    min-height: 84px;     /* 四档格子等高对齐：内容少的格子不塌、九宫格不参差 */
+}
+
+/* ── 四档成熟度（v3 最强 → v0 最弱）────────────────────────────────────────────────────
+   🔴🔴 这一段的难点**不是配色本身**，是「明暗两套主题下都必须还能分出四档」。
+   本仓踩过这个坑（见 `.rl-exp-panel` 那条 #588 注释）：`--background-secondary` 在亮色下
+   与弹窗底只差 **4 级灰**（#f6f6f6 vs #fafafa），而 `--background-modifier-hover` 又是**半透明**的
+   （白/黑 7.5% 罩层）—— 两者在暗色主题里一个"比底更深"、一个"比底更浅"，方向是反的。
+   ⇒ 所以层次用**两条通道**同时表达，任一条失效另一条仍在：
+     ⑴ **通道 A（明度台阶）**：v0 无底（只有虚线框）< v1 一档灰 < v2 主题色描边 < v3 实心强调底；
+     ⑵ **通道 B（主题色染色比例 9% → 18% → 28%）**：染色是**色相**偏移，不是明暗偏移，
+        它在浅色与深色主题下的方向**完全相同**（越成熟 = 越"带主题色"），
+        即使某个主题把灰阶压平了，「带不带主题色」这层差也仍然在。
+   ⚠️ `color-mix()` 在老核心上不存在 ⇒ 必须「先给变量兜底、再 `@supports` 升级」：
+      若直接写 `color-mix` 而无兜底，不支持时自定义属性在**计算值阶段**失效，
+      `background` 会退回 `transparent`（看起来像"四档全没了"，比少一层灰糟得多）。 */
+
+/* 兜底（所有版本都生效）：v0 无底 + 虚线框 ⇒ 与有底的三档天然可分 */
+.rl-rm-cell[data-level="v0"] { background: transparent; border-style: dashed; }
+.rl-rm-cell[data-level="v1"] { background: var(--background-secondary); }
+.rl-rm-cell[data-level="v2"] { background: var(--background-modifier-hover); border-color: var(--interactive-accent); }
+/* v3 = 完全形态：兜底层也要"最重" —— 用强调色实心底把顶上那一档与 v2 的"描边"分开，
+   不依赖 color-mix（老内核上四档仍能读出 v3 ≠ v2）。文字色在下面单独覆盖成 on-accent。 */
+.rl-rm-cell[data-level="v3"] { background: var(--interactive-accent); border-color: var(--interactive-accent); }
+
+/* 升级（支持 `color-mix` 时覆盖）：主题色染色强度随成熟度递增 —— 这是明暗两套共同的坐标系 */
+@supports (background: color-mix(in srgb, #000 10%, #fff)) {
+    .rl-rm-cell[data-level="v1"] { background: color-mix(in srgb, var(--interactive-accent) 9%, var(--background-primary)); }
+    .rl-rm-cell[data-level="v2"] { background: color-mix(in srgb, var(--interactive-accent) 18%, var(--background-primary)); }
+    /* v3 刻意**不再加染色比例**、改回 `--interactive-accent` 实心：
+       v2 的 18% 与实心之间隔着一条明度断崖，四档才分得开；若继续按百分比递进（28%），
+       在亮色主题上 v2/v3 只差 10% 灰，用户根本认不出「进阶完善」和「完全形态」。 */
+    .rl-rm-cell[data-level="v3"] { background: var(--interactive-accent); }
+
+    /* 🔴 暗色主题**单独给值**（不是复制一份，是重标刻度）：同一个百分比的主题色，
+       在暗底上叠加后的**对比增量**比亮底小 —— 9% 在暗色里几乎看不见，18% 又会被
+       `--background-primary`（近黑）吃掉边界。所以两档各抬一档（12% / 24%）。
+       ⚠️ 仍然只动**一个**自变量（accent 混合比），因此「v2 比 v1 更浓」这条次序在两种主题下
+          永远成立 —— 不会出现暗色下 v1 反而比 v2 深的翻转（那正是本仓「只差 4 级灰」的老坑：
+          灰阶变量在明暗两套里方向相反，而"混合比"不会）。
+       ⚠️ 必须留在 `@supports` 里：`color-mix` 不被支持时，带它的声明是
+          invalid-at-computed-value-time ⇒ `background` 会退成初始值 transparent（四档全白），
+          而不是"退回上一条兜底"。
+       ⚠️ v3 在暗色下仍用实心 accent（不跟灰阶走），四档次序不受主题影响。 */
+    .theme-dark .rl-rm-cell[data-level="v1"] { background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary)); }
+    .theme-dark .rl-rm-cell[data-level="v2"] { background: color-mix(in srgb, var(--interactive-accent) 24%, var(--background-primary)); }
+    .theme-dark .rl-rm-cell[data-level="v3"] { background: var(--interactive-accent); }
+}
+
+/* 文字色也分四档（用户要求"文字色也要有差"）：v0 整格退成弱色，
+   v1/v2 名称同为正文色、但说明文字差一档（v1 faint / v2 muted）⇒ 可读性的方向与"成熟度越高越清楚"一致。
+   v3 底色是实心强调色 ⇒ 名称/说明必须换成 `--text-on-accent`，否则正文色压上去对比度不足（暗色主题尤其糟）。 */
+.rl-rm-cell[data-level="v0"] .rl-rm-name { color: var(--text-muted); }
+.rl-rm-cell[data-level="v0"] .rl-rm-scope { color: var(--text-faint); }
+.rl-rm-cell[data-level="v1"] .rl-rm-scope { color: var(--text-faint); }
+.rl-rm-cell[data-level="v2"] .rl-rm-name { color: var(--text-normal); }
+.rl-rm-cell[data-level="v2"] .rl-rm-scope { color: var(--text-muted); }
+.rl-rm-cell[data-level="v3"] .rl-rm-name,
+.rl-rm-cell[data-level="v3"] .rl-rm-scope,
+.rl-rm-cell[data-level="v3"] .rl-rm-badge { color: var(--text-on-accent); }
+/* v3 的说明文字整格用 on-accent 会太抢 ⇒ 压一档不透明度，主次仍在（名称实色、说明 85%）。 */
+.rl-rm-cell[data-level="v3"] .rl-rm-scope { opacity: 0.85; }
+
+.rl-rm-name { font-weight: 600; font-size: var(--font-ui-small); color: var(--text-normal); }
+.rl-rm-scope { color: var(--text-muted); font-size: var(--font-ui-smaller); line-height: 1.5; }
+.rl-rm-badge {
+    position: absolute;
+    top: 6px; right: 8px;
+    font-size: 10px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+}
+/* 角标是绝对定位 ⇒ 长标题会从它下面穿过去。有角标时给名称让出右侧 30px；
+   用 `:has()` 只在**真有角标**的格子上让位（没有角标的格子一点不受影响）。
+   ⚠️ 老内核不认 `:has()` ⇒ 整条忽略，最坏情况是长标题压到角标上（不会更乱）。 */
+.rl-rm-cell:has(.rl-rm-badge) .rl-rm-name { padding-right: 30px; }
+
+/* 🔴 2026-10-21 用户指令：底部**整块退场**（图例三行 + 「知道了」按钮都删了）。
+   图例是把「颜色越深 = 完成度越高」翻译第二遍，而顶部标题已经把它说完；关闭走右上角 X / Esc。
+   ⇒ `.rl-rm-foot` / `.rl-rm-legend*` / `.rl-rm-swatch` / `.rl-rm-key` 全部随组件一起删除，
+     ⛔ 别留"以备将来"的死规则：四档配色的真源只剩上面的 `.rl-rm-cell[data-level]` 一套。 */
+
+/* 窄屏（手机 / 分栏窄窗）：九宫格压成一列 —— 三列在 320px 下每格只剩 ~90px，标题必折成竖排，
+   比"能滚动"还难读。⚠️ 断点 560px 与弹窗自身的 min-width 无关，纯看可用宽度。 */
+@media (max-width: 560px) {
+    .rl-rm-grid { grid-template-columns: 1fr; }
 }
 
 /* ── 「下载歌曲」弹窗：**只留一条滚动条**（#496 追加，2026-10-03）────────────────────
@@ -2817,6 +4442,28 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 }
 .rl-reader-toc-pane { flex: 1; overflow-y: auto; padding: 2px var(--rl-side-pad, 8px) 10px; display: flex; flex-direction: column; }
 .rl-reader-toc-pane.hidden { display: none; }
+/* 侧栏溢出提示：**门控**上下渐隐（与 .rl-set-tabs 同一套语言，只是竖向）。
+   为什么需要：侧栏滚动条按用户 2026-09-16 指示**刻意隐藏**，内容溢出时没有任何线索，
+   末行被裁一半 ⇒ 用户报「书签显示不全」（真机实测滚动本身可达，缺的是提示）。
+   `.rl-fade-y` 由 `pure/readerToc.attachScrollFade()` 挂到**真正会滚**的那个容器上
+   （目录页是 .rl-reader-toc-list；书签页是 .rl-reader-ex-pane —— 两者的滚动宿主不同，
+   所以用标记类而不是把选择器写死在某个类上）。
+   🔴 ⛔ 不常驻：JS 按 scrollTop 挂/撤 .is-overflow-start / .is-overflow-end，滑到端点必须撤。
+   ⚠️ mask 改绘制不改布局；渐隐 20px 只吃掉末行下缘的留白，不遮文字。
+   ⚠️ `#000` 是 alpha 遮罩"全不透明"语义，与主题无关；`-webkit-` 前缀双写不可省。 */
+.rl-fade-y.is-overflow-end {
+    -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 20px), rgba(0, 0, 0, 0) 100%);
+            mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 20px), rgba(0, 0, 0, 0) 100%);
+}
+.rl-fade-y.is-overflow-start {
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, #000 20px, #000 100%);
+            mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, #000 20px, #000 100%);
+}
+/* 两端同时（滚动中）：合并成一条四停渐变，写在单端规则**之后**才生效 */
+.rl-fade-y.is-overflow-start.is-overflow-end {
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, #000 20px, #000 calc(100% - 20px), rgba(0, 0, 0, 0) 100%);
+            mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, #000 20px, #000 calc(100% - 20px), rgba(0, 0, 0, 0) 100%);
+}
 .rl-reader-ex-list { overflow-y: auto; padding: 2px 0 10px; }
 .rl-reader-ex-empty {
     padding: 8px 8px;
@@ -3790,6 +5437,16 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     font-weight: 600;
     line-height: 1.4;
 }
+/* 🔴 2026-10-24：分组容器补上与菜单同一条行间距节奏（`display:flex + gap:2px`）。
+   此前它是默认 `display:block` ⇒ 组内各行的间距是 **0**（行内 padding 直接相接），
+   而 PDF / 漫画的行是菜单的**直接子项**、吃 `.rl-reader-menu` 的 `gap:2px` ——
+   同一个「设置菜单」在四阅读器里行疏密不同，就是「样式不统一」的一条。
+   ⚠️ 别删这条：它只影响**组内**节奏，分组标题与首行之间的间距仍由菜单自身的 gap 提供。 */
+.rl-reader .rl-reader-menu-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
 
 /* 底栏图标组（#351：全屏 / 沉浸 / 自动 / 朗读 —— 从设置面板搬到高频操作处）
    🔴 `position: relative` 是**右键浮层的定位锚**（见下一条 `.rl-reader-pop-up`），别删。 */
@@ -4280,6 +5937,32 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     padding: 16px 0 60vh;
     gap: 14px;
 }
+/* ── 翻页模式（2026-10-23 用户报障「切换翻页模式不生效」） ──────────────────────────
+   本条与 `.rl-pdf-scroll.rl-pdf-paged` 是一对：光在 JS 里 `toggleClass` 没有配套规则时，
+   类挂上去等于什么都没发生（旧版就是这样，用户看到的一直是滚动）。
+
+   🔴 为什么用 `visibility` 而不是 `display:none`：
+      `PdfReaderModal.refreshPageTops()` / `currentPageIndex()` 依赖每页的 `offsetTop` 几何。
+      `display:none` 会让被隐藏的页塌成 0 高度 ⇒ 整列页顶缓存全错、`scrollToPage()` 定位失效。
+      `visibility:hidden` 保留盒模型与占位，只把人眼看不见的页藏起来。
+
+   🔴 为什么 `overflow-y: hidden` + `padding-bottom: 100vh`：
+      程序化 `scrollTop` 在 `overflow:hidden` 的容器上依然有效（它仍是滚动容器），
+      但可滚动范围 = `scrollHeight - clientHeight`；末几页要能「顶对齐」就必须在尾部留出
+      至少一屏的空白，否则最后若干页永远滚不到顶部（`60vh` 不够 —— 窗口 900px 时只有 540px，
+      而容器 clientHeight 约 758px）。 */
+.rl-pdf-scroll.rl-pdf-paged {
+    overflow-y: hidden;
+}
+.rl-pdf-scroll.rl-pdf-paged .rl-pdf-pages {
+    padding-bottom: 100vh;
+}
+.rl-pdf-scroll.rl-pdf-paged .rl-pdf-page {
+    visibility: hidden;
+}
+.rl-pdf-scroll.rl-pdf-paged .rl-pdf-page.is-current {
+    visibility: visible;
+}
 /* 单页容器：相对定位（textLayer absolute 覆盖 canvas）；canvas 阴影区分页边界 */
 .rl-pdf-page {
     position: relative;
@@ -4322,6 +6005,100 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     background: rgba(255, 200, 60, 0.4);
     color: transparent;
 }
+/* ── PDF 页内高亮覆盖层（2026-10-23 路线 A） ─────────────────────────────────────
+   结构：`.rl-pdf-page > div.rl-pdf-hl-layer > div.rl-pdf-hl[data-color][data-style]`
+   - 层与 textLayer 同为 `position:absolute; inset:0`，DOM 上排在 textLayer 之后 ⇒ 天然压在上面；
+   - 🔴 层必须 `pointer-events:none`：否则会挡住 textLayer 的拖选（高亮是纯视觉层，不参与交互）；
+   - 子盒位置/尺寸全部是百分比（`pure/pdfHighlight.relRectStyle` 输出）⇒ 缩放 50%–300% 不用重算；
+   - 颜色/样式复用正文高亮的同一套语义（data-color 决定色、data-style 决定高亮/划线/波浪）。 */
+.rl-pdf-hl-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+}
+.rl-pdf-hl {
+    position: absolute;
+    box-sizing: border-box;
+    /* 半点透明：PDF 页面底色是纸白，纯色压上去会盖住字（canvas 在下面，字是画上去的） */
+    opacity: 0.38;
+}
+.rl-pdf-hl[data-color="red"] { --rl-pdf-hl-c: #e8665a; }
+.rl-pdf-hl[data-color="yellow"] { --rl-pdf-hl-c: #e8b93f; }
+.rl-pdf-hl[data-color="green"] { --rl-pdf-hl-c: #58c072; }
+.rl-pdf-hl[data-color="blue"] { --rl-pdf-hl-c: #5aa2e8; }
+.rl-pdf-hl[data-color="purple"] { --rl-pdf-hl-c: #9a7ae0; }
+.rl-pdf-hl[data-style="hl"] {
+    background: var(--rl-pdf-hl-c, #e8b93f);
+    border-radius: 2px;
+}
+/* 划线 / 波浪只画在盒子底边（盒子本来就是一行文字的外框 ⇒ 视觉上正好压在字下面） */
+.rl-pdf-hl[data-style="underline"] {
+    background: transparent;
+    border-bottom: 2px solid var(--rl-pdf-hl-c, #e8b93f);
+}
+.rl-pdf-hl[data-style="wavy"] {
+    background: transparent;
+    /* 用 mask 铺波浪再灌当前颜色 —— 这样 data-color 换色不用换图（⛔ 别改成写死颜色的 SVG data URI） */
+    background-color: var(--rl-pdf-hl-c, #e8b93f);
+    height: 4px !important;
+    bottom: 0;
+    top: auto !important;
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='4'%3E%3Cpath d='M0 3 Q2 0.6 4 3 T8 3' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3C/svg%3E");
+    mask-repeat: repeat-x;
+    mask-position: left bottom;
+    mask-size: 8px 4px;
+}
+/* ── 阅读器「区域截图」框选层（`modals/ShotOverlay`，2026-10-23 用户指令） ──
+   三端共用：TXT / EPUB / PDF。取像素走宿主 `capturePage(rect)`（真机实证精确命中），
+   本层只负责**画选框 + 交矩形**，不碰像素。
+   🔴 必须 `position: fixed; inset: 0`：拖拽期间正文可能还在滚（PDF 自动滚动 / 触控板惯性），
+      用容器相对坐标会让选框与最终截图错位；fixed + clientX/clientY 才是同一套视口坐标。
+   🔴 必须 `touch-action: none` + `user-select: none`：否则拖拽会被 textLayer 的
+      `user-select:text` 抢走，变成拖选文字而不是画框。 */
+.rl-shot-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    cursor: crosshair;
+    background: rgba(0, 0, 0, 0.28);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+/* 拖拽中禁掉全站选中（遮罩已挡视觉，但键盘扩展选区仍会响应） */
+body.rl-shot-dragging {
+    user-select: none;
+    -webkit-user-select: none;
+}
+.rl-shot-hint {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 14px;
+    /* ⛔ 别写成 999px：全仓有一条反向守卫「胶囊形态（999px + 容器底）一律退场」，
+       写了会让 _assert 的 @L5216 当场红（本批实测踩过一次）。用核心圆角变量即可。 */
+    border-radius: var(--radius-l);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: 0 2px 10px var(--background-modifier-box-shadow);
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    pointer-events: none;
+    white-space: nowrap;
+}
+.rl-shot-hint.hidden { display: none; }
+/* 选框：外框亮色描边 + 内部挖空（用 box-shadow 的巨大扩散做「四周压暗、框内清晰」） */
+.rl-shot-box {
+    position: fixed;
+    border: 1px solid var(--interactive-accent);
+    background: transparent;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.28);
+    pointer-events: none;
+}
+.rl-shot-box.hidden { display: none; }
+
 /* 目录嵌套行（复用 rl-reader-toc-item 样式，嵌套缩进由行内 padding 控制） */
 .rl-reader-toc-row { display: flex; flex-direction: column; }
 
@@ -4329,6 +6106,44 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
    舞台 = 一整页的容器：单页制下 DOM 里恒只有一张 `<img>`（或一个占位），
    缩放 ≤1× 时 `max-width/max-height:100%` 让整页 contain 进舞台；>1× 时放开约束、
    由舞台的 `overflow:auto` 平移（面板在缩放时清 scrollTop/scrollLeft，换页也归零）。 */
+/* ── 🔴🔴 #671 / 2026-10-25 结构同构化：漫画与另三个阅读器共用同一套骨架 ──────────
+   真机 DOM（`ComicReaderModal.buildBody`）现在是：
+     `.rl-reader`(column) > `.rl-reader-body`(row)
+       > [ `.rl-reader-toc`(左列), `.rl-reader-main`(column)
+             > [ `.rl-comic-main-row`(row) > [正文, `.rl-comic-thumbs`], `.rl-reader-footer` ] ]
+   ⇒ 目录是 `.rl-reader-body` 的**第一列**，底栏挂在 `.rl-reader-main` **内部** ⇒
+      侧栏把底栏与主内容区整体往右推挤、底栏宽度随 main 自适应缩减（用户要的「推挤式 Push」），
+      底栏⛔ 不再横跨到目录下方。
+   ⚠️ 旧结构是 `.rl-reader-main`(row) > [toc, body, thumbs] + 底栏挂 `.rl-reader`(width:100%)
+      —— 那正是「侧边栏没把底部栏隔开」的成因，已整体废弃。
+   ⛔ 底栏不许再挂回 `.rl-reader`：那是 #675 的老坑（会横跨全宽、盖章目录）。 */
+/* `.rl-comic-main-row`：正文 + 缩略图栏横排（#671 的语义收进这一层，main 恢复 column） */
+.rl-comic .rl-comic-main-row {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    /* 🔴 #674：正文区自己是 flex 容器，主内容必须能收缩（否则页块会把容器撑出横向滚动） */
+    overflow: hidden;
+}
+.rl-comic .rl-comic-main-row > .rl-comic-scroll,
+.rl-comic .rl-comic-main-row > .rl-comic-stage {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+}
+/* 🔴 2026-10-25：漫画侧栏现在挂在 `.rl-reader-body` 里（与 EPUB/TXT/PDF 完全同构），
+   靠 `.rl-reader-body` 的 `padding-top: 54px` 避开悬浮顶栏 ⇒ ⛔ 不要再补 margin-top，
+   否则会叠成 108px、侧栏顶边比另三个低一半（用户会看成「没对齐」）。 */
+/* 🔴🔴 #675：底栏**必须**是 `.rl-reader-main`（column）的直接子项 —— 现在它在 main 末尾，
+   恒在 main 底部、宽度随 main 收缩（目录列独立占左侧）。这条是**兜底**：
+   万一将来又被挂到 `.rl-reader` 上，也保证它不横跨目录。 */
+.rl-reader-footer {
+    flex: 0 0 auto;
+    width: 100%;
+}
 .rl-comic .rl-reader-body { align-items: stretch; }
 .rl-comic-stage {
     flex: 1;
@@ -4372,6 +6187,256 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     font-size: 13px;
     text-align: center;
 }
+
+/* ══ 🔴 #636 ⑤ 漫画阅读器增强（参考 usero2/obsidian-plugins-cbz-reader）══════════════
+   三件：① 右侧**垂直缩略图导航栏**（默认隐藏，顶栏一枚开关）② **连续滚动模式**
+        ③ 右键菜单（看原文件名 / 复制图像）。
+   🔴 三者的**判据**全在 `pure/comicViewer`（缩略图惰性窗口 / 从滚动位置反推当前页 /
+      视野外卸载 / 原文件名截断 / 模式归一，19 例单测）—— CSS 这里只管画。 */
+
+/* ① 右侧缩略图栏（用户规格：「右侧浅灰的垂直缩略图导航栏，卡片式缩略图，
+   选中缩略图带加粗黑色边框」）。
+   ⚠️ `flex: none` + 固定宽 ⇒ 它**不参与**正文的伸缩（开它 = 正文少这么多宽，窄窗下确实会挤；
+      用户 2026-10-19 裁定默认**开**，顶栏一枚按钮可关，⛔ 不再在设置页放开关）。
+   🔴 #669 三层结构（⛔ 别把它们合成一层）：
+      `.rl-comic-thumbs`        = 滚动视口（定高、overflow-y:auto）—— **滑块挂在这一层**
+      `.rl-comic-thumbs-track`  = 卡片轨道（宽 100%，卡片按列排）
+      栏的**第一个子元素**       = 进度滑块（absolute 在视口上 ⇒ 拖动时跟手，不随内容滚走）
+   ⚠️ 卡片内距必须留给滑块：滑块宽 5px 压在最右，轨道 `margin-right` 让出这 10px，否则卡片被盖住一条。
+   🔴🔴 **`min-width: 0` 是这栏的生命线（2026-10-19 用户报障后补）**：栏里 `flex-direction: column` 的轨道，
+      其子项默认 `min-width: auto` ⇒ 会按卡片内容的**最大最小宽度**撑，把栏越撑越宽；而 `main` 是
+      `display:flex` ⇒ 正文被压到几像素、栏看起来「跑到了左边」。固定宽 + `flex: none` 还不够，必须显式 `min-width:0`。
+   ⚠️ `box-sizing: border-box`：Obsidian 全局用的是 content-box，`width:112px + padding + border` 会算成 119px
+      （右侧多出 7px 横向溢出 + 横向滚动条）。 */
+.rl-comic .rl-comic-thumbs {
+    position: relative;
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    width: 112px;
+    min-width: 0;
+    max-width: 112px;
+    box-sizing: border-box;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 8px 0 8px 6px;
+    background: var(--background-secondary);
+    border-left: 1px solid var(--background-modifier-border);
+    scrollbar-width: none;
+    overscroll-behavior: contain;
+}
+.rl-comic .rl-comic-thumbs::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.rl-comic .rl-comic-thumbs-track {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: auto;
+    min-width: 0;
+    margin-right: 10px;
+}
+/* 进度滑块（参考仓 `cbz-reader` 的 minimap thumb）：画「读到全书哪儿」+ 可拖拽跳页。
+   高度由面板按可视比例写行内 `height`；内容比视口矮时加 `.is-off` 直接隐藏。
+   🔴 **选中用结构而不是类名**：生产环境里滑块是 `el.createDiv()` 出来的、靠 `addClass()` 加类，
+     而 Obsidian 的 `addClass` 是 classList 包装，产物里**不会出现类名字面量**（按类名写选择器
+     在源码/单测里都对，到真机却「样式没生效」）。它在 DOM 里的位置是**栏的第一个子元素**
+     （第二个是卡片轨道），这个位置是稳定的。 */
+.rl-comic .rl-comic-thumbs > :first-child {
+    position: absolute;
+    right: 2px;
+    top: 0;
+    width: 5px;
+    min-height: 24px;
+    border-radius: 3px;
+    background: var(--interactive-accent);
+    opacity: 0.5;
+    cursor: grab;
+    z-index: 2;
+    /* ⚠️ 只过渡 opacity（过渡 top/height 会让它追不上滚动 ⇒ 看着像「不同步」） */
+    transition: opacity 0.15s ease;
+}
+.rl-comic .rl-comic-thumbs > :first-child:hover { opacity: 0.85; }
+.rl-comic .rl-comic-thumbs > :first-child.is-dragging { opacity: 1; cursor: grabbing; }
+.rl-comic .rl-comic-thumbs > :first-child.is-off { display: none; }
+.rl-comic .rl-comic-thumb {
+    flex: none;
+    position: relative;
+    /* 🔴 Obsidian 全局用 content-box：`width:100% + padding + border` 会把卡片撑到比栏还宽
+       ⇒ 栏被撑开、正文被挤扁（用户 2026-10-19 截图报障的形态之一）。这里显式改回 border-box。 */
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: 92px;
+    margin: 0;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 5px;
+    background: var(--background-modifier-hover);
+    box-shadow: none;
+    overflow: hidden;
+    cursor: pointer;
+}
+/* 选中态：**加粗黑色边框**（用户规格原话）—— 深色主题下纯黑边框在深底上看不见，
+   故叠一圈主题色描边保证两种主题都读得出来（⛔ 不是「换成主题色」，黑边仍在）。 */
+.rl-comic .rl-comic-thumb.is-on {
+    border-color: #000;
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+.rl-comic-thumb-no {
+    position: absolute;
+    left: 4px;
+    top: 3px;
+    z-index: 1;
+    font-size: 10px;
+    line-height: 1;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+}
+.rl-comic-thumb-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* ② 连续滚动模式：页竖排、容器自己滚（与 `.rl-comic-stage` 是**并列的两条路**，只用一个）。
+   🔴 #669：滚轮在这个容器里就是**滚动**（面板侧按模式分流，⛔ 不再拦去翻页）；
+      `Ctrl/⌘ + 滚轮` = 缩放。缩放 > 1 时页比容器宽 ⇒ 允许横向滚（`overflow-x: auto`）。 */
+.rl-comic-scroll {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 10px 0 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    background: var(--background-primary);
+    user-select: none;
+    scrollbar-width: thin;
+    scrollbar-color: var(--rl-scroll-thumb) transparent;
+}
+.rl-comic-scroll::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+.rl-comic-scroll::-webkit-scrollbar-track { background: transparent; }
+.rl-comic-scroll::-webkit-scrollbar-thumb {
+    background: var(--rl-scroll-thumb);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+.rl-comic-scroll::-webkit-scrollbar-thumb:hover { background: var(--rl-scroll-thumb-hover); background-clip: padding-box; }
+/* 每页的容器：宽高**由面板按纵横比写成行内像素**（`pure/comicScroll.pageBox`）。
+   🔴 #669 与旧写法的差别（这是「连续滚动边看边跳」的真因）：
+     旧 = `min-height: 240px` 占位、图回来再撑开 ⇒ 每来一张图，下面所有页整体位移，
+          滚动位置跟着变，右侧缩略图同步也跟着抖；
+     新 = 先按「已知纵横比（没有就 `1.45`）× 可用宽 × 缩放」算好宽高写进 `style`，
+          图到位的高度与占位几乎一致 ⇒ **不跳**。卸载时只撤 `<img>`，块的高度不受影响。
+   ⚠️ `min-height` 仍留一个很小的兜底（40px）：只是为了「行内尺寸还没写到位」那一帧不至于塌成 0
+      （0 高的块在 IntersectionObserver 里永不命中 = 懒加载自锁）。
+   ⚠️ ⛔ 别写 `width: 92%`：宽度是算出来的（>1× 时要比容器宽、靠横向滚动平移）。 */
+.rl-comic-spage {
+    position: relative;
+    flex: none;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--background-secondary);
+    border-radius: 2px;
+}
+.rl-comic-spage-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: 2px;
+    box-shadow: var(--rl-t-shadow-card, 0 1px 4px rgba(0, 0, 0, 0.18));
+}
+.rl-comic-spage-no {
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    z-index: 1;
+    font-size: 10.5px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+/* ③ 右键菜单（参考仓 v1.0.4）：贴在容器坐标系里（⛔ 不用 `fixed` —— Obsidian 视图外层带
+   `transform`，`fixed` 会被重定向到那个祖先，本仓在回到顶部按钮上实测过同一个坑）。 */
+.rl-comic .rl-comic-ctx {
+    position: absolute;
+    z-index: 20;
+    min-width: 180px;
+    max-width: 260px;
+    padding: 4px;
+    border-radius: 7px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.rl-comic-ctx-fn {
+    padding: 5px 9px;
+    font-size: 11px;
+    word-break: break-all;
+    color: var(--text-faint);
+}
+.rl-comic .rl-comic-ctx-it {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 6px 9px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    box-shadow: none;
+    text-align: left;
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-normal);
+    cursor: pointer;
+}
+.rl-comic .rl-comic-ctx-it:hover { background: var(--background-modifier-hover); }
+
+/* 面板内轻提示（复制成功/失败）——漫画面板没有 Notice 通道（不持 app），用它给回执 */
+.rl-comic .rl-comic-toast {
+    position: absolute;
+    left: 50%;
+    bottom: 56px;
+    transform: translateX(-50%);
+    z-index: 30;
+    padding: 5px 12px;
+    border-radius: var(--rl-t-radius-pill, 999px);
+    background: var(--background-modifier-border);
+    color: var(--text-normal);
+    font-size: 11.5px;
+    pointer-events: none;
+}
+
+/* 🔴 2026-10-24：原 `.rl-comic-mode-seg` 胶囊分段（4 条规则）已整体退场 ——
+   漫画阅读模式改用与 TXT/EPUB/PDF 同一套 `.rl-seg rl-seg-text` 纯字变色切换
+   （UI-GUIDE §7.10：二选一互斥项 ⛔ 不铺底、不描边、不要容器，用户 2026-09-20 裁定）。
+   ⛔ 别为漫画再造第三套分段样式。 */
+/* 2026-10-23：漫画书签区（设置菜单里，因为漫画没有侧栏）。
+   🔴 列表行复用 `.rl-reader-toc-item` / `.rl-reader-toc-label`（与 PDF 书签同一套，零新样式）；
+      这里只负责「标签 + 列表」两列布局与最大高度（书签多时菜单自身不要被撑爆）。 */
+.rl-comic-bm-row { align-items: flex-start; }
+.rl-comic-bm-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    max-height: 168px;
+    overflow-y: auto;
+}
+.rl-comic-bm-list .rl-reader-toc-item { width: 100%; text-align: left; }
+
 
 /* ── 「添加条目」搜索结果区（全局兜底：与 EntryForm.svelte 的 Svelte scoped 样式重复，确保 Obsidian 重启/CSP 下也生效）── */
 .rl-res-head { display: flex; align-items: baseline; gap: 10px; margin: 8px 0 10px; }
@@ -4729,64 +6794,12 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     pointer-events: none;
 }
 .rl-vp-tip.hidden { display: none; }
-/* 进度条标记（#333）：`#333` 圆点 + 悬停卡片。
-   🔴 三层摆放顺序是**有意**的：标记层画在 `played`/`thumb` **之后**（否则已播区间是实心强调色底、
-   圆点会被吞掉），但在 `.rl-vp-tip` **之前**（卡片必须压在最上面）。
-   🔴 `pointer-events: none`：命中判定走进度条自己的 pointermove/pointerdown（不做逐点监听），
-   所以圆点**不吃拖拽**。⚠️ 进度条三段高度 6/9/14px 不许改（圆点是叠上去的，不占条高）。 */
-.rl-vp-marks {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-}
-.rl-vp-mark {
-    position: absolute;
-    top: 50%;
-    width: 7px;
-    height: 7px;
-    margin: -3.5px 0 0 -3.5px;
-    border-radius: 50%;
-    background: var(--interactive-accent);
-    box-shadow: 0 0 0 1.5px var(--background-primary);
-}
-/* 点多时的降级（D-5 Ⓐ）：缩小 + 变淡 —— 保持「这里有打点」的信息，但不变成一条花边 */
-.rl-vp-marks-dense .rl-vp-mark {
-    width: 5px;
-    height: 5px;
-    margin: -2.5px 0 0 -2.5px;
-    opacity: .65;
-}
-/* 悬停在标记上时的卡片（替换「落点 / 总长」气泡）：可换行、竖排内容 */
-.rl-vp-tip-mark {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-    max-width: 220px;
-    padding: 6px 8px;
-    white-space: normal;
-    text-align: left;
-}
-.rl-vp-mark-head {
-    color: var(--text-muted);
-    font-size: 11px;
-}
-.rl-vp-mark-text { font-size: 12px; }
-.rl-vp-mark-img {
-    max-width: 200px;
-    max-height: 112px;
-    border-radius: 4px;
-    display: block;
-}
-/* 打开方式提示（2026-09-19 用户改判：**悬停出卡片 → 右键打开**；卡片里**不再放按钮**）。
-   🔴 为什么去掉按钮：卡片本体是 `pointer-events: none`（悬停时间气泡要跟着鼠标走、不能吃指针），
-   要在卡片里放可点元素就得再补一条 `pointer-events: auto` —— 那条路连着踩了三轮「点不动」
-   （每次重建 / pointerleave 收卡片 / 1 秒空闲隐藏）。右键走 **root 上的 `contextmenu`**，
-   不依赖卡片内的命中层（实测：卡片空白处的命中目标是底层 video）。 */
-.rl-vp-mark-hint {
-    color: rgba(255,255,255,.62);
-    font-size: 11px;
-}
+/* 🔴 #634：进度条标记（`#333` 的 `.rl-vp-marks` 圆点层）与「悬停标记卡片」（`.rl-vp-tip-mark` +
+   `.rl-vp-mark-head/-text/-img/-hint`）**整组删除** —— 用户裁定：「播放器上的进度条不再显示标记，
+   并取消该跳转笔记功能，仅在抽屉侧边栏可点击跳转对应视频进度和关联时间戳笔记」。
+   ⛔ 别照 `#333` / `#579` 的历史注释把它们加回来：卡片的那几项（种类 · 时间 · 说明 · 截图）
+      现在由**抽屉**（`.rl-vp-drawer` 那一组）承载，信息一条都没丢。
+   ⚠️ 进度条三段高度 6/9/14px 一字未动（圆点当年是叠上去的、不占条高）⇒ 删掉后条本身**高度不变**。 */
 
 /* ── #579 时间戳侧边栏（抽屉：截图笔记 / 名场面）────────────────────────────────
    用户口径：「**默认收起**，以抽屉/浮层形式展开，**不挤压主视频区域**」＋「点击列表项精准跳转」
@@ -4878,6 +6891,24 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .rl-vp-ditem.is-active .rl-vp-dtext { color: #fff; }
+/* 🔴 #634：「在笔记中打开」—— 抽屉行**第三枚兄弟按钮**（缩略图 / 跳转 / 开笔记，⛔ 三者不嵌套）。
+   用户裁定「仅在抽屉侧边栏可点击跳转对应视频进度和关联时间戳笔记」⇒ 进度条那条右键通路撤除后，
+   它是「跳关联笔记」的唯一落点。
+   ⚠️ 尺寸与 `.rl-vp-dthumb` 同级（`flex: none` 不被跳转按钮挤扁）；图标走 `currentColor`。
+   ⚠️ 两级前缀（`.rl-vp-drawer .rl-vp-dnote`）压核心 `button:not(.clickable-icon)`（0,1,1）的灰底 —— 
+      与同一组里另两枚按钮**同一口径**（⛔ 单类选择器会被核心规则盖掉，本仓踩过多次）。 */
+.rl-vp-drawer .rl-vp-dnote {
+    flex: none; width: 30px; height: 30px; margin: 0; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid transparent; border-radius: 4px;
+    background: transparent; box-shadow: none;
+    color: rgba(255,255,255,.72); cursor: pointer;
+    transition: background .12s ease, color .12s ease;
+}
+.rl-vp-drawer .rl-vp-dnote:hover {
+    background: rgba(255,255,255,.1); color: #fff;
+}
+.rl-vp-dnote svg { width: 15px; height: 15px; }
 /* 空状态引导（分栏两句，文案真源 `pure/videoDrawer.markEmptyHint`） */
 .rl-vp-dempty { padding: 10px 4px; font-size: 12px; line-height: 1.65; color: rgba(255,255,255,.6); }
 

@@ -13,8 +13,9 @@ function e(id: string, year?: number): MediaEntry {
 }
 
 describe('pure/viewModes · 视图真源', () => {
-    it('通用视图表 = 4 档（海报墙 / 列表 / 瀑布流 / 时间线）', () => {
-        expect(VIEW_MODES).toEqual(['grid', 'list', 'masonry', 'timeline']);
+    it('通用视图表 = 5 档（卡片网格 / 列表 / 瀑布流 / 海报墙 / 时间线）', () => {
+        // 🔴 #624：`wall`（海报墙）新增；`grid` 改名为「卡片网格」—— 阶数从 4 变 5，⛔ 别退回 4
+        expect(VIEW_MODES).toEqual(['grid', 'list', 'masonry', 'wall', 'timeline']);
     });
 
     it('🔴 三张表（VIEW_MODES / VIEW_LABELS / VIEW_ICONS）的键集合**逐项一致** —— 加视图漏一张就红', () => {
@@ -23,15 +24,18 @@ describe('pure/viewModes · 视图真源', () => {
         expect(Object.keys(VIEW_ICONS).sort()).toEqual(sorted);
     });
 
-    it('🔴 用户可见名（口径沿用，⛔ 别把 grid 写成「网格」——它与设置页那一档必须同一个词）', () => {
+    it('🔴 用户可见名（#624 改名后口径：`grid` = 卡片网格、`wall` = 海报墙 —— ⛔ 两词别互换）', () => {
         expect(VIEW_LABELS).toEqual({
-            grid: '海报墙', list: '列表', masonry: '瀑布流', timeline: '时间线',
+            grid: '卡片网格', list: '列表', masonry: '瀑布流', wall: '海报墙', timeline: '时间线',
         });
+        // 🔴 反向守卫：旧叫法「grid = 海报墙」必须彻底退场 —— 同一个词指两个视图是最难查的混淆
+        expect(VIEW_LABELS.grid).not.toBe('海报墙');
+        expect(VIEW_LABELS.wall).toBe('海报墙');
     });
 
     it('🔴 图标名逐项钉住（`setIcon` 找不到是**静默失败** ⇒ 少一枚图标很难在开发时发现）', () => {
         expect(VIEW_ICONS).toEqual({
-            grid: 'layout-grid', list: 'list', masonry: 'columns-3', timeline: 'clock',
+            grid: 'layout-grid', list: 'list', masonry: 'columns-3', wall: 'gallery-vertical', timeline: 'clock',
         });
     });
 

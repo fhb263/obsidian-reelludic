@@ -4,7 +4,7 @@
 // 由 ReaderView 传入容器/scope 挂载；closeView 由视图层注入（detach leaf）
 import { Notice, requestUrl, setIcon, type Scope } from 'obsidian';
 import { parseTxtBook, chapterParagraphs, txtChapterUnits, type TxtBook } from 'pure/txtParse';
-import { attachTocResizer, formatCharCount } from 'pure/readerToc';
+import { attachScrollFades, resyncScrollFade, attachTocResizer, formatCharCount } from 'pure/readerToc';
 import { attachHeadDensity } from 'pure/readerHead';
 import {
     annoCountText,
@@ -78,6 +78,9 @@ import { locateQuoteSpan } from 'pure/anchor';
 import { normalizeLineWidth, normalizeScrollMode, pageToRatio, ratioToPage, isFirstPage, isLastPage, type ReaderLineWidth, type ScrollMode } from 'pure/paged';
 import { footerReadout } from 'pure/readerFooter';
 import { excerptCardLocLabel, excerptCardKeyAction, needsQuoteExpand, placeCard } from 'pure/excerptCard';
+// 2026-10-23 区域截图：面板只交矩形 + 定位，取像素/落盘/写笔记在宿主（`saveReaderShot`）。
+import type { ShotLoc, ShotRect } from 'pure/readerShot';
+import { ShotOverlay } from 'modals/ShotOverlay';
 import { SEARCH_ENGINE_GROUPS, searchEngineUrl, type SearchEngineId } from 'pure/readerSearch';
 import { SEARCH_ENGINE_ICONS } from 'pure/searchIcons';
 
@@ -144,6 +147,12 @@ export interface TxtReaderOptions {
     getCloudKey?: () => string;
     /** 摘抄保存（就地卡片 → 写回笔记「## 摘抄」区）；返回是否成功（false 保留卡片与输入便于重试） */
     onExcerptSave?: (quote: string, note: string | undefined, loc: { chapter: number; pct: number }) => Promise<boolean>;
+    /**
+     * 区域截图（2026-10-23 用户指令：TXT/EPUB/PDF 三阅读器加「区域截图回填笔记」）。
+     * 面板只交**视口矩形 + 定位**；取像素/落盘/写笔记全在宿主 `main.ts:saveReaderShot`
+     * （笔记文件唯一拥有者是 `EntryService`，⛔ 面板里不许 `vault.modify`）。
+     */
+    onShotSave?: (rect: ShotRect, loc?: ShotLoc) => void;
     /** 摘抄书签数据源（笔记「## 摘抄」区解析；打开阅读器时读取） */
     excerpts?: ParsedExcerpt[];
     /** 删除摘抄回调（书签右键 → main 层确认删除；返回是否成功，成功则面板刷新书签列表） */
@@ -187,6 +196,9 @@ let readerLineHeight: number | null = null;
 /** 字号调节范围（px） */
 const FONT_MIN = 12;
 const FONT_MAX = 30;
+/** Ctrl/⌘+滚轮一次调多少（2026-10-23 用户指令：三阅读器统一支持滚轮改显示大小）。
+ *  取 2 = 滑条一格的两倍 —— 滚轮手感上「一滚就看得见变化」，但仍能在 12–30 区间内微调。 */
+const FONT_STEP = 2;
 /** 行距调节范围（倍数） */
 const LINE_MIN = 1.2;
 const LINE_MAX = 2.4;
@@ -424,6 +436,8 @@ export class TxtReaderPanel {
     /** 卡片当前待写入的引用文本与定位（保存时一并交给宿主） */
     private excerptCardQuote = '';
     private excerptCardLoc: { chapter: number; pct: number } | null = null;
+    /** 区域截图的框选层（存在即「正在框选」；销毁阅读器时必须一并收掉） */
+    private shotOverlay: ShotOverlay | null = null;
     /** 高亮本地态（真源在笔记；打开时 options.highlights 注入，一键后本地追加即时渲染，删高亮本地移除） */
     private highlightList: ReaderHighlight[] = [];
     /** 标注三区（书签/高亮/摘抄）的选择模式状态与头部句柄（#345：「清除全部」→ 选择模式 + 删除所选） */
@@ -445,6 +459,8 @@ export class TxtReaderPanel {
     private morePanelEl: HTMLDivElement | null = null;
     private moreOpen = false;
     private disposeHeadDensity: (() => void) | null = null;
+    /** 侧栏溢出渐隐的解绑器（见 `pure/readerToc.attachScrollFades`） */
+    private disposeFade: (() => void) | null = null;
     private quickBtns: Partial<Record<ReaderQuickMode, HTMLButtonElement>> = {};
     /** 翻页模式当前页 index / 总页数 / 单页横向位移（列宽+gap；仅 paged 用；连续不用） */
     private pageIndex = 0;
@@ -633,6 +649,8 @@ export class TxtReaderPanel {
         this.saveTimer = null;
         this.disposeHeadDensity?.(); // #345 顶栏窄屏收纳的 ResizeObserver 随面板注销
         this.disposeHeadDensity = null;
+        this.disposeFade?.(); // 侧栏溢出渐隐的 scroll/RO/MO 监听随面板注销
+        this.disposeFade = null;
         this.ttsSvc?.destroy(); // 朗读随面板一并停止（cancel + 清高亮）
         this.resetAnnotate(); // 关面板复位标注模式
         if (this.fsListenerRegistered) {
@@ -652,6 +670,9 @@ export class TxtReaderPanel {
             window.clearTimeout(this.switchTimer);
             this.switchTimer = null;
         }
+        // 框选层是 fixed 遮罩、挂在 document.body 上 —— 面板没了它必须一起收（否则整窗点不动）
+        this.shotOverlay?.destroy();
+        this.shotOverlay = null;
         this.container.empty();
     }
 
@@ -698,6 +719,14 @@ export class TxtReaderPanel {
         // 图标名≠模式 id（netsearch / aisearch 不是图标名），故 mkQuick 显式收 icon。
         mkQuick('netsearch', 'globe', '网络搜索模式：拖选文字后选搜索引擎，再点退出');
         mkQuick('aisearch', 'sparkles', 'AI 搜索模式：拖选文字后由 AI 作答，再点退出');
+        // 区域截图（2026-10-23 用户指令）：一次性动作，⛔ 不走 toggleAnnotate（那不是「模式」，
+        //   点一次框一次；做成模式会留下一个「激活态」按钮而没有任何持续语义）。
+        if (this.options.onShotSave) {
+            const shotBtn = quickWrap.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '区域截图：框选区域截图回填笔记内' } });
+            safeSetIcon(shotBtn, 'image');
+            shotBtn.addEventListener('mousedown', (ev) => ev.stopPropagation());
+            shotBtn.addEventListener('click', () => this.startShot());
+        }
 
         // 目录/书签/摘抄 切换改由侧栏 tab 行承担（顶部仅渲染一次）
         const titleWrap = head.createDiv({ cls: 'rl-reader-title-wrap' });
@@ -1852,7 +1881,7 @@ export class TxtReaderPanel {
             item.addEventListener('click', () => this.switchChapter(i));
         });
         // 目录侧栏可拖宽（#338：为显示字数；记忆宽度在 localStorage，拖动期间关掉宽度过渡）
-        attachTocResizer(this.tocEl);
+        attachTocResizer(this.tocEl, 'txt');
         // 标注 pane（原「摘抄」页）：书签 / 高亮 / 摘抄三区上下叠放，各区自带「计数 + 选择」头
         // （#345 用户裁定：「清除全部」这种不可逆的一键清空改为**选择模式** —— 能看见具体条目、
         //   可勾选单条或多条后「删除所选」。三区结构同构，共用 pure/annoSelection.buildAnnoHead。）
@@ -1896,6 +1925,10 @@ export class TxtReaderPanel {
         this.exSel = this.exHeadRef.sel;
         this.exCountEl = this.exHeadRef.countEl;
         this.exListEl = this.exHeadRef.listEl;
+        // 侧栏滚动条刻意隐藏 ⇒ 溢出时没有任何线索（末行被裁一半，用户读作「显示不全」）。
+        // 门控渐隐挂到两个**真正会滚**的容器：目录页 = tocListEl（它有 flex:1 + overflow-y:auto），
+        // 标注页 = exPane 本人（书签/高亮/摘抄三个 list 都没有自己的滚动框，是 pane 在滚）。
+        this.disposeFade = attachScrollFades([this.tocListEl, exPane]);
         this.refreshHighlightToc();
         this.buildExcerptToc();
         tocTab.addEventListener('click', () => this.activatePane('toc'));
@@ -1926,10 +1959,17 @@ export class TxtReaderPanel {
         this.textEl.addEventListener('click', (ev) => this.onTextClickAnchor(ev));
         // 翻页模式点屏两侧翻页：仅在无文字选区 + 落在正文左右 1/4 时触发（点中央保留选中/不误翻）
         this.scrollEl.addEventListener('click', (ev) => this.onBodyClickPage(ev));
-        // 翻页模式滚轮横向切页：无选区 + deltaY 大于阈值 → 上一/下一页（不做页面缩放等额外处理）
+        // 翻页模式滚轮横向切页 + Ctrl/⌘+滚轮调字号（2026-10-23 用户指令：三阅读器统一支持 Ctrl+滚轮改显示大小）。
+        // 🔴 Ctrl+滚轮优先级最高：命中即 preventDefault（否则 Obsidian 自身会把它当整页缩放），且不再翻页。
         this.scrollEl.addEventListener(
             'wheel',
             (ev) => {
+                if (ev.ctrlKey || ev.metaKey) {
+                    ev.preventDefault();
+                    // 方向：向上滚（deltaY < 0）= 放大，与系统/浏览器缩放一致
+                    this.adjustFont(ev.deltaY < 0 ? FONT_STEP : -FONT_STEP);
+                    return;
+                }
                 if (!this.isPaged()) return;
                 if (window.getSelection()?.toString().trim()) return;
                 if (Math.abs(ev.deltaY) < 24) return;
@@ -2819,6 +2859,35 @@ export class TxtReaderPanel {
         return { chapter: this.chapterIndex + 1, pct: Math.round(this.currentRatio() * 100) };
     }
 
+    /**
+     * 进入区域截图框选态（2026-10-23 用户指令）。
+     *
+     * 🔴 三个要点：
+     *   ① 框选区 = `this.scrollEl`（正文滚动区），⛔ 别用 `container` —— 顶栏/侧栏不参与截图。
+     *   ② 矩形是**视口坐标**（`ShotOverlay` 用 fixed 遮罩），直接交给宿主 `capturePage`。
+     *   ③ 定位与摘抄同一口径（`currentLoc()`），截图块落进笔记「## 阅读截图」区。
+     */
+    private startShot(): void {
+        const save = this.options.onShotSave;
+        if (!save) return;
+        if (this.shotOverlay) return;
+        this.hideSelbar();
+        this.hideMenu();
+        this.hideMore();
+        const overlay = new ShotOverlay(
+            this.scrollEl,
+            (rect) => {
+                this.shotOverlay = null;
+                save(rect, this.currentLoc());
+            },
+            () => {
+                this.shotOverlay = null;
+            },
+        );
+        this.shotOverlay = overlay;
+        overlay.start('拖拽框选要截图的区域 · Esc 取消');
+    }
+
     /** 切换到指定章（越界忽略），滚动重置到顶部 */
     private switchChapter(i: number): void {
         if (i < 0 || i >= this.book.chapters.length || i === this.chapterIndex) return;
@@ -2849,6 +2918,13 @@ export class TxtReaderPanel {
         if (idx < 0) return;
         this.tocEl.querySelectorAll('.rl-reader-toc-tab').forEach((el, i) => el.toggleClass('active', i === idx));
         this.tocEl.querySelectorAll('.rl-reader-toc-pane').forEach((el, i) => el.toggleClass('hidden', i !== idx));
+        // pane 由 display:none 恢复显示时 ROS 未必回调 ⇒ 补一枪，否则首次切页签没有渐隐提示
+        // 🔴 补的对象必须是挂过渐隐的容器（目录页是 tocListEl，标注页是 pane 本身；见 buildSidebar 的 attachScrollFades）
+        resyncScrollFade(
+            pane === 'toc'
+                ? this.tocListEl
+                : this.tocEl.querySelectorAll<HTMLElement>('.rl-reader-toc-pane')[idx],
+        );
     }
 
     // ── 顶栏快捷「标注模式锁」 ──

@@ -1,12 +1,14 @@
-// 进度条打点/标记的纯逻辑（`pure/videoMarks`）：从条目笔记解析出「时间戳点」→ 过滤到当前集 → 换算成百分比 → 命中判定。
+// 进度条打点/标记的纯逻辑（`pure/videoMarks`）：从条目笔记解析出「时间戳点」→ 过滤到当前集 → 换算成百分比。
 //
 // 为什么是纯模块：这些判据全都**没有 DOM/vault 依赖**，但每一条都容易静默出错，必须单测钉死：
 //   ① 只认那两区（写入名 `## 单时间戳` / `## 截图时间戳`，外加两个**历史区名** `## 时间戳` / `## 截图`
 //      —— #587 改名不改旧笔记 ⇒ 老区里的标记照样读得出来）—— 正文/摘抄区里的链接**不许**被当成标记
 //   ② **认链接目标、不认显示文字** —— 老笔记里 `[7:46·回到视频](…)` 与新格式 `[7:46](…)` 都要认
 //   ③ 多集：库外深链按 `ep` 过滤；**库内链接只有文件名**（可能带 `<…>` 与 URL 编码）→ 按文件名比
-//   ④ 行号要准（「在笔记中打开」要滚到那一行）
-//   ⑤ 卡片展开后**指针停在卡片上**时不许重算/收起（否则按钮点不动 —— 见文件末尾那组用例）
+//   ④ 行号要准（抽屉点「在笔记中打开」要滚到那一行）
+// ⚠️ 🔴 #634：**进度条的命中判定不在本模块了** —— `hitMark` / `inBarBand` / `pointerOnCard` /
+//    `MARK_DENSE_THRESHOLD` 随「进度条不再显示标记 + 取消该跳转笔记功能」一并删除（用户裁定）。
+//    ⇒ 那几组用例也已撤（别照旧注释去找它们：file末尾那组讲的是卡片，卡片同样没了）。
 import { describe, expect, it } from 'vitest';
 import {
     MARK_SECTIONS,
@@ -14,13 +16,10 @@ import {
     MARK_SECTION_SHOT_LEGACY,
     MARK_SECTION_STAMP,
     MARK_SECTION_STAMP_LEGACY,
-    hitMark,
-    inBarBand,
     markCaption,
     markPct,
     marksForEpisode,
     parseNoteMarks,
-    pointerOnCard,
 } from 'pure/videoMarks';
 import { buildTimeLink } from 'pure/videoLink';
 
@@ -144,20 +143,16 @@ describe('pure/videoMarks marksForEpisode', () => {
     });
 });
 
-describe('pure/videoMarks markPct / hitMark', () => {
+describe('pure/videoMarks markPct', () => {
     it('百分比：按总时长折算并夹在 0~1；总时长未知（0/负）→ 0', () => {
         expect(markPct(30, 120)).toBeCloseTo(0.25);
         expect(markPct(-5, 120)).toBe(0);
         expect(markPct(999, 120)).toBe(1);
         expect(markPct(30, 0)).toBe(0);
     });
-
-    it('命中判定：容差内取最近的一个；容差外 → -1（点空白不该跳）', () => {
-        expect(hitMark([0.1, 0.5], 0.12, 0.05)).toBe(0); // 命中 0.1
-        expect(hitMark([0.5, 0.52], 0.515, 0.05)).toBe(1); // 两个都在容差内 → 取最近的（0.52 距 0.005 < 0.5 距 0.015）
-        expect(hitMark([0.1, 0.5], 0.3, 0.05)).toBe(-1); // 都不在容差内
-        expect(hitMark([], 0.5, 0.1)).toBe(-1);
-    });
+    // 🔴 #634：`hitMark` / `inBarBand` / `pointerOnCard` / `MARK_DENSE_THRESHOLD` 的用例**已随功能删除** ——
+    //    进度条不再画标记圆点、也不再有点击/右键命中判定（用户裁定，见 `pure/videoMarks` 文件头）。
+    //    ⛔ 别保留「反正还导出着」的测试：那条导出已被删（本仓「死码不留」），测试会直接编译不过。
 });
 
 describe('pure/videoMarks markCaption（悬停卡片里那句「用户手写的补充说明」）', () => {
@@ -170,67 +165,3 @@ describe('pure/videoMarks markCaption（悬停卡片里那句「用户手写的�
     });
 });
 
-describe('pure/videoMarks pointerOnCard（卡片展开后「指针停在卡片上」的判据）', () => {
-    // 🔴 用户 2026-09-19 实测报障：「小圆点悬浮后，点『在笔记中打开』点不动」。
-    //    根因就是这条判据缺失 —— 卡片画在**进度条上方**（`bottom: 22px`），指针必须从条上**向上**移进
-    //    卡片才能按到按钮；这段位移期间：
-    //      ① `pointerleave` 触发 → 旧代码把卡片 `hidden` 掉（卡片在眼前消失）
-    //      ② `pointermove` 触发 → 旧代码 `tip.empty()` **重建卡片** ⇒ 按钮在 mousedown 与 mouseup
-    //         之间被换掉 ⇒ 浏览器**不合成 click**（按钮永远点不动）
-    //    ⇒ 判据抽成纯函数：「指针是否落在卡片矩形内（含容差）」= true 时**既不重算也不收起**。
-    const card = { left: 100, top: 200, right: 300, bottom: 260 };
-
-    it('卡片没展开（null）→ false（普通悬停照旧显示时间气泡）', () => {
-        expect(pointerOnCard(null, 150, 230)).toBe(false);
-    });
-
-    it('指针落在卡片内 → true', () => {
-        expect(pointerOnCard(card, 150, 230)).toBe(true);
-        expect(pointerOnCard(card, 100, 200)).toBe(true); // 左上角
-        expect(pointerOnCard(card, 300, 260)).toBe(true); // 右下角
-    });
-
-    it('容差 4px：贴着边缘（手抖）仍算在卡片上；再远一点就不算', () => {
-        expect(pointerOnCard(card, 302, 262)).toBe(true); // 外扩 2px
-        expect(pointerOnCard(card, 96, 196)).toBe(true); // 外扩 4px（正好落在容差上）
-        expect(pointerOnCard(card, 90, 190)).toBe(false); // 外扩 10px → 不算
-        expect(pointerOnCard(card, 150, 300)).toBe(false); // 卡片下方（进度条那一侧）→ 不算
-    });
-
-    it('🔴 没量到尺寸（`display:none` 时 rect 全 0）→ false —— 否则会把整条进度条都当成卡片', () => {
-        expect(pointerOnCard({ left: 0, top: 0, right: 0, bottom: 0 }, 0, 0)).toBe(false);
-        expect(pointerOnCard({ left: 10, top: 10, right: 10, bottom: 40 }, 10, 20)).toBe(false);
-    });
-});
-
-describe('pure/videoMarks inBarBand（右键命中的**纵向**门控）', () => {
-    // 🔴 2026-09-19 用户改判：打开方式从「卡片里的按钮」换成「悬停出卡片 → **右键**打开」。
-    //    右键必须挂在播放器 **root** 上 —— 因为卡片是 `pointer-events: none`，卡片空白处的命中目标是
-    //    **底层 video**（无头 Chrome 实测 `elementFromPoint`），事件根本不经过进度条。
-    //    代价：**画面任何位置右键都会进到处理器里** ⇒ 必须用两道门控夹回进度条附近
-    //    （横向 = `hitMark` 的 8px 容差；纵向 = 本函数），否则会吞掉用户在画面别处的正常右键菜单。
-    const top = 700;
-    const bottom = 714;
-
-    it('落在进度条带内 → true', () => {
-        expect(inBarBand(700, top, bottom)).toBe(true);
-        expect(inBarBand(707, top, bottom)).toBe(true);
-        expect(inBarBand(714, top, bottom)).toBe(true);
-    });
-
-    it('上下各 40px 之内 → true（卡片就悬在条上方，右键卡片要算命中）', () => {
-        expect(inBarBand(660, top, bottom)).toBe(true); // 上方 40px
-        expect(inBarBand(754, top, bottom)).toBe(true); // 下方 40px
-    });
-
-    it('🔴 出了带外（画面别处右键）→ false —— 不许吞掉系统右键菜单', () => {
-        expect(inBarBand(659, top, bottom)).toBe(false);
-        expect(inBarBand(755, top, bottom)).toBe(false);
-        expect(inBarBand(300, top, bottom)).toBe(false); // 画面中部
-    });
-
-    it('非法值 → false（量不到 rect 时别误判）', () => {
-        expect(inBarBand(NaN, top, bottom)).toBe(false);
-        expect(inBarBand(700, NaN, bottom)).toBe(false);
-    });
-});

@@ -6,6 +6,8 @@ import type { MediaEntry, Progress, WatchLink } from 'data/types';
 import type { MediaStatus } from 'pure/status';
 import { isMediaStatus } from 'pure/status';
 import type { Rating } from 'pure/rating';
+// 1.3.1 ① 字段映射（读侧）：笔记里的键名可能被用户改过，解析前先反查回原始键名
+import { EMPTY_FIELD_MAP, mapReverse, type CompiledFieldMap } from 'pure/fieldMap';
 
 export interface NoteEditable {
     /** 个人评语（笔记中实际写的文本；占位符视为未写返回 undefined） */
@@ -56,6 +58,36 @@ const LEGACY_NOTES_PLACEHOLDERS: readonly string[] = ['（在这里写下你的�
 export function isNotesPlaceholder(text: string): boolean {
     const t = text.trim();
     return t === NOTES_PLACEHOLDER || LEGACY_NOTES_PLACEHOLDERS.includes(t);
+}
+
+/**
+ * 🔴 #635 关联章节名（**保留区键**）。与 `data/noteGenerator.RELATED_SECTION` 必须是**同一个字面量** ——
+ * 改名 = 存量笔记里的关联区一保存就被模板重写抹掉（「#587 改区名」同族的静默丢数据）。
+ * ⚠️ 这里不 import 那边：`noteEditable` 是 pure 层，`noteGenerator` 是 data 层，反向依赖会成环。
+ * 两边由断言逐字钉住（`assert-symbols`）。
+ */
+export const RELATED_SECTION = '关联';
+
+/** 关联为空时的提示行（与链接章节「（暂无链接）」同口径；判断「这区是不是空的」靠它） */
+export const RELATED_EMPTY_HINT = '（暂无关联）';
+
+/**
+ * 从笔记抽出「## 关联」区的原始正文（#635 重写保留区用）。
+ * 空区（只有提示行 / 只有空白）⇒ `''`；没有该区 ⇒ `null`（**两种要分开**：
+ * 「用户把整区删了」与「用户留着空区」在重写时的处理不一样）。
+ */
+export function extractRelatedSectionBody(text: string): string | null {
+    const lines = text.split('\n');
+    const head = lines.findIndex((l) => l.trim() === `## ${RELATED_SECTION}`);
+    if (head === -1) return null;
+    const buf: string[] = [];
+    for (let i = head + 1; i < lines.length; i++) {
+        if (/^##\s/.test(lines[i])) break; // 下一个二级标题 ⇒ 区结束
+        buf.push(lines[i]);
+    }
+    const body = buf.join('\n').trim();
+    if (!body || body === RELATED_EMPTY_HINT) return '';
+    return body;
 }
 
 /** 纯文本章节（标题 → 字段）：内容取标题与下一个 ## 标题之间的文本，去首尾空白 */
@@ -135,7 +167,12 @@ type FmMap = (val: string, ctx: { str: (v: string) => string | undefined; strLis
  *  - 非法值忽略（status 非四态、rating 超界、year 非数字等不返回）
  *  - banner → poster（URL 或库内路径原文透传，EntryModal 负责剥库目录前缀）
  */
-export function extractFrontmatterFromNote(text: string): Partial<MediaEntry> {
+export function extractFrontmatterFromNote(
+    text: string,
+    /** 1.3.1 ①：用户配置的字段映射（缺省恒等）。⚠️ 这里用的是**反向**表 ——
+     *  笔记里写的是「新键名」，要靠它反查出 `handlers` 认识的原键名。 */
+    fieldMap: CompiledFieldMap = EMPTY_FIELD_MAP,
+): Partial<MediaEntry> {
     const out: Partial<MediaEntry> = {};
     const fm = /^---\n([\s\S]*?)\n---/.exec(text);
     if (!fm) return out;
@@ -225,7 +262,8 @@ export function extractFrontmatterFromNote(text: string): Partial<MediaEntry> {
         if (!line || line.startsWith('#')) continue;
         const idx = line.indexOf(':');
         if (idx < 0) continue;
-        const key = line.slice(0, idx).trim();
+        // 1.3.1 ①：先按反向映射把「笔记里的键名」换回原始键名，再查 handlers
+        const key = mapReverse(fieldMap, line.slice(0, idx).trim());
         const val = line.slice(idx + 1).trim();
         const handler = handlers[key];
         if (handler) handler(val, { str, strList, num });

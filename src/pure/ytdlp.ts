@@ -179,7 +179,7 @@ export function ytDlpFailureMessage(failure: { code: number | null; stderr: stri
 
 /** 没找到 yt-dlp 可执行文件时的文案（把「去哪儿配」直接写出来，⛔ 别让用户自己猜） */
 export function ytDlpNotFoundMessage(exe: string): string {
-    return `未找到 yt-dlp（${exe}）：请在 设置 → 元数据源配置 › 音乐源凭据 里填写 yt-dlp 可执行文件路径，或把它加入系统 PATH`;
+    return `未找到 yt-dlp（${exe}）：请在 设置 → 元数据源配置 › 音乐下载源凭据 里填写 yt-dlp 可执行文件路径，或把它加入系统 PATH`;
 }
 
 /** 进程跑完（退出码 0）但临时目录里没有音频文件 */

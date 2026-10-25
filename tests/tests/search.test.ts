@@ -1,0 +1,361 @@
+// 关键词 + 类型 + 状态过滤 + 排序 纯逻辑单测
+import { describe, it, expect } from 'vitest';
+import { matchesSearch, matchesType, matchesStatus, filterAndSort } from 'pure/search';
+import type { MediaEntry } from 'data/types';
+
+function e(partial: Partial<MediaEntry>): MediaEntry {
+    return {
+        id: partial.id ?? 'x',
+        type: partial.type ?? 'movie',
+        title: partial.title ?? '',
+        originalTitle: partial.originalTitle,
+        status: partial.status ?? 'want',
+        rating: partial.rating ?? 0,
+        year: partial.year,
+        genres: [],
+        cast: [],
+        links: [],
+        notes: '',
+        tags: [],
+        progress: undefined,
+        createdAt: partial.createdAt ?? '2026-01-01T00:00:00.000Z',
+        updatedAt: partial.updatedAt ?? '2026-01-01T00:00:00.000Z',
+        ...partial,
+    } as MediaEntry;
+}
+
+describe('matchesSearch 关键词命中', () => {
+    it('空搜索词全部命中', () => {
+        expect(matchesSearch(e({ title: '沙丘' }), '')).toBe(true);
+        expect(matchesSearch(e({ title: '沙丘' }), '   ')).toBe(true);
+    });
+
+    it('标题小写包含匹配', () => {
+        expect(matchesSearch(e({ title: '沙丘：第二部' }), '沙丘')).toBe(true);
+        expect(matchesSearch(e({ title: 'Dune' }), 'dune')).toBe(true);
+        expect(matchesSearch(e({ title: '沙丘' }), 'dune')).toBe(false);
+    });
+
+    it('原名兜底匹配', () => {
+        expect(matchesSearch(e({ title: '千与千寻', originalTitle: 'Spirited Away' }), 'spirited')).toBe(true);
+    });
+
+    it('原名为空字符串不报错', () => {
+        expect(matchesSearch(e({ title: '海王' }), '海')).toBe(true);
+    });
+});
+
+describe('matchesSearch 按类型扩展字段（作者/开发商）', () => {
+    it('书籍按作者命中', () => {
+        expect(matchesSearch(e({ type: 'book', title: '置身事内', author: '兰小欢' }), '兰小欢')).toBe(true);
+        expect(matchesSearch(e({ type: 'book', title: '置身事内', author: '兰小欢' }), '置身')).toBe(true);
+    });
+
+    it('游戏按开发商命中', () => {
+        expect(matchesSearch(e({ type: 'game', title: '部落冲突', developer: 'Supercell' }), 'supercell')).toBe(true);
+        expect(matchesSearch(e({ type: 'game', title: '部落冲突', developer: 'Supercell' }), 'super')).toBe(true);
+    });
+
+    it('作者/开发商搜索大小写不敏感', () => {
+        expect(matchesSearch(e({ type: 'book', title: '1984', author: 'George Orwell' }), 'george')).toBe(true);
+        expect(matchesSearch(e({ type: 'game', title: '半条命', developer: 'Valve' }), 'VALVE')).toBe(true);
+        expect(matchesSearch(e({ type: 'music', title: 'Stairway to Heaven', author: 'Led Zeppelin' }), 'zeppelin')).toBe(true);
+    });
+
+    it('author/developer 为空不报错且不命中', () => {
+        expect(matchesSearch(e({ type: 'book', title: '三体' }), '刘慈欣')).toBe(false);
+        expect(matchesSearch(e({ type: 'game', title: '塞尔达' }), '任天堂')).toBe(false);
+        expect(matchesSearch(e({ type: 'music', title: '夜曲' }), '周杰伦')).toBe(false);
+    });
+
+    it('音乐按作者（歌手）命中', () => {
+        expect(matchesSearch(e({ type: 'music', title: '七里香', author: '周杰伦' }), '周杰伦')).toBe(true);
+        expect(matchesSearch(e({ type: 'music', title: '七里香', author: '周杰伦' }), '七里')).toBe(true);
+    });
+
+    it('影视不按作者/开发商匹配，音乐不按开发商匹配', () => {
+        expect(matchesSearch(e({ type: 'movie', title: '沙丘', author: 'Frank Herbert' }), 'frank')).toBe(false);
+        expect(matchesSearch(e({ type: 'movie', title: '沙丘', developer: 'Legendary' }), 'legendary')).toBe(false);
+        expect(matchesSearch(e({ type: 'music', title: '七里香', developer: '杰威尔' }), '杰威尔')).toBe(false);
+    });
+});
+
+describe('matchesType / matchesStatus', () => {
+    it('type all 通配', () => {
+        expect(matchesType(e({ type: 'movie' }), 'all')).toBe(true);
+    });
+    it('type 精确匹配', () => {
+        expect(matchesType(e({ type: 'book' }), 'book')).toBe(true);
+        expect(matchesType(e({ type: 'book' }), 'game')).toBe(false);
+    });
+    it('status all 通配', () => {
+        expect(matchesStatus(e({ status: 'watching' }), 'all')).toBe(true);
+    });
+    it('status 精确匹配', () => {
+        expect(matchesStatus(e({ status: 'want' }), 'want')).toBe(true);
+        expect(matchesStatus(e({ status: 'want' }), 'watching')).toBe(false);
+    });
+});
+
+describe('filterAndSort 综合筛选 + 排序', () => {
+    const data: MediaEntry[] = [
+        e({ id: 'a', title: 'Dune',        originalTitle: 'Dune',          type: 'movie', status: 'watched', rating: 4, year: 2021, updatedAt: '2026-08-25T00:00:00.000Z' }),
+        e({ id: 'b', title: '沙丘：第二部', originalTitle: 'Dune: Part Two', type: 'movie', status: 'want',    rating: 0, year: 2024, updatedAt: '2026-08-20T00:00:00.000Z' }),
+        e({ id: 'c', title: '葬送的芙莉莲', type: 'anime', status: 'watching', rating: 5, year: 2023, updatedAt: '2026-08-26T00:00:00.000Z' }),
+        e({ id: 'd', title: '三体',          type: 'book',   status: 'want',     rating: 4, year: 2008, updatedAt: '2026-08-15T00:00:00.000Z' }),
+        e({ id: 'e', title: '流浪地球',      type: 'movie',  status: 'watched',  rating: 3, year: 2019, updatedAt: '2026-08-10T00:00:00.000Z' }),
+    ];
+
+    it('空搜索 + 全状态 + 全类型 → recent 排序', () => {
+        const out = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'recent' });
+        expect(out.map((x) => x.id)).toEqual(['c', 'a', 'b', 'd', 'e']);
+    });
+
+    it('recent-asc 排序（最久未更新在前，与 recent 反向）', () => {
+        const out = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'recent-asc' });
+        expect(out.map((x) => x.id)).toEqual(['e', 'd', 'b', 'a', 'c']);
+    });
+
+    it('搜索 Dune 命中标题+原名', () => {
+        const out = filterAndSort(data, { status: 'all', type: 'all', query: 'dune', sortBy: 'recent' });
+        expect(out.map((x) => x.id).sort()).toEqual(['a', 'b']);
+    });
+
+    it('搜索 沙丘 命中中文标题', () => {
+        const out = filterAndSort(data, { status: 'all', type: 'all', query: '沙丘', sortBy: 'recent' });
+        expect(out.map((x) => x.id)).toEqual(['b']);
+    });
+
+    it('搜索 + 类型联合筛', () => {
+        const out = filterAndSort(data, { status: 'all', type: 'book', query: '三', sortBy: 'recent' });
+        expect(out.map((x) => x.id)).toEqual(['d']);
+    });
+
+    it('bookKind 筛选：novel 只留显式网文', () => {
+        const books = [
+            e({ id: 'b1', type: 'book', title: '图书A' }),
+            e({ id: 'b2', type: 'book', title: '小说B', bookKind: 'novel' }),
+            e({ id: 'm1', type: 'movie', title: '电影C' }),
+        ];
+        const out = filterAndSort(books, { status: 'all', type: 'all', query: '', sortBy: 'recent', bookKind: 'novel' });
+        expect(out.map((x) => x.id)).toEqual(['b2']);
+    });
+
+    it('bookKind 筛选：book 含缺省条目（缺省归文学，存量书不丢失）', () => {
+        const books = [
+            e({ id: 'b1', type: 'book', title: '图书A' }),
+            e({ id: 'b2', type: 'book', title: '小说B', bookKind: 'novel' }),
+        ];
+        const out = filterAndSort(books, { status: 'all', type: 'all', query: '', sortBy: 'recent', bookKind: 'book' });
+        expect(out.map((x) => x.id)).toEqual(['b1']);
+    });
+
+    // 音乐子分类过滤项随【音乐】页签子分类行下线（1.0.3.1，用户 2026-09-13 裁定）：filterAndSort 不再有 musicKind 选项
+
+    // ⚠️ #435 的 `filterAndSort` 的 `series` 选项已随「系列筛选」整块退场（用户：「删除这个筛选系列框」）
+
+    it('title-asc 排序（A-Z，zh locale）', () => {
+        const out = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'title-asc' });
+        const titles = out.map((x) => x.title);
+        expect(titles).toHaveLength(5);
+        // 同一比较器对全部条目返回确定性顺序：复制再排，结果应完全一致
+        const copy = [...data].sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+        expect(titles).toEqual(copy.map((x) => x.title));
+    });
+
+    it('title-desc 排序（Z-A，与 A-Z 完全反序）', () => {
+        const asc = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'title-asc' }).map((x) => x.id);
+        const desc = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'title-desc' }).map((x) => x.id);
+        expect(desc).toEqual([...asc].reverse());
+    });
+
+    it('myrating-asc 排序（个人评分 1★→5★，未评 0 排最前）', () => {
+        const out = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'myrating-asc' });
+        expect(out[0].id).toBe('b'); // 0
+        expect(out[out.length - 1].id).toBe('c'); // 5
+    });
+
+    it('release-desc / release-asc 排序（发布日期 新→旧 / 旧→新）', () => {
+        const desc = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'release-desc' });
+        expect(desc[0].id).toBe('b'); // 2024
+        expect(desc[desc.length - 1].id).toBe('d'); // 2008
+        const asc = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'release-asc' });
+        expect(asc[0].id).toBe('d'); // 2008
+        expect(asc[asc.length - 1].id).toBe('b'); // 2024
+    });
+
+    it('score-desc / score-asc 排序（大众评分 高→低 / 低→高，无评分视作 0）', () => {
+        const scored = data.map((d, i) => ({ ...d, communityScore: (i % 3) + 1 }));
+        const desc = filterAndSort(scored, { status: 'all', type: 'all', query: '', sortBy: 'score-desc' });
+        for (let i = 1; i < desc.length; i++) {
+            expect((desc[i - 1].communityScore ?? 0)).toBeGreaterThanOrEqual(desc[i].communityScore ?? 0);
+        }
+        const asc = filterAndSort(scored, { status: 'all', type: 'all', query: '', sortBy: 'score-asc' });
+        for (let i = 1; i < asc.length; i++) {
+            expect((asc[i - 1].communityScore ?? 0)).toBeLessThanOrEqual(asc[i].communityScore ?? 0);
+        }
+        // 无大众评分的排最前（asc）/最末（desc）
+        const noScore = filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'score-asc' });
+        expect(noScore[0].communityScore ?? 0).toBe(0);
+    });
+
+    it('status-asc / status-desc 排序（想看→在看→已看→存档；倒序反之）', () => {
+        const statusData: MediaEntry[] = [
+            e({ id: 'a', title: 'A', status: 'watched' }),
+            e({ id: 'b', title: 'B', status: 'want' }),
+            e({ id: 'c', title: 'C', status: 'archived' }),
+            e({ id: 'd', title: 'D', status: 'watching' }),
+        ];
+        const asc = filterAndSort(statusData, { status: 'all', type: 'all', query: '', sortBy: 'status-asc' });
+        expect(asc.map((x) => x.id)).toEqual(['b', 'd', 'a', 'c']); // want→watching→watched→archived
+        const desc = filterAndSort(statusData, { status: 'all', type: 'all', query: '', sortBy: 'status-desc' });
+        expect(desc.map((x) => x.id)).toEqual(['c', 'a', 'd', 'b']);
+    });
+
+    it('原数组不被改动（slice 副本）', () => {
+        const before = data.map((d) => d.id);
+        filterAndSort(data, { status: 'all', type: 'all', query: '', sortBy: 'title-asc' });
+        expect(data.map((d) => d.id)).toEqual(before);
+    });
+
+    // 题材维度（视图级题材筛选，用户 2026-09-22）：新增可选选项，缺省/空选必须完全不过滤（老调用零影响）
+    it('题材缺省 / 空选 → 不过滤（老调用行为不变）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', genres: ['科幻'] }),
+            e({ id: 'b', genres: [] }),
+            e({ id: 'c', genres: ['推理', '悬疑'] }),
+        ];
+        const base = { status: 'all' as const, type: 'all' as const, query: '', sortBy: 'title-asc' as const };
+        expect(filterAndSort(g, base).map((x) => x.id)).toEqual(['a', 'b', 'c']);
+        expect(filterAndSort(g, { ...base, genres: [] }).map((x) => x.id)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('题材多选是 OR（命中任一已选题材即保留）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', genres: ['科幻'] }),
+            e({ id: 'b', genres: ['历史'] }),
+            e({ id: 'c', genres: ['推理', '悬疑'] }),
+        ];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'title-asc', genres: ['推理', '科幻'] });
+        expect(out.map((x) => x.id)).toEqual(['a', 'c']);
+    });
+
+    it('题材与状态 / 类型 / 关键词是 AND 关系（叠加生效）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', title: '沙丘', type: 'movie', status: 'watched', genres: ['科幻'] }),
+            e({ id: 'b', title: '沙丘2', type: 'book', status: 'watched', genres: ['科幻'] }),
+            e({ id: 'c', title: '沙丘3', type: 'movie', status: 'want', genres: ['科幻'] }),
+        ];
+        const out = filterAndSort(g, {
+            status: 'watched',
+            type: 'movie',
+            query: '沙丘',
+            sortBy: 'title-asc',
+            genres: ['科幻'],
+        });
+        expect(out.map((x) => x.id)).toEqual(['a']);
+    });
+
+    it('题材筛选与 bookKind 叠加（阅读子视图内再按题材收窄）', () => {
+        const g: MediaEntry[] = [
+            e({ id: 'a', type: 'book', bookKind: 'book', genres: ['科幻'] }),
+            e({ id: 'b', type: 'book', bookKind: 'novel', genres: ['科幻'] }),
+        ];
+        const out = filterAndSort(g, {
+            status: 'all',
+            type: 'book',
+            query: '',
+            sortBy: 'title-asc',
+            bookKind: 'novel',
+            genres: ['科幻'],
+        });
+        expect(out.map((x) => x.id)).toEqual(['b']);
+    });
+
+    it('题材值 trim 后比对（笔记里带空格的题材照常命中）', () => {
+        const g: MediaEntry[] = [e({ id: 'a', genres: [' 科幻 '] }), e({ id: 'b', genres: ['科幻 '] })];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'title-asc', genres: ['科幻'] });
+        expect(out.map((x) => x.id)).toEqual(['a', 'b']);
+    });
+});
+
+/**
+ * #441 新增的两个「系列序号」排序档（视图里默认用 series-asc；比较逻辑借 `seriesGroup` 那份单一真源）。
+ * 数据形态照抄真库：序号可以有小数（3.5）、也可以没填。
+ */
+describe('filterAndSort · 系列序号排序（#441）', () => {
+    const idx = (n: number | undefined, id: string, title: string, year?: number) =>
+        e({ id, title, year, seriesIndex: n, series: '示例系列' });
+
+    it('series-asc：**按序号升序**，小数序号照样排得进去（3 < 3.5 < 5）', () => {
+        const g = [idx(5, 'c', '第五部'), idx(3, 'a', '第三部'), idx(3.5, 'b', '三点五部')];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-asc' });
+        expect(out.map((x) => x.id)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('series-asc：🔴 **没填序号的置后**（不是置前 —— 它们还没归类，不该压住排好序的那些）', () => {
+        const g = [idx(undefined, 'z', '没序号'), idx(2, 'b', '第二部'), idx(1, 'a', '第一部')];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-asc' });
+        expect(out.map((x) => x.id)).toEqual(['a', 'b', 'z']);
+    });
+
+    it('series-desc：**按序号降序**，但没填序号的**仍然置后**（⛔ 不是简单把整个比较器取反）', () => {
+        const g = [idx(1, 'a', '第一部'), idx(undefined, 'z', '没序号'), idx(3, 'c', '第三部'), idx(2, 'b', '第二部')];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-desc' });
+        expect(out.map((x) => x.id)).toEqual(['c', 'b', 'a', 'z']);
+    });
+
+    it('序号相同 ⇒ 年份兜底（升序档取早的先；降序档取晚的先）', () => {
+        const g = [idx(1, 'b', '乙', 2020), idx(1, 'a', '甲', 2010)];
+        expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-asc' }).map((x) => x.id)).toEqual(['a', 'b']);
+        expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-desc' }).map((x) => x.id)).toEqual(['b', 'a']);
+    });
+
+    it('都不填序号 ⇒ 退回年份 → 标题（与组内排序同一口径）', () => {
+        const g = [idx(undefined, 'b', '乙', 2020), idx(undefined, 'a', '甲', 2010)];
+        expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'series-asc' }).map((x) => x.id)).toEqual(['a', 'b']);
+    });
+});
+
+// 🔴 #689（用户 2026-10-19）：「列表视图全局搜索框可按导演筛选显示条目」
+//   —— 影视/动画额外命中 导演 / 演员 / 编剧。
+describe('matchesSearch · 导演 / 演员（#689）', () => {
+    it('影视按导演命中', () => {
+        const m = e({ type: 'movie', title: '活着', director: '张艺谋' });
+        expect(matchesSearch(m, '张艺谋')).toBe(true);
+        expect(matchesSearch(m, '艺谋')).toBe(true);
+        expect(matchesSearch(m, '陈凯歌')).toBe(false);
+    });
+
+    it('剧集 / 动画同样按导演命中', () => {
+        expect(matchesSearch(e({ type: 'tv', title: 'X', director: '孔笙' }), '孔笙')).toBe(true);
+        expect(matchesSearch(e({ type: 'anime', title: 'Y', director: '新海诚' }), '新海诚')).toBe(true);
+    });
+
+    it('按演员命中（cast 数组任一命中即可）', () => {
+        const m = e({ type: 'movie', title: 'Z', cast: ['葛优', '巩俐'] });
+        expect(matchesSearch(m, '巩俐')).toBe(true);
+        expect(matchesSearch(m, '周迅')).toBe(false);
+    });
+
+    it('按编剧命中', () => {
+        expect(matchesSearch(e({ type: 'movie', title: 'W', screenwriter: ['芦苇'] }), '芦苇')).toBe(true);
+    });
+
+    it('大小写不敏感 + 首尾空白容忍（与其他字段同口径）', () => {
+        expect(matchesSearch(e({ type: 'movie', title: 'Dune', director: 'Denis Villeneuve' }), '  denis ')).toBe(true);
+    });
+
+    it('导演/演员为空或缺失时不误命中', () => {
+        const bare = e({ type: 'movie', title: '空数据' });
+        expect(matchesSearch(bare, '张艺谋')).toBe(false);
+        expect(matchesSearch(e({ type: 'movie', title: 'A', cast: [] }), '任何人')).toBe(false);
+    });
+
+    it('书籍/音乐/游戏的字段口径不受影响（反向守卫）', () => {
+        // 电影上的 director 不应让「游戏/书」的字幕匹配规则串味
+        expect(matchesSearch(e({ type: 'game', title: 'G', developer: '米哈游' }), '米哈游')).toBe(true);
+        expect(matchesSearch(e({ type: 'book', title: 'B', author: '余华' }), '余华')).toBe(true);
+        expect(matchesSearch(e({ type: 'movie', title: 'M', author: '余华' }), '余华')).toBe(false);
+    });
+});

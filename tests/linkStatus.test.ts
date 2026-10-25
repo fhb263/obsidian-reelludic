@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
     bvidOf,
     buildBiliCheckUrl,
+    clearDeadEpisodeUrls,
     collectLinkScanTargets,
     isDead,
     isHttpUrl,
@@ -129,5 +130,47 @@ describe('collectLinkScanTargets（#531 全库扫描的目标收集）', () => {
         const out = collectLinkScanTargets([{ id: 'a', episodeUrls: src }]);
         expect(out[0].urls).not.toBe(src);
         expect(out[0].urls).toEqual(src);
+    });
+});
+
+describe('clearDeadEpisodeUrls（一键清除，2026-10-22 用户指令）', () => {
+    it('🔴 只清 `dead`：`ok` / `unknown` / 未检测一律不动（unknown 多为超时，误删风险）', () => {
+        const urls = ['https://a/1', 'https://a/2', 'https://a/3', 'https://a/4'];
+        const out = clearDeadEpisodeUrls(urls, ['ok', 'dead', 'unknown', undefined]);
+        expect(out).toEqual(['https://a/1', undefined, 'https://a/3', 'https://a/4']);
+    });
+
+    it('🔴 **保留空位（不压缩）**：清掉第 2 集不能让第 3 集前移一格', () => {
+        const out = clearDeadEpisodeUrls(['u1', 'u2', 'u3'], ['ok', 'dead', 'ok']);
+        expect(out).toBeDefined();
+        expect(out?.[0]).toBe('u1');
+        expect(out?.[2]).toBe('u3');
+        // 下标 1 是洞（undefined）而不是被 u3 顶上
+        expect(out?.[1]).toBeUndefined();
+        expect(out?.length).toBe(3);
+    });
+
+    it('🔴 同一条 URL 填了两处：只清标了 dead 的那一位（不按 URL 反查）', () => {
+        const same = 'https://same/1';
+        const out = clearDeadEpisodeUrls([same, same], ['ok', 'dead']);
+        expect(out).toEqual([same, undefined]);
+    });
+
+    it('没有任何 dead → undefined（调用方据此跳过写盘）', () => {
+        expect(clearDeadEpisodeUrls(['u1', 'u2'], ['ok', 'unknown'])).toBeUndefined();
+        expect(clearDeadEpisodeUrls(['u1'], [])).toBeUndefined();
+        expect(clearDeadEpisodeUrls([], ['dead'])).toBeUndefined();
+        expect(clearDeadEpisodeUrls(undefined, ['dead'])).toBeUndefined();
+    });
+
+    it('标的 dead 但该位本来就空 / 纯空白 → 不算改动', () => {
+        expect(clearDeadEpisodeUrls([undefined, '  '], ['dead', 'dead'])).toBeUndefined();
+    });
+
+    it('不改动入参数组', () => {
+        const src = ['u1', 'u2'];
+        const out = clearDeadEpisodeUrls(src, ['ok', 'dead']);
+        expect(src).toEqual(['u1', 'u2']);
+        expect(out).not.toBe(src);
     });
 });

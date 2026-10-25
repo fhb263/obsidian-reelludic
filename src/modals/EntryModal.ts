@@ -1,14 +1,23 @@
 // 添加/编辑条目弹窗（Douban/TMDB/Bangumi 搜索回填 + 手动覆盖）
 import { App, Modal, Notice, TFile, normalizePath } from 'obsidian';
+// 🔴 #635：Svelte 4 只有在组件**被绑定**时才会保留 `export function`（如 `isDirty()`），
+//    否则编译期就把它们摇成空壳（实测产物里 `function isDirty() { return false; }`）。
+//    `bind()` 就是 `<Component bind:this={…}>` 背后那一句 —— 本仓没有用自定义元素，故直接调它。
+//    ⚠️ `svelte/internal` 已在 esbuild 的 external 名单里（红线 5），运行时由宿主提供。
+import { bind as bindComponent } from 'svelte/internal';
 import EntryForm from 'views/components/EntryForm.svelte';
 import type ReelLudicPlugin from '../../main';
 import type { TmdbSearchResult } from 'services/tmdb';
-import type { EntryType, MediaEntry } from 'data/types';
-import { SOURCE_VIEW } from 'pure/searchDisplay';
+import type { EntryType, MediaEntry, EntryLogKind } from 'data/types';
+import { SOURCE_VIEW, type SearchResult } from 'pure/searchDisplay';
 import { extractEditableFromNote, extractFrontmatterFromNote } from 'pure/noteEditable';
+// 1.3.1 ① 字段映射：笔记里的键名可能被用户改过，读回时要按同一份配置反查
+import { compileFieldMapText } from 'pure/fieldMap';
 import { lrcBlockLyrics } from 'pure/lrcSource';
 import { orphanedDownloadedPosters } from 'pure/posterFile';
 import { NoteConflictModal } from 'modals/NoteConflictModal';
+// 🔴 #635 切条目前的脏检查确认框（`window.confirm` 在 Electron 里会阻塞主线程 + 与 Modal 关闭动画抢焦点）
+import { ConfirmModal } from 'modals/ConfirmModal';
 import { PosterSearchModal } from 'modals/PosterSearchModal';
 import type { PosterCandidate } from 'pure/posterSearch';
 import type { PosterSource } from 'pure/posterSources';
@@ -20,8 +29,19 @@ import type { LyricSourceId } from 'pure/lyricOnline';
 import type { LocalEpisodeQuery } from 'pure/localEpisode';
 // 🔴 #602：书籍本地检索的查询形状（与关联弹窗**同一份**，收在纯模块 —— ⛔ 别在组件侧另立一个）
 import type { LocalBookSearchQuery } from 'pure/localDirs';
+import { applyScrollPref } from 'services/scrollPref';
+// 🔴 #632 连续添加：序号 +1 的唯一算法（另见 `EntryForm.repeatAddState` —— 会话状态的产出方）
+import { nextSeriesIndexLabel, type RepeatAddState } from 'pure/repeatAdd';
+// ⑬ 搜索累积池（会话内）：合并/去重/桶键口径都在纯模块里，⛔ 别在本文件里再写一份
+import { bucketOf, mergeSearchResults, searchBucketKey, withBucket, SEARCH_POOL_KEEP, type SearchPool } from 'pure/searchAccum';
 
 export class EntryModal extends Modal {
+    /**
+     * 表单实例（`mountForm` 建、`onClose` / 重建时 `$destroy`）。
+     * 🔴 #635：本类现在**要调组件的导出方法**（`isDirty()` / `repeatAddState()`）——
+     * Svelte 4 的 `export function` 只在组件**被 `bind:this` 绑定过**时才会留下代码：
+     * 否则树摇会把它整个删掉（产物里只剩个壳）。本字段就是这个绑定点，⛔ 别改成局部变量。
+     */
     private form: EntryForm | null = null;
     /** 本次会话 douban 封面下载的本地相对路径集合（保存失败/取消时清理孤儿文件，防止 封面/ 残留垃圾） */
     private downloadedPosters = new Set<string>();
@@ -29,6 +49,27 @@ export class EntryModal extends Modal {
     private saved = false;
     /** 保存成功时条目实际引用的封面相对路径（未保存/封面被清空时为 undefined） */
     private savedPoster?: string;
+    /**
+     * 🔴 #632 连续添加的会话状态（**新建态**保存成功后更新一次，重建表单时注回去）。
+     * ⚠️ 编辑态永不写它 —— 「保存后不关窗」只属于新增（用户要的是「接着加下一条」）。
+     */
+    private repeat: RepeatAddState = { results: [], query: '', addedKey: null, series: '', seriesIndex: '' };
+    /** 「已添加」标记键集：本次会话里**建成过条目**的候选（`pure/repeatAdd.resultKeyOf`）—— 跨重建累积 */
+    private addedHits = new Set<string>();
+    /**
+     * ⑬ 搜索累积池（用户 2026-10-25 改口径：「添加条目窗口保存逻辑仅搜索完毕不关闭窗口才保存，
+     * 退出再重新搜索为清除」）。
+     *
+     * 🔴 **只活在本实例的内存里**，落盘那套已整段拆掉（原 `{lib}/search-pool.json`）：
+     *   - 弹窗关掉 ⇒ 实例被丢弃 ⇒ 池子随之蒸发 ⇒ 再点「添加」重新搜索是空的（正是用户要的「清除」）；
+     *   - 弹窗**没关**时，换关键词再搜仍会并进同一个桶（「上限 20 条可再搜索突破」这条照旧有效）；
+     *   - 保存并继续（`mountForm` 重建表单）时实例还在 ⇒ 池子不丢，用户挑的那批还在屏上。
+     * ⛔ 别把它挪到 `plugin` 上：那就等于回到跨会话持久化，用户明确否掉的正是这个。
+     */
+    private searchPool: SearchPool = {};
+    // 🔴 #668 关联功能区已下线归档（用户：「编辑条目的关联功能区全部给我移除掉吧归档下未来实现」）：
+    //    这里的「关联候选池」(`pool`) 与「切条目重入守卫」(`switching`) 随之退场 —— 它们只服务那套 UI。
+    //    ⚠️ 数据层与笔记侧**未删除**（`MediaEntry.related` / `normalizeEntry` 白名单 / 笔记 `## 关联` 章节）。
 
     constructor(
         app: App,
@@ -60,22 +101,41 @@ export class EntryModal extends Modal {
         this.applyResultCols(0);
         // 编辑表单适配 Obsidian 正文字体（--font-text），与视图内容区一致
         this.contentEl.addClass('rl-form-root');
-        // 设置「隐藏插件内滚动条」开启时，编辑弹窗内部滚动条一并隐藏（rl-hide-scroll 作用于自身及后代）
-        if (this.plugin.settings.hideScrollbars) this.modalEl.addClass('rl-hide-scroll');
-        // 编辑模式：catalog 是结构化数据源，但用户可能直接在笔记里手动编辑过
-        // 「个人评语/观看·相关链接/简介/作者简介/目录」与顶部 frontmatter（评分/状态/年份/进度等）——
-        // 打开表单时读笔记覆盖 catalog 值，避免内容"消失"（全类型通用）
-        let effective = this.entry;
-        /** 打开音乐条目时从笔记 ` ```lrc ` 块读回的歌词正文（#396；表单 LRC 框初值） */
+        // 🔴 #630：滚动条偏好走 `services/scrollPref` 那一处真源（**跟随设置开关**）——
+        //    原先这里自己判 `settings.hideScrollbars`，与另外二十多个弹窗各写各的 ⇒ 口径一改全仓找。
+        applyScrollPref(this.modalEl);
+        /**
+         * 🔴 ⑬ 搜索累积池（用户 2026-10-25 定稿口径：「保存逻辑仅搜索完毕不关闭窗口才保存，
+         * 退出再重新搜索为清除」）：
+         * **不再从盘上注回任何东西** —— `searchPool` 是本实例的字段，新建实例必然是空的。
+         * 所以「关掉弹窗再点添加」看到的就是空列表，正是用户要的「清除」。
+         * ⚠️ 唯一还沿用池子的地方是 `repeat.results`（「保存并继续」带回来的本次会话列表）——
+         *    它属于**同一个实例、窗口没关**的场景，与「退出再重新搜索」不冲突。
+         */
+        const { effective, lrc: initialLrc } = await this.readEntryForForm(this.entry);
+        this.mountForm(effective ?? null, initialLrc);
+    }
+
+    /**
+     * 取「表单该用的条目 + LRC 初值」。编辑模式：catalog 是结构化数据源，但用户可能直接在笔记里
+     * 手动编辑过「个人评语/观看·相关链接/简介/作者简介/目录」与顶部 frontmatter（评分/状态/年份/进度等）——
+     * 打开表单时读笔记覆盖 catalog 值，避免内容「消失」（全类型通用）。
+     *
+     * 🔴 #635 从 `onOpen` 里**原样抽出**：切条目（`openRelated`）必须走**同一份口径** ——
+     *    两处各写一遍，迟早只改一处，表现为「切过去之后笔记里手改的评语看不到了」。
+     * 无 notePath / 笔记不可读 ⇒ 原样返回 catalog 值（⛔ 不抛错：没笔记的条目就是没笔记）。
+     */
+    private async readEntryForForm(source: MediaEntry | undefined): Promise<{ effective: MediaEntry | undefined; lrc: string }> {
+        let effective = source;
         let initialLrc = '';
-        if (this.entry?.notePath) {
+        if (source?.notePath) {
             try {
-                const f = this.app.vault.getAbstractFileByPath(this.entry.notePath);
+                const f = this.app.vault.getAbstractFileByPath(source.notePath);
                 if (f instanceof TFile) {
                     const text = await this.app.vault.read(f);
                     initialLrc = lrcBlockLyrics(text);
                     const ext = extractEditableFromNote(text);
-                    const fm = extractFrontmatterFromNote(text);
+                    const fm = extractFrontmatterFromNote(text, compileFieldMapText(this.plugin.settings.fieldMap ?? ''));
                     if (ext.notes !== undefined || ext.links || ext.summary !== undefined || ext.authorIntro !== undefined || ext.toc !== undefined || ext.aiSummary !== undefined || ext.aiHighlights !== undefined || ext.sourceUrl !== undefined || Object.keys(fm).length > 0) {
                         // banner（frontmatter 为库内完整路径，如 媒体库/封面/xx.jpg）→ poster（相对路径 封面/xx.jpg）
                         let poster = fm.poster;
@@ -84,22 +144,22 @@ export class EntryModal extends Modal {
                             if (poster.startsWith(dir + '/')) poster = poster.slice(dir.length + 1);
                         }
                         effective = {
-                            ...this.entry,
-                            notes: ext.notes ?? this.entry.notes,
-                            links: ext.links ?? this.entry.links,
-                            summary: ext.summary ?? this.entry.summary,
-                            authorIntro: ext.authorIntro ?? this.entry.authorIntro,
-                            toc: ext.toc ?? this.entry.toc,
-                            aiSummary: ext.aiSummary ?? this.entry.aiSummary,
-                            aiHighlights: ext.aiHighlights ?? this.entry.aiHighlights,
-                            source: ext.source ?? this.entry.source,
-                            sourceUrl: ext.sourceUrl ?? this.entry.sourceUrl,
+                            ...source,
+                            notes: ext.notes ?? source.notes,
+                            links: ext.links ?? source.links,
+                            summary: ext.summary ?? source.summary,
+                            authorIntro: ext.authorIntro ?? source.authorIntro,
+                            toc: ext.toc ?? source.toc,
+                            aiSummary: ext.aiSummary ?? source.aiSummary,
+                            aiHighlights: ext.aiHighlights ?? source.aiHighlights,
+                            source: ext.source ?? source.source,
+                            sourceUrl: ext.sourceUrl ?? source.sourceUrl,
                             ...fm,
                             // frontmatter 无 history 字段：进度合并保留条目既有追更历史，避免保存时清空
                             progress: fm.progress
-                                ? { ...(this.entry.progress ?? { season: 1, episode: 0, history: [] }), ...fm.progress, history: this.entry?.progress?.history ?? [] }
-                                : this.entry.progress,
-                            poster: poster ?? this.entry.poster,
+                                ? { ...(source.progress ?? { season: 1, episode: 0, history: [] }), ...fm.progress, history: source.progress?.history ?? [] }
+                                : source.progress,
+                            poster: poster ?? source.poster,
                         };
                     }
                 }
@@ -107,10 +167,34 @@ export class EntryModal extends Modal {
                 // 笔记不可读：忽略，沿用 catalog 值
             }
         }
+        return { effective, lrc: initialLrc };
+    }
+
+    /**
+     * 🔴 #632 连续添加 —— **建 / 重建**表单组件（新建态保存成功后走一遍，见 `repeatAdd()`）。
+     *
+     * 为什么重建而不是「把字段一个个复位」：表单有 60+ 个 state（各源 UI 模式、进度、浮层开关、
+     * 下载态……），逐个复位迟早漏一个 —— 而漏掉的那个会**带着上一条的脏值落库**。
+     * 重建 = 所有初值回到 `entry: null` 那一套，天然干净。
+     * 而「跨次还要用」的四样（候选列表 / 关键词 / 已添加标记 / 系列两栏）由宿主拿着、经 `preset*` 注回。
+     *
+     * ⚠️ 重建 **≠ 重开弹窗**：Modal 外壳与 `contentEl` 都留着 ⇒ 这里**不碰** `onOpen` 里那套
+     *    （`titleEl` / 宽度初值 / 滚动条偏好），只换里面的组件实例。
+     * ⚠️ 顺带 `applyResultCols(0)` 把宽度收回常规值：上一条可能是在三栏（宽屏 1200）态保存的。
+     */
+    private mountForm(effective: MediaEntry | null, initialLrc: string): void {
+        this.form?.$destroy();
+        this.applyResultCols(0);
         this.form = new EntryForm({
             target: this.contentEl,
             props: {
                 entry: effective,
+                // 🔴 #632 连续添加的会话状态（新建态才有值；编辑态恒为空 ⇒ 与旧行为逐字一致）
+                presetResults: this.repeat.results,
+                presetQuery: this.repeat.query,
+                addedHits: this.addedHits,
+                initialSeries: this.repeat.series,
+                initialSeriesIndex: this.repeat.seriesIndex,
                 initialType: this.entry?.type ?? this.initialType ?? 'movie',
                 initialBookKind: this.entry?.bookKind ?? this.initialBookKind,
                 canSearch: !!this.plugin.settings.tmdbApiKey,
@@ -126,9 +210,21 @@ export class EntryModal extends Modal {
                 onSearchGame: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchGame(q, onProgress),
                 onSearchAnime: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchAnime(q, onProgress),
                 onSearchMusic: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchMusic(q, onProgress),
+                /**
+                 * 🔴 ⑬「可再搜索突破」的会话内接线（用户 2026-10-25 改口径：**不落盘**）。
+                 * 合并/去重/截断的算法在 `pure/searchAccum`；池子存本实例的 `searchPool` 字段，
+                 * 弹窗一关随实例销毁 ⇒「退出再重新搜索为清除」由生命周期保证，⛔ 不需要额外的清理代码。
+                 * ⚠️ 组件只把「本次新鲜结果」交过来，拿**合并后的完整列表**回去渲染 —— 不碰 vault。
+                 */
+                onMergeSearchPool: (t: EntryType, k: BookKind | undefined, fresh: SearchResult[]) =>
+                    this.mergeSearchPool(t, k, fresh),
                 onFetchDetail: (r: TmdbSearchResult) => this.plugin.fetchTmdbDetail(r),
                 // 豆瓣兜底结果：点击时按需拉详情补全表单字段（搜索仅前 3 条预补全）
                 onFetchDoubanDetail: (id: string, type: EntryType) => this.plugin.fetchDoubanDetailForEntry(id, type),
+                // 🔴 #623 Steam 游戏选中结果按需补全（appdetails 公开端点 → 平台/开发商/发行年/题材/简介；
+                //    失败 null 静默）。⚠️ 与上面的 TMDB 详情**是两条独立回调** —— 别为了省一个 prop 把
+                //    Steam 的 appid 塞进 `onFetchDetail`（那条只通 TMDB，会拼出 /undefined/{appid} 打 404）。
+                onFetchSteamDetail: (appid: number) => this.plugin.fetchSteamDetailForEntry(appid),
                 // Bangumi 选中结果按需补全（persons+subjects API → 导演/评分/主演）
                 onFetchBangumiDetail: (id: number) => this.plugin.fetchBangumiDetailForEntry(id),
                 // Open Library 书籍选中结果按需补全（works.json → 简介/页数/出版社；失败 null 静默）
@@ -204,7 +300,12 @@ export class EntryModal extends Modal {
                         new Notice('保存失败：' + (e instanceof Error ? e.message : String(e)));
                     } finally {
                         // 无论成败都刷新：数据可能已变更（如 writeNote 部分成功），界面必须反映最新状态
-                        if (saved) this.close();
+                        if (saved) {
+                            // 🔴 #632：**编辑态照旧关窗**（改完就走）；新建态不关 —— 回到候选列表接着挑下一条
+                            //    （用户：「新增一个条目后搜索源出来的窗口不消失可继续添加」）。
+                            if (this.entry) this.close();
+                            else this.repeatAdd();
+                        }
                         await this.plugin.refreshViews();
                     }
                 },
@@ -214,9 +315,9 @@ export class EntryModal extends Modal {
                 onAddExcerpt: () => {
                     if (this.entry) this.plugin.openExcerptModal(this.entry);
                 },
-                /** 游戏编辑表单「记录游玩」：固定挂载当前游戏打开游玩记录弹窗 */
-                onRecordPlaySession: () => {
-                    if (this.entry) this.plugin.openGameSessionModal(this.entry);
+                /** #685 编辑表单「记录时长 / 记录周目」：固定挂载当前条目打开记录弹窗 */
+                onOpenEntryLogModal: (kind: EntryLogKind) => {
+                    if (this.entry) this.plugin.openEntryLogModal(this.entry, kind);
                 },
                 onOpenSource: (url: string) => this.plugin.openExternalUrl(url),
                 /** 编辑表单「集按钮」：打开本地剧集视频（桌面 Electron 系统播放器） */
@@ -311,6 +412,14 @@ export class EntryModal extends Modal {
                  * 🔴 门控在宿主那侧（`searchWeread` 自判 `Platform.isDesktopApp` 并给文案），组件不重复判断。
                  */
                 onSearchWeread: (keyword: string) => this.plugin.searchWeread(keyword),
+                /**
+                 * 🔴 #685（用户：「音乐也要加网络检索小图标按钮，参考弹出搜索b站视频链接回填就行了」）：
+                 * 音乐「网络地址」标签行那枚 globe 的宿主出口 —— **在线曲库检索**。
+                 * ⛔ 只回传候选（歌名 / 歌手·专辑 / 平台试听页链接），**不下载、不解析正文**。
+                 * 🔴 与「快捷关联」弹窗那枚 globe **同一个出口**（`searchSongLibraryForAssociate`）⇒
+                 *    两处口径必然一致（⛔ 别在组件里另拼一份四平台请求）。
+                 */
+                onSearchSongLibrary: (keyword: string) => this.plugin.searchSongLibraryForAssociate(keyword),
                 /**
                  * 🔴 #527 / #531 链接失效状态（**只读注入**）：从宿主内存缓存读一次 ——
                  * 缓存由「设置 › 基本设置 › 封面与清理 › 失效链接检测」扫**全库**时写入。
@@ -426,7 +535,21 @@ export class EntryModal extends Modal {
                 },
             },
         });
+        // 🔴 #635 绑定组件实例 —— 这就是 `<EntryForm bind:this={form} />` 编译出来的那一句。
+        //    没有它，`EntryForm` 的 `export function`（`isDirty()` / `repeatAddState()`）会在编译期
+        //    被摇成 `function isDirty() { return false; }`（本批实测：脏检查恒不拦）。
+        //    ⚠️ `bind` 会**立即回调一次**当前值，故它必须跟在构造之后、且不能用它覆盖 `this.form`。
+        if (this.form) bindComponent(this.form, 'form', () => undefined);
     }
+
+    /**
+     * 🔴 #668 归档说明：「点关联条目 ⇒ 在同一个弹窗里切到那条继续编辑」（#635 的 `openRelated`）**已整体退场** ——
+     * 用户裁定「编辑条目的关联功能区全部给我移除掉吧归档下未来实现」。
+     * ⚠️ 重新实现时注意那两条当年踩出来的硬结论（留在这里免得再踩）：
+     *   ① 切换必须**同时换 `this.entry`**，否则界面是 B、保存却写进 A；
+     *   ② 切换前要**脏检查**（`form.isDirty()` + `ConfirmModal`），且重建走 `mountForm`、笔记覆盖值走
+     *      `readEntryForForm`（与 `onOpen` 同一份口径）。
+     */
 
     /** 清理本次会话下载但未被条目引用的本地封面：用户取消/未保存 → 全部删除；保存成功 → 仅保留条目实际引用的那张。
      *  删除失败静默（文件可能已被外部移除），尽力而为。 */
@@ -445,10 +568,51 @@ export class EntryModal extends Modal {
         this.downloadedPosters.clear();
     }
 
+    /**
+     * 🔴 #632 连续添加：**新建**条目保存成功后的收口 —— 弹窗不关，回到候选列表继续挑（替代 #631 那套独立批量弹窗）。
+     *
+     * 三步（顺序有讲究）：
+     *   ① 从**旧实例**收下会话状态（候选 / 关键词 / 刚挑的那条 / 系列两栏）—— `$destroy()` 之后就取不到了；
+     *   ② 把刚建的那条记为「已添加」，并把序号 +1（系列名留着：一次填好连编 13 部）；
+     *   ③ 重建表单（`mountForm`）⇒ `picked=false`，直接回到候选列表。
+     *
+     * ⚠️ 只在**新建态**被调用（编辑态走 `close()`）—— 所以不需要判 `this.entry`。
+     */
+    private repeatAdd(): void {
+        const st = this.form?.repeatAddState();
+        if (st) {
+            if (st.addedKey) this.addedHits.add(st.addedKey);
+            // 序号跨次继承 + 自动 +1（`'2'` → `'3'`；空 / 非纯数字原样返回 —— 见 `tests/repeatAdd.test.ts`）
+            this.repeat = { ...st, seriesIndex: nextSeriesIndexLabel(st.seriesIndex) };
+        }
+        new Notice('已保存，可继续挑下一条', 2000);
+        this.mountForm(null, '');
+    }
+
+    /**
+     * ⑬ 把本次搜索结果并进**本实例的**桶（新的在前、按 `resultKeyOf` 去重、截断到 `SEARCH_POOL_KEEP`），
+     * 返回合并后的完整列表给表单渲染。
+     *
+     * 🔴 用户 2026-10-25 口径：「保存逻辑仅搜索完毕不关闭窗口才保存，退出再重新搜索为清除」——
+     *   所以这里**只动内存**：`searchPool` 是实例字段，弹窗关掉就没人持有它了。
+     *   ⛔ 别再往 `plugin` / vault / data.json 里写：那正是被用户否掉的「跨会话持久化」。
+     * ⚠️ 与 `pure/searchAccum.mergeSearchResults` 的分工：合并算法归纯模块（可单测），
+     *   本方法只负责「按桶取旧值 → 合并 → 存回桶」这三步簿记。
+     */
+    private mergeSearchPool(type: EntryType, bookKind: BookKind | undefined, fresh: readonly SearchResult[]): SearchResult[] {
+        const bucket = searchBucketKey(type, bookKind);
+        const merged = mergeSearchResults(bucketOf(this.searchPool, bucket), fresh, SEARCH_POOL_KEEP);
+        this.searchPool = withBucket(this.searchPool, bucket, merged);
+        return merged;
+    }
+
     onClose(): void {
         void this.cleanupOrphanedPosters();
         this.form?.$destroy();
         this.form = null;
+        // ⑬ 会话内累积池随实例一起退场（用户口径：「退出再重新搜索为清除」）——
+        //    显式清一次是为了让「已释放」这件事在读代码时看得见，而不是只靠 GC 丢对象。
+        this.searchPool = {};
         // 释放插件侧的弹窗引用（防叠加守卫用；仅当仍是本实例时清除）
         if (this.plugin.entryModal === this) this.plugin.entryModal = null;
     }

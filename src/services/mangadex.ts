@@ -34,7 +34,7 @@ export const MANGADEX_SEARCH_LIMIT = 20;
  */
 // 🔴 版本段必须跟着 `package.json` 的 version 走（断言侧已改为「与 package.json 比对」，⛔ 不再写死一个版本）——
 //    发版时**一起改**，别让 UA 停在旧版（官方 policy 要的是「可标识调用方」，陈旧版本号反而误导。
-export const MANGADEX_UA = 'ReelLudic/1.3.0 (Obsidian plugin; metadata-only)';
+export const MANGADEX_UA = 'ReelLudic/1.4.0 (Obsidian plugin; metadata-only)';
 
 /** 封面尺寸档（官方支持 `.256.jpg` / `.512.jpg` / `.original.jpg`）——取 512：海报墙够用，又不像 original 那样几 MB。 */
 const COVER_SIZE = '512';

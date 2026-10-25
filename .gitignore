@@ -16,5 +16,15 @@ main.js
 # —— 一律以 `_` 打头、全不入库；自检：`git ls-files | grep '^_'` 恒为 0 才是对的
 _*
 
+# 无头 Chrome 探针用的**独立用户目录**（CDP 复现页/断言脚本各自一个 profile）
+# —— 里面是浏览器缓存与配置，动辄几十 MB，纯本地产物。自检：`git ls-files | grep '^\.chrome'` 恒为 0
+.chrome-*/
+
 # 旧依赖备份目录（node_modules 换版本时留下的快照）
 node_modules.bak-*/
+
+# 真机测试（tools/rd.cjs）的隔离库与独立 user-data-dir
+# —— 库副本含封面/笔记（数十 MB），userdata 是 Obsidian 缓存，都是纯本地产物。
+# `tools/` 本身要入库；只排除这两个运行时目录。自检：`git ls-files | grep -E '^\.testvault'` 恒为 0
+.testvault/
+.testvault-userdata/

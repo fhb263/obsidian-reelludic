@@ -32,7 +32,8 @@ export interface ReaderStore {
     progress: ReadingProgress;
     /** 书签 */
     bookmarks: ReaderBookmark[];
-    /** 高亮（PDF 阅读器无高亮功能 → 恒空数组，不为 PDF 特化 schema） */
+    /** 高亮（TXT/EPUB/PDF 三端共用同一条 schema；PDF 自 2026-10-23 起也写入这里，
+     *  额外带可选 `rects`（归一化页内矩形）供跨缩放还原，见 `pure/highlight.ReaderHighlight`） */
     highlights: ReaderHighlight[];
 }
 

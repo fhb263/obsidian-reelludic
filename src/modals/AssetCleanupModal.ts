@@ -10,6 +10,7 @@
 //      删除前必须拼上库目录再 `getAbstractFileByPath` —— 直接查 `封面/x` 会在库根找不到。
 import { App, Modal, Notice, TFile, normalizePath } from 'obsidian';
 import type { OrphanAsset } from 'pure/orphanAssets';
+import { applyScrollPref, markScrollInside } from 'services/scrollPref';
 
 /** 类型徽章文案（弹窗里一行一项，用户要一眼看出「这是什么文件」） */
 const KIND_LABEL: Record<OrphanAsset['kind'], string> = { cover: '封面', store: '阅读存档' };
@@ -40,12 +41,16 @@ export class AssetCleanupModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
         if (this.assets.length === 0) {
             contentEl.createDiv({ cls: 'rl-pc-empty', text: '没有未被引用的附件，无需清理' });
             return;
         }
+        // 🔴 #634：与 `DeleteEntryModal` 同一处结构（`.rl-pc-list` + 底部操作行）⇒ 实测双滚动条嵌套，
+        //    标记「滚动只在内部」。⚠️ 放在**空态早退之后** —— 空态只一行字，去掉外层滚动没有收益却多一个坑。
+        markScrollInside(this.modalEl);
         contentEl.createEl('h2', { text: '附件清理' });
         contentEl.createDiv({
             cls: 'rl-pc-desc',
@@ -64,9 +69,9 @@ export class AssetCleanupModal extends Modal {
         }
 
         contentEl.createDiv({ cls: 'rl-pc-hint', text: '删除后进入回收站（跟随 Obsidian「删除文件」设置），可在回收站还原。' });
+        // 🔴 2026-10-25 用户指令：底部**不画「取消」** —— 弹窗右上角的 ✕ 就是取消（与它重复）。
+        //    ⛔ 别为了「取消好找」把它加回来；用户在 #③ 里对五个弹窗统一提了同一条。
         const foot = contentEl.createDiv({ cls: 'rl-pc-foot' });
-        const cancel = foot.createEl('button', { cls: 'rl-btn', text: '取消' });
-        cancel.onclick = () => this.close();
         const delBtn = foot.createEl('button', { cls: 'rl-nc-danger', text: '删除选中' });
         this.delBtn = delBtn;
         delBtn.onclick = async () => {

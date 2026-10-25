@@ -11,6 +11,15 @@ import { seriesIndexValue } from 'pure/seriesGroup';
 import { episodeHintLabel } from 'pure/episodeAssoc';
 import { entrySourceLabel } from 'pure/sourceMeta';
 import { NOTES_PLACEHOLDER } from 'pure/noteEditable';
+// 🔴 用户 m00002：「记录时长 / 重温 / 周目 都加上时间前缀，预览效果」——
+//   落盘行格式与弹窗预览共用 `pure/logLine` **唯一真源**（⛔ 别在这里再手拼一遍模板）
+import { commentRecordBlock, datedRecordLine } from 'pure/logLine';
+// 1.3.1 ① 字段映射（写侧）：把生成好的 YAML 顶层键名按用户配置重写
+import { EMPTY_FIELD_MAP, mapForward, type CompiledFieldMap } from 'pure/fieldMap';
+// 1.3.1 ① 第 3 件：把键**行**按该类型的配置顺序重排（文本层，与上面那道改名同一层）
+import { applyFieldOrder } from 'pure/fieldOrder';
+// #635 关联章节：关系词默认词与「目标标题」口径都走纯模块唯一真源（⛔ 别在笔记侧另立一份）
+import { REL_DEFAULT_LABEL } from 'pure/relatedGraph';
 
 /** 剔除文件名字非法字符，空则回退「未命名」 */
 export function safeFilename(title: string): string {
@@ -31,8 +40,16 @@ export function hashNoteContent(content: string): string {
 
 /** 生成 frontmatter（YAML：字符串字段加引号防特殊字符破坏）
  *  Dataview 对齐：tags / created / updated / progress_percent —— 在 Obsidian 里可直接
- *  `TABLE rating, status FROM #movie WHERE rating >= 4 SORT created DESC` 检索。 */
-export function entryFrontmatter(e: MediaEntry, libraryDir: string = 'ReelLudic'): string {
+ *  `TABLE rating, status FROM #movie WHERE rating >= 4 SORT created DESC` 检索。
+ *  ⚠️ 1.3.1 ①：第三参 `fieldMap` 是用户配置的**字段改名**（缺省恒等）—— 见 `applyFieldMap`。 */
+export function entryFrontmatter(
+    e: MediaEntry,
+    libraryDir: string = 'ReelLudic',
+    fieldMap: CompiledFieldMap = EMPTY_FIELD_MAP,
+    /** 1.3.1 ① 第 3 件：该类型的**属性写出顺序**（原始键名数组；缺省 / 空 = 现有顺序）。
+     *  ⚠️ 由 `EntryService` 按 `e.type` 从 `pure/fieldOrder.resolveAllOrders` 取好后传进来。 */
+    fieldOrder: readonly string[] = [],
+): string {
     const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
     const lines: string[] = [
         '---',
@@ -93,12 +110,38 @@ export function entryFrontmatter(e: MediaEntry, libraryDir: string = 'ReelLudic'
     if (e.type === 'book' && e.pageCount) lines.push(`page_count: ${e.pageCount}`); // 元数据页数（豆瓣实体书，仅展示/统计）；网文同字段 = 章数，键名不变（Dataview 查询兼容，1.0.3）
     if (e.type === 'book' && e.readMinutes) lines.push(`read_minutes: ${e.readMinutes}`); // #537 阅读时长（分钟；阅读器自动累计 + 表单手填）
     if (e.type === 'game' && e.playtimeMinutes) lines.push(`playtime_minutes: ${e.playtimeMinutes}`);
+    if (e.type === 'music' && e.listenMinutes) lines.push(`listen_minutes: ${e.listenMinutes}`); // #685 收听时长（分钟；播放器累计 + 「记录时长」补记）
     // progress_percent：进度百分比（Dataview 排序/筛选用）——书籍优先 percent，回退 page/totalPage（与书架进度条同口径）；
     // 剧集/动画按已看集数比；游戏/音乐无统一百分比，不输出
     const pct = progressPercentOf(e);
     if (pct !== undefined) lines.push(`progress_percent: ${pct}`);
     lines.push('---');
-    return lines.join('\n');
+    // 🔴 两道文本层，**顺序不能换**：先按原始键名**排序**（`applyFieldOrder`），再**改名**（`applyFieldMap`）。
+    //    反过来做的话，`fieldOrder` 里那一串原始键名就得跟着映射表再换一套，白搭一层耦合。
+    return applyFieldMap(applyFieldOrder(lines.join('\n'), fieldOrder), fieldMap);
+}
+
+/**
+ * 1.3.1 ①：把生成好的 YAML 里的**顶层键名**按映射重写。
+ *
+ * 🔴 为什么在**文本层**做，而不是把 42 处 `lines.push(\`year: …\`)` 逐个改成 `\`${K('year')}: …\``：
+ *    · 那样要动 42 行，且以后新增字段的人很容易漏掉一次换算（漏了就是**静默不映射**）；
+ *    · 文本层只认「行首到第一个冒号」这一段，与生成逻辑完全解耦 ⇒ 新增字段**自动**被覆盖。
+ * ⚠️ 「键名在行首」是这份 YAML 的**既有不变量**：全部单行、无嵌套、无缩进，值里虽有冒号但都在键之后。
+ * ⛔ 别改成按 `key:` 全文搜索替换 —— 值里也可能出现同样的字符串。
+ */
+function applyFieldMap(fm: string, fieldMap: CompiledFieldMap): string {
+    if (fieldMap.forward.size === 0) return fm;
+    return fm
+        .split('\n')
+        .map((line) => {
+            const idx = line.indexOf(':');
+            if (idx <= 0) return line;
+            const key = line.slice(0, idx);
+            const to = mapForward(fieldMap, key);
+            return to === key ? line : `${to}${line.slice(idx)}`;
+        })
+        .join('\n');
 }
 
 /** 条目进度百分比（0-100 取整）；无法确定 → undefined */
@@ -159,15 +202,51 @@ function sourceLinkText(e: MediaEntry): string {
 }
 
 
+/**
+ * 🔴 #635 关联章节：标题名是**保留区键**（`EntryService.writeNote` 会把旧笔记这一区整段搬回），
+ *  ⛔ 改名 = 存量笔记里的关联区一保存就被模板重写抹掉（与 #587 改区名同族的静默丢数据）。
+ *  读取侧 `pure/noteEditable.RELATED_SECTION` 必须是**同一个字面量**。
+ */
+export const RELATED_SECTION = '关联';
+/** 关联为空时的提示行（与链接章节「（暂无链接）」同一措辞口径） */
+export const RELATED_EMPTY_HINT = '（暂无关联）';
+
+/**
+ * 笔记「## 关联」区的逐条内容（#635）：`- 关系词：[[目标标题]]`，与既有 wikilink 口径一致。
+ *
+ * ⚠️ 只写**出边**（`e.related`）—— 入边是渲染时算的，笔记里写进去就成了第二份真源，
+ *    摘掉出边之后笔记里会留下删不掉的幽灵关联。
+ * ⚠️ 目标标题取 `allEntries`（可选）：查不到时用 `id` 兜底（⛔ 不丢行 —— 笔记是给人看的，
+ *    留一行「已失效」比静默少一行更容易让用户自己发现）。
+ */
+export function relatedNoteLines(e: MediaEntry, allEntries?: readonly MediaEntry[]): string[] {
+    const list = Array.isArray(e.related) ? e.related : [];
+    if (!list.length) return [];
+    const byId = new Map<string, string>();
+    for (const x of allEntries ?? []) {
+        if (x && typeof x.id === 'string') byId.set(x.id, x.title);
+    }
+    const out: string[] = [];
+    for (const link of list) {
+        if (!link || typeof link.id !== 'string' || !link.id) continue;
+        const title = byId.get(link.id) || link.id;
+        const label = typeof link.label === 'string' && link.label.trim() ? link.label.trim() : REL_DEFAULT_LABEL;
+        out.push(`- ${label}：[[${escapeLinkText(title)}]]`);
+    }
+    return out;
+}
+
 /** 生成详情笔记 Markdown 全文（顶部块 + 属性表格 + 评语 + 链接）
  *  - `opts.table === false`（设置页「笔记表格」关）→ **属性表格 + 顶部块（标题 / 封面嵌入）都不写**，
  *    正文直接从第一个内容小节开始；标题与封面只在 **YAML 属性**（含 `banner`）里保留。
  *    影响面：`pure/noteEditable` 的「来源」行解析拿不到值 → 编辑回填回退 catalog 既有值（不丢数据，
- *    但笔记里看不到来源链接）。 */
+ *    但笔记里看不到来源链接）。
+ *  - 🔴 #635 `opts.allEntries`：关联章节要把目标 **id 换成标题**（`[[标题]]`）。不传则回落 id 兜底；
+ *    传了就能出真正的双链。它与「笔记表格」开关**互相独立**（表格关掉照样有关联章节）。 */
 export function generateNoteMarkdown(
     e: MediaEntry,
     libraryDir: string = 'ReelLudic',
-    opts: { table?: boolean } = {},
+    opts: { table?: boolean; allEntries?: readonly MediaEntry[] } = {},
 ): string {
     const s: string[] = [];
     const withTable = opts.table !== false;
@@ -235,6 +314,9 @@ export function generateNoteMarkdown(
     } else if (e.type === 'game') {
         if (e.platform) rows.push(['平台', e.platform]);
         if (e.playtimeMinutes) rows.push(['时长', `${Math.round(e.playtimeMinutes / 60)}h`]);
+    } else if (e.type === 'music') {
+        // #685 收听时长（与「阅读时长」同一个格式化真源 `formatPlaytime`，⛔ 别另写一套）
+        if (e.listenMinutes) rows.push(['收听时长', formatPlaytime(e.listenMinutes)]);
     } else {
         if (e.type === 'anime' && e.developer) rows.push(['制作公司', e.developer]);
         if (e.screenwriter?.length) rows.push(['编剧', e.screenwriter.join(' / ')]);
@@ -348,18 +430,69 @@ export function generateNoteMarkdown(
     s.push(e.notes.trim() ? e.notes : NOTES_PLACEHOLDER);
     s.push('');
 
-    // 音乐 lrc 块已上移到笔记开头（#404，见上方「## 歌词」小节）—— ⛔ 别在这里再写一份。
-    // 游戏游玩记录（catalog 明细的展示副本，日期倒序；由模板生成，重写笔记时随模板更新）
-    if (e.type === 'game' && e.playSessions?.length) {
-        s.push('## 游玩记录');
+    // 🔴 用户 2026-10-25：「添加短评不要追加到个人评语，另起个标题追加」——
+    //    短评流水落到**独立**的 `## 短评` 章节（在「个人评语」之后、「游玩/阅读/收听记录」之前），
+    //    日期倒序、与 `roundLogs` 同一口径。⛔ 别再往 `notes` 里拼（那正是用户要停掉的行为）。
+    const commentLogs = e.commentLog ?? [];
+    if (commentLogs.length) {
+        s.push('## 短评');
         s.push('');
-        const sorted = [...e.playSessions].sort((a, b) => b.date.localeCompare(a.date));
-        for (const ps of sorted) {
-            s.push(`- **${ps.date}** · ${formatPlaytime(ps.minutes)}${ps.note ? ` · ${ps.note}` : ''}`);
+        for (const cm of [...commentLogs].sort((a, b) => b.date.localeCompare(a.date))) {
+            // 多行短评走 `commentRecordBlock`（首行挂日期、后续行缩进两格保住列表项归属）；
+            // 与弹窗预览**同一函数**，⛔ 别在这里另拼模板。
+            s.push(commentRecordBlock(cm.date, cm.text));
         }
         s.push('');
     }
+
+    // 音乐 lrc 块已上移到笔记开头（#404，见上方「## 歌词」小节）—— ⛔ 别在这里再写一份。
+    // 🔴 #685 时长明细**按类型分章节**（catalog 明细的展示副本，日期倒序；由模板生成，重写笔记时随模板更新）：
+    //    游戏 → 游玩记录 ｜ 书籍 → 阅读记录 ｜ 音乐 → 收听记录（章节名唯一真源在这一处，⛔ 别各处各写一份）
+    const timeSection =
+        e.type === 'game' ? '游玩记录' : e.type === 'book' ? '阅读记录' : e.type === 'music' ? '收听记录' : undefined;
+    if (timeSection && e.playSessions?.length) {
+        s.push(`## ${timeSection}`);
+        s.push('');
+        const sorted = [...e.playSessions].sort((a, b) => b.date.localeCompare(a.date));
+        for (const ps of sorted) {
+            s.push(datedRecordLine(ps.date, formatPlaytime(ps.minutes), ps.note));
+        }
+        s.push('');
+    }
+    // 🔴 #685 重温 / 周目记录：影视「重刷次数 + 感想」、游戏「周目序号 + 感想」—— 感想落**笔记内**（用户原话）
+    const rewatchLogs = (e.roundLogs ?? []).filter((r) => r.kind === 'rewatch');
+    if (rewatchLogs.length) {
+        s.push('## 重温记录');
+        s.push('');
+        for (const r of [...rewatchLogs].sort((a, b) => b.date.localeCompare(a.date))) {
+            s.push(datedRecordLine(r.date, `第 ${r.round} 次重刷`, r.note));
+        }
+        s.push('');
+    }
+    const playthroughLogs = (e.roundLogs ?? []).filter((r) => r.kind === 'playthrough');
+    if (playthroughLogs.length) {
+        s.push('## 周目记录');
+        s.push('');
+        for (const r of [...playthroughLogs].sort((a, b) => b.date.localeCompare(a.date))) {
+            s.push(datedRecordLine(r.date, `第 ${r.round} 周目`, r.note));
+        }
+        s.push('');
+    }
+    // 🔴 #685 攻略（游戏）：右键菜单「添加攻略」写入 → 笔记「攻略」章节（空串不落）
+    if (e.guide?.trim()) {
+        s.push('## 攻略');
+        s.push('');
+        s.push(e.guide.trim());
+        s.push('');
+    }
     // 音乐无观看/相关链接章节（本地音频已在 lrc 块声明，网络地址随条目保存但不在笔记渲染）
+    // 🔴 #635：**关联章节必须排在链接章节之前** —— 与表单章节顺序一致（简介 → 评语 → 关联 → 链接），
+    //    且 `mergeExcerptSection` 的插入锚点是「链接章节之前」⇒ 摘抄区仍落在评语与关联之间。
+    s.push(`## ${RELATED_SECTION}`);
+    const relLines = relatedNoteLines(e, opts.allEntries);
+    if (relLines.length) s.push(...relLines);
+    else s.push(RELATED_EMPTY_HINT);
+    s.push('');
     if (e.type !== 'music') {
         s.push(`## ${e.type === 'book' || e.type === 'game' ? '相关链接' : '观看链接'}`);
         // 🔴 #448：影视的**逐集网络链接**也要落进来（形如 `- [第 1 集 新邻居](https://…)`）。

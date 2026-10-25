@@ -17,6 +17,7 @@ import type {
     RecommendedPlaylist,
 } from 'services/dl';
 import type { BiliVideo } from 'pure/dl/bilibili';
+import { applyScrollPref } from 'services/scrollPref';
 
 /** 弹窗依赖（真源在 `main.ts`；这里只声明形状，便于将来换源 / 单测） */
 export interface MusicDownloadDeps {
@@ -63,6 +64,7 @@ export class MusicDownloadModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         this.titleEl.setText('下载歌曲');
         contentEl.addClass('rl-dl-modal');

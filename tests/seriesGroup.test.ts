@@ -8,6 +8,7 @@ import {
     sortSeriesItems,
     foldSeries,
     listTreeRows,
+    listFlatRows,
     listDisplayRows,
     compareSeriesGroups,
     seriesYearSpan,
@@ -862,6 +863,33 @@ describe('pure/seriesGroup 列表视图树形行序（#592：合集整体置顶 
     it('展开键里混入**已不成组**的旧键 ⇒ 静默忽略（不抛错、不多出行）', () => {
         const rows = listTreeRows([rich('a1', undefined)], 'recent');
         expect(listDisplayRows(rows, ['movie\u0001不存在的系列'])).toHaveLength(1);
+    });
+});
+
+describe('pure/seriesGroup 列表视图「不并组展示」（需求 9：展示分组 ⇄ 不并组展示 单循环切换）', () => {
+    it('🔴 同系列的多部**不再**折成合集行 —— 每条独立一行（对照组：分组态确实成组）', () => {
+        const entries = [e('s1', 'movie', '熊出没'), e('s2', 'movie', '熊出没'), e('a1', 'movie')];
+        expect(listFlatRows(entries).map((r) => (r.kind === 'single' ? r.entry.id : 'G'))).toEqual(['s1', 's2', 'a1']);
+        // 对照组：同一条流走分组态时确实出组行 —— 否则上面那条「不并组」是假绿（根本没分成过）
+        expect(listTreeRows(entries, 'recent').some((r) => r.kind === 'series')).toBe(true);
+    });
+
+    it('🔴 顺序 = **传入顺序**（⛔ 不按「合集置顶 / 单集垫后」搬运 —— 摊平态没有「合集」这个单位）', () => {
+        const entries = [e('a1', 'movie'), e('x1', 'movie', 'X'), e('b1', 'movie'), e('x2', 'movie', 'X')];
+        expect(listFlatRows(entries).map((r) => (r.kind === 'single' ? r.entry.id : 'G'))).toEqual(['a1', 'x1', 'b1', 'x2']);
+    });
+
+    it('空输入 ⇒ 空行（不抛错）', () => {
+        expect(listFlatRows([])).toEqual([]);
+    });
+
+    it('🔴 形状是 `SeriesRow[]`（全 single）⇒ 直接喂 `listDisplayRows` 得「零组行、child 恒 false」', () => {
+        const entries = [e('s1', 'movie', '熊出没'), e('s2', 'movie', '熊出没')];
+        const key = seriesKeyOf(e('s1', 'movie', '熊出没'));
+        // 即使展开键里真带着该组的键，摊平态也没有组行可展开 ⇒ 成员不会被折成子行
+        const display = listDisplayRows(listFlatRows(entries), [key as string]);
+        expect(display.every((r) => r.kind === 'entry')).toBe(true);
+        expect(display.map((r) => (r.kind === 'entry' ? `${r.child ? 'c' : 'e'}:${r.entry.id}` : 'G'))).toEqual(['e:s1', 'e:s2']);
     });
 });
 

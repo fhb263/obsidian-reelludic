@@ -14,6 +14,7 @@ import { Modal, type App } from 'obsidian';
 import PosterSearch from 'views/components/PosterSearch.svelte';
 import type { PosterCandidate } from 'pure/posterSearch';
 import type { PosterSource } from 'pure/posterSources';
+import { applyScrollPref } from 'services/scrollPref';
 
 /** 弹窗依赖（真源在 `main.ts`；这里只声明形状，便于将来换源 / 单测） */
 export interface PosterSearchDeps {
@@ -56,6 +57,7 @@ export class PosterSearchModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         this.titleEl.setText('从网络搜索封面');
         this.modalEl.style.width = 'min(760px, 94vw)';

@@ -14,6 +14,7 @@ import {
     type ParsedExcerpt,
 } from 'pure/excerpt';
 import { compactText, locateQuoteSpan } from 'pure/anchor';
+import { normalizeRelRects, type PdfRelRect } from 'pure/pdfHighlight';
 
 /** 笔记「## 高亮」区标题（与「## 摘抄」并列） */
 export const HIGHLIGHT_SECTION = '高亮';
@@ -142,6 +143,14 @@ export interface ReaderHighlight {
     style?: HlStyle;
     /** 颜色（缺省＝黄；旧数据无此字段） */
     color?: HlColor;
+    /**
+     * PDF 页内几何（2026-10-23 路线 A，**仅 PDF 用**；TXT/EPUB 无此字段）。
+     * 归一化 0-1 矩形数组，相对所在页宽/页高 —— 存它而不是存字符偏移，是因为 PDF 的
+     * textLayer span 切分随 pdf.js 版本/字体度量变化，字符偏移跨版本不可靠；矩形则与缩放无关
+     * （页宽页高同比例变），重开文档直接按百分比还原，不用再跑一遍 Range 定位。
+     * 缺省时渲染端回退「按 quote 在 textLayer 文本里重新定位」（复用 `pure/anchor.locateQuoteSpan`）。
+     */
+    rects?: PdfRelRect[];
 }
 
 /** 从 ParsedExcerpt 收窄为高亮条目（只取 quote/id/loc；页码/心得高亮不用但保留引用字段以兼容删除定位） */
@@ -194,6 +203,9 @@ export function normalizeHighlights(raw: unknown): ReaderHighlight[] {
         if (loc) hl.loc = loc;
         if (o.style !== undefined) hl.style = normalizeHlStyle(o.style);
         if (o.color !== undefined) hl.color = normalizeHlColor(o.color);
+        // PDF 页内几何：只在真有可用矩形时写（`undefined` 代表「没有几何数据，回退按 quote 定位」）
+        const rects = normalizeRelRects(o.rects);
+        if (rects) hl.rects = rects;
         out.push(hl);
     }
     return out;

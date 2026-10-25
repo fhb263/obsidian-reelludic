@@ -9,6 +9,7 @@
 //    故新文案：标题点明「不一致」的两端是**笔记文件**与**库数据**；描述先给「库数据已保存」
 //    这个前提；两个按钮各自直接说出**对笔记文件做什么**，tip 补上后果与「不再重复提示」。
 import { App, Modal } from 'obsidian';
+import { applyScrollPref } from 'services/scrollPref';
 
 export type ConflictChoice = 'overwrite' | 'keep';
 
@@ -26,6 +27,7 @@ export class NoteConflictModal extends Modal {
     }
 
     onOpen(): void {
+        applyScrollPref(this.modalEl);
         const { contentEl } = this;
         contentEl.empty();
         // 警告 emoji 圆形底（用户 2026-09-09 拍板回退 emoji 保证显示）

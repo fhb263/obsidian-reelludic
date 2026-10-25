@@ -14,8 +14,13 @@
  *    它从「只服务朗读云合成」**升为一等 chat 提供商**（同时仍是朗读的云音源）。
  *    ⚠️ 这与 #478 那条「不作 chat 提供商」是**同一条事实的两个处置**：当时实测该账号 chat 402
  *    （余额不足）⇒ 保守起见只留云合成；现在用户明确要求接进来 ⇒ 端点照接，**失败时如实报 402**。
+ * 🔴 #634 加 `'custom2'` —— 用户 2026-10-15「给 AI 集成再加个自定义端点 2 项，并支持重命名」，
+ *    经追问裁定为**总共两个槽位**（不是三个）：`'custom'` = 槽位 1（**沿用既有字段，零迁移**），
+ *    本类型新增 `'custom2'` = 槽位 2。两项**各自独立**的 base URL / Key / 模型名，且都可**重命名**。
+ *    ⚠️ 为什么不用「无上限的动态列表」：那要处理上限、顺序、删除后引用等一堆边界（工程量翻倍），
+ *    而用户要的是「多一条能用的通道」—— 两个固定槽位已经覆盖「中转站 A / 本机 Ollama」这类真实场景。
  */
-export type TranslateProvider = 'zhipu' | 'deepseek' | 'siliconflow' | 'custom';
+export type TranslateProvider = 'zhipu' | 'deepseek' | 'siliconflow' | 'custom' | 'custom2';
 
 /** 智谱 GLM chat/completions 端点（open.bigmodel.cn v4，OpenAI 兼容；用户 cform 现用端点） */
 export const ZHIPU_CHAT_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
@@ -40,6 +45,7 @@ export const PROVIDER_LABEL: Readonly<Record<TranslateProvider, string>> = {
     deepseek: 'DeepSeek',
     siliconflow: '硅基流动',
     custom: '自定义端点',
+    custom2: '自定义端点 2',
 };
 
 /** 服务商显示名（含未知名兜底） */
@@ -54,9 +60,63 @@ export function providerLabel(provider: TranslateProvider | undefined): string {
  */
 export function aiKeyField(provider: TranslateProvider): string {
     if (provider === 'custom') return 'readerCustomKey';
+    if (provider === 'custom2') return 'readerCustom2Key';
     if (provider === 'deepseek') return 'readerDeepseekKey';
     if (provider === 'siliconflow') return 'readerSiliconflowKey';
     return 'readerZhipuKey';
+}
+
+/**
+ * 🔴 #634：**自定义端点槽位** —— 两个固定槽位（用户裁定「总共两个」）。
+ * 槽位 1 沿用 #478 的既有字段（⛔ **零迁移**：老用户填过的那条原样就是槽位 1），槽位 2 是新增。
+ */
+export type CustomSlot = 'custom' | 'custom2';
+
+/** 槽位清单（顺序即设置页渲染顺序） */
+export const CUSTOM_SLOTS: readonly CustomSlot[] = ['custom', 'custom2'];
+
+/** 该服务商是不是自定义端点槽位（⛔ 别写 `=== 'custom'` —— 那会把槽位 2 当成别的东西） */
+export function isCustomSlot(provider: unknown): provider is CustomSlot {
+    return provider === 'custom' || provider === 'custom2';
+}
+
+/**
+ * 槽位 → settings 里的三个字段名（base URL / Key / 模型 / **显示名**）。
+ * 🔴 **唯一真源**：设置页渲染、宿主取端点、重命名输入框都从这一份取，
+ * ⛔ 别在别处写第二份「custom 用哪个字段」的三元式（漏一处 = 槽位 2 静默复用槽位 1 的凭据）。
+ */
+export const CUSTOM_SLOT_FIELDS: Readonly<Record<CustomSlot, { base: string; key: string; model: string; name: string }>> = {
+    custom: { base: 'readerCustomBaseUrl', key: 'readerCustomKey', model: 'readerCustomModel', name: 'readerCustomName' },
+    custom2: { base: 'readerCustom2BaseUrl', key: 'readerCustom2Key', model: 'readerCustom2Model', name: 'readerCustom2Name' },
+};
+
+/**
+ * 槽位显示名的**默认值**（用户没改名时用）。
+ * 🔴 #634：槽位 1 的默认名**逐字沿用 #478 的既有文案**「自定义端点」（设置页行头当年写的就是它），
+ *    ⛔ 别改成「自定义」（那个词在 `AI_PROVIDER_OPTIONS` 里是**下拉选项**的口径，两者用途不同）。
+ */
+export const CUSTOM_SLOT_DEFAULT_NAME: Readonly<Record<CustomSlot, string>> = {
+    custom: '自定义端点',
+    custom2: '自定义端点 2',
+};
+
+/**
+ * 归一「用户填的显示名」：trim 后空 ⇒ `undefined`（= 用默认名）。
+ * ⚠️ 上限 20 字：名字要进下拉选项与行头，过长会把设置页那行撑变形。
+ */
+export function normalizeCustomName(raw: unknown): string | undefined {
+    if (typeof raw !== 'string') return undefined;
+    const s = raw.trim();
+    if (!s) return undefined;
+    return s.length > 20 ? s.slice(0, 20) : s;
+}
+
+/**
+ * 取槽位的**显示名**（用户改过用用户的，否则用默认）。
+ * 🔴 这是「重命名」的唯一读出口 —— 下拉选项、设置页行头、错误文案都调它。
+ */
+export function customSlotName(slot: CustomSlot, rawName?: unknown): string {
+    return normalizeCustomName(rawName) ?? CUSTOM_SLOT_DEFAULT_NAME[slot];
 }
 
 /** 智谱默认模型（GLM-4-Flash 免费） */
@@ -99,14 +159,17 @@ export const PROVIDER_MODELS: Readonly<Record<TranslateProvider, readonly { valu
     ],
     /** 自定义端点没有预置（模型名由用户填） */
     custom: [],
+    /** #634：槽位 2 同槽位 1 —— 无预置 */
+    custom2: [],
 };
 
-/** 各家**默认模型**（用户没选 / 选了自定义但没填 ⇒ 回落到它）。⚠️ `custom` 无默认 —— 必须用户填 */
+/** 各家**默认模型**（用户没选 / 选了自定义但没填 ⇒ 回落到它）。⚠️ 两个自定义槽位都无默认 —— 必须用户填 */
 export const DEFAULT_MODELS: Readonly<Record<TranslateProvider, string>> = {
     zhipu: ZHIPU_MODEL,
     deepseek: DEEPSEEK_MODEL,
     siliconflow: SILICONFLOW_MODEL_ID,
     custom: '',
+    custom2: '',
 };
 
 /** 设置页模型下拉里「自定义…」那一项的哨兵值（选中 ⇒ 显示手填输入框） */
@@ -170,7 +233,7 @@ export function aiBaseUrlIssue(raw: unknown): string | null {
  */
 export function translateChatUrl(provider: TranslateProvider | undefined, customBase?: unknown): string {
     const p = normalizeProvider(provider);
-    if (p === 'custom') return customChatUrl(customBase);
+    if (isCustomSlot(p)) return customChatUrl(customBase);
     if (p === 'deepseek') return DEEPSEEK_CHAT_URL;
     if (p === 'siliconflow') return SILICONFLOW_CHAT_URL;
     return ZHIPU_CHAT_URL;
@@ -188,7 +251,8 @@ export function modelFor(provider: TranslateProvider | undefined): string {
  * 归一化服务商：仅 'deepseek' / 'zhipu' / 'siliconflow' / 'custom' 有效；其余（含 undefined/未知）回退默认 zhipu。
  */
 export function normalizeProvider(provider: unknown): TranslateProvider {
-    return provider === 'deepseek' || provider === 'zhipu' || provider === 'siliconflow' || provider === 'custom'
+    return provider === 'deepseek' || provider === 'zhipu' || provider === 'siliconflow' ||
+        provider === 'custom' || provider === 'custom2'
         ? provider
         : DEFAULT_TRANSLATE_PROVIDER;
 }
@@ -208,31 +272,81 @@ export type AiProviderChoice = TranslateProvider | typeof AI_PROVIDER_OFF;
  * ⚠️ 不能拿 `normalizeProvider` 顶替 —— 它会把 'off' 静默吃掉变回 zhipu（「关了又自己开了」）。
  */
 export function normalizeAiChoice(v: unknown): AiProviderChoice {
-    return v === AI_PROVIDER_OFF || v === 'deepseek' || v === 'zhipu' || v === 'siliconflow' || v === 'custom'
+    return v === AI_PROVIDER_OFF || v === 'deepseek' || v === 'zhipu' || v === 'siliconflow' ||
+        v === 'custom' || v === 'custom2'
         ? v
         : DEFAULT_TRANSLATE_PROVIDER;
 }
 
-/** 设置页下拉选项（顺序即 UI 顺序；「不启用」放最后，避免误选） */
+/**
+ * 设置页下拉选项（顺序即 UI 顺序；「不启用」放最后，避免误选）。
+ * 🔴 #634：两个自定义槽位的**显示名可被用户改** ⇒ 选项表不能是纯静态常量，
+ *    这里给「默认名」版本（`AI_PROVIDER_OPTIONS`），带改名的活版本由 `aiProviderOptions()` 产出。
+ */
 export const AI_PROVIDER_OPTIONS: { value: AiProviderChoice; label: string }[] = [
     { value: 'zhipu', label: '智谱 GLM' },
     { value: 'deepseek', label: 'DeepSeek' },
     { value: 'siliconflow', label: '硅基流动' },
-    { value: 'custom', label: '自定义（OpenAI 兼容）' },
+    // 🔴 #640e（1.4.0，用户点名）：「选择AI模型服务窗口两个标签(OpenAI 兼容)去掉」——
+    //    两个自定义槽位的选项名由「自定义（OpenAI 兼容）」/「自定义 2（OpenAI 兼容）」
+    //    收成「自定义」/「自定义 2」。理由：chip 行空间有限，而「OpenAI 兼容」这半边
+    //    对**每一个**自定义端点都成立（本槽位的定义就是「OpenAI 兼容端点」）⇒ 它不是区分信息，
+    //    只是把两个 chip 撑长。⛔ 别在后缀里再塞别的技术词（用户要的是短）。
+    { value: 'custom', label: '自定义' },
+    { value: 'custom2', label: '自定义 2' },
     { value: AI_PROVIDER_OFF, label: '不启用' },
 ];
 
+/**
+ * 🔴 #634：**带用户重命名的**下拉选项 —— 设置页三处服务下拉都用它。
+ *
+ * `names` = 两个槽位的用户填名原文（缺省/空白 ⇒ 用 `CUSTOM_SLOT_DEFAULT_NAME`）。
+ * ⚠️ 内置三家与「不启用」的文案**逐字取自 `AI_PROVIDER_OPTIONS`**（唯一真源），本函数只替换两个槽位那两项。
+ *
+ * 🔴 #640e（1.4.0）：**后缀「（OpenAI 兼容）整体去掉**（用户：「选择AI模型服务窗口两个标签(OpenAI 兼容)去掉」）——
+ *    ⇒ 改名前逐字是「自定义」/「自定义 2」；改名后**就只有用户填的那个名**（⛔ 不许再拼任何后缀）。
+ *    ⚠️ 旧口径（#478/#634）是「未改名时逐字等于『自定义（OpenAI 兼容）』」—— 那条**已被本批推翻**，
+ *      别按旧注释把后缀写回来。
+ */
+export function aiProviderOptions(
+    names?: { custom?: unknown; custom2?: unknown },
+): { value: AiProviderChoice; label: string }[] {
+    return AI_PROVIDER_OPTIONS.map((o) => {
+        if (o.value !== 'custom' && o.value !== 'custom2') return o;
+        const renamed = normalizeCustomName(names?.[o.value]);
+        // 没改名 ⇒ 逐字返回原选项（=「自定义」/「自定义 2」）；改了 ⇒ **只有新名**，不带后缀
+        return renamed ? { value: o.value, label: renamed } : o;
+    });
+}
+
 /** 哪些服务商**不需要**用户手填 base URL（用于设置页文案与提示分支） */
 export function isBuiltinProvider(provider: TranslateProvider | undefined): boolean {
-    return normalizeProvider(provider) !== 'custom';
+    return !isCustomSlot(normalizeProvider(provider));
 }
 
 /**
  * 服务商选项的显示名 —— **唯一真源 = `AI_PROVIDER_OPTIONS`**（⛔ 别在视图层再抄一份文案）。
  * 未知值（脏数据）回退到该家显示名，不抛错。
+ * ⚠️ #634：两个自定义槽位的**名字可被用户改** ⇒ 要显示用户改的名时用 `aiChoiceLabelNamed`。
  */
 export function aiChoiceLabel(v: AiProviderChoice): string {
     return AI_PROVIDER_OPTIONS.find((o) => o.value === v)?.label ?? providerLabel(normalizeProvider(v));
+}
+
+/**
+ * 🔴 #634：**带重命名的**选项显示名（合并控件那行字用）。
+ * `names` 为空 / 没改过 ⇒ 与 `aiChoiceLabel` **逐字相同**（缺省路径零变化）。
+ *
+ * ⚠️ 改名后走 `aiProviderOptions` 的**同一套拼法**（#640e 起 = 就只有新名，无后缀），
+ *    ⛔ 别在这里直接用 `customSlotName` —— 那会得到行头口径的「自定义端点」，
+ *    与下拉里的「自定义」**两套词**（本仓「同一概念只准一份文案」）。
+ */
+export function aiChoiceLabelNamed(
+    v: AiProviderChoice,
+    names?: { custom?: unknown; custom2?: unknown },
+): string {
+    const o = aiProviderOptions(names).find((x) => x.value === v);
+    return o?.label ?? aiChoiceLabel(v);
 }
 
 /** 该服务是否「不启用」（#480 ①：不启用时模型区要**置灰且点不动**，别再亮着一个模型名） */
@@ -245,8 +359,12 @@ export function isAiOff(v: unknown): boolean {
  * 🔴 「不启用」**不带模型段** —— 那正是 #480 ① 要消除的视觉冲突（「选了不启用，右边还亮着 GLM-4-Flash」）。
  * ⚠️ 模型为空（如 `custom` 还没填）⇒ 只显示服务商名，由调用方决定要不要补「选择模型…」占位。
  */
-export function aiPickText(v: AiProviderChoice, model?: string): string {
-    const name = aiChoiceLabel(v);
+export function aiPickText(
+    v: AiProviderChoice,
+    model?: string,
+    names?: { custom?: unknown; custom2?: unknown },
+): string {
+    const name = aiChoiceLabelNamed(v, names);
     if (v === AI_PROVIDER_OFF) return name;
     const m = typeof model === 'string' ? model.trim() : '';
     return m ? `${name} · ${m}` : name;
@@ -315,6 +433,24 @@ const NOT_CHAT_MODEL =
 export function pickPingModel(ids: readonly string[], fallback = ''): string {
     const list = ids.map((s) => (typeof s === 'string' ? s.trim() : '')).filter(Boolean);
     return list.find((id) => !NOT_CHAT_MODEL.test(id)) ?? list[0] ?? fallback;
+}
+
+/**
+ * 🔴 #634：这条端点**一个「像文本对话」的模型都没有** ⇒ `pickPingModel` 只能退回列表第一个。
+ *
+ * 为什么要单独判一次：用户原话「自定义端点这里有点连接问题**怎么是连第一个模型的**」——
+ *   退回第一个**本身是刻意的**（总得试一个），但**没有一个字告诉用户这件事**：
+ *   他只看到「连接失败（模型 MiniMax-Hailuo-2.3）」⇒ 会去反复检查 Key 和 base URL，
+ *   而真正的原因是**这条端点的模型列表里没有聊天模型**（全是视频/语音/向量）。
+ * ⇒ 测试连接在退回时**先说清原因**，公式：列表里全部命中 `NOT_CHAT_MODEL` ⇒ 报这句。
+ * ⚠️ 判据与 `pickPingModel` **同一份正则**（⛔ 别另写一份，两份必然漂）。
+ */
+export function noChatModelHint(ids: readonly string[]): string {
+    const list = ids.map((s) => (typeof s === 'string' ? s.trim() : '')).filter(Boolean);
+    if (list.length === 0) return '';
+    return list.some((id) => !NOT_CHAT_MODEL.test(id))
+        ? ''
+        : '（这条端点没有任何文本对话模型，列表里全是视频/语音/向量类，已退回第一个试打）';
 }
 
 /** 翻译默认 system 提示词（中英自动互译，只输出译文）；设置页「服务提示词」以它为默认值、可被覆盖 */

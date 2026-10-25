@@ -31,13 +31,22 @@ export function excerptCardKeyAction(ev: {
     return ev.ctrlKey || ev.metaKey ? 'submit' : 'ignore';
 }
 
-/** 信息行文案：「摘自《书名》· 第 N 章 · P%」（无定位/无百分比时逐级省略，不留分隔符残渣） */
-export function excerptCardLocLabel(title: string, loc?: { chapter: number; pct: number }): string {
+/**
+ * 信息行文案：「摘自《书名》· 第 N 章 · P%」（无定位/无百分比时逐级省略，不留分隔符残渣）。
+ * 🔴 第 3 参 `unit`：TXT / EPUB 是「章」，PDF 是「页」（PDF 的 `loc.chapter` 存的是一基页码，
+ *    见 `PdfReaderModal.addSelExcerpt`）—— 不给单位的话 PDF 摘抄会被写成「第 7 章」，语义错。
+ *    ⛔ 别把 PDF 改成往 `loc.chapter` 里塞页码以外的含义（`ParsedExcerpt.loc` 是 TXT/EPUB/PDF 共用 schema）。
+ */
+export function excerptCardLocLabel(
+    title: string,
+    loc?: { chapter: number; pct: number },
+    unit: '章' | '页' = '章',
+): string {
     const name = title.trim() || '作品名称';
     const book = `摘自《${name}》`;
     if (!loc || !Number.isFinite(loc.chapter) || loc.chapter <= 0) return book;
     const pct = Number.isFinite(loc.pct) && loc.pct > 0 ? ` · ${Math.round(loc.pct)}%` : '';
-    return `${book} · 第 ${Math.floor(loc.chapter)} 章${pct}`;
+    return `${book} · 第 ${Math.floor(loc.chapter)} ${unit}${pct}`;
 }
 
 /** 就地浮层落位：水平居中于锚点、优先贴其上方，放不下转下方，四周钳制不出容器（宿主局部坐标） */
