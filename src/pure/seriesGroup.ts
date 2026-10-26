@@ -460,6 +460,27 @@ export function listTreeRows(entries: readonly MediaEntry[], sortBy: SortBy): Se
 }
 
 /**
+ * **列表视图「不并组展示」的行序**（需求 9，用户 2026-10-21：「新增『展示分组 / 不并组展示』
+ * 单循环切换按钮」）—— 同一个工具栏按钮在两种口径间翻面，本条是「摊平」那一侧的纯逻辑。
+ *
+ * 🔴 三条口径：
+ *  ⑴ **每条独立一行**：同系列的多部**不再**折成合集父级行（⛔ 别在这里偷偷调 `foldSeries` ——
+ *     折出来后 `listDisplayRows` 会输出「组行 + 子行」，与「不并组」正好相反）；
+ *  ⑵ **顺序 = 传入顺序**（入口 `filterAndSort` 已按当前排序档排好）—— 与 `listTreeRows` 的
+ *     「合集整体置顶、组间按代表值」**有意不同**：摊平态里没有「合集」这个单位，再按组搬运
+ *     就等于偷偷分了组；
+ *  ⑶ 返回 `SeriesRow[]`（全 `single`）⇒ 下游 `listDisplayRows` / `listItems` / `drawList`
+ *     **一条路都不用改**（⛔ 别为摊平态另造一套 `ListDisplayRow[]`：两套形状必然漂）。
+ *
+ * ⚠️ 展开态（`openGroupKeys`）在摊平态里**不参与**：既然没有组行，展开集就是死状态；
+ *    切回「展示分组」时也**不恢复**旧展开集（沿用组件现值）—— 用户亲手点开的组不该被一次
+ *    视图口径切换悄悄改变，而「上次摊平前展开过谁」没有可见意义，不值得再存一份。
+ */
+export function listFlatRows(entries: readonly MediaEntry[]): SeriesRow[] {
+    return entries.map((e): SeriesRow => ({ kind: 'single', entry: e }));
+}
+
+/**
  * 折叠卡的「年份跨度」行（占用普通卡的**创作者行**那一格）：
  * 0 个年份 → `—`；1 个 → `2014`；≥2 个 → `2014–2019`（**en dash**，与卡面其它区间写法一致）。
  * ⚠️ 只取**极值**而不是把每个年份都列出来 —— 十几部作品列全了会把这行撑爆（卡面是单行省略）。

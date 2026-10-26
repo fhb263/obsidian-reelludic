@@ -6,10 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        感谢反馈。提交前请先确认两件事：
-
-        1. 已阅读 README 的[常见问题](https://github.com/fhb263/obsidian-reelludic#faq)与[已知问题与限制](https://github.com/fhb263/obsidian-reelludic#known-issues)
-        2. 已搜索现有 Issue，确认这不是重复反馈
+        感谢反馈。请尽量给出**最小、确定可复现**的步骤 —— 步骤越准，修得越快。
 
   - type: input
     id: plugin-version
@@ -40,6 +37,24 @@ body:
         - Linux
         - Android
         - iOS
+    validations:
+      required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: 涉及版块
+      description: 按「关于 → 未来规划」里的九个版块选一个最接近的（决定这条报给谁）
+      options:
+        - 搜索添加
+        - 视图编辑
+        - 播放阅读
+        - 计划追踪
+        - 统计报告
+        - AI 赋能
+        - 插件设置
+        - 数据管理
+        - 生态联动
     validations:
       required: true
 
@@ -110,11 +125,9 @@ body:
     id: confirm
     attributes:
       label: 确认
-      description: 提交前请逐项确认
+      description: 提交前请确认
       options:
         - label: 我已搜索现有 Issue，确认这不是重复反馈
           required: true
         - label: 我已关闭其他插件后在「安全模式」下复现，问题依然存在
           required: false
-        - label: 我已确认这不是 README 中「已知问题与限制」里记录的情况
-          required: true

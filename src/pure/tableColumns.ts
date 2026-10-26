@@ -19,7 +19,7 @@
 //    信息栏那边（`normalizeCardFieldsForType`）是「选哪些行」，**顺序恒由池子定**；
 //    表格这边用户能拖列序（表头横拖，见 `MediaList`），若也按池子重排，拖了等于白拖。
 import { ENTRY_TYPES, type EntryType } from 'data/types';
-import { META_FIELDS, type MetaFieldKind } from 'pure/metaFields';
+import { META_FIELDS, fieldAppliesTo, labelOf, type MetaFieldKind } from 'pure/metaFields';
 import { seriesGenres, seriesStatus, seriesYearSpan, type SeriesGroup } from 'pure/seriesGroup';
 
 /**
@@ -65,13 +65,23 @@ export function tableColumnPoolFor(type: EntryType): TableColumnDef[] {
             (f) => f.writable
                 && f.readable
                 && !TABLE_COLUMN_EXCLUDED.includes(f.key)
-                && (!f.types || f.types.includes(type)),
+                // 🔴🔴 #668 修「文学类表头里冒出『导演』」：
+                //    这里原来判的是 `(!f.types || f.types.includes(type))`，而 `types` 是**写出侧门控**
+                //    ——`director` / `cast` / `isbn` / `author` 这类在写出侧是「有值就写」，`types` 是**空**，
+                //    于是「空 ⇒ 六类全给」⇒ 每个类型的列池里都有导演、文学里也有片长。
+                //    ⛔ 判据必须换成 `fieldAppliesTo`（= 语义归属 `appliesTo`，`pure/metaFields` 里唯一真源；
+                //       #640f 就是为了这个问题把 `appliesTo` 单独列出来的）。
+                //    ⚠️ 别把 `types` 也一起要求上：那样 `appliesTo` 有值、`types` 为空的字段会全被排除。
+                && fieldAppliesTo(f.key, type),
         )
         .map((f) => ({
             key: f.key,
-            label: f.label,
+            // 🔴 2026-10-21：列名按**该类型**取（音乐列表头是「艺术家」、动画是「制作公司」、
+            //    剧集/动画是「单集片长」）—— 见 `metaFields.labelFor`。⛔ 别退回 `f.label`。
+            label: labelOf(f.key, type),
             kind: f.kind,
             editable: true,
+            // `types` 仍是「写出侧门控」，原样带上（下游渲染/判定要用）；没有就不带
             ...(f.types ? { types: f.types } : {}),
         }));
     return [...meta, ...TABLE_VIRTUAL_COLUMNS.map((c) => ({ ...c }))];
@@ -126,6 +136,26 @@ export function normalizeTableColumnsForType(type: EntryType, v: unknown): strin
         seen.add(x);
         out.push(x);
     }
+    return out.length > TABLE_COLUMN_LIMIT ? out.slice(0, TABLE_COLUMN_LIMIT) : out;
+}
+
+/**
+ * 🔴 #668（用户：「我要的是列表视图切换各类型**不要出现不是该类型的表头列**」）：
+ * **混类型表默认只显示「所有类型都适用」的公共列**，而不是六类并集。
+ *
+ * 为什么要改：并集口径下「全部」页签会出现 `作者 / 平台 / 片长` 三列同时在场的情况，
+ * 电影行里的「作者」「平台」全是 `—` —— 用户看到的是「这条电影怎么有作者列」。
+ * ⇒ 默认 = 交集（年份 / 状态 / 评分 / 进度这类人人都有的），各类型专属列**不进混排表**。
+ *
+ * ⚠️ 交集为空时**回落到并集**：配置全是专属列（用户把公共列全取消了）时，交集为 `[]`
+ *    会让表退化成只剩「标题 + 操作」—— 那比多几列更难用。空交集按并集截断兜底。
+ * ⚠️ 顺序取**第一个类型**的顺序（交集内的键）：同一批类型恒定得同一套列序，⛔ 不随内容抖动。
+ */
+export function commonColumnsForTypes(types: readonly EntryType[], resolved: Record<EntryType, string[]>): string[] {
+    const lists = types.map((t) => resolved[t] ?? []);
+    if (lists.length === 0) return [];
+    const common = lists[0].filter((k) => lists.every((l) => l.includes(k)));
+    const out = common.length > 0 ? common : tableColumnsForTypes(types, resolved);
     return out.length > TABLE_COLUMN_LIMIT ? out.slice(0, TABLE_COLUMN_LIMIT) : out;
 }
 

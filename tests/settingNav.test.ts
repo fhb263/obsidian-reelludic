@@ -63,14 +63,21 @@ describe('settingNav（#354 设置页导航真源；1.3.1 ① 起 5 个平级 Ta
     it('groupIcon：登记过的返回图标名，未登记返回 null（不抛错，只是缺个图标）', () => {
         // #422 改名：两组加「元」字 —— ⛔ 旧键（数据源启用 / 数据源凭据）必须**整体退场**，
         //    留着就是永不命中的死配置（组名已经改了，没有任何地方会再拿旧名来查）
-        expect(groupIcon('元数据源启用')).toBe('toggle-right');
-        expect(groupIcon('元数据源凭据')).toBe('key-round');
+        // 🔴 #690（1.4.1，用户点名）：三组改名为「元数据搜索源启用 / 元数据搜索源凭据 / 音乐下载源凭据」
+        //    ⇒ 旧键（元数据源启用 / 元数据源凭据 / 音乐源凭据）同样**必须整体退场**（静默取不到图标就是漏配）。
+        expect(groupIcon('元数据搜索源启用')).toBe('toggle-right');
+        expect(groupIcon('元数据搜索源凭据')).toBe('key-round');
         expect(groupIcon('数据源启用')).toBeNull();
         expect(groupIcon('数据源凭据')).toBeNull();
+        expect(groupIcon('元数据源启用')).toBeNull();
+        expect(groupIcon('元数据源凭据')).toBeNull();
         // 🔴 #422：音乐源凭据不再与「凭据」类共用钥匙图标（三组挨着排下来分不出谁是谁）
-        expect(groupIcon('音乐源凭据')).toBe('audio-lines');
+        expect(groupIcon('音乐下载源凭据')).toBe('audio-lines');
+        expect(groupIcon('音乐源凭据')).toBeNull();
         // 🔴 #422：书源那组改名 + **首次挂图标**（原「网文书源」没有图标）
-        expect(groupIcon('书籍源凭据')).toBe('book-marked');
+        // 🔴 2026-10-22 **书籍下载整体撤除**：「书籍源凭据」那组随之退场 ⇒ 图标键也必须整体退场
+        //    （同「语音合成」「AI服务」口径：组没了还留键 = 一条永远不会命中的死配置）
+        expect(groupIcon('书籍源凭据')).toBeNull();
         expect(groupIcon('网文书源')).toBeNull();
         // 🔴 #356：「语音合成」组已撤销（两行分别搬进 AI服务 / API凭据）⇒ 该 key 必须整体退场，
         //    ⛔ 留着就是一条永远不会命中的死配置

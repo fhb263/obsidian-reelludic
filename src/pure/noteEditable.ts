@@ -60,6 +60,36 @@ export function isNotesPlaceholder(text: string): boolean {
     return t === NOTES_PLACEHOLDER || LEGACY_NOTES_PLACEHOLDERS.includes(t);
 }
 
+/**
+ * 🔴 #635 关联章节名（**保留区键**）。与 `data/noteGenerator.RELATED_SECTION` 必须是**同一个字面量** ——
+ * 改名 = 存量笔记里的关联区一保存就被模板重写抹掉（「#587 改区名」同族的静默丢数据）。
+ * ⚠️ 这里不 import 那边：`noteEditable` 是 pure 层，`noteGenerator` 是 data 层，反向依赖会成环。
+ * 两边由断言逐字钉住（`assert-symbols`）。
+ */
+export const RELATED_SECTION = '关联';
+
+/** 关联为空时的提示行（与链接章节「（暂无链接）」同口径；判断「这区是不是空的」靠它） */
+export const RELATED_EMPTY_HINT = '（暂无关联）';
+
+/**
+ * 从笔记抽出「## 关联」区的原始正文（#635 重写保留区用）。
+ * 空区（只有提示行 / 只有空白）⇒ `''`；没有该区 ⇒ `null`（**两种要分开**：
+ * 「用户把整区删了」与「用户留着空区」在重写时的处理不一样）。
+ */
+export function extractRelatedSectionBody(text: string): string | null {
+    const lines = text.split('\n');
+    const head = lines.findIndex((l) => l.trim() === `## ${RELATED_SECTION}`);
+    if (head === -1) return null;
+    const buf: string[] = [];
+    for (let i = head + 1; i < lines.length; i++) {
+        if (/^##\s/.test(lines[i])) break; // 下一个二级标题 ⇒ 区结束
+        buf.push(lines[i]);
+    }
+    const body = buf.join('\n').trim();
+    if (!body || body === RELATED_EMPTY_HINT) return '';
+    return body;
+}
+
 /** 纯文本章节（标题 → 字段）：内容取标题与下一个 ## 标题之间的文本，去首尾空白 */
 const TEXT_SECTIONS: Record<string, keyof NoteEditable> = {
     '## 内容简介': 'summary',

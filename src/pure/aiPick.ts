@@ -85,3 +85,67 @@ export function togglePin(pinned: readonly string[], value: string): string[] {
     if (!value) return [...pinned];
     return pinned.includes(value) ? pinned.filter((v) => v !== value) : [...pinned, value];
 }
+
+// ───────────── 2026-10-23 用户：「插件内置候选模型列出来给我决定删除哪个」 ─────────────
+//
+// 口径（⚠️ 三条都别改）：
+//   ① **只能删本仓预置的**（`fromApi === false`）—— `/models` 拉回来的真实清单删了没意义：
+//      下次「重新获取」它又回来了，用户会以为删不掉。
+//   ② **默认模型不可删**（`isDefault`）—— `resolveModel` 没选值时回落到 `DEFAULT_MODELS`，
+//      删掉它 = 回落到一个在列表里看不见的名字（设置页显示空白，用户无法理解）。
+//   ③ 隐藏名单**按服务商分键**（模型 id 可能跨家重名，如硅基流动上的 `deepseek-chat`）。
+
+/** 隐藏键的分隔符（`\u0000` 不可能出现在模型 id 里，⇒ 拼接无歧义） */
+const HIDDEN_SEP = '\u0000';
+
+/** 隐藏名单里这一项的键（服务商 + 模型 id） */
+export function hiddenKey(provider: string, value: string): string {
+    return `${provider}${HIDDEN_SEP}${value}`;
+}
+
+export function isHidden(hidden: readonly string[], provider: string, value: string): boolean {
+    return hidden.includes(hiddenKey(provider, value));
+}
+
+/** 切换隐藏（有则摘、无则追加）；返回**新数组**。空模型名 / 空服务商 ⇒ 原样复制 */
+export function toggleHidden(hidden: readonly string[], provider: string, value: string): string[] {
+    if (!value || !provider) return [...hidden];
+    const k = hiddenKey(provider, value);
+    return hidden.includes(k) ? hidden.filter((v) => v !== k) : [...hidden, k];
+}
+
+/**
+ * 这一行能不能删。
+ * ⚠️ `keep` 为**当前在用的模型**：永远返回 false（用户不能把自己正在用的那个删掉）。
+ */
+export function canHideModel(it: AiModelCandidate, keep?: string): boolean {
+    if (it.fromApi || it.isDefault) return false;
+    return !keep || it.value !== keep;
+}
+
+/**
+ * 去掉被隐藏的候选。
+ * `keep` = 当前在用的模型 ⇒ **即使被隐藏也照样显示**（否则用户上次选了一个、后来删了它，
+ * 打开弹窗就找不到自己正在用的那一项，以为设置丢了）。
+ */
+export function visibleModels(
+    items: readonly AiModelCandidate[],
+    hidden: readonly string[],
+    provider: string,
+    keep?: string,
+): AiModelCandidate[] {
+    if (!hidden.length) return [...items];
+    return items.filter((it) => !isHidden(hidden, provider, it.value) || (!!keep && it.value === keep));
+}
+
+/** 该服务商下被隐藏的项数（给「已隐藏 N 个 · 全部恢复」用） */
+export function hiddenCount(hidden: readonly string[], provider: string): number {
+    const prefix = `${provider}${HIDDEN_SEP}`;
+    return hidden.filter((k) => k.startsWith(prefix)).length;
+}
+
+/** 只摘掉**该服务商**的隐藏项（「全部恢复」用）；返回新数组 */
+export function clearHiddenFor(hidden: readonly string[], provider: string): string[] {
+    const prefix = `${provider}${HIDDEN_SEP}`;
+    return hidden.filter((k) => !k.startsWith(prefix));
+}

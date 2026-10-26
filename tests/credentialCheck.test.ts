@@ -9,7 +9,11 @@ import {
     configuredCredentialChecks,
     isExpired,
     musicCheckKey,
+    normalizeCredentialStatus,
     sourceCheckKey,
+    statusOf,
+    withStatus,
+    withoutStatus,
 } from 'pure/credentialCheck';
 // 🔴 #597：国内源的**真源**（注册表标记）与音乐源图标表的键集合
 import { PROVIDERS } from 'pure/sourceRegistry';
@@ -117,5 +121,61 @@ describe('#589 键前缀 / 失效判定 / 节奏常量', () => {
         expect(EXPIRED_BADGE).toBe('连接失败');
         expect(CREDENTIAL_CHECK_DELAY_MS).toBeGreaterThan(0);
         expect(CREDENTIAL_CHECK_GAP_MS).toBeGreaterThan(0);
+    });
+});
+
+// 🔴🔴 用户裁定（1.4.x）：「已测试链接得到的『连接失败』标签要持久化，重启新会话后不要变回『已配置』」。
+// 根因 = 结论只活在内存 Map，且豆瓣不在开机自检白名单（#634）⇒ 重启必然回弹。
+describe('凭据结论持久化（落盘归一 / 读写）', () => {
+    it('只认布尔值：脏数据（字符串 "false" / null / 数字）一律丢掉，⛔ 别把真值串当成结论', () => {
+        expect(normalizeCredentialStatus({
+            'source:douban': false,
+            'music:qq': true,
+            'source:tmdb': 'false',
+            'source:bad': null,
+            'source:num': 0,
+            '': true,
+        })).toEqual({ 'source:douban': false, 'music:qq': true });
+    });
+
+    it('非对象入参 ⇒ 空表（旧 data.json 没有这个键 / 脏数据都不许抛）', () => {
+        expect(normalizeCredentialStatus(undefined)).toEqual({});
+        expect(normalizeCredentialStatus(null)).toEqual({});
+        expect(normalizeCredentialStatus('oops')).toEqual({});
+        expect(normalizeCredentialStatus([])).toEqual({});
+    });
+
+    it('🔴 没有键 = 还没测过（`undefined`），⛔ 不是 false —— 否则会把「没测」画成「连接失败」', () => {
+        const s = { 'source:douban': false };
+        expect(statusOf(s, 'source:douban')).toBe(false);
+        expect(statusOf(s, 'source:weread')).toBeUndefined();
+        // 反向：`withStatus` 只加键，`withoutStatus` 才删
+        expect(statusOf(withStatus(s, 'source:weread', true), 'source:weread')).toBe(true);
+    });
+
+    it('🔴🔴 重启不回弹：写进去的 false 归一后仍然是 false（这正是「连接失败」要活过重启的那条链路）', () => {
+        const saved = withStatus({}, 'source:douban', false);
+        const reloaded = normalizeCredentialStatus(JSON.parse(JSON.stringify(saved)));
+        expect(statusOf(reloaded, 'source:douban')).toBe(false);
+        expect(isExpired(statusOf(reloaded, 'source:douban'))).toBe(true);
+    });
+
+    it('withStatus / withoutStatus 都返回**新对象**（⛔ 不原地改，调用方要靠引用变化判断要不要落盘）', () => {
+        const base = { 'music:qq': true };
+        const added = withStatus(base, 'source:douban', false);
+        expect(added).not.toBe(base);
+        expect(base).toEqual({ 'music:qq': true });
+        const removed = withoutStatus(added, 'music:qq');
+        expect(removed).not.toBe(added);
+        expect(removed).toEqual({ 'source:douban': false });
+        // 删不存在的键 ⇒ 原样返回（不白造对象）
+        expect(withoutStatus(base, 'source:nope')).toBe(base);
+    });
+
+    it('三族前缀各走各的键（`source:qq` 与 `music:qq` 是两个结论，⛔ 别互相覆盖）', () => {
+        let s = withStatus({}, sourceCheckKey('qq'), false);
+        s = withStatus(s, musicCheckKey('qq'), true);
+        expect(statusOf(s, 'source:qq')).toBe(false);
+        expect(statusOf(s, 'music:qq')).toBe(true);
     });
 });

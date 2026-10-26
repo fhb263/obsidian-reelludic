@@ -14,11 +14,30 @@ import type { ReaderThemeId } from 'pure/readerTheme';
 /** 阅读模式（#636 ⑵）：单页制（#537 现状）/ 连续滚动（本批新增） */
 export type ComicViewMode = 'single' | 'scroll';
 
-export const COMIC_VIEW_MODES: readonly ComicViewMode[] = ['single', 'scroll'];
+/**
+ * 菜单里的**呈现顺序**：`'scroll'`（滚动）在前、`'single'`（翻页）在后。
+ *
+ * 🔴 2026-10-24 修正：此前这里写的是 `['single', 'scroll']`（翻页在前），与书籍阅读器**相反**。
+ *    真正的同一套顺序在 `pure/readerTypography.ts` 的 `SCROLL_OPTIONS`：`滚动 / 翻页`。
+ *    TXT / EPUB / PDF 三个阅读器都直接遍历 `SCROLL_OPTIONS`，所以「统一」= 漫画也照它排。
+ * ⚠️ 这只是**数组顺序**（纯 UI），值 `'single' | 'scroll'` 与设置字段 `comicViewMode` 一字不动
+ *    （⛔ 改了就是数据不兼容）—— 顺序变了不影响任何已存偏好。
+ */
+export const COMIC_VIEW_MODES: readonly ComicViewMode[] = ['scroll', 'single'];
 
+/**
+ * 两个阅读模式在**界面上**的名字。
+ *
+ * 🔴 #676（用户 2026-10-19）：「两个切页模式文案名称改成『翻页、滚动』同步书籍阅读器」——
+ *    与 TXT / EPUB 阅读器的「模式：滚动 / 翻页」保持**同一套用词**（UI-GUIDE v10 续 那条口径：
+ *    书籍阅读器**不用**「连续滚动 / 翻页式」这种长名）。
+ * ⚠️ 只改**文案**：值 `'single' | 'scroll'` 与设置字段 `comicViewMode` 一字不动（⛔ 改了就是数据不兼容）。
+ * ⚠️ 顺序见上面 `COMIC_VIEW_MODES` 的说明：**先「滚动」后「翻页」**，与 `SCROLL_OPTIONS` 一致。
+ *    （本条早先误写成「先翻页后滚动」，与事实相反，已于 2026-10-24 更正。）
+ */
 export const COMIC_VIEW_MODE_LABELS: Readonly<Record<ComicViewMode, string>> = {
-    single: '单页',
-    scroll: '连续滚动',
+    single: '翻页',
+    scroll: '滚动',
 };
 
 /** 归一阅读模式（未知 / 脏值 ⇒ 单页 —— 那是 #537 起的既有行为，⛔ 别默认为连续） */
@@ -121,9 +140,17 @@ export function baseNameOf(path: string, max = 42): string {
     return base.slice(0, max - ext.length - 1) + '…' + ext;
 }
 
-/** 缩略图栏是否该渲染（默认**隐藏** —— 用户裁定；窄窗下它会挤掉正文） */
+/**
+ * 缩略图栏是否该渲染。
+ *
+ * 🔴 #669（用户 2026-10-19 裁定）：**默认开**，且开关**只留在漫画阅读器顶栏**（已从设置页阅读器
+ *   折叠组里移出）。沿革：#636 曾裁定「默认关」（怕窄窗下挤掉正文），实测下来用户根本不知道有这功能
+ *   ——「默认关 + 开关藏在设置页」等于没做。
+ * ⚠️ 只有显式 `false` 才关；缺省 / 脏值一律**开**（老用户 data.json 里没有这个键 ⇒ 升级后可见）。
+ *    字符串 `'false'`（手改 data.json 的常见形态）**不算**关闭 —— 判定必须是布尔 `false`。
+ */
 export function thumbsVisible(stored: unknown): boolean {
-    return stored === true;
+    return stored !== false;
 }
 
 /** 阅读模式的两档在菜单里的选项（供设置菜单遍历，⛔ 别在视图里手写两份文案） */

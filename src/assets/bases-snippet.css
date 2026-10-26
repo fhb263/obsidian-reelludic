@@ -1,0 +1,120 @@
+/* ============================================================================
+ * ReelLudic Bases 样式 —— Obsidian CSS 片段
+ *
+ * 用途：让 Obsidian 原生 Bases 的 cards 视图观感贴近 ReelLudic 插件的海报墙。
+ * 启用：设置 › 外观 › CSS 代码片段 › 刷新 › 打开「ReelLudic Bases 样式」。
+ *       本文件由插件「设置 › 数据与工具 › 生成 Bases 视图模板」一并写入
+ *       .obsidian/snippets/。
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ * 🔴🔴 类名口径（2026-10-22 修正 —— 上一版整份片段**一条都没生效**的真因）
+ *
+ *   上一版按 `body .bases-view …` / `body .base-view …` 写选择器。
+ *   **这两个类名在 Obsidian 里不存在** ⇒ 9 条规则全部匹配不到元素，
+ *   用户看到的正是「这个 css 代码片段不生效没有悬停动效」。
+ *
+ *   真实结构（社区实测片段 `.bases-cards-item` 上挂 `:hover` 生效为证，
+ *   见 Obsidian 论坛 Improve compatibility of Bases Cards with CSS Snippets）：
+ *     .bases-cards-group      卡片区容器（一个 groupBy 分组一个）
+ *       .bases-cards-item     单张卡片（🔴 悬停就挂在这个身上）
+ *         img                 封面
+ *         .bases-cards-property   一条属性行，带 data-property="note.xxx"
+ *           .bases-cards-label      属性名
+ *           .bases-rendered-value   属性值
+ *
+ *   另外两个已知事实，别踩：
+ *     ⑴ cards 内部用**绝对定位**排版 ⇒ ⛔ 不要用 flex/grid 去改布局，
+ *        那会把卡片内容挤成空白；只改观感（圆角 / 阴影 / 字色 / 字号）。
+ *     ⑵ 行高有官方变量 `--bases-cards-line-height`，要挪位置用它算，
+ *        别写死 px（用户改 cardSize 后会错位）。
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * 设计纪律：
+ *   1. 只用**主题变量**（--background-secondary / --text-muted / --radius-m …），
+ *      不写死颜色 ⇒ 深色/浅色/任何主题下都不会瞎。
+ *   2. 纯观感，不改布局逻辑、不改字体度量；任何一条被忽略都只影响「好看程度」。
+ *   3. `[class*="bases-cards"]` 是**兜底**：万一 Obsidian 改类名前缀，
+ *      凡是带这段字样的容器仍能吃到圆角与悬停（宁可糙一点，不要整份失效）。
+ * ========================================================================== */
+
+/* ── 卡片：与插件海报墙同款过渡 + 悬停抬起 ───────────────────────────────── */
+/* 🔴 悬停必须挂在 .bases-cards-item 上（卡片本体），挂在容器上永远不触发 */
+.bases-cards-group .bases-cards-item,
+[class*='bases-cards'] .bases-cards-item {
+    border-radius: var(--radius-m, 8px);
+    overflow: hidden;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.bases-cards-group .bases-cards-item:hover,
+[class*='bases-cards'] .bases-cards-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px var(--background-modifier-box-shadow, rgba(0, 0, 0, .18));
+}
+
+/* 键盘可达：Obsidian 里卡片可聚焦，聚焦态给同款强调（不只照顾鼠标） */
+.bases-cards-group .bases-cards-item:focus-visible,
+[class*='bases-cards'] .bases-cards-item:focus-visible {
+    transform: translateY(-2px);
+    box-shadow: 0 0 0 2px var(--interactive-accent);
+    outline: none;
+}
+
+/* ── 封面：与插件一致的圆角 + 加载期底色 ─────────────────────────────────── */
+.bases-cards-group .bases-cards-item img,
+[class*='bases-cards'] .bases-cards-item img {
+    border-radius: var(--radius-s, 4px);
+    background: var(--background-secondary);
+}
+
+/* ── 卡片文字：标题更紧、属性行更淡（贴近插件 .rl-card-meta） ────────────── */
+.bases-cards-group .bases-cards-property,
+[class*='bases-cards'] .bases-cards-property {
+    font-size: 0.82em;
+}
+
+.bases-cards-group .bases-cards-label,
+[class*='bases-cards'] .bases-cards-label {
+    color: var(--text-faint);
+}
+
+.bases-cards-group .bases-rendered-value,
+[class*='bases-cards'] .bases-rendered-value {
+    color: var(--text-muted);
+}
+
+/* 标题那条（第一行属性通常是 note.file.name / title）给回正文色，别跟着变淡 */
+.bases-cards-group .bases-cards-property:first-child .bases-rendered-value,
+[class*='bases-cards'] .bases-cards-property:first-child .bases-rendered-value {
+    color: var(--text-normal);
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+/* ── 分组标题（groupBy 的组头）：与插件「合集壳」同一档底色 ─────────────── */
+.bases-cards-group .bases-cards-group-header,
+[class*='bases-cards'] .bases-cards-group-header {
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+/* ── 表格视图：行高与插件列表视图对齐（12px 字、不挤） ─────────────────── */
+.bases-table {
+    font-size: 12px;
+}
+
+.bases-table th {
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+/* ── 兜底层：极老版本 / 类名重构后的最小观感（不依赖上面任何具体结构） ──── */
+[class*='bases-cards'] :has(> img) {
+    border-radius: var(--radius-m, 8px);
+    overflow: hidden;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 下面是**你自己的区域** —— 插件升级不会动这里，随便加。
+ * （上面带 🔴 的托管区会在「重新生成 Bases 视图模板」时被整段替换）
+ * ══════════════════════════════════════════════════════════════════════════ */

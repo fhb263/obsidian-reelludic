@@ -28,6 +28,7 @@ import {
     modelTags,
     AI_PROVIDER_OPTIONS,
     AI_PROVIDER_OFF,
+    AI_PURPOSE_DEFAULT,
     PROVIDER_MODELS,
     DEFAULT_MODELS,
     MODEL_CUSTOM,
@@ -51,6 +52,31 @@ import {
     DEFAULT_TRANSLATE_PROVIDER,
     type TranslateProvider,
 } from 'pure/translate';
+// 🔴 默认值断言只测**纯模块**：`src/Settings.ts` 会连带拖进 `modals/*` 等别名（vitest 只配了
+//    pure/data/services）⇒ 直接 import 会连带整棵依赖树失败。默认值本身已抽成 `AI_PURPOSE_DEFAULT`。
+
+describe('默认 AI 用途（2026-10-25 用户裁定：默认全部不启用）', () => {
+    it('🔴 AI_PURPOSE_DEFAULT 是 off，且解析后仍是 off（不被 normalizeAiChoice 兜回 zhipu）', () => {
+        //   用户原话：「默认配置下 设置-AI集成-用途 默认全部为不启用」
+        //   ⚠️ 这条必须同时守住**两件事**，只断言其一会漏：
+        //     ① 默认值本身是 'off'（否则 DEFAULT_SETTINGS 里那四行等于没改）；
+        //     ② 经 `normalizeAiChoice` 之后仍然是 'off'（否则设置页显示「不启用」、main 侧却按 zhipu 发请求）。
+        expect(AI_PURPOSE_DEFAULT).toBe(AI_PROVIDER_OFF);
+        expect(normalizeAiChoice(AI_PURPOSE_DEFAULT)).toBe(AI_PROVIDER_OFF);
+    });
+
+    it('守不变量：显式设过服务商的用户不被默认值覆盖（off 只是缺省，不是强制）', () => {
+        //   真实合并语义 = `Object.assign({}, DEFAULT_SETTINGS, loadData())` —— 存的键后写，故覆盖默认值。
+        const merged = Object.assign({}, { readerTranslateProvider: AI_PURPOSE_DEFAULT }, { readerTranslateProvider: 'deepseek' });
+        expect(normalizeAiChoice(merged.readerTranslateProvider)).toBe('deepseek');
+    });
+
+    it('守不变量：normalizeAiChoice 的脏数据兜底**仍是 zhipu**（不是 off）—— 默认值收紧不走兜底', () => {
+        //   若把兜底改成 off，所有拼错的脏值都会静默变成「不启用」，用户会以为功能坏了。
+        expect(normalizeAiChoice(undefined)).toBe(DEFAULT_TRANSLATE_PROVIDER);
+        expect(normalizeAiChoice('java')).toBe(DEFAULT_TRANSLATE_PROVIDER);
+    });
+});
 
 describe('provider / 端点 / 固定模型', () => {
     it('常量正确', () => {

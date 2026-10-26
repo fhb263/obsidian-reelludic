@@ -135,6 +135,37 @@ describe('normalizeEntry 缺字段兜底', () => {
         expect(normalizeEntry({ title: 'x' }).seriesIndex).toBeUndefined();
     });
 
+    it('#635 手动关联 `related` 走白名单（🔴 漏加 = 保存即静默丢弃，本仓 bookKind / summary 踩过）', () => {
+        // ① 有字段 + 口径正确：合法项逐项透传
+        const e = normalizeEntry({ title: 'x', related: [{ id: 'e_b', label: '翻唱' }, { id: 'e_c' }] });
+        expect(e.related).toEqual([{ id: 'e_b', label: '翻唱' }, { id: 'e_c' }]);
+        // ② 脏项单丢，不整批废
+        expect(normalizeEntry({ title: 'x', related: [null, { id: 'e_b' }, { id: '' }] as never }).related).toEqual([{ id: 'e_b' }]);
+        // ③ 非数组 / 空数组 ⇒ 字段缺省（⛔ 不落 []）
+        expect(normalizeEntry({ title: 'x' }).related).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', related: [] }).related).toBeUndefined();
+        expect(normalizeEntry({ title: 'x', related: 'oops' as never }).related).toBeUndefined();
+        // ④ 指向自己 ⇒ 丢（自环在图上没有意义，且会让「点节点」变成「切到自己」）
+        const self = normalizeEntry({ id: 'e_self', title: 'x', related: [{ id: 'e_self' }, { id: 'e_o' }] });
+        expect(self.related).toEqual([{ id: 'e_o' }]);
+        // ⑤ 同 id 重复 ⇒ 后写的赢
+        expect(normalizeEntry({ title: 'x', related: [{ id: 'e_a', label: '原唱' }, { id: 'e_a', label: '同曲' }] }).related)
+            .toEqual([{ id: 'e_a', label: '同曲' }]);
+        // ⑥ label 空 ⇒ 不落这个键（不是落空串）
+        const blank = normalizeEntry({ title: 'x', related: [{ id: 'e_a', label: '   ' }] });
+        expect(blank.related).toEqual([{ id: 'e_a' }]);
+        expect(Object.prototype.hasOwnProperty.call(blank.related?.[0], 'label')).toBe(false);
+    });
+
+    it('#635 related 经 parseCatalog 全链路不丢（写入 → 序列化 → 读回）', () => {
+        const cat: Catalog = {
+            version: 1,
+            entries: [{ ...normalizeEntry({ id: 'e_a', title: 'A' }), related: [{ id: 'e_b', label: '前作' }] }],
+        };
+        const back = parseCatalog(serializeCatalog(cat));
+        expect(back.entries[0].related).toEqual([{ id: 'e_b', label: '前作' }]);
+    });
+
     it('豆瓣适配字段归一化：字符串透传、数组过滤、空数组归 undefined', () => {
         const e = normalizeEntry({
             screenwriter: ['诺兰', '弟弟'],

@@ -69,9 +69,9 @@ export class AssetCleanupModal extends Modal {
         }
 
         contentEl.createDiv({ cls: 'rl-pc-hint', text: '删除后进入回收站（跟随 Obsidian「删除文件」设置），可在回收站还原。' });
+        // 🔴 2026-10-25 用户指令：底部**不画「取消」** —— 弹窗右上角的 ✕ 就是取消（与它重复）。
+        //    ⛔ 别为了「取消好找」把它加回来；用户在 #③ 里对五个弹窗统一提了同一条。
         const foot = contentEl.createDiv({ cls: 'rl-pc-foot' });
-        const cancel = foot.createEl('button', { cls: 'rl-btn', text: '取消' });
-        cancel.onclick = () => this.close();
         const delBtn = foot.createEl('button', { cls: 'rl-nc-danger', text: '删除选中' });
         this.delBtn = delBtn;
         delBtn.onclick = async () => {

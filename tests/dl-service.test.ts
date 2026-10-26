@@ -226,6 +226,29 @@ describe('dlTestConnection：四态文案（未填 / 无效 / 有效 / 会员）
         const { t } = fakeTransport({});
         expect((await dlTestConnection(t, 'kuwo', '')).message).toContain('免登录');
     });
+
+    /**
+     * 🔴 2026-10-25（用户：「在b站音频流凭据行底下加个测试连接按钮」）：
+     * 「有效」的判据是 `x/web-interface/nav` 回 `code === 0 && data.isLogin === true`。
+     * ⛔ 别改用「能不能取字幕」当判据 —— 未登录时字幕接口也回 `code: 0`（只把 `need_login_subtitle`
+     * 置真、字幕数组空），照它判会把匿名请求判成「有效」。
+     */
+    it('B站：未填 / 未登录 / code≠0 / 有效 四态', async () => {
+        const empty = fakeTransport({});
+        expect(await dlTestConnection(empty.t, 'bilibili', '')).toEqual({ ok: false, message: '未粘贴 B 站 Cookie' });
+
+        // 未登录：接口 200 + code 0，但 isLogin=false ⇒ 必须判无效（这正是「能不能取字幕」判据会漏掉的坑）
+        const anon = fakeTransport({ nav: { text: JSON.stringify({ code: 0, data: { isLogin: false } }) } });
+        expect((await dlTestConnection(anon.t, 'bilibili', 'SESSDATA=x')).message).toContain('未登录');
+
+        const bad = fakeTransport({ nav: { text: JSON.stringify({ code: -101, message: '账号未登录' }) } });
+        expect((await dlTestConnection(bad.t, 'bilibili', 'SESSDATA=x')).message).toContain('无效或已过期');
+
+        const ok = fakeTransport({ nav: { text: JSON.stringify({ code: 0, data: { isLogin: true, uname: '测试用户' } }) } });
+        const r = await dlTestConnection(ok.t, 'bilibili', 'SESSDATA=x');
+        expect(r.ok).toBe(true);
+        expect(r.message).toContain('测试用户');
+    });
 });
 
 describe('dlDownloadSong：四平台分发 + 落盘口径', () => {

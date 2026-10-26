@@ -67,6 +67,120 @@ export const MUSIC_VIEW: { value: string; label: string; icon: string } = {
  */
 export const TIMELINE_UNKNOWN_LABEL = '年份未知';
 
+// ─────────── #668 视图切换按钮的**自由排序**（持久化在设置里）───────────
+
+/** 「切换视图」选项表里可能出现的一档（含音乐专有的 `grouped`） */
+export interface ViewChoice {
+    value: string;
+    label: string;
+    icon: string;
+}
+
+/** 全部可排序的值（默认顺序 = 通用五档 + 音乐专有那一档） */
+export const ALL_VIEW_VALUES: readonly string[] = [...VIEW_MODES, MUSIC_VIEW.value];
+
+/**
+ * 归一化用户拖出来的视图顺序（**设置里存的原始值 → 一份可用的完整顺序**）。
+ *
+ * 口径（与 `pure/tableColumns.normalizeTableColumnsForType` 同一套思路）：
+ *  · **保留用户顺序**（⛔ 别按 `ALL_VIEW_VALUES` 重排 —— 那就等于拖了白拖）；
+ *  · 丢掉不认识的值、去重；
+ *  · **缺失的档补在末尾**（🔑 关键：以后新增视图时，老用户存的顺序里没有它 ——
+ *    不补就**永远看不到那一档**，而用户根本不知道自己少了东西）；
+ *  · 非数组 / 空数组 ⇒ 回落到默认顺序（等于「没配过」）。
+ *
+ * ⚠️ 返回**完整的**值列表（长度恒 = `ALL_VIEW_VALUES.length`），调用方直接按它渲染。
+ */
+export function normalizeViewOrder(raw: unknown): string[] {
+    const known = new Set(ALL_VIEW_VALUES);
+    const src: unknown[] = Array.isArray(raw) ? raw : [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const x of src) {
+        if (typeof x !== 'string' || !known.has(x) || seen.has(x)) continue;
+        seen.add(x);
+        out.push(x);
+    }
+    for (const v of ALL_VIEW_VALUES) {
+        if (!seen.has(v)) out.push(v);
+    }
+    return out;
+}
+
+/**
+ * 按给定顺序排出一份**选项表**（图标 / 名字一律取自本模块的三张表，⛔ 别在组件里手写第二份）。
+ * @param order 用户顺序（已归一；缺省用默认顺序）
+ * @param lockType 当前页签锁定的类型 —— 音乐专有的「分组歌单」只在这一档出现
+ */
+export function buildViewChoices(order: readonly string[] | undefined, lockType?: string | null): ViewChoice[] {
+    const seq = order && order.length ? order : ALL_VIEW_VALUES;
+    const out: ViewChoice[] = [];
+    for (const v of seq) {
+        if (v === MUSIC_VIEW.value) {
+            if (lockType === 'music') out.push({ ...MUSIC_VIEW });
+            continue;
+        }
+        if (!(VIEW_MODES as readonly string[]).includes(v)) continue;
+        const m = v as ViewMode;
+        out.push({ value: m, label: VIEW_LABELS[m], icon: VIEW_ICONS[m] });
+    }
+    return out;
+}
+
+/**
+ * 把 `from` 这一档移到 `to` 这一档的位置，返回**新的完整顺序**（不改入参）。
+ * 判据全在值上（⛔ 不依赖 DOM 下标）：两者任一不认识 ⇒ 原样返回归一份。
+ */
+export function moveViewValue(order: readonly string[], from: string, to: string): string[] {
+    const cur = normalizeViewOrder(order);
+    const i = cur.indexOf(from);
+    const j = cur.indexOf(to);
+    if (i < 0 || j < 0 || i === j) return cur;
+    const out = [...cur];
+    out.splice(i, 1);
+    out.splice(j, 0, from);
+    return out;
+}
+
+// ─────────── #668 时间线视图的缩放（Ctrl + 滚轮）───────────
+
+/** 时间线条目宽度档：1 = 最宽（大封面），越大越窄。 */
+export const TL_ZOOM_MIN = 1;
+export const TL_ZOOM_MAX = 6;
+export const TL_ZOOM_DEFAULT = 3;
+
+/** 每一档对应的条目宽度（px）。**单调递减** ⇒ 档位越大条目越小。
+ *  ⚠️ 与 `rl-tl-item` 的 `width` 绑同一个变量，⛔ 别再在样式里写死像素。 */
+export const TL_WIDTH_BY_ZOOM: Record<number, number> = {
+    1: 128,
+    2: 104,
+    3: 84,
+    4: 68,
+    5: 56,
+    6: 46,
+};
+
+/** 归一时间线缩放档：非有限数 / 越界 ⇒ 夹到合法区间；完全无法识别 ⇒ 缺省档。 */
+export function normalizeTimelineZoom(raw: unknown): number {
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return TL_ZOOM_DEFAULT;
+    const n = Math.round(raw);
+    return Math.min(TL_ZOOM_MAX, Math.max(TL_ZOOM_MIN, n));
+}
+
+/** 该档对应的条目宽度（px）。 */
+export function timelineItemWidth(zoom: number): number {
+    return TL_WIDTH_BY_ZOOM[normalizeTimelineZoom(zoom)] ?? TL_WIDTH_BY_ZOOM[TL_ZOOM_DEFAULT];
+}
+
+/**
+ * Ctrl+滚轮一步：`dir='in'`（向上滚，放大）= 档位 **-1**（条目变大），与浏览器「上滚放大」一致。
+ * 已在边界 ⇒ 原样返回（调用方据此判「no-op、不落盘」）。
+ */
+export function timelineZoomStep(zoom: number, dir: 'in' | 'out'): number {
+    const cur = normalizeTimelineZoom(zoom);
+    return dir === 'in' ? Math.max(TL_ZOOM_MIN, cur - 1) : Math.min(TL_ZOOM_MAX, cur + 1);
+}
+
 /** 时间线视图的一桶 = 同一年（或「年份未知」）的条目 */
 export interface TimelineBucket {
     /** 桶的显示名（年份串，或 `TIMELINE_UNKNOWN_LABEL`）—— 同时用作 `{#each}` 的 key */

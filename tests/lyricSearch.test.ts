@@ -17,7 +17,7 @@ interface Call {
 }
 
 /** 假 HTTP：按 URL 返回响应；`undefined` 表示「这个 URL 不该被请求」 */
-function makeHttp(route: (url: string) => { status: number; text: string } | undefined) {
+function makeHttp(route: (url: string) => { status: number; text: string; headers?: Record<string, string | string[]> } | undefined) {
     const calls: Call[] = [];
     const http: LyricHttpGet = async (url, headers) => {
         calls.push({ url, headers });
@@ -41,7 +41,7 @@ const KUGOU_OK = JSON.stringify({ data: { candidates: [{ id: 'kg1', accesskey: '
 const QQ_OK = 'MusicJsonCallback(' + JSON.stringify({ data: { song: { list: [{ songmid: 'mid1', songname: '七里香', singer: [{ name: '周杰伦' }], interval: 299 }] } } }) + ');';
 
 /** 四源都成功的最小路由 */
-function allOk(url: string): { status: number; text: string } | undefined {
+function allOk(url: string): { status: number; text: string; headers?: Record<string, string | string[]> } | undefined {
     if (url.includes('music.163.com/api/cloudsearch')) return { status: 200, text: NETEASE_OK };
     if (url.includes('kuwo.cn/search')) return { status: 200, text: KUWO_OK };
     if (url.includes('c.y.qq.com/soso')) return { status: 200, text: QQ_OK };
@@ -62,6 +62,7 @@ describe('lyricSearch · 搜索', () => {
         const { http, calls } = makeHttp(allOk);
         const out = await searchLyrics(http, '七里香', '周杰伦');
         expect(out.query).toBe('七里香 周杰伦');
+        // 4 个源各发 1 次搜索
         expect(calls).toHaveLength(4);
         expect(out.results.map((r) => r.source)).toEqual(LYRIC_SOURCE_ORDER);
         // #404：来源 label 走 `LYRIC_SOURCE_LABELS`，已改**简称**（网易云 / 酷我 / QQ / 酷狗）
@@ -73,10 +74,11 @@ describe('lyricSearch · 搜索', () => {
         const { http, calls } = makeHttp(allOk);
         await searchLyrics(http, '七里香', '周杰伦');
         const enc = encodeURIComponent('七里香 周杰伦');
-        expect(calls[0].url).toContain(`s=${enc}`);
-        expect(calls[1].url).toContain(`all=${enc}`);
-        expect(calls[2].url).toContain(`w=${enc}`);
-        expect(calls[3].url).toContain(`keyword=${encodeURIComponent('周杰伦-七里香')}`);
+        const byUrl = (needle: string) => calls.find((c) => c.url.includes(needle))?.url ?? '';
+        expect(byUrl('music.163.com/api/cloudsearch')).toContain(`s=${enc}`);
+        expect(byUrl('kuwo.cn/search')).toContain(`all=${enc}`);
+        expect(byUrl('c.y.qq.com/soso')).toContain(`w=${enc}`);
+        expect(byUrl('lyrics.kugou.com/search')).toContain(`keyword=${encodeURIComponent('周杰伦-七里香')}`);
     });
 
     it('🔴 每源带自己的 Referer（⛔ 缺了会被站点拒绝或返回空）', async () => {
@@ -106,11 +108,11 @@ describe('lyricSearch · 搜索', () => {
     it('🔴 单源抛错 ⇒ 只有该源带 error，其余源结果照旧（不许整体失败）', async () => {
         const { http } = makeHttp((url) => (url.includes('kuwo') ? undefined : allOk(url)));
         const out = await searchLyrics(http, '七里香', '周杰伦');
-        expect(out.results).toHaveLength(4);
+        expect(out.results).toHaveLength(LYRIC_SOURCE_ORDER.length);
         const kuwo = out.results.find((r) => r.source === 'kuwo') as { candidates: unknown[]; error?: string };
         expect(kuwo.candidates).toEqual([]);
         expect(kuwo.error).toContain('unexpected url');
-        expect(out.results.filter((r) => !r.error)).toHaveLength(3);
+        expect(out.results.filter((r) => !r.error)).toHaveLength(LYRIC_SOURCE_ORDER.length - 1);
     });
 
     it('🔴 非 2xx 也当失败并报出状态码（403 的正文常是 HTML 错误页，交给解析器只会静默 0 条）', async () => {

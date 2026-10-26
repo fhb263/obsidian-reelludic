@@ -299,10 +299,12 @@ describe('parseBiliView', () => {
         expect(out.code).toBe(0);
         expect(out.title).toBe('一口气看完【熊出没之春日对对碰】52集合集');
         expect(out.parts).toEqual([
-            { page: 1, title: '01赏花大会', durationSec: 1001 },
-            { page: 2, title: '02 树神的反击', durationSec: 1001 },
+            // 🔴 2026-10-25：`cid` 现在是 `BiliPart` 的字段（B 站歌词源要靠它签 wbi 取字幕），
+            //    源响应本来就有 `cid`，这里跟着带出；`duration` 仍是**秒**。
+            { cid: 1, page: 1, title: '01赏花大会', durationSec: 1001 },
+            { cid: 2, page: 2, title: '02 树神的反击', durationSec: 1001 },
             // 全角空格被折叠成一个半角空格（`decodeHtmlText` 的既有口径）
-            { page: 3, title: '第03集 消失的记忆 上', durationSec: 781 },
+            { cid: 3, page: 3, title: '第03集 消失的记忆 上', durationSec: 781 },
         ]);
     });
 

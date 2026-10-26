@@ -97,6 +97,42 @@ export function summarizeLinkStatus(list: (LinkStatus | undefined)[]): {
     return { ok, dead, unknown, checked: ok + dead + unknown };
 }
 
+/**
+ * 🔴 2026-10-22 用户指令：「失效链接检测完成后给一个一键清除按钮」。
+ * 按**下标对齐**的检测结果，把 `status === 'dead'` 的位置清空（`ok` / `unknown` / 未检测一律不动）。
+ *
+ * ⚠️ 为什么不按 URL 反查：同一集可以把同一条链接填两遍（甚至两集填同一条），
+ *    按 URL 找会一次清掉多条 / 清错集；这里 `statuses[i]` 与 `urls[i]` 同下标，
+ *    是宿主 `scanLibraryLinks` 写进 `linkStatusCache` 的原生对齐关系（见 `collectLinkScanTargets`）。
+ * ⚠️ **保留空位（不压缩）**：清掉第 2 集的链接不能让第 3 集前移一格 ——
+ *    落库前还要过 `pure/episodeAssoc.storeEpisodeList`（去尾空位、留中间的洞），
+ *    直接 `filter` 会造成「第 3 集的链接跑到第 2 集」。
+ *
+ * @returns 清空后的新数组（稀疏，洞 = 该集未关联）；**没有任何改动 → `undefined`**（调用方据此跳过写盘）
+ */
+export function clearDeadEpisodeUrls(
+    urls: ReadonlyArray<string | undefined> | undefined,
+    statuses: ReadonlyArray<LinkStatus | undefined> | undefined,
+): string[] | undefined {
+    if (!Array.isArray(urls) || urls.length === 0) return undefined;
+    if (!Array.isArray(statuses) || statuses.length === 0) return undefined;
+    // 与 `episodeAssoc.storeEpisodeList` 同一种形态：`string[]` 的**稀疏数组**（洞即未关联）
+    const out: string[] = [];
+    let changed = false;
+    for (let i = 0; i < urls.length; i++) {
+        const u = urls[i];
+        const dead = statuses[i] === 'dead';
+        if (dead && typeof u === 'string' && u.trim()) {
+            changed = true; // 该位留洞（不赋值）
+            continue;
+        }
+        if (u !== undefined) out[i] = u;
+    }
+    if (!changed) return undefined;
+    out.length = urls.length;
+    return out;
+}
+
 /** 全库扫描的一个目标：某条目的网络地址数组（**下标与 `episodeUrls` 对齐**） */
 export interface LinkScanTarget {
     entryId: string;

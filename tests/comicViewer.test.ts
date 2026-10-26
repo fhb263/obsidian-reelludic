@@ -13,16 +13,31 @@ import {
     thumbsVisible,
     comicViewModeOptions,
 } from 'pure/comicViewer';
+import { SCROLL_OPTIONS } from 'pure/readerTypography';
 
-describe('#636 阅读模式（单页 / 连续滚动）', () => {
-    it('两档、标签齐全、选项表与之一致（⛔ 别在视图里另写文案）', () => {
-        expect(COMIC_VIEW_MODES).toEqual(['single', 'scroll']);
-        expect(COMIC_VIEW_MODE_LABELS.single).toBe('单页');
-        expect(COMIC_VIEW_MODE_LABELS.scroll).toBe('连续滚动');
+describe('#676 阅读模式文案 = 书籍阅读器同款「翻页 / 滚动」', () => {
+    it('两档标签与书籍阅读器同一套用词（⛔ 别再用「单页 / 连续滚动」长名）', () => {
+        // 🔴 2026-10-24：顺序改成 **滚动 → 翻页**，与 `SCROLL_OPTIONS`（书籍阅读器真源）逐项一致。
+        //    此前是 ['single','scroll']（翻页在前）—— 漫画与另三个阅读器顺序相反，是「设置菜单不统一」的五处之一。
+        expect(COMIC_VIEW_MODES).toEqual(['scroll', 'single']);
+        expect(COMIC_VIEW_MODE_LABELS.single).toBe('翻页');
+        expect(COMIC_VIEW_MODE_LABELS.scroll).toBe('滚动');
         expect(comicViewModeOptions()).toEqual([
-            { value: 'single', label: '单页' },
-            { value: 'scroll', label: '连续滚动' },
+            { value: 'scroll', label: '滚动' },
+            { value: 'single', label: '翻页' },
         ]);
+    });
+
+    it('🔴 菜单顺序必须与书籍阅读器的 `SCROLL_OPTIONS` 逐项同序（防再次写反）', () => {
+        const comic = comicViewModeOptions().map((o) => o.label);
+        const book = SCROLL_OPTIONS.map((o) => o.label);
+        expect(comic).toEqual(book);
+    });
+
+    it('🔴 只改文案、值不变：存储字段 `comicViewMode` 与 normalize 的行为一字不动', () => {
+        // 老用户 data.json 里存的是 'single' / 'scroll' ⇒ 改文案绝不能让已有偏好失效
+        expect(normalizeComicViewMode('scroll')).toBe('scroll');
+        expect(normalizeComicViewMode('single')).toBe('single');
     });
 
     it('🔴 归一：未知 / 脏值一律回 **single**（那是 #537 起的既有行为 —— ⛔ 别默认成连续）', () => {
@@ -160,14 +175,14 @@ describe('#636 右键菜单：原文件名', () => {
     });
 });
 
-describe('#636 缩略图栏默认隐藏（用户裁定）', () => {
-    it('🔴 只有**显式 true** 才显示 —— 缺省 / 脏值一律隐藏（窄窗下它会挤掉正文）', () => {
-        expect(thumbsVisible(true)).toBe(true);
+describe('#669 缩略图栏默认显示（用户 2026-10-19 裁定，取代 #636 的「默认关」）', () => {
+    it('🔴 只有**显式 false** 才关 —— 缺省 / 脏值一律开（老用户 data.json 没有这个键 ⇒ 升级后可见）', () => {
         expect(thumbsVisible(false)).toBe(false);
-        expect(thumbsVisible(undefined)).toBe(false);
-        expect(thumbsVisible(null)).toBe(false);
-        expect(thumbsVisible('true')).toBe(false); // 字符串不算（手改 data.json 的常见形态）
-        expect(thumbsVisible(1)).toBe(false);
+        expect(thumbsVisible(undefined)).toBe(true);
+        expect(thumbsVisible(null)).toBe(true);
+        expect(thumbsVisible(true)).toBe(true);
+        expect(thumbsVisible('false')).toBe(true); // 字符串不算关闭（手改 data.json 的常见形态）
+        expect(thumbsVisible(0)).toBe(true);
     });
 });
 

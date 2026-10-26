@@ -285,6 +285,13 @@ export interface BiliPart {
     title: string;
     /** 时长（秒）；解析不出 ⇒ 0 */
     durationSec: number;
+    /**
+     * 分P 的 `cid`（2026-10-25 追加，append-only 可选）。
+     * 🔴 为什么要它：字幕接口 `x/player/wbi/v2` 认 `bvid + cid` 两个参数，`cid` **只在 view 响应里**有，
+     *    搜索接口不返回它 ⇒ 不在这里带出来，「B站搜索转字幕歌词」就得为每条候选多打一次 view。
+     * 缺字段 / 非正数 ⇒ `undefined`（调用方据此判定「这条取不了字幕」）。
+     */
+    cid?: number;
 }
 
 /** `view` 响应的解析结果（`title` = 视频标题，给勾选表当上下文） */
@@ -349,10 +356,15 @@ export function parseBiliView(text: string): BiliViewParse {
         const p = (item ?? {}) as Record<string, unknown>;
         const page = Number(p.page);
         if (!Number.isFinite(page) || page < 1) continue;
+        // 🔴 `cid` 只在 view 响应里（搜索不返回）⇒ 字幕接口必须靠它，这里一并带出。
+        //    缺 / 非正数 ⇒ 不写字段（⛔ 别填 0：`cid=0` 那种请求恒报参数错误，比缺省更难排查）。
+        const cidRaw = Number(p.cid);
+        const cid = Number.isFinite(cidRaw) && cidRaw > 0 ? Math.trunc(cidRaw) : undefined;
         parts.push({
             page: Math.floor(page),
             title: decodeBiliText(p.part),
             durationSec: parseBiliDuration(p.duration),
+            ...(cid !== undefined ? { cid } : {}),
         });
     }
     return { code, message, title, parts, cover };

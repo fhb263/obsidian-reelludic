@@ -74,8 +74,8 @@ export class ExcerptModal extends Modal {
         const previewEl = contentEl.createDiv({ cls: 'rl-ex-preview', text: this.selected ? '填写引用文本后显示预览' : '选择书目后显示生成预览' });
 
         // 操作
+        // 🔴 #（用户 m00002）：弹窗底部「取消」与右上角 ✕ 重复 ⇒ 只留「生成摘抄」。
         const foot = contentEl.createDiv({ cls: 'rl-ex-foot' });
-        const cancelBtn = foot.createEl('button', { cls: 'rl-ex-btn', text: '取消' });
         const submitBtn = foot.createEl('button', { cls: 'rl-ex-btn rl-ex-btn-primary', text: '生成摘抄', attr: { disabled: '' } });
 
         const allBooks = this.book ? [] : (await this.plugin.service.list()).filter((e) => e.type === 'book');
@@ -162,8 +162,6 @@ export class ExcerptModal extends Modal {
                 updatePreview();
             }
         };
-
-        cancelBtn.onclick = () => this.close();
 
         // 剪贴板带入（Electron 支持；无权限/失败静默）
         void navigator.clipboard?.readText?.().then((t) => {

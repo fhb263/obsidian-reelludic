@@ -1,3 +1,27 @@
+<script context="module" lang="ts">
+    // 🔴🔴 #680：**互斥展开**的注册表 —— 必须放在 `context="module"` 里。
+    //    普通 `<script>` 的 `export function` 是**组件实例导出**（`new MiniSelect({...})` 能拿到，`import` 拿不到）；
+    //    只有 module 段导出才是模块级导出，`import { broadcastClosePeers } from './MiniSelect.svelte'` 才成立
+    //    （esbuild 报 "No matching export" 就是这个原因）。
+    // ⚠️ 注册表按**组名**隔离：不同区域的下拉互不影响；组件 `onDestroy` 时各自摘除（⛔ 不泄漏）。
+    const peerClosers = new Map<string, Set<() => void>>();
+
+    /** #680：互斥组名 —— 与 MediaList 里题材面板共享同一个字符串（改这里要同步改那边） */
+    export const TOOLBAR_FILTER_GROUP = 'rl-toolbar-filters';
+
+    /**
+     * #680：**给「非 MiniSelect 的同组下拉」用的广播口**（题材面板是手写 DOM，不是本组件）。
+     * 它点开时调用本函数，组里的 MiniSelect 收到后自行收起 —— 保证「同一时间最多一个面板」。
+     * ⚠️ 放在 `<script>` 里 `export function`：Svelte 4 里这是**组件导出**（`new MiniSelect({...})` 拿不到），
+     *    so 调用方必须走 `<script module>`；这里改放 `context="module"` 段落（见文件末尾）。
+     */
+    export function broadcastClosePeers(group: string): void {
+        const set = peerClosers.get(group);
+        if (!set) return;
+        for (const fn of [...set]) fn();
+    }
+</script>
+
 <script lang="ts">
     // 「受控下拉」的自绘版（#566）：把原生下拉控件换成「按钮 + 浮层列表」。
     //
@@ -30,10 +54,61 @@
     export let chevron: boolean = true;
     /** 选中回调（父组件据此回推宿主真源） */
     export let onPick: (v: string) => void = () => {};
+    /**
+     * 🔴🔴 #680（用户：「三个并列下拉状态独立，可同时点开多个 ⇒ 面板互相遮挡。必须互斥展开」）：
+     * **互斥组名**。同一组内，任何一枚展开时会通知组里其他实例收起。
+     *
+     * 做法 = 「模块级注册表 + 广播」而不是「父组件持有 `openWhich`」：
+     *   · 本组件是**自绘受控下拉**，`open` 是它自己的局部状态；把它抬到父组件要改 4 处调用点 + 父组件
+     *     再管一份「谁开着」的状态（两份状态必然漂，本仓 #668 记录过同一类坑）；
+     *   · 注册表在**模块作用域**、按组名隔离 ⇒ 互不影响其它下拉（比如编辑器里的选择器）；组件销毁自动摘除。
+     * ⚠️ 缺省 `''` = **不参与互斥**（行为与改动前逐字一致，留给未来不想要互斥的用法）。
+     */
+    export let group: string = '';
 
     let open = false;
     let onDown: ((ev: MouseEvent) => void) | null = null;
     let onKey: ((ev: KeyboardEvent) => void) | null = null;
+
+    /**
+     * #680 互斥注册表：`group → 组内所有实例的「请求收起」回调`。
+     * ⚠️ 模块级 = 同一页面里所有 MiniSelect 共享；组件 `onDestroy` 时摘除自己的登记（⛔ 不泄漏）。
+     */
+
+    /** 本实例在组里的登记项（稳定引用，销毁时按它摘除） */
+    const myCloser = (): void => {
+        if (open) close();
+    };
+    function registerPeer(): void {
+        if (!group) return;
+        let set = peerClosers.get(group);
+        if (!set) {
+            set = new Set();
+            peerClosers.set(group, set);
+        }
+        set.add(myCloser);
+    }
+    function unregisterPeer(): void {
+        if (!group) return;
+        const set = peerClosers.get(group);
+        if (!set) return;
+        set.delete(myCloser);
+        if (set.size === 0) peerClosers.delete(group);
+    }
+    /** 组名可能在运行中变（组件被复用）⇒ 变化时重新登记 */
+    $: if (group !== registeredGroup) {
+        unregisterPeer();
+        registeredGroup = group;
+        registerPeer();
+    }
+    let registeredGroup = '';
+    /** 展开前先让组里其他人收起（互斥的唯一实现点） */
+    function closePeers(): void {
+        if (!group) return;
+        const set = peerClosers.get(group);
+        if (!set) return;
+        for (const fn of [...set]) if (fn !== myCloser) fn();
+    }
 
     $: current = options.find((o) => o.value === value);
     // 🔴 单实例复用兜底：展开中 options 被换、当前值不在新列表 ⇒ 立即收起（⛔ 别留着僵尸浮层）
@@ -56,6 +131,8 @@
             close();
             return;
         }
+        // 🔴 #680：**先让同组其他下拉收起**，再展开自己（保证同一时间最多一个）
+        closePeers();
         open = true;
         onDown = (ev: MouseEvent) => {
             const el = ev.target as HTMLElement | null;
@@ -85,7 +162,11 @@
             : opts[Math.max(0, i - 1)] ?? opts[opts.length - 1];
         next?.focus();
     }
-    onDestroy(unbind);
+    // ⚠️ 两端都要清：窗口监听 + 互斥注册表（漏了后者 ⇒ 组里留着已销毁实例的回调，点开时白跑一圈）
+    onDestroy(() => {
+        unbind();
+        unregisterPeer();
+    });
 </script>
 
 <div class="rl-sel-wrap" class:is-open={open}>

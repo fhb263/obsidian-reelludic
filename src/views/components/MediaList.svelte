@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { tick, onDestroy, onMount } from 'svelte';
+    import { tick, afterUpdate, onDestroy, onMount } from 'svelte';
 
     /**
      * 🔴 #510 系列折叠卡的**首屏性能**：每张卡最多真正渲染几层封面。
@@ -96,7 +96,7 @@
     import { filterAndSort } from 'pure/search';
     // 🔴 #552：`BOOK_KIND_TOP_UNITS` 随库概览一起恢复 —— 阅读页签选中某个子分类时，
     //    工具栏那枚概览的量词跟着换（「12 本网文」而不是笼统的「本书」），对齐影视「8 部剧集」那套。
-    import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_TOP_UNITS, bookKindCounts } from 'pure/bookKind';
+    import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_TOP_UNITS, bookKindCounts, normalizeBookKind } from 'pure/bookKind';
     // 🔴 #547：排序选项表搬到 `pure/sortOptions`（合并视图的顶端筛选栏要用**同一份**）——
     //    ⛔ 别在本组件里再写一张表：加一档排序时必然只改一处。
     import { SORT_OPTIONS, SORT_OPTIONS_BASE } from 'pure/sortOptions';
@@ -105,9 +105,9 @@
     //    还要它的**选项表与文案**（⛔ 不在组件里手写第二份中文）。
     import { MERGED_SCOPES, mergedBookKind, mergedScopeLabel, type MergedScope } from 'pure/mergedScope';
     import { groupMusicByArtist } from 'pure/musicGroup';
-    import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres, cardFieldValue, seriesCardFieldValue, DEFAULT_CARD_FIELDS_BY_TYPE, type CardFieldKey } from 'pure/cardMeta';
+    import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres, cardFieldValue, seriesCardFieldValue, cardFieldsFor, DEFAULT_CARD_FIELDS_BY_TYPE, type CardFieldKey } from 'pure/cardMeta';
     // 1.3.1 ②（#621）表格视图：列配置（pure/tableColumns）与单元格读写（pure/tableCell）真源
-    import { DEFAULT_TABLE_COLUMNS_BY_TYPE, TABLE_COLUMN_LIMIT, columnAppliesTo, seriesCellText, tableColumnDefsFor, tableColumnPoolFor, tableColumnsForTypes, type TableColumnDef } from 'pure/tableColumns';
+    import { DEFAULT_TABLE_COLUMNS_BY_TYPE, TABLE_COLUMN_LIMIT, columnAppliesTo, commonColumnsForTypes, seriesCellText, tableColumnDefsFor, tableColumnPoolFor, tableColumnsForTypes, type TableColumnDef } from 'pure/tableColumns';
     import { hasTableCellBinding, parseTableCellInput, tableCellCurrentPatch, tableCellDraft, tableCellText } from 'pure/tableCell';
     // ⚠️ 本组件其余分支**不用** `Notice`（回执一律在宿主侧）—— 这里是**唯一**例外：
     //    「改的这格写不进去」必须**当场**告诉用户（留在宿主侧会丢掉是哪个字段、为什么）
@@ -122,16 +122,22 @@
     // 🔴 #625：`seriesYearSpan` / `seriesGenres` **不再从组件里直取** —— 折叠卡的信息行改走
     //    `pure/cardMeta.seriesCardFieldValue`（它内部才用这两个聚合函数）。
     //    ⛔ 别因为「组件里看不到它们了」就在视图层再拼一次（那样行数与取值又会各走一套）。
-    import { foldSeries, listTreeRows, listDisplayRows, seriesKeyOf, seriesStatus, nextSeriesEntry, seriesReadPercent, seriesReadDone, seriesIndexValue, type SeriesGroup, type SeriesRow } from 'pure/seriesGroup';
+    import { foldSeries, listTreeRows, listFlatRows, listDisplayRows, seriesKeyOf, seriesStatus, nextSeriesEntry, seriesReadPercent, seriesReadDone, seriesIndexValue, type SeriesGroup, type SeriesRow } from 'pure/seriesGroup';
     // 进度 / 状态小字（#444c 下沉到纯模块）：卡片与弹窗**共用同一份口径**，⛔ 别在两处各写一套。
     import { listProgress, readPercent, bookUnitOf, cardPlaytimeBadge, cardReadBadge } from 'pure/mediaProgress';
     import { placeMenu } from 'pure/menuPlacement';
-    // 🔴 #626 多带三样：`posterGridTemplateForWall`（墙自己的列模板裁决）、`POSTER_WALL_GAP`（墙的间距，
-    //    必须与 `.rl-wall{gap}` 同值）、`POSTER_WALL_COLUMNS_MAX`（墙的列数上界，比网格宽一档）。
-    import { posterGridTemplate, posterGridTemplateForWall, posterZoomColumns, normalizePosterColumns, POSTER_COLUMNS_DEFAULT, POSTER_COLUMNS_MAX, POSTER_WALL_COLUMNS_MAX, type PosterDensity } from 'pure/posterGrid';
+    // 🔴 #626 多带两样：`posterGridTemplateForWall`（墙的列模板 —— 自定义档的**间距比网格宽**，裁决收在 pure 层）、
+    //    `POSTER_WALL_GAP`（墙的间距，必须与 `.rl-wall{gap}` 同值）。
+    // 🔴 用户 2026-10-20 删除「海报墙列数」⇒ `POSTER_WALL_COLUMNS_MAX` 与 `wallColumns` prop 一并下线。
+    import { posterGridTemplate, posterGridTemplateForWall, posterZoomColumns, normalizePosterColumns, POSTER_COLUMNS_DEFAULT, POSTER_COLUMNS_MAX, type PosterDensity } from 'pure/posterGrid';
     // 🔴 #598 视图切换的**唯一真源**（通用视图表 + 用户可见名 + lucide 图标名）＋ 时间线分组纯逻辑。
     //    ⛔ 别在这里手写第二份 label / icon（本仓「同一概念只准一份」）。
-    import { VIEW_MODES, VIEW_LABELS, VIEW_ICONS, MUSIC_VIEW, buildTimeline, type ViewMode } from 'pure/viewModes';
+    import {
+        VIEW_MODES, VIEW_LABELS, VIEW_ICONS, MUSIC_VIEW, buildTimeline, type ViewMode,
+        // 🔴 #668 视图顺序（自由排序 + 持久化）与时间线缩放档 —— 判据全在纯模块，⛔ 组件里不复制
+        buildViewChoices, moveViewValue, normalizeViewOrder,
+        normalizeTimelineZoom, timelineItemWidth, timelineZoomStep, TL_ZOOM_DEFAULT,
+    } from 'pure/viewModes';
     import {
         buildGenreOptions, genrePillLabel, matchesGenreScope,
         resolveGenreScope, seriesGenreScope, genreScopeKeyOf,
@@ -141,11 +147,16 @@
     // ⚠️ `pure/sourceRegistry` 的旧助手在这里**已无消费者**（角标改走 `entrySourceLabel`）⇒ 不再 import，
     //    ⛔ 别为「以防万一」把它加回来（未被调用的 import 就是一条会漂移的死路）。
     import { entrySourceLabel } from 'pure/sourceMeta';
+    // 🔴 2026-10-25 大众评分展示口径先收敛到 `pure/scoreDisplay`（Steam 好评率百分比优先）
+    import { scoreTextOf, scoreIsPercentOf } from 'pure/scoreDisplay';
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS, TYPE_COLORS, type ColorTheme, type EntryType } from 'data/types';
-    import type { MediaEntry, MediaStatus, BookKind } from 'data/types';
+    import type { MediaEntry, MediaStatus, BookKind, EntryLogKind, EntryTextKind } from 'data/types';
     import Icon from './Icon.svelte';
     // #566：受控下拉的自绘版（原生 `<select>` 的 popup 在 Windows 上不受 CSS 控制 ⇒ 列表无法居中）
     import MiniSelect from './MiniSelect.svelte';
+    // 🔴 #680：题材面板是**手写 DOM**（不是 MiniSelect），要让同组的三个下拉在它展开时收起 ——
+    //    走 MiniSelect 模块导出的广播口（⛔ 别在这里直接碰那个私有注册表）。
+    import { broadcastClosePeers } from './MiniSelect.svelte';
 
     export let entries: MediaEntry[] = [];
     export let onAdd: (t?: EntryType, kind?: BookKind) => void = () => {};
@@ -181,8 +192,10 @@
     export let onBulkDelete: (ids: string[]) => Promise<void> = async () => {};
     /** 书籍卡片右键「添加摘抄」：打开摘抄弹窗并固定挂载该书 */
     export let onAddExcerpt: (book: MediaEntry) => void = () => {};
-    /** 游戏卡片右键「记录游玩」：打开游玩记录弹窗并固定挂载该游戏 */
-    export let onOpenGameSessionModal: (game: MediaEntry) => void = () => {};
+    /** #685 右键「记录时长 / 记录重温 / 记录周目」：打开记录弹窗并固定挂载该条目 */
+    export let onOpenEntryLogModal: (e: MediaEntry, kind: EntryLogKind) => void = () => {};
+    /** #685 右键「添加短评 / 添加攻略」：打开文本记录弹窗并固定挂载该条目 */
+    export let onOpenEntryTextModal: (e: MediaEntry, kind: EntryTextKind) => void = () => {};
     /** 批量设置个人评分（rating 0 = 清除） */
     export let onBulkRating: (ids: string[], rating: number) => Promise<void> = async () => {};
     /** 批量追加标签（合并去重） */
@@ -204,6 +217,14 @@
      *     卡片按**自己那条的类型**取，所以一本书与一部电影可以显示不同的信息栏。
      *  🔴 数组顺序 = 渲染顺序；空数组 = 该类型三行都不显示（合法的用户选择）。 */
     export let cardFieldsByType: Record<EntryType, CardFieldKey[]> = DEFAULT_CARD_FIELDS_BY_TYPE;
+    /** 🔴 #653：书籍**按子分类**（文学 / 网文 / 漫画）各一份的信息栏。
+     *  ⚠️ 只对书籍生效；其余类型仍走 `cardFieldsByType`。缺省 = 三个子类都等于书籍那一份
+     *     （回落链在 `pure/cardMeta.resolveCardFieldsByKind`，⛔ 别在组件里另写一套）。 */
+    export let cardFieldsByKind: Record<BookKind, CardFieldKey[]> = {
+        book: DEFAULT_CARD_FIELDS_BY_TYPE.book,
+        novel: DEFAULT_CARD_FIELDS_BY_TYPE.book,
+        comic: DEFAULT_CARD_FIELDS_BY_TYPE.book,
+    };
     /** 1.3.1 ②（#621）：**表格视图的列**（按条目类型各一份；宿主已用 `resolveTableColumnsByType` 解析成六键齐全）。
      *  🔴 与上面的 `cardFieldsByType` **是两件事**（⛔ 别合并）：卡片信息栏是「精选 16 项、最多 5 行」，
      *     表格列是「该类型全部可写可读字段」。混在一起卡片那边会冒出 40 个候选。 */
@@ -219,20 +240,31 @@
     export let posterDensity: PosterDensity = 'standard';
     /**
      * 自定义列数的目标列数（仅 posterDensity === 'custom' 生效；实际列数仍由容器宽度决定）。
-     * 🔴 #626 起这是**卡片网格 / 瀑布流**的列数；海报墙只在没配过 `wallColumns` 时才跟随它。
+     * 🔴 用户 2026-10-20 删除「海报墙列数」后，这是**卡片网格 / 瀑布流 / 海报墙共用**的唯一列数真源
+     *    （墙不再有自己的 `wallColumns` —— 那个 prop 已随设置项一起下线）。
      */
     export let posterColumns: number = POSTER_COLUMNS_DEFAULT;
-    /**
-     * 🔴 #626 海报墙（`wall`）**自己的**列数；`undefined` = 跟随 `posterDensity`（缺省即此）。
-     * ⚠️ 类型是 `unknown`：它是**从设置直接透传的原始值**，归一 / 裁决只在
-     *    `pure/posterGrid.posterGridTemplateForWall` 一处收口（脏值按「没配过」处理 ⇒ 不会静默变 6 列）。
-     */
-    export let wallColumns: unknown = undefined;
+
     /**
      * 🔴 #591 Ctrl+滚轮缩放开关（设置页「外观与体验 › Ctrl + 滚轮缩放」，缺省关）。
      * `true` = 在本视图里**拦截** Ctrl+滚轮的默认页面缩放，改为缩放内容区卡片。
      */
     export let ctrlWheelZoom: boolean = false;
+    /**
+     * 🔴 #668「切换视图」各档的**显示顺序**（用户自由拖排，持久化在设置 `viewOrder` 里）。
+     * ⚠️ 传的是**原始配置**（可能缺键 / 脏），归一由 `pure/viewModes.normalizeViewOrder` 在阅读时做 ——
+     *    ⛔ 别在宿主里也归一一次（两处归一必然漂）。
+     */
+    export let viewOrder: string[] = [];
+    /** 拖完后回写宿主落盘（与 `onTableColumnsChange` 同一条通道） */
+    export let onViewOrderChange: (order: string[]) => void = () => {};
+    /**
+     * 🔴 #668 时间线视图自己的缩放档（持久化在设置 `timelineZoom` 里）。
+     * ⚠️ 与海报密度**分开存**：共用会让「在时间线上缩一次，卡片网格也跟着变」（`wallColumns` 同款教训）。
+     */
+    export let timelineZoom: number = TL_ZOOM_DEFAULT;
+    /** 时间线缩放后回写宿主落盘 */
+    export let onTimelineZoomChange: (zoom: number) => void = () => {};
     /**
      * 🔴 #591 Ctrl+滚轮缩放的**回推出口**（受控口径：值由宿主持有并落盘）。
      * 宿主收到后写 `posterDensity = 'custom'` + `posterColumns = n` ⇒ `syncPosterGrid()` 重推
@@ -267,6 +299,20 @@
     export let onScopePick: (scope: MergedScope) => void = () => {};
     export let onStatusPick: (status: MediaStatus | 'all') => void = () => {};
     export let onSortPick: (sort: SortBy) => void = () => {};
+    /**
+     * 🔴 需求 9（用户 2026-10-21）：**列表视图**「展示分组 / 不并组展示」的单循环开关。
+     * `true`（含缺省）= 展示分组（同系列折叠成合集行 + 可展开成员子行，即 #592 起的老口径）；
+     * `false` = 不并组展示（每条独立一行，行序 = `filtered` 的顺序，见 `pure/seriesGroup.listFlatRows`）。
+     * ⚠️ 只作用于**列表视图** —— 海报墙 / 卡片网格 / 瀑布流 / 时间线**行为不变**
+     *    （需求原文只点名列表视图；摊平那几种视图等于把同系列的 13 部散成 13 张卡，与 #592 的裁定相反）。
+     * ⚠️ 缺省 `true`：设置里 `undefined` 也当「展示分组」（老库没这个键 ⇒ 观感与升级前一致）。
+     */
+    export let listGrouping = true;
+    /**
+     * 上面那枚按钮的回推出口（受控口径：值由宿主持有并落盘，⛔ 组件不自己存一份设置）。
+     * ⚠️ **未注入（`null`）时整枚按钮不渲染** —— 本仓铁律：没接线就不画一个点了没反应的按钮。
+     */
+    export let onToggleGrouping: ((next: boolean) => void) | null = null;
 
     /**
      * 当前视图。
@@ -327,43 +373,54 @@
      * 步进方向 = 与浏览器一致（向上滚 = 放大 = 卡片变大 = **列数 -1**，见 `posterZoomColumns`）。
      * ⚠️ 一次滚轮手势会连发几十个 `wheel` ⇒ 时间戳**限流**，否则一划就从 12 列窜到 1 列。
      */
+    /** 时间线当前缩放档（已归一）+ 每档对应的条目宽度 —— 模板里只读这两条反应式 */
+    $: tlZoom = normalizeTimelineZoom(timelineZoom);
+    $: tlItemW = timelineItemWidth(tlZoom);
+
     const ZOOM_THROTTLE_MS = 140;
     let lastZoomAt = 0;
     /**
-     * 🔴 #626 海报墙的**起步列数**（`measuredColumns` 读不到时的兜底）。
-     * 墙有两套来源：配过 `wallColumns` ⇒ 用它；没配过 ⇒ 跟随共享的 `posterColumns`。
-     * ⚠️ 判据「配过没有」必须与 `pure/posterGrid.posterGridTemplateForWall` **同一口径**（有限数才算）。
-     */
-    function wallStartColumns(): number {
-        return typeof wallColumns === 'number' && Number.isFinite(wallColumns)
-            ? normalizePosterColumns(wallColumns, POSTER_WALL_COLUMNS_MAX)
-            : posterColumns;
-    }
-    /**
      * 🔴 #626 `kind` 多一档 `'wall'` —— 海报墙与卡片网格**共用同一个容器**，
-     * 但缩放的上界与落盘出口都不同（墙 16 列 / 只写 `wallColumns`）。
+     * 缩放的上界与落盘出口按视图分流（见下）。
      * ⚠️ 参数一变 Svelte 会**重建这个 action**（旧监听先 destroy）—— 切视图时正好需要这个行为。
      */
-    function zoomWheel(node: HTMLElement, kind: 'grid' | 'wall' | 'masonry') {
+    function zoomWheel(node: HTMLElement, kind: 'grid' | 'wall' | 'masonry' | 'timeline') {
         const onWheel = (ev: WheelEvent) => {
-            if (!ctrlWheelZoom || !onPosterZoom) return;
+            // 🔴 守卫按 kind 分流（#668）：海报三档要 `onPosterZoom`；**时间线只认自己的 `onTimelineZoomChange`**
+            //    —— 原写法 `if (!ctrlWheelZoom || !onPosterZoom) return;` 会让「时间线没传海报缩放出口」时
+            //    整条路被挡掉（实测：探针不传 onPosterZoom，时间线 Ctrl+滚轮毫无反应）。
+            // ⚠️ 开关仍是同一条 `ctrlWheelZoom`（用户在设置里统一控制），⛔ 别给时间线另开一个开关。
+            if (!ctrlWheelZoom) return;
+            const isTimeline = kind === 'timeline';
+            if (!isTimeline && !onPosterZoom) return;
+            if (isTimeline && !onTimelineZoomChange) return;
             if (!ev.ctrlKey) return;
             ev.preventDefault();   // 拦截系统默认缩放（Chromium 的 Ctrl+wheel 页面缩放）
             ev.stopPropagation();
             const now = Date.now();
             if (now - lastZoomAt < ZOOM_THROTTLE_MS) return;
             const dir: 'in' | 'out' = ev.deltaY < 0 ? 'in' : 'out';
+            // 🔴 #668 时间线**不是列数模型**（按年份横向铺条目，没有「列」）⇒ 走自己的宽度档，
+            //    也写自己的设置键。⛔ 别把它塞进 `onPosterZoom`（那会顺手改掉卡片网格的列数）。
+            if (isTimeline) {
+                const nextZ = timelineZoomStep(tlZoom, dir);
+                if (nextZ === normalizeTimelineZoom(tlZoom)) return; // 已到边界 ⇒ no-op，不落盘
+                lastZoomAt = now;
+                onTimelineZoomChange(nextZ);
+                return;
+            }
             const isWall = kind === 'wall';
             // 从**实际渲染的列数**起步（用户眼前那个数），⛔ 不用设置里那份可能属于别的档位的数
+            // 🔴 用户 2026-10-20 删除「海报墙列数」后，墙**没有第二套起步值**了 —— 与卡片网格同源。
             const cur = kind === 'masonry'
                 ? masonryCols
-                : measuredColumns(node) ?? (isWall ? wallStartColumns() : posterColumns);
+                : measuredColumns(node) ?? posterColumns;
             // 🔴🔴 #598 **翻面**：不再按容器宽度夹上限（那套「卡片不小于 180px」实测把**缩小**堵死了：
             //    1080px 宽时限成 5 列 ⇒ 从 5 列再滚恒 no-op，用户报的正是「缩小失灵」）。
-            //    上下界回到列数常量：放大到 1 列、**缩小到各自的上界**。
-            // 🔴 #626 上界按视图分流：墙 `POSTER_WALL_COLUMNS_MAX`（16 列，纯封面可以更密）、
-            //    卡片网格/瀑布流仍 `POSTER_COLUMNS_MAX`（12 列）。
-            const max = isWall ? POSTER_WALL_COLUMNS_MAX : POSTER_COLUMNS_MAX;
+            //    上下界回到列数常量：放大到 1 列、**缩小到 `POSTER_COLUMNS_MAX`**。
+            // 🔴 #626 曾经给墙开过一档更宽的上界（16 列），随「海报墙列数」设置项一起下线 ——
+            //    ⛔ 别再加回来：那会让墙停在一个设置页调不动的列数上。
+            const max = POSTER_COLUMNS_MAX;
             const next = posterZoomColumns(cur, dir, max);
             if (next === normalizePosterColumns(cur, max)) return;   // 已在边界 ⇒ 不动（天然 no-op，不落盘）
             lastZoomAt = now;
@@ -470,6 +527,27 @@
     let ctxOnKey: ((ev: KeyboardEvent) => void) | null = null;
     /** 批量选择（列表视图 checkbox） */
     let selectedIds: Set<string> = new Set();
+    /** 🔴 #680 ⑤：搜索框 DOM 引用（Ctrl+F 聚焦它 —— 见 `onWindowKeydown`） */
+    let searchInputEl: HTMLInputElement | null = null;
+    /**
+     * 🔴🔴 #680 ③-3（用户：「最左侧常驻的勾选框干扰视线。默认隐藏勾选框，在列表顶部加一个『批量管理』
+     * 入口；点击后进入多选模式，勾选框才出现，同时顶部浮现批量操作栏」）：
+     * **批量模式开关**。只有它为真时，表头与各行的勾选列才渲染（`{#if batchMode}`）。
+     * · 关掉 = 勾选全部清空（⛔ 别留半套：看不到勾选框却还带着选中项，下次删东西会删到看不见的东西）；
+     * · 表格列里那一列也是条件渲染的 ⇒ 关掉时「标题」自动占满（不会留一条空列）。
+     */
+    let batchMode = false;
+    function enterBatchMode(): void {
+        batchMode = true;
+    }
+    function exitBatchMode(): void {
+        batchMode = false;
+        clearSelection();
+    }
+    /** 从「已选 N 项」的批量条一键退出（与「取消选择」的区别：它也关掉批量模式本身） */
+    function finishBatch(): void {
+        exitBatchMode();
+    }
     let bulkStatus: MediaStatus | '' = '';
     let bulkRating = 0;
     let bulkTagsText = '';
@@ -529,12 +607,15 @@
     //      （**只剩这一个使用者** ⇒ 留着就是死码，本仓「死码不留」）。
     //    ⚠️ 这里**刻意不写出那两个被删导出名** —— 注释会进产物，写了会撞红自己的反向守卫（本仓老坑）。
 
-    /** 搜索占位符随当前类型动态（书籍=书名/作者、游戏=标题/开发商、音乐=标题/作者，均已真实参与 matchesSearch；影视仅标题可搜，原名不宣传） */
+    /** 搜索占位符随当前类型动态（书籍=书名/作者、游戏=标题/开发商、音乐=标题/作者，均已真实参与 matchesSearch）
+     *  🔴 #689：影视 / 动画补「导演」—— 用户要求「列表视图全局搜索框可按导演筛选显示条目」，
+     *    占位符必须跟上，否则功能做了也没人知道（⛔ 别只改逻辑不改文案）。 */
     $: searchPlaceholder = (() => {
         const t = lockType ?? (typeFilter !== 'all' ? typeFilter : null);
         if (t === 'book') return '搜索书名、作者…';
         if (t === 'game') return '搜索标题、开发商…';
         if (t === 'music') return '搜索标题、作者…';
+        if (t === 'movie' || t === 'tv' || t === 'anime') return '搜索标题、导演…';
         return '搜索标题…';
     })();
 
@@ -816,7 +897,14 @@
         : viewMode === 'grid' || viewMode === 'wall'
             ? seriesRows
             : viewMode === 'list'
-                ? listTreeRows(filtered, sortBy)
+                ? // 🔴 需求 9（2026-10-21）：列表视图两种口径——`listGrouping` 开 = #592 起的
+                  //    「合集整体置顶 + 树形父子行」；关 = **不并组展示**（`listFlatRows`：每条独立一行、
+                  //    行序 = `filtered` 的顺序）。两分支都吐 `SeriesRow[]` ⇒ 下游 `listDisplayRows` /
+                  //    `listItems` / `drawList` 一行都不用改（⚠️ 摊平态的 `openGroupKeys` 自然失效：
+                  //    没有组行可展开；切回分组态时组件里那套展开集原样还在）。
+                  listGrouping
+                    ? listTreeRows(filtered, sortBy)
+                    : listFlatRows(filtered)
                 : filtered.map((e): SeriesRow => ({ kind: 'single', entry: e }));
     $: listRows = rowSource;
     /**
@@ -841,15 +929,15 @@
      */
     $: wallView = viewMode === 'wall';
     /**
-     * 🔴 #626 卡片网格 / 海报墙**各自**的列模板。
-     * 两处差异都要在这里表达，⛔ 别把两份并成一个：
-     *   ⑴ **来源不同** —— 墙优先用它自己的 `wallColumns`（配过才用），否则跟随共享的密度档；
-     *   ⑵ **间距不同** —— 墙 `.rl-wall{gap:10px}` / 网格 `.rl-grid{gap:12px}`，
-     *      而自定义列数要按真实 gap 反算列宽（`posterGridTemplate` 的第 3 参）。
-     * 🔴 判据 `=== undefined` 那套收在 `posterGridTemplateForWall` 里，这里**不重复判**（单一真源）。
+     * 🔴 #626 卡片网格 / 海报墙**各自的**列模板。
+     * 差异只剩**间距**一处（⛔ 别把两份并成一个）：
+     *   墙 `.rl-wall{gap:10px}` / 网格 `.rl-grid{gap:12px}`，而自定义列数要按真实 gap 反算列宽
+     *   （`posterGridTemplate` 的第 3 参），所以墙走 `posterGridTemplateForWall` 把 gap 换掉。
+     * 🔴 用户 2026-10-20 删除「海报墙列数」⇒ **列数来源已统一**（都是共享的密度档 / 列数），
+     *    `wallColumns` 这个第一参已从函数签名里拿掉，⛔ 别再给墙传第二套列数。
      */
     $: gridColsTemplate = wallView
-        ? posterGridTemplateForWall(wallColumns, posterDensity, posterColumns)
+        ? posterGridTemplateForWall(posterDensity, posterColumns)
         : posterGridTemplate(posterDensity, posterColumns);
     $: masonryBuckets = splitMasonry(listItems, masonryCols);
 
@@ -942,11 +1030,16 @@
     // 游戏游玩时长角标（封面左下角，🔴 #471 从元信息区搬来）：实现**下沉到
     // `pure/mediaProgress.cardPlaytimeBadge`**，模板直接调它（⛔ 别在这里再包一层别名 —— 多一个名字就多一处会漂移的入口）。
 
-    /** 大众评分数字格式化：整数去小数点（10 分制/5 分制均可） */
+    /**
+     * 大众评分数字格式化。
+     *
+     * 🔴 2026-10-25 起**实现下沉到 `pure/scoreDisplay.scoreTextOf`**（唯一真源）：
+     *    Steam 条目有 `reviewPercent` 时显示 `97%`，其余条目仍是 10 分制数字。
+     *    ⚠️ 保留本函数只是为了模板里几十处 `scoreText(e)` 调用点不必全改（别名而非第二份实现）——
+     *    ⛔ 千万别在这里再写一遍格式化逻辑，那正是「同一件事两处做」的老坑。
+     */
     function scoreText(e: MediaEntry): string {
-        if (e.communityScore == null) return '';
-        const n = Number(e.communityScore);
-        return Number.isInteger(n) ? String(n) : n.toFixed(1);
+        return scoreTextOf(e);
     }
 
     /**
@@ -1074,11 +1167,62 @@
         window.addEventListener('mousedown', viewOnDown);
         window.addEventListener('keydown', viewOnKey);
     }
-    /** 选项表 = 通用视图表（`pure/viewModes`）＋ 音乐专有的「分组歌单」（仅 `lockType === 'music'` 追加） */
-    $: viewChoices = [
-        ...VIEW_MODES.map((v) => ({ value: v as string, label: VIEW_LABELS[v], icon: VIEW_ICONS[v] })),
-        ...(lockType === 'music' ? [MUSIC_VIEW] : []),
-    ];
+    /**
+     * 🔴 #668 用户：「切换视图按钮也支持**自由排序并持久化**」。
+     *
+     * 三份状态，顺序有讲究（⛔ 别调换）：
+     *  ① `curViewOrder` = **本地生效**的顺序。为什么要留一份而不直接读 prop：拖完我们只是**回调**宿主落盘，
+     *     宿主回推要绕一圈 `refreshViews`；若直接读 prop，落盘那一瞬界面顺序不动 ⇒ 用户看着像「没拖成」
+     *     （实测：回调已经拿到 `['wall', …]`，列表却还是原序）。
+     *  ② `dragViewValue` / `overViewValue` = 拖拽进行中的那一档与落点（判据全在**值**上，⛔ 不依赖 DOM 下标 ——
+     *     下标会随「分组歌单」是否在场而漂）。
+     *  ③ 宿主那份 `viewOrder` 只在**首次注入**时收下（`gotHostOrder` 闸门）⇒ 拖动中不会被打回去。
+     */
+    let curViewOrder: string[] = [];
+    let dragViewValue: string | null = null;
+    let overViewValue: string | null = null;
+    let gotHostOrder = false;
+    // 宿主那份（设置页改了 / 首次注入）⇒ 只在第一次收下
+    $: if (!gotHostOrder && viewOrder && viewOrder.length) {
+        curViewOrder = viewOrder;
+        gotHostOrder = true;
+    }
+
+    /**
+     * 选项表 = 通用视图表（`pure/viewModes`）按**当前顺序**排 ＋ 音乐专有的「分组歌单」
+     * （仅 `lockType === 'music'` 追加）。顺序 / 图标 / 名字一律经 `pure/viewModes.buildViewChoices`，
+     * ⛔ 本组件不手写第二份。
+     */
+    $: viewChoices = buildViewChoices(curViewOrder, lockType);
+
+    function onViewDragStart(ev: DragEvent, value: string): void {
+        dragViewValue = value;
+        overViewValue = value;
+        if (ev.dataTransfer) {
+            ev.dataTransfer.effectAllowed = 'move';
+            ev.dataTransfer.setData('text/plain', value);
+        }
+    }
+    function onViewDragOver(ev: DragEvent, value: string): void {
+        if (!dragViewValue) return;
+        ev.preventDefault(); // 不拦就没有 drop
+        overViewValue = value;
+    }
+    function onViewDrop(ev: DragEvent, value: string): void {
+        if (!dragViewValue) return;
+        ev.preventDefault();
+        const from = dragViewValue;
+        dragViewValue = null;
+        overViewValue = null;
+        if (from === value) return;
+        const next = moveViewValue(curViewOrder, from, value);
+        curViewOrder = next;   // 先本地生效（界面立刻跟上），再回传落盘
+        onViewOrderChange(next);
+    }
+    function onViewDragEnd(): void {
+        dragViewValue = null;
+        overViewValue = null;
+    }
 
     /**
      * 🔴🔴 #640 ⑷（1.4.0，用户点名）：**混类型视图下卡片信息区等高**
@@ -1104,7 +1248,7 @@
         const types = new Set<EntryType>();
         for (const e of filtered) types.add(e.type);
         let max = 0;
-        for (const t of types) max = Math.max(max, (cardFieldsByType[t] ?? []).length);
+        for (const t of types) max = Math.max(max, (cardFieldsFor(t, t === 'book' ? 'novel' : undefined, cardFieldsByType, cardFieldsByKind) ?? []).length);
         // 空集合时给 0（下面的补位逻辑自然不做事）
         return max;
     })();
@@ -1114,8 +1258,8 @@
      * ⚠️ 补位行的值走 `null`（模板据此渲染一个**不含文字但占位**的 div），
      *    ⛔ 不要用「—」填：那会让用户以为「这条条目这个字段是空的」（假数据）。
      */
-    function cardRowsFor(type: EntryType): Array<{ f: CardFieldKey | null; key: string }> {
-        const real = cardFieldsByType[type] ?? [];
+    function cardRowsFor(type: EntryType, kind?: BookKind): Array<{ f: CardFieldKey | null; key: string }> {
+        const real = cardFieldsFor(type, kind, cardFieldsByType, cardFieldsByKind);
         const out: Array<{ f: CardFieldKey | null; key: string }> = real.map((f) => ({ f, key: f }));
         for (let i = real.length; i < cardRowMax; i++) out.push({ f: null, key: `__pad${i}` });
         return out;
@@ -1156,6 +1300,10 @@
             closeGenre();
             return;
         }
+        // 🔴 #680：**题材面板与三个 MiniSelect 同属一组互斥** —— 题材是手写面板、不是 MiniSelect，
+        //    所以这里要显式广播一次「别的下拉请收起」。注册表在 `MiniSelect` 模块内，这里通过共享组名
+        //    `rl-toolbar-filters` + 事件桥接（见 `broadcastClosePeers`）。
+        broadcastClosePeers('rl-toolbar-filters');
         genreOpen = true;
         genreOnDown = (ev: MouseEvent) => {
             const el = ev.target as HTMLElement | null;
@@ -1290,7 +1438,8 @@
     // 1.3.1 ②（#621）列表视图改**可编辑表格**
     //
     // 用户口径（2026-10-13）：「列表视图改表格式」＋「列的字段可自定义」＋「格子点击编辑、失焦保存、
-    // Ctrl+Z 撤销」＋「列宽可拖、双击自适应」，且点名「看主流软件怎么做的」⇒ 对齐 Obsidian 官方 Bases。
+    // Ctrl+Z 撤销」＋「列宽可拖」，且点名「看主流软件怎么做的」⇒ 对齐 Obsidian 官方 Bases。
+    // （原本还有「双击自适应列宽」，v2 已于 2026-10-20 按用户要求删除。）
     //
     // 四条落点：
     //   ① 列 = **数据驱动**（`colViews`）—— ⛔ 不再把「年份 / 状态 / 评分 / 进度」写死在模板里；
@@ -1311,19 +1460,57 @@
         }
         return out;
     })();
-    /** 单类型表 ⇒ 该类型（列可配置）；混类型（「全部」页签）⇒ `null`（走并集，列菜单禁用） */
-    $: tableType = tableTypes.length === 1 ? tableTypes[0] : null;
+    /** 单类型表 ⇒ 该类型（列可配置）；混类型（「全部」页签）⇒ `null`（走并集，列菜单禁用）
+     *  🔴🔴 #688（用户报「表头字段也无法拖动」）：判据**必须优先认 `lockType`**。
+     *    原来只看 `listViewRows` 里出现了几种类型 —— 而切页签后（尤其切换瞬间）行数据可能还是
+     *    上一页的混类型结果 ⇒ `tableType` 为 null ⇒ `canEditColumns` 为 false ⇒ 表头 `draggable=false`，
+     *    用户看到的就是「表头拖不动」，且**没有任何提示**。
+     *    `lockType` 是宿主传下来的「本页锁定的类型」（阅读/影视/游戏/音乐页都有），它比「当前渲染了哪些行」
+     *    更权威：行还没刷新时它就已经是对的。
+     */
+    $: tableType = lockType !== null && lockType !== undefined ? lockType : tableTypes.length === 1 ? tableTypes[0] : null;
     /** 渲染兜底用的类型集合（空表 / 混类型靠它取列名与默认权重；⛔ 不参与「这格能不能改」的判定） */
     $: tableDefTypes = tableTypes.length > 0 ? tableTypes : [lockType ?? 'movie'];
-    /** 本表实际显示的列键。🔴 混类型走**并集**（取某个类型会让别的类型的列永远看不见），并截断到上限 */
+    /** 本表实际显示的列键。
+     *  🔴 #668 用户裁定：「列表视图切换各类型**不要出现不是该类型的表头列**」。
+     *     · 单类型（某个类型页签）⇒ 该类型自己的配置（专属列齐全）；
+     *     · 混类型（「全部」页签）⇒ **公共列**（交集），不再是六类并集 ——
+     *       并集会让电影行里出现「作者」「平台」这些它根本没有的列（整列都是 `—`）。
+     *     ⚠️ 交集为空时 `commonColumnsForTypes` 内部回落到并集（⛔ 别让表退化成只剩标题）。
+     */
     $: tableKeys = tableType
         ? (tableColumnsByType[tableType] ?? [])
-        : tableColumnsForTypes(tableDefTypes, tableColumnsByType);
+        : commonColumnsForTypes(tableDefTypes, tableColumnsByType);
     $: columnDefs = tableColumnDefsFor(tableKeys, tableDefTypes);
     /** 列配置菜单：只有单类型表能开（混类型没有「哪一套」可改） */
     $: canEditColumns = tableType !== null;
     let colMenuOpen = false;
     $: colPool = tableType ? tableColumnPoolFor(tableType) : [];
+    /**
+     * 🔴🔴 #680 ③-4：列池**分三组显示**（用户：「面板改为支持分组的显示以区分不同的列字段重要性」）。
+     * 判据只看列键，⛔ 不改 `pure/tableColumns` 的池子顺序与归一 —— 那套顺序是「拖表头定列序」的真源。
+     *   ① 常用：状态 / 评分 / 进度 / 年份（每张表都看得见的东西）；
+     *   ② 作品信息：题材 / 作者 / 画师 / 平台 / 导演 这些内容属性；
+     *   ③ 其它：出版社 / 译者 / ISBN / 价格 这类低频字段。
+     */
+    const COL_GROUP_PRIMARY = new Set(['status', 'rating', 'year', '__community', '__progress']);
+    const COL_GROUP_CONTENT = new Set(['genres', 'author', 'artist', 'platform', 'developer', 'director', 'cast', 'screenwriter', 'album', 'language', 'country', 'series', 'series_index']);
+    function colGroupOf(key: string): string {
+        if (COL_GROUP_PRIMARY.has(key)) return '常用';
+        if (COL_GROUP_CONTENT.has(key)) return '作品信息';
+        return '其它';
+    }
+    /** 分组后的列池（保持组内原池顺序；空组不渲染） */
+    $: colGroups = (() => {
+        const order = ['常用', '作品信息', '其它'];
+        const map = new Map<string, { key: string; label: string; editable: boolean }[]>();
+        for (const opt of colPool) {
+            const g = colGroupOf(opt.key);
+            if (!map.has(g)) map.set(g, []);
+            map.get(g)!.push(opt);
+        }
+        return order.filter((t) => map.has(t)).map((t) => ({ title: t, items: map.get(t)! }));
+    })();
 
     // ── 列宽：**权重**（不是 px、也不是 %）─────────────────────────────────────
     //   🔴 为什么是权重：整表恒撑满容器（#595 的口径 —— 用户嫌「书名栏占太大空间」，改成全部按比例给宽）。
@@ -1336,112 +1523,380 @@
     const OPS_PCT = 7;
     const FLEX_PCT = 100 - CB_PCT - OPS_PCT;
     const MIN_WEIGHT = 0.35;
+    /**
+     * 🔴🔴 #680（用户：「标题列必须设为弹性列，占剩余最大宽度；次要列固定窄宽，绝不随窗口拉宽无限拉伸」）：
+     * 窄列的**单列上限**（占总宽百分比）。1244px 下 1% ≈ 12.4px ⇒ 8% ≈ 100px。
+     * ⚠️ 这不是「每列都封 8%」—— 列一多那样会把 88% 预算吃光（10 列时标题只剩 8%，比改之前更糟；
+     *    探针 _probe_680_cols 第一版抓到过）。真正的算法在 buildColViews：
+     *    **标题先保底 TITLE_MIN_PCT**，剩下的预算再按列数分给窄列（每列再受这里这个上限约束）。
+     */
+    /** ⚠️ #680 换框后**不再使用**百分比上限（改为固定 px，见 colPx）。保留一个 0 值以挡住误用。 */
+    const NARROW_CAP_PCT = 0;
+    /**
+     * 🔴🔴 #684：**标题列的保底像素宽**。次要列再多，也必须给它留这么宽。
+     * 依据：标题格里是「封面 + 间距 + 书名」，280px 能完整放下「三体全集（典藏版）· 刘慈欣」这一档长度。
+     * ⚠️ 这是**硬闸**（`buildColViews` 用它算次要列预算），⛔ 别调小到让标题又开始截断。
+     */
+    const TITLE_MIN_PX = 280;
+    /** 🔴 #684：勾选列 / 操作列的**固定像素宽**（原先是 5% / 7% 百分比，窄屏会跟着缩，宽屏又浪费）。 */
+    const CB_W = 60;
+    const OPS_W = 84;
+    /**
+     * 🔴 #684：表格**可用横向宽度**（px）。由 `bind:clientWidth` 实时喂进来
+     * （`$: tableAvailPx = wrapW || 1244`）。⛔ 别在 `buildColViews` 里读 DOM —— 那是已渲染的旧值，
+     * 而且会让 Svelte 的依赖分析失效（本仓 #446/#530 的老坑）。
+     * 量不到时用 1244（用户常用窗口宽）做保守默认。
+     */
+    let wrapW = 0;
+    let tableAvailPx = 1244;
+    /** 次要列的**兜底宽度**（px）：内容没量到时用它。⚠️ #687 起这只是下限，不是固定宽 ——
+     *  有实测内容宽时按实测分配（见 `buildColViews`）。 */
+    const NARROW_PX_BASE = 80;
+    /** 🔴 #687：纯数值列（页数 / 片长 / 集数）的兜底下限 —— 内容只有几个数字，别占 80px。 */
+    const NARROW_PX_NUM = 56;
+    /** 🔴 #687：评分类列（个人评分 / 大众评分）的下限 —— 格子里是「五颗星 + 数字」。 */
+    const NARROW_PX_SCORE = 104;
+    /** 长文本次要列（作者 / 平台 / 专辑）的兜底下限：80px 会截断两三个字，给 120。 */
+    const NARROW_PX_LONG = 120;
+    /** 拖窄时的下限（再窄就认不出是哪一列了）。 */
+    const NARROW_PX_MIN = 48;
+    /** 🔴 #680：标题列的**保底占比**（其余列只分 FLEX_PCT − 它）—— 保证长书名永远有地方放。 */
+    const TITLE_MIN_PCT = 22;
     const TITLE_KEY = '__title';
-    const TITLE_DEFAULT_WEIGHT = 3.2;
-    let colWeights: Record<string, number> = {};
+    /**
+     * 🔴🔴 用户 2026-10-20（v2 列表视图宽度重构）：**用户手动拖出来的列宽，单位就是 px**。
+     *
+     * 改前存的是「权重」（3.2 权重 = 80px 之类），拖 1px 要 `px → 权重 → px` 往返换算；
+     * 而标题列还额外挂了一条补丁（`titlePinned()` / `tableExactWidth()` / `colPxForTitle()`），
+     * 让表格宽度 = Σ 列宽 —— 与 `<table style="width:100%">` 和 `buildColViews` 的
+     * 「availPx − CB_W − OPS_W 预算」三方互相抵消，结果是**标题列拖动被全部吃掉**（用户报障）。
+     *
+     * ⇒ v2：**px 是唯一真源**，拖多少记多少，⛔ 别再引入权重/百分比/比例。
+     *   有键 = 这一列由用户定宽；没键 = 这一列走内容自适应（见 `buildColViews`）。
+     *   标题列也在这张表里，和次要列**同一套规则**（不再有第二条分支）。
+     */
+    let manualPx: Record<string, number> = {};
+    /** 🔴 #688：拖动列宽期间为 true —— 期间**禁止**自适应重算，否则每帧把用户拖出来的宽度冲回内容宽。 */
+    let resizing = false;
+    /** 🔴 用户 2026-10-20：正在拖的那一列（只用于给柄加 `.is-active` 高亮）。`null` = 没在拖。 */
+    let resizeColKey: string | null = null;
 
-    function defaultWeight(def: TableColumnDef): number {
-        if (def.key === '__progress') return 1.8;
-        if (def.key === '__community') return 1.1;
-        switch (def.kind) {
-            case 'number': return 1;
-            case 'enum': return 1.1;
-            case 'list': return 1.7;
-            case 'date': return 1.3;
-            case 'readonly': return 1.2;
-            default: return 1.4;
+    /**
+     * 🔴 v2 说明：`autoWeights` 的内部仍是**权重口径**（量内容那一路没动，改动面越小越安全），
+     * 本常量只服务权重 ↔ px 的换算（`recomputeAutoWeights` 的 `toWeight` 与 `buildColViews` 的
+     * `fromMeasure`）。⛔ 拖动路径（`manualPx`）**完全不经过它** —— 拖多少记多少 px。
+     * 权重 1 ≈ `NARROW_PX_BASE`(80px)。
+     */
+    const NARROW_DEFAULT_WEIGHT = 3.2;
+
+    /** 🔴 v2（用户 2026-10-20「彻底重构 v2 版本的列表视图」）：`buildWeights()` 与 `defaultWeight()`
+     *  已**整体删除**。它们是「手动权重 > 自适应权重 > 按 kind 兜底」三层优先级里最底那一层，
+     *  在标题列上最终退化成 `TITLE_DEFAULT_WEIGHT` 这个凭空造的数 —— 标题列宽之所以拖不动，
+     *  有一半原因就是它被这条兜底反复涂改。现在列宽**只有一条路**：`buildColViews()`。
+     *  ⛔ 别再补回「按 kind 猜宽度」的函数，猜出来的数永远会和内容打架。 */
+
+    /**
+     * 内容自适应的实测结果（**内部仍是权重口径**，只在 `buildColViews` 里换算回 px）。
+     *
+     * 口径：**宽度由内容算**，`autoWeights` 只是「还没量到内容时的兜底」。
+     *  · 量什么：本表**实际渲染的所有行**里该列文字的 `scrollWidth`（`.rl-tbl-mv` 是 `overflow:hidden`，
+     *    `scrollWidth` 恰好是全文宽）+ 格内距；表头文字也算一份（列名比内容长时按列名）。
+     *  · **无内容的列收窄**：全列都是 `—`（这一列对本表没有信息）⇒ 压到 `MIN_WEIGHT` 那一档，
+     *    把空间让给有内容的列 —— 这正是「不是该类型的列占着宽度」的解法。
+     *  · 手动拖**优先级更高**：`manualPx` 里有这个键就整列跳过，自适应不再覆盖它
+     *    （否则每换一次数据就把人手拖的宽度冲掉）。
+     *
+     *  🌱 约定：`manualPx` 里有这个键，表示这一列是被手动拖动过的，不再参与内容自适应。
+     *     ⚠️ 绝不能放进 `$:` 里直接量 DOM：`$:` 在**渲染之前**跑，那时候表格还是上一版的行
+     *     （本仓「先算后画」的老坑）。⇒ 走 `afterUpdate` 量一次、写进 `autoWeights`，由 `$:` 去消费。
+     */
+    let autoWeights: Record<string, number> = {};
+
+    /**
+     * 量一列的内容宽（px），同时告诉调用方「这列有几格是**真实内容**」。
+     * 🔴 #668 两个踩过的坑：
+     *  ⑴ 空值的格子里渲染的是占位符 `—`，它的 `scrollWidth` **不是 0**（它继承整格宽）⇒
+     *     只看宽度会把「整列都是 —」当成有内容，永远压不窄 ⇒ 判据必须是「**非占位符**的格子数」。
+     *  ⑵ 选择器 `[data-col="…"] .rl-tbl-mv` 会**连表头一起选中**（`th` 也带 `data-col` 且有 `.rl-tbl-mv`）
+     *     ⇒ 列数永远比真实行多 1，`real` 恒 > 0、压窄永不生效。表头只能算宽度，**不算内容格**。
+     * ⇒ 本函数拆成 `tbody` 里的数据格（判 real + 量宽）与表头（只量宽）两段。
+     */
+    function measureCol(table: HTMLTableElement, key: string): { px: number; real: number } {
+        let max = 0;
+        let real = 0;
+        // ① 只数 **tbody** 里的数据格（表头在 thead，天然被排除；合集父级行也在这里，算一格）
+        // 🔴 占位符 `—` 是**格子里面**的 `<span class="rl-tbl-none">`，不是格子本身 ——
+        //    选择器命中的是外层 `.rl-tbl-cell.rl-tbl-ed`（它也带 `.rl-tbl-mv`），
+        //    所以「是不是占位符」必须看**这个格子内部有没有 `.rl-tbl-none`**。
+        table.querySelectorAll<HTMLElement>(`tbody [data-col="${key}"] .rl-tbl-mv`).forEach((el) => {
+            const placeholderOnly = !!el.querySelector(':scope > .rl-tbl-none');
+            if (!placeholderOnly) real++;
+            if (el.scrollWidth > max) max = el.scrollWidth;
+        });
+        // ② 表头文字只参与**宽度**（列名常常比内容长），⛔ 不计入 real
+        const th = table.querySelector<HTMLElement>(`thead th[data-col="${key}"] .rl-tbl-mv`);
+        if (th && th.scrollWidth > max) max = th.scrollWidth;
+        return { px: max, real };
+    }
+
+    /**
+     * 用**实测内容宽**重算整表权重（每列 = 内容宽 + 内距 + 余量）。
+     * ⚠️ 只给**没被手动拖过**的列算（`colWeights` 里有的键原样跳过）—— 手动优先。
+     */
+    function recomputeAutoWeights(): void {
+        // 🔴 #688：拖动列宽期间**不许重算**（见 startColResize 的注释）
+        if (resizing) return;
+        const table = tableEl;
+        if (!table) return;
+        const next: Record<string, number> = {};
+        const px: Record<string, number> = {};
+        const real: Record<string, number> = {};
+        for (const def of columnDefs) {
+            if (Object.prototype.hasOwnProperty.call(manualPx, def.key)) continue; // 手动拖过 ⇒ 不覆盖
+            const m = measureCol(table, def.key);
+            px[def.key] = m.px;
+            real[def.key] = m.real;
         }
-    }
-    /** 事件处理器用的「当前权重表」（那里**不在反应式上下文**，直接读 `colWeights` 没有穿透问题） */
-    function keyWeight(): Record<string, number> {
-        return buildWeights(colWeights, columnDefs);
+        const titlePx = (() => {
+            const th = table.querySelector<HTMLElement>(`th[data-col="${TITLE_KEY}"] .rl-tbl-mv`);
+            return th ? th.scrollWidth : 0;
+        })();
+        const haveAny = Object.values(px).some((v) => v > 0) || titlePx > 0;
+        if (!haveAny) return; // 还没渲染出行：保持兜底权重（⛔ 别把表写成 0 宽）
+        // 🔴🔴 #687：内容宽 → 权重，**按绝对值换算**（原来是「除以最宽一列 × 3.6」）。
+        //    旧换算的分母是**本表最宽的那一列** ⇒ 列宽是「相对最宽列」的比例，最窄的列也恒得 0.9×
+        //    权重 ≈ 22px，再被 `NARROW_PX_MIN` 抬回 48px ⇒ 12 列时所有列被压成同一个宽度（实测 106px），
+        //    短字段（年份）与中字段（ISBN）分不开。现在权重 = 实测 px 直接换算（1 权重 = 80px），
+        //    `buildColViews` 再按需求宽分配剩余空间给标题。
+        const toWeight = (v: number): number => Math.max(MIN_WEIGHT, (v / NARROW_PX_BASE) * NARROW_DEFAULT_WEIGHT);
+        if (titlePx > 0 && !Object.prototype.hasOwnProperty.call(manualPx, TITLE_KEY)) next[TITLE_KEY] = toWeight(titlePx);
+        for (const def of columnDefs) {
+            const v = px[def.key] ?? 0;
+            // 🔴 整列**没有真实内容**（只有占位符 —）⇒ 压到最窄那一档，把宽度让给有信息的列。
+            //    ⚠️ 判据是 `real === 0`（有真实内容的格子数），**不是** `v > 0` ——
+            //       占位符 `—` 自己也有宽度，按宽度判会永远不压窄（本批实测踩到）。
+            next[def.key] = real[def.key] > 0 ? toWeight(v) : MIN_WEIGHT;
+        }
+        // 🔴 只在**结果真的变了**时赋值：`autoWeights` 会驱动 `colViews` 重算 ⇒ 再触发 `afterUpdate`，
+        //    无脑写就是无限更新（Svelte 的 `flush_loop`）。浮点差异按 0.05 一档比较。
+        const same =
+            Object.keys(next).length === Object.keys(autoWeights).length &&
+            Object.keys(next).every((k) => Math.abs((autoWeights[k] ?? -1) - next[k]) < 0.05);
+        if (!same) autoWeights = next;
     }
 
-    /**
-     * 逐列的渲染清单（列描述 + 已算好的百分比宽）。
-     * 🔴 必须**整份**由 `$:` 产出：Svelte 4 的依赖分析**不穿透函数体**，模板里写 `colPct(def)`
-     *    在 `colWeights` 变化时**根本不会重算**（本仓 #446 / #530 都栽过同一件事）。
-     */
-    /** 权重表（**纯函数：只吃参数**，⛔ 自己不读 `colWeights`）—— 缺省权重与兜底都收在这一处 */
-    function buildWeights(weights: Record<string, number>, defs: TableColumnDef[]): Record<string, number> {
-        const w: Record<string, number> = { [TITLE_KEY]: weights[TITLE_KEY] ?? TITLE_DEFAULT_WEIGHT };
-        for (const d of defs) w[d.key] = weights[d.key] ?? defaultWeight(d);
-        return w;
-    }
+    /** 权重表（**纯函数：只吃参数**，⛔ 自己不读 `manualPx`）—— 缺省权重与兜底都收在这一处。
+     *  🔴 v2：`buildWeights()` / `defaultWeight()` 已整体删除（列宽只走 `buildColViews()`）。 */
 
     /**
-     * 逐列的渲染清单（列描述 + 已算好的百分比宽）。
+     * 逐列的渲染清单（列描述 + 已算好的像素宽）。
      * 🔴🔴 **依赖必须由调用点当实参传进来**：Svelte 4 的依赖分析**不穿透函数体** ——
-     *    写成 `$: colViews = buildColViews()`（让函数自己去读 `colWeights`）时，权重变化**不会触发重算**
-     *    ⇒ 拖列宽时列边不动、松手才跳一下。本仓 #446 / #530 都栽过同一件事，口径是
+     *    写成 `$: colViews = buildColViews()`（让函数自己去读 `manualPx`）时，拖列宽**不会触发重算**
+     *    ⇒ 拖的时候列边不动、松手才跳一下。本仓 #446 / #530 都栽过同一件事，口径是
      *    「**函数只算参数，依赖由 `$:` 那一行显式给出**」。
+     *
+     * 🔴🔴 v2（用户 2026-10-20「彻底重构 v2 版本的列表视图」）模型，**三步，顺序不能换**：
+     *
+     *  ① **标题列先落定**（`titlePx`）：手动拖过 ⇒ 就是那个 px；没拖过 ⇒ 吃掉扣除全部次要列需求后的
+     *     剩余宽，但**不低于 `TITLE_MIN_PX`**、**不高于可用宽**。
+     *  ② **预算里必须先扣标题**：`room = avail − CB − OPS − titlePx`。这一条是本次返工的核心 ——
+     *     旧代码的预算是 `avail − CB − OPS`，**不扣标题**，于是次要列按「整表宽」算需求，
+     *     标题列多占的 px 只能从次要列身上抢回来 ⇒ 拖标题列被全部抵消（用户报障：
+     *     「光标变成 ↔ 了，但无法向左或右拖动，其他列竖指示器正常」）。
+     *  ③ 次要列在 `room` 里按「手动 > 需求」分配，**放得下就各拿各的**，放不下才按同一比例压缩。
+     *
+     * ⚠️ 不变式（`tools/verify-artifact.cjs` 会核）：`titlePx + Σ cols.px ≤ avail` 在需求能装下时恒成立；
+     *    装不下时由 `tableMinWidth` 触发横向滚动，⛔ 不允许再把标题列的宽度反向补给次要列。
      */
-    function buildColViews(weights: Record<string, number>, defs: TableColumnDef[]): { title: number; cols: { def: TableColumnDef; pct: number }[] } {
-        const w = buildWeights(weights, defs);
-        const sum = Object.values(w).reduce((a, b) => a + b, 0);
-        const pct = (k: string): number => (sum > 0 ? (w[k] / sum) * FLEX_PCT : 0);
-        return { title: pct(TITLE_KEY), cols: defs.map((def) => ({ def, pct: pct(def.key) })) };
+    function buildColViews(manual: Record<string, number>, auto: Record<string, number>, defs: TableColumnDef[], availPx: number): { titlePx: number; cols: { def: TableColumnDef; px: number }[] } {
+        // 🔴 #687（用户 2026-10-19）：「各列宽字段其他短内容字段**不要省略号**显示，
+        //    按最小宽度缩显示以展示够 12 列」——次要列的需求宽 = 实测内容宽，量不到时退回兜底下限。
+        const budgetAll = Math.max(0, availPx - CB_W - OPS_W);
+
+        // ② 每列的「需求宽」/「手动宽」（手动的话 need 恒为 0，不参与后面的比例压缩）
+        const demand = defs.map((def) => {
+            if (Object.prototype.hasOwnProperty.call(manual, def.key)) {
+                return { def, px: clampManualPx(manual[def.key], colPxMin(def)), manual: true, need: 0 };
+            }
+            const measured = auto[def.key];
+            // `autoWeights` 里**仍然是权重口径**（量内容那一路没动，改动面越小越安全），换算回 px 当需求宽
+            const fromMeasure = measured !== undefined ? Math.round((measured / NARROW_DEFAULT_WEIGHT) * NARROW_PX_BASE) : 0;
+            const need = Math.max(fromMeasure, colPxMin(def));
+            return { def, px: need, manual: false, need };
+        });
+
+        const manualTotal = demand.filter((d) => d.manual).reduce((a, c) => a + c.px, 0);
+        const needTotal = demand.reduce((a, c) => a + (c.manual ? 0 : c.need), 0);
+
+        // ① 标题列先落定 —— 手动值优先；否则吃「预算 − 次要列（手动 + 需求）」的剩余，夹在 [TITLE_MIN_PX, 可用宽]
+        const titleManual = Object.prototype.hasOwnProperty.call(manual, TITLE_KEY);
+        const titlePx = titleManual
+            ? clampManualPx(manual[TITLE_KEY], TITLE_MIN_PX)
+            : Math.min(budgetAll, Math.max(TITLE_MIN_PX, budgetAll - manualTotal - needTotal));
+
+        // ③ 次要列在「扣掉标题之后」的余量里分配
+        const room = Math.max(0, budgetAll - titlePx);
+        let scale = 1;
+        if (manualTotal + needTotal > room && needTotal > 0) {
+            scale = Math.max(0, room - manualTotal) / needTotal;
+        }
+        const cols = demand.map((d) => ({
+            def: d.def,
+            // 手动列**绝不缩放**（拖多少就是多少）；压缩只发生在自动列身上
+            px: d.manual ? d.px : Math.max(NARROW_PX_MIN, Math.round(d.need * scale)),
+        }));
+        return { titlePx: Math.round(titlePx), cols };
     }
-    $: colViews = buildColViews(colWeights, columnDefs);
 
-    /** 表宽下限：列多了要横向滚动（与 `.rl-table` 的 `min-width` 同口径，取大者） */
-    $: tableMinWidth = 520 + colViews.cols.length * 78;
+    /**
+     * 手动宽度的**唯一清洗口**：非有限数 / 非正数 ⇒ 退回兜底；低于 `NARROW_PX_MIN` ⇒ 抬到下限。
+     * ⚠️ ⛔ 不要在这里取整 —— 拖动时保留小数，取整会让「拖 1px」在手感上被吞掉（v2 之前的坑，见 startColResize）。
+     */
+    function clampManualPx(px: number | undefined, fallbackPx: number): number {
+        if (px === undefined || !Number.isFinite(px) || px <= 0) return fallbackPx;
+        return Math.max(NARROW_PX_MIN, px);
+    }
 
-    /** 拖列宽 / 双击自适应：把「像素目标」换算成**权重增量**再让邻居让位 */
-    function applyResize(key: string, deltaWeight: number, startWeights: Record<string, number>): void {
-        const order = [TITLE_KEY, ...colViews.cols.map((c) => c.def.key)];
-        const i = order.indexOf(key);
-        if (i < 0) return;
-        const donor = i < order.length - 1 ? order[i + 1] : order[i - 1];
-        if (!donor) return;
-        const base = { ...startWeights };
-        const mine = base[key];
-        const theirs = base[donor];
-        // 让位上限：邻居不能低于 MIN_WEIGHT；自己也不能被拖到低于 MIN_WEIGHT
-        const lo = MIN_WEIGHT - mine;
-        const hi = theirs - MIN_WEIGHT;
-        const applied = Math.max(lo, Math.min(deltaWeight, hi));
-        colWeights = { ...base, [key]: mine + applied, [donor]: theirs - applied };
+    /**
+     * 一列的目标像素宽。
+     * · 用户拖过列宽（`colWeights` 里记着这个键）⇒ 按拖出来的量换算（1 权重 ≈ NARROW_PX_STEP 像素）；
+     * · 否则给**该类列的固定宽度**：数值 / 状态 / 评分这类 80px 足够；长文本列（作者 / 平台）给 120px。
+     * ⚠️ 固定 px 是用户的明确要求（「次要列设定固定的窄宽度，绝不随窗口拉宽而无限拉伸」），
+     *    ⛔ 别改成百分比或 min-width —— 那样窗口一宽就又拉长了。
+     */
+    /**
+     * 🔴 #687：每列的**最小需求宽**（内容没量到 / 量到也比它小时的下限）。
+     *
+     * 意义变了：以前这些是「固定宽」（窗口拉宽也不动），现在只是**下限**
+     * —— 实测内容更宽就按实测走（见 `buildColViews` ③），所以短字段不会再被无谓撑开。
+     * 依据仍是实测：
+     *   · 年份 `1991–2014` / 状态胶囊 / `★8.4` / `2012-08-01`：约 76~90px 够；
+     *   · 页数 `1222` 这类纯数字列：56px 足够（`NARROW_PX_MIN` 之上一点点）；
+     *   · 进度是「文字 + 42px 细条」并排，152px 才能不折行（#680 实测，⛔ 别调小）；
+     *   · 作者 / 出版社 / 系列这类长文本：120px 起，实测更长时按实测。
+     */
+    function colPxMin(def: TableColumnDef): number {
+        if (def.key === '__progress') return NARROW_PX_PROGRESS;
+        // 🔴 #687：ISBN 是 13 位定长数字。**实测**（`_probe_isbn2`）：
+        //    内层 `.rl-tbl-cell` 可用宽 = 列宽 − 12（格内距），13 位数字在该字体下要 **102px**；
+        //    列宽 112 ⇒ 内层 100 ⇒ 差 2px 被省略。⇒ 下限给 **118**（内层 106，留 4px 余量）。
+        if (def.key === 'isbn') return 118;
+        // 🔴 #687：评分列格子里是五颗星 + 数字（约 92px），比纯数字列宽得多 ——
+        //    按 kind=number 给 56px 会被截成「★★★★★ 4…」（实测踩到）。
+        if (def.key === 'rating' || def.key === '__community') return NARROW_PX_SCORE;
+        // 纯数值列（页数 / 片长 / 集数…）内容就是几个数字，给得比通用档小
+        if (def.kind === 'number') return NARROW_PX_NUM;
+        if (LONG_TEXT_COLUMNS.has(def.key)) return NARROW_PX_LONG;
+        return NARROW_PX_BASE;
+    }
+
+    /** 一列的目标像素宽（手动拖过 / 还没量到内容时的兜底）。
+     * · 用户拖过列宽（`manualPx` 里记着这个键）⇒ 直接用那个 px（`buildColViews` 已走这条路，
+     *   本函数现在只服务「兜底下限」）；
+     * · 否则给该列的最小需求宽（`colPxMin`）。
+     * ⚠️ 有实测内容宽时由 `buildColViews` 按实测分配。
+     * ⚠️ 本函数内部不再被引用（v2 后列宽统一由 `buildColViews` 出）—— 保留给未来单列兜底用。
+     */
+    function colPx(def: TableColumnDef, px: number | undefined): number {
+        if (px !== undefined && Number.isFinite(px) && px > 0) return Math.max(NARROW_PX_MIN, Math.round(px));
+        return colPxMin(def);
+    }
+
+    /** 🔴 #680：进度列宽度 —— 必须容纳「文字 + 42px 细条」并排。
+     *  ⚠️ 实测（`_shot_680`）：132px 时「11/21 章 · 50%」+ 42px 条仍被挤到文字截断 ⇒ 给到 **152px**，
+     *     并把条的伸缩改成 `flex: 0 1 42px`（文字完整优先、条先让位，见 `.rl-prog-chip` 注释）。 */
+    const NARROW_PX_PROGRESS = 152;
+
+    /** 🔴 #680：这些列的内容通常比短字段长（作者 / 平台 / 专辑 / 出版社），固定宽给 120px */
+    const LONG_TEXT_COLUMNS = new Set(['author', 'platform', 'album', 'publisher', 'developer', 'genres']);
+
+    $: colViews = buildColViews(manualPx, autoWeights, columnDefs, tableAvailPx);
+    /** 🔴 #684：容器宽变了就重算（`bind:clientWidth` 已在模板上） */
+    $: tableAvailPx = wrapW > 0 ? wrapW : 1244;
+
+    /** 表宽下限：列多了要横向滚动。
+     *  🔴 #687：改成 **按各列实际分配宽累加**（原来是 `520 + 列数 × 78` 的粗估 ——
+     *     12 列时估成 1456px，与实际分配完全脱节，且会让所有列一起被硬撑到该宽度）。
+     *  🔴🔴 v2：标题列宽由 `buildColViews` **算好返回**（`colViews.titlePx`），这里只负责累加 ——
+     *     组件里**不再有第二条**计算标题列宽的路径（旧 `titlePinned()` / `colPxForTitle()` /
+     *     `tableExactWidth()` 三件套已删，它们互相抵消正是标题列拖不动的根因）。 */
+    $: tableMinWidth = colViews.titlePx + OPS_W + (batchMode ? CB_W : 0) + colViews.cols.reduce((a, c) => a + c.px, 0);
+
+    /**
+     * 🔴🔴 v2（用户 2026-10-20「彻底重构 v2 版本的列表视图」）拖列宽的唯一实现。
+     *
+     * 旧实现在这里叠了三层补丁（`colWeights` 权重 / `titlePinned()` / `tableExactWidth()`），
+     * 三者互相抵消，最终表现是**标题列拖不动、其他列拖得动**。现在只剩一条算术：
+     *   `新宽度 = 拖动起始宽度 + (当前指针 x − 按下时的指针 x)`，直接写进 `manualPx[key]`（单位 px）。
+     * ⛔ 不要再引入权重 / 百分比 / 二次分配 —— 拖多少就是多少，这是 v2 的硬口径。
+     *
+     * @param key 列键（含 `TITLE_KEY`）
+     * @param startPx 按下时那一列**实际渲染**的宽度
+     * @param startX 按下时的指针 x
+     * @param clientX 当前指针 x
+     */
+    function applyResize(key: string, startPx: number, startX: number, clientX: number): void {
+        const nextPx = Math.max(NARROW_PX_MIN, startPx + (clientX - startX));
+        // 保留小数：取整会让「拖 1px」在连续 move 里被吞掉，手感变成「不动、突然跳一格」
+        manualPx = { ...manualPx, [key]: nextPx };
     }
 
     function startColResize(ev: PointerEvent, key: string): void {
         ev.preventDefault();
         ev.stopPropagation();
-        const th = (ev.currentTarget as HTMLElement).closest('th');
-        const startWeights = keyWeight();
-        const startPx = th ? th.getBoundingClientRect().width : 80;
+        // 🔴 用户 2026-10-20：柄已移到 `<table>` 下（不再在 `<th>` 里）—— `closest('th')` 会返回 null，
+        //    所以列宽基准**必须**从 `data-resize-col` 反查到那一列的 `th` 再量。
+        //    ⚠️ 这里量到的是**当前实际渲染宽**（标题列没拖过时是「吃掉剩余」算出来的那个值，
+        //       不一定等于 TITLE_MIN_PX）—— v2 就以它为拖动起点，⛔ 别改成从 manualPx 或常量取。
+        const table = tableEl;
+        const th = table?.querySelector<HTMLElement>(`thead th[data-col="${key}"]`) ?? null;
+        const startPx = th ? th.getBoundingClientRect().width : NARROW_PX_BASE;
         const startX = ev.clientX;
-        // px → 权重：本列当前「一单位权重值多少像素」
-        const pxPerWeight = startPx / Math.max(0.01, startWeights[key]);
+        /**
+         * 🔴🔴 #688：拖动期间**必须锁住自适应**，否则拖动基本无效。
+         *    根因：`afterUpdate` 每帧都跑 `recomputeAutoWeights()`，它按**实测内容宽**重算并写
+         *    `autoWeights`；而实测内容宽是不变的 ⇒ 每帧都把人刚拖出来的宽度**冲回内容宽**。
+         *    修法：拖动中置 `resizing=true`，`recomputeAutoWeights()` 直接返回；松手后再解冻。
+         * 🔴 `resizing` 是**普通变量**，它的变化不驱动模板更新 —— 松手时**显式**调一次
+         *    `recomputeAutoWeights()` + `syncColResizeHeight()`，别指望反应式。
+         */
+        resizing = true;
+        resizeColKey = key;
+        /**
+         * 🔴🔴 v2 的关键一步：按下时**立刻**把这一列钉成「起始宽」的手动值。
+         *    没有这一步，标题列（此前走「吃掉剩余」）在第一帧之前 `manualPx` 里还没有它，
+         *    每帧都会按剩余宽重算一遍，拖动量被整段吞掉 —— 这正是「标题列拖不动」的直接成因。
+         */
+        manualPx = { ...manualPx, [key]: startPx };
         const onMove = (e: PointerEvent) => {
-            applyResize(key, (e.clientX - startX) / pxPerWeight, startWeights);
+            e.preventDefault();
+            applyResize(key, startPx, startX, e.clientX);
         };
-        const onUp = () => {
+        const finish = () => {
             window.removeEventListener('pointermove', onMove);
-            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointerup', up);
+            window.removeEventListener('pointercancel', up);
+            window.removeEventListener('blur', up);
+            resizing = false;
+            resizeColKey = null;
+            // 松手后解冻：让自适应按**新宽度**重新量一次（此时 manualPx 已含该键，
+            // `recomputeAutoWeights` 会跳过它，不会冲掉用户的选择）；再同步一次柄的坐标。
+            recomputeAutoWeights();
+            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => syncColResizeHeight());
+            else syncColResizeHeight();
+        };
+        // 🔴 `finish` 必须**幂等**：pointerup / pointercancel / window blur 三路都可能先到，
+        //    不幂等就会重复重算（第二次 `recomputeAutoWeights` 时 `resizing` 已是 false，会按旧内容宽覆盖）。
+        const up = () => {
+            if (!resizing) return;
+            finish();
         };
         window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp);
-    }
-
-    /** 双击列边 = 按**该列最宽的那一格**自适应（`.rl-tbl-cell` 是 `overflow:hidden` ⇒ `scrollWidth` 就是全文宽） */
-    function autofitCol(ev: MouseEvent, key: string): void {
-        ev.preventDefault();
-        ev.stopPropagation();
-        const th = (ev.currentTarget as HTMLElement).closest('th');
-        const table = th?.closest('table');
-        if (!th || !table) return;
-        let max = 0;
-        const sel = `[data-col="${key}"] .rl-tbl-mv`;
-        table.querySelectorAll<HTMLElement>(sel).forEach((el) => {
-            if (el.scrollWidth > max) max = el.scrollWidth;
-        });
-        if (max <= 0) return;
-        const startWeights = keyWeight();
-        const curPx = th.getBoundingClientRect().width;
-        const pxPerWeight = curPx / Math.max(0.01, startWeights[key]);
-        // 目标宽 = 内容宽 + 内距（8×2）+ 一点余量；换算成权重增量
-        applyResize(key, (max + 22) / pxPerWeight - startWeights[key], startWeights);
+        window.addEventListener('pointerup', up);
+        // 🔴 用户 2026-10-20：原来只挂 `pointerup` —— 指针拖出 Obsidian 窗口 / 系统抢占 / 触屏打断时
+        //    收不到 `pointerup`，`resizing` 永远为 true ⇒ 自适应冻结、后续拖动全部失效（只能重载插件）。
+        window.addEventListener('pointercancel', up);
+        window.addEventListener('blur', up);
     }
 
     // ── 列序：表头横拖（列序 = 数组顺序，⛔ 归一不按池子重排，见 pure/tableColumns）──────────
@@ -1671,6 +2126,11 @@
         if (!el) return;
         cellCursor = { r, c };
         el.focus();
+        // 🔴 #668（用户：「选中的方向键上下应该焦点聚焦滚动」）：原来只 `focus()` —— 格子落在可视区外时
+        //    **焦点去了看不见的地方**，屏幕不动，读起来就是「按了没反应」。
+        //    `block:'nearest'`：只在真的超出时才滚，已经在视野里就一个像素都不动（⛔ 别用 'center'，
+        //    每按一次都整页跳一下更晕）。横向同理交给 `inline:'nearest'`（表格可横向滚）。
+        el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
 
     /** 焦点进到某一格 ⇒ 记下光标（方向键 / 上下移动都以它为准）。
@@ -1737,6 +2197,20 @@
         const mod = ev.ctrlKey || ev.metaKey;
         if (!mod) return;
         const k = ev.key.toLowerCase();
+        // 🔴🔴 #680 ⑤（用户：「搜索框增加支持 Ctrl+F 快捷聚焦」）：
+        //    作用域 = **本组件在文档里且焦点不在输入类控件上**（在编辑器/表单里按 Ctrl+F 不该被抢走）。
+        //    ⚠️ 不拦默认行为时浏览器会开「页内查找」气泡 ⇒ 必须 `preventDefault`。
+        if (k === 'f') {
+            const t = ev.target as HTMLElement | null;
+            const typing = !!t?.closest('input, textarea, select, [contenteditable="true"]');
+            if (typing) return;
+            const box = searchInputEl;
+            if (!box) return;
+            ev.preventDefault();
+            box.focus();
+            box.select();
+            return;
+        }
         if (k !== 'z' && k !== 'y') return;
         const target = ev.target;
         const inside = target instanceof Node && !!tableEl && tableEl.contains(target);
@@ -1755,6 +2229,58 @@
             window.removeEventListener('keydown', onWindowKeydown);
             document.removeEventListener('mousedown', onColDocMouseDown);
         };
+    });
+
+    /**
+     * 🔴 #668 自适应列宽的**量测时机**：`afterUpdate`（DOM 已经是**这一版**的行之后）。
+     * ⚠️ 不能在 `$:` 里量（那时还是上一版 DOM）；也不能只在挂载时量（换页签 / 筛类型 / 增删列都会变）。
+     * ⚠️ 写 `autoWeights` 会让 `colViews` 重算 ⇒ 再触发一次 `afterUpdate`；本函数**只在结果真的变了时**赋值
+     *    （先比一遍），否则就是无限更新（Svelte 会报 `flush_loop`）。
+     */
+    /**
+     * 🔴 #668 把每个「拖宽手柄」的竖线拉成**整列高**（用户：「调整列宽度的竖指示器没有格子只有表头」）。
+     *
+     * 为什么必须用 JS 写坐标：手柄在 `<th>` 里，而 `<th>` 是 `position: relative` 的定位祖先 ⇒
+     *   `top:0;bottom:0` 只能撑到表头高（实测 29px vs 整表 2130px）。要把线拉满整列，只能让
+     *   **横向/纵向坐标都由 JS 写给 CSS 变量**（`--rl-tbl-x` / `--rl-tbl-h`），由样式表去用。
+     * ⚠️ 每个手柄各写一份变量（内联 `style` 优先级高于样式表里的 `var()` 默认值）。
+     * ⚠️ 只在**列表视图**跑；`afterUpdate` 里调用 —— 那时 DOM 是本版的行，量出来的高度才对。
+     * ⚠️ 列宽/行数/滚动位置都不必触发重算：线的高度跟随表格总高，横向跟随手柄左缘。
+     */
+    function syncColResizeHeight(): void {
+        const table = tableEl;
+        if (!table) return;
+        const h = table.offsetHeight;
+        if (h <= 0) return;
+        // 🔴 横向坐标必须用 `getBoundingClientRect()` 相对**表格自身**算：
+        //    `th.offsetLeft` 的基准是**行**（`tr`）而不是 `table`，两者混用会把线画到别的列上
+        //    （本批实测：year 列变量写 583px、实际渲染到 1105px，差 450px ≈ 标题列宽）。
+        const tableLeft = table.getBoundingClientRect().left;
+        // 🔴🔴 用户 2026-10-20：柄现在挂在 `<table>` 下（⛔ 不再在 `<th>` 里），所以**不能**再
+        //    `handle.closest('th')`（那次调用会返回 null ⇒ 整条柄永远停在 -99px = 「拖不动」的根因之一）。
+        //    ⇒ 用柄自己的 `data-resize-col` 反查那一列的 `th`。
+        table.querySelectorAll<HTMLElement>(':scope > .rl-tbl-resize').forEach((handle) => {
+            const key = handle.dataset.resizeCol;
+            if (!key) return;
+            const th = table.querySelector<HTMLElement>(`thead th[data-col="${key}"]`);
+            if (!th) return;
+            // 线的**中心**落在列右缘（视觉上压在格线上）：柄宽 10px、竖条居中在 left 4px + 1px 处
+            // ⇒ 柄左缘 = 列右缘 − 5。
+            const x = th.getBoundingClientRect().right - tableLeft - 5;
+            handle.style.setProperty('--rl-tbl-x', `${x}px`);
+            handle.style.setProperty('--rl-tbl-h', `${h}px`);
+        });
+    }
+
+    afterUpdate(() => {
+        if (viewMode !== 'list' || !tableEl) return;
+        // 🔴 顺序有讲究：`recomputeAutoWeights()` 会**改列宽**（写 `autoWeights` ⇒ 重算 colViews ⇒ 下一帧才重排），
+        //    而 `syncColResizeHeight()` 量的正是列右缘 —— 先量后改会拿到**旧布局**的坐标
+        //    （本批实测：变量写 587、真实列右缘 646，差 50px）。
+        //    ⇒ 先算宽、再在**下一帧**量位置（`requestAnimationFrame` 里读，此时 DOM 已按新列宽重排）。
+        recomputeAutoWeights();
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => syncColResizeHeight());
+        else syncColResizeHeight();
     });
 
     async function undoCellChange(): Promise<void> {
@@ -1781,7 +2307,7 @@
     function cellDisplayText(e: MediaEntry, def: TableColumnDef): string {
         if (def.key === 'status') return statusLabel(e.type, e.status);
         if (def.key === 'rating') return e.rating > 0 ? `${e.rating}` : '';
-        if (def.key === '__community') return e.communityScore != null ? scoreText(e) : '';
+        if (def.key === '__community') return scoreText(e);
         if (def.key === '__progress') return listProgress(e).text;
         return tableCellText(e, def.key);
     }
@@ -1814,6 +2340,7 @@
             type="search"
             placeholder={searchPlaceholder}
             bind:value={searchText}
+            bind:this={searchInputEl}
             aria-label="搜索条目"
             on:keydown={(ev) => { if (ev.key === 'Escape') { searchText = ''; ev.stopPropagation(); } }}
         />
@@ -1880,6 +2407,7 @@
                     value={scope}
                     options={scopeOptions}
                     ariaLabel="媒体类型"
+                    group="rl-toolbar-filters"
                     onPick={pickScope} />
             </span>
             <span class="rl-vb-sep" aria-hidden="true"></span>
@@ -1912,6 +2440,7 @@
             value={statusFilter}
             options={statusOptions}
             ariaLabel="状态筛选"
+            group="rl-toolbar-filters"
             onPick={pickStatus} />
     </span>
     {#if viewMode !== 'grouped'}
@@ -1927,6 +2456,7 @@
                 options={sortSelOptions}
                 ariaLabel="排序方式"
                 chevron={false}
+                group="rl-toolbar-filters"
                 onPick={pickSort} />
         </span>
         <!-- 题材（视图级，用户 2026-09-22）：紧贴「排序」右侧的同款胶囊；genreScope 为 null 的视图
@@ -1983,13 +2513,73 @@
          闭合框 = 「当前视图的图标 + 名字 + ▾」；点开是选项表（每项**图标 + 名字**，当前那项走主题色 + 一枚轻勾）。
          图标 / 名字一律取自 `pure/viewModes`，⛔ 不在这里手写第二份。
          ⚠️ 音乐专有的「分组歌单」由 `viewChoices` 按 `lockType === 'music'` 追加（不在通用表里）。 -->
+    <!-- 🔴🔴 需求 9（用户 2026-10-21）：「列表视图工具栏……排布成：… 题材、批量管理、列、分组、切换视图」。
+         ⇒ 本组（批量管理 / 列 / 分组）从「切换视图」**之后**搬到**之前**：视图切换仍是行尾最后一枚，
+            三者贴着它左排（**取代** #633 那版「列按钮挨着切换视图右边」的排布）。
+         ⚠️ 它们仍整体落在 `.rl-vb-view{margin-left:auto}` 的**右侧簇**里（auto 边距吃在「题材」与本组之间），
+            ⛔ 别挪回左段那一组（#633 实测过：那会把搜索框推开，列表与海报墙两视图的搜索框左缘就不齐了）。
+         ⚠️ 渲染条件仍是**只在列表视图**：其它视图没有表格列、没有勾选列，也没有「并组」这回事
+            （#622 用户原话就是「海报墙…多出了个『列』按钮什么东西没用」⇒ ⛔ 常驻后置灰）。
+         ⚠️ 行尾那枚导航入口是绝对定位、只在「侧边栏 / 合并视图」布局下才渲染（默认 `navLayout:'top'` 时插槽为空）
+            ⇒ 共存时贴在本组右侧，⛔ 别给这里加绝对定位（会把导航入口压住）。
+         ⚠️ 文案跟着工具栏的语言走（**图标 + 文字**，与「添加」同款），⛔ 不做纯图标小方块。 -->
+    {#if viewMode === 'list'}
+        <!-- 🔴🔴 #680 ③-3：**「批量管理」入口**（用户：「默认隐藏勾选框，列表顶部加一个批量管理入口；
+             点击进入多选模式，勾选框才出现」）。只在列表视图出现 —— 其它视图没有表格列，也没有勾选列。 -->
+        {#if batchMode}
+            <button
+                class="rl-tbl-colmenu is-on"
+                type="button"
+                aria-pressed="true"
+                data-tip="退出批量管理（并清空已选）"
+                on:click={finishBatch}><Icon icon="check-square" size={13} /> 批量管理</button>
+        {:else}
+            <button
+                class="rl-tbl-colmenu"
+                type="button"
+                aria-pressed="false"
+                data-tip="进入批量管理：出现勾选框，可批量改状态 / 评分 / 标签 / 删除"
+                on:click={enterBatchMode}><Icon icon="check-square" size={13} /> 批量管理</button>
+        {/if}
+        <!-- 🔴 #633：列配置入口（勾选列 / 取消列；列头可拖动调序）。 -->
+        <button
+            class="rl-tbl-colmenu"
+            type="button"
+            aria-haspopup="true"
+            aria-expanded={colMenuOpen}
+            data-tip="设置表格的列（勾选 / 取消；列头可拖动调序）"
+            on:click={openColMenu}><Icon icon="columns-2" size={13} /> 列</button>
+        <!-- 🔴 需求 9 核心件：**「展示分组 / 不并组展示」单循环切换**（同一枚按钮两种口径来回翻，⛔ 不是两枚按钮）。
+             可见文案 = **当前口径**（图标同步：树形 `list-tree` / 平铺 `list`），
+             `aria-pressed` 标「不并组是否生效」，`data-tip` 先说当前口径、括号里再说点一下会变成什么。
+             ⚠️ 只在列表视图出现（摊平只作用于列表；海报墙 / 卡片网格 / 瀑布流 / 时间线行为一律不变）。
+             ⚠️ 宿主没注入 `onToggleGrouping`（`null`）时**整枚不渲染** —— 不画一枚点了没反应的按钮。 -->
+        {#if onToggleGrouping}
+            <button
+                class="rl-tbl-colmenu"
+                class:is-on={!listGrouping}
+                type="button"
+                aria-pressed={!listGrouping}
+                data-tip={listGrouping
+                    ? '展示分组：同系列折叠成组（点击改为不并组展示）'
+                    : '不并组展示：每条独立一行（点击改为展示分组）'}
+                on:click={() => onToggleGrouping?.(!listGrouping)}>
+                <Icon icon={listGrouping ? 'list-tree' : 'list'} size={13} />
+                {listGrouping ? '展示分组' : '不并组展示'}
+            </button>
+        {/if}
+    {/if}
     <span class="rl-vb-view" role="group" class:is-open={viewOpen}>
+        <!-- 🔴🔴 #670（用户：「鼠标 hover 轻提示还有覆盖两层不可见」）：这枚按钮**同时挂了 `aria-label` 与 `data-tip`**，
+             而 Obsidian 会给带 `aria-label` 的元素自绘官方气泡、本仓的 `data-tip` 也是自绘的 ⇒ **同屏两层**。
+             按钮里已经有可见文字（当前视图名 + ▾），读屏本来就念得出来 ⇒ **删掉 `aria-label`，只留 `data-tip`**
+             （与 UI-GUIDE §3「`aria-label` 不得出现在带 `data-tip` 的元素或祖先链上」对齐）。
+             ⚠️ 全仓只有这一处是同元素双挂（2026-10-19 以 `_audit670_chain2.cjs` 逐个标签扫过）。 -->
         <button
             class="rl-vb-btn"
             type="button"
             aria-haspopup="listbox"
             aria-expanded={viewOpen}
-            aria-label="切换视图"
             data-tip="切换视图"
             on:click={toggleViewMenu}>
             {#if currentView}<Icon icon={currentView.icon} size={14} />{/if}
@@ -1998,13 +2588,22 @@
         </button>
         {#if viewOpen}
             <div class="rl-vb-pop" role="listbox" aria-label="切换视图">
+                <!-- 🔴 #668 用户：「切换视图按钮也支持**自由排序并持久化**」⇒ 选项可**上下拖**换位置，
+                     松手即写设置（`onViewOrderChange`）。拖拽判据全在值上，见 `onViewDrop`。 -->
                 {#each viewChoices as c (c.value)}
                     <button
                         class="rl-vb-opt"
                         class:on={c.value === viewMode}
+                        class:is-dragging={dragViewValue === c.value}
+                        class:is-over={dragViewValue !== null && overViewValue === c.value && dragViewValue !== c.value}
                         type="button"
                         role="option"
                         aria-selected={c.value === viewMode}
+                        draggable="true"
+                        on:dragstart={(ev) => onViewDragStart(ev, c.value)}
+                        on:dragover={(ev) => onViewDragOver(ev, c.value)}
+                        on:drop={(ev) => onViewDrop(ev, c.value)}
+                        on:dragend={onViewDragEnd}
                         on:click={() => pickView(c.value)}>
                         <Icon icon={c.icon} size={14} />
                         <span class="rl-vb-opt-label">{c.label}</span>
@@ -2014,25 +2613,6 @@
             </div>
         {/if}
     </span>
-    <!-- 🔴🔴 #633：列配置入口 —— **挨着「切换视图」按钮的右边**（用户：「调整列表头序的按钮放在切换视图
-         按钮的右旁边」）。两者是同一类东西（都改「这张表/这个视图怎么摆」），并排读作一家；
-         原来它挂在**左段**那一组（搜索框 + 添加）里 ⇒ 唯独列表视图下那一组多出一件、把搜索框推开
-         （实测已证实：搬走后列表与海报墙两视图的搜索框左缘逐像素一致）。
-         ⚠️ 渲染条件仍是**只在列表视图**：用户在 #622 报的就是「海报墙…多出了个'列'按钮什么东西没用」——
-            其它视图里压根没有「列」这回事，所以它跟着视图出现/消失（⛔ 不是常驻后置灰）。
-         ⚠️ 它排在 `.rl-vb-view` **之后**，整组仍由 `.rl-vb-view` 的 `margin-left: auto` 推到行尾。
-            行尾那枚导航入口是绝对定位、且**只在「侧边栏 / 合并视图」布局下**才渲染（默认 `navLayout: 'top'`
-            时插槽是空的）⇒ 共存时两者挨着，⛔ 别给这里加绝对定位（会把导航入口压住）。
-         ⚠️ 按钮文案跟着工具栏的语言走（**图标 + 文字**，与「添加」同款），⛔ 不做纯图标小方块。 -->
-    {#if viewMode === 'list'}
-        <button
-            class="rl-tbl-colmenu"
-            type="button"
-            aria-haspopup="true"
-            aria-expanded={colMenuOpen}
-            data-tip="设置表格的列（勾选 / 取消；列头可拖动调序）"
-            on:click={openColMenu}><Icon icon="columns-2" size={13} /> 列</button>
-    {/if}
 </div>
 
 {#if selectedIds.size > 0}
@@ -2057,7 +2637,8 @@
         <input class="rl-batch-tags" placeholder="批量标签（逗号分隔）" bind:value={bulkTagsText} aria-label="批量标签" />
         <button class="rl-batch-btn" disabled={!bulkStatus && !bulkRating && !bulkTagsText.trim()} on:click={applyBulkAll} data-tip="应用到选中条目">应用</button>
         <button class="rl-batch-btn rl-batch-danger" on:click={bulkDelete} data-tip="删除选中（会二次确认）">删除</button>
-        <button class="rl-batch-btn" on:click={clearSelection} data-tip="取消选中">取消选择</button>
+        <button class="rl-batch-btn" on:click={clearSelection} data-tip="只清空已选，仍在批量管理模式">取消选择</button>
+        <button class="rl-batch-btn" on:click={finishBatch} data-tip="退出批量管理（勾选框随之隐藏）">退出批量</button>
     </div>
 {/if}
 
@@ -2093,7 +2674,7 @@
                         {#if e.audioPath}
                             <button class="rl-music-play" data-tip="播放音乐" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon="play" size={13} /><span class="rl-sr">播放音乐</span></button>
                         {/if}
-                        <button class="rl-music-edit" data-tip="编辑条目" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onEditEntry(e.id); }}>✎<span class="rl-sr">编辑条目</span></button>
+                        <button class="rl-music-edit" data-tip="编辑属性" on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onEditEntry(e.id); }}>✎<span class="rl-sr">编辑属性</span></button>
                     </div>
                 </div>
             {/each}
@@ -2117,9 +2698,10 @@
     <!-- 列数：设置档位 → grid-template-columns 串（pure/posterGrid）。
          ⛔ 不改 waterfall 列数；CSS 里的 fallback 与「标准」档完全一致（内联 style 缺席也不塌成单列） -->
     <!-- 🔴 #591：`use:zoomWheel` 挂的是**元素上的非被动** wheel 监听（见 script 里那三条纪律）。
-         🔴 #626 参数按视图给 `'grid'` / `'wall'` —— 两档的**列数上界**（12 / 16）与**落盘出口**
-             （共享密度 / `wallColumns`）都不同，靠这个参数分流（见 script 里 `zoomWheel`）。
-         🔴 #626 列模板走 `gridColsTemplate`（墙与网格的来源、间距都不同）。 -->
+         🔴 #626 参数按视图给 `'grid'` / `'wall'`，只为标明「缩的是哪个视图」——用户 2026-10-20
+             删除「海报墙列数」后两者**落盘出口已统一**（都写共享的 posterDensity / posterColumns），
+             ⛔ 别再按这个参数分流到第二个列数键。
+         🔴 #626 列模板走 `gridColsTemplate`（墙与网格只差 gap）。 -->
     <div class="rl-grid" class:rl-wall={viewMode === 'wall'} use:zoomWheel={wallView ? 'wall' : 'grid'} style={`grid-template-columns:${gridColsTemplate}`}>
         <!-- 🔴 #434：从条目序列改成 `drawList` —— 一行可能是散卡 / 折叠卡 / 组头。
              摊平（而不是三个分支各写一遍卡片标记）的理由见 script 里 DrawItem 的注释。 -->
@@ -2170,7 +2752,7 @@
                              ⛔ 别再退回「只认数据源键」的那个旧助手 —— 那条路正是本批要修的漏。 -->
                         {@const srcLabel = entrySourceLabel(e)}
                         <span class="rl-cov-score"
-                              data-tip={`大众评分（来源：${srcLabel || '—'}）`}>{#if srcLabel}<span class="rl-cov-src">{srcLabel}</span>{/if}{scoreText(e)}★</span>
+                              data-tip={`大众评分（来源：${srcLabel || '—'}）`}>{#if srcLabel}<span class="rl-cov-src">{srcLabel}</span>{/if}{scoreText(e)}{#if !scoreIsPercentOf(e)}★{/if}</span>
                     {/if}
                     <!-- 游戏游玩时长角标（🔴 #471，用户原话：「游戏类型海报墙上已玩 10h 放在游戏封面左下角用个标记」）
                          —— 从元信息区那行 `.rl-prog` **搬来**，呈现位置变了、取值口径没变（`cardPlaytimeBadge`）。
@@ -2272,7 +2854,7 @@
                     <!-- 🔴 #624：海报墙下**整段不渲染**（只留封面 + 标题）。
                          ⚠️ 与卡片网格一样「要么全渲染、要么全不渲染」—— 同一张墙上的卡片行数恒定，底部才齐平。 -->
                     {#if !wallView}
-                        {#each cardRowsFor(e.type) as row (row.key)}
+                        {#each cardRowsFor(e.type, e.bookKind) as row (row.key)}
                             {#if row.f === null}
                                 <!-- 🔴 #640 ⑷：**补位空行** —— 只为把信息区撑到与同行最高卡片一致，
                                      ⛔ 不填「—」（那会伪装成一个真实存在的空字段）。 -->
@@ -2564,7 +3146,7 @@
                             <span class="rl-m-meta">
                                 {#if e.year}<span class="rl-m-yr">{e.year}</span>{/if}
                                 {#if e.year && scoreText(e)}<span class="rl-m-dot">·</span>{/if}
-                                {#if scoreText(e)}<span class="rl-m-sc">★ {scoreText(e)}</span>{/if}
+                                {#if scoreText(e)}<span class="rl-m-sc">{#if !scoreIsPercentOf(e)}★ {/if}{scoreText(e)}</span>{/if}
                             </span>
                         </div>
                     </div>
@@ -2587,7 +3169,15 @@
          用户：「还有什么视图可新增展示」→ `AskUserQuestion` 选定「时间线」。
          ⚠️ 分桶是**纯逻辑**（`pure/viewModes.buildTimeline`，配单测），桶内**保持传入顺序** ——
             入口 `filterAndSort` 已按当前排序档排好，这里只做「分桶搬运」，⛔ 不重排一遍。 -->
-    <div class="rl-timeline">
+    <!-- 🔴 #668 用户：「时间线视图展示的也要支持 **Ctrl+Z 缩放大小**」（即 Ctrl+滚轮缩放）。
+         走与海报墙/瀑布流**同一枚** `zoomWheel` action（三条纪律都在那边注释里：只在开关开时接管 /
+         只有 ctrlKey 才算缩放 / 监听必须挂元素且 passive:false），只是 `kind='timeline'` 走**宽度档**。
+         ⚠️ 条目宽度由 `--rl-tl-w` 驱动（`tlItemW`），⛔ 样式里不再写死 76px。 -->
+    <div
+        class="rl-timeline"
+        use:zoomWheel={'timeline'}
+        style={`--rl-tl-w:${tlItemW}px`}
+        data-tip={ctrlWheelZoom ? 'Ctrl+滚轮缩放条目大小' : ''}>
         {#each timelineBuckets as b (b.label)}
             <div class="rl-tl-group">
                 <div class="rl-tl-axis">
@@ -2613,7 +3203,7 @@
                             <span class="rl-tl-title">{e.title}</span>
                             <span class="rl-tl-meta">
                                 <span class="rl-badge rl-badge-{e.status}">{statusLabel(e.type, e.status)}</span>
-                                {#if scoreText(e)}<span class="rl-tl-sc">★ {scoreText(e)}</span>{/if}
+                                {#if scoreText(e)}<span class="rl-tl-sc">{#if !scoreIsPercentOf(e)}★ {/if}{scoreText(e)}</span>{/if}
                             </span>
                         </div>
                     {/each}
@@ -2638,29 +3228,42 @@
          ⚠️ `<th>` 上 `draggable` 只在**单类型表**开（混类型没有「哪一套列序」可改）。 -->
     <!-- 🔴 这个容器**不挂** `on:keydown`（Ctrl+Z 走窗口监听，见 `onWindowKeydown` 的说明）——
          给它挂键盘监听在 a11y 检查里怎么摆都不对，而它本来就只是个滚动容器。 -->
-    <div class="rl-tbl-wrap">
+    <!-- 🔴 #684：`bind:clientWidth` 把容器真实宽度喂给 `tableAvailPx` —— 列宽预算必须按**实际可用宽**算，
+         否则窄窗口下标题列会被次要列挤没（用户实测 136px）。 -->
+    <div class="rl-tbl-wrap" bind:clientWidth={wrapW}>
+    <!-- 🔴🔴 v2（用户 2026-10-20）：表格**只写 min-width**，不再有「拖过标题列就改成精确 width」的分支。
+         那条分支是标题列拖不动的另一半原因：`width` 钉死后 `buildColViews` 的预算却按「整表宽」算，
+         标题列多占的 px 只能从次要列身上抢回来 ⇒ 拖动被全部抵消。现在宽度由 `min-width` 兜底、
+         各列 `<col>` 各自给 px，`table-layout: fixed` 下一切可预测。 -->
     <table class="rl-table rl-tbl" bind:this={tableEl} style={`min-width:${tableMinWidth}px`}>
         <!-- 🔴 #590 口径不变：`table-layout: fixed` + `colgroup` 钉列宽（书名再长也只在自己那格里省略）。
              #621 起列宽由 `colViews` 逐列给出（权重换算，见 script），cb / ops 两列仍走固定百分比。 -->
         <colgroup>
-            <col class="rl-col-w-cb" />
-            <col style={`width:${colViews.title}%`} />
-            {#each colViews.cols as cv (cv.def.key)}<col style={`width:${cv.pct}%`} />{/each}
+            <!-- 🔴🔴 #683：勾选列**只在这里出现一次**，且与表头 / 数据行的 `{#if batchMode}` **严格配对**。
+                 上一版这里多了一条裸 `<col class="rl-col-w-cb" />`（原来就有的那一条没删），而表头只有
+                 一条条件 `th` ⇒ 三处列数对不上，`table-layout: fixed` 把每一列都错开一格：
+                 用户看到的就是「表头整体右移、标题文字与表头差 72px、行首空出一条」。
+                 ⚠️ 改这里时必须同时数三处：colgroup 的 `col` / thead 的 `th` / tbody 的 `td`。 -->
+            {#if batchMode}
+                <col class="rl-col-w-cb" />
+            {/if}
+            <!-- 🔴🔴 v2：标题列的 `<col>` **恒给显式 px**（`colViews.titlePx`），不再有「拖过 / 没拖过」两条分支。
+                 改前是裸 `<col />` + `table-layout: fixed` 吃剩余 ⇒ 标题列宽实际由「表格宽 − 其余列」**反推**，
+                 拖它只是在跟这个反推式打架。现在它和其它列**同一套规则**：px 从 `buildColViews` 一处出。
+                 依据（用户报障原话）：「光标变成 ↔ 了，但无法向左或右拖动，其他列竖指示器正常」。 -->
+            <col style={`width:${colViews.titlePx}px`} />
+            {#each colViews.cols as cv (cv.def.key)}<col style={`width:${cv.px}px`} />{/each}
             <col class="rl-col-w-ops" />
         </colgroup>
         <thead>
         <tr>
-            <th scope="col" class="rl-col-cb"><input type="checkbox" bind:this={headCb} checked={allChecked} on:click={toggleSelectAll} aria-label="全选当前筛选结果" /></th>
-            <!-- 标题列：可拖宽 / 可双击自适应，但**不参与列序拖拽**（它是固定首列，列序里没有它） -->
+            {#if batchMode}
+                <th scope="col" class="rl-col-cb"><input type="checkbox" bind:this={headCb} checked={allChecked} on:click={toggleSelectAll} aria-label="全选当前筛选结果" /></th>
+            {/if}
+            <!-- 标题列：可拖宽，但**不参与列序拖拽**（它是固定首列，列序里没有它）。
+                 🔴 用户 2026-10-20：「删除双击列自适应列宽的逻辑」⇒ 双击已不再自适应。 -->
             <th scope="col" class="rl-col-title rl-tbl-th" data-col={TITLE_KEY}>
                 <span class="rl-tbl-head rl-tbl-mv">标题</span>
-                <span
-                    class="rl-tbl-resize"
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label="调整「标题」列宽（双击自适应）"
-                    on:pointerdown={(ev) => startColResize(ev, TITLE_KEY)}
-                    on:dblclick={(ev) => autofitCol(ev, TITLE_KEY)}></span>
             </th>
             {#each colViews.cols as cv, c (cv.def.key)}
                 <th
@@ -2674,15 +3277,14 @@
                     on:dragover={(ev) => onColDragOver(ev, cv.def.key)}
                     on:dragend={onColDragEnd}
                     on:drop={(ev) => onColDrop(ev, cv.def.key)}>
-                    {#if canEditColumns}<span class="rl-tbl-grip" aria-hidden="true" data-tip="拖动调整列序"><Icon icon="grip-horizontal" size={12} /></span>{/if}
-                    <span class="rl-tbl-head rl-tbl-mv">{cv.def.label}</span>
-                    <span
-                        class="rl-tbl-resize"
-                        role="separator"
-                        aria-orientation="vertical"
-                        aria-label={`调整「${cv.def.label}」列宽（双击自适应）`}
-                        on:pointerdown={(ev) => startColResize(ev, cv.def.key)}
-                        on:dblclick={(ev) => autofitCol(ev, cv.def.key)}></span>
+                    <span class="rl-tbl-thbox">
+                        <span class="rl-tbl-head rl-tbl-mv">{cv.def.label}</span>
+                        <!-- 🔴 #668 用户：「表头拖动时**去掉六点图标，不要显示了**」。
+                             六点握把**整体删除**（连同它的 `.rl-tbl-grip` 样式与悬停淡入规则）。
+                             拖拽能力本身没变：`<th>` 仍带 `draggable` + dragstart/dragover/drop ⇒ 拖表头照样换列序，
+                             只是不再有任何图标提示。`cursor: grab` 由 `.rl-tbl-th` 自己给（见样式表）。
+                             ⛔ 别把 grip 图标加回来 —— 用户点了两次名。 -->
+                    </span>
                 </th>
             {/each}
             <th scope="col" class="rl-col-ops rl-tbl-opshead">
@@ -2698,7 +3300,9 @@
         <tbody>
             {#if emptyState}
                 <tr class="rl-empty-row">
-                    <td colspan={2 + colViews.cols.length}>
+                    <!-- 🔴 #680：勾选列现在**按 `batchMode` 条件渲染** ⇒ colspan 也要跟着算，
+                         否则批次模式下空态行会短一列（右边留一条空白）。 -->
+                    <td colspan={2 + colViews.cols.length + (batchMode ? 1 : 0)}>
                         <div class="rl-empty" role="status">
                             <div class="rl-empty-title">{emptyState.title}</div>
                             {#if emptyState.hint}<div class="rl-empty-hint">{emptyState.hint}</div>{/if}
@@ -2720,7 +3324,10 @@
                 {@const gPct = g.type === 'book' ? seriesReadPercent(g.items) : undefined}
                 <tr class="rl-grp-row" class:is-open={gOpen}>
                     <!-- 🔴 #594：父级行的勾选框 = **整组联动**（用户：「合集条加个勾选框，一勾选子条目也被勾选」）——
-                         状态三态：全选 = ✓ / 部分 = 半选（`indeterminate`）/ 全不选 = 空。 -->
+                         状态三态：全选 = ✓ / 部分 = 半选（`indeterminate`）/ 全不选 = 空。
+                         🔴 #686：整格随 `batchMode` 一起出现/消失 —— 与条目行的 `rl-col-cb` 同一口径，
+                            ⛔ 别只藏里面的 input 而留着空格（那会让合集行也整体错开一列）。 -->
+                    {#if batchMode}
                     <td class="rl-col-cb">
                         <input
                             type="checkbox"
@@ -2729,6 +3336,7 @@
                             on:click={(ev) => { ev.stopPropagation(); toggleGroupSelection(g); }}
                             aria-label={`选中整个合集（${g.items.length} 部）`} />
                     </td>
+                    {/if}
                     <td class="rl-col-title" data-col={TITLE_KEY}>
                         <div class="rl-title-cell" title={g.title}>
                             {#if posterUrl(g.items[0])}<img class="rl-thumb" src={posterUrl(g.items[0])} alt="" loading="lazy" decoding="async" referrerpolicy={isDoubanImage(posterUrl(g.items[0])) ? 'unsafe-url' : undefined} />{/if}<button
@@ -2744,13 +3352,27 @@
                     <!-- 父级行的数据格：**只给能真聚合的列**（年份段 / 题材 / 状态 / 书籍进度），其余 `—`。
                          ⛔ 别拿组里第一部的值冒充整组 —— 用户看到组行写着某一部的年份会以为那就是组的年份。 -->
                     {#each colViews.cols as cv (cv.def.key)}
-                        <td class="rl-tbl-td" data-col={cv.def.key}>
+                        <!-- 🔴 #668 用户：「竖指示器要下面格也显示」⇒ 合集父级行的数据格也挂同一个 `is-over`，
+                             与表头格的竖线连成一条（⛔ 别只在条目行挂，否则合集行那儿会断一截）。 -->
+                        <td
+                            class="rl-tbl-td"
+                            class:is-over={dragColKey !== null && overColKey === cv.def.key && dragColKey !== cv.def.key}
+                            data-col={cv.def.key}>
                             {#if cv.def.key === 'status'}
-                                <span class="rl-badge rl-badge-{gStatus}">{statusLabel(g.type, gStatus)}</span>
+                                <!-- 🔴 #668（用户：「列表视图的系列的状态字段值不能居中对齐」）：这里原来是**裸** `<span class="rl-badge">`，
+                                     不带 `.rl-tbl-cell` ⇒ 既不吃居中也不吃省略号。包一层与条目行**同款**的
+                                     `.rl-tbl-cell`（再加上 `.rl-tbl-series-cell` 让徽标真正落在格子中线）——
+                                     ⛔ 别只给 `.rl-badge` 写 `margin: auto`：徽标是 `inline-flex`，行内元素上下外边距无效。 -->
+                                <span class="rl-tbl-cell rl-tbl-series-cell">
+                                    <span class="rl-badge rl-badge-{gStatus}">{statusLabel(g.type, gStatus)}</span>
+                                </span>
                             {:else if cv.def.key === '__progress'}
                                 {#if gPct !== undefined}
-                                    <span class="rl-tbl-cell rl-tbl-ro rl-tbl-mv">{gPct}% · {seriesReadDone(g.items)}/{g.items.length} 部</span>
-                                    <div class="rl-readbar rl-readbar-inline"><div class="rl-readbar-fill" style={`width:${gPct}%`}></div></div>
+                                    <!-- 🔴 #680 ③-2：合集行同样收成微型胶囊（与条目行同一套视觉） -->
+                                    <span class="rl-prog-chip" data-tip={`已读 ${gPct}% · ${seriesReadDone(g.items)}/${g.items.length} 部`}>
+                                        <span class="rl-prog-chip-txt">{gPct}% · {seriesReadDone(g.items)}/{g.items.length} 部</span>
+                                        <span class="rl-prog-chip-bar" aria-hidden="true"><span style={`width:${gPct}%`}></span></span>
+                                    </span>
                                 {:else}<span class="rl-tbl-none">—</span>{/if}
                             {:else}
                                 {@const gt = groupCellText(g, cv.def.key)}
@@ -2772,12 +3394,21 @@
             {@const e = row.entry}
             {@const lp = listProgress(e)}
             <tr class:rl-row-child={row.child}>
+                <!-- 🔴🔴 #686：表体这一格**必须与表头 / colgroup 严格配对** ——
+                     上一版写的是恒渲染 `<td class="rl-col-cb">`，而 colgroup 的 `<col class="rl-col-w-cb">`
+                     与表头的 `<th class="rl-col-cb">` 都在 `{#if batchMode}` 里 ⇒ 非批量模式下
+                     **表体 6 格、表头 4 列**，`table-layout: fixed` 把每一格都错开一位：
+                     用户看到的就是「标题栏空一条、年份跑到标题列底下、状态跑到年份底下、评分跑到状态底下」。
+                     ⚠️ 这与 #683 修的是**同一个坑的另一半**（那次是 colgroup 多一条 col）——
+                     改这里时三处一起数：colgroup 的 `col` / thead 的 `th` / tbody 的 `td`。 -->
+                {#if batchMode}
                 <td class="rl-col-cb">
                     <input
                         type="checkbox"
                         checked={selectedIds.has(e.id)}
                         on:click={(ev) => { ev.stopPropagation(); toggleSelect(e.id); }} />
                 </td>
+                {/if}
                 <td class="rl-col-title" data-col={TITLE_KEY}>
                     <!-- 封面 + 书名同一行；书名 `flex: 1` 自适应 + 超出省略号，`title` 提供全名悬停提示 -->
                     <!-- 🔴 #621 追加件（用户报障）：「点标题跳笔记」必须**显式挂在这个 span 上** ——
@@ -2796,7 +3427,10 @@
                     {@const ed = cellEditable(e, d)}
                     {@const isEditing = editingCell !== null && editingCell.id === e.id && editingCell.key === d.key}
                     {@const shown = cellDisplayText(e, d)}
-                    <td class="rl-tbl-td" data-col={d.key}>
+                    <td
+                        class="rl-tbl-td"
+                        class:is-over={dragColKey !== null && overColKey === d.key && dragColKey !== d.key}
+                        data-col={d.key}>
                         {#if isEditing}
                             <!-- 🔴 编辑态**只有一种**：文本输入框（状态也走它，预填中文标签「在看」）。
                                  ⛔ 别在这里换原生 `<select>` —— 本仓 #566 起「原生下拉整体退场」
@@ -2838,11 +3472,20 @@
                                 {:else if d.key === 'status'}
                                     <span class="rl-badge rl-badge-{e.status}">{statusLabel(e.type, e.status)}</span>
                                 {:else if d.key === '__community'}
-                                    {#if e.communityScore != null}<span class="rl-thumb-score">★ {scoreText(e)}</span>{:else}<span class="rl-tbl-none">—</span>{/if}
+                                    {#if scoreText(e)}<span class="rl-thumb-score">{#if !scoreIsPercentOf(e)}★ {/if}{scoreText(e)}</span>{:else}<span class="rl-tbl-none">—</span>{/if}
                                 {:else if d.key === '__progress'}
+                                    <!-- 🔴🔴 #680 ③-2（用户：「进度条贯穿整列、文字与条分离、视觉松散」）：
+                                         改成**微型胶囊** —— 一个 `inline-flex` 容器里并排「文字 + 4px 细条」，
+                                         不再让进度条单独占一行撑满整列。悬停 capsule 出 `data-tip` 看详情。 -->
                                     {#if lp.text}
-                                        <span class="rl-list-prog">{lp.text}{#if lp.pct !== undefined} · {lp.pct}%{/if}</span>
-                                        {#if lp.pct !== undefined}<div class="rl-readbar rl-readbar-inline"><div class="rl-readbar-fill" style={`width:${lp.pct}%`}></div></div>{/if}
+                                        <span
+                                            class="rl-prog-chip"
+                                            data-tip={lp.pct !== undefined ? `已读 ${lp.pct}% · ${lp.text}` : lp.text}>
+                                            <span class="rl-prog-chip-txt">{lp.text}{#if lp.pct !== undefined} · {lp.pct}%{/if}</span>
+                                            {#if lp.pct !== undefined}
+                                                <span class="rl-prog-chip-bar" aria-hidden="true"><span style={`width:${lp.pct}%`}></span></span>
+                                            {/if}
+                                        </span>
                                     {:else}<span class="rl-tbl-none">—</span>{/if}
                                 {:else if shown}
                                     {shown}
@@ -2861,8 +3504,8 @@
                     <div class="rl-ops-row">
                         <button
                             class="rl-edit-row"
-                            data-tip="编辑条目"
-                            on:click={(ev) => { ev.stopPropagation(); onEditEntry(e.id); }}><Icon icon="pencil" size={14} /><span class="rl-sr">编辑条目</span></button>
+                            data-tip="编辑属性"
+                            on:click={(ev) => { ev.stopPropagation(); onEditEntry(e.id); }}><Icon icon="pencil" size={14} /><span class="rl-sr">编辑属性</span></button>
                         {#if hasActionEntry(e)}
                             <button
                                 class="rl-edit-row rl-edit-watch"
@@ -2875,6 +3518,32 @@
             {/if}
         {/each}
         </tbody>
+        <!-- 🔴🔴 列宽手柄（用户 2026-10-20：「列表视图怎么作品标题的竖状指示器不能拉动」）——
+             **必须挂在 `<table>` 这一层，⛔ 别放回 `<th>` 里面**。
+             上一版把它们写在各自的 `<th>` 里，但 `.rl-tbl-th` 是 `position: static`（#668 为了让竖线
+             拉满整列），于是手柄实际锚定的是 `.rl-table`（唯一的定位祖先），坐标全靠
+             `--rl-tbl-x` / `--rl-tbl-h` 两个变量算出来 —— **而这两个变量只由 `afterUpdate` 显式赋值**：
+              ① 表头被横向滚出视野 / 重新布局时没有 `afterUpdate` ⇒ 变量停在旧值，手柄画在**别的列**上；
+              ② 变量没写之前兜底是 `left: -99px` ⇒ 表格**左外侧**那条看不见的线；
+              ③ `.rl-tbl-wrap` 是 `overflow-x: auto` 的滚动容器 ⇒ 任何落在 wrap 外面的部分被裁掉。
+             结果就是用户看到的「竖指示器拖不动」（视觉上那条线是 `th` 的边框，拖的是另一条不存在的线）。
+             ⇒ 现在手柄**直接挂在 table 下**（它本来就是 table 的子级，语义与坐标一致），仍由
+               `syncColResizeHeight()` 按 `th` 右缘写坐标；`role="separator"` 原样保留。
+             🔴 用户 2026-10-20：「删除双击列自适应列宽的逻辑」⇒ `on:dblclick` 与 `autofitCol()` 已整体删除，
+               列宽**只由拖动决定**（双击不做任何事，⛔ 别再加回来）。
+             ⚠️ 列数 = `colViews.cols.length + 1`（标题列 + 所有数据列）；每列右缘一条，
+                竖线落在「列与列之间」，最后一条压在操作列左缘（拖动同样只改它左边那一列）。
+             ⚠️ `aria-label` 里的列名 = 手柄**左边**那一列（拖的就是它），⛔ 别写成右边那列。 -->
+        {#each [{ key: TITLE_KEY, label: '标题' }, ...colViews.cols.map((cv) => ({ key: cv.def.key, label: cv.def.label }))] as hd (hd.key)}
+            <span
+                class="rl-tbl-resize"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={`调整「${hd.label}」列宽`}
+                class:is-active={resizeColKey === hd.key}
+                data-resize-col={hd.key}
+                on:pointerdown={(ev) => startColResize(ev, hd.key)}></span>
+        {/each}
     </table>
     </div>
 {/if}
@@ -2900,13 +3569,39 @@
                          （`associateMenuLabel`）。有入口时主操作是「观看 / 阅读 / 启动 / 播放」，
                          改关联 / 换关联只剩这一条路；无入口时它与主操作同一个动作（进路不变）。 -->
                     <button on:click={() => { closeCtx(); onQuickAssociate(ctxEntry); }} data-tip="选择本地文件 / 网络地址（随时可改）">{associateMenuLabel(ctxEntry.type)}</button>
-                    <button on:click={() => { closeCtx(); onEditEntry(ctxEntry.id); }} data-tip="编辑字段与关联">编辑条目</button>
-                    {#if ctxEntry.type === 'book'}
+                    <!-- 🔴 2026-10-21（用户：「用细灰线（分割线）把菜单分成 3 组」）——
+                         第 1 组 = 入口本身（主操作 + 关联入口），第 2 组 = 改属性与补录，第 3 组 = 删除。
+                         ⚠️ 分隔线是**普通 div**（不是 `hr`）：`hr` 在 Obsidian 里被样式表当成正文分隔符压过边距。 -->
+                    <div class="rl-ctx-sep"></div>
+                    <!-- 🔴 2026-10-21（用户：「把『编辑条目』统一改成『编辑属性』」）——
+                         与属性面板/字段编辑同一套词，⛔ 别改回「条目」：弹窗改的是**属性**，不是那一条记录。
+                         ⚠️ 全仓另有 4 处「编辑条目」字面量（音乐行 ✎ 提示、列表铅笔提示、追更表按钮、
+                            `EntryForm` 的浮层标题）—— 🔴 #686（用户 2026-10-22：「全仓 4 处也改成编辑属性名称」）
+                            已全部统一为「编辑属性」；注释 / 文档里的历史引用**保留**（那是当时的语境，不是用户看到的字）。 -->
+                    <button on:click={() => { closeCtx(); onEditEntry(ctxEntry.id); }} data-tip="编辑字段与关联">编辑属性</button>
+                    <!-- 🔴 #685（用户 2026-10-22）：右键补录组，按**条目类型**给对应动作 ——
+                         摘抄 = 文学 / 网文（⛔ 漫画不算，漫画走「添加短评」）｜短评 = 电影 / 剧集 / 动画 / 漫画 / 音乐｜
+                         攻略 = 游戏｜重温 = 电影 / 剧集 / 动画｜周目 = 游戏｜时长 = 文学 / 网文 / 漫画 / 音乐 / 游戏。
+                         ⚠️ 分隔线是**内容层级**（⛔ 别用 `:nth-child` 钉死 —— 各类型菜单项数不同）。 -->
+                    {#if ctxEntry.type === 'book' && normalizeBookKind(ctxEntry.bookKind) !== 'comic'}
                         <button on:click={() => { closeCtx(); onAddExcerpt(ctxEntry); }} data-tip="粘贴文本生成摘抄">添加摘抄</button>
                     {/if}
-                    {#if ctxEntry.type === 'game'}
-                        <button on:click={() => { closeCtx(); onOpenGameSessionModal(ctxEntry); }} data-tip="记一次游玩（日期 + 时长 + 心得）">记录游玩</button>
+                    {#if ctxEntry.type === 'movie' || ctxEntry.type === 'tv' || ctxEntry.type === 'anime' || ctxEntry.type === 'music' || (ctxEntry.type === 'book' && normalizeBookKind(ctxEntry.bookKind) === 'comic')}
+                        <button on:click={() => { closeCtx(); onOpenEntryTextModal(ctxEntry, 'comment'); }} data-tip="写一句短评 → 写入笔记独立的「短评」章节">添加短评</button>
                     {/if}
+                    {#if ctxEntry.type === 'game'}
+                        <button on:click={() => { closeCtx(); onOpenEntryTextModal(ctxEntry, 'guide'); }} data-tip="写下攻略 → 写入笔记「攻略」章节">添加攻略</button>
+                    {/if}
+                    {#if ctxEntry.type === 'movie' || ctxEntry.type === 'tv' || ctxEntry.type === 'anime'}
+                        <button on:click={() => { closeCtx(); onOpenEntryLogModal(ctxEntry, 'rewatch'); }} data-tip="第几次重刷 + 感想 → 写入笔记「重温记录」">记录重温</button>
+                    {/if}
+                    {#if ctxEntry.type === 'game'}
+                        <button on:click={() => { closeCtx(); onOpenEntryLogModal(ctxEntry, 'playthrough'); }} data-tip="第几周目 + 感想 → 写入笔记「周目记录」">记录周目</button>
+                    {/if}
+                    {#if ctxEntry.type === 'book' || ctxEntry.type === 'music' || ctxEntry.type === 'game'}
+                        <button on:click={() => { closeCtx(); onOpenEntryLogModal(ctxEntry, 'time'); }} data-tip="记一次时长 → 写入笔记「阅读 / 收听 / 游玩记录」章节">记录时长</button>
+                    {/if}
+                    <div class="rl-ctx-sep"></div>
                     <button class="rl-ctx-danger" on:click={() => ctxDelete(ctxEntry)} data-tip="删除条目">删除条目</button>
                 {/if}
             {:else if ctxGroupKey}
@@ -2941,17 +3636,30 @@
             style={`left:${colX}px; top:${colY}px`}
             bind:this={colPanelEl}>
             {#if canEditColumns}
-                <div class="rl-tbl-colhint">点格子即编辑 · Enter 进入 · Tab 走格 · 退格清空 · Ctrl+Z 撤销</div>
-                {#each colPool as opt (opt.key)}
-                    <label class="rl-tbl-colopt">
-                        <input type="checkbox" checked={tableKeys.includes(opt.key)} on:change={() => toggleCol(opt.key)} />
-                        <span class="rl-tbl-colhead">{opt.label}</span>
-                        {#if !opt.editable}<span class="rl-tbl-colro">只读</span>{/if}
-                    </label>
+                <!-- 🔴🔴 #680 ③-4（用户：「删掉顶部快捷键说明，把提示放到页面帮助文档/设置里；
+                     面板改为**支持分组的显示**以区分不同的列字段重要性」）：
+                  ⑴ 「点格子即编辑 · Enter 进入 · …」那行**整条删除**（不是隐藏）——
+                     它是后台系统式的硬核说明，用户点名不要；入口已经移到阅读器/关于页的新手引导。
+                  ⑵ 选项按 `colGroupOf()` **分三组**：常用字段 / 作品信息 / 其它。
+                     ⛔ 分组只是**显示层**（DOM 分了 section），`tableKeys` 的顺序与归一不受影响 ——
+                     列序仍由用户拖表头决定（见 `pure/tableColumns` 文件头那条口径）。 -->
+                {#each colGroups as g (g.title)}
+                    <div class="rl-tbl-colgroup">
+                        <div class="rl-tbl-colgroup-title">{g.title}</div>
+                        <div class="rl-tbl-colgrid">
+                            {#each g.items as opt (opt.key)}
+                                <label class="rl-tbl-colopt">
+                                    <input type="checkbox" checked={tableKeys.includes(opt.key)} on:change={() => toggleCol(opt.key)} />
+                                    <span class="rl-tbl-colhead">{opt.label}</span>
+                                    {#if !opt.editable}<span class="rl-tbl-colro">只读</span>{/if}
+                                </label>
+                            {/each}
+                        </div>
+                    </div>
                 {/each}
                 <div class="rl-tbl-colfoot">已选 {tableKeys.length} / {TABLE_COLUMN_LIMIT}</div>
             {:else}
-                <div class="rl-tbl-colhint">当前是「全部」页签：表格按各类型的列<b>并集</b>显示，没有「哪一套配置」可改。<br />进入某个类型页签（电影 / 书籍 / …）后再来点这里，就能勾选列了。</div>
+                <div class="rl-tbl-colhint">当前是「全部」页签：表格按<b>各类型共有的列</b>显示（各类型专属列不进混排表），没有「哪一套配置」可改。<br />进入某个类型页签（电影 / 书籍 / …）后再来点这里，就能勾选列了。</div>
             {/if}
         </div>
     {/if}
@@ -3182,6 +3890,18 @@
     .rl-vb-view .rl-vb-opt-label { flex: 1 1 auto; }
     .rl-vb-tick { flex: none; width: 12px; text-align: right; font-size: 11px; }
     .rl-vb-view .rl-vb-opt:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+    /* 🔴🔴 #680 用户：「直接去掉每一个视图上的『点切换·拖动可调整顺序』Tooltip。既然支持拖动排序，
+       最直观的反馈是光标」⇒ 那条 `data-tip` 已从模板删除（⛔ 别加回来），改为：
+       · `cursor: grab` = 悬停即「可抓」；按住拖动时 `cursor: grabbing` = 「正在抓」；
+       · 拖拽中那一项半透明；落点用**顶部一条主题色线**（列表竖排，横线才读得出「插到谁前面」）。
+       · ⚠️ 落点线用 `inset box-shadow` 而不是 `border-top` —— border 会让那一行高 1px、整列抖一下。
+       · ⚠️ `grabbing` 必须同时挂在 `:active` 与 `.is-dragging` 上：拖拽过程中指针常常已经不在那一行上，
+         `:active` 会掉（实测：按住往隔壁项上拖时，光标会跳回 grab）。 */
+    .rl-vb-view .rl-vb-opt { cursor: grab; }
+    .rl-vb-view .rl-vb-opt:active,
+    .rl-vb-view .rl-vb-opt.is-dragging { cursor: grabbing; }
+    .rl-vb-view .rl-vb-opt.is-dragging { opacity: .45; }
+    .rl-vb-view .rl-vb-opt.is-over { box-shadow: inset 0 2px 0 var(--interactive-accent); }
 
     /* ── 🔴 #598 时间线视图 ──────────────────────────────────────────────
        结构 = 若干「桶」（一年一桶，新的在前）→ 每桶 = 左侧**年份轴**（年份 + 部数）
@@ -3196,7 +3916,7 @@
     .rl-tl-year { font-size: 12px; font-weight: 600; color: var(--text-normal); font-variant-numeric: tabular-nums; }
     .rl-tl-cnt { font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
     .rl-tl-items { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 10px; }
-    .rl-tl-item { width: 76px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
+    .rl-tl-item { width: var(--rl-tl-w, 76px); display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
     .rl-tl-cov { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: var(--rl-t-radius-sm, 4px); display: block; }
     .rl-tl-ph {
         display: flex; align-items: center; justify-content: center;
@@ -3696,7 +4416,16 @@
         /* 视口过矮/过窄时内联 max-height/max-width 生效 → 菜单内部滚动，不整块越界 */
         overflow: auto; overscroll-behavior: contain;
     }
-    .rl-ctx button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 6px 10px; border: none; background: transparent; color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer; font-family: inherit; }
+    /* 🔴 2026-10-21（用户：「去掉每个菜单项的独立边框，改成**平铺的列表项**（像 Obsidian 原生的右键菜单那样）」）：
+       那圈「独立边框」**从来不是 `border`**（下面这行早就写了 `border: none`），是核心给裸 `button` 的
+       `box-shadow: var(--input-shadow)`（亮色主题第一段 = `inset 0 0 0 1px rgba(0,0,0,.12)`，即 1px 内描边环）。
+       ⚠️ 本 `<style>` 是 Svelte 作用域样式，选择器落地为 `.rl-ctx button.svelte-xxxx`（0,2,1）⇒ 稳赢核心 (0,1,1)，
+         ⛔ 不用 `!important`。 */
+    .rl-ctx button { display: block; width: 100%; text-align: left; font-size: 12px; padding: 6px 10px; border: none; box-shadow: none; background: transparent; color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px); cursor: pointer; font-family: inherit; }
+    /* 🔴 2026-10-21（用户：「用细灰线（分割线）把菜单分成 **3 组**」）——
+       分组是**内容层级**（主操作/关联 → 编辑与补录 → 删除），所以分隔线写在模板里按分支插，
+       ⛔ 别用 `:nth-child` 钉死（类型不同菜单项数不同，钉死必错位）。 */
+    .rl-ctx-sep { height: 1px; margin: 4px 0; background: var(--background-modifier-border); }
     .rl-ctx button:hover { background: var(--interactive-accent); color: var(--text-on-accent); }
     .rl-ctx .rl-ctx-danger { color: var(--rl-danger-strong); }
     .rl-ctx .rl-ctx-danger:hover { background: var(--rl-danger-strong); color: #fff; }
@@ -3715,8 +4444,11 @@
        🔴🔴 #595：列宽改**百分比**（八列都给宽，标题列封顶 39%）⇒ 整行恒撑满、富余宽度按比例分给各列。
        `min-width` 兜底：容器过窄时整表横向滚动，⛔ 不把状态列挤成两行。
        ⚠️ 780px 是「操作列仍容得下横向两枚 24px 图标」的下限（改列宽/图标尺寸就要一起复核）。 */
-    /* 🔴 #621：`min-width` **不再写死** —— 列数可变 ⇒ 由模板内联 `style={min-width:...px}` 逐表给（见 `tableMinWidth`）。 */
-    .rl-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+    /* 🔴 #621：`min-width` **不再写死** —— 列数可变 ⇒ 由模板内联 `style={min-width:...px}` 逐表给（见 `tableMinWidth`）。
+       🔴 #668：`position: relative` 是**拖宽竖线拉满整列**的定位上下文（见 `.rl-tbl-resize`）——
+       ⛔ 删掉它，手柄就会退回「只有表头那么高」（因为定位祖先会变成 `<th>`）。
+       ⚠️ 表格成为定位上下文后，`th` 里其它绝对定位元素（如列宽手柄）不受影响：`th` 自己仍是 `relative`。 */
+    .rl-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; position: relative; }
     /* 🔴 #598（用户 2026-10-10）：「**列表视图表头文字要居中对齐**」—— 表头由 `text-align: left`
        改成 **center**（`#590` 起一直是左对齐）。
        ⚠️ 只动**表头**：单元格内容（年份 / 状态 / 评分 / 进度）仍是左对齐 —— 那几列的值长短不一，
@@ -3727,13 +4459,26 @@
     /* ⚠️ #621 起 `td` **不再**是 `cursor: pointer`（原来点整行开条目）—— 现在点格子是「改这一格」，
        光标交给里面那个可编辑格（`.rl-tbl-cell` = `cursor: text`；只读格 `.rl-tbl-ro` = 默认箭头）。 */
     .rl-table td { padding: 5px 6px; border-bottom: 1px solid var(--background-modifier-border); overflow: hidden; }
+    /* 🔴 #668（用户：「统一给我居中啊，**除标题外**不居中」）：上面的 `text-align: center` 落在
+       `.rl-tbl-cell` 上，而**标题格里的文字不是 `.rl-tbl-cell`**（是 `.rl-row-link` / 合集名），
+       会去继承 `td` 的对齐 ⇒ 标题也被居中了。这里把标题列**显式钉回左对齐**。
+       ⚠️ 必须作用在 `td` 上（继承源），⛔ 只给 `.rl-row-link` 写不行：同一个标题格里还有副标题/徽标/合集名。 */
+    .rl-table td.rl-col-title { text-align: left; }
+    /* 🔴 #668 系列合集行的**状态徽标**居中：`.rl-badge` 是 `inline-flex`（行内级），
+       `text-align: center` 只把它摆到格子的水平中间，**垂直**方向仍贴基线 ⇒ 与条目行里那枚
+       「上下居中」的徽标高度对不齐。这里用 flex 把徽标在格子里真正居中（水平 + 垂直）。 */
+    .rl-tbl-series-cell { display: flex; align-items: center; justify-content: center; }
     /* 行首勾选列（居中；宽度交给 colgroup 的 `.rl-col-w-cb`，⛔ 这里别再写第二份 width） */
     .rl-col-cb { text-align: center; }
     /* 🔴🔴 列宽：`cb` / `ops` 两列走**固定百分比**（不参与拖动分配），其余列由 `colViews` 逐列给宽。
        ⚠️ 这三个数必须与 script 里的 `CB_PCT` / `OPS_PCT` 一致（`FLEX_PCT = 100 − 5 − 7 = 88`）——
           对不上就会出现「所有列加起来不是 100%」的静默偏差。 */
-    .rl-table .rl-col-w-cb { width: 5%; }
-    .rl-table .rl-col-w-ops { width: 7%; }
+    /* 🔴🔴 #684：勾选列 / 操作列改成**固定像素宽**（原来是 5% / 7% 百分比）。
+       百分比在窄屏会跟着缩（勾选框挤成一团），在宽屏又浪费（操作列白占 7%）；
+       而 `buildColViews` 的预算算式 `availPx − CB_W − OPS_W − TITLE_MIN_PX` 里用的就是这两个 px 值
+       —— 两边必须一致，⛔ 别一边写 px 一边写 %（本仓 #446 因为这类双真源栽过）。 */
+    .rl-table .rl-col-w-cb { width: 60px; }
+    .rl-table .rl-col-w-ops { width: 84px; }
     /* 操作列：左右内距收窄（图标贴右缘即可）⇒ 窄屏下也够放**横向**两枚（见 `.rl-ops-row`） */
     .rl-table .rl-col-ops { padding-left: 4px; padding-right: 4px; }
 
@@ -3744,51 +4489,100 @@
        手柄挂在 `right: -4px`（跨在右邻格的边上），而 `.rl-table th` 是 `overflow: hidden` ⇒
        整条手柄被裁掉 = 看得见一条看不出、鼠标也**点不到**（用户报障：「表头不能自由调整宽度」）。
        ⚠️ 表头文字自己的省略号在 `.rl-tbl-head`（`.rl-tbl-mv`）上，不靠 th 的 overflow。 */
-    .rl-table .rl-tbl-th { position: relative; overflow: visible; }
-    .rl-tbl-th { position: relative; }
+    /* 🔴🔴 #668 拖宽竖线要**拉满整列**，就必须让 `<th>` **不再是定位上下文**：
+       `position: relative` 的祖宗会把绝对定位的子元素锚在自己身上（实测：竖线只在表头那 29px 里）。
+       ⇒ 两处 `relative` 全部改成 `static`（`overflow: visible` 保留，右缘手柄要露出来），
+          手柄改为相对 `<table>`（`.rl-table` 是 `relative`）定位，坐标由 CSS 变量给。
+       ⚠️ 本仓曾有「`th` 必须 relative 才能让右缘手柄可见」的写法 —— 那条约束**已随竖线拉满整列而失效**
+          （手柄现在整条都在表格坐标系里，不需要 th 来定位）。
+       ⚠️ 现在 `th` 里**没有**任何其它绝对定位子元素（六点握把已整体删除），所以改 static 安全。 */
+    .rl-table .rl-tbl-th { position: static; overflow: visible; }
+    .rl-tbl-th { position: static; }
     .rl-tbl-head { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* 🔴🔴 #633 拖序把手（用户：「这个表头移动只有鼠标选中才显示6点图标，并且要对齐好图标横过来」）：
-       · **默认隐身**，鼠标进到这一格才淡入（`:hover` ／ 拖拽中 都算）；显隐**只动 `opacity`** ——
-         ⛔ 别用 `display` 切，那会让表头文字在鼠标进出时**左右跳**（左内距是常驻留位的，见下条）。
-       · 图标换成 lucide **`grip-horizontal`（横排六点）**，替掉原来那个**竖排八点的盲文点阵字符**：
-         而且它是 inline 元素、表头文字是 `display: block` ⇒ **各占一行** —— 这正是「没对齐」的由来。
-       · `position: absolute` 贴左缘 + 垂直居中：脱离文档流后表头只剩一行，文字不再被顶下去。
-       · `cursor: grab` 是「这一列能拖」的提示；`.rl-tbl` 无把手时（未配置列）这枚自然不存在。 */
-    .rl-tbl-grip {
-        position: absolute; left: 1px; top: 50%; transform: translateY(-50%);
-        display: inline-flex; align-items: center;
-        color: var(--text-faint); cursor: grab; opacity: 0;
-        transition: opacity var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
+    /* 🔴 #668 用户：「拖序不要显示那六个点图标为中心了，**以文字为中心**」。
+       旧写法 = 握把 `position: absolute; left: 1px`（贴左缘）+ 表头 `padding-left: 16px` 给它让位
+       ⇒ 文字被推到右半边，视觉中心成了那个六点图标。
+       🔴🔴 **第一版改错并返工**：我直接把 `display: flex` 写在 `<th>` 上 —— **`<th>` 一旦变成 flex 容器，
+       就不再参与表格的列宽分配**（`table-layout: fixed` 下所有列塌成同宽，实测四列表头 left 全是 522）。
+       ⇒ 正确做法：`<th>` 保持 `table-cell`（⛔ 别给它 display/flex），居中的是**内层 `.rl-tbl-thbox`**
+          （`inline-flex` 纵排：文字在上、握把在下），`th` 只负责 `text-align: center`。
+       ⚠️ ⛔ 别再给绝对定位的握把留 `padding-left`（那正是「文字偏心」的根因）。 */
+    .rl-table .rl-tbl-th:not(.rl-col-title) {
+        padding-left: 4px;
+        padding-right: 4px;
+        text-align: center;
     }
-    .rl-tbl-th:hover .rl-tbl-grip,
-    .rl-tbl-th.is-dragging .rl-tbl-grip { opacity: 1; }
-    /* 把手的常驻留位（**⛔ 别跟 `:hover` 绑** —— 那会让表头文字随鼠标进出左右跳）。
-       ⚠️ 只给**参与拖序的列**（标题列是固定首列、列序里没有它；操作列压根不带 `.rl-tbl-th` 类），
-          它的 `padding-left: 4px` 因此不受影响。 */
-    .rl-table .rl-tbl-th:not(.rl-col-title) { padding-left: 16px; }
+    .rl-tbl-thbox {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        vertical-align: middle;
+        max-width: 100%;
+    }
+    /* 🔴 #668 六点握把（`.rl-tbl-grip`）连同它的悬停淡入规则**整体退场** ——
+       用户：「表头拖动时去掉六点图标，不要显示了」。拖拽仍挂在 `<th>` 上，只是没有图标提示了。
+       ⛔ 别再为它加样式：没有模板节点时这些规则只会变成「未使用选择器」告警（构建 87 的基线会被打破）。 */
     .rl-tbl-th.is-dragging { opacity: .45; }
-    /* 落点指示：**右侧竖线**（列是横着排的，横线会让「插到哪一列」看不出方向） */
+    /* 🔴 #668 用户：「**竖指示器要下面格也显示**」—— 落点竖线原来只有表头格有 `inset` 阴影，
+       数据行列一点都看不见，读不出「插到哪一列」。修法 = 同一条竖线**也挂到该列的数据格**
+       （模板上 `td.rl-tbl-td` 带 `class:is-over`，见那边的注释）。
+       ⚠️ 两处都必须用 `inset` 阴影而不是 `border`：`border` 会改列宽 ⇒ 拖动时整表抖一下。 */
     .rl-tbl-th.is-over { box-shadow: inset -2px 0 0 var(--interactive-accent); }
-    /* 拖宽手柄：**贴右缘的竖条**，命中区比视觉宽（`::after` 撑到 9px）—— 1px 的线根本点不中。
-       🔴 `touch-action: none` 必给：否则触控板上按下即被判成滚动，`pointermove` 收不到。 */
+    .rl-tbl-td.is-over { box-shadow: inset -2px 0 0 var(--interactive-accent); }
+    /* 🔴🔴 #668 用户：「调整列宽度的**竖指示器没有格子只有表头**」——
+       原写法 `position: absolute; top: 0; bottom: 0` 是**相对最近的定位祖先**展开的，而这个祖先就是
+       `<th>`（它自己 `position: relative`，为了右缘手柄能被看见）⇒ 竖线只有**表头那么高**
+       （实测 29px，整表 2130px，漏掉 2100px）。
+       ⇒ 修法：把这条线改成**相对整张表**定位 —— `<table>` 是 `position: relative`，
+          `th` 的 `relative` **拦不住绝对定位的子元素**（子元素照样锚到最近的定位祖先）。
+          🔴 所以不能只改 `<table>`：必须**让 `th` 不再构成定位上下文**，手柄才会去锚表格。
+          做法 = 手柄的坐标全部交给 CSS 变量（`--rl-tbl-x` / `--rl-tbl-h`，由 `syncColResizeHeight()` 每帧写），
+          而 `th` 上的 `position: relative` 只保留给... 什么都没有了 ⇒ 见下条：`th` 改 `static`，
+          右缘那条竖线的可见性不再依赖 th 的定位（它现在整列都在表格坐标系里）。
+       ⚠️ 横向位置与高度**都必须**由变量给，⛔ 别再写 `right: -4px`（那是相对 th 的坐标）。
+       🔴🔴 用户 2026-10-20：「列表视图怎么作品标题的竖状指示器**不能拉动**」—— 这条的上一版把柄留在
+          `<th>` 里，而 `th` 是 `static` ⇒ 柄锚在 `.rl-table` 上、坐标全靠变量；变量只在 `afterUpdate`
+          里写 ⇒ 表头滚动 / 未初始化时柄跑到 -99px（表格左外侧，还被 `.rl-tbl-wrap` 的 `overflow-x`
+          裁掉），真正被拖到的是 `th` 边框那条**装饰线**，不是这个柄。
+       ⇒ 现在的**结构保证**：柄的 DOM 父节点就是 `<table>`（见模板末尾那段），它自然锚在表格坐标系，
+         与变量算出来的坐标同一空间 —— 「看得见的那条线」和「能拖的那条线」从此是同一条。
+       ⚠️ 兜底值仍写 `-99px`（未初始化时藏起来），但 `afterUpdate` 之后一定有值；⛔ 别改成 `right: 0`
+          之类相对 th 的写法（th 已不是定位祖先）。 */
     .rl-tbl-resize {
-        position: absolute; top: 0; right: -4px; bottom: 0; width: 2px; z-index: 2;
+        position: absolute; top: 0;
+        /* 🔴 宽度 = 视口令柄条（2px，见 ::before）+ 两侧命中带（4px ± → 共 10px）。
+           ⛔ 别把 width 收窄回 2px：`<span>` 的命中区只有自身盒子，2px 在触控板上根本点不中。 */
+        left: var(--rl-tbl-x, -99px); height: var(--rl-tbl-h, 30px);
+        width: 10px; margin-left: -5px; z-index: 2;
         cursor: col-resize; touch-action: none; background: transparent;
     }
-    .rl-tbl-resize::after { content: ''; position: absolute; top: 4px; bottom: 4px; left: -3px; width: 8px; }
-    .rl-tbl-resize:hover { background: var(--interactive-accent); }
-    /* 值格：恒定「整格宽 + 省略号」。🔴 `overflow:hidden` 同时是**双击自适应**的测量基础 ——
-       `scrollWidth` 给出的才是全文宽度（不裁就不是这个数）。 */
+    /* 可见的竖条（细、居中压在格线上）。⚠️ 用伪元素画而不是给柄本身背景色 —— 那样 10px 的命中带会变成
+       一条粗色带，视觉上把两列硬切开。 */
+    .rl-tbl-resize::before { content: ''; position: absolute; left: 4px; top: 0; bottom: 0; width: 2px; background: transparent; }
+    /* 悬停 / 拖动中 = **整条竖线**亮起（用户要的正是「下面格子也显示」） */
+    .rl-tbl-resize:hover::before,
+    .rl-tbl-resize.is-active::before { background: var(--interactive-accent); }
+    /* 值格：恒定「整格宽 + 省略号」。🔴 `overflow:hidden` 同时是**内容自适应**的测量基础 ——
+       `scrollWidth` 给出的才是全文宽度（不裁就不是这个数）。
+       （用户 2026-10-20 删掉了「双击表头自适应」这个交互，但测量本身仍由 `measureCol` 用来算列宽，
+        ⛔ 别因为删了双击就把 `overflow:hidden` 也去掉。） */
     .rl-tbl-mv { display: block; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rl-tbl-cell {
         width: 100%; height: auto; margin: 0; padding: 3px 4px; min-height: 18px;
         border-radius: var(--rl-t-radius-sm, 4px);
+        /* 🔴 #668（用户：「占位符能居中对齐，其他填入的仍为左对齐…统一给我居中啊，除标题外不居中」）：
+           **有值也居中**（占位符「—」本来就居中，一列里两种对齐看着像没对齐）。
+           ⚠️ 表格里**唯一例外是标题列**（不挂本类的 .rl-col-title）—— 标题长短不一且常带副标题/徽标，
+              居中会看不出列的起点。⛔ 别把本条挪到 .rl-tbl-mv 上（那会连标题列的省略号盒一起居中）。 */
+        text-align: center;
     }
     /* 可编辑格是**真 `<button>`** ⇒ 必须把浏览器默认样式整套抹掉；🔴 `height: auto` 上面已给
        （核心 `button:not(.clickable-icon)` 写死了 `height: var(--input-height)`，不覆盖就是 30px 高）。 */
     .rl-tbl-ed {
         background: transparent; border: none; box-shadow: none;
-        color: var(--text-normal); font: inherit; text-align: left; cursor: text;
+        color: var(--text-normal); font: inherit;
+        /* 与 .rl-tbl-cell 同口径（居中）；核心 button 的默认居中会与它冲突，这里显式钉死 */
+        text-align: center; cursor: text;
     }
     .rl-tbl-ed:hover { background: var(--background-modifier-hover); }
     .rl-tbl-ed:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -1px; }
@@ -3806,6 +4600,8 @@
     /* 编辑框：**铺满整格**（不铺满会看起来像「格子里又开了个小框」） */
     .rl-tbl-input {
         width: 100%; min-width: 0; height: 20px; padding: 0 4px; margin: 0;
+        /* 值居中 ⇒ 进入编辑态时**光标也从中间起**，不然输入瞬间文字会「跳一下」 */
+        text-align: center;
         font-family: inherit; font-size: 12px; color: var(--text-normal);
         background: var(--background-primary); border: 1px solid var(--interactive-accent);
         border-radius: var(--rl-t-radius-sm, 4px);
@@ -3820,10 +4616,26 @@
           （CSS 规定另一轴留 visible 时会一并算成 auto）⇒ 面板会被那层裁掉。 */
     .rl-tbl-col-anchor { position: relative; z-index: 60; isolation: isolate; }
     .rl-tbl-colpop {
-        position: absolute; z-index: 100; min-width: 200px; max-height: 320px; overflow-y: auto;
+        position: absolute; z-index: 100; width: 430px; max-height: 320px; overflow-y: auto;
         background: var(--background-primary); border: 1px solid var(--background-modifier-border);
         border-radius: var(--rl-t-radius-lg, 8px); box-shadow: var(--rl-t-shadow-menu-strong, 0 4px 14px rgba(0, 0, 0, .18));
         padding: 4px; overscroll-behavior: contain;
+    }
+    /* 🔴 #668 列选择器 = **三列网格**（用户：「改成三列排布」）。
+       ⚠️ 面板宽度从 200px 提到 430px —— 三列挤在 200px 里每列只有 ~62px，列名会被截成两三个字。
+       ⚠️ 每项 `min-width: 0` 是网格里的必需项：不给它，长列名会把整列撑宽、三列变成不等宽。 */
+    .rl-tbl-colgrid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0 4px;
+    }
+    /* 🔴 #680 ③-4：列池**分组**（常用 / 作品信息 / 其它）—— 组标题一行小字 + 组内三列网格。
+       ⚠️ 组间距用 `margin-top` 而不是 `gap`：`.rl-tbl-colgrid` 是独立的 grid 容器，组之间不是它的孩子。 */
+    .rl-tbl-colgroup + .rl-tbl-colgroup { margin-top: 8px; }
+    .rl-tbl-colgroup-title {
+        margin-bottom: 3px; padding-left: 2px;
+        font-size: 10.5px; font-weight: 600; letter-spacing: .02em;
+        color: var(--text-faint);
     }
     /* 表头「操作」格：🔴 #630 起**只剩「操作」二字**（那枚列设置按钮已按用户要求搬回工具栏，
        见上方 `.rl-tbl-colmenu`）—— 保留 flex + 居中，是给将来可能回到这一格的件留的位，⛔ 别改成纯文本块
@@ -3840,9 +4652,11 @@
     .rl-tbl-colmenu:hover { color: var(--interactive-accent); border-color: var(--interactive-accent); }
     .rl-tbl-colmenu:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
     .rl-tbl-colhint { padding: 2px 6px 6px; color: var(--text-muted); font-size: 11px; line-height: 1.6; white-space: normal; }
-    .rl-tbl-colopt { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--rl-t-radius-sm, 4px); cursor: pointer; font-size: 12px; }
+    .rl-tbl-colopt { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--rl-t-radius-sm, 4px); cursor: pointer; font-size: 12px; min-width: 0; }
     .rl-tbl-colopt:hover { background: var(--background-modifier-hover); }
     .rl-tbl-colopt input[type='checkbox'] { margin: 0; flex: none; }
+    /* 三列网格里的列名：窄了要省略号，⛔ 别让它把格子撑开（撑开 = 三列不等宽） */
+    .rl-tbl-colopt .rl-tbl-colhead { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rl-tbl-colhead { flex: 1 1 auto; }
     .rl-tbl-colro { flex: none; color: var(--text-faint); font-size: 10px; }
     .rl-tbl-colfoot {
@@ -3854,13 +4668,29 @@
 
     /* 标题格：封面 + 书名同一行；书名 `flex: 1` 自适应（用户：「书名列采用自适应布局 flex:1」），
        超出省略号、悬停 `title` 显示全名。 */
-    .rl-title-cell { display: flex; align-items: center; min-width: 0; }
+    /* 🔴🔴 #686：缩略图由 20×28 放大到 **28×40**（真机实测：20×28 时封面只是个小色块，
+       连「是书还是电影」都分辨不出，白白占一个 254px 宽的标题列）。
+       仍是 2:3 比例（与海报卡一致，⛔ 别改比例 —— 封面会被拉伸或裁掉关键部分），
+       只放大不改形状；行高随之从 41px 涨到 ~53px，仍比海报卡(≈350px)紧凑得多。
+       ⚠️ 锁定区里的其它规则引用了 `--rl-list-thumb-w/h`，改尺寸只改这对变量。 */
+    .rl-title-cell {
+        --rl-list-thumb-w: 28px;
+        --rl-list-thumb-h: 40px;
+        display: flex; align-items: center; min-width: 0;
+    }
     /* 🔴 #621 追加件（用户报障）：表格行撤了整行点击之后，**标题自己**必须既是入口又看得出来能点 ——
        `cursor: pointer` + 悬停转主题色（与折叠卡的组名同款反馈）。 */
     .rl-title-cell .rl-row-link { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
     .rl-title-cell .rl-row-link:hover { color: var(--interactive-accent); }
     .rl-title-cell .rl-row-link:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; border-radius: var(--rl-t-radius-sm, 4px); }
-    .rl-thumb { flex: none; width: 20px; height: 28px; object-fit: cover; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+    .rl-thumb {
+        flex: none;
+        width: var(--rl-list-thumb-w, 28px);
+        height: var(--rl-list-thumb-h, 40px);
+        object-fit: cover; border-radius: 3px; margin-right: 8px; vertical-align: middle;
+        /* 底色兜住还没解码完的那一帧（加载中不闪白条）；主题自适应，⛔ 不写死色值 */
+        background: var(--background-modifier-border);
+    }
     /* 表头：纯文本，不提供排序交互，也没有 hover 反馈（排序见工具栏「排序」下拉） */
     /* 列表大众评分列 */
     .rl-thumb-score { font-size: 11px; font-weight: 600; color: var(--rl-score); white-space: nowrap; }
@@ -3871,6 +4701,32 @@
        90px 在窄屏会顶出格子、宽屏又浪费（与「各列都宽一点」同一条口径）。 */
     .rl-readbar-inline { height: 3px; width: 100%; display: block; margin-top: 3px; flex: none; }
 
+    /* ── 🔴🔴 #680 ③-2：列表进度列的**微型胶囊**（用户：「进度条贯穿整列、文字与条分离、视觉松散」）──
+       结构 = 一个 `inline-flex` 胶囊，里面「文字 + 4px 细条」并排；条**不再独占一行、不再撑满整列**。
+       · 宽度跟着文字走（`width: fit-content`），右侧不会再拖出一条长条；
+       · 条最多 42px —— 只是「读到哪」的视觉提示，精确值看文字与悬停提示；
+       · `vertical-align: middle`：格子里它与其它文字基线对齐，行高不变。 */
+    .rl-prog-chip {
+        display: inline-flex; align-items: center; gap: 5px;
+        max-width: 100%; padding: 1px 6px;
+        border-radius: var(--rl-t-radius-pill, 999px);
+        background: var(--background-modifier-hover);
+        font-size: 11px; line-height: 1.5; color: var(--text-muted);
+        white-space: nowrap; vertical-align: middle;
+        /* 🔴 #680：整格宽度不够时**让条先让位、文字保持完整**（实测 132px 列里「11/21 章 · 50%」+ 42px 条
+           会挤到文字被截成「…章 · 5…」）。条给 `min-width` 下限，文字 `flex: 0 0 auto`。 */
+    }
+    .rl-prog-chip-txt { flex: 0 0 auto; }
+    .rl-prog-chip-bar {
+        flex: 0 1 42px; min-width: 18px; height: 4px; overflow: hidden;
+        background: var(--background-modifier-border);
+        border-radius: var(--rl-t-radius-pill, 999px);
+    }
+    .rl-prog-chip-bar > span {
+        display: block; height: 100%; background: var(--rl-good-bar, #4d9b52);
+        border-radius: var(--rl-t-radius-pill, 999px);
+    }
+
     /* ── 🔴 #592 列表视图的**合集父级行 / 成员子行**（#594 两处翻面见下）──────────────
        父级行 = 组头：一层很淡的底 + 组名加粗 + 「共 N 部」读数 + 行首**整组勾选框**；
        子行 = 组内成员，**与普通条目同一层级**（#594 撤销 #592 的 20px 缩进）。 */
@@ -3880,6 +4736,12 @@
         /* 🔴 「框四件」一起压（核心 `button:not(.clickable-icon)` 的 (0,1,1) 会铺灰底/加内描边环）——
            本组件的 scope 类让它天然 ≥2 类，但四条显式写出来才不依赖特异性侥幸。 */
         display: flex; align-items: center; gap: 6px; min-width: 0;
+        /* 🔴🔴 #688（用户：「标题字段超过 8 个字就省略号」）：合集名那一行**必须吃掉标题列的剩余宽度**。
+           原来没写 `flex` ⇒ `button` 在 flex 容器里是 `0 1 auto`（基础宽 = 内容宽的上限受挤），
+           而里面的 `.rl-grp-name` 也只拿了「几个字」的宽 ⇒ **8 个字就被省略**（实测 cw=88px，
+           标题列有 1036px 却全空着）。这里给 `1 1 auto` + `min-width: 0`（可收缩），
+           名字再 `flex: 1` 撑满 ⇒ 长合集名可以一直显示到列宽为止。 */
+        flex: 1 1 auto;
         border: none; box-shadow: none; border-radius: 4px; padding: 2px 6px 2px 2px;
         background: transparent; color: var(--text-normal);
         font-family: inherit; font-size: 12px; cursor: pointer; text-align: left;
@@ -3887,7 +4749,8 @@
     .rl-grp-toggle:hover { color: var(--interactive-accent); }
     /* 🔴🔴 #594 **翻面**：名字左边那枚倒三角**整体退场**（用户：「把合集名称左边的倒三角样式去掉」）——
        展开 / 收起仍由**点合集名**触发（那个 `button` 与 `aria-expanded` 都还在，只是不再画箭头）。⛔ 别挪回来。 */
-    .rl-grp-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* 🔴 #688：`flex: 1` 让名字吃掉按钮可用宽（配合上面的 `flex: 1 1 auto`）⇒ 不再 8 个字就省略。 */
+    .rl-grp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rl-grp-cnt { flex: none; font-size: 11px; font-weight: 400; color: var(--text-muted); }
     /* 🔴🔴 #594 **翻面**：子行**不再缩进** —— 用户：「合集系列下的子条目**不位于与其他条目一层级**」
        ⇒ 撤掉 #592 那条「只推标题格 20px」的规则，子行与单集**逐列对齐**。

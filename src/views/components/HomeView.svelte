@@ -4,6 +4,8 @@
     import CalendarBoard from './CalendarBoard.svelte';
     import TrackingBoard from './TrackingBoard.svelte';
     import StatsBoard from './StatsBoard.svelte';
+    // 🔴 #657：统计页区块顺序的缺省值与类型（真源在 pure/statsLayout）
+    import { STATS_BLOCK_DEFAULTS, type StatsBlockKey } from 'pure/statsLayout';
     // #546：导航本体（大字 + 面板 + 键盘）抽成独立组件 —— **两个挂载点共用同一份实现**：
     //   有工具栏的页签经 MediaList 的 `nav-entry` 插槽放进搜索框那一行，计划/统计由本组件包一行。
     import NavMenu from './NavMenu.svelte';
@@ -17,7 +19,7 @@
     // 🔴 #624：`shouldShowTop` 不再直接引用 —— 显隐统一走 `topVisible`（它内部就是 `shouldShowTop` + 静止/悬停两条）
     import { topVisible, wrapsRoot, TOP_IDLE_MS } from 'pure/topButton';
     import { type ColorTheme, type EntryType } from 'data/types';
-    import type { ActivityEvent, BookKind, MediaEntry, MediaStatus } from 'data/types';
+    import type { ActivityEvent, BookKind, MediaEntry, MediaStatus, EntryLogKind, EntryTextKind } from 'data/types';
     // 🔴 #635：评分看板「拖入即改评分」的载荷类型（与存储口径同源 `pure/rating`）
     import type { Rating } from 'pure/rating';
     import type { FeedRange } from 'pure/activityFeed';
@@ -69,8 +71,10 @@
     export let onBulkDelete: (ids: string[]) => Promise<void> = async () => {};
     /** 书籍卡片右键「添加摘抄」：固定挂载该书打开摘抄弹窗 */
     export let onAddExcerpt: (book: MediaEntry) => void = () => {};
-    /** 游戏卡片右键「记录游玩」：固定挂载该游戏打开游玩记录弹窗 */
-    export let onOpenGameSessionModal: (game: MediaEntry) => void = () => {};
+    /** #685 右键「记录时长 / 记录重温 / 记录周目」：固定挂载该条目打开记录弹窗 */
+    export let onOpenEntryLogModal: (e: MediaEntry, kind: EntryLogKind) => void = () => {};
+    /** #685 右键「添加短评 / 添加攻略」：固定挂载该条目打开文本记录弹窗 */
+    export let onOpenEntryTextModal: (e: MediaEntry, kind: EntryTextKind) => void = () => {};
     /** 批量设置个人评分 */
     export let onBulkRating: (ids: string[], rating: number) => Promise<void> = async () => {};
     /** 批量追加标签 */
@@ -112,6 +116,28 @@
     /** 表格格子提交 ⇒ 宿主写回条目 + 笔记 + 刷新视图 */
     export let onCellCommit: (id: string, patch: Partial<MediaEntry>) => Promise<void> = async () => {};
     /**
+     * 🔴 #668 用户：「切换视图按钮也支持**自由排序并持久化**」。
+     * 顺序原样传给 `MediaList`（⛔ 两处不各归一一次），归一只在 `pure/viewModes.normalizeViewOrder`。
+     */
+    export let viewOrder: string[] = [];
+    /** 拖完 ⇒ 宿主落盘 + 刷视图 */
+    export let onViewOrderChange: (order: string[]) => void = () => {};
+    /** 🔴 #668：时间线自己的缩放档（⛔ 与海报列数**分开存**，见设置里那条注释） */
+    export let timelineZoom: number = 3;
+    /** 时间线缩放 ⇒ 宿主落盘 + 刷视图 */
+    export let onTimelineZoomChange: (zoom: number) => void = () => {};
+    /**
+     * 🔴 需求 9（用户 2026-10-21）：**列表视图**「展示分组 / 不并组展示」的单循环口径。
+     *  `true`（含缺省 = 老库没这个键）= 展示分组（同系列折成合集行、可展开）；`false` = 不并组展示（每条独立一行）。
+     *  ⚠️ 只作用于列表视图 —— 海报墙 / 卡片网格 / 瀑布流 / 时间线的排布与行为一律不变。
+     */
+    export let listGrouping = true;
+    /**
+     * 上面那枚切换按钮的回推出口（受控口径：值与落盘都归宿主，⛔ 组件不自己存设置）。
+     * ⚠️ `null` = 宿主没接线 ⇒ `MediaList` 里**整枚按钮不渲染**（不画点了没反应的按钮）。
+     */
+    export let onToggleGrouping: ((next: boolean) => void) | null = null;
+    /**
      * 🔴 #635 ④：评分看板「拖入即改评分」⇒ 宿主写回条目 + 笔记 + 刷新视图。
      * ⚠️ 与 `onCellCommit` **分开**（那是通用 patch、这是评分专用）：看板要的是「明确的评分数」，
      *    复用一个泛 patch 通道会让「拖错了怎么办」的失败回滚判据失去抓手。
@@ -147,18 +173,20 @@
     /** 自定义列数的目标列数（仅 posterDensity === 'custom' 生效；实际列数仍由容器宽度决定） */
     export let posterColumns: number = POSTER_COLUMNS_DEFAULT;
     /**
-     * 🔴 #626 海报墙（`wall`）**自己的**列数；`undefined` = 跟随 `posterDensity`（缺省即此）。
-     * ⚠️ 类型刻意是 `unknown`：它是**从 settings 直接透传的原始值**，归一 / 裁决只在
-     *    `pure/posterGrid.posterGridTemplateForWall` 一处收口（脏值按「没配过」处理）。
+     * 🔴 用户 2026-10-20 删除「海报墙列数」⇒ 墙**没有第二套列数**了，与卡片网格共用 `posterColumns`。
+     *    （原 #626 的 `wallColumns` prop 已随之整条下线，⛔ 别再补回来。）
      */
-    export let wallColumns: unknown = undefined;
     /** 🔴 #591 媒体库内 Ctrl+滚轮缩放开关（设置页配置；缺省关 —— 要接管系统手势） */
     export let ctrlWheelZoom: boolean = false;
+    /** 🔴 #657 统计页区块顺序（`settings.statsOrder` 归一后的值；缺省 = 原视觉顺序）。 */
+    export let statsOrder: StatsBlockKey[] = [...STATS_BLOCK_DEFAULTS];
+    /** 🔴 #657 顺序变化 → 宿主落盘（与缺省一致时宿主会删键）。 */
+    export let onStatsOrderChange: (next: StatsBlockKey[]) => void = () => {};
     /**
      * 🔴 #591 缩放**回推出口**：MediaList 只报告「缩到几列 + 哪个视图」，落盘与重推由宿主承担。
-     * 🔴 #626 第 3 参 `view`：`grid` → `plugin.applyPosterZoom`（写共享密度/列数）、
-     *    `wall` → `plugin.applyWallZoom`（**只**写 `wallColumns`）。两条路必须分开 ——
-     *    从前墙上缩放走的是共享那对，等于顺手改掉了卡片网格的列数。
+     * 🔴 #626 第 3 参 `view`：`grid` / `wall` —— 用户 2026-10-20 删除「海报墙列数」后
+     *    两条路写的是**同一对**共享键（`applyWallZoom` 也只写 posterColumns），
+     *    这个参数只剩「标明缩的是哪个视图」的语义，⛔ 别再拿它分流到第二套列数键。
      */
     export let onPosterZoom: (density: PosterDensity, columns: number, view: 'grid' | 'wall') => void = () => {};
 
@@ -516,8 +544,12 @@
         {:else if effPage === 'stats'}
             <!-- 🔴 #635 ④：评分看板要「封面 + Ctrl 滚轮缩放 + 拖入落库」三样 ——
                  `posterUrl` / `ctrlWheelZoom` 本组件已有（与主视图同源，⛔ 不新造），
-                 只多传一个 `onSetRating`（拖入即改评分 → 宿主落库）。 -->
-            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} />
+                 只多传一个 `onSetRating`（拖入即改评分 → 宿主落库）。
+                 🔴 #657：另传统计页**区块顺序**与其落盘回调（自由排序，自适应 —— 见 `pure/statsLayout`）。 -->
+            <!-- 🔴🔴 #659：prop 名必须与 `StatsBoard` 的 `export let` **逐字一致** ——
+                 上一版 StatsBoard 里叫 `onOrderChange`、这里传的是 `onStatsOrderChange`，
+                 Svelte 4 对「多传的 prop」**静默忽略** ⇒ 拖动后回调永远是默认空函数 ⇒ **拖了没反应**（零报错）。 -->
+            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} order={statsOrder} onOrderChange={onStatsOrderChange} />
         {:else}
             <MediaList
                 entries={listEntries}
@@ -527,10 +559,15 @@
                 {tableColumnsByType}
                 {onTableColumnsChange}
                 {onCellCommit}
+                {onViewOrderChange}
+                {onTimelineZoomChange}
+                {viewOrder}
+                {timelineZoom}
+                {listGrouping}
+                {onToggleGrouping}
                 {defaultViewMode}
                 {posterDensity}
                 {posterColumns}
-                {wallColumns}
                 {ctrlWheelZoom}
                 {onPosterZoom}
                 {onAdd}
@@ -547,7 +584,8 @@
                 {onDeleteEntry}
                 {onBulkDelete}
                 {onAddExcerpt}
-                {onOpenGameSessionModal}
+                {onOpenEntryLogModal}
+                {onOpenEntryTextModal}
                 {onBulkRating}
                 {onBulkTags}
                 {onConfirmBulk}

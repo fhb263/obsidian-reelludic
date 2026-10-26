@@ -12,25 +12,31 @@ import {
     PROVIDERS, PROVIDER_META, GROUP_LABELS,
     resolveSourceChain, normalizeSourceChain, DEFAULT_CHAINS,
 } from 'pure/sourceRegistry';
-import { normalizeAiChoice, normalizeProvider, normalizeAiBaseUrl, AI_PROVIDER_OPTIONS, aiProviderOptions, AI_PROVIDER_OFF, DEFAULT_MODELS, DEFAULT_TRANSLATE_PROMPT, aiBaseUrlIssue, providerLabel, mergeModelCandidates, aiChoiceLabel, aiChoiceLabelNamed, aiPickText, isAiOff, aiKeyField, isCustomSlot, customSlotName, normalizeCustomName, CUSTOM_SLOTS, CUSTOM_SLOT_FIELDS, CUSTOM_SLOT_DEFAULT_NAME, type CustomSlot, type AiProviderChoice, type TranslateProvider, type ModelFetched } from 'pure/translate';
+import { normalizeAiChoice, normalizeProvider, normalizeAiBaseUrl, AI_PROVIDER_OPTIONS, aiProviderOptions, AI_PROVIDER_OFF, AI_PURPOSE_DEFAULT, DEFAULT_MODELS, DEFAULT_TRANSLATE_PROMPT, aiBaseUrlIssue, providerLabel, mergeModelCandidates, aiChoiceLabel, aiChoiceLabelNamed, aiPickText, isAiOff, aiKeyField, isCustomSlot, customSlotName, normalizeCustomName, CUSTOM_SLOTS, CUSTOM_SLOT_FIELDS, CUSTOM_SLOT_DEFAULT_NAME, type CustomSlot, type AiProviderChoice, type TranslateProvider, type ModelFetched } from 'pure/translate';
 // #484：模型拣选弹窗的筛选 / 置顶判定（纯逻辑，可单测）
-import { togglePin } from 'pure/aiPick';
+import { togglePin, toggleHidden, clearHiddenFor } from 'pure/aiPick';
 // #479 AI集成页整页重排：服务商品牌标（LobeHub Icons，MIT）+ 可搜索的模型选择
 // #480：图标绘制与「服务商图标」抽到 services/aiIcon（设置页与拣选弹窗共用一份）
 import { AI_PROVIDER_ICON, TTS_ICON, type AiIcon } from 'pure/aiIcons';
-// 🔴 #636 ⑤：漫画阅读器两档（阅读方式 / 缩略图栏）的**归一闪源**（⛔ 不在设置页另写一份判据）
-import { normalizeComicViewMode, thumbsVisible, comicViewModeOptions } from 'pure/comicViewer';
+// 🔴 #689：`pure/comicViewer` 的两个导出**已不再被设置页使用**（漫画阅读方式下拉已移除，
+//    入口只在漫画阅读器内）⇒ import 一并删除。⛔ 别因为「以后可能用」留着 —— 本仓死码不留。
 // 🔴 #639 ⑥：Steam 凭据（SteamID 校验是纯函数，⛔ 不在设置页另写一份位数判断）
 import { steamIdIssue } from 'pure/steamSync';
+// 🔴 2026-10-25 用户裁定：TMDB 两格各只收一种凭据（Key 格 = 32 位 v3 API Key；Session 格 = v4 access_token），
+//    校验文案走纯函数，便于单测与「占位说明也是」那条要求对齐。
+import { tmdbApiKeyFieldIssue, tmdbSessionFieldIssue } from 'pure/tmdbAuth';
 import { renderAiIcon, aiChoiceIcon } from 'services/aiIcon';
 // #488：元数据源 / 音乐平台图标真源（simple-icons CC0 品牌标 + 内置兜底；**生成器写盘**，
 // 见 `_gen_source_icons.cjs`）。与 AI 服务商图标共用**同一个** `renderAiIcon` 渲染端。
 import { SOURCE_ICON, MUSIC_COOKIE_ICON, type KeySourceId, type MusicSourceId } from 'pure/sourceIcons';
 // #589 开机凭据自检：凭据行的徽标要能显示「连接失败」（#634 由「已失效」改名）
 // 🔴 #634：`aiCheckKey` 让 AI 服务（翻译/总结/云合成/自定义端点）也走**同一张三态结果表**
-import { EXPIRED_BADGE, isExpired, aiCheckKey, musicCheckKey, sourceCheckKey } from 'pure/credentialCheck';
+import { EXPIRED_BADGE, isExpired, aiCheckKey, musicCheckKey, sourceCheckKey, type CredentialStatusMap } from 'pure/credentialCheck';
 // #491「更新日志」= 内置弹窗（⛔ 不再跳浏览器）；正文是 `pure/releaseNotes` 里那张**手写**的版本一句话表
 import { ReleaseNotesModal } from 'modals/ReleaseNotesModal';
+// 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑧）：关于页那枚「新手引导」按钮换成「未来规划」，
+//    引导弹窗（`modals/GuideModal`）与它的 `GUIDE_PAGE_COUNT` 一并下线 ⇒ 这里只留路线图弹窗。
+import { RoadmapModal } from 'modals/RoadmapModal';
 // #598 对外链接的唯一真源（仓库 / 报 Bug / 提需求 / 爱发电）—— 「关于」页那几枚按钮只读它
 import { REPO_URL, AFDIAN_URL, SUPPORT_BUTTONS } from 'pure/supportLinks';
 import { AiPickerModal, AiModelNameModal, type AiModelItem, type AiPickerPick } from 'modals/AiPickerModal';
@@ -49,20 +55,17 @@ import { DEFAULT_PREFILL_PROMPT } from 'pure/aiPrefill';
 import { DEFAULT_SEARCH_PROMPT } from 'pure/readerSearch';
 import { loadTtsEngine, saveTtsEngine } from 'pure/tts';
 import { DOWNLOAD_DIR_DEFAULT, downloadRootIssue, normalizeDownloadRoot, type DownloadKind } from 'pure/downloadPlan';
-import { BOOK_DOWNLOAD_ENABLED } from 'pure/featureGate';
-// #422 书源（设置页「元数据源配置 › 书籍源凭据」组）：类型 + 摘要 + 站点键 + 分类
-import { SOURCE_KINDS, SOURCE_KIND_LABEL, sourceKey, sourceSummary, type NovelSource, type SourceKind } from 'pure/sourceRule';
-// #432 甲：源生命周期（订阅 / 粘贴 / 体检）—— 体检汇总口径 + 取消 + 弹窗
-import { SOURCE_HEALTH_KEYWORD, sourceCheckHealthText, sourceCheckSummaryText, type SourceCheckResult } from 'pure/sourceCheck';
-import { SourceSubscribeModal } from 'modals/SourceSubscribeModal';
-import { CancelledError, createCancelToken } from 'pure/cancel';
-import { mountFilePickLabel } from 'services/filePick';
 import {
     POSTER_DENSITIES, POSTER_DENSITY_LABELS, POSTER_COLUMNS_MIN, POSTER_COLUMNS_MAX,
-    POSTER_WALL_COLUMNS_MAX,
     normalizePosterDensity, normalizePosterColumns, type PosterDensity,
 } from 'pure/posterGrid';
-import { PosterMigrateModal } from 'modals/PosterMigrateModal';
+// 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑤-3）：「一键迁移」不再在设置页里画进度条
+//    （`.rl-mig-prog` 那套 DOM 已整体删除），改由进度弹窗承担；结果也由它的 `finish()` 展示 ⇒
+//    `PosterMigrateModal`（结果弹窗）**不再被本文件 import**（文件本身保留：可能被命令/别处引用）。
+// 🔴 2026-10-25：`PosterMigrateProgressModal` 也不再由本文件 import —— 一键迁移的完整流程
+//    （扫候选 → 勾选弹窗 → 进度弹窗 → 迁移）已收进 `main.openPosterMigrate()`，设置页只点一下。
+// 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑤-2）：失效链接检测结果改弹窗展示
+import { LinkCheckModal } from 'modals/LinkCheckModal';
 import { AssetCleanupModal } from 'modals/AssetCleanupModal';
 import { ConfirmModal } from 'modals/ConfirmModal';
 import {
@@ -78,18 +81,29 @@ import {
 } from 'pure/settingNav';
 // 1.3.1 ①「高级设置」页：字段映射（纯逻辑校验 + 字段清单真源）
 import { parseFieldMap } from 'pure/fieldMap';
-import { META_FIELDS, findMetaField } from 'pure/metaFields';
-import { CARD_FIELD_LIMIT, CARD_PREVIEW_ENTRIES, cardFieldOptionsFor, cardFieldValue, resolveCardFieldsByType, type CardFieldKey } from 'pure/cardMeta';
+// 🔴 #653：属性顺序「对比预览」的位次矩阵（纯逻辑，⛔ 不在这里另算一套）
+// 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑦）：对比预览从 7 列扩到 9 列（书籍拆成
+//    文学 / 网文 / 漫画三列）⇒ 列清单改从 `FIELD_ORDER_COMPARE_COLUMNS` 取，⛔ 别再在设置页手写列。
+import { FIELD_ORDER_COMPARE_COLUMNS, buildFieldOrderCompare, fieldLabelOf } from 'pure/fieldOrderCompare';
+import { META_FIELDS, labelOf } from 'pure/metaFields';
+import { CARD_FIELD_LIMIT, CARD_PREVIEW_ENTRIES, cardFieldOptionsFor, cardFieldValue, normalizeCardFieldsForType, resolveCardFieldsByType, type CardFieldKey } from 'pure/cardMeta';
 // 1.3.1 ① 第 3 件：各类型笔记属性顺序（拖拽列表复用 seriesGroup 的通用搬移纯函数）
 import {
     FIELD_ORDER_TYPES,
     GLOBAL_FIELD_KEYS,
     defaultOrderFor,
     exclusiveFieldsFor,
+    // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑦）：书籍三子类各有排除表（网文去掉画师 / ISBN），
+    //    子类页与对比预览的 `k:<kind>` 列都走它 —— ⛔ 不许在设置页拿 `exclusiveFieldsFor('book')` 顶替。
+    exclusiveFieldsForBookKind,
     isDefaultKindOrder,
     isDefaultOrder,
     orderForBookKind,
     orderForType,
+    // 对比预览九列要按「用户已配次序」取数：回落链（子类 → 大类 → 缺省）由这两个汇总器负责，
+    // ⛔ 别在设置页自己拼一遍（拼错就静默用缺省序，tsc 不会报）。
+    resolveAllKindOrders,
+    resolveAllOrders,
 } from 'pure/fieldOrder';
 import { moveItem } from 'pure/seriesGroup';
 // #541「个性化体验」四项：主导航布局 / 起始页 / 卡片风格 / 界面动效。
@@ -104,6 +118,8 @@ import {
 export interface ReelLudicSettings {
     /** TMDB API Key（免费注册，设置页引导） */
     tmdbApiKey: string;
+    /** 🔴 #665：TMDB 账号同步用（watchlist / favorite 接口要 session_id，搜索只用 API Key；见 pure/tmdbSync 模块头） */
+    tmdbSessionId: string;
     /** 库目录（vault 内） */
     libraryDir: string;
     /** 豆瓣兜底（已移除开关，改为始终启用；字段保留以兼容旧数据，不再读取） */
@@ -137,22 +153,43 @@ export interface ReelLudicSettings {
     posterDensity?: PosterDensity;
     /** 自定义列数的「目标列数」（仅 posterDensity === 'custom' 生效；缺省 6，范围 1-12）。
      *  实际列数仍由容器宽度决定 —— 容器过窄时按最小卡片宽度自动减列（pure/posterGrid）。
-     *  🔴 #626：这一对（`posterDensity` / `posterColumns`）从此是**卡片网格（grid）**的档位；
-     *     海报墙（wall）只在**没配过 `wallColumns`** 时跟随它。 */
+     *  🔴 用户 2026-10-20 删除「海报墙列数」后，这一对是**卡片网格与海报墙共用**的唯一列数真源。 */
     posterColumns?: number;
     /**
-     * 🔴 #626 **海报墙（`wall`）自己的目标列数**（append-only 可选字段）。
+     * 🔴 #626 **海报墙（`wall`）自己的目标列数** —— ⚠️ **已下线**（用户 2026-10-20：「设置页里的
+     * 海报墙列数项删除掉」）。字段名保留**仅为了读懂老 data.json**：它现在被**一律忽略**
+     * （见 `pure/posterGrid.posterGridTemplateForWall`，形参收下就丢），墙恒跟随上面的「海报密度」。
      *
-     * 为什么要有它：Ctrl+滚轮缩放原本只写共享的 `posterDensity` / `posterColumns`
-     * ⇒ **在墙上缩一次，卡片网格的列数也跟着变了**（用户报的就是这件事）。
-     * 现在墙上滚动只写这里，两个视图各记各的。
+     * 历史：Ctrl+滚轮缩放原本只写共享的 `posterDensity` / `posterColumns` ⇒「在墙上缩一次，
+     * 卡片网格的列数也跟着变了」；#626 于是给墙开了这个键。现在墙面那一路的缩放**也落回共享键**
+     * （见 main.ts 的 `applyWallZoom`）—— 一条真源，⛔ 别再给墙开第二个列数键。
      *
-     * 🔴 **缺省 = 键不存在 = 跟随上面的「海报密度」**（零写入迁移：老用户观感一字不变）。
-     * 归一 / 裁决全在 `pure/posterGrid.posterGridTemplateForWall` 一处 ——
-     * 脏值（`null` / 字符串 / `NaN`）一律按「没配过」处理，⛔ 不会静默变成「6 列」。
-     * 上界比卡片网格宽一档（`POSTER_WALL_COLUMNS_MAX` = 16）：墙是纯封面 + 一行标题，密一点仍读得出。
+     * ⛔ **不要把设置行加回来**：没有入口的键 = 鬼开关。
      */
     wallColumns?: number;
+    /**
+     * 🔴 #668 **时间线视图自己的缩放档**（append-only 可选字段）。
+     *
+     * 与 `wallColumns` 同一条理由：Ctrl+滚轮缩放若共用 `posterColumns`，
+     * 「在时间线上缩一次，卡片网格的列数也跟着变」—— 每个视图各记各的。
+     * ⚠️ 语义是**条目宽度档**（1 = 最宽 .. 6 = 最窄），不是列数：时间线是按年份横向铺条目，没有「列」。
+     * 🔴 **缺省 = 没配过** ⇒ 用 `TL_WIDTH_DEFAULT`，脏值（`null` / 字符串 / `NaN` / 越界）一律按没配过处理。
+     */
+    timelineZoom?: number;
+    /**
+     * 🔴 #668 **「切换视图」下拉里各档的顺序**（append-only 可选字段，用户自由拖排）。
+     * 缺省 = `ALL_VIEW_VALUES` 的默认顺序；归一在 `pure/viewModes.normalizeViewOrder` 一处
+     * （丢未知值 / 去重 / **把缺失的档补到末尾** —— 以后新增视图时老用户也能看见它）。
+     */
+    viewOrder?: string[];
+    /**
+     * 🔴 2026-10-21（用户需求 9）**列表视图「展示分组 / 不并组展示」**（append-only 可选字段）。
+     * `undefined` 或 `true` = 展示分组（同系列折叠成组，与 1.4.0 之前的行为一致）；`false` = 不并组展示。
+     * ⚠️ 只作用于**列表视图**（需求原文只点名列表视图那排工具栏）；海报墙 / 卡片 / 时间线**不受影响**
+     *    —— 它们的行源在 `MediaList.svelte` 里是另一条分支，⛔ 别把开关接到 `seriesRows` 那一支上。
+     * 落盘走 `plugin.setListGrouping(next)`（唯一出口，⛔ 别在视图里直接改 `settings` 字段）。
+     */
+    listGrouping?: boolean;
     /** 界面主题（1.0.3）：全面 modern 后恒为 'modern'（设置页已无切换入口；字段按 schema append-only 保留） */
     uiTheme?: UiTheme;
     /**
@@ -163,6 +200,13 @@ export interface ReelLudicSettings {
      * 归一走 `pure/navLayout.normalizeNavLayout`（脏值回 `top`，⛔ 升级不得换脸）。
      */
     navLayout?: NavLayout;
+    /**
+     * 🔴 #657（用户：「统计页的所有元素支持自由排序，自适应」）：统计页**五个区块的顺序**。
+     * `['hero','feed','trend','overview','board']` = 缺省（与原三层倒金字塔的视觉顺序一致）。
+     * 🔴 落盘口径：与缺省逐位一致 ⇒ **删掉该键**（⛔ 不存缺省副本）—— 这样以后新增区块能自动落在缺省位置。
+     * 归一 / 移动 / 自适应档见 `pure/statsLayout`（唯一真源，⛔ 别在视图里再写一遍阈值）。
+     */
+    statsOrder?: string[];
     /**
      * 🔴 #541 引入 / **#543 退场**：曾表示侧边栏的折叠态（图标+文字 ↔ 只留图标）。
      * #543 把侧边栏改成**恒定图标轨**（用户裁定的 ④ 排法：轨里只有图标、页名交给内容区大标题承担）
@@ -193,6 +237,10 @@ export interface ReelLudicSettings {
     readerLineHeight: number;
     /** 阅读滚动模式：'continuous' 连续滚动（默认）/ 'paged' 翻页（CSS 列式分页，D4b）。append-only，缺省 continuous */
     readerScrollMode?: 'continuous' | 'paged';
+    /** PDF 阅读器页面缩放（2026-10-23 用户指令「记住 Ctrl+滚轮调过的大小」）。
+     *  范围与 `PdfReaderModal` 的 SCALE_MIN/MAX 一致（0.5–3，步进 0.25）；append-only，缺省 1 = 100%。
+     *  ⚠️ 与 `readerFontSize` 语义不同：那个是 TXT/EPUB 的正文字号，这个是 PDF 整页缩放。 */
+    readerPdfScale?: number;
     /** 阅读行宽：'strict' 固定版心（默认）/ 'full' 铺满可用宽度。append-only，缺省 strict */
     readerLineWidth?: 'strict' | 'full';
     /** 阅读器正文段落首行缩进（用户 2026-09-16；append-only 可选字段，缺省 false = 段首齐头） */
@@ -333,10 +381,33 @@ export interface ReelLudicSettings {
      * ⚠️ 转 mp3 还需要 ffmpeg：yt-dlp 自己会去 PATH 与「它自己所在目录」找，⛔ 本仓不另设 ffmpeg 路径项。
      */
     ytdlpPath?: string;
+    /**
+     * B 站 Cookie（2026-10-25，用户：「b站cookie凭据放音乐下载源「B站音频流」下」）—— append-only 可选字段。
+     *
+     * 🔴 **为什么不并进 `musicDlCookies`**：那张表的键是 `MusicSourceId`（`netease|qq|kugou`），
+     *    而 `pure/sourceIcons.MUSIC_COOKIE_ICON`、`pure/credentialCheck.DOMESTIC_MUSIC_SOURCES` 与
+     *    设置页 `DL_COOKIE_ROWS` 三者的键集合被单测互相钉死（加一个键不改另两处 = 编译期或单测立刻红）。
+     *    更要紧的是**语义不同**：`musicDlCookies` 是「按平台下载歌曲」的登录态，B 站这条是
+     *    「读 B 站字幕 / 音频」的登录态 —— 混进同一张表会让「测试连接」按音乐源那套逻辑去测它。
+     *    用户的原话是「放在**那一行下面**」（界面位置），⛔ 不是「并进那张表」。
+     *
+     * 🔴 **不填也能用**：B 站的公开字幕接口（`x/player/wbi/v2`）免登录就能拿到**已公开**的字幕；
+     *    填了 Cookie 才能看到「仅登录可见」的以及更稳地过风控。⇒ 空值是合法缺省，⛔ 别在读取端兜底成假值。
+     * ⚠️ 明文存 `data.json`（与各源 API Key、音乐 Cookie 同款），说明写在行内描述里，⛔ 不做额外加密。
+     */
+    biliCookie?: string;
     /** 每类型源链（六组自选源及顺序；缺省/空 = 默认链，见 pure/sourceRegistry.DEFAULT_CHAINS。append-only 可选字段，旧数据无此键不迁移）。
      *  ⚠️ #580：书籍组因新增「微信读书」成为**首个 4 候选组**（豆瓣 / 微信读书 / Open Library / Google Books），
      *     ⛔ 原「≤3 源」不再是各组通用上限（其余五组仍 ≤3）。 */
     sourceChains?: Partial<Record<SourceGroup, ProviderId[]>>;
+    /**
+     * 🔴🔴 用户裁定（1.4.x）：「已测试链接得到的**连接失败**标签要持久化，重启新会话后不要变回『已配置』」。
+     * 键 = `pure/credentialCheck` 的 `sourceCheckKey` / `musicCheckKey` / `aiCheckKey`（带族前缀，⛔ 别用裸 id）；
+     * 值只有 `true` / `false`。**没有键 = 还没测过**（⛔ 别默认 false —— 那会把「没测」画成「失败」）。
+     * ⚠️ 只存结论、⛔ 不存凭据本身（结论是「这个 Key 通不通」，不是敏感数据）。
+     * append-only 可选字段；读写一律走 `normalizeCredentialStatus` / `withStatus` / `withoutStatus`。
+     */
+    credentialStatus?: CredentialStatusMap;
     /** 阅读翻译服务商（'zhipu' 智谱 GLM / 'deepseek' / **'siliconflow'（#480）** / **'custom' 自定义 OpenAI 兼容端点（#478）** / 'off' 不启用；
      *  默认 zhipu。批3 r3 双源。
      *  append-only 可选字段；'off' 由 normalizeAiChoice 认，勿用 normalizeProvider 归一（会把 off 吃掉）） */
@@ -432,6 +503,14 @@ export interface ReelLudicSettings {
      * append-only 可选字段，旧数据无此键 = 「还没有置顶」。
      */
     readerPinnedModels?: string[];
+    /**
+     * 2026-10-23 用户：「插件内置候选模型列出来给我决定删除哪个」⇒ **被删掉的内置候选**。
+     * 键 = `服务商\u0000模型id`（见 `pure/aiPick.hiddenKey`）—— 模型 id 会跨家重名，必须带服务商。
+     * ⚠️ 只作用于**本仓预置**候选（`fromApi === false`）；`/models` 拉回来的删不掉（下次获取又回来）。
+     * ⚠️ 默认模型删不掉（`resolveModel` 会回落到它）；当前在用的那个也删不掉。
+     * append-only 可选字段，旧数据无此键 = 「还没删过任何内置候选」。
+     */
+    readerHiddenModels?: string[];
     /** OMDb API Key（影视第三源，需 Key 1000 次/日；T1 预留字段，omdb 客户端接入后读取。append-only 可选字段，旧数据无此键不迁移） */
     omdbApiKey?: string;
     /** 服务集成折叠项开合记忆（**已弃用**：用户 2026-09-17 定稿「只有标题不折叠、内容一律折叠」，
@@ -461,6 +540,11 @@ export interface ReelLudicSettings {
      *      游戏 = 年份/开发商/平台，音乐 = 年份/创作者/专辑）。
      *  归一（含**按类型的池子过滤**）见 `pure/cardMeta.resolveCardFieldsByType`（唯一真源）。 */
     cardFieldsByType?: Record<string, string[]>;
+    /** 🔴 #653：**书籍子分类各一份**的卡片信息栏（文学 / 网文 / 漫画）。
+     *  🔴 **append-only 可选键，零迁移**：缺席 ⇒ 三个子类**一律回落 `cardFieldsByType.book`**
+     *     （与 `fieldOrderByKind → fieldOrder.book` 同一条回落链）。
+     *  ⚠️ ⛔ 别往 `cardFieldsByType` 里塞 `novel` / `comic` —— 那张表按 `EntryType` 键，塞进去会被当脏数据忽略。 */
+    cardFieldsByKind?: Record<string, string[]>;
     /** 1.3.1 ②（#621）：**表格视图的列**（按条目类型各一份；在**视图内**的「列」菜单里配）。
      *  🔴 与上面的 `cardFieldsByType` **是两件事**（⛔ 别合并）：卡片信息栏是「精选 16 项、最多 5 行」，
      *     表格列是「该类型全部可写可读字段」。混在一起卡片那边会冒出 40 个候选。
@@ -490,20 +574,11 @@ export interface ReelLudicSettings {
     /** 打卡日记文件名格式（moment 日期格式，如 YYYY-MM-DD）；留空/缺省 = 自动跟随核心「日记」插件，未检测到用 YYYY-MM-DD。
      *  09-10 起设置页不再提供入口，字段保留兼容/兜底读取。 */
     journalFormat?: string;
-    /**
-     * **书源**（#419；**#422 起按分类分「网络文学源 / 经典文学源」两类**）—— 用户自备的 SoNovel 格式书源（`.json` 导入后的原始规则对象）。
-     *
-     * 🔴 红线 **D-24(a)**：插件**不内置任何书源**、不绕过登录与付费、**不执行 `@js:` 脚本**。
-     *    这里存的是**用户自己的文件内容**（与各数据源 API Key / 音乐 Cookie 同款口径：明文存 `data.json`）。
-     * 🔴 唯一键 = **站点地址**（`pure/sourceRule.sourceKey`）⇒ 重复导入算「更新」而不是追加。
-     *    ⚠️ `disabled` 是**使用态**：合并导入时会**保留用户自己的开关**（不要被刷新重置）。
-     * append-only 可选字段，旧数据无此键不迁移。
-     */
-    novelSources?: NovelSource[];
 }
 
 export const DEFAULT_SETTINGS: ReelLudicSettings = {
     tmdbApiKey: '',
+    tmdbSessionId: '',
     libraryDir: 'ReelLudic',
     doubanEnabled: false,
     platformTemplates: ['B站', 'Netflix', '豆瓣', '爱奇艺', '腾讯视频'],
@@ -519,9 +594,8 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     hideScrollbars: false,
     posterDensity: 'standard',
     posterColumns: 6,
-    // 🔴🔴 #626 **`wallColumns` 刻意不在这里** —— 它「缺省 = 跟随海报密度」这件事**靠键不存在**表达。
-    //    写进默认值（哪怕是 `undefined` 或 6）都会把「跟随」变成「已配置」，老用户升上来就换脸。
-    //    ⛔ 别顺手补一条；要改墙的列数走设置页那一行（留空即回到跟随）。
+    // 🔴🔴 #626 **`wallColumns` 已下线**（用户 2026-10-20 删除「海报墙列数」设置项）——
+    //    墙与卡片网格共用上面的 `posterDensity` / `posterColumns`，⛔ 别再把墙的列数默认值补回来。
     uiTheme: 'modern',
     // #541「个性化体验」四项 —— 🔴 缺省值必须让**升级后的观感与 1.2.0 逐项一致**：
     //    顶部胶囊 / 展开态 / 影视页 / 完整动效 / 标准卡片。换任何一个缺省都是在用户没点过的前提下换脸。
@@ -564,6 +638,26 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     musicDlCookies: {},
     // #496：空串 = 用系统 PATH 里的 yt-dlp（见 `ytdlpPath` 字段注释，⛔ 别填成 `yt-dlp`）
     ytdlpPath: '',
+    // 2026-10-25：B 站 Cookie（空 = 免登录，只能拿到已公开的字幕）
+    biliCookie: '',
+    // 凭据测试结论（空表 = 全部「还没测过」；⛔ 别预填任何 false）
+    credentialStatus: {},
+    // 🔴🔴 2026-10-25 用户裁定（默认值收紧）：「默认配置下 设置-AI集成-用途 默认全部为不启用」。
+    //
+    // 为什么必须写在这里、而不是去改 `normalizeAiChoice` 的兜底：
+    //   `normalizeAiChoice(undefined)` 原来回退 `DEFAULT_TRANSLATE_PROVIDER`（= 'zhipu'）⇒ 四行默认「已启用」。
+    //   若把那个兜底改成 'off'，**所有脏数据**（拼错的字符串、旧版遗留的怪值）都会变成「不启用」，
+    //   且 `DEFAULT_TRANSLATE_PROVIDER` 的类型是 `TranslateProvider`（不含 'off'）—— 改不得。
+    //   ⇒ 正道是在 DEFAULT_SETTINGS 里**显式声明默认值**：新装用户与从未存过这几键的老用户都拿到 'off'，
+    //     而任何**显式设过服务商**的用户（data.json 里有该键）由 `Object.assign` 覆盖，行为不变。
+    //
+    // ⚠️ 四行各自独立（与设置页四个下拉一一对应），⛔ 别只写一行指望其余继承。
+    // ⚠️ 「朗读音源」那一行不算在内：它是 `system | cloud` 音源切换，**没有「不启用」这个档**
+    //     （见 `renderTtsVoiceRow` / `pure/tts.TtsEngineKind`），不属于「AI 服务商」默认值。
+    readerTranslateProvider: AI_PURPOSE_DEFAULT,
+    readerSummaryProvider: AI_PURPOSE_DEFAULT,
+    readerSearchProvider: AI_PURPOSE_DEFAULT,
+    readerPrefillProvider: AI_PURPOSE_DEFAULT,
 };
 
 export const PLATFORM_URL_PRESETS: Record<string, string> = {
@@ -606,6 +700,33 @@ const KEY_SOURCE_ORDER: readonly KeySourceId[] = [
  * ⚠️ 存储上是**并行的可选键** `fieldOrderByKind`（见 `pure/fieldOrder` 模块头），零迁移。
  */
 type FieldOrderTarget = { type: EntryType } | { kind: BookKind } | null;
+
+/**
+ * 🔴🔴 #653：「卡片信息栏」的八个切换格（用户点名顺序：**电影、剧集、动画、文学、网文、漫画、游戏、音乐**）。
+ *
+ * 六类型 + **书籍按子分类拆三页** —— 位置与「笔记属性顺序」那组的左导航一致（书籍原本那一格原地展开），
+ *   ⛔ 别把文学/网文/漫画甩到末尾（那会让「书籍」这一族散开）。
+ *
+ * 🔴 存储口径：`cardFieldsByType` 仍是**六类型**（零迁移）；三个子分类各写 `cardFieldsByKind[kind]`，
+ *    没配过 ⇒ 回落 `cardFieldsByType.book`（与 `fieldOrderByKind → fieldOrder.book` 同一条回落链）。
+ *    ⚠️ 为什么不直接往 `cardFieldsByType` 里塞 `novel` / `comic`：那是个**按 EntryType 键**的表，
+ *    塞进非 EntryType 的键会让 `resolveCardFieldsByType` 把它们当脏数据忽略（静默失效）。
+ */
+const CARD_TYPE_SLOTS: ReadonlyArray<{
+    key: string;
+    label: string;
+    /** 预览卡 / 字段池按哪个条目类型算 */
+    type: EntryType;
+    /** 仅书籍子分类有值 */
+    kind?: BookKind;
+}> = [
+    { key: 'f:movie', label: ENTRY_TYPE_LABELS.movie, type: 'movie' },
+    { key: 'f:tv', label: ENTRY_TYPE_LABELS.tv, type: 'tv' },
+    { key: 'f:anime', label: ENTRY_TYPE_LABELS.anime, type: 'anime' },
+    ...BOOK_KINDS.map((k) => ({ key: `k:${k}`, label: BOOK_KIND_LABELS[k], type: 'book' as EntryType, kind: k })),
+    { key: 'f:game', label: ENTRY_TYPE_LABELS.game, type: 'game' },
+    { key: 'f:music', label: ENTRY_TYPE_LABELS.music, type: 'music' },
+];
 
 /** ② 数据源启用分类展示顺序（spec S5：书籍/漫画/影视/动画/音乐/游戏；registry SOURCE_GROUPS 顺序不同，UI 行序以此为准）。
  *  🔴 2026-09-30：漫画组**加回**（1.0.3.1 曾下线），UI 里**紧跟书籍**（同属书籍类目）——
@@ -660,12 +781,27 @@ const DL_COOKIE_ROWS: ReadonlyArray<{
 const YTDLP_PATH_DESC =
     'B 站音频下载用的 yt-dlp 可执行文件路径；留空则用系统 PATH 里的 yt-dlp。转 mp3 还需 ffmpeg（放 yt-dlp 同目录或系统 PATH 中）。';
 
-/** 需 Key 但 Key 可选的数据源（未配仍照常工作，仅限流；空态徽标文案标「可选」而非「未配置」）
- *  🔴 #580：微信读书**也在这一集合里**，但理由与 googleBooks 不同 —— 它连「限流」都不涉及：
- *     书籍检索本身**免登录**（实测），Cookie 只是「测试连接」与「从微信读书同步书架」的凭据。
- *     ⇒ 用户不填 Cookie 时它照常参与搜索（⛔ 别把它挪出这个集合：那会让勾选后什么都不发生）。
- *     ⚠️ 空态徽标不借用「可选 Key」（它是 **Cookie**）—— 由注册表 `emptyBadge` 单独给文案。 */
-const OPTIONAL_KEY_SOURCES: ReadonlySet<ProviderId> = new Set(['googleBooks', 'weread']);
+/**
+ * 「B站音频流」行内的 **B 站 Cookie** 说明（2026-10-25，用户：「b站cookie凭据放音乐下载源「B站音频流」下」）。
+ *
+ * 🔴 与上面三条 Cookie 的 `desc` 同款：**纯文本**（`createDiv({ text })`，不解析 markdown）⇒ ⛔ 不许写 `**`。
+ * 🔴 三件必须说清：⑴ 它干什么用；⑵ **不填会怎样**（不是「不能用」，而是「只能拿到已公开的字幕」）；
+ *    ⑶ 到哪去拿（⛔ 只说「请填 Cookie」，用户不知道从哪复制）。
+ * ⚠️ 别写进「音乐源凭据」那三条的 `DL_COOKIE_ROWS`：那张表的键必须与 `MusicSourceId` 一致（见 `biliCookie` 字段注释）。
+ */
+const BILI_COOKIE_DESC =
+    'B 站的登录 Cookie：用于读取视频字幕（转成 LRC 歌词）与音频流。不填也能用——只是仅能拿到已公开的字幕。获取：浏览器登录 bilibili.com 后，开发者工具 → 网络 → 任一请求的 Cookie 整行复制。';
+
+/** **空态徽标**要标「可选 Key」而非「未配置」的源。
+ *
+ *  ⚠️ 本集合**只决定徽标那两个字**，与「不填凭据能不能搜」是两码事 ——
+ *     后者在 `main.ts` 的 `OPTIONAL_KEY_AUX`（`providerConfigured`），两处已解耦。
+ *
+ *  🔴 2026-10-25 用户裁定：「微信读书未配置时的状态标签从『可选 cookie』改成『未配置』以统一」
+ *     ⇒ `weread` 已从本集合移出（它在设置页显示「未配置」），但它**仍然免登录可搜**：
+ *     放行逻辑留在 `main.ts` 的 `OPTIONAL_KEY_AUX` 里，一个字没动。
+ *     ⛔ 别为了「看起来一致」把 weread 加回来 —— 用户明确要同页只有「已配置 / 未配置」两套词。 */
+const OPTIONAL_KEY_SOURCES: ReadonlySet<ProviderId> = new Set(['googleBooks']);
 
 /** 折叠 API 行的测试结果类型 */
 export interface SourceTestResult {
@@ -864,21 +1000,157 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      * 创建可切换明文/密文的密钥输入框：
      * 默认密文（password），点击「显示/隐藏」按钮切换 type，兼顾安全与核对。
      */
+    /**
+     * 造一个**多格共用**的就地校验提示槽的调度器。
+     *
+     * 🔴🔴 2026-10-25 用户裁定：「TMDB 行下的各个框间隔要同步 IGDB 行的」。
+     *   真因 = 每格后面都插一条 `.rl-secret-issue`（`min-height:1.4em` + `margin-top:2px`），
+     *   叠在 `.rl-key-body` 的 `gap:6px` 上 ⇒ 两框之间实际 ~34px；IGDB 两框之间只有 6px。
+     *   ⇒ 提示槽改成**整行一个**，两个框直接相邻 = `gap:6px`，与 IGDB 逐像素一致。
+     *
+     * ⚠️ 共用一个槽就必须有**仲裁**，否则两格同时报错时后一次输入会把前一格的提示抹掉
+     *   （用户正看着「Key 格填错」去改另一格，提示突然变成另一句，等于丢信息）。
+     *   仲裁口径：**优先显示「刚刚编辑的那格」的错误**；刚编辑那格没错误时，再按登记顺序找第一条。
+     *   ⛔ 不要改成「永远按登记顺序」：那样用户改第一格时，第二格的旧错误会把新提示压住。
+     */
+    private makeIssueSlot(): {
+        register: (input: HTMLInputElement, issue: (v: string) => string | null) => void;
+        /** 两个输入框都建好之后再调：把槽建到 `body` 末尾并首次渲染（顺序决定间距，⛔ 别提前建） */
+        mountIn: (body: HTMLElement) => void;
+        /** 把槽插到**某个已存在节点之后**（TMDB 用它挂到动作行下面，见 `renderKeyRow`） */
+        mountAfter: (anchor: HTMLElement) => void;
+    } {
+        const regs: Array<{ input: HTMLInputElement; issue: (v: string) => string | null }> = [];
+        let lastFired: HTMLInputElement | null = null;
+        let slot: HTMLElement | null = null;
+        const render = (): void => {
+            if (!slot) return; // 还没挂到 DOM：输入事件不可能发生在 mount 之前，这里只是防御
+            const order: Array<{ input: HTMLInputElement; issue: (v: string) => string | null }> = [];
+            if (lastFired) {
+                for (const r of regs) if (r.input === lastFired) order.push(r);
+            }
+            for (const r of regs) if (r.input !== lastFired) order.push(r);
+            let msg: string | null = null;
+            for (const r of order) {
+                const m = r.issue(r.input.value);
+                if (m) {
+                    msg = m;
+                    break;
+                }
+            }
+            slot.setText(msg ?? '');
+            slot.toggleClass('is-empty', !msg);
+        };
+        return {
+            register: (input, issue) => {
+                regs.push({ input, issue });
+                input.addEventListener('input', () => {
+                    lastFired = input;
+                    render();
+                });
+            },
+            mountIn: (body) => {
+                slot = body.createDiv({ cls: 'rl-secret-issue' });
+                slot.addClass('is-empty');
+                render();
+            },
+            mountAfter: (anchor) => {
+                slot = document.createElement('div');
+                slot.className = 'rl-secret-issue rl-secret-issue-tail';
+                slot.classList.add('is-empty');
+                anchor.insertAdjacentElement('afterend', slot);
+                render();
+            },
+        };
+    }
+
     private createSecretField(
         body: HTMLDivElement,
-        opts: { placeholder: string; value: string; onInput: (v: string) => void },
+        opts: {
+            placeholder: string;
+            value: string;
+            onInput: (v: string) => void;
+            /** 就地校验文案（纯函数）；传了它才需要配 `issueSlot` */
+            issue?: (v: string) => string | null;
+            /**
+             * 校验提示的**落点**（多格共用一个槽时由调用方传入，见 `makeIssueSlot`）。
+             * 不传 = 本格自建一条（老路径，单格场景）。
+             */
+            issueSlot?: { register: (input: HTMLInputElement, issue: (v: string) => string | null) => void };
+        },
     ): HTMLInputElement {
         const wrap = body.createDiv({ cls: 'rl-secret' });
+        const input = this.fillSecretRow(wrap, opts);
+        // 🔴 2026-10-25 用户裁定「占位说明也是」⇒ 光改占位不够：TMDB 两格**各只收一种**形态，
+        //    填错格的人必须当场看见「你填错格了、该去哪拿」。旧版填错也能保存、要到点同步才 401，
+        //    用户只能反复重填（#700/#701 就是这么来的）。
+        //    ⚠️ 校验器是**纯函数**注入（`pure/tmdbAuth` 的 `tmdbApiKeyFieldIssue` / `tmdbSessionFieldIssue`），
+        //      这里只管渲染 —— 文案与判据单测覆盖得到。
+        //    ⚠️ 提示挂在 `.rl-secret` 行**之外**：行本身是 flex 行，塞进去会把输入框挤窄。
+        //    🔴🔴 **高度恒定预留**：这个槽永远占一行（空态只清文字、不收起元素），否则用户打字时
+        //       提示一闪现就把下面的动作行（立即同步 / 测试连接）整体往下顶 —— 那正是用户在
+        //       「立即同步按钮后出来的提示也不要更改按钮位置」里刚提过的同一类毛病。
+        //       ⛔ 别改成 `display:none` / 删节点：那会让按钮上下跳。样式见 `styles.css` 的 `.rl-secret-issue`。
+        //    ⚠️ 多格共用槽时由调用方传 `issueSlot`（`renderKeyRow` 里 TMDB 双格就是这么做的）；
+        //       每格各建一条会把两格间距撑到 ~34px（用户 2026-10-25 报的那条）。
+        if (opts.issue) {
+            if (opts.issueSlot) {
+                opts.issueSlot.register(input, opts.issue);
+            } else {
+                const issueEl = body.createDiv({ cls: 'rl-secret-issue' });
+                const syncIssue = (): void => {
+                    const msg = opts.issue!(input.value);
+                    // 空态写全角空格占位：`.rl-secret-issue` 的 min-height 已保住行高，
+                    // 这里再留一个字符宽，避免某些主题把空 div 的高度算成 0（min-height 与 theme 变量打架时）。
+                    issueEl.setText(msg ?? '');
+                    issueEl.toggleClass('is-empty', !msg);
+                };
+                issueEl.addClass('is-empty');
+                input.addEventListener('input', syncIssue);
+                syncIssue();
+            }
+        }
+        return input;
+    }
+
+    /**
+     * 往一个**已有的** `.rl-secret` 行里填「输入框 + 显示/隐藏」。
+     *
+     * 🔴🔴 #654（用户：「steam 下的两个值框对齐 IGDB 凭据样式」）：Steam 的第二个值框（SteamID）
+     *    原来走的是 `.rl-steam-id`（只给了 `max-width: 320px`，于是它比 IGDB 的框**短一截**）。
+     *    ⇒ 抽成本方法，让 SteamID 也落在 `.rl-secret` 这套**同一份**几何里。
+     * ⚠️ 抽出来而不是复制：`.rl-secret` 的宽度 / 内距 / 右侧「显示」的尺寸只有一处定义，
+     *    两处各写一遍迟早会漂（本仓「同一件事写两遍」栽过多次）。
+     * ⚠️ `type` 由 `opts.masked` 决定：SteamID 是**明文**（它不是密钥，用户要能核对位数），
+     *    但**仍保留「显示 / 隐藏」那一栏** —— 用户要的两框对齐，对齐的正是这一栏的位置。
+     *    明文时按钮恒显「显示」且禁用（点了不该有任何事发生，⛔ 别做成「点了变乱码」）。
+     */
+    private fillSecretRow(
+        wrap: HTMLDivElement,
+        opts: { placeholder: string; value: string; onInput: (v: string) => void; masked?: boolean },
+    ): HTMLInputElement {
+        const masked = opts.masked !== false;
         const input = wrap.createEl('input', {
             cls: 'rl-secret-input',
-            attr: { placeholder: opts.placeholder, type: 'password', spellcheck: 'false' },
+            attr: { placeholder: opts.placeholder, type: masked ? 'password' : 'text', spellcheck: 'false' },
         });
         input.value = opts.value;
-        const toggle = wrap.createEl('button', { cls: 'rl-secret-eye', attr: { type: 'button', 'data-tip': '显示 / 隐藏' }, text: '显示' });
-        const apply = (show: boolean) => {
+        const toggle = wrap.createEl('button', {
+            cls: 'rl-secret-eye',
+            attr: { type: 'button' },
+            text: masked ? '显示' : '隐藏',
+        });
+        // 🔴🔴 #655（用户：「steamid 的显示按钮点击无反应」）：那一枚**必须能点**。
+        //    上一版把它做成 `is-static`（明文项没有「隐藏」可言）⇒ 点了真的什么都没发生。
+        //    ⇒ 现在明文项也走**同一个切换**：点「隐藏」→ 退回 `password`（✓ 圆点）；再点「显示」→ 明文。
+        //    这样它既与原位置对齐，也真有反馈 —— ⛔ 别再为了对齐把按钮做成死的。
+        const apply = (show: boolean): void => {
             input.type = show ? 'text' : 'password';
             toggle.setText(show ? '隐藏' : '显示');
+            toggle.setAttribute('data-tip', show ? '隐藏' : '显示');
         };
+        // 初始态：`masked` 项从「隐藏」起步（显示「显示」）；明文项从「显示」起步（显示「隐藏」）
+        apply(!masked);
         toggle.addEventListener('click', () => apply(input.type === 'password'));
         input.addEventListener('input', () => opts.onInput(input.value.trim()));
         return input;
@@ -907,7 +1179,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *
      * 🔴🔴 **#488 组序改判（用户 2026-10-02：「插件设置页-元数据源凭据界面也改成 AI 集成的样式，加图标，
      *    凭据移到上面」）**：页内组序从「启用 → 元数据源凭据 → 音乐源凭据」改成
-     *    **「元数据源凭据 → 音乐源凭据 →（书籍源凭据）→ 元数据源启用」**——凡「凭据」一律排到「启用」之前。
+     *    **「元数据搜索源凭据 → 音乐下载源凭据 →（书籍源凭据）→ 元数据搜索源启用」**——凡「凭据」一律排到「启用」之前。
+     *    （组名按 #690 的改名口径写；当年 #488 定序时的旧名见下文「元数据源凭据」字样。）
      *    依据与 AI 页 #483 那条**同源**：接入的心智顺序是「**先连上 → 再选它用在哪**」
      *    （AI 页正是把「模型服务」提到「用途」之前）。⛔ 别只搬「元数据源凭据」一组留下音乐源 ——
      *    用户在本轮明确选了「所有凭据组都上移」。
@@ -921,7 +1194,13 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // 统称「数据源」会让「音乐/书籍也算数据源」这件事一直含混。
         // ⚠️ 改组名必须同步全仓处方文案（`pure/sourceRegistry` / `ImportBangumiModal` / 下载弹窗），
         //    否则提示会指向一个**不存在的入口**（本仓铁律，见 MEMORY）。
-        this.createGroupSection(parent, '元数据源凭据', (body) => {
+        // 🔴🔴 #690（1.4.1，用户 2026-10-20 点名）：「设置页-音乐源凭据名称改成『音乐下载源凭据』，
+        //    元数据源凭据改成『元数据搜索源凭据』、元数据源启用改成『元数据搜索源启用』」。
+        //    ⇒ 本页三个组名（以及全仓处方文案里的路径）统一带上「搜索 / 下载」这个**用途后缀**：
+        //       元数据搜索源凭据 = 填搜索服务商的凭据；音乐下载源凭据 = 填下载 / 试听的 Cookie；
+        //       元数据搜索源启用 = 勾选哪几类搜索、每类用哪些源。
+        //    ⚠️ **页签名「元数据源配置」不动**（用户只点了三个组名）—— 导航图标表同理，见 `pure/settingNav`。
+        this.createGroupSection(parent, '元数据搜索源凭据', (body) => {
             // #488：整组先包一层 `.rl-prov-list`（flex column + gap 8px），行长什么样子由 `createApiKeyRow`
             // 自己挂 `.rl-prov-card` 决定 —— 与 AI 页「模型服务」那组**同一套容器 + 同一个类**。
             const list = body.createDiv({ cls: 'rl-prov-list' });
@@ -938,19 +1217,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // （源名 + 徽标 + ▸ → 展开才是密文输入 + 测试连接）。
         // #488：与本组同样卡片化（用户本轮点名「音乐源凭据一起改」）—— 容器与卡片类都由
         // `renderMusicCookieRows` 内部挂，调用点形态不变。
-        this.createGroupSection(parent, '音乐源凭据', (body) => this.renderMusicCookieRows(body));
-        // 2026-09-28 #419（用户：「改成接内容源，按我给参考的软件做」）：
-        //    **书源**自成一组 —— 书源是**内容源**，与「元数据源凭据」同类，故放本页而非「数据与备份」。
-        // #422（用户：「网文书源改成『书籍源凭据』加个图标，把网络文学源和经典文学源分组折叠起来，
-        //    分别加导入按钮」）：标题改名 + 组内拆成两个可折叠小节，见 `renderBookSourceFold`。
-        // 🔴 #468 封禁：这一整组**不再渲染** —— 书源是内容源，本来就是给「下载书籍」用的，
-        //    下载入口全封之后它就是个没有消费者的死块（用户 2026-10-01 选「一起封」）。
-        //    ⛔ 别改成「留个空组壳」或「留着只读展示」。
-        //    解禁 = 翻 `pure/featureGate.BOOK_DOWNLOAD_ENABLED`。
-        if (BOOK_DOWNLOAD_ENABLED) {
-            this.createGroupSection(parent, '书籍源凭据', (body) => this.renderBookSourceFold(body));
-        }
-        this.createGroupSection(parent, '元数据源启用', (body) => {
+        this.createGroupSection(parent, '音乐下载源凭据', (body) => this.renderMusicCookieRows(body));
+        this.createGroupSection(parent, '元数据搜索源启用', (body) => {
             for (const g of GROUP_DISPLAY_ORDER) this.createGroupCheckRow(body, g);
         });
         // ⛔ 2026-09-27 #399 起「音乐集成」分组已整体撤除（用户：「把设置页-音乐集成分组和其下项都删除掉」）。
@@ -958,287 +1226,6 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    （基本设置 · 实验性功能）单点门控。
         //    ⚠️ 2026-09-28 #403：「下载目录」**在「基本设置 › 数据与备份」里回来了**（改名「音乐下载路径目录」，
         //    因为它的字段一直是 `downloadSong` 的 root）⇒ ⛔ 别再把「目录类设置」加回本页。
-    }
-
-    /**
-     * 「一键体检」的**上一次结果**（按 `sourceKey` 存 —— ⛔ 别按名字，两个源同名时会串行）。
-     * ⚠️ 这是**会话内**的临时状态（不落库）：体检结果会过期，落库反而会误导（下次打开还显示上次的绿字）。
-     */
-    private srcCheckResults = new Map<string, SourceCheckResult>();
-
-    /** #432 甲：打开「订阅 / 粘贴」弹窗（一个弹窗两条路，⛔ 不给用户多一个要记的入口） */
-    private openSourceSubscribe(kind: SourceKind): void {
-        new SourceSubscribeModal(this.app, {
-            kindLabel: SOURCE_KIND_LABEL[kind],
-            // ⛔ 这一行**不判分类**：拉取 / 解析全在宿主（`resolveSourceInput`），本处只转发
-            onResolve: (input, onProgress, cancel) => this.plugin.resolveSourceInput(input, { onProgress, cancel }),
-            onApply: (r) => this.plugin.mergeNovelSources(r.sources, kind, r.skipped.map((s) => `${s.name}：${s.reason}`)),
-        }).open();
-    }
-
-    /**
-     * #432 甲：跑一轮体检并写回源行小字。
-     *
-     * 🔴 三件都别省：① 按钮**当帧**进「体检中…」并在每源回来时更新计数（用户要知道它没死）；
-     *    ② 跑完 `display()` 重渲染把结果落到源行上（⛔ 只改内存不重渲染 = 看起来没反应）；
-     *    ③ 结果**只说事实**（N 条可用 / M 条不可用），⛔ 不评价、⛔ 不把「搜到 0 条」算坏。
-     */
-    private async runSourceCheck(kind: SourceKind, btn: HTMLButtonElement): Promise<void> {
-        const label = SOURCE_KIND_LABEL[kind];
-        const total = this.plugin.novelSourcesOf(kind).filter((s) => s.disabled !== true).length;
-        if (!total) {
-            new Notice(`「${label}」里还没有启用中的书源。`);
-            return;
-        }
-        const t0 = Date.now();
-        btn.disabled = true;
-        btn.setText(`体检中 0/${total}`);
-        const token = createCancelToken();
-        const modal = new Modal(this.app);
-        modal.titleEl.setText(`正在体检「${label}」`);
-        modal.contentEl.createDiv({ cls: 'rl-cancel-note', text: '逐条试搜一次；关掉本窗口即取消。' });
-        const cancelBtn = modal.contentEl.createEl('button', { cls: 'rl-btn', text: '取消' });
-        cancelBtn.addEventListener('click', () => {
-            token.stop();
-            cancelBtn.setText('取消中…');
-            cancelBtn.disabled = true;
-        });
-        modal.open();
-        let done = 0;
-        try {
-            const results = await this.plugin.checkNovelSources(
-                kind,
-                (r) => {
-                    done++;
-                    this.srcCheckResults.set(r.key, r);
-                    btn.setText(`体检中 ${done}/${total}`);
-                },
-                token,
-            );
-            for (const r of results) if (r) this.srcCheckResults.set(r.key, r);
-            new Notice(sourceCheckSummaryText(results.filter(Boolean), Date.now() - t0), 8000);
-        } catch (e) {
-            // ⚠️ 取消**不是失败**（用户自己按的）—— 中性提示，⛔ 不报红（本仓 #428 口径）
-            if (e instanceof CancelledError) new Notice(`已取消体检（已完成 ${done}/${total} 条）`, 6000);
-            else new Notice(`体检出错：${e instanceof Error ? e.message : String(e)}`, 8000);
-        } finally {
-            modal.close();
-            btn.disabled = false;
-            btn.setText('体检');
-            this.display(); // 🔴 把结果落到源行小字上（⛔ 不重渲染 = 用户看不到任何变化）
-        }
-    }
-
-    /**
-     * 「元数据源配置」页 · **「书籍源凭据」组**（#419 建立；**#422 拆成两个可折叠小节**）：
-     * 导入 / 启停 / 删除 / 改分类用户自备的 SoNovel 格式书源。
-     *
-     * 🔴 红线 **D-24(a)**：**不内置任何书源**、不绕过登录与付费、**不执行 `@js:` 脚本**
-     *    （含脚本的源照常可导入，但会标出「已降级」）。
-     * ⚠️ 书源文件是**用户自己的东西**（提示语里说清「由你自备」），与各元数据源 Key / 音乐 Cookie 同款口径。
-     *
-     * 🔴 **#422 为什么拆两个小节**：书源分「网络文学源」「经典文学源」两类（`pure/sourceRule.SourceKind`），
-     *    而这两类在**检索时是分开用的** —— 网文条目只拿网文源搜、文学条目只拿文学源搜。
-     *    混在一列里用户既分不清哪个是哪个，也没法「我只想导一批文学源」。
-     *    ⇒ 各自成节、各自带**导入按钮**（导入即归类），并各自可折叠（条数多起来时整页不被撑爆）。
-     */
-    private renderBookSourceFold(body: HTMLDivElement): void {
-        // ⛔ 2026-09-29（用户上手当天，第二处删除）：这一组原来顶着一句**组级提示**（说明书源是用户自备的
-        //    SoNovel 格式 .json、且含脚本的源会被标记但脚本不执行）—— 用户看过后说「将这个删除掉……太丑了」，
-        //    **已整体删除**。⚠️ 这里刻意**不把那句原文抄进注释**：产物**不剥注释**，抄进来会让
-        //    「这句不许回潮」的反向守卫自撞红（本仓踩过多次的老坑）。
-        //    信息没丢：①「由你自备」这件事在**弹窗空态**那句里写着，也在两个小节的空态提示里写着；
-        //    ②「含脚本会被标记」是**逐条**的事 —— 源行 desc 里本来就有「已降级」体检小字，比组级笼统声明更准。
-        //    ⇒ 组内第一个元素直接就是「网络文学源」小节（少了那段两行灰字，整组清爽很多）。
-        const counts = this.plugin.novelSourceCounts();
-        for (const kind of SOURCE_KINDS) this.renderSourceSubsection(body, kind, counts[kind]);
-        // ⛔ 2026-09-29（用户上手后：「太丑了，把清空全部按钮删除掉」）：**这里不再有「清空全部」** ——
-        //    两个小节已经把「哪一类」分开了，而那个按钮孤零零落在组尾右下角、与上面两行都不成组，
-        //    观感上像一块浮出来的色块。清空不再是必需能力：源行各自带删除（带二次确认），
-        //    书源本来就是用户自己导入的少数几条（实测 11 条），逐条删既够用也更不容易误伤。
-        //    ⚠️ 连带 `main.clearNovelSources()` 一并退场（没了调用方就是死码）；反向守卫钉着不许回潮。
-    }
-
-    /**
-     * 书源**小节**（网络文学源 / 经典文学源）：可折叠行头 + 展开后的书源列表。
-     *
-     * 🔴 行形态照抄上面的 `rl-key-row` 折叠行（源名 + 徽标 + ▸），这是设置页唯一的折叠语汇，
-     *    ⛔ 别为这两个小节另造一套（观感会跟源行、Cookie 行打架）。
-     * 🔴 **「导入…」放在行头**、不是展开后 —— #421 的教训：入口被折叠藏起来，用户就以为「根本不能导入」。
-     * ⚠️ 行头里那枚按钮的 `margin-left: auto` 与 caret 的 `margin-left: auto` **会平分剩余空间**
-     *    （首版就是这样：按钮停在中间、离右边 caret 一大段空白，用户上手第一句就是「太丑了」）。
-     *    ⇒ styles.css 里配了一条 `.rl-src-import + .rl-key-caret { margin-left: 0 }` 把 caret 的 auto 收掉。
-     *    行头那个 click 是折叠开关，所以按钮里**必须 `stopPropagation`**（否则点导入会顺手把面板折上）。
-     * ⚠️ 与上面各组不同，本页的**子分组**刻意是静态常量（`createGroupSection` 不折叠）——
-     *    这里折叠是用户 2026-09-29 点名要的，只给这两个小节开，⛔ 别顺手把 `createGroupSection` 也改成可折叠。
-     */
-    private renderSourceSubsection(parent: HTMLDivElement, kind: SourceKind, count: number): void {
-        const row = parent.createDiv({ cls: 'rl-key-row' });
-        const head = row.createDiv({ cls: 'rl-key-head' });
-        head.createSpan({ cls: 'rl-key-name', text: SOURCE_KIND_LABEL[kind] });
-        head.createSpan({ cls: 'rl-key-badge', text: `${count} 条` });
-        // 🔴 #432 甲：行头从「一枚导入按钮」变成**一组**（订阅… / 体检 / 导入…），故包一层 `.rl-src-tools`：
-        //    · `margin-left: auto` 挂在这一层上 ⇒ 三个按钮**成组靠右**（⛔ 别让每个按钮各带 auto —— 那会把
-        //      剩余空间**平分**成几段空白，正是 #422 那轮「按钮停在中间」的同一个坑）；
-        //    · caret 的 `margin-left: auto` 由 `.rl-src-tools + .rl-key-caret` 收掉（选择器随之从
-        //      `.rl-src-import + .rl-key-caret` 改过来 —— 直接前一个兄弟现在是这一层了）。
-        //    ⚠️ 「导入…」**保持在组内最后一位**：它那套 `<label>` + 内嵌 input 的原生关联是 #425 第三次修才治好的，
-        //      ⛔ 别动它的位置与结构（断言两头都钉着）。
-        const ops = head.createDiv({ cls: 'rl-src-tools' });
-        const subBtn = ops.createEl('button', { cls: 'rl-btn rl-src-sub', text: '订阅…' });
-        subBtn.setAttribute('data-tip', '粘贴订阅地址或书源 JSON');
-        subBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.openSourceSubscribe(kind);
-        });
-        const checkBtn = ops.createEl('button', { cls: 'rl-btn rl-src-check', text: '体检' });
-        checkBtn.setAttribute('data-tip', `逐条试搜（0 条≠坏了）`);
-        checkBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            void this.runSourceCheck(kind, checkBtn);
-        });
-        // 🔴 #439 整批改分类（源行那枚是**单条**）：`kind` 是**本地状态**、无法从内容反推，
-        //    一次误点的整批错位只能逐条点回来（11 条 = 11 次）；更糟的是「本类为空」时
-        //    这一组里**根本没有源行可点**（用户当时看到的就是「换到网文条目里一条书源都看不见」）。
-        //    ⇒ 补一枚**整组**操作。⚠️ 位置：**「导入…」必须留在组内最后一位**（它那套
-        //    `<label>` + 内嵌 input 的原生关联是 #425 第三次修才治好的，⛔ 别动它的位置与结构）。
-        //    ⚠️ 这是**批量**操作 ⇒ 按本仓「批量操作前置确认」的既有规矩走 `ConfirmModal`
-        //    （单条那枚不确认；整组一次搬 11 条，误点的代价太大）。
-        //    ⚠️ 本组为空时不渲染：没有东西可搬（**另一组**的那枚才是「搬进来」）。
-        if (count > 0) {
-            const other: SourceKind = kind === 'novel' ? 'book' : 'novel';
-            const moveAll = ops.createEl('button', { cls: 'rl-btn rl-src-moveall', text: '移到另一组' });
-            moveAll.setAttribute('data-tip', `把这 ${count} 条整批归到「${SOURCE_KIND_LABEL[other]}」`);
-            moveAll.addEventListener('click', (e) => {
-                e.stopPropagation();
-                void (async () => {
-                    const ok = await new ConfirmModal(
-                        this.app,
-                        `把「${SOURCE_KIND_LABEL[kind]}」这 ${count} 条整批归到「${SOURCE_KIND_LABEL[other]}」？\n（分类是本地状态，源文件里没有这项 —— 搬错了就在对面那组再点一次搬回来）`,
-                        '整批移动',
-                    ).open();
-                    if (!ok) return;
-                    const moved = this.plugin.moveAllNovelSources(kind, other);
-                    new Notice(
-                        moved > 0 ? `已把 ${moved} 条书源归到「${SOURCE_KIND_LABEL[other]}」` : '这一组已经没有书源了',
-                        5000,
-                    );
-                    this.display();
-                })();
-            });
-        }
-        const imp = mountFilePickLabel(ops, {
-            cls: 'rl-btn rl-src-import',
-            text: '导入…',
-            tip: `导入一份 .json 书源文件；导进来的源归到「${SOURCE_KIND_LABEL[kind]}」`,
-            onText: (text) => this.applyImportedSources(text, kind),
-            onError: (e) => new Notice(`读取书源文件失败：${e instanceof Error ? e.message : String(e)}`, 8000),
-        });
-        // ⚠️ 只 `stopPropagation`（行头那个 click 是折叠开关）—— ⛔ 别 `preventDefault()`：
-        //    那把 label 的激活转发一并挡掉，就又回到「点了没反应」。
-        imp.addEventListener('click', (e) => e.stopPropagation());
-        head.createSpan({ cls: 'rl-key-caret', text: '▸' });
-        head.addEventListener('click', () => row.toggleClass('rl-key-open', !row.hasClass('rl-key-open')));
-
-        const body = row.createDiv({ cls: 'rl-key-body' });
-        const list = this.plugin.novelSourcesOf(kind);
-        if (!list.length) {
-            body.createDiv({ cls: 'rl-hint-note', text: '这一组还没有书源 —— 点右上角「导入…」挑一份 .json（书源由你自备）。' });
-        }
-        for (const src of list) this.renderNovelSourceRow(body, src, kind);
-    }
-
-    /**
-     * 一条书源行：名称 + 站点/体检小字 + 启停开关 + **改分类** + 删除。
-     * 🔴 「改分类」的图标用**目标那一组**的图标（网文↔文学），用户一眼看出「点它去哪」。
-     * ⚠️ 改完要 `this.display()` 重渲染（条目要挪到另一个小节里去 —— 只改数据不动 DOM 会看起来没反应）。
-     */
-    /**
-     * 一条书源行：名称 + 站点/体检小字 + 启停开关 + **改分类** + 删除 + **就地改 Cookie**（#457 C′）。
-     * 🔴 「改分类」的图标用**目标那一组**的图标（网文↔文学），用户一眼看出「点它去哪」。
-     * ⚠️ 改完要 `this.display()` 重渲染（条目要挪到另一个小节里去 —— 只改数据不动 DOM 会看起来没反应）。
-     *
-     * 🔴 C′ 为什么是「源行下面一整行」而不是行内再塞一枚图标按钮：
-     *    ① 行内已经有「开关 + 移到另一组 + 删除」三件，再挤一枚就放不下了；
-     *    ② 更硬的理由是**图标名**：`cookie` / `lock` / `shield` 都不在本仓核实过的名单里，
-     *       `setIcon` 遇到未知名是**静默失败** ⇒ 那会是一枚空白按钮（本仓踩过）。
-     *    ⇒ 用一行文字标签 + 输入框，既不会空白，也放得下说明。
-     */
-    private renderNovelSourceRow(body: HTMLDivElement, src: NovelSource, kind: SourceKind): void {
-        const s = sourceSummary(src);
-        const key = sourceKey(src);
-        // 站点 + 体检小字（含脚本 / 需登录 / 含 XPath 都在 warning 里，逐条说清）
-        // 🔴 #432：**再加**上一次「一键体检」的结果（可用 / 不可用 + 时延 + 条数）——
-        //    静态体检说「字段缺不缺」，这里说「这条源现在还能不能用」，两回事，都留着。
-        const health = this.srcCheckResults.get(key);
-        const desc = [s.host, s.warning, health ? sourceCheckHealthText(health) : ''].filter(Boolean).join(' · ');
-        const other: SourceKind = kind === 'novel' ? 'book' : 'novel';
-        new Setting(body)
-            .setName(s.name)
-            .setDesc(desc)
-            .addToggle((t) => t.setValue(!s.disabled).onChange((v) => this.plugin.setNovelSourceEnabled(key, v)))
-            .addExtraButton((b) =>
-                b
-                    .setIcon(other === 'book' ? 'library-big' : 'scroll-text')
-                    .setTooltip(`移到「${SOURCE_KIND_LABEL[other]}」`)
-                    .onClick(() => {
-                        this.plugin.setNovelSourceKind(key, other);
-                        this.display();
-                    }),
-            )
-            .addExtraButton((b) =>
-                b
-                    .setIcon('trash-2')
-                    .setTooltip('删除这条书源')
-                    .onClick(() => {
-                        void (async () => {
-                            const ok = await new ConfirmModal(this.app, `删除书源「${s.name}」？`, '删除').open();
-                            if (!ok) return;
-                            this.plugin.removeNovelSource(key);
-                            this.display();
-                        })();
-                    }),
-            );
-
-        // ── #457 C′：**就地改 Cookie** —— 以前改一次 Cookie 要重导一整份 .json，现在改完即存。
-        //    ⚠️ 提交口径 = **失焦 / 回车**（与设置页目录项同款）；**没改动就不写盘**（⛔ 别每次失焦都落一次盘）。
-        const cookieRow = body.createDiv({ cls: 'rl-src-cookie' });
-        cookieRow.createSpan({ cls: 'rl-src-cookie-l', text: 'Cookie' });
-        const cookieInput = cookieRow.createEl('input', {
-            cls: 'rl-input',
-            attr: {
-                type: 'text',
-                spellcheck: 'false',
-                placeholder: '需要登录的源：登录后把 Cookie 粘到这里（凭据由你自备；留空即清除）',
-            },
-        });
-        const saved = String(src?.search?.cookies ?? '').trim();
-        cookieInput.value = saved;
-        const commitCookie = (): void => {
-            const v = cookieInput.value.trim();
-            if (v === saved) return;
-            this.plugin.setNovelSourceCookie(key, v);
-            new Notice(v ? `已保存「${s.name}」的 Cookie` : `已清空「${s.name}」的 Cookie`, 3000);
-        };
-        cookieInput.addEventListener('blur', commitCookie);
-        cookieInput.addEventListener('keydown', (ev) => {
-            if (ev.key !== 'Enter') return;
-            ev.preventDefault();
-            cookieInput.blur(); // 回车 ⇒ 失焦 ⇒ 走同一个提交口
-        });
-    }
-
-    /**
-     * 把**已经读到的**书源文本导入（#425）。
-     *
-     * 🔴 与「下载书籍」弹窗**共用宿主的 `importNovelSources(text, kind)`** —— 那边也是自己在
-     *    Svelte 模板里读文件、再把文本交过来。⛔ 别再退回「宿主自己弹文件框」那条路：
-     *    文件框必须挂在**调用方自己的 DOM 上**（设置页的 label / 组件里的 label），宿主拿不到。
-     */
-    private applyImportedSources(text: string, kind: SourceKind): void {
-        const r = this.plugin.importNovelSources(text, kind);
-        new Notice(r.message, r.ok ? 5000 : 8000);
-        if (r.ok) this.display();
     }
 
     /**
@@ -1309,12 +1296,14 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 },
             });
             // 「测试连接」与源行同款反馈（✓/✗ 文案 · Nms；失败红、成功绿）
+            // 用户裁定：结果文字在按钮**左边**、点测试时按钮**不许跳**（见 styles.css `.rl-key-actions` 注释）。
             const actions = body.createDiv({ cls: 'rl-key-actions' });
-            const resultEl = actions.createSpan({ cls: 'rl-key-result' });
+            const resultEl = actions.createSpan({ cls: 'rl-key-result' }); // 行首：文字向左长，按钮贴右不动
             const testBtn = actions.createEl('button', { text: '测试连接', cls: 'mod-cta' });
             testBtn.addEventListener('click', async () => {
                 testBtn.disabled = true;
-                testBtn.setText('测试中…');
+                // ⛔ 不改文案：`.rl-btn-loading` 已把文字置透明并叠 spinner；改文案（「测试中…」更短）
+                //    会让按钮宽度变窄 ⇒ 按钮横向跳动，那正是用户报的那类抖动。
                 testBtn.addClass('rl-btn-loading');
                 resultEl.setText('');
                 resultEl.removeClass('rl-key-result-ok', 'rl-key-result-bad');
@@ -1322,7 +1311,6 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 const r = await this.plugin.dlTestConnection(p.id, current());
                 const elapsedMs = Date.now() - started;
                 testBtn.disabled = false;
-                testBtn.setText('测试连接');
                 testBtn.removeClass('rl-btn-loading');
                 // 🔴 #589：结论记进同一张结果表 ⇒ 徽标（含刚被打开的「连接失败」）同步刷新
                 this.plugin.setCredentialStatus(musicCheckKey(p.id), r.ok);
@@ -1345,7 +1333,10 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    旧名把**实现工具**当成了功能名，用户看不出这行到底在开什么；新名先说是「B 站音频流」，
         //    再把两个外部依赖写进括号（与下面 `YTDLP_PATH_DESC` 说的事一致，⛔ 别改成第二套说法）。
         //    ⚠️ 注释里**刻意不复述旧名** —— 反向守卫会连同注释一起查（本仓老坑：写了就自撞）。
-        dlHead.createSpan({ cls: 'rl-key-name', text: 'B站音频流（需yt-dlp、ffmpeg）' });
+        // 🔴 用户裁定（1.4.x）：标题只写「B站音频流」——⛔ 别在这里挂「（需yt-dlp、ffmpeg）」：
+        //    依赖说明已经是下方那个路径项的描述（`YTDLP_PATH_DESC`，写了留空=走 PATH、转 mp3 还需 ffmpeg），
+        //    标题里再重复一遍只是噪音（用户原话：去掉）。
+        dlHead.createSpan({ cls: 'rl-key-name', text: 'B站音频流' });
         const dlBadge = dlHead.createSpan({ cls: 'rl-key-badge' });
         const currentExe = (): string => this.plugin.settings.ytdlpPath ?? '';
         const refreshExeBadge = (): void => {
@@ -1370,6 +1361,48 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             this.plugin.settings.ytdlpPath = exeInput.value.trim();
             void this.plugin.saveSettings();
             refreshExeBadge();
+        });
+        // ── B 站 Cookie（2026-10-25）──
+        // 🔴 用户原话：「b站cookie凭据放音乐下载源「B站音频流」下」⇒ 位置就在**这一行里**、路径框**下面**。
+        //    ⛔ 别另建一个并列的源行（那张表的键受 `MusicSourceId` 钉死，见 `biliCookie` 字段注释）。
+        // 🔴 **本行的徽标仍然只表示「路径」**：一个行头挂两个徽标会让人分不清哪个在说哪件事
+        //    （本仓 #489 已经因为「同页两组说同一件事却两套词」被用户点过一次）。
+        //    Cookie 有没有填，用输入框上的小标签「（可选）」+ 空态说明表达 —— 不占徽标。
+        dlBody.createDiv({ cls: 'rl-hint-note', text: BILI_COOKIE_DESC });
+        const biliLabel = dlBody.createDiv({ cls: 'rl-lbl-inline', text: 'B 站 Cookie（可选）' });
+        biliLabel.addClass('rl-bili-cookie-lbl');
+        this.createSecretField(dlBody, {
+            placeholder: '粘贴 bilibili.com 的 Cookie（可留空）',
+            value: this.plugin.settings.biliCookie ?? '',
+            // 与三条音乐 Cookie 同款：只在下一次请求那一刻被读，边打边存没有副作用。
+            onInput: (v) => {
+                this.plugin.settings.biliCookie = v.trim();
+                void this.plugin.saveSettings();
+            },
+        });
+        // 🔴 2026-10-25（用户：「在b站音频流凭据行底下加个测试连接按钮」）：
+        //    形态与上面三条音乐 Cookie **逐字同款**（`.rl-key-actions` + 行首回执槽 + 按钮贴右），
+        //    ⛔ 别再发明第四套按钮/回执布局（#488/#489 已经把同页两套说法的账算过一次）。
+        //    ⚠️ **结论不写进行头徽标**：本行徽标只表示「yt-dlp 路径配没配」（见上方 :1352 注释），
+        //    Cookie 有没有效是另一件事，混进徽标会让用户分不清哪个在说哪件事。
+        //    所以这里只做「就地回执」，不调 `setCredentialStatus`。
+        const biliActions = dlBody.createDiv({ cls: 'rl-key-actions' });
+        const biliResult = biliActions.createSpan({ cls: 'rl-key-result' });
+        const biliTestBtn = biliActions.createEl('button', { text: '测试连接', cls: 'mod-cta' });
+        biliTestBtn.addEventListener('click', async () => {
+            biliTestBtn.disabled = true;
+            // ⛔ 不改文案：`.rl-btn-loading` 已把文字置透明并叠 spinner；改文案会让按钮变窄 ⇒ 横向跳动
+            biliTestBtn.addClass('rl-btn-loading');
+            biliResult.setText('');
+            biliResult.removeClass('rl-key-result-ok', 'rl-key-result-bad');
+            const started = Date.now();
+            const r = await this.plugin.dlTestConnection('bilibili', this.plugin.settings.biliCookie ?? '');
+            const elapsedMs = Date.now() - started;
+            biliTestBtn.disabled = false;
+            biliTestBtn.removeClass('rl-btn-loading');
+            biliResult.setText(`${r.ok ? '✓ ' : '✗ '}${r.message} · ${elapsedMs}ms`);
+            biliResult.toggleClass('rl-key-result-ok', r.ok);
+            biliResult.toggleClass('rl-key-result-bad', !r.ok);
         });
         dlHead.addEventListener('click', () => dlRow.toggleClass('rl-key-open', !dlRow.hasClass('rl-key-open')));
     }
@@ -1427,6 +1460,73 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // 🔴 #553：`nativeGroup` 时给内容器补核心的 `.setting-items`（组卡与行平铺都由它触发，见上）。
         const body = wrap.createDiv({ cls: nativeGroup ? 'rl-svc-group-body setting-items' : 'rl-svc-group-body' });
         fill(body);
+    }
+
+    /**
+     * 把一个「恢复默认」按钮挂到某组的**标题行右侧**（#652，用户：「高级设置下的三个组都要有恢复默认项」）。
+     *
+     * 🔴 为什么挂在组标题行而不是组内容顶部：三组的位置**完全一致** ——
+     *    用户不必每组各找一次「按钮在哪」；也⛔ 不挤占内容区（那会让表格 / 卡片整体下移一行）。
+     * 🔴🔴 **#653 翻面：按钮常显，未修改时点了给「轻提示」** ——
+     *    用户原话「还有要始终出现『恢复默认』，未修改时误点击要轻提示」。
+     *    上一版是「没配置就整枚不渲染」，那会让按钮**看起来时有时无**（用户不知道该不该点、
+     *    甚至会以为功能没了）。现在一律显示，靠 `isCustomized()` 分成两条路：
+     *      · 有配置 ⇒ `ConfirmModal` 二次确认 → 清键 → 整组重画；
+     *      · 没配置 ⇒ **什么都不改**，只在按钮旁浮出一枚「已经是默认值」轻提示（1.5s 自动淡出）。
+     *    ⚠️ 轻提示**不弹 Notice**：Notice 在右上角、离按钮很远，用户点下去会以为「没反应」。
+     */
+    private mountGroupReset(body: HTMLElement, opts: {
+        /** 当前是否有用户配置（决定是「二次确认」还是「轻提示」） */
+        isCustomized: () => boolean;
+        /** 组名（进 aria-label 与确认文案） */
+        title: string;
+        /** 确认弹窗正文：**逐字说清会丢什么**（⛔ 别只写「确定吗」） */
+        message: string;
+        /** 执行恢复（只负责落盘，重画由本方法统一做） */
+        apply: () => Promise<void>;
+    }): void {
+        const group = body.closest('.rl-svc-group');
+        const head = group?.querySelector('.rl-svc-group-title');
+        if (!head) return;
+        // 同一组重画时先摘掉旧的按钮与提示（⛔ 不叠第二份）
+        head.querySelector('.rl-group-reset')?.remove();
+        head.querySelector('.rl-group-hint')?.remove();
+        const btn = head.createEl('button', {
+            cls: 'rl-group-reset',
+            attr: {
+                type: 'button',
+                'aria-label': `恢复「${opts.title}」的默认设置`,
+                // 状态即文案语义：没改过时提示「点了也没用」，读屏能听见这条差异
+                'aria-describedby': `rl-gr-hint-${opts.title}`,
+            },
+        });
+        safeSetIcon(btn.createSpan({ cls: 'rl-group-reset-icon' }), 'rotate-ccw');
+        btn.createSpan({ cls: 'rl-group-reset-text', text: '恢复默认' });
+        const hint = head.createDiv({
+            cls: 'rl-group-hint',
+            text: '已经是默认值',
+            attr: { id: `rl-gr-hint-${opts.title}`, role: 'status', 'aria-live': 'polite' },
+        });
+        const timer = { id: 0 as number };
+        const flashHint = (): void => {
+            hint.addClass('is-on');
+            if (timer.id) window.clearTimeout(timer.id);
+            timer.id = window.setTimeout(() => hint.removeClass('is-on'), 1500);
+        };
+        btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            // 🔴 未修改：只给轻提示，⛔ 不开确认弹窗、⛔ 不写盘
+            if (!opts.isCustomized()) {
+                flashHint();
+                return;
+            }
+            void (async () => {
+                const ok = await new ConfirmModal(this.app, opts.message, '恢复默认').open();
+                if (!ok) return;
+                await opts.apply();
+                this.display();
+            })();
+        });
     }
 
     /**
@@ -1954,6 +2054,18 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 this.plugin.settings.readerPinnedModels = togglePin(cur, model);
                 void this.plugin.saveSettings();
             },
+            // 2026-10-23 用户：「插件内置候选列出来给我决定删除哪个」⇒ 删（隐藏）内置候选
+            hiddenOf: () => this.plugin.settings.readerHiddenModels ?? [],
+            onToggleHide: (_p, model) => {
+                const cur = this.plugin.settings.readerHiddenModels ?? [];
+                this.plugin.settings.readerHiddenModels = toggleHidden(cur, _p, model);
+                void this.plugin.saveSettings();
+            },
+            onClearHidden: (_p) => {
+                const cur = this.plugin.settings.readerHiddenModels ?? [];
+                this.plugin.settings.readerHiddenModels = clearHiddenFor(cur, _p);
+                void this.plugin.saveSettings();
+            },
             // 🔴 #634：两个自定义槽位显示**用户改过的名**（chips / 获取按钮 / 加载文案三处共用这一份）
             customNamesOf: () => this.customSlotNames(),
             // 🔴 #484 ②：**就地**拉（弹窗自己转圈 / 报错）。⛔ 不再「关弹窗 → 请求 → 成功才重开」
@@ -2257,18 +2369,18 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         refreshBadge: () => void,
     ): void {
         // 与 cookie 那处同款：同一行里「结果文字 + 测试连接」
+        // 用户裁定：结果文字在按钮**左边**、点测试时按钮**不许跳**（见 styles.css `.rl-key-actions` 注释）。
         const actions = bodyEl.createDiv({ cls: 'rl-key-actions' });
-        const resultEl = actions.createSpan({ cls: 'rl-key-result' });
+        const resultEl = actions.createSpan({ cls: 'rl-key-result' }); // 行首：文字向左长，按钮贴右不动
         const btn = actions.createEl('button', { cls: 'mod-cta', text: '测试连接' });
         btn.addEventListener('click', async () => {
             btn.disabled = true;
-            btn.setText('测试中…');
+            // ⛔ 不改文案（理由同音乐源那处）：文字变短会让按钮宽度变窄 ⇒ 横向跳动
             btn.addClass('rl-btn-loading'); // 1.0.4：内联 spinner（文字由 .rl-btn-loading 置透明）
             resultEl.setText('');
             resultEl.removeClass('rl-key-result-ok', 'rl-key-result-bad');
             const res = await run();
             btn.disabled = false;
-            btn.setText('测试连接');
             btn.removeClass('rl-btn-loading');
             resultEl.setText(`${res.ok ? '✓ ' : '✗ '}${res.message} · ${res.elapsedMs}ms`);
             // 反馈配色（用户 2026-09-14 裁定）：失败才红，成功一律绿 —— 不再区分「偏慢」档
@@ -2297,12 +2409,84 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         if (meta.id === 'bangumi') return '输入 Bangumi Access Token';
         if (meta.id === 'googleBooks') return 'API Key（可选，提配额）';
         if (meta.id === 'igdb') return 'IGDB Client ID';
+        // 🔴 2026-10-25 用户裁定（原文：「第二格填的只能是从 themoviedb.org 的「设置 → API」获取的 32 位字符串，占位说明也是」）：
+        //    这一格**只收 32 位 v3 API Key**。旧版占位写「v3 API Key 或 v4 Read Access Token」，
+        //    结果两格都能填两种、用户怎么填都「看起来对」，填错了也看不出（#700/#701 两轮返工的真因）。
+        if (meta.id === 'tmdb') return 'TMDB v3 API Key（32 位，设置 → API）';
         // 🔴 #580：微信读书的凭据是 **Cookie** 不是 Key —— 占位符要说清「从哪儿抄、抄什么」，
         //    以及「只在同步书架时用得上」（否则用户会以为不填就不能搜）。
         if (meta.id === 'weread') return '微信读书 Cookie（书架同步用）';
         // 🔴 #639 ⑥：Steam 的 Key **只服务同步**（搜索/详情免 Key）—— 占位符要说清这一点
         if (meta.id === 'steam') return 'Steam Web API Key（同步库用）';
         return `输入 ${meta.label} API Key`;
+    }
+
+    /**
+     * 🔴 #662：豆瓣凭据行里的**同步导入按钮**（用户：「豆瓣凭据入口再添加个同步导入按钮」）。
+     *
+     * 与 `renderWereadSyncButton` / `renderSteamActions` **同款**（都走 `.mod-cta.rl-sync-btn`）：
+     * 三个同步源的动作行长得一样，用户不用重新认。
+     * ⚠️ 按钮只负责**开弹窗**（选类型 + 状态 → 读取 → 勾选导入），
+     *    抓取与落库都在宿主（`openDoubanCollectionSync` → `fetchDoubanCollection` / `importDoubanCollection`）。
+     *    ⛔ 别在这里直接发请求：设置页是同步渲染路径，发请求会让整页卡住。
+     */
+    private renderDoubanSyncButton(actions: HTMLElement): void {
+        // 🔴 2026-10-20 用户裁定：五个同步源（豆瓣 / 微信读书 / TMDB / Bangumi / Steam）的按钮文案
+        //    **统一为「立即同步」**（原文案「同步豆瓣收藏」）—— 动作行本来就带源名在行头，按钮上再写一遍源名是冗余。
+        //    ⚠️ 改文案必须五处一起改（本方法 + Bangumi / TMDB / 微信读书 / Steam 四颗），
+        //        Steam 的「同步中…」是**进行中**态，不属于这套命名。
+        const btn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '立即同步' });
+        btn.addEventListener('click', () => this.plugin.openDoubanCollectionSync());
+    }
+
+    /**
+     * 🔴 #665：Bangumi 凭据行里的**同步按钮**（用户：「Bangumi 元数据源凭据行加个同步按钮并排」）。
+     * 与豆瓣 / 微信读书 / Steam **同款**（`.mod-cta.rl-sync-btn`）—— 五个同步源动作行同构。
+     * 只负责**开弹窗**（读三态收藏 → 勾选 → 导入）；抓取与落库都在宿主（`openBangumiSync`）。
+     */
+    private renderBangumiSyncButton(actions: HTMLElement): void {
+        // 文案统一「立即同步」（2026-10-20 用户裁定，原文案「同步 Bangumi 收藏」）
+        const btn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '立即同步' });
+        btn.addEventListener('click', () => this.plugin.openBangumiSync());
+    }
+
+    /**
+     * 🔴 #665：TMDB 凭据行里的**同步按钮**（用户：「也做 TMDB 的同步接入（同先参考金标准）」）。
+     * 与其它四个同步源**同款**。⏱ 双凭据（API Key + Session ID）在**发请求之前**就拦（#664 口径：
+     * 缺哪个给按钮旁就地轻提示，⛔ 不发请求、不重建页面）。
+     */
+    private renderTmdbSyncButton(actions: HTMLElement): void {
+        // 文案统一「立即同步」（2026-10-20 用户裁定，原文案「同步 TMDB 清单」）
+        const btn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '立即同步' });
+        btn.addEventListener('click', () => {
+            const apiKey = (this.plugin.settings.tmdbApiKey ?? '').trim();
+            const sessionId = (this.plugin.settings.tmdbSessionId ?? '').trim();
+            // 🔴 2026-10-25 用户裁定后：两格各只收一种，所以这里**按格说清楚**，
+            //    ⛔ 不再用「两种都能填」的和稀泥文案 —— 用户这次就是被那句「Session ID 或 access_token」绕进去的。
+            //    校验走纯函数（与输入框下方就地提示同一份判据，⛔ 别在这里重写一遍正则）。
+            const keyIssue = tmdbApiKeyFieldIssue(apiKey);
+            if (keyIssue) {
+                this.flashInlineHint(actions, keyIssue);
+                return;
+            }
+            const sesIssue = tmdbSessionFieldIssue(sessionId);
+            if (sesIssue) {
+                this.flashInlineHint(actions, sesIssue);
+                return;
+            }
+            if (!apiKey) {
+                this.flashInlineHint(actions, '未配置 TMDB API Key —— 先在上面填入 32 位 v3 API Key（设置 → API）');
+                return;
+            }
+            if (!sessionId) {
+                this.flashInlineHint(
+                    actions,
+                    '未配置 TMDB access_token —— 先在上面填入 v4 用户认证流程（request_token → 浏览器批准 → access_token）拿到的 eyJ 长串',
+                );
+                return;
+            }
+            this.plugin.openTmdbSync();
+        });
     }
 
     /**
@@ -2315,7 +2499,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *    ⛔ 别再自己 `createDiv({ cls: 'rl-key-actions' })`（那会另起一行，回到用户报的竖排三行）。
      */
     private renderWereadSyncButton(actions: HTMLElement): void {
-        const btn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '从微信读书同步书架' });
+        // 文案统一「立即同步」（2026-10-20 用户裁定，原文案「从微信读书同步书架」）
+        const btn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '立即同步' });
         btn.addEventListener('click', () => this.plugin.openWereadShelfSync());
     }
 
@@ -2336,13 +2521,23 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *    提交口径 = **失焦 / 回车**（与目录项同款，⛔ 不用 `input` —— 打字中途会连续写盘 + 连续校验）。
      */
     private renderSteamExtra(body: HTMLElement): void {
-        const idRow = body.createDiv({ cls: 'rl-steam-idrow' });
-        const input = idRow.createEl('input', {
-            cls: 'rl-input rl-steam-id',
-            attr: { type: 'text', spellcheck: 'false', placeholder: '64 位 SteamID（形如 76561198…）' },
+        // 🔴🔴 #654（用户：「steam 下的两个值框对齐 IGDB 凭据样式」）：
+        //    结构 = 与 Key 那行**同一个** `.rl-secret`（输入框 flex:1 + 右侧「显示」），
+        //    ⛔ 不再是裸 `<input class="rl-input rl-steam-id">` —— 那个只给了 max-width: 320px，
+        //    于是 Steam 的第一个框跟 IGDB 一样宽、第二个框短一截，两个框自己都不齐。
+        const idRow = body.createDiv({ cls: 'rl-secret' });
+        const input = this.fillSecretRow(idRow, {
+            // ⚠️ 2026-10-25 用户：「steam凭据行下的框占位符怎么说明是64位，改成17位」——
+            //    真值 = SteamID64 是 **17 位**数字（`76561198…`）；旧文案写「64 位」是把它跟
+            //    「SteamID**64**」这个叫法混了，用户照着数位数必然以为自己填错了。
+            placeholder: '17 位 SteamID（形如 76561198…）',
+            value: this.settingValue('steamId'),
+            masked: false,
+            // 校验在「失焦 / 回车」时才落盘（见下面的 commit），这里只做**即时预告**
+            onInput: () => undefined,
         });
-        input.value = this.settingValue('steamId');
-        const hint = idRow.createDiv({ cls: 'rl-hint-note' });
+        input.addClass('rl-steam-id');
+        const hint = body.createDiv({ cls: 'rl-hint-note' });
         const commit = (): void => {
             const raw = input.value.trim();
             if (!raw) {
@@ -2390,28 +2585,126 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      * ⚠️ 通用动作行由调用点建在正确位置（见 `createApiKeyRow` 里的 `steamActions`）——
      *    ⛔ 本方法不自己建行、也不重排 DOM（那会与调用点的顺序打架）。
      */
-    private renderSteamActions(actions: HTMLElement): void {
-        // 🔴 #640e：按钮**追加进调用方给的那条动作行**（与「测试连接」并排）。
-        //    就地回执 `resultEl` 紧挨按钮之后建 ⇒ DOM 里是「同步 Steam · ✓ …」的次序。
-        const btn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '同步 Steam' });
-        const resultEl = actions.createSpan({ cls: 'rl-key-result' });
+    private renderSteamActions(actions: HTMLElement, getResult: () => HTMLElement | null, sourceId: string): void {
+        // 🔴 #655（用户：「steam 同步和测试按钮应该调换位置」）：本方法**只负责「同步 Steam」这一颗**，
+        //    它必须是这一行的**第一颗**；「测试连接」由调用点在本方法之后紧接着建。
+        //    ⛔ 别再在这里做任何 DOM 排序（上一版用 `resultEl.before()` 插槽 ⇒ 测试连接跑到了最前）。
+        // ⚠️ 回执槽由调用点建（在两颗按钮之后），同步结论与测试结论共用那一个 ⇒ 本方法收 `resultEl`。
+        // 文案统一「立即同步」（2026-10-20 用户裁定，原文案「同步 Steam」）；进行中另用「同步中…」。
+        const btn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '立即同步' });
         btn.addEventListener('click', async () => {
+            // 🔴🔴 #664（用户：「未配置 steam 点击同步怎么不是轻提示误而是直接收起了」）：
+            //    真因 = 下面的 `this.display()` —— 同步完**整行重建**，而重建后是**收起态**
+            //    + 回执槽是新的空 span ⇒ 用户看到的是「点了以后那一行自己合上了」，
+            //    回执（"缺 Key / 缺 SteamID"）连一眼的工夫都没有。
+            //    ⇒ 三条一起改：
+            //      ⑴ **未配置就别开始**：先拦一次，只给一条**就地轻提示**（⛔ 不写进回执槽、⛔ 不重建行）；
+            //      ⑵ 只有**真的同步过**才刷新徽标（`display()` 的用途就是刷徽标，没同步就没必要重建）；
+            //      ⑶ 即使要重建，也必须保住「展开态 + 回执」，否则同样是"自己合上了"。
             btn.disabled = true;
             btn.setText('同步中…');
             btn.addClass('rl-btn-loading');
-            resultEl.setText('');
-            resultEl.removeClass('rl-key-result-ok', 'rl-key-result-bad');
-            const r = await this.plugin.syncSteamNow();
+            getResult()?.setText('');
+            getResult()?.removeClass('rl-key-result-ok', 'rl-key-result-bad');
+            const issue = this.plugin.steamCredsIssue();
+            if (issue) {
+                btn.disabled = false;
+                btn.setText('立即同步');
+                btn.removeClass('rl-btn-loading');
+                // 轻提示：贴在按钮旁边，1.5s 淡出（与「恢复默认」那枚同款，⛔ 不弹 Notice）
+                this.flashInlineHint(actions, issue);
+                return;
+            }
             btn.disabled = false;
-            btn.setText('同步 Steam');
+            btn.setText('立即同步');
             btn.removeClass('rl-btn-loading');
-            resultEl.setText(`${r.ok ? '✓ ' : '✗ '}${r.message}`);
-            resultEl.toggleClass('rl-key-result-ok', r.ok);
-            resultEl.toggleClass('rl-key-result-bad', !r.ok);
-            // 同步结论也记进同一张结果表（徽标据此刷新，与「测试连接」同款）
-            this.plugin.setCredentialStatus(sourceCheckKey('steam'), r.ok);
-            this.display();
+            // 🔴 2026-10-25（用户：「所有类型账号同步是要先列出弹窗列出游戏让我勾选才同步（库内已有要提示覆盖）」）：
+            //    口径从「点一下就全量落库」改为「**先弹窗列清单、勾选后才落库**」，与豆瓣 / Bangumi /
+            //    TMDB / 微信读书四个同步弹窗完全同构。⛔ 别在这里再写一份落库循环 ——
+            //    全量静默同步仍由 `syncSteamNow()` 承担（启动时那条），两者共用同一套判重键。
+            this.plugin.openSteamSync();
+            return;
         });
+    }
+
+    /**
+     * 🔴 #664：在一颗按钮**旁边**闪一条轻提示（`host` 是它所在的动作行 `.rl-key-actions`）。
+     *
+     * 与「恢复默认」那枚同一视觉：淡底小字，2.4s 后自动消失。
+     * ⚠️ 同时挂 `role="status"`，读屏也能听见（⛔ 不要只靠颜色 / 位置传达）。
+     *
+     * 🔴🔴 2026-10-25 用户裁定：「元数据源的立即同步按钮后出来的提示文字**也不要更改同步和连接
+     *     按钮的位置**」。⇒ 落点从「动作行末尾」改成「行首回执槽 `.rl-key-result`」。
+     * 为什么必须这样（真 Chrome 实测，改回来前先看数）：
+     *   · 旧写法 `host.appendChild(tip)` 会给 `.rl-key-actions` **多加一个 flex item**；
+     *     它是 `justify-content: flex-end` + 回执槽 `flex: 1 1 auto` ⇒ 两枚按钮被整体左推。
+     *     实测（`_probe_inlinehint.cjs`，文案取最长那条 TMDB Session ID 提示）：
+     *     「立即同步」left **638.34 → 185.91**、「测试连接」left **715.67 → 263.23**（左移 452px）。
+     *   · 改进回执槽后：槽宽固定吃满行首剩余空间，提示只在**槽内**排版 ⇒ 两枚按钮 left/right/top
+     *     **逐位相等**（同一支探针的 B 组），行高恒 25px。
+     * ⚠️ 旧的「回执随行重建一起消失」这条顾虑已不成立：`redisplayKeepingRow` 会把文案写回去；
+     *    且本条只活 2.4s、期间不重建行。
+     */
+    private flashInlineHint(host: HTMLElement, text: string): void {
+        host.querySelector('.rl-inline-hint')?.remove();
+        const tip = document.createElement('span');
+        tip.className = 'rl-inline-hint';
+        tip.setAttribute('role', 'status');
+        tip.textContent = text;
+        // 文案被 CSS 压成单行 + 省略号（防止换行把按钮顶下去），全文挂 title 供悬停查看
+        tip.setAttribute('title', text);
+        const slot = this.actionRowResultSlot(host);
+        if (!slot) {
+            // 兜底：结构变了也不许丢提示（此处会位移，但只有真找不到槽时才会走到）
+            host.appendChild(tip);
+            window.setTimeout(() => tip.remove(), 2400);
+            return;
+        }
+        // 提示与回执共用那一格：先把已有回执文字让出来，2.4s 后连提示一起还原
+        const prev = slot.textContent ?? '';
+        slot.setText('');
+        slot.appendChild(tip);
+        window.setTimeout(() => {
+            tip.remove();
+            if (prev) slot.setText(prev);
+        }, 2400);
+    }
+
+    /** 动作行里行首那个回执槽（`.rl-key-result`）；只认**直接子节点**，避免命中别处的同名元素。 */
+    private actionRowResultSlot(host: HTMLElement): HTMLElement | null {
+        const kids = Array.from(host.children);
+        for (const el of kids) {
+            if (el.classList.contains('rl-key-result')) return el as HTMLElement;
+        }
+        return null;
+    }
+
+    /**
+     * 🔴 #664：刷新设置页（为了更新徽标），但**保住刚操作那一行的展开态与回执文字**。
+     *
+     * `display()` 会整页重建 ⇒ 行回到收起态、回执被清空。
+     * 这里在重建前后各记一次：重建后把那一行重新展开，并把回执文字写回去。
+     * ⚠️ 只在「确实需要刷新徽标」时调用；无谓的重建本身就是这个 bug 的来源。
+     */
+    private redisplayKeepingRow(sourceId: string): void {
+        const sel = `.rl-key-row[data-source-id="${sourceId}"]`;
+        const before = this.containerEl.querySelector(sel);
+        const wasOpen = !!before?.hasClass('rl-key-open');
+        const resultText = before?.querySelector('.rl-key-result')?.textContent ?? '';
+        const resultOk = before?.querySelector('.rl-key-result')?.hasClass('rl-key-result-ok') ?? false;
+        const resultBad = before?.querySelector('.rl-key-result')?.hasClass('rl-key-result-bad') ?? false;
+        this.display();
+        const after = this.containerEl.querySelector(sel);
+        if (!after) return;
+        if (wasOpen) after.addClass('rl-key-open');
+        if (resultText) {
+            const el = after.querySelector('.rl-key-result');
+            if (el) {
+                el.setText(resultText);
+                el.toggleClass('rl-key-result-ok', resultOk);
+                el.toggleClass('rl-key-result-bad', resultBad);
+            }
+        }
     }
 
     /**
@@ -2433,7 +2726,12 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         if (!meta.keyField) return; // 免 Key 源不在此列
         const keyField: string = meta.keyField;
         const keyField2: string | undefined = meta.keyField2 ?? undefined; // 双凭据源（igdb）第二字段
-        const row = parent.createDiv({ cls: 'rl-key-row rl-prov-card' });
+        const row = parent.createDiv({
+            cls: 'rl-key-row rl-prov-card',
+            // 🔴 #664：带上源 id —— 同步完要刷新徽标时，靠它把**同一行**找回来、
+            //    保住它的展开态与回执（否则整页重建后那一行会自己合上，用户什么都看不到）。
+            attr: { 'data-source-id': id },
+        });
         const head = row.createDiv({ cls: 'rl-key-head' });
         renderAiIcon(head.createSpan({ cls: 'rl-ai-icon' }), SOURCE_ICON[id]);
         // 🔴🔴 #641（1.4.1，用户点名）：「steam 凭据行上的副标题取消并移动到（获取：… 用途：…）后面」。
@@ -2446,7 +2744,14 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         head.createSpan({ cls: 'rl-key-name', text: meta.label });
         const badge = head.createSpan({ cls: 'rl-key-badge' });
         const refreshBadge = (): void => {
-            const has = !!this.settingValue(keyField) && (!keyField2 || !!this.settingValue(keyField2));
+            // 🔴🔴 #690（用户报障 2026-10-20：「tmdb 填了 API 连接成功但未填 id，为什么显示未配置」）：
+            //   双凭据源的「已配置」判据**不是一律双字段同有值** ——
+            //   · 缺省（igdb）：两个字段是一对，少一个就换不出 token ⇒ 双有才算配置好（口径不变）；
+            //   · `keyField2OptionalForConfigured`（tmdb）：access_token 只服务账号同步，
+            //     搜索只用 API Key ⇒ **主凭据有值即已配置**，否则就与「测试连接」（只查 API Key）互相打架。
+            //   ⚠️ 只改徽标；同步按钮在发请求前自己拦「还缺 access_token」（renderTmdbSyncButton / TmdbSyncModal）。
+            const has = !!this.settingValue(keyField)
+                && (meta.keyField2OptionalForConfigured === true || !keyField2 || !!this.settingValue(keyField2));
             // 🔴 #589：开机自检（或手动「测试连接」）**测不通** ⇒ 徽标改「连接失败」（红，#634 由「已失效」改名）。
             //    ⚠️ 只在**已配置**时才谈失效；`undefined`（还没测过）走原来的两态 ——
             //       ⛔ 别把「还没跑」画成「连接失败」（那是撒谎，判据见 `pure/credentialCheck.isExpired`）。
@@ -2456,9 +2761,9 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             } else if (has) {
                 badge.setText('已配置');
             } else {
-                // 🔴 #580：源可自带文案（`emptyBadge`，如微信读书的「可选 Cookie」）；
-                //    没带的源逐字沿用「可选 Key / 未配置」两态（#489 口径未动）。
-                badge.setText(meta.emptyBadge ?? (OPTIONAL_KEY_SOURCES.has(meta.id) ? '可选 Key' : '未配置'));
+                // 🔴 #489 / 2026-10-25：空态只有两套词 —— 「可选 Key」（真的可留空的 Key 源）
+                //    与「未配置」（其余全部，含微信读书的 Cookie）。⛔ 别再加第三套文案。
+                badge.setText(OPTIONAL_KEY_SOURCES.has(meta.id) ? '可选 Key' : '未配置');
             }
             badge.toggleClass('rl-key-badge-on', has && !expired);
             badge.toggleClass('rl-key-badge-bad', expired);
@@ -2468,22 +2773,54 @@ export class ReelLudicSettingTab extends PluginSettingTab {
 
         const body = row.createDiv({ cls: 'rl-key-body' });
         body.createDiv({ cls: 'rl-hint-note', text: meta.hint });
-        this.createSecretField(body, {
-            placeholder: this.credentialPlaceholder(meta),
-            value: this.settingValue(keyField),
-            onInput: (v) => {
-                (this.plugin.settings as unknown as Record<string, unknown>)[keyField] = v;
-                void this.plugin.saveSettings();
-                // #589：值一改，旧的「连接失败」结论立刻作废（⛔ 别让红标挂在一个刚填的新值上）
-                this.plugin.clearCredentialStatus(sourceCheckKey(meta.id));
-                refreshBadge();
-            },
-        });
-        // 双凭据源（IGDB：Client ID + Client Secret）：第二行密文输入
-        if (keyField2) {
+        /**
+         * 🔴🔴 #667（用户：「tmdb 怎么多显示了一行 key 框」+「统一 id 框在上，key 框在下」）：
+         * 双凭据源的两个输入框，**统一「标识」在上、「密钥」在下**：
+         *   · igdb：Client ID（keyField，标识）→ Client Secret（keyField2，密钥）—— 声明序天然正确；
+         *   · tmdb：Session ID（keyField2，标识）→ API Key（keyField，密钥）—— **倒序**。
+         * 🔴 上一版 #666 的 bug：主字段（`keyField`）在下面这块**之外**无条件先建了一次，
+         *    tmdb 分支里又建一遍 ⇒ API Key 框**出现两次**（一次在 Session ID 上面、一次在下面）。
+         *    ⇒ 重构：主字段**只在分支里建**（tmdb 走后建、其余源先建），⛔ 任何路径都只建一次。
+         * ⚠️ 占位符按源给出（⛔ 别写死 IGDB 的字样）。
+         */
+        // 🔴🔴 2026-10-25 用户裁定：「TMDB 行下的各个框间隔要同步 IGDB 行的」。
+        //   TMDB 两格各带就地校验，若按老写法「每格后面插一条 `.rl-secret-issue`」，
+        //   两框之间 = gap(6) + margin-top(2) + min-height(1.4em≈19) + gap(6) ≈ 34px，
+        //   而 IGDB 两框之间就是 `.rl-key-body` 的 `gap:6px` ⇒ 肉眼看得出「TMDB 松一档」。
+        //   ⇒ 整行**只建一个**提示槽，且挂到**动作行之后**（`mountAfter(actions)`，见方法末尾）。
+        //     两格于是直接相邻（6px，与 IGDB 逐像素一致）；「最后一格框 → 按钮行」也只隔 8px
+        //     （与 IGDB / Steam 等所有单格源同一数值），提示展开只往下推、⛔ 不动按钮。
+        //   ⚠️ 槽必须**最后** mount：先建就又会夹在两个框中间（或框与按钮之间），等于没修。
+        const issueSlot = meta.id === 'tmdb' && keyField2 ? this.makeIssueSlot() : null;
+        const mainField = (): void => {
             this.createSecretField(body, {
-                placeholder: 'IGDB Client Secret',
-                value: this.settingValue(keyField2),
+                placeholder: this.credentialPlaceholder(meta),
+                value: this.settingValue(keyField),
+                // 🔴 2026-10-25 用户裁定：TMDB 的 Key 格**只收 32 位 v3 API Key**，填 v4 令牌就当场提示改填下一格
+                // ⚠️ 校验提示走**整行共用的槽**（`issueSlot`），⛔ 别让本格自建一条 —— 那会把两框间距撑到 ~34px
+                issue: meta.id === 'tmdb' ? tmdbApiKeyFieldIssue : undefined,
+                issueSlot: issueSlot ?? undefined,
+                onInput: (v) => {
+                    (this.plugin.settings as unknown as Record<string, unknown>)[keyField] = v;
+                    void this.plugin.saveSettings();
+                    // #589：值一改，旧的「连接失败」结论立刻作废（⛔ 别让红标挂在一个刚填的新值上）
+                    this.plugin.clearCredentialStatus(sourceCheckKey(meta.id));
+                    refreshBadge();
+                },
+            });
+        };
+        const secondField = (): void => {
+            // 🔴 2026-10-25 用户裁定（原文：「Session ID 那一格填的只能是 access_token 近 300 位字符串…占位说明也是」）：
+            //    这一格**只收 v4 access_token**（v4 用户认证流程 request_token → 批准 → access_token 的产物）。
+            //    旧占位写「Session ID 或 v4 access_token」= 两种都收，用户按老文档填 32 位 session_id 也「看起来对」，
+            //    但那套在本插件里已经不走了 ⇒ 名字都改掉，别再叫「Session ID」把人往 v3 文档引。
+            const placeholder =
+                meta.id === 'tmdb' ? 'TMDB v4 access_token（eyJ 开头长串，账号同步用）' : `${meta.label} Client Secret`;
+            this.createSecretField(body, {
+                placeholder,
+                value: this.settingValue(keyField2 as string),
+                issue: meta.id === 'tmdb' ? tmdbSessionFieldIssue : undefined,
+                issueSlot: issueSlot ?? undefined,
                 onInput: (v) => {
                     (this.plugin.settings as unknown as Record<string, unknown>)[keyField2 as string] = v;
                     void this.plugin.saveSettings();
@@ -2491,12 +2828,37 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     refreshBadge();
                 },
             });
+        };
+        if (keyField2) {
+            if (meta.id === 'tmdb') {
+                // tmdb：标识（Session ID）在上，密钥（API Key）在下
+                secondField();
+                mainField();
+            } else {
+                // igdb 等源：标识（keyField）在上，密钥（keyField2）在下
+                mainField();
+                secondField();
+            }
+        } else if (meta.id === 'steam') {
+            // 🔴🔴 #667（用户：「我要的是 steam 的 id 框与 key 框调换」）：
+            //    Steam 的「标识」= SteamID（`renderSteamExtra` 里的那个明文框），密钥 = API Key（keyField）。
+            //    上一版顺序 = Key 在上、SteamID 在下（#640f 定的）；用户这次点名**调换** ⇒ SteamID 在上、Key 在下。
+            //    实现 = **主字段（Key）延后建**：先跑 renderSteamExtra（把 SteamID 框放上去），
+            //    再补 Key 框。SteamID 的就地校验 / 失焦落盘逻辑都在 renderSteamExtra 里（⛔ 不搬）。
+            //    ⚠️ 动作行（同步/测试）仍须在**两个输入之后**（#640f 口径不变）。
+            this.renderSteamExtra(body);
+            mainField();
+        } else {
+            mainField();
         }
+        // 🔴🔴 2026-10-25：TMDB 双格的共用校验槽改为挂到**动作行之后**（见下方 `if (issueSlot) issueSlot.mountAfter(actions)`）
+        //   ⇒ 这里不再 mount；⚠️ 槽仍必须「最后」挂 —— 提前挂就又会夹在框与按钮之间，间距问题回来。
+        //   ⚠️ 只有 `issueSlot` 非空（TMDB 双格）时才挂；其余源的提示行仍由各自 `createSecretField` 自建。
         // 🔴🔴 #640f（1.4.0，用户点名）：「这两个同步与测试连接按钮应该在 **steamid 下**」。
-        //    ⇒ Steam 那一行的顺序是：Key 密文 → **SteamID 输入** → **动作行（同步 Steam · 测试连接）**。
-        //    实现 = **动作行在「输入之后」才建**（下面的 `actions`），而 SteamID 输入先建。
-        //    ⚠️ 其余源没有「第二条输入」，所以它们的动作行位置与原来**逐字相同**（零变化）。
-        if (meta.id === 'steam') this.renderSteamExtra(body);
+        //    ⇒ 动作行在「输入之后」才建（下面的 `actions`）。
+        // 🔴🔴 #667（用户：「steam 的 id 框与 key 框调换」）：SteamID 输入**已经搬到上面**（steam 分支里
+        //    `renderSteamExtra` 先于 `mainField`）⇒ 这里⛔ **不许再调一次** renderSteamExtra
+        //    （本批实测：残留的旧调用让 SteamID 框出现两个 —— 产物核对当场抓到）。
         // 🔴🔴 #640e：「steam 同步按钮还有微信读书同步按钮应该和测试连接并排显示」——
         //    动作行**只建这一次**，两个同步按钮往里追加，「测试连接」也建在同一行。
         //    ⚠️ 原先是各建各的 `.rl-key-actions`（同步一行、测试又一行）⇒ 竖着堆三行。
@@ -2510,27 +2872,63 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    ⇒ 结果 span **挪到测试连接之后**（DOM 里两个按钮**相邻**，gap 只计一次）。
         //    ⚠️ 与原「同步 Steam · ✗ …」的就地回执次序一致（回执仍紧跟它服务的按钮组），
         //      且失败长文案不再把两颗按钮**撑开**（max-width:60% 换行时更明显）。
+        // 🔴🔴 #655 动作行**按创建顺序建按钮**，⛔ 不再用 `resultEl.before()` 排序：
+        //    上一版是「先建回执槽 → 两个排序槽 before(回执槽)」⇒ 后插入的**测试连接跑到了最前**
+        //    （真实 DOM 是「测试连接 · 同步 Steam · 回执」），用户看到的正是两颗按钮**顺序反了**。
+        //    而我当时的仿真页是**手写**成「同步 → 测试」的 ⇒ 量出「8px 对齐」就收工，**量的是假的**。
+        //    ⚠️ 教训：仿真页必须复刻**创建顺序**，⛔ 不能复刻「我以为的顺序」。
+        //    现在：回执槽 → 同步按钮 → 测试连接，三条同步行（Steam / 微信读书 / 无同步的源）同构。
+        // 🔴 #641：⛔ 回执槽别夹在两颗按钮**中间**：空的 flex item 会把 `gap` 计两次
+        //    （8 → 16px），正是用户报过两次的那处间距。放到**行首**即可（见下条 ⑴）。
+        // 🔴 用户裁定（1.4.x）：「测试结果文字显示在按钮左边，且点按钮时按钮不许跳」。
+        //    ⑴ 回执槽**建在最前**（DOM 首个 flex item）：`.rl-key-result` 吃满剩余空间、文字右对齐贴按钮，
+        //       ⇒ 文字变长不会把按钮往左推（这是本次要修的那类跳动）。
+        //    ⑵ 顺带保住 #641 那条约束：回执槽在**按钮组之外**，两颗按钮仍然相邻，
+        //       `gap` 只计一次（8px），⛔ 不会回到 16px。
+        //    ⑶ 顺序 = 回执槽 → 同步按钮 → 测试连接（视觉上仍右对齐成「同步 · 测试」，回执在最左）。
         const actions = body.createDiv({ cls: 'rl-key-actions' });
-        if (meta.id === 'steam') this.renderSteamActions(actions);
+        const resultEl = actions.createSpan({ cls: 'rl-key-result' });
+        // 回执槽交给 Steam 的同步按钮（它稍后才建 ⇒ 用**取值函数**延迟拿，⛔ 别用 null 兜底）
+        const syncResultEl: HTMLElement = resultEl;
+        if (meta.id === 'steam') this.renderSteamActions(actions, () => syncResultEl, meta.id);
         // 🔴 #639 ⑥：微信读书的同步入口**搬到它自己的凭据行里**（用户：
         //    「并将微信读书同步入库的项放在微信读书凭据下拉处，两个同步按钮样式都改成**白字主题色底**」）。
         //    ⚠️ 原来是「基本设置 › 启用内置阅读器」折叠组里的独立一行 —— 现在**那一行删掉**，
         //    入口只此一处（⛔ 别两处都留：同一功能两个入口，用户会以为哪一处是失效的备份）。
         if (meta.id === 'weread') this.renderWereadSyncButton(actions);
-        // 测试连接：✓/✗ 消息 · Nms；失败红色、成功绿色（与同步按钮**同一行**，见上）
+        // 🔴 #662（用户：「元数据源凭据-豆瓣凭据入口再添加个同步导入按钮的功能」）：
+        //    豆瓣也有一颗同步按钮 —— 位置 / 样式 / 次序与微信读书**完全同构**
+        //    （⛔ 别另起一行、别另用一种颜色：三个源的动作行必须长得一样，用户才不用重新认）。
+        if (meta.id === 'douban') this.renderDoubanSyncButton(actions);
+        // 🔴 #665（用户：「Bangumi 元数据源凭据行加个同步按钮并排，也做 TMDB 的同步接入」）：
+        //    Bangumi / TMDB 也各加一颗 —— 五个可同步源的动作行**同构**（Steam / 微信读书 / 豆瓣 / Bangumi / TMDB）。
+        //    TMDB 需要第二凭据 session_id（meta.keyField2 已声明，双字段输入框自动出现）。
+        if (meta.id === 'bangumi') this.renderBangumiSyncButton(actions);
+        if (meta.id === 'tmdb') this.renderTmdbSyncButton(actions);
+        // 🔴🔴 2026-10-25（用户：「TMDB行的立即同步测试连接按钮和上面的框间隔怎么和其他行的间隔不同，给我统一下」）：
+        //    TMDB 双格的共用校验槽挂到**动作行之后**（不是两框之间、也不是按钮行里）。
+        //    为什么是这个位置（两个要求同时成立）：
+        //      ⑴ 「间距与别行一致」——「最后一格输入框 → 按钮行」之间只隔 `.rl-key-body` 的 gap 6px
+        //         + `.rl-key-actions` 的 margin-top 2px = **8px**，与 IGDB / Steam 等所有单格源逐像素相同。
+        //         改前槽夹在框与按钮之间（`min-height:1.4em` ≈ 16.8px）⇒ 那一处是 32.8px，一眼看得出不一样。
+        //      ⑵ 「提示出现不许挪按钮」——槽是这一行的**最后一个子项**，按钮在它上方
+        //         ⇒ 提示展开只会把下方内容往下推，按钮 rect 一个像素都不动（#699 的口径继续成立）。
+        //    ⚠️ 空态 `display:none`（`.rl-secret-issue-tail.is-empty`）：它下面没有要护的东西，
+        //       别保留高度——留着会让 TMDB 行常年比别的行高一截，又变成「间距不一致」。
+        if (issueSlot) issueSlot.mountAfter(actions);
+        // 测试连接：✓/✗ 消息 · Nms；失败红色、成功绿色（与同步按钮**同一行**）
         const testBtn = actions.createEl('button', { text: '测试连接', cls: 'mod-cta' });
-        // 🔴 #641：结果 span **建在两个按钮之后** —— ⛔ 别挪回它们中间：空的 flex item 会把
-        //    `gap` 计两次（8 → 16px），正是用户报的那处间距不一致（见上「动作行」注释）。
-        const resultEl = actions.createSpan({ cls: 'rl-key-result' });
+        // ⛔ 回执槽**已在行首**建好（见本方法上方 `resultEl`）—— 别再在这里建第二个：
+        //    那样会多出一个空 flex item（把 `gap` 计两次，8 → 16px = #641 老毛病），
+        //    且结果文字又跑到按钮右边去（正是用户本次要修的那处）。
         testBtn.addEventListener('click', async () => {
             testBtn.disabled = true;
-            testBtn.setText('测试中…');
+            // ⛔ 不改文案（同音乐源那处）：文字变短会使按钮变窄 ⇒ 横向跳动
             testBtn.addClass('rl-btn-loading'); // 1.0.4：内联 spinner（文字由 .rl-btn-loading 置透明）
             resultEl.setText('');
             resultEl.removeClass('rl-key-result-ok', 'rl-key-result-bad');
             const res = await this.testConnectionFor(meta.id);
             testBtn.disabled = false;
-            testBtn.setText('测试连接');
             testBtn.removeClass('rl-btn-loading');
             // 🔴 #589：手动测试的结论**记进同一个结果表** —— 徽标（含刚被打开的「连接失败」）据此同步刷新。
             this.plugin.setCredentialStatus(sourceCheckKey(meta.id), res.ok);
@@ -2765,12 +3163,68 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      * ⚠️ 只影响**之后写入 / 重写**的笔记（改顺序不会回头去改已存在的笔记文件）。
      */
     private renderFieldOrderRows(body: HTMLElement): void {
+        // 🔴 #652：本组的「恢复默认」（六类顺序 + 三个书籍子类顺序**一键全清**）
+        this.mountGroupReset(body, {
+            title: '笔记属性顺序',
+            isCustomized: () =>
+                Object.keys(this.plugin.settings.fieldOrder ?? {}).length > 0
+                || Object.keys(this.plugin.settings.fieldOrderByKind ?? {}).length > 0,
+            message: '将把所有类型（含文学 / 网文 / 漫画）的属性顺序恢复成默认。\n（只影响之后写入或重写的笔记）',
+            apply: async () => {
+                this.plugin.settings.fieldOrder = {};
+                this.plugin.settings.fieldOrderByKind = {};
+                await this.plugin.saveSettings();
+            },
+        });
+
         body.createDiv({
             cls: 'rl-fo-help',
             text: '拖动调整笔记里属性的排列顺序；只影响之后写入或重写的笔记。',
         });
 
-        const wrap = body.createDiv({ cls: 'rl-fo-wrap' });
+        // 🔴 #653（用户：「再加个对比视图，如一整个表格滑动并览」）：**编辑 / 对比预览**两档切换。
+        //    编辑 = 左主右从（一次看一组）；对比 = 一整个表格横向滑动（七组并排、按位次对齐）。
+        //    ⚠️ 两个视图共用同一份取数（`orderForType` / `GLOBAL_FIELD_KEYS`），⛔ 别各算一套。
+        let mode: 'edit' | 'compare' = 'edit';
+        const modeBar = body.createDiv({
+            cls: 'rl-fo-modebar',
+            attr: { role: 'tablist', 'aria-label': '属性顺序视图' },
+        });
+        const editBtn = modeBar.createEl('button', {
+            cls: 'rl-fo-mode', text: '编辑', attr: { type: 'button', role: 'tab', 'aria-selected': 'true' },
+        });
+        const cmpBtn = modeBar.createEl('button', {
+            cls: 'rl-fo-mode', text: '对比预览', attr: { type: 'button', role: 'tab', 'aria-selected': 'false' },
+        });
+        const editHost = body.createDiv({ cls: 'rl-fo-view' });
+        const cmpHost = body.createDiv({ cls: 'rl-fo-view' });
+        cmpHost.addClass('is-hidden');
+        const syncMode = (): void => {
+            const isEdit = mode === 'edit';
+            editBtn.toggleClass('is-on', isEdit);
+            editBtn.setAttribute('aria-selected', isEdit ? 'true' : 'false');
+            cmpBtn.toggleClass('is-on', !isEdit);
+            cmpBtn.setAttribute('aria-selected', isEdit ? 'false' : 'true');
+            editHost.toggleClass('is-hidden', !isEdit);
+            cmpHost.toggleClass('is-hidden', isEdit);
+            // 切到对比时才重算（横向长表，不必常驻 DOM 陪着编辑视图）
+            if (!isEdit) this.renderFieldOrderCompare(cmpHost);
+        };
+        editBtn.addEventListener('click', () => {
+            mode = 'edit';
+            syncMode();
+        });
+        cmpBtn.addEventListener('click', () => {
+            mode = 'compare';
+            syncMode();
+        });
+        // 🔴🔴 #659（用户：「怎么不默认高亮『编辑』按钮啊，要切换一下才能正常高亮」）：
+        //    上一版只在**点击时**调 `syncMode()` ⇒ 首屏两个按钮都还没有 `is-on`，
+        //    初始 `aria-selected="true"` 是写在 HTML 里的字面量、类名却没跟上 ⇒ "看起来没高亮"。
+        //    ⇒ 首次渲染就要跑一次（与点击走**同一个**函数，⛔ 不另写一份初始态）。
+        syncMode();
+
+        const wrap = editHost.createDiv({ cls: 'rl-fo-wrap' });
 
         // ── 左：属性分组导航（「全局」+ 六个类型）─────────────────────────────────
         const nav = wrap.createDiv({
@@ -2834,6 +3288,103 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
+     * 🔴🔴 #653（用户：「再加个对比视图，如一整个表格滑动并览」）：**七组并排的位次矩阵**。
+     *
+     * 行 = **位次**（1..maxLen），列 = 全局 + 六个类型；格 = 「该组第 N 位是哪个字段」。
+     * 🔴 为什么不按字段做行：七组字段集不同（全局 8 个、电影 16 个、书籍 20 个），
+     *    按字段取并集会有 30+ 行、绝大多数格子空白 —— 稀疏矩阵根本读不出「对比」。
+     *    用户要的是「第 3 位在各类里分别是谁」⇒ 位次做行才能横向对齐着读。
+     *
+     * 表格本体是**真 `<table>`**（`border-collapse: collapse` + 固定列宽），横向滑动由外层容器负责：
+     *   · 外层 `overflow-x: auto` + 内层 `min-width: max-content` ⇒ 宽屏铺满、窄屏可滑；
+     *   · 表头 / 首位次列 `position: sticky`（滑的时候列头跟着走，不然不知道自己在看哪一列）；
+     * · 各列**等宽**（`minmax(96px, 1fr)` 的语义用 `table-layout: fixed` + 定宽实现）。
+     * ⚠️ 这是**只读**视图：⛔ 不做拖拽 / 编辑（要改去「编辑」那档）。
+     */
+    private renderFieldOrderCompare(host: HTMLElement): void {
+        host.empty();
+        host.addClass('rl-fo-cmp');
+
+        const fieldOrder = this.plugin.settings.fieldOrder;
+        const kindOrderCfg = this.plugin.settings.fieldOrderByKind;
+
+        // 全局次序：取电影那一份（六个类型同步写；用户手改 data.json 使它们不一致时，
+        // 显示的是电影那份 —— 与编辑视图「全局」页的取法**同一口径**，⛔ 别另选一个类型）
+        const movieOrder = orderForType(fieldOrder, FIELD_ORDER_TYPES[0]);
+        const globalOrder = GLOBAL_FIELD_KEYS.filter((k) => movieOrder.includes(k));
+
+        // 「用户已配」的完整次序（含全局段）—— 真源走 `pure/fieldOrder` 的两个汇总器，
+        // ⛔ 别在设置页自己拼回落链（子类那份要走 kind → book → 缺省，拼错就静默用缺省序）。
+        const typeOrders = resolveAllOrders(fieldOrder);
+        const kindOrders = resolveAllKindOrders(fieldOrder, kindOrderCfg);
+
+        /**
+         * 某列最终喂给对比矩阵的数组 = **用户已配次序 ∩ 该列专属字段集**。
+         * 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑦）：按列键前缀分流取数 ——
+         *    `__global` = 全局那批；`t:<type>` = `exclusiveFieldsFor(type)`；
+         *    `k:<kind>` = `exclusiveFieldsForBookKind(kind)`（网文才不会列出画师 / ISBN）。
+         * 🔴 **必须滤掉全局字段**：`fieldAppliesTo` 对全局字段恒返回 true（它们没有 `appliesTo`），
+         *    直接把 `resolveAllOrders` 那份整表丢进去，九列会变成「同一批全局字段 + 各自专属」
+         *    —— 前面十来行九列一模一样，正是 #653 第一版被指出「把同一列抄九遍」的退化形态。
+         */
+        const columnOrder = (key: string): string[] => {
+            if (key === '__global') return [...globalOrder];
+            if (key.startsWith('k:')) {
+                const allowed = exclusiveFieldsForBookKind(key.slice(2) as BookKind);
+                return kindOrders[key.slice(2) as BookKind].filter((k) => allowed.includes(k));
+            }
+            const allowed = exclusiveFieldsFor(key.slice(2) as EntryType);
+            return typeOrders[key.slice(2) as EntryType].filter((k) => allowed.includes(k));
+        };
+
+        const orders: Record<string, string[]> = {};
+        for (const c of FIELD_ORDER_COMPARE_COLUMNS) orders[c.key] = columnOrder(c.key);
+
+        const cmp = buildFieldOrderCompare(orders, globalOrder);
+
+        host.createDiv({
+            cls: 'rl-fo-cmp-cap',
+            text: '按「位次」对齐：横向滑动可并览全部类型与书籍子类；每列只列该列的字段。',
+        });
+        // ⚠️ 表头（`thead th` 的 sticky）**必须留在这个滚动容器内部** —— 挪到容器外就没有
+        //    「滑的时候列头跟着走」的效果，而且 sticky 会挂到设置页滚动流上（用户 2026-10-19 报障的层级穿透）。
+        const scroll = host.createDiv({ cls: 'rl-fo-cmp-scroll' });
+        const table = scroll.createEl('table', { cls: 'rl-fo-cmp-table' });
+        // 首位次列 + 九列，全部定宽（⛔ 别用 auto 布局：各列宽度会被内容拉得参差，扫读时对不齐）
+        const cols = ['56px', ...cmp.columns.map(() => '112px')].join(' ');
+        table.createEl('colgroup').innerHTML = cols.split(' ').map((w) => `<col style="width:${w}">`).join('');
+        const headRow = table.createEl('thead').createEl('tr');
+        headRow.createEl('th', { cls: 'rl-fo-cmp-rank', text: '位次', attr: { scope: 'col' } });
+        for (const c of cmp.columns) {
+            const th = headRow.createEl('th', { cls: 'rl-fo-cmp-col', attr: { scope: 'col' } });
+            th.createSpan({ cls: 'rl-fo-cmp-col-label', text: c.label });
+            th.createSpan({ cls: 'rl-fo-cmp-col-n', text: `${cmp.sizes[c.key]} 项` });
+        }
+        const tbody = table.createEl('tbody');
+        for (const row of cmp.rows) {
+            const tr = tbody.createEl('tr');
+            tr.createEl('th', { cls: 'rl-fo-cmp-rank', text: String(row.rank), attr: { scope: 'row' } });
+            for (const c of cmp.columns) {
+                const key = row.cells[c.key];
+                const td = tr.createEl('td', { cls: key ? 'rl-fo-cmp-cell' : 'rl-fo-cmp-cell is-empty' });
+                if (key) {
+                    // 🔴 按**该列的类型**取名：`author` 在音乐列是「艺术家」、`developer` 在动画列是
+                    //    「制作公司」、`duration_min` 在剧集/动画列是「单集片长」（见 `metaFields.labelFor`）。
+                    //    书籍三子类共用大类的名字 ⇒ 传 'book'。
+                    const colType = c.key.startsWith('t:')
+                        ? (c.key.slice(2) as EntryType)
+                        : c.key.startsWith('k:')
+                          ? ('book' as EntryType)
+                          : undefined;
+                    td.createSpan({ cls: 'rl-fo-cmp-label', text: fieldLabelOf(key, colType) });
+                    // 键名走 `data-tip`（本仓禁用 title）；空位不挂提示
+                    td.setAttribute('data-tip', key);
+                }
+            }
+        }
+    }
+
+    /**
      * 右侧面板：把**当前分组**的可拖列表画出来（#640）。
      *
      * 🔴 两档语义（同一个拖动实现，只是**作用范围**不同）：
@@ -2864,27 +3415,36 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // 🔴 #640e：书籍子分类那一档（文学 / 网文 / 漫画）—— 与「类型」档分开处理
         const kind: BookKind | null = target && 'kind' in target ? target.kind : null;
         const type: EntryType | null = target && 'type' in target ? target.type : null;
-        /** 当前这一页面向的**字段集**按哪个类型算（子分类页也按 book 算字段集，只是顺序各存各的） */
-        const fieldType: EntryType = kind ? 'book' : (type as EntryType);
         /** 这一页显示的标题名（子分类用 `BOOK_KIND_LABELS`，⛔ 不手写） */
         const pageLabel = isGlobal ? '全局' : kind ? BOOK_KIND_LABELS[kind] : ENTRY_TYPE_LABELS[type as EntryType];
 
-        // 全局页 = 那批公共字段；其余页 = 该字段集适用、且**不属于公共**的那批（专属字段）
-        const baseKeys = isGlobal ? [...globalKeys] : exclusiveFieldsFor(fieldType);
+        // 全局页 = 那批公共字段；其余页 = 该字段集适用、且**不属于公共**的那批（专属字段）。
+        // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑦）：这里原先对书籍子类一律按 `'book'` 算字段集
+        //    （`kind ? 'book' : type`），于是**网文 / 漫画页也把画师、ISBN 列了出来** —— 用户明确要求去掉。
+        //    ⇒ 子类页改走 `exclusiveFieldsForBookKind(kind)`（排除表的真源在 `pure/fieldOrder`，
+        //    ⛔ 别在设置页另写一份排除名单，否则三处会漂移）。
+        const baseKeys = isGlobal
+            ? [...globalKeys]
+            : kind
+              ? exclusiveFieldsForBookKind(kind)
+              : exclusiveFieldsFor(type as EntryType);
 
+        // 🔴 #643（用户「这个太丑了」）表头措辞：原来标题与说明**各说一遍「全局」**、中间还夹一个悬浮间隔号，
+        //    读起来像两段碎句拼的。改成**一句说得清的话**：左边是「哪些字段」、右边是「改了对谁生效」。
+        //    ⚠️ 这里**刻意不复述旧文案**：注释会进产物，反向守卫（「旧措辞不许回潮」）会被自己的注释撞红（本批实测撞过一次）。
         const head = pane.createDiv({ cls: 'rl-fo-pane-head' });
         head.createDiv({
             cls: 'rl-fo-pane-title',
-            text: isGlobal ? '全局属性 · 顺序' : `${pageLabel} · 专属属性顺序`,
+            text: isGlobal ? '全局属性' : `${pageLabel}专属属性`,
         });
         head.createDiv({
             cls: 'rl-fo-pane-note',
             // 🔴 #640e：子分类页要**说清它与「书籍」的关系** —— 文学/网文/漫画三者属性集相同、
             //    但顺序各存各的（这正是用户要「更明确的分组」的意义），⛔ 别让用户以为改一个动全部。
             text: isGlobal
-                ? '所有类型共用，拖动会影响全部类型'
+                ? '所有类型共用，改动对全部类型生效'
                 : kind
-                  ? `仅对${pageLabel}生效（文学 / 网文 / 漫画各存一份）`
+                  ? `仅对${pageLabel}生效，文学 / 网文 / 漫画各存一份`
                   : `仅对${pageLabel}生效`,
         });
 
@@ -2960,23 +3520,30 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         let order = readOrder();
         /** 正在拖的那一项（`dragstart` 记下、`drop` 取用） */
         let dragKey: string | null = null;
+        /**
+         * 🔴 2026-10-21：这一页按**哪个类型**的名字显示（`metaFields.labelFor`）。
+         * · 全局页 ⇒ `undefined`（一律用缺省名）；
+         * · 书籍三子类页 ⇒ `'book'`（子类不改显示名，差异只在**字段集**，见 `BOOK_KIND_EXCLUDED_FIELDS`）；
+         * · 其余类型页 ⇒ 该类型（音乐页的 `author` 显示「艺术家」、动画页的 `developer` 显示「制作公司」）。
+         */
+        const labelType: EntryType | undefined = isGlobal ? undefined : kind ? 'book' : (type as EntryType);
 
         const render = (): void => {
             list.empty();
             order.forEach((key, i) => {
-                const f = findMetaField(key);
+                const label = labelOf(key, labelType);
                 const li = list.createEl('li', {
                     cls: 'rl-fo-item',
                     attr: {
                         role: 'option',
                         tabindex: '0',
                         draggable: 'true',
-                        'aria-label': `${f?.label ?? key}，第 ${i + 1} 位`,
+                        'aria-label': `${label}，第 ${i + 1} 位`,
                     },
                 });
                 // 🔴 #633 同款：把手只在悬停 / 拖动时现身（默认隐身，⛔ 不占位推文字）
                 safeSetIcon(li.createSpan({ cls: 'rl-fo-grip' }), 'grip-vertical');
-                li.createSpan({ cls: 'rl-fo-label', text: f?.label ?? key });
+                li.createSpan({ cls: 'rl-fo-label', text: label });
                 li.createSpan({ cls: 'rl-fo-key' }).createEl('code', { text: key });
 
                 li.addEventListener('dragstart', (ev) => {
@@ -3049,11 +3616,12 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *    写侧 `EntryService` / 读侧 `EntryModal` 一行都不用改，零数据迁移。
      */
     private renderFieldMapRows(body: HTMLElement): void {
-        body.createDiv({
-            cls: 'rl-fieldmap-help',
-            text: '在「新属性名」列填你想要的键名，回车或失焦生效；留空 = 保持原属性名。',
-        });
-
+        // 🔴 #652：标题行右侧「恢复默认」（用户：「高级设置下的三个组都要有恢复默认项」）。
+        //    ⚠️ 挂**组标题行**而不是组内容顶部：三个组的位置一致，用户扫一眼就在同一个地方找到它。
+        const help = body.createDiv({ cls: 'rl-fieldmap-help' });
+        /** 说明行的主体句式（未配置时状态就折在它前面，见 `renderFieldMapStatus`） */
+        const HELP_TEXT = '在「新属性名」列填你想要的键名，回车或失焦生效；留空 = 保持原属性名。';
+        /** 回执槽：放在**说明与表头之间**（⛔ 不占固定高度，空态由 CSS 的 `:empty` 收掉） */
         const feedback = body.createDiv({ cls: 'rl-fieldmap-feedback' });
 
         // 🔴 #640（1.4.0，用户报障）：「表头区域超出了自身容器的边界，与上方设置页签的底部发生了
@@ -3066,10 +3634,16 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //         右侧那一列的表头与内容**对不齐**。
         //    ⇒ 结构改成 **表头 / 表体两张独立的 `<table>`**：表头在外（不滚动），表体在滚动容器里。
         //      ⚠️ 两张表必须**列宽完全一致**才对齐 ⇒ 都走 `table-layout: fixed` + **同一份
-        //      `<colgroup>`**（三列 26% / 22% / 52%），⛔ 别在 CSS 里各写一套百分比。
+        //      `<colgroup>`**（见 `COL_WIDTHS`），⛔ 别在 CSS 里各写一套百分比。
         //      ⚠️ 滚动条宽度用 `scrollbar-gutter: stable` 在滚动容器**右侧常驻预留**——
         //      这样不管有没有滚动条，表体内容区宽度都不变，与表头恒定对齐。
-        const COL_WIDTHS = ['26%', '22%', '52%'];
+        // 🔴🔴 #652（用户：「表头和其下字段三者隔开按比例分一下」）：原来是 26 / 22 / 52 ——
+        //    第一列（中文名，最长「阅读时长」「进度百分比」6 字）只占 26%、第三列（短键名）却吃掉
+        //    一半以上 ⇒「名字挤、输入区空」。改成 **1 : 1.3 : 1.7**：名字给到能放下 6 字（约 1.4×），
+        //    原键名按最长 `progress_total_episodes`（23 字符等宽 11px ≈ 150px）给够，
+        //    剩下的全归输入区 —— 三列之间有明确比例关系，不再是被内容「挤」出来的。
+        //    ⚠️ 列宽真源只在这里：CSS ⛔ 不得再写 `td { width: … }`（`table-layout: fixed` 下会打架）。
+        const COL_WIDTHS = ['30%', '24%', '46%'];
         const headWrap = body.createDiv({ cls: 'rl-fieldmap-headwrap' });
         const headTable = headWrap.createEl('table', { cls: 'rl-fieldmap-table rl-fieldmap-head' });
         const colgroupHtml = COL_WIDTHS.map((w) => `<col style="width:${w}">`).join('');
@@ -3093,32 +3667,33 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             const lines: string[] = [];
             for (const f of META_FIELDS) {
                 const v = (inputs.get(f.key)?.value ?? '').trim();
+                // 🔴 #644：**空 = 不写这条映射**（= 保持原键名）。原键名现在只做 placeholder（不进 `value`），
+                //    所以这里不再需要 `v !== f.key` 那半句 —— 但**留着**：用户手打成一个与原键名**完全相同**的
+                //    串（比如把 `rating` 填成 `rating`）也是「改了等于没改」，不该在 `fieldMap` 里留一条空转映射。
                 if (v && v !== f.key) lines.push(`[${f.key}] -> [${v}]`);
             }
             const draft = lines.join('\n');
             // 🔴 校验不过**不落盘**（见方法头说明）
             if (parseFieldMap(draft).errors.length) {
-                this.renderFieldMapFeedback(feedback, draft);
+                this.renderFieldMapStatus(help, HELP_TEXT, feedback, draft);
                 return;
             }
             this.plugin.settings.fieldMap = draft;
             await this.plugin.saveSettings();
-            this.renderFieldMapFeedback(feedback, draft);
+            this.renderFieldMapStatus(help, HELP_TEXT, feedback, draft);
         };
 
         const tbody = table.createEl('tbody');
         for (const f of META_FIELDS) {
             const tr = tbody.createEl('tr');
             const labelTd = tr.createEl('td', { cls: 'rl-fm-label' });
-            labelTd.createSpan({ text: f.label });
-            // Dataview 对齐键：只提示、不拦（#613 翻面）
-            if (f.dataviewAligned) {
-                labelTd.createSpan({
-                    cls: 'rl-fm-badge',
-                    text: 'Dataview',
-                    attr: { 'data-tip': 'Dataview 对齐键：改名会让既有的 Dataview 查询静默失效' },
-                });
-            }
+            // 🔴 #645：`td` 上的左内距改不动（被 `.rl-fieldmap-table td` 的 `padding` 简写竞掉 —— 实测该 td 的
+            //    computed `padding-left` 恒为 8px，连内联简写都不动）⇒ 8px 内缩改由**这个内层 span** 承担，
+            //    与另两列「`<code>` / `<input>` 自己带内距」**同构** ⇒ 三列的值共享同一条文字左缘。
+            labelTd.createSpan({ cls: 'rl-fm-label-text', text: f.label });
+            // 🔴 #652（用户：「字段映射还有那几个不要dataview标签了」）：Dataview 徽标**整体撤掉**。
+            //    ⚠️ 语义仍在 `pure/metaFields.dataviewAligned`（只是不再渲染），⛔ 别删那个字段 ——
+            //    它是「这几个键被外部查询依赖」的唯一登记处，将来要提示还能用。
             tr.createEl('td', { cls: 'rl-fm-key' }).createEl('code', { text: f.key });
 
             const input = tr.createEl('td', { cls: 'rl-fm-input' }).createEl('input', {
@@ -3126,17 +3701,43 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 type: 'text',
                 attr: { placeholder: f.key, 'aria-label': `「${f.label}」的新属性名` },
             });
+            // 🔴🔴 #644（用户：「输入框内显示的均是默认的原属性名……对应了上方『未配置映射』的提示」）——
+            //    **空值就是「没配过」**，原键名只做**灰色占位提示**（`placeholder` 已在上面给了），⛔ 不再写进 `value`。
+            //    理由三条：⑴ 回显 = 界面无法表达「我改过这一行」与「我没动」的区别；
+            //    ⑵ 用户**做不到把某个字段改成空**（原值 `writer` 想不写出，只能先删光 —— 而回显态下删光又跳回原键名）；
+            //    ⑶ 42 行输入框里 42 个重复的 `id`/`type`/`title` 本身就是一团噪声（这才是本组最刺眼的地方）。
+            // 🔴🔴 #651：**已映射的行要有记号**（用户：「这UI太丑了，改改」）。输入框改表格式（无框）之后，
+            //    「这行配没配」只能靠行上的记号表达 —— 判据 = 输入框有值且不等于原键名（提交口径同 `commit`）。
+            //    ⚠️ 只切一个类，⛔ 不重建行（重建会把正在输入的焦点打掉）。
+            const syncMapped = (): void => {
+                const v = input.value.trim();
+                tr.toggleClass('is-mapped', v !== '' && v !== f.key);
+            };
             input.value = current.get(f.key) ?? '';
             input.spellcheck = false;
             inputs.set(f.key, input);
-            // `change` = 失焦或回车才触发（⛔ 不用 `input`，否则每敲一个字符都写盘一次）
+            syncMapped();
+            // ⚠️ `input` 只管「记号」这一个视觉钩子（零写盘）；落盘仍走 `change`（回车 / 失焦）
+            input.addEventListener('input', syncMapped);
+            // `change` = 失焦或回车才触发（⛔ 不用 `input` 落盘，否则每敲一个字符都写盘一次）
             input.addEventListener('change', () => {
                 void commit();
             });
         }
 
+        // 🔴 #652：本组的「恢复默认」（清空 `fieldMap` 文本 ⇒ 回到恒等映射）
+        this.mountGroupReset(body, {
+            title: '字段映射',
+            isCustomized: () => !!(this.plugin.settings.fieldMap ?? '').trim(),
+            message: '将清空「字段映射」里的全部改名，之后写出的笔记一律用原始属性名。\n（已有的旧笔记不会回改）',
+            apply: async () => {
+                this.plugin.settings.fieldMap = '';
+                await this.plugin.saveSettings();
+            },
+        });
+
         // 首次渲染就把当前状态的判定显示出来（别等用户动一下才出现反馈）
-        this.renderFieldMapFeedback(feedback, this.plugin.settings.fieldMap ?? '');
+        this.renderFieldMapStatus(help, HELP_TEXT, feedback, this.plugin.settings.fieldMap ?? '');
     }
 
     /**
@@ -3176,21 +3777,92 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // 🔴 #640 ⑶：整组的「已保存」轻提示挂在组标题行上（一进来就建好，落盘时点亮）
         this.mountCardFieldsToast();
 
-        // 类型切换：原生下拉，与设置页其余多档选择同款（⛔ 别新造控件，也⛔ 别用分段控制器）
-        new Setting(body)
-            .setName('条目类型')
-            .setDesc('每个类型各配一套信息栏')
-            .addDropdown((d) => {
-                for (const t of ENTRY_TYPES) d.addOption(t, ENTRY_TYPE_LABELS[t]);
-                d.setValue(this.cardFieldsType);
-                d.onChange((v) => {
-                    this.cardFieldsType = v as EntryType;
-                    this.renderCardFieldsPanel(panel);
-                });
-            });
-
+        // 🔴 #652（用户：「像切换条目类型用选择不用下拉了」）：下拉 → **分段 chips**。
+        //    理由：六个类型是**平级枚举**，下拉把五个藏进一次点击里；chips 一眼看全、一点即切，
+        //    与下面那排「信息栏字段」chips 也是同一种手势（选中 = 主题色）。⛔ 别退回 `<select>`。
+        // 🔴🔴 #653（用户点名顺序）：「电影、剧集、动画、文学、网文、漫画、游戏、音乐」——
+        //    八格：六类型 + **书籍按子分类拆三页**（文学 / 网文 / 漫画，位置与「笔记属性顺序」那组一致：
+        //    书籍原本那一格原地展开）。⚠️ 存储仍是 `cardFieldsByType` 的**六类型**口径（零迁移）：
+        //    三个子分类分别映射到 `book` 的哪一份？⇒ 用户选哪个子类就显示 / 写那一类的**独立**配置
+        //    （`cardFieldsByKind`）。没配过的子类回落到 `cardFieldsByType.book`（与 `fieldOrderByKind`
+        //    同一条回落链，⛔ 别各写一套）。
+        const typeRow = body.createDiv({ cls: 'rl-cf-typerow' });
+        typeRow.createDiv({ cls: 'rl-cf-typerow-cap', text: '条目类型' });
+        const typeBar = typeRow.createDiv({
+            cls: 'rl-cf-typebar',
+            attr: { role: 'tablist', 'aria-label': '条目类型' },
+        });
         const panel = body.createDiv({ cls: 'rl-cf-panel' });
-        this.renderCardFieldsPanel(panel);
+
+        // 切类型要重画**面板**（预览 + 已选 + 池子）与**类型条自身**的高亮 —— 同源刷新
+        const panelHost = { el: panel };
+        const typeBtns = new Map<string, HTMLButtonElement>();
+        const syncTypeBar = (): void => {
+            const cur = this.cardFieldsSlotKey();
+            for (const [k, b] of typeBtns) {
+                const on = k === cur;
+                b.toggleClass('is-on', on);
+                b.setAttribute('aria-selected', on ? 'true' : 'false');
+            }
+        };
+
+        // 🔴 #652：本组的「恢复默认」—— 六类**全部**回到各自预填（不只是当前类型）
+        this.mountGroupReset(body, {
+            title: '卡片信息栏',
+            isCustomized: () =>
+                Object.keys(this.plugin.settings.cardFieldsByType ?? {}).length > 0
+                || Object.keys(this.plugin.settings.cardFieldsByKind ?? {}).length > 0,
+            message: '将把六个类型（含文学 / 网文 / 漫画）的卡片信息栏一起恢复成默认字段（当前选中的也不例外）。',
+            apply: async () => {
+                this.plugin.settings.cardFieldsByType = {};
+                this.plugin.settings.cardFieldsByKind = {};
+                await this.plugin.saveSettings();
+                this.plugin.refreshViews();
+            },
+        });
+
+        for (const e of CARD_TYPE_SLOTS) {
+            const btn = typeBar.createEl('button', {
+                cls: 'rl-cf-type',
+                text: e.label,
+                attr: { type: 'button', role: 'tab', 'aria-selected': 'false' },
+            });
+            typeBtns.set(e.key, btn);
+            btn.addEventListener('click', () => {
+                if (this.cardFieldsSlotKey() === e.key) return;
+                this.cardFieldsSlot = e.key;
+                syncTypeBar();
+                this.renderCardFieldsPanel(panelHost.el);
+            });
+        }
+        // 首次进入：把默认槽位抬到「当前类型对应的那一格」（电影 → f:movie）
+        if (!CARD_TYPE_SLOTS.some((e) => e.key === this.cardFieldsSlot)) this.cardFieldsSlot = `f:${this.cardFieldsType}`;
+        syncTypeBar();
+        this.renderCardFieldsPanel(panelHost.el);
+    }
+
+    /**
+     * 「卡片信息栏」当前选中的那一格（#653 八格）。
+     * 🔴 槽位键是**字符串**（`f:<EntryType>` / `k:<BookKind>`），⛔ 别再用 `cardFieldsType` 单值表达 ——
+     *    文学 / 网文 / 漫画共用 `book` 的类型却各存一份，一个 `EntryType` 装不下。
+     */
+    private cardFieldsSlot = 'f:movie';
+
+    /** 当前槽位的键（没设过就按当前类型算，保证永远有值） */
+    private cardFieldsSlotKey(): string {
+        return CARD_TYPE_SLOTS.some((e) => e.key === this.cardFieldsSlot) ? this.cardFieldsSlot : `f:${this.cardFieldsType}`;
+    }
+
+    /** 当前槽位对应的**条目类型**（预览卡 / 字段池按它算） */
+    private cardFieldsSlotType(): EntryType {
+        const e = CARD_TYPE_SLOTS.find((x) => x.key === this.cardFieldsSlotKey());
+        return e ? e.type : this.cardFieldsType;
+    }
+
+    /** 当前槽位对应的**书籍子分类**（仅 `k:*` 有值，其余为 null） */
+    private cardFieldsSlotKind(): BookKind | null {
+        const e = CARD_TYPE_SLOTS.find((x) => x.key === this.cardFieldsSlotKey());
+        return e && e.kind ? e.kind : null;
     }
 
     /**
@@ -3239,18 +3911,27 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
-     * 读**当前类型**的信息栏配置。
+     * 读**当前选中那一格**的信息栏配置（#653：八格 = 六类型 + 文学/网文/漫画）。
      * 🔴 刻意走 `resolveCardFieldsByType` 这个**唯一真源**（与 `HomeView.ts` 给海报墙传参时用的是同一个）
      *    —— ⛔ 别在这里另写一套「新键 → 预填」的回落链，两份回落链迟早会不一致。
+     * 🔴 子分类那一格：`cardFieldsByKind[kind]` 缺失 ⇒ 回落 `cardFieldsByType.book`
+     *    （= `resolveCardFieldsByType` 算出来的书籍那一份，零迁移）。
      */
     private currentCardFields(): CardFieldKey[] {
-        return resolveCardFieldsByType(this.plugin.settings.cardFieldsByType)[this.cardFieldsType];
+        const byType = resolveCardFieldsByType(this.plugin.settings.cardFieldsByType);
+        const kind = this.cardFieldsSlotKind();
+        if (!kind) return byType[this.cardFieldsSlotType()];
+        const raw = (this.plugin.settings.cardFieldsByKind ?? {})[kind];
+        // 有独立配置 ⇒ 按该类型的池子归一（⛔ 不直接用原数组：可能是手改 data.json 留下的脏值）
+        return raw === undefined ? byType.book : normalizeCardFieldsForType('book', raw);
     }
 
     /** 预览卡 + 字段 chip 那一整块（#617 切类型时**整块重画**）。结构 / 口径见上方注释。 */
     private renderCardFieldsPanel(host: HTMLElement): void {
         host.empty();
-        const entry = CARD_PREVIEW_ENTRIES[this.cardFieldsType];
+        const slotType = this.cardFieldsSlotType();
+        const slotKind = this.cardFieldsSlotKind();
+        const entry = CARD_PREVIEW_ENTRIES[slotType];
         const wrap = host.createDiv({ cls: 'rl-cf-wrap' });
 
         // ── 左：卡片实况预览 ────────────────────────────────────────────────────
@@ -3284,12 +3965,19 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         /** 正在拖的字段键（`dragstart` 记下、`drop` 取用） */
         let dragKey: CardFieldKey | null = null;
 
-        /** 落盘：只写**当前类型**这一个键，其余五类走各自预填（#617 口径不动） */
+        /** 落盘：只写**当前那一格**（类型格写 `cardFieldsByType[type]`；子分类格写 `cardFieldsByKind[kind]`） */
         const commit = async (keys: CardFieldKey[]): Promise<void> => {
-            this.plugin.settings.cardFieldsByType = {
-                ...(this.plugin.settings.cardFieldsByType ?? {}),
-                [this.cardFieldsType]: keys,
-            };
+            if (slotKind) {
+                this.plugin.settings.cardFieldsByKind = {
+                    ...(this.plugin.settings.cardFieldsByKind ?? {}),
+                    [slotKind]: keys,
+                };
+            } else {
+                this.plugin.settings.cardFieldsByType = {
+                    ...(this.plugin.settings.cardFieldsByType ?? {}),
+                    [slotType]: keys,
+                };
+            }
             await this.plugin.saveSettings();
             // 🔴 #640 ⑶：落盘成功才点亮「已保存」（失败不该说已保存）
             this.flashCardFieldsToast();
@@ -3308,7 +3996,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 selected.createDiv({ cls: 'rl-cf-empty', text: '还没选任何字段' });
             }
             cur.forEach((key, i) => {
-                const opt = cardFieldOptionsFor(this.cardFieldsType).find((o) => o.key === key);
+                const opt = cardFieldOptionsFor(slotType).find((o) => o.key === key);
                 const el = selected.createDiv({
                     cls: 'rl-cf-sel',
                     attr: {
@@ -3391,7 +4079,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             if (cur.length === 0) rows.createDiv({ cls: 'rl-pvw-row rl-pvw-sub', text: '—' });
         };
 
-        for (const opt of cardFieldOptionsFor(this.cardFieldsType)) {
+        for (const opt of cardFieldOptionsFor(slotType)) {
             const btn = chips.createEl('button', { cls: 'rl-cf-chip', text: opt.label });
             btn.type = 'button';
             btn.setAttribute('aria-pressed', 'false');
@@ -3414,20 +4102,45 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         sync();
     }
 
-    /** 映射校验回执（成功 / 逐条错误）。⚠️ 只动自己那个容器的内容，不重建整页。 */
-    private renderFieldMapFeedback(el: HTMLElement, text: string): void {
+    /**
+     * 映射状态回执（成功 / 逐条错误）—— **#644 起「未配置」这一态不再单独占一行**。
+     *
+     * 三态落点：
+     *   · **未配置**（`entries` 与 `errors` 都空）⇒ 状态折成 `help` 行前面的灰色小字，`el` **留空**
+     *     （CSS `:empty` 把外距一起收掉 ⇒ 表格不会被一句「什么都没发生」往下推）；
+     *   · **已生效** ⇒ `el` 里一行「N 条映射已生效」；
+     *   · **有错** ⇒ `el` 里逐条错误（`is-bad` 保留：它是「别信那行成功回执」的样式钩子）。
+     * ⚠️ 只动自己这两个容器的内容，不重建整页。
+     */
+    private renderFieldMapStatus(
+        help: HTMLElement,
+        helpText: string,
+        el: HTMLElement,
+        text: string,
+    ): void {
+        help.empty();
         el.empty();
         const { entries, errors } = parseFieldMap(text);
         if (errors.length) {
+            // 有错时不折状态：把「未配置」的暗示收起来，避免与错误同时出现、让用户不知道信哪条
+            help.createSpan({ text: helpText });
             el.toggleClass('is-bad', true);
+            // 🔴 #651：错误要**被读屏听见**（`role="alert"` 比 `aria-live` 更可靠 —— 它是断言式播报）
+            el.setAttribute('role', 'alert');
             for (const msg of errors) el.createDiv({ cls: 'rl-fieldmap-err', text: msg });
             return;
         }
         el.toggleClass('is-bad', false);
-        el.createDiv({
-            cls: 'rl-fieldmap-ok',
-            text: entries.length ? `${entries.length} 条映射已生效` : '未配置映射，按原始字段名写出',
-        });
+        el.removeAttribute('role');
+        if (!entries.length) {
+            // 未配置 ⇒ 状态折进说明行（前半句灰字 + 空格 + 原说明）
+            const idle = help.createSpan({ cls: 'rl-fieldmap-idle', text: '未配置映射，按原始字段名写出。' });
+            idle.setAttribute('aria-live', 'polite');
+            help.createSpan({ text: helpText });
+            return;
+        }
+        help.createSpan({ text: helpText });
+        el.createDiv({ cls: 'rl-fieldmap-ok', text: `${entries.length} 条映射已生效` });
     }
 
     /**
@@ -3463,8 +4176,19 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    ⇒ **不套 = 三项各自一张卡 + 项间 8px 留缝**，正是用户要的「分开」，而且**零手写卡片样式**
         //      （⛔ 别再去写一套卡片：那就是 #541 手写分组卡 → #551 手写压制那条老账的第三次）。
         //    ⚠️ **组标题仍在**（`.rl-svc-group-title`），只是它后面不再跟着那张大卡。
-        //    ⚠️ 本组是**唯一**不套原生卡的一组（另三组的成员是普通设置行，套上才对）。
-        this.createGroupSection(parent, '实验性功能', (body) => this.renderExperimentalRows(body), false);
+        //    ⚠️ 那一版本组是**唯一**不套原生卡的一组（另三组的成员是普通设置行，套上才对）。
+        //
+        // 🔴🔴 2026-10-21 **翻面上面那条**（用户需求 3，逐字）：「实验性功能区域的背景色块样式
+        //    必须与同级『外观与体验』『数据与备份』卡片背景**绝对一致**（统一卡片底色与边距）；
+        //    折叠下拉容器可深色一点；其他样式不变」，并点明这是「**纠正之前的去背景逻辑**」。
+        //    ⇒ 本组改回 `true`（借核心原生 `.setting-group` + `.setting-items`）：
+        //      · 底色/圆角/边距全部由核心算 ⇒ 与另三组**同源同值**，我们一格都不手写
+        //        （#541 手写卡 → #551 手写压制 → #567 不套卡，这条路上已经栽过三次）；
+        //      · 于是 `styles.css` 里那两条「#655 去背景」与「水平内距归零」的规则**必须一并退场**
+        //        （内距归零的初衷是"没有卡了别留卡的内衬"，卡回来后它会让文字贴到卡边）。
+        //    ⚠️ 用户说的「折叠下拉容器可深色一点」指**展开后的子面板**，不是本组容器 ——
+        //      子面板底色在 `styles.css` 的 `.rl-exp-panel.is-open` 上，见那里注释。
+        this.createGroupSection(parent, '实验性功能', (body) => this.renderExperimentalRows(body), true);
         this.createGroupSection(parent, '数据与备份', (body) => this.renderDataBackupRows(body), true);
         this.createGroupSection(parent, '封面与清理', (body) => this.renderPosterCleanupRows(body), true);
     }
@@ -3556,7 +4280,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //  🔴 #591 起**一直保留原生下拉框**（用户：「起始页：保留原生的下拉框，因为选项较多，下拉框更合适」）；
         //     #596 之后本组有 **5 处**下拉（本行 + 导航布局 / 卡片风格 / 界面动效 / 海报密度）。
         new Setting(parent)
-            .setName('起始页').setDesc('打开主视图时的默认页签')
+            .setName('起始页').setDesc('打开顶部胶囊/文字菜单视图时的默认页签')
             .addDropdown((d) => {
                 for (const t of HOME_TAB_ORDER) d.addOption(t, homeTabLabel(t));
                 d.setValue(normalizeStartTab(this.plugin.settings.startTab)).onChange(async (key) => {
@@ -3652,45 +4376,10 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 syncColsVisible();
             });
 
-        // ── ⑤-b 🔴 #626 海报墙列数（append-only 键 `wallColumns`）──
-        // 海报墙（`wall`）**自己的**目标列数。为什么要单独一行：
-        // Ctrl + 滚轮在**墙上**缩放从前写的是共享的 `posterDensity`/`posterColumns`
-        // ⇒「在墙上缩一次，卡片网格的列数也跟着变」（用户报的就是这件事）。
-        // 🔴 **留空 = 该键不存在 = 跟随上面那一行的海报密度**（零写入迁移：老用户观感一字不变）。
-        //    这也是本行**唯一**的清空入口 —— ⛔ 不能让这个键变成「设置页没有、行为却受它影响」的鬼开关。
-        // 🔴 上界走 `POSTER_WALL_COLUMNS_MAX`（16，比卡片网格的 12 宽一档）：墙是纯封面 + 一行标题。
-        //    ⚠️ 判据「配过没有」必须与 pure/posterGrid.posterGridTemplateForWall **同一口径**
-        //       （有限数才算配过；脏值一律当没配过）。
-        new Setting(parent)
-            .setName('海报墙列数')
-            .setDesc('留空跟随上面的海报密度')
-            .addText((t) => {
-                t.inputEl.type = 'number';
-                t.inputEl.min = String(POSTER_COLUMNS_MIN);
-                t.inputEl.max = String(POSTER_WALL_COLUMNS_MAX);
-                t.inputEl.addClass('rl-poster-cols');
-                t.setPlaceholder('跟随');
-                const readWallCols = (): number | undefined => {
-                    const raw = this.plugin.settings.wallColumns;
-                    return typeof raw === 'number' && Number.isFinite(raw)
-                        ? normalizePosterColumns(raw, POSTER_WALL_COLUMNS_MAX)
-                        : undefined;
-                };
-                const showWallCols = readWallCols();
-                t.setValue(showWallCols === undefined ? '' : String(showWallCols));
-                t.onChange(async (value) => {
-                    // ⚠️ 与上面那行同款：输入过程中**不回写**输入框（否则敲「12」会被第一位归一成的「1」打断）。
-                    const v = value.trim();
-                    delete this.plugin.settings.wallColumns;
-                    if (v !== '') this.plugin.settings.wallColumns = normalizePosterColumns(v, POSTER_WALL_COLUMNS_MAX);
-                    await this.plugin.saveSettings();
-                    this.plugin.syncPosterGrid();
-                });
-                t.inputEl.addEventListener('blur', () => {
-                    const cur = readWallCols();
-                    t.inputEl.value = cur === undefined ? '' : String(cur);
-                });
-            });
+        // ── ⑤-b 🔴 #626「海报墙列数」这一行**已删除**（用户 2026-10-20：「设置页里的海报墙列数项删除掉」）──
+        // 随之一起下线的还有 `wallColumns` 这个设置键（schema 字段见 settings 类型里的注释）：
+        // 「设置页看不见、脚本还记着」的键就是鬼开关 —— 墙现在恒跟随上面的「海报密度」。
+        // ⛔ 别把这一行加回来：海报墙想要更密/更疏，改「海报密度」或 Ctrl+滚轮（都落到同一处真源）。
 
         // ── ⑥ Ctrl + 滚轮缩放（🔴 #591 新增）──
         //  在**媒体库视图**（海报墙 / 瀑布流）里按住 Ctrl 滚滚轮 = 放大 / 缩小内容区卡片：
@@ -3771,6 +4460,11 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //      （`> .rl-exp-row:not(:first-child)`，⛔ 不用 `border-bottom`：子面板会插在行与行之间，
         //        `:last-child` 判不准）。摘要按钮上那个「框」也随之拍平（`border/padding` 归零）。
         //    ⚠️ 于是 `.rl-exp-list` 上「gap 8px + margin 0」那条旧口径**作废**（现在 gap 0）。
+        // 🔴 2026-10-21（用户需求 3）：本组**改回套核心原生分组卡**（见 `renderBasicPage`），
+        //    所以上面 #567/#574 那两段「不套卡 / 容器自己就是那张卡」的形态**都已作废**；
+        //    容器类名保留只为挂钩两件事：容器内 `gap: 0` 与行间分割线（用户说「其他样式不变」）。
+        //    ⛔ 但**行内距/外边距一律不再自己写** —— 那两格的语义现在是「与另三组逐值一致」，
+        //       唯一正确做法是交给核心（同一套 DOM 链 ⇒ 同一套规则），见 `styles.css` 对应注释。
         parent.addClass('rl-exp-list');
         const reader = new Setting(parent)
             .setName('启用内置阅读器')
@@ -3791,9 +4485,12 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 // 🔴 #639 ⑥：**原来这里有一行「从微信读书同步书架」** —— 用户要求把同步入口
                 //    「放在微信读书凭据下拉处」⇒ 已搬到 `createApiKeyRow` 的 weread 分支
                 //    （入口只此一处，⛔ 别两处都留：同一功能两个入口，用户会以为哪一处是坏掉的备份）。
-                // 🔴 #636 ⑤：漫画阅读器两档（阅读模式 / 缩略图栏）—— 放在阅读器折叠组里，
-                //    它们只作用于**漫画阅读器**（图片文件夹 / CBZ / CBT / 图册型 EPUB）。
-                this.renderComicReaderRows(panel);
+                // 🔴🔴 #689（用户 2026-10-19 裁定）：「设置页-基本设置**去掉漫画阅读模式的选择**，
+                //    只由**漫画阅读器内**设置调整」。
+                //    ⇒ 这里原本调的 `renderComicReaderRows(panel)`（「漫画阅读方式」下拉）**已整体移除**，
+                //       阅读方式现在只在漫画阅读器内部切换（顶栏那枚按钮，状态仍落 `comicViewMode`）。
+                //    ⚠️ 沿用 #669 立的同一条口径：**同一功能只留一个入口** —— 两个入口会让用户以为
+                //       哪一处是坏掉的备份。⛔ 别再把下拉搬回来。
             },
         );
 
@@ -3996,11 +4693,13 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     private createLocalDirRow(parent: HTMLElement, key: LocalDirKey): void {
         const field = LOCAL_DIR_FIELD[key];
         const row = new Setting(parent).setName(LOCAL_DIR_LABELS[key]).setDesc('本地文件检索的根目录');
-        const hint = row.descEl.createDiv({ cls: 'rl-hint-note' });
-        const showState = (): void => {
-            const v = localDirOf(this.plugin.settings, key);
-            hint.setText(v ? `检索目录：${v}` : '未配置 — 单集本地检索不可用');
-        };
+        // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑥）：这一行的输入框宽度不受控（换行 / 溢出都见过），
+        //    给整行挂一个钩子类，宽度规则**统一写在 `styles.css`** —— ⛔ 别在这里写内联 width
+        //    （内联会盖掉主题与 CSS 的收敛规则，之后想改就得回来动 TS）。
+        row.settingEl.addClass('rl-dir-row');
+        // 🔴 2026-10-25 用户指令：这一行的状态提示（未配置时的「未配置 — 单集本地检索不可用」与
+        //    配置后的「检索目录：…」）**两条都去掉** —— 输入框里已经是当前值，再复述一遍纯属噪音。
+        //    ⛔ 别把 `rl-hint-note` 加回来；「没配目录 ⇒ 本地检索不可用」由检索动作当场给 Notice 承担。
         this.localDirSuggests.get(key)?.close();
         this.localDirSuggests.set(key, null);
         row.addText((text) => {
@@ -4010,7 +4709,6 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 (this.plugin.settings as unknown as Record<string, unknown>)[field] = next;
                 await this.plugin.saveSettings();
                 text.setValue(next); // 失焦回显去空白后的值
-                showState();
             };
             text.inputEl.addEventListener('blur', () => void commit());
             text.inputEl.addEventListener('keydown', (ev) => {
@@ -4033,7 +4731,6 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     }),
                 );
             }
-            showState();
         });
     }
 
@@ -4043,7 +4740,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *
      * 原落点是「基本设置 › 启用内置阅读器」折叠组里的一整行（#581 用户 2026-10-09 亲自点的位置）——
      * 本轮用户改判，把它搬到**微信读书凭据行**内（`createApiKeyRow` 的 weread 分支 →
-     * `renderWereadSyncButton`）：与 Steam 的「同步 Steam」**同款同位置**，两个按钮样式统一。
+     * `renderWereadSyncButton`）：与 Steam 的「立即同步」**同款同位置**，两个按钮样式统一。
      *
      * ⛔ **别把这一行加回来**：同一个功能两个入口，用户会以为哪一处是坏掉的备份
      *    （本仓在「同一概念只准一份文案 / 一个入口」上栽过多次）。
@@ -4095,36 +4792,16 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
-     * 🔴 #636 ⑤：漫画阅读器两档（阅读模式 / 缩略图栏）。
+     * 🔴🔴 #689（用户 2026-10-19 裁定）：「设置页-基本设置**去掉漫画阅读模式的选择**，
+     *    只由**漫画阅读器内**设置调整」。
      *
-     * ⚠️ **单独一个方法**：`renderExperimentalRows` 组内 `setName` 被既有断言钉成**恰 3 条**
-     *    （阅读→视频→音乐，#399），塞进去会当场撞红那条判据（#562/#574 同款理由）。
-     *
-     * 🔴 两行都落在设置页 = 它们是**可发现的**：阅读模式在阅读器设置菜单里也能切，
-     *    但「缩略图栏」若只在顶栏有开关，用户找不到默认值在哪改（设置页是**唯一**能说明「默认关」的地方）。
+     * ⇒ 原来这里那个 `renderComicReaderRows`（「漫画阅读方式」下拉）**已连同方法一起删除** ——
+     *    调用点没了就是死码，本仓「死码不留」。阅读方式只在漫画阅读器内切换。
+     *    ⚠️ `comicViewMode` 字段与 `pure/comicViewer` 的归一函数**照旧保留**（红线：字段只增不删），
+     *       `ComicReaderModal` 仍在用。
+     *    ⚠️ 沿用 #669 立的同一条口径：**同一功能只留一个入口** ——
+     *       两个入口会让用户以为哪一处是坏掉的备份。⛔ 别再把下拉搬回来。
      */
-    private renderComicReaderRows(parent: HTMLDivElement): void {
-        new Setting(parent)
-            .setName('漫画阅读方式')
-            .setDesc('单页翻页或连续滚动')
-            .addDropdown((d) => {
-                for (const o of comicViewModeOptions()) d.addOption(o.value, o.label);
-                d.setValue(normalizeComicViewMode(this.plugin.settings.comicViewMode)).onChange(async (value) => {
-                    this.plugin.settings.comicViewMode = normalizeComicViewMode(value);
-                    await this.plugin.saveSettings();
-                });
-            });
-        new Setting(parent)
-            .setName('漫画缩略图栏')
-            // #477 口径：≤15 字、用途式
-            .setDesc('显示右侧页面缩略图')
-            .addToggle((t) =>
-                t.setValue(thumbsVisible(this.plugin.settings.comicThumbs)).onChange(async (value) => {
-                    this.plugin.settings.comicThumbs = value;
-                    await this.plugin.saveSettings();
-                }),
-            );
-    }
 
     /**
      * #538 音乐「在线曲库」检索开关（用户 2026-10-05：「设置项可选择开启或关闭新增音乐条目『在线曲库』的搜索，
@@ -4252,26 +4929,6 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // 🔴 #562：原「音频文件目录」那一行**已搬到「实验性功能 › 启用内置音乐播放器」折叠分组下**
         //    （用户 2026-10-08：「把音乐路径目录放在启用内置音乐播放器折叠分组下」）。
         //    ⛔ 别在本组再渲染一份 —— 同一个 `musicDownloadDir` 出现两个输入框，改哪个都只影响一半心智。
-        // 🔴 #468 封禁：整个「书籍文件目录」项**不再渲染**（用户 2026-10-01：「设置页书籍文件路径也封禁掉」）。
-        //    ⚠️ 字段本身照旧（`downloadDir(root,'book')` 仍读它，存量值不动、也不影响任何现存条目）——
-        //    封的只是「让用户改它」这件事，⛔ 别顺手把字段也删了（schema append-only + 解禁要还原）。
-        //    解禁 = 翻 `pure/featureGate.BOOK_DOWNLOAD_ENABLED`，下面这段还原缩进即可。
-        if (BOOK_DOWNLOAD_ENABLED) {
-            this.createLibraryDirRow(
-                parent,
-                '书籍文件目录',
-                // 🔴 #476 改用途式 → #477 与音频那项**同款写法**（一致性；口径见 renderAppearanceRows）
-                '书籍下载的存放与检索目录',
-                () => this.plugin.settings.bookDownloadDir,
-                async (next) => {
-                    this.plugin.settings.bookDownloadDir = next;
-                    await this.plugin.saveSettings();
-                },
-                'book',
-                'book',
-            );
-        }
-
         // ② 数据备份与恢复（合并原「导出备份」+「从备份恢复」；桌面端走系统文件对话框，非桌面回退 vault 选择器）
         //   🔴 #477 改名（用户 2026-10-02：「标题太长（可改成数据备份与恢复）」）：原「导出备份与备份恢复」
         //      11 字且把两件事串着说 ⇒ 改为 6 字。⚠️ 改名要同步**用户向文档**里的引用（README 两处）；
@@ -4292,6 +4949,18 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     else this.plugin.openBackupPicker();
                 }),
             );
+
+        // ③ 生成 Bases 视图模板（用户 2026-10-20：「做随生成 .base 模板」）
+        //   🔴 数据真源是**笔记 frontmatter**，不是 catalog.json —— Bases 只索引 vault 里的 markdown。
+        //      所以这里生成的是「查询模板」而不是「数据导出」：条目一改，Bases 视图跟着变，永远不会过期。
+        //   ⚠️ 描述点明**产物路径**（用户能自己找到文件），并说清「可重复生成、可随意改」。
+        //   🔴 2026-10-19 用户指令（设置页 UX 改版 ⑤-1）：这枚按钮**降级为普通按钮**（去掉 `.setCta()`）——
+        //      它是「生成一个模板」，不是本页的主行动；紫色 primary 在这里把视觉重量给错了地方
+        //      （同页的「扫描 / 查看」都是白底灰边）。描述同步改成用户给定的逐字文案。
+        new Setting(parent)
+            .setName('Bases 视图模板')
+            .setDesc('生成 .base：用原生 Bases 浏览收藏库(重复生成即覆盖)')
+            .addButton((b) => b.setButtonText('生成并打开').onClick(() => void this.plugin.generateAndOpenBaseTemplate()));
     }
 
     /**
@@ -4384,34 +5053,12 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             .setDesc('将网络封面下载并保存到本地')
             .addButton((b) =>
                 b.setButtonText('一键迁移').onClick(() => {
-                    if (this.plugin.isMigratingPosters) {
-                        new Notice('封面迁移正在进行中…');
-                        return;
-                    }
-                    // 点击直接开始（无二次确认）：设置页内显示进度条（不关闭设置页）→ 结束后弹结果弹窗
-                    prog.addClass('show');
-                    fill.style.width = '0%';
-                    textLabel.setText('正在迁移中… 0/0');
-                    void this.plugin
-                        .localizeAllPosters((done, total) => {
-                            const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-                            fill.style.width = `${pct}%`;
-                            textLabel.setText(`正在迁移中… ${done}/${total}`);
-                        })
-                        .then((result) => {
-                            prog.removeClass('show');
-                            new PosterMigrateModal(this.app, result).open();
-                        });
+                    // 🔴 2026-10-25 用户指令：「点击"一键迁移"先弹窗列出当前可以迁移的封面条目出来然后用户勾选再迁移，默认全选」
+                    //    ⇒ 整条流程（扫候选 → 勾选弹窗 → 进度弹窗 → 迁移）收进 `main.openPosterMigrate()`，
+                    //    设置页只负责点一下，⛔ 不再自己 new 进度弹窗（那会绕过勾选直接全量跑）。
+                    void this.plugin.openPosterMigrate();
                 }),
             );
-
-        // 迁移进度条（紧跟设置行下方，默认隐藏；迁移中显示「正在迁移中… N/M」）
-        const prog = parent.createDiv({ cls: 'rl-mig-prog' });
-        const bar = prog.createDiv({ cls: 'rl-mig-bar' });
-        const fill = bar.createDiv({ cls: 'rl-mig-fill' });
-        const text = prog.createDiv({ cls: 'rl-mig-text' });
-        text.createSpan({ cls: 'rl-spinner' }); // 1.0.4：迁移中内联 spinner
-        const textLabel = text.createSpan({ text: '正在迁移中…' });
 
         // ③.5 附件清理（原「清理孤儿封面」）：未被引用的封面 + 条目已删除后遗留的阅读存档，逐项勾选后清理
         new Setting(parent)
@@ -4426,39 +5073,67 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 }),
             );
 
+        // ③.5a 条目还原（用户 2026-10-06 指令：「条目还原：可选回撤删除的条目（5 个）」）
+        //   删除条目时（`main.deleteEntry` / `deleteEntries`）先把条目快照写进 `{lib}/trash.json`，
+        //   这里把最近 5 条列出来供勾选复活。⛔ 文件本身在 Obsidian 回收站，弹窗里已如实说明。
+        new Setting(parent)
+            .setName('条目还原')
+            .setDesc('恢复最近删除的 5 个条目')
+            .addButton((b) =>
+                b.setButtonText('还原').onClick(() => {
+                    void this.plugin.openEntryRestore();
+                }),
+            );
+
+        // ③.5b 附件管理（同一指令：「附件管理：支持浏览所有关联的条目 - 笔记 - 图片 - 附件，可选删除」）
+        //   ⚠️ 与上一行「附件清理」的区别：清理只认**孤儿**（没人引用的），管理浏览的是**全部**关联文件（含正在用的）。
+        new Setting(parent)
+            .setName('附件管理')
+            .setDesc('查看每次删除带走的文件')
+            .addButton((b) =>
+                b.setButtonText('浏览').onClick(() => {
+                    void this.plugin.openAssetManager();
+                }),
+            );
+
         // ③.6 失效链接检测（🔴 #531，用户 2026-10-05 指令：「把检测已填网络地址是否失效按钮放在设置页-基本设置-
         //      封面与清理下面，功能为**全库**检索失效链接标红」）—— 原在**编辑表单**里的那枚按钮**已撤**，
         //      改成这里一键扫全库；结果只存内存，失效的集在**编辑表单 / 集数选择弹窗**里标红（用户裁定「仅表单/弹窗」）。
-        const scanStatus = parent.createDiv({ cls: 'rl-hint' });
-        scanStatus.style.display = 'none';
+        // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑤-2）：结果**不再埋在设置页里**（原来那行 `.rl-hint` 在长设置页
+        //    滚过去就丢，且只报个数、看不到具体是哪条链接）⇒ 改 `LinkCheckModal` 列出「条目名 / 字段 / 链接」明细。
+        //    `scanLibraryLinks()` 因此扩了返回值：除四个计数外还带 `items`（失效明细，逐条 label + url）。
         let scanning = false;
         new Setting(parent)
             .setName('失效链接检测')
             .setDesc('检测全库网络链接是否失效')
             .addButton((b) => {
                 b.setButtonText('检测').onClick(() => {
+                    // 防重入：全库扫描是串行网络请求，连点会打出多份请求并把结果互相覆盖
                     if (scanning) return;
                     scanning = true;
                     b.setDisabled(true);
                     b.setButtonText('检测中…');
-                    scanStatus.style.display = '';
-                    scanStatus.setText('正在检测…（条目多时请稍候）');
+                    // 🔴 2026-10-25 用户指令：**先弹窗再陆续显示**检测到的失效链接。
+                    //    ⇒ 先用 progressive 工厂开一个空壳（标题 + 「正在检测…」），
+                    //      再把 `onDead` 接上宿主，每抓到一条就往列表里追加一行。
+                    //    ⛔ 别再退回「扫完才 new LinkCheckModal(...items)」—— 那等于用户盯着一个不动的按钮等全库。
+                    const modal = LinkCheckModal.progressive(
+                        this.app,
+                        { entries: 0, dead: 0, unknown: 0 },
+                        // 执行体留在宿主（`plugin.clearDeadLinks`），弹窗只负责确认与反馈 ——
+                        // ⛔ 别在弹窗里自己改 catalog：写盘要过 `service.update` 的唯一收口。
+                        () => this.plugin.clearDeadLinks(),
+                    );
+                    modal.markScanning();
+                    modal.open();
                     void this.plugin
-                        .scanLibraryLinks()
+                        .scanLibraryLinks((item) => modal.appendItem(item))
                         .then((r) => {
-                            const tail = r.unknown ? `，另有 ${r.unknown} 条无法确认` : '';
-                            scanStatus.setText(
-                                r.entries
-                                    ? `已检测 ${r.entries} 个条目：${r.dead} 条可能已失效${tail}`
-                                    : '没有可检测的网络地址',
-                            );
-                            new Notice(
-                                r.dead ? `检测完成：${r.dead} 条可能已失效${tail}` : `检测完成：未发现失效链接${tail}`,
-                                6000,
-                            );
+                            modal.finishScan({ entries: r.entries, dead: r.dead, unknown: r.unknown });
                         })
                         .catch(() => {
-                            scanStatus.setText('检测失败，请稍后再试');
+                            modal.close();
+                            new Notice('检测失败，请稍后再试');
                         })
                         .finally(() => {
                             scanning = false;
@@ -4491,6 +5166,16 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *    ⚠️ 两枚反馈按钮的 label 与 URL 都取自 `pure/supportLinks.SUPPORT_BUTTONS`（唯一真源），
      *      链到 `.github/ISSUE_TEMPLATE/` 下的两个 issue form（模板已排好必填项）——
      *      ⛔ 别再退回那枚笼统的「问题反馈」（它只落到 issue 列表页，用户还得自己挑模板）。
+     *
+     * 🔴🔴 **#686（用户 2026-10-19，现行定稿）**：两卡**按语义各管一摊** ——
+     *    信息卡 = **更新日志 · 未来规划**（「这版改了什么 / 接下来做什么」）；
+     *    支持作者卡 = **报 Bug · 提需求 · Github · 爱发电**（「给反馈 / 给支持」）。
+     *    ⇒ 本页两块卡**都带按钮**了（#685 曾把六枚全并到信息卡、支持作者卡只剩一句话，本轮已推翻）。
+     *
+     * 🔴🔴 **2026-10-19 用户指令（设置页 UX 改版 ⑧）**：信息卡第二枚按钮**「新手引导」→「未来规划」**。
+     *    用户裁定引导弹窗整体下线（「新手引导」这条线不再维护，`modals/GuideModal` 已删、首次安装自动弹引导也一并撤），
+     *    换成指向路线图弹窗。⚠️ **不带** `.rl-about-btn-accent`：本卡不再设强调按钮
+     *    （紫色实底留给支持作者卡的「爱发电」，那才是本页唯一的行动召唤）。
      */
     private renderAboutPage(parent: HTMLElement): void {
         // ── ① 插件信息卡（名称 · 版本 / 简介 / 作者 · 许可证 + 两枚按钮）──
@@ -4506,30 +5191,39 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         infoText.createDiv({ cls: 'rl-about-meta', text: `作者 ${this.plugin.manifest.author} · 许可证 ${license}` });
 
         const infoBtns = info.createDiv({ cls: 'rl-about-buttons' });
-        // 🔴🔴 #598（用户 2026-10-10）：「把**问题反馈**按钮分成**报 Bug、提需求**两个按钮，做好调用入口」。
-        //    原来那一枚「问题反馈」笼统指向 `/issues`（裸的 issue 列表页，用户进去还得自己挑模板）；
-        //    现在拆成两枚，各自**直达**对应的 issue form —— 模板里已把必填项排好，点进去先看到该填什么。
-        //    文案与 URL 都取自 `pure/supportLinks.SUPPORT_BUTTONS`（唯一真源）——
-        //    ⛔ 别在这里手写第二份 label / URL（本仓「同一概念只准一份」）。
-        for (const b of SUPPORT_BUTTONS) {
-            const btn = infoBtns.createEl('button', { cls: 'rl-about-btn', text: b.label });
-            btn.addEventListener('click', () => window.open(b.url, '_blank'));
-        }
-        // 🔴 #491（用户 2026-10-03：「点击更新日志不跳转网页改成内置弹窗」）：原先是 `window.open(CHANGELOG.md)`
-        //    ⇒ 改成在 Obsidian 里打开**内置弹窗**（正文见 `pure/releaseNotes`）。
+        // 🔴🔴 #686（用户 2026-10-19）：「更新日志、爱发电按钮放在 ReelLudic 信息栏；报 Bug、提需求、Github
+        //    移到支持作者卡片」。⇒ 按钮按**语义归属**分两组，不再挤同一行：
+        //      信息栏（认识这个插件）  → 更新日志 · 未来规划
+        //      支持作者卡（反馈与支持）→ 报 Bug · 提需求 · Github · 爱发电
+        //    ⚠️ 沿革：#685 曾把六枚全并进信息栏一行（当时读成「都排在爱发电前面」）；本轮用户明确了归属，
+        //       ⛔ 别再合并回去 —— 两组的语义本来就不同（一个讲「这版改了什么/接下来做什么」，一个讲「给反馈/给支持」）。
+        //    ⚠️ 文案 / URL 仍取 `pure/supportLinks`（唯一真源，⛔ 别手写第二份）。
+        // 🔴 #491（用户 2026-10-03：「点击更新日志不跳转网页改成内置弹窗」）：内置弹窗（正文见 `pure/releaseNotes`）。
         //    ⛔ 别再退回浏览器跳转；完整发布记录那条链在弹窗底部，由用户主动点。
         const logBtn = infoBtns.createEl('button', { cls: 'rl-about-btn', text: '更新日志' });
         logBtn.addEventListener('click', () => new ReleaseNotesModal(this.app).open());
+        // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑧）：原「新手引导」按钮**整体退场**（引导弹窗下线，见 `modals/GuideModal` 的删除），
+        //    这个位置换成「未来规划」——用户要的是「这插件接下来做什么」的可见出口。
+        //    ⚠️ 普通次要按钮样式（⛔ 不带 `.rl-about-btn-accent`）：本卡的按钮都不该抢「爱发电」的行动召唤。
+        const roadmapBtn = infoBtns.createEl('button', { cls: 'rl-about-btn', text: '未来规划' });
+        roadmapBtn.addEventListener('click', () => new RoadmapModal(this.app).open());
 
-        // ── ② 支持作者（#356 起的样子，⛔ 一字未改）──
+        // ── ② 支持作者（说明文字 + **反馈与支持**四枚按钮）──
+        // 🔴 #686：本卡恢复「左文右钮」布局（`.rl-about` 本就是 flex），按钮改挂到这张卡上。
         const about = parent.createDiv({ cls: 'rl-about' });
         const aboutText = about.createDiv({ cls: 'rl-about-text' });
         aboutText.createDiv({ cls: 'rl-about-title', text: '支持作者' });
         aboutText.createDiv({ cls: 'rl-about-desc', text: '如果 ReelLudic 对你有帮助，欢迎在 GitHub 上给个 ⭐，或通过爱发电支持一下～' });
-        const aboutBtns = about.createDiv({ cls: 'rl-about-buttons' });
-        const githubBtn = aboutBtns.createEl('button', { cls: 'rl-about-btn', text: 'Github' });
+
+        const supportBtns = about.createDiv({ cls: 'rl-about-buttons' });
+        for (const b of SUPPORT_BUTTONS) {
+            const btn = supportBtns.createEl('button', { cls: 'rl-about-btn', text: b.label });
+            btn.addEventListener('click', () => window.open(b.url, '_blank'));
+        }
+        const githubBtn = supportBtns.createEl('button', { cls: 'rl-about-btn', text: 'Github' });
         githubBtn.addEventListener('click', () => window.open(REPO_URL, '_blank'));
-        const afdianBtn = aboutBtns.createEl('button', { cls: 'rl-about-btn rl-about-btn-accent', text: '爱发电' });
+        // 爱发电压轴：它是这一组里唯一「掏钱」的入口，用主题色实底与三枚反馈按钮拉开层级
+        const afdianBtn = supportBtns.createEl('button', { cls: 'rl-about-btn rl-about-btn-accent', text: '爱发电' });
         afdianBtn.addEventListener('click', () => window.open(AFDIAN_URL, '_blank'));
     }
 }

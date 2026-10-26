@@ -263,6 +263,18 @@ export function normalizeProvider(provider: unknown): TranslateProvider {
  */
 export const AI_PROVIDER_OFF = 'off';
 
+/** 🔴 2026-10-25 用户裁定：设置-AI集成-用途四个下拉的**默认值** = 不启用。
+ *
+ *  用户原话：「默认配置下 设置-AI集成-用途 默认全部为不启用」。
+ *
+ *  ⚠️ 它只是「DEFAULT_SETTINGS 里四项的初值」，⛔ **不是** `normalizeAiChoice` 的兜底：
+ *     兜底仍是 `DEFAULT_TRANSLATE_PROVIDER`（zhipu）。若把兜底改成 off，所有拼错的脏值都会
+ *     静默变成「不启用」，用户会以为功能坏了、还查不出原因。
+ *  ⚠️ 四行（翻译/总结/搜索/预填）各自独立取这个初值，⛔ 别只写一行指望其余继承。
+ *  ⚠️ 「朗读音源」不在此列：那是 `system | cloud` 音源切换，没有「不启用」档。
+ */
+export const AI_PURPOSE_DEFAULT: AiProviderChoice = AI_PROVIDER_OFF;
+
 /** 服务商或「不启用」 */
 export type AiProviderChoice = TranslateProvider | typeof AI_PROVIDER_OFF;
 

@@ -12,7 +12,6 @@ import {
     POSTER_COLUMNS_DEFAULT,
     POSTER_COLUMNS_MIN,
     POSTER_COLUMNS_MAX,
-    POSTER_WALL_COLUMNS_MAX,
     FALLBACK_POSTER_GRID_TEMPLATE,
     normalizePosterDensity,
     normalizePosterColumns,
@@ -186,16 +185,11 @@ describe('posterZoomColumns（#591 Ctrl+滚轮缩放）', () => {
 // 🔴 #626 海报墙（wall）打磨：间距参数化 + 墙自己的列数
 // 背景：`.rl-wall { gap: 10px }` 自 #624 起就与常量 12 不一致（列数反算按 12 扣间距）；
 //       且 Ctrl+滚轮在墙上缩放写的是共享的 posterDensity，会**连带改掉卡片网格的列数**。
-describe('posterGrid · #626 间距参数化与海报墙列数', () => {
+describe('posterGrid · #626 间距参数化（海报墙共用海报密度）', () => {
     it('两个间距常量：卡片网格 12 / 海报墙 10（各与自己的 CSS gap 同源）', () => {
         expect(POSTER_GRID_GAP).toBe(12);
         expect(POSTER_WALL_GAP).toBe(10);
         expect(POSTER_WALL_GAP).toBeLessThan(POSTER_GRID_GAP);
-    });
-
-    it('海报墙列数上界 16（比卡片网格的 12 更宽一档）', () => {
-        expect(POSTER_WALL_COLUMNS_MAX).toBe(16);
-        expect(POSTER_WALL_COLUMNS_MAX).toBeGreaterThan(POSTER_COLUMNS_MAX);
     });
 
     it('posterGridTemplate 第 3 参 = 间距；缺省仍是 12（既有调用点字面输出不变）', () => {
@@ -213,42 +207,34 @@ describe('posterGrid · #626 间距参数化与海报墙列数', () => {
 
     it('normalizePosterColumns 的 max 参数：缺省 12、传 16 时 14 与 99 各自落位', () => {
         expect(normalizePosterColumns(99)).toBe(12);
-        expect(normalizePosterColumns(99, POSTER_WALL_COLUMNS_MAX)).toBe(16);
+        expect(normalizePosterColumns(99, 16)).toBe(16);
         expect(normalizePosterColumns(14)).toBe(12);
-        expect(normalizePosterColumns(14, POSTER_WALL_COLUMNS_MAX)).toBe(14);
+        expect(normalizePosterColumns(14, 16)).toBe(14);
         // 下界不受 max 影响
-        expect(normalizePosterColumns(0, POSTER_WALL_COLUMNS_MAX)).toBe(1);
+        expect(normalizePosterColumns(0, 16)).toBe(1);
     });
 
-    it('posterZoomColumns 的 max 参数：墙上能缩到 16 列，卡片网格仍在 12 收住', () => {
+    it('posterZoomColumns 的 max 参数：缺省按 12 收住，传 16 时能继续缩', () => {
         expect(posterZoomColumns(POSTER_COLUMNS_MAX, 'out')).toBe(POSTER_COLUMNS_MAX);
-        expect(posterZoomColumns(12, 'out', POSTER_WALL_COLUMNS_MAX)).toBe(13);
-        expect(posterZoomColumns(15, 'out', POSTER_WALL_COLUMNS_MAX)).toBe(16);
-        expect(posterZoomColumns(16, 'out', POSTER_WALL_COLUMNS_MAX)).toBe(16);
+        expect(posterZoomColumns(12, 'out', 16)).toBe(13);
+        expect(posterZoomColumns(15, 'out', 16)).toBe(16);
+        expect(posterZoomColumns(16, 'out', 16)).toBe(16);
         // 放大方向两视图共用下界 1
-        expect(posterZoomColumns(1, 'in', POSTER_WALL_COLUMNS_MAX)).toBe(1);
+        expect(posterZoomColumns(1, 'in', 16)).toBe(1);
     });
 
-    it('posterGridTemplateForWall：缺省 / 脏值 ⇒ 跟随共享密度（观感与老用户一致）', () => {
-        for (const raw of [undefined, null, '', 'abc', NaN, Infinity, true, {}, []]) {
-            expect(posterGridTemplateForWall(raw, 'standard', 6)).toBe(
-                posterGridTemplate('standard', 6, POSTER_WALL_GAP),
-            );
-            expect(posterGridTemplateForWall(raw, 'custom', 9)).toBe(
-                posterGridTemplate('custom', 9, POSTER_WALL_GAP),
-            );
+    // 🔴 用户 2026-10-20：「设置页里的海报墙列数项删除掉」——墙不再有自己的一档列数，
+    //    `wallColumns` 这个键连运行时语义一起下线（签名里的形参也没了，传不进来了）。
+    it('posterGridTemplateForWall：墙恒跟随共享海报密度（只换 gap，别的一律照网格）', () => {
+        for (const density of ['compact', 'standard', 'cozy', 'custom'] as const) {
+            for (const cols of [1, 3, 6, 9, 12]) {
+                expect(posterGridTemplateForWall(density, cols)).toBe(
+                    posterGridTemplate(density, cols, POSTER_WALL_GAP),
+                );
+            }
         }
-    });
-
-    it('posterGridTemplateForWall：有值 ⇒ 走自定义列数（完全无视共享密度档）', () => {
-        expect(posterGridTemplateForWall(8, 'standard', 6)).toBe(posterGridTemplate('custom', 8, POSTER_WALL_GAP));
-        expect(posterGridTemplateForWall(8, 'cozy', 6)).toBe(posterGridTemplate('custom', 8, POSTER_WALL_GAP));
-        // 🔴 关键：墙上有值时**不许**跟共享密度走 —— 否则「在墙上缩放」等于改了卡片网格
-        expect(posterGridTemplateForWall(8, 'standard', 6)).not.toBe(posterGridTemplate('standard', 6, POSTER_WALL_GAP));
-    });
-
-    it('posterGridTemplateForWall：走墙自己的上界 16（共享上限 12 不适用）', () => {
-        expect(posterGridTemplateForWall(99, 'standard', 6)).toBe(posterGridTemplate('custom', 16, POSTER_WALL_GAP));
-        expect(posterGridTemplateForWall(14, 'standard', 6)).toBe(posterGridTemplate('custom', 14, POSTER_WALL_GAP));
+        // 关键：墙与网格的差别**只剩 gap** —— 列模板体必须与「网格用墙的 gap」一模一样
+        expect(posterGridTemplateForWall('custom', 6)).not.toBe(posterGridTemplate('custom', 6));
+        expect(posterGridTemplateForWall('standard', 6)).not.toBe(posterGridTemplate('custom', 8, POSTER_WALL_GAP));
     });
 });

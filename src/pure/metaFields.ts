@@ -73,22 +73,48 @@ export interface MetaField {
      * `director` **不门控**（有值就写）却**只属于影视** —— 这就是两者分叉的样本。
      */
     appliesTo?: readonly EntryType[];
+    /**
+     * 🔴 2026-10-21（用户「字段字典按表重置」）：**按类型换显示名**。
+     *
+     * 同一个 frontmatter 键在不同类型下是不同语义，用户表里就写成**不同的字段名**：
+     *   · `author` → 书籍「作者」/ 音乐「艺术家」（音乐侧表单的 creator 取的就是 `author`）；
+     *   · `developer` → 游戏「开发商」/ 动画「制作公司」（动画正文那行「制作公司」取的就是它）；
+     *   · `duration_min` → 电影「片长（分钟）」/ 剧集·动画「单集片长」。
+     *
+     * ⛔ **不新开同义键**（那会让同一语义两处可填：`year` 与 `release_date` 各写一半），
+     *    只换显示名。`label` 仍是缺省名，`labelOf(key, type)` 是唯一读取入口。
+     */
+    labelFor?: Partial<Record<EntryType, string>>;
     /** 补充说明（设置页；缺省不显示） */
     note?: string;
 }
 
 /**
- * 全部字段，顺序 = `entryFrontmatter` 的输出顺序（读到哪一行就登记到哪一行，便于对照）。
+ * 全部字段。
+ *
+ * 🔴🔴 2026-10-21（用户「字段字典按表重置各媒体类型的属性字段及横向排序」）：
+ * **本数组的顺序 = 用户那张表的横向顺序**，分四段：全局 → 影视 → 游戏 → 书籍 → 音乐。
+ * 因为 `defaultOrderFor` / `GLOBAL_FIELD_KEYS` / `exclusiveFieldsFor` 全都按**登记序**取序，
+ * 所以「排好这一张表」就等于排好了：笔记 frontmatter 写出序、设置页「笔记属性顺序」每一页、
+ * 九列对比预览的每一列。⛔ 别在别处再手抄一份顺序（那样两处迟早漂）。
+ *
+ * ⚠️ 段的先后是**被约束出来的**，不是随手排的：单张登记序要同时当 8 组字段集的**子序列**，
+ *    所以 `developer` 必须排在 `cast` 之后、`country` 之前（动画的「制作公司」在大类里紧跟主演），
+ *    `progress_percent` 必须排在 `producer` / `playtime_minutes` 之后（剧集与游戏都把它放末尾）。
+ *    改编排前先把 `tests/fieldOrder.test.ts` 的「每类型专属集 = 表」用例看一遍。
+ *
+ * 🔴 用户表里还有 **13 个字段位本仓没有任何数据通道**（⛔ 加进来就是给用户看空行）：
+ *    出版年、首发平台、连载状态、字数、已读字数、卷数、上映日期、首播年份、单集片长、
+ *    发售日期、发行日期、流派、介质、曲目数 —— 其中「单集片长」已用 `duration_min` 的
+ *    按类型显示名顶上；其余 12 个要新增 frontmatter 键 ⇒ 写侧 `noteGenerator` + 读侧
+ *    `noteEditable` handlers + `MediaEntry` 字段 + `EntryForm` 输入框 + 单测五处同改，
+ *    属第二批（键一旦写进用户笔记就**永久存在**，append-only，⛔ 不许先占坑后补实现）。
  */
 export const META_FIELDS: readonly MetaField[] = [
+    // ───────────────────────── 全局（六类通用） ─────────────────────────
     { key: 'id', label: '条目 ID', kind: 'string', writable: true, readable: false, note: '改名不影响 catalog 同步' },
     { key: 'type', label: '类型', kind: 'enum', writable: true, readable: false, note: '改名不影响 tags 里的类型键' },
     { key: 'title', label: '标题', kind: 'string', writable: true, readable: false, note: '改名不影响笔记文件名' },
-    { key: 'status', label: '状态', kind: 'enum', writable: true, readable: true },
-    { key: 'rating', label: '个人评分', kind: 'number', writable: true, readable: true, dataviewAligned: true },
-    { key: 'tags', label: '标签', kind: 'list', writable: true, readable: false, dataviewAligned: true },
-    { key: 'created', label: '创建日期', kind: 'date', writable: true, readable: false, dataviewAligned: true },
-    { key: 'updated', label: '更新日期', kind: 'date', writable: true, readable: false, dataviewAligned: true },
     { key: 'banner', label: '封面', kind: 'string', writable: true, readable: true, note: '读侧映射到 poster' },
     // 🔴🔴 #640f **`appliesTo` 口径纠正**（用户：「什么鬼，不是所有条目不都有这些字段吗」）——
     //
@@ -103,39 +129,71 @@ export const META_FIELDS: readonly MetaField[] = [
     //   `page_count` / `read_minutes` / `playtime_minutes` 这几处。
     { key: 'year', label: '年份', kind: 'number', writable: true, readable: true },
     { key: 'genres', label: '题材', kind: 'list', writable: true, readable: true },
+    { key: 'series', label: '系列', kind: 'string', writable: true, readable: true },
+    { key: 'series_index', label: '系列序号', kind: 'number', writable: true, readable: true },
+    { key: 'status', label: '状态', kind: 'enum', writable: true, readable: true },
+    { key: 'rating', label: '个人评分', kind: 'number', writable: true, readable: true, dataviewAligned: true },
+    { key: 'tags', label: '标签', kind: 'list', writable: true, readable: false, dataviewAligned: true },
+    { key: 'aliases', label: '又名', kind: 'list', writable: true, readable: true },
+    { key: 'planned_date', label: '计划日期', kind: 'date', writable: true, readable: true },
+    // 用户表口径：影视看、书籍读、玩游戏都是同一个「看过/读过/玩过的那天」⇒ 一个键、一个名字。
+    { key: 'watched_date', label: '观看/阅读/游玩日期', kind: 'date', writable: true, readable: true },
+    { key: 'created', label: '创建日期', kind: 'date', writable: true, readable: false, dataviewAligned: true },
+    { key: 'updated', label: '更新日期', kind: 'date', writable: true, readable: false, dataviewAligned: true },
+
+    // ───────────────────── 影视（电影 / 剧集 / 动画） ─────────────────────
     { key: 'director', label: '导演', kind: 'string', writable: true, readable: true, appliesTo: ['movie', 'tv', 'anime'] },
-    { key: 'cast', label: '主演', kind: 'list', writable: true, readable: true, appliesTo: ['movie', 'tv', 'anime'] },
     { key: 'screenwriter', label: '编剧', kind: 'list', writable: true, readable: true, appliesTo: ['movie', 'tv', 'anime'] },
+    { key: 'cast', label: '主演', kind: 'list', writable: true, readable: true, appliesTo: ['movie', 'tv', 'anime'] },
+    // 🔴 动画的「制作公司」**复用这个键**：正文里那行 `['制作公司', e.developer]` 取的就是 `developer`
+    //    （`noteGenerator.ts` 正文表），⛔ 别为一个显示名新开 `studio` 键 —— 那会让同一部动画
+    //    在「开发商」和「制作公司」两处各填一半。
+    { key: 'developer', label: '开发商', kind: 'string', writable: true, readable: true, appliesTo: ['game', 'anime'], labelFor: { anime: '制作公司' }, note: '动画侧显示为「制作公司」（与正文那行同源）' },
     { key: 'country', label: '制片国家', kind: 'string', writable: true, readable: true, appliesTo: ['movie', 'tv', 'anime'] },
     { key: 'language', label: '语言', kind: 'string', writable: true, readable: true, appliesTo: ['movie', 'tv', 'anime'] },
-    { key: 'duration_min', label: '片长（分钟）', kind: 'number', writable: true, readable: true, appliesTo: ['movie', 'tv', 'anime'] },
-    { key: 'aliases', label: '又名', kind: 'list', writable: true, readable: true },
-    { key: 'author', label: '作者', kind: 'string', writable: true, readable: true, appliesTo: ['book'] },
+    { key: 'progress_season', label: '季', kind: 'number', writable: true, readable: true, types: ['tv', 'anime'], appliesTo: ['tv', 'anime'] },
+    { key: 'progress_total_episodes', label: '总集数', kind: 'number', writable: true, readable: true, types: ['tv', 'anime'], appliesTo: ['tv', 'anime'] },
+    { key: 'progress_episode', label: '已看集数', kind: 'number', writable: true, readable: true, types: ['tv', 'anime'], appliesTo: ['tv', 'anime'] },
+    // 电影是「片长」，剧集/动画是「单集片长」—— 同一个键，按类型换名（见 labelFor 的注释）。
+    { key: 'duration_min', label: '片长（分钟）', kind: 'number', writable: true, readable: true, appliesTo: ['movie', 'tv', 'anime'], labelFor: { tv: '单集片长', anime: '单集片长' } },
+    // 用户表：电影/剧集/游戏有「出品方」，**动画那一列没有**（动画只有「制作公司」）。
+    { key: 'producer', label: '出品方', kind: 'string', writable: true, readable: true, appliesTo: ['movie', 'tv', 'game'] },
+
+    // ───────────────────────────── 游戏 ─────────────────────────────
+    { key: 'platform', label: '平台', kind: 'string', writable: true, readable: true, appliesTo: ['game'] },
+    { key: 'playtime_minutes', label: '游戏时长', kind: 'number', writable: true, readable: true, types: ['game'], appliesTo: ['game'] },
+    // ⚠️ 用户表里游戏有「进度百分比」，但 `noteGenerator.progressPercentOf` **对 game 返回 undefined**
+    //    ⇒ 游戏这一格永远空。保留登记（表里有），如实标注，⛔ 别当它已实现。
+    { key: 'progress_percent', label: '进度百分比', kind: 'number', writable: true, readable: false, appliesTo: ['tv', 'anime', 'game'], note: '派生值，由进度字段算出；游戏侧目前算不出（progressPercentOf 对 game 返回 undefined）' },
+
+    // ───────────────────────────── 书籍 ─────────────────────────────
+    // 用户表口径：书籍的「作者」与音乐的「艺术家」是同一个键（音乐表单的 creator 取 `author`），
+    // `artist` 那个键是**画师**（只有漫画有，见 BOOK_KIND_EXCLUDED_FIELDS）。
+    { key: 'author', label: '作者', kind: 'string', writable: true, readable: true, appliesTo: ['book', 'music'], labelFor: { music: '艺术家' }, note: '音乐侧显示为「艺术家」（与表单 creator 同源）' },
     // ⚠️ 现状登记：写侧有、**读侧没有**（`handlers` 缺 artist）⇒ 笔记里手改画师不会被读回。
     //   本批（1.3.1 ①）**不修**（用户只要求做字段映射，改动面越小越好），如实记录在 readable 上。
+    // 🔴 分类归属（2026-10-19 用户裁定）：`appliesTo: ['book']` 是**大类**口径（book 这条类型
+    //    写出侧才认画师），**子类**里只有「漫画」有画师 —— 文学 / 网文没有。
+    //    子类差异⛔ 不在这张表表达（改 appliesTo 会把「类型门控」和「子类字段集」搅成一处），
+    //    真源是 `pure/fieldOrder.BOOK_KIND_EXCLUDED_FIELDS`。
     { key: 'artist', label: '画师', kind: 'string', writable: true, readable: false, appliesTo: ['book'], note: '读侧尚未解析（既有缺口，非本批引入）' },
     { key: 'translator', label: '译者', kind: 'string', writable: true, readable: true, appliesTo: ['book'] },
     { key: 'publisher', label: '出版社', kind: 'string', writable: true, readable: true, appliesTo: ['book'] },
-    { key: 'producer', label: '出品方', kind: 'string', writable: true, readable: true, appliesTo: ['movie', 'tv', 'anime', 'game'] },
+    // 🔴 分类归属（同上，2026-10-19 裁定）：ISBN 是**已出版实体书**的编号 ⇒ 文学 / 漫画有，
+    //    **网文没有**（网络连载走上架年 / 元数据章数那一套）。同样只记大类 `['book']`。
     { key: 'isbn', label: 'ISBN', kind: 'string', writable: true, readable: true, appliesTo: ['book'] },
     { key: 'binding', label: '装帧', kind: 'string', writable: true, readable: true, appliesTo: ['book'] },
     { key: 'price', label: '定价', kind: 'string', writable: true, readable: true, appliesTo: ['book'] },
-    { key: 'series', label: '系列', kind: 'string', writable: true, readable: true },
-    { key: 'series_index', label: '系列序号', kind: 'number', writable: true, readable: true },
-    { key: 'platform', label: '平台', kind: 'string', writable: true, readable: true, appliesTo: ['game'] },
-    { key: 'album', label: '专辑', kind: 'string', writable: true, readable: true, types: ['music'], appliesTo: ['music'] },
-    { key: 'developer', label: '开发商', kind: 'string', writable: true, readable: true, appliesTo: ['game'] },
-    { key: 'progress_season', label: '季', kind: 'number', writable: true, readable: true, types: ['tv', 'anime'], appliesTo: ['tv', 'anime'] },
-    { key: 'progress_episode', label: '集', kind: 'number', writable: true, readable: true, types: ['tv', 'anime'], appliesTo: ['tv', 'anime'] },
-    { key: 'progress_total_episodes', label: '总集数', kind: 'number', writable: true, readable: true, types: ['tv', 'anime'], appliesTo: ['tv', 'anime'] },
-    { key: 'watched_date', label: '观看日期', kind: 'date', writable: true, readable: true },
-    { key: 'planned_date', label: '计划日期', kind: 'date', writable: true, readable: true },
-    { key: 'reading_page', label: '已读页数', kind: 'number', writable: true, readable: true, types: ['book'], appliesTo: ['book'] },
     { key: 'reading_total_page', label: '总页数', kind: 'number', writable: true, readable: true, types: ['book'], appliesTo: ['book'] },
-    { key: 'page_count', label: '页数', kind: 'number', writable: true, readable: true, types: ['book'], appliesTo: ['book'] },
+    { key: 'reading_page', label: '已读页数', kind: 'number', writable: true, readable: true, types: ['book'], appliesTo: ['book'] },
     { key: 'read_minutes', label: '阅读时长', kind: 'number', writable: true, readable: true, types: ['book'], appliesTo: ['book'] },
-    { key: 'playtime_minutes', label: '游戏时长', kind: 'number', writable: true, readable: true, types: ['game'], appliesTo: ['game'] },
-    { key: 'progress_percent', label: '进度百分比', kind: 'number', writable: true, readable: false, appliesTo: ['tv', 'anime', 'book', 'game'], note: '派生值，由进度字段算出' },
+    // ⚠️ `page_count` 与 `reading_total_page` 不是一回事：前者是**阅读器算出来的**版心页数
+    //    （EPUB/TXT 打开后才有），后者是用户填的「这本书一共多少页」。用户表只列「总页数」，
+    //    但这一列是真有数据的自有字段 ⇒ 排在书籍段末尾（⛔ 别删，阅读进度条在用）。
+    { key: 'page_count', label: '页数（阅读器）', kind: 'number', writable: true, readable: true, types: ['book'], appliesTo: ['book'], note: '阅读器算出的版心页数，与「总页数」不同源' },
+
+    // ───────────────────────────── 音乐 ─────────────────────────────
+    { key: 'album', label: '专辑', kind: 'string', writable: true, readable: true, types: ['music'], appliesTo: ['music'] },
 ];
 
 /** 全部键名（写侧 + 读侧的并集，顺序同上） */
@@ -144,6 +202,24 @@ export const META_FIELD_KEYS: readonly string[] = META_FIELDS.map((f) => f.key);
 /** 按 key 查字段；未登记返回 `undefined`（调用方自行决定是忽略还是报错） */
 export function findMetaField(key: string): MetaField | undefined {
     return META_FIELDS.find((f) => f.key === key);
+}
+
+/**
+ * 键 → **该类型下**的中文名（`labelFor` 优先，退回 `label`；未登记键原样返回）。
+ *
+ * 🔴 2026-10-21：`author` / `developer` / `duration_min` 这三个键在不同类型下是**不同字段名**
+ * （作者↔艺术家、开发商↔制作公司、片长↔单集片长）。⛔ 显示层别再直接读 `f.label` ——
+ *    那样音乐页会显示「作者」、动画页会显示「开发商」、剧集页会显示「片长」。
+ * @param type 不给（或该类型没有覆盖名）⇒ 用缺省 `label`
+ */
+export function labelOf(key: string, type?: EntryType): string {
+    const f = findMetaField(key);
+    if (!f) return key;
+    if (type) {
+        const alt = f.labelFor?.[type];
+        if (alt) return alt;
+    }
+    return f.label;
 }
 
 /**

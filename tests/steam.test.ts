@@ -4,6 +4,7 @@ import {
     buildDetailUrl,
     parseSteamResults,
     parseAppDetails,
+    parseReviewHistogram,
     toGameResult,
     SteamClient,
     type RawSteamItem,
@@ -146,6 +147,9 @@ const fullDetailJson = JSON.stringify({
             short_description: 'Every day, millions of players worldwide enter battle as one of over a hundred Dota heroes.',
             detailed_description: '<strong>The most-played game on Steam.</strong><br>Every day, millions…',
             header_image: 'https://cdn.cloudflare.steamstatic.com/steam/apps/570/header.jpg',
+            // 🔴 2026-10-25 补：评分 / 评价人数的两个来源字段（真实响应里就长这样，Portal 2 实测确认）
+            metacritic: { score: 90, url: 'https://www.metacritic.com/game/pc/dota-2' },
+            recommendations: { total: 1234567 },
         },
     },
 });
@@ -221,6 +225,44 @@ describe('🔴 #623 parseAppDetails', () => {
     });
 });
 
+// 🔴 2026-10-25 用户报障「拉取到的怎么没有 steam 的评分和评价人数」——这两条的守卫。
+//    取法：评分 = metacritic.score ÷10（10 分制）、评价人数 = recommendations.total。
+//    ⚠️ 这里锁的是**用户会看见的数字**，不是「解析没抛异常」——避免以后有人把 ÷10 写成 ÷100 还能过。
+describe('🔴 2026-10-25 parseAppDetails 评分与评价人数', () => {
+    const of = (data: Record<string, unknown>) =>
+        parseAppDetails(JSON.stringify({ '9': { success: true, data } }), 9);
+
+    it('metacritic.score 0-100 → 10 分制一位小数；recommendations.total → 评价人数', () => {
+        const d = of({ metacritic: { score: 95 }, recommendations: { total: 392382 } });
+        expect(d!.rating).toBe(9.5);
+        expect(d!.ratingCount).toBe(392382);
+    });
+
+    it('metacritic 缺失 / score 为 0 / 越界 ⇒ rating undefined（⛔ 不编 0 分）', () => {
+        expect(of({})?.rating).toBeUndefined();
+        expect(of({ metacritic: {} })?.rating).toBeUndefined();
+        // Steam 用 score:0 表示「没收录」，÷10 会变成刺眼的 0 分
+        expect(of({ metacritic: { score: 0 } })?.rating).toBeUndefined();
+        expect(of({ metacritic: { score: 101 } })?.rating).toBeUndefined();
+        expect(of({ metacritic: { score: -5 } })?.rating).toBeUndefined();
+    });
+
+    it('recommendations 缺失 / total 为 0 ⇒ ratingCount undefined', () => {
+        expect(of({})?.ratingCount).toBeUndefined();
+        expect(of({ recommendations: {} })?.ratingCount).toBeUndefined();
+        expect(of({ recommendations: { total: 0 } })?.ratingCount).toBeUndefined();
+    });
+
+    it('🔴 评分与评价人数**不同源**：即使只有其中一个，另一个也不许被凑数填上', () => {
+        const onlyRating = of({ metacritic: { score: 88 } });
+        expect(onlyRating!.rating).toBe(8.8);
+        expect(onlyRating!.ratingCount).toBeUndefined(); // ⛔ 不许拿 metacritic 的分去凑评价人数
+        const onlyCount = of({ recommendations: { total: 500 } });
+        expect(onlyCount!.ratingCount).toBe(500);
+        expect(onlyCount!.rating).toBeUndefined(); // ⛔ 不许拿评价数去凑评分
+    });
+});
+
 describe('🔴 #623 SteamClient.fetchDetail', () => {
     it('用注入的 http 拉详情并按 appid 解析', async () => {
         const calls: string[] = [];
@@ -239,6 +281,136 @@ describe('🔴 #623 SteamClient.fetchDetail', () => {
     });
 });
 
+// 🔴 2026-10-25 用户报障「有评价人数没评分」⇒ 评分口径从 Metacritic 换算改为 **Steam 好评率百分比**。
+//    这一段锁的是「谁的数说了算」：histogram 的百分比与人数必须**同源**，否则界面上会出现
+//    「97% 好评 · 但人数只有 556」这种自相矛盾的组合（两个不同统计口径混搭）。
+describe('🔴 2026-10-25 fetchDetail 合并好评率（histogram）', () => {
+    /** appdetails 返回体（含 Metacritic 与 recommendations 兜底值） */
+    const appdetails = JSON.stringify({
+        '570': {
+            success: true,
+            data: {
+                developers: ['Valve'],
+                metacritic: { score: 90 },
+                recommendations: { total: 556 },
+                platforms: { windows: true },
+            },
+        },
+    });
+    /** appreviewhistogram 返回体：周汇总，累加 = 好评率与总测评数 */
+    const histogram = JSON.stringify({
+        success: true,
+        results: {
+            rollups: [
+                { recommendations_up: 900, recommendations_down: 0 },
+                { recommendations_up: 100, recommendations_down: 0 },
+            ],
+        },
+    });
+
+    it('histogram 的 percent 与 total 一起覆盖 appdetails 的兜底值（同源）', async () => {
+        const client = new SteamClient(async (url) =>
+            url.includes('appreviewhistogram') ? histogram : appdetails,
+        );
+        const d = await client.fetchDetail(570);
+        // 1000 条里 1000 条好评 ⇒ 100%；同时 ratingCount 被改成 1000（⛔ 不再是 recommendations 的 556）
+        expect(d?.reviewPercent).toBe(100);
+        expect(d?.ratingCount).toBe(1000);
+        // Metacritic 换算的 10 分制值仍在（`rating` 是个人/媒体分，与好评率不是一回事）
+        expect(d?.rating).toBe(9);
+    });
+
+    it('🔴 百分比与人数必须同源：不许出现「histogram 的 percent + recommendations 的 total」', async () => {
+        const client = new SteamClient(async (url) =>
+            url.includes('appreviewhistogram') ? histogram : appdetails,
+        );
+        const d = await client.fetchDetail(570);
+        expect(d?.ratingCount).not.toBe(556);
+    });
+
+    it('histogram 挂了 ⇒ 详情照常返回（降级到 appdetails 的兜底值，⛔ 不整条作废）', async () => {
+        const client = new SteamClient(async (url) => {
+            if (url.includes('appreviewhistogram')) throw new Error('network down');
+            return appdetails;
+        });
+        const d = await client.fetchDetail(570);
+        expect(d?.developer).toBe('Valve');
+        expect(d?.reviewPercent).toBeUndefined();
+        expect(d?.ratingCount).toBe(556); // 退回 recommendations.total
+        expect(d?.rating).toBe(9);
+    });
+
+    it('histogram 返回 success=false ⇒ 不写 reviewPercent、不写 total', async () => {
+        const client = new SteamClient(async (url) =>
+            url.includes('appreviewhistogram') ? JSON.stringify({ success: false }) : appdetails,
+        );
+        const d = await client.fetchDetail(570);
+        expect(d?.reviewPercent).toBeUndefined();
+        expect(d?.ratingCount).toBe(556); // 兜底值仍在
+    });
+
+    it('两类请求各只发一次（⛔ 别为了拿名字或人数重复请求）', async () => {
+        const urls: string[] = [];
+        const client = new SteamClient(async (url) => {
+            urls.push(url);
+            return url.includes('appreviewhistogram') ? histogram : appdetails;
+        });
+        await client.fetchDetail(570);
+        expect(urls.filter((u) => u.includes('appdetails'))).toHaveLength(1);
+        expect(urls.filter((u) => u.includes('appreviewhistogram'))).toHaveLength(1);
+    });
+});
+
+describe('🔴 2026-10-25 parseReviewHistogram 好评率口径', () => {
+    const hist = (rollups: unknown[]) => JSON.stringify({ success: true, results: { rollups } });
+
+    it('全部好评 ⇒ 100%（且 total 是真数，不省略）', () => {
+        const r = parseReviewHistogram(hist([{ recommendations_up: 10, recommendations_down: 0 }]));
+        expect(r.percent).toBe(100);
+        expect(r.total).toBe(10);
+    });
+
+    it('🔴 全差评 ⇒ percent 必须是 0（真实结论），而不是「没有百分比」', () => {
+        // ⚠️ 这条曾是反向口径（宁缺勿假），2026-10-25 改判：0% 是有意义的结论。
+        //    同时它承担收敛职责 —— 补详情判据是「有 total 没 percent 就再拉」，
+        //    若全差评不给 0，这类游戏会每次开机重拉一遍、永不能收敛。
+        const r = parseReviewHistogram(hist([{ recommendations_up: 0, recommendations_down: 7 }]));
+        expect(r.percent).toBe(0);
+        expect(r.total).toBe(7);
+    });
+
+    it('没人评过 ⇒ 空对象（⛔ 不是 0%）', () => {
+        expect(parseReviewHistogram(hist([]))).toEqual({});
+        expect(parseReviewHistogram(hist([{ recommendations_up: 0, recommendations_down: 0 }]))).toEqual({});
+    });
+
+    it('success=false / 坏 JSON ⇒ 空对象，不抛错', () => {
+        expect(parseReviewHistogram(JSON.stringify({ success: false }))).toEqual({});
+        expect(parseReviewHistogram('not json')).toEqual({});
+        expect(parseReviewHistogram('')).toEqual({});
+    });
+
+    it('百分比取整（四舍五入），多周汇总累加', () => {
+        // 2 好评 1 差评 = 66.67% ⇒ 67%
+        expect(parseReviewHistogram(hist([{ recommendations_up: 2, recommendations_down: 1 }])).percent).toBe(67);
+        // 两周累加：3 好 0 差 与 0 好 1 差 ⇒ 75%
+        const r = parseReviewHistogram(
+            hist([
+                { recommendations_up: 3, recommendations_down: 0 },
+                { recommendations_up: 0, recommendations_down: 1 },
+            ]),
+        );
+        expect(r.percent).toBe(75);
+        expect(r.total).toBe(4);
+    });
+
+    it('脏 rollups（非数组 / 元素非对象 / 字段非数字）不炸', () => {
+        expect(parseReviewHistogram(JSON.stringify({ success: true, results: { rollups: 'x' } }))).toEqual({});
+        expect(
+            parseReviewHistogram(hist([null, 'x', { recommendations_up: '5', recommendations_down: 2 }])).total,
+        ).toBe(2);
+    });
+});
 describe('SteamClient 注入 http', () => {
     it('search 用注入的 http 拉取并返回 toGameResult 结果', async () => {
         const calls: string[] = [];

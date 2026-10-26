@@ -44,12 +44,13 @@ import {
     buildKugouLyricSearchUrl,
     parseKugouLyricDownload,
 } from 'pure/dl/kugou';
+// 「发 GET 并判状态码」的唯一实现（详见该文件头：请求头与状态码判定必须只有一处）。
+import { getTextWithHeaders, type TextHttpGet } from 'services/httpText';
 
-/** 注入式 GET：返回状态码 + 文本（真源 = `services/nodeHttp.nodeHttpGet`） */
-export type LyricHttpGet = (
-    url: string,
-    headers?: Record<string, string>,
-) => Promise<{ status: number; text: string }>;
+/** 注入式 GET：返回状态码 + 文本（真源 = `services/nodeHttp.nodeHttpGet`）。
+ *  🔴 2026-10-25 起**别名到 `TextHttpGet`**（`services/httpText`）——
+ *     各写一份同形签名，加字段时必有一处漏改。 */
+export type LyricHttpGet = TextHttpGet;
 
 /** 源顺序 = 弹窗展示顺序 = 「自动填入」的尝试顺序（网易云曲库最全、纯 JSON 最稳；QQ 需去 JSONP 包裹放最后） */
 export const LYRIC_SOURCE_ORDER: LyricSourceId[] = ['netease', 'kuwo', 'qq', 'kugou'];
@@ -124,11 +125,12 @@ const ADAPTERS: Record<
     },
 };
 
-/** 非 2xx 一律当失败：站点返回 403/404/500 时正文常常是 HTML 错误页，交给解析器只会静默得到 0 条 */
+/** 发一次 GET 并取正文。
+ *  🔴 状态码判定在 `services/httpText` 的唯一实现（`getTextWithHeaders`）——
+ *     ⛔ 别在这层或适配器里再写一份 `if (!res || res.status < 200 …)`，
+ *     等于把「什么叫请求失败」切成两处。本函数现在只剩「选哪套请求头」这一件事。 */
 async function getText(http: LyricHttpGet, url: string, source: LyricSourceId): Promise<string> {
-    const res = await http(url, LYRIC_SOURCE_HEADERS[source]);
-    if (!res || res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res?.status ?? '?'}`);
-    return res.text;
+    return getTextWithHeaders(http, url, LYRIC_SOURCE_HEADERS[source]);
 }
 
 function errText(e: unknown): string {
@@ -136,10 +138,14 @@ function errText(e: unknown): string {
 }
 
 /**
- * 四源并行搜索（**单源失败逐个降级**，返回的 `results` 与 `LYRIC_SOURCE_ORDER` 同序、长度恒为 4）。
+ * 四源并行搜索（**单源失败逐个降级**，返回的 `results` 与 `LYRIC_SOURCE_ORDER` 同序、长度恒为源数）。
  * 标题为空 ⇒ 不发任何请求，`query` 返回 `null`。
  */
-export async function searchLyrics(http: LyricHttpGet, title: string, author?: string): Promise<LyricSearchOutcome> {
+export async function searchLyrics(
+    http: LyricHttpGet,
+    title: string,
+    author?: string,
+): Promise<LyricSearchOutcome> {
     const query = buildLyricQuery(title, author);
     if (!query) return { query: null, results: [] };
     const results = await Promise.all(
@@ -161,7 +167,11 @@ export async function searchLyrics(http: LyricHttpGet, title: string, author?: s
  * 🔴 `text === null && !error` = **该源确实没有歌词**（正常结果，不是错误）；`error` 有值才是请求失败
  *    （弹窗据此区分「该源未找到」与「该源请求失败」，⛔ 别把两者写成同一句话）。
  */
-export async function fetchLyric(http: LyricHttpGet, source: LyricSourceId, id: string): Promise<LyricFetchOutcome> {
+export async function fetchLyric(
+    http: LyricHttpGet,
+    source: LyricSourceId,
+    id: string,
+): Promise<LyricFetchOutcome> {
     try {
         return { text: await ADAPTERS[source].lyric(http, id) };
     } catch (e) {

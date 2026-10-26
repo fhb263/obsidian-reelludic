@@ -56,11 +56,19 @@ describe('注册表元数据', () => {
         }
     });
 
-    it('igdb 双凭据源：keyField=Client ID + keyField2=Client Secret（已配置需两字段）', () => {
+    it('双凭据源：igdb（Client ID + Secret）、tmdb（API Key + Session ID，#665 账号同步）——已配置需两字段', () => {
         expect(PROVIDER_META.igdb.keyField2).toBe('igdbClientSecret');
         expect(PROVIDER_META.igdb.groups).toEqual(['game']);
+        // 🔴 #665：tmdb 也升级为双凭据 —— 搜索只用 API Key，账号同步（watchlist / favorite）要 session_id
+        expect(PROVIDER_META.tmdb.keyField2).toBe('tmdbSessionId');
+        expect(PROVIDER_META.tmdb.groups).toEqual(['movieTv']);
+        // 🔴🔴 #690（用户报障 2026-10-20：「tmdb 填了 API 连接成功但未填 id，显示未配置」）：
+        //    tmdb 的 Session ID **只服务同步**（搜索只用 API Key）⇒ 已配置判定只要求主凭据；
+        //    而 igdb 缺 Secret 连 token 都换不出来 ⇒ 仍按「两字段同有值」。
+        expect(PROVIDER_META.tmdb.keyField2OptionalForConfigured).toBe(true);
+        expect(PROVIDER_META.igdb.keyField2OptionalForConfigured).toBeUndefined();
         // 其余源不应误带 keyField2（单凭据源不受影响）
-        for (const pid of PROVIDERS.filter((p) => p.id !== 'igdb').map((p) => p.id)) {
+        for (const pid of PROVIDERS.filter((p) => p.id !== 'igdb' && p.id !== 'tmdb').map((p) => p.id)) {
             expect(PROVIDER_META[pid].keyField2, pid).toBeUndefined();
         }
     });
@@ -101,16 +109,25 @@ describe('候选源矩阵（T1：各组适用源全部 implemented → 候选 = 
     });
 });
 
-describe('默认链（T1 落上游 D2 表）', () => {
-    it('book=douban+openLibrary；game/music/movieTv/anime 不变；comic=豆瓣单源（2026-09-30 加回）', () => {
-        expect(DEFAULT_CHAINS.book).toEqual(['douban', 'openLibrary']);
-        expect(DEFAULT_CHAINS.game).toEqual(['douban', 'steam']);
-        expect(DEFAULT_CHAINS.music).toEqual(['douban', 'musicbrainz', 'itunes']);
-        expect(DEFAULT_CHAINS.movieTv).toEqual(['douban', 'tmdb']);
-        expect(DEFAULT_CHAINS.anime).toEqual(['douban', 'bangumi']);
-        // 🔴 用户裁定「漫画源接豆瓣、Bangumi、MangaDex 三个源」（2026-09-30）：豆瓣为链首主源。
-        //    ⚠️ 与 1.0.3 的旧值 ['bangumi','douban'] 不同：那是 Bangumi 主源两源，且那份实现已被删除重建。
-        expect(DEFAULT_CHAINS.comic).toEqual(['douban', 'bangumi', 'mangadex']);
+describe('默认链', () => {
+    it('🔴 2026-10-25 用户裁定：六组默认一律只有豆瓣（其他源默认不勾选）', () => {
+        //   用户原话：「默认配置下 设置-启用元数据凭据源 默认全部为仅豆瓣勾选启用，其他不勾选」
+        //   ⚠️ 旧口径（book=douban+openLibrary / movieTv=douban+tmdb / comic=douban+bangumi+mangadex …）
+        //      已被本批推翻，⛔ 别按测试里的历史注释把它们写回来。
+        expect(DEFAULT_CHAINS.book).toEqual(['douban']);
+        expect(DEFAULT_CHAINS.game).toEqual(['douban']);
+        expect(DEFAULT_CHAINS.music).toEqual(['douban']);
+        expect(DEFAULT_CHAINS.movieTv).toEqual(['douban']);
+        expect(DEFAULT_CHAINS.anime).toEqual(['douban']);
+        expect(DEFAULT_CHAINS.comic).toEqual(['douban']);
+    });
+
+    it('守不变量：豆瓣必须在全部六组的 groups 里 —— 否则「仅豆瓣」会被归一滤空、回退默认链成死循环', () => {
+        for (const g of ['book', 'game', 'music', 'movieTv', 'anime', 'comic'] as const) {
+            expect(PROVIDER_META.douban.groups).toContain(g);
+            // 默认链本身必须经得起归一（不依赖「回退默认链」这条兜底才拿得到）
+            expect(normalizeSourceChain(g, [...DEFAULT_CHAINS[g]])).toEqual(['douban']);
+        }
     });
 });
 
@@ -159,9 +176,9 @@ describe('normalizeSourceChain 归一', () => {
 });
 
 describe('resolveSourceChain 解析', () => {
-    it('未配置（undefined）→ 默认链', () => {
-        expect(resolveSourceChain(undefined, 'movieTv')).toEqual(['douban', 'tmdb']);
-        expect(resolveSourceChain(undefined, 'anime')).toEqual(['douban', 'bangumi']);
+    it('未配置（undefined）→ 默认链（2026-10-25 起六组均只有豆瓣）', () => {
+        expect(resolveSourceChain(undefined, 'movieTv')).toEqual(['douban']);
+        expect(resolveSourceChain(undefined, 'anime')).toEqual(['douban']);
     });
 
     it('已配置合法链 → 原样（保序）', () => {
@@ -169,12 +186,12 @@ describe('resolveSourceChain 解析', () => {
     });
 
     it('已配置空数组/全被滤空 → 回退默认链（脏数据防御）', () => {
-        expect(resolveSourceChain({ book: [] }, 'book')).toEqual(['douban', 'openLibrary']);
-        expect(resolveSourceChain({ book: ['tmdb'] }, 'book')).toEqual(['douban', 'openLibrary']); // tmdb 不适用 book 滤空 → 回退默认链
+        expect(resolveSourceChain({ book: [] }, 'book')).toEqual(['douban']);
+        expect(resolveSourceChain({ book: ['tmdb'] }, 'book')).toEqual(['douban']); // tmdb 不适用 book 滤空 → 回退默认链
     });
 
     it('不同组互不影响', () => {
-        expect(resolveSourceChain({ movieTv: ['tmdb'] }, 'anime')).toEqual(['douban', 'bangumi']);
+        expect(resolveSourceChain({ movieTv: ['tmdb'] }, 'anime')).toEqual(['douban']);
     });
 });
 
@@ -193,7 +210,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             group: 'book', chain: ['douban'],
             douban: { reachable: false, cookieInvalid: false }, aux: {},
         });
-        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
+        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据搜索源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
         expect(err).toContain('Douban 兜底不可用');
     });
 
@@ -203,7 +220,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: false, cookieInvalid: true },
             aux: { tmdb: 'unconfigured' },
         });
-        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 元数据源配置 › 元数据源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
+        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 元数据源配置 › 元数据搜索源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
         expect(err).toContain('豆瓣 Cookie 已失效或过期');
     });
 
@@ -291,7 +308,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             aux: { tmdb: 'unconfigured' },
         });
         expect(err).toContain('未配置凭据');
-        expect(err).toContain('设置 → 元数据源配置 › 元数据源凭据');
+        expect(err).toContain('设置 → 元数据源配置 › 元数据搜索源凭据');
         expect(err).toContain('测试连接');
     });
 
@@ -332,7 +349,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: true, cookieInvalid: false },
             aux: { bangumi: 'unconfigured' },
         });
-        expect(err).toContain('设置 → 元数据源配置 › 元数据源凭据');
+        expect(err).toContain('设置 → 元数据源配置 › 元数据搜索源凭据');
         expect(err).toContain('Bangumi Token');
     });
 });

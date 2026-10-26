@@ -61,15 +61,6 @@ export const POSTER_COLUMNS_DEFAULT = 6;
 export const POSTER_COLUMNS_MIN = 1;
 export const POSTER_COLUMNS_MAX = 12;
 
-/**
- * 🔴 #626 **海报墙**的列数上界（比卡片网格更宽一档）。
- *
- * 为什么墙可以更密：墙是**纯封面 + 一行标题**，一张卡要承载的信息只有封面 ⇒ 缩小到 16 列
- * （1080px 容器约 60px 一张）仍可辨认「这是哪部」。卡片网格到那一档已经读不出副行文字了。
- * ⚠️ 下界两个视图共用 `POSTER_COLUMNS_MIN`（1 列 = 满宽那张）。
- */
-export const POSTER_WALL_COLUMNS_MAX = 16;
-
 const DEFAULT_DENSITY: PosterDensity = 'standard';
 
 // 合法值集合以「标签表的自有键」为准（禁用 `in` —— 会沿原型链把 toString/__proto__ 判为合法，
@@ -87,12 +78,13 @@ export function normalizePosterDensity(raw: unknown): PosterDensity {
 }
 
 /**
- * 归一自定义列数：数值 → 四舍五入后钳制到 `[1, max]`（`max` 缺省 `POSTER_COLUMNS_MAX` = 12；
- * 海报墙传 `POSTER_WALL_COLUMNS_MAX` = 16）。
+ * 归一自定义列数：数值 → 四舍五入后钳制到 `[1, max]`（`max` 缺省 `POSTER_COLUMNS_MAX` = 12）。
  * **空值 / 非数字 → 缺省 6**（输入框被清空或用户乱打时，不该掉到「1 列」这种极端值）。
  * ⚠️ 只认 number 与「非空数字串」两种形态：`true` / `[]` 这类会被 `Number()` 悄悄转成 0 或 1 的值
  * 一律走缺省 —— 否则脏数据会被当成合法的「1 列」显示。
- * 🔴 `max` 是**缝在末尾的参数**：调用点不传就走 12，既有行为一字不变（改动只发生在海报墙那一路）。
+ * 🔴 用户 2026-10-20：「设置页里的海报墙列数项删除掉」 ⇒ 海报墙不再有自己的一档列数，
+ *    跟随共享的「海报密度」；`max` 参数保留只为「墙 = 纯封面，可以更密」这条历史口径在
+ *    缩放路径（`posterZoomColumns` 的 `max`）上复用，⛔ 不再是设置项的入口。
  */
 export function normalizePosterColumns(raw: unknown, max: number = POSTER_COLUMNS_MAX): number {
     let n: number;
@@ -139,34 +131,20 @@ export function posterGridTemplate(density: PosterDensity, columns: number, gap:
 }
 
 /**
- * 🔴 #626 **海报墙（`wall`）的列模板裁决** —— 墙有两套来源，这里的先后就是全部口径：
+ * 海报墙（`wall`）的列模板 —— 只是「换成墙的间距」的那一层。
  *
- *  ⑴ `wallColumns` **有值**（用户在墙上 Ctrl+滚轮缩过、或在设置页「海报墙列数」填过）
- *     ⇒ 墙走**自定义列数**，用 `wallColumns` 与**墙上自己的上界**（`POSTER_WALL_COLUMNS_MAX` = 16）。
- *     ⚠️ 这一路**完全不看** `posterDensity` —— 否则「在墙上缩放」会连带改掉卡片网格的档位。
- *  ⑵ `wallColumns` **缺省** ⇒ 墙**跟随**共享的「海报密度」档（零写入迁移：老用户观感一字不变）。
- *
- * 🔴 判据 = **「是个有限数才算配过」**（`typeof !== 'number' || !Number.isFinite` ⇒ 跟随）。
- *    为什么不是 `=== undefined`：`wallColumns` 是**从 data.json 直接读来的原始值**，
- *    手改过 / 被别的版本写过时可能是 `null` / 字符串 / `NaN` —— 那些一律按「没配过」处理
- *    （**跟随共享密度**是安全的那一边：观感与老用户一致，⛔ 不会把脏值静默变成「6 列」）。
- *    ⚠️ 也正因为要吃原始值，这个函数的入参类型是 `unknown`（归一全在这里一处收口）。
- *
- * ⚠️ 两条路都传 `POSTER_WALL_GAP`（墙的间距与卡片网格不同，见该常量）。
+ * 🔴 用户 2026-10-20：「设置页里的海报墙列数项删除掉」——`wallColumns` 设置键**整条下线**
+ *    （设置页没有入口了，再留一个「脚本还记得、界面看不见」的键就是鬼开关）。
+ *    现在墙与卡片网格**共用**「海报密度」这一档，唯一差别是间距（墙的 gap 更紧一档）。
+ * ⚠️ 这里**不再收 `wallColumns` 形参**：老 data.json 里可能还躺着这个键，但它已经没有任何读取方
+ *    （Settings 也不再把字段传给视图），留着形参反而像个「传了就有效」的开关。
+ * ⚠️ 间距照旧传 `POSTER_WALL_GAP`（墙的间距与卡片网格不同）。
  */
 export function posterGridTemplateForWall(
-    wallColumns: unknown,
     density: PosterDensity,
     columns: number,
 ): string {
-    if (typeof wallColumns !== 'number' || !Number.isFinite(wallColumns)) {
-        return posterGridTemplate(density, columns, POSTER_WALL_GAP);
-    }
-    return posterGridTemplate(
-        'custom',
-        normalizePosterColumns(wallColumns, POSTER_WALL_COLUMNS_MAX),
-        POSTER_WALL_GAP,
-    );
+    return posterGridTemplate(density, columns, POSTER_WALL_GAP);
 }
 
 /**
@@ -194,8 +172,9 @@ export function posterZoomColumns(current: unknown, dir: 'in' | 'out', max: numb
     //    #597 那套「按宽度算列数上限」实测把缩小的路堵死了：1080px 宽时上限只有 **5 列**，
     //    从 5 列再往下滚**恒 no-op**（用户眼前完全没反应，正是他报的那条）。
     //    ⇒ 现在缩小一路到 `POSTER_COLUMNS_MAX`（12 列，卡片约 80px）。
-    // 🔴 #626：上界改走 `max` 入参 —— 海报墙传 `POSTER_WALL_COLUMNS_MAX`（16 列）：
-    //    墙是纯封面 + 一行标题，更密一档仍读得出「这是哪部」；卡片网格到 16 列就没法读了。
+    // 🔴 #626：上界改走 `max` 入参（海报墙曾经传更宽的一档）。
+    //    用户 2026-10-20 删除「海报墙列数」设置项后，墙与卡片网格共用 12 列上限 ——
+    //    参数保留，因为「缩到几列」的上界是**调用方**的事，本函数不替它做主。
     //    ⚠️ 下界两个视图共用 `POSTER_COLUMNS_MIN`（1 列 = 满宽那张），不参数化。
     return Math.min(max, Math.max(POSTER_COLUMNS_MIN, next));
 }

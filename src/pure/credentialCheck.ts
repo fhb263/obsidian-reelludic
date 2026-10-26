@@ -110,3 +110,46 @@ export function configuredCredentialChecks(settings: unknown): { sources: string
 export function isExpired(status: boolean | undefined): boolean {
     return status === false;
 }
+
+/** 「凭据测试结论」的落盘形态：键 → 测通没测通（`source:x` / `music:x` / `ai:x`）。 */
+export type CredentialStatusMap = Record<string, boolean>;
+
+/**
+ * 🔴🔴 用户裁定（1.4.x）：「已测试链接得到的**连接失败**标签要持久化，重启新会话后不要变回『已配置』，
+ *    要等到下一次用户测过才改」。⇒ 结论必须落盘，不能只活在内存 Map 里。
+ *
+ * 为什么这条以前做不到（根因，⛔ 别只看表面）：结论一直存在 `main.ts` 的 `Map<string, boolean>`，
+ *   `loadData()` 从不读回它；而开机自检的白名单里**没有豆瓣**（#634：豆瓣必然误报）——
+ *   于是「豆瓣测过失败 → 重启 → 既无狗盘值、自检又不测它」⇒ 徽标必然回到「已配置」。
+ *
+ * 下面是**纯的归一/读写**（零 obsidian / 零 DOM ⇒ 可单测）：
+ *   · 只有 `true` / `false` 算结论，其余（脏数据、`null`、字符串）**一律丢掉** ——
+ *     ⛔ 别把 `"false"` 这种真值串当成 false，那会把「没测过」画成「连接失败」。
+ *   · `undefined` 仍然表示「还没有结论」（= 不标徽标），与内存态口径一致。
+ */
+export function normalizeCredentialStatus(raw: unknown): CredentialStatusMap {
+    if (!raw || typeof raw !== 'object') return {};
+    const out: CredentialStatusMap = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof v === 'boolean' && k) out[k] = v;
+    }
+    return out;
+}
+
+/** 读一条结论（`undefined` = 没测过）。 */
+export function statusOf(status: CredentialStatusMap, key: string): boolean | undefined {
+    return Object.prototype.hasOwnProperty.call(status, key) ? status[key] : undefined;
+}
+
+/** 写入一条结论，**返回新对象**（⛔ 别原地改：调用方要能判断「值有没有变」再决定落不落盘）。 */
+export function withStatus(status: CredentialStatusMap, key: string, ok: boolean): CredentialStatusMap {
+    return { ...status, [key]: ok };
+}
+
+/** 清掉一条结论（用户改了凭据 ⇒ 旧结论作废），返回新对象。 */
+export function withoutStatus(status: CredentialStatusMap, key: string): CredentialStatusMap {
+    if (!Object.prototype.hasOwnProperty.call(status, key)) return status;
+    const next = { ...status };
+    delete next[key];
+    return next;
+}

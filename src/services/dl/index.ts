@@ -633,6 +633,36 @@ export async function dlTestConnection(
                 : { ok: false, message: `酷狗 Cookie 无效或已过期（errno=${info.errno}），请重新登录复制` };
         }
         if (source === 'kuwo') return { ok: true, message: '酷我免登录即可下载，Cookie 非必需' };
+        // 🔴 2026-10-25（用户：「在b站音频流凭据行底下加个测试连接按钮」）：
+        //    「有效」的判据 = **`x/web-interface/nav` 认得这份 Cookie**（`code === 0 && data.isLogin === true`）。
+        //    为什么不用「能不能取字幕」当判据：字幕接口在**未登录**时也回 `code: 0`（只把
+        //    `need_login_subtitle` 置真、字幕数组空），照它判会把匿名请求判成「有效」。
+        //    为什么不用「能不能下载音频」当判据：那要真跑 yt-dlp 二进制，测一次几十秒，
+        //    而且失败原因是「这台机器没装 yt-dlp」而不是「Cookie 坏了」——两件事必须分开。
+        if (source === 'bilibili') {
+            if (!c) return { ok: false, message: '未粘贴 B 站 Cookie' };
+            const res = await t.get('https://api.bilibili.com/x/web-interface/nav', {
+                'User-Agent': UA,
+                Referer: 'https://www.bilibili.com/',
+                Accept: 'application/json, text/plain, */*',
+                Cookie: c,
+            });
+            if (!res || res.status < 200 || res.status >= 300) return { ok: false, message: '请求失败（网络或接口变更）' };
+            let info: { code: number; isLogin: boolean; uname: string };
+            try {
+                const root = JSON.parse(res.text) as { code?: unknown; data?: { isLogin?: unknown; uname?: unknown } };
+                info = {
+                    code: typeof root.code === 'number' ? root.code : -1,
+                    isLogin: root.data?.isLogin === true,
+                    uname: typeof root.data?.uname === 'string' ? root.data.uname : '',
+                };
+            } catch {
+                return { ok: false, message: '接口返回的不是 JSON（可能被风控拦截）' };
+            }
+            if (info.code !== 0) return { ok: false, message: `B 站接口返回 code=${info.code}，Cookie 无效或已过期，请重新登录复制` };
+            if (!info.isLogin) return { ok: false, message: 'B 站 Cookie 无效或已过期（未登录状态），请重新登录复制' };
+            return { ok: true, message: info.uname ? `B 站 Cookie 有效（${info.uname}）` : 'B 站 Cookie 有效' };
+        }
         return { ok: false, message: `未知平台：${source}` };
     } catch (e) {
         return { ok: false, message: `请求失败：${e instanceof Error ? e.message : String(e)}` };
@@ -788,7 +818,7 @@ async function resolveAudio(
     if (song.source === 'qq') {
         const cookie = (cookies?.qq ?? '').trim();
         if (!cookie) {
-            return { error: `QQ 需先在 设置 → 元数据源配置 › 音乐源凭据 粘贴登录 Cookie` };
+            return { error: `QQ 需先在 设置 → 元数据源配置 › 音乐下载源凭据 粘贴登录 Cookie` };
         }
         const mid = song.songmid ?? song.id;
         if (!mid) return { error: '缺少 QQ 歌曲 songmid' };

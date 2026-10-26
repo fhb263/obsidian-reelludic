@@ -70,6 +70,13 @@ describe('excerptCardLocLabel（卡片信息行）', () => {
         expect(excerptCardLocLabel('书名', { chapter: 1, pct: 18.6 })).toBe('摘自《书名》 · 第 1 章 · 19%');
         expect(excerptCardLocLabel('')).toBe('摘自《作品名称》');
     });
+
+    it('🔴 PDF 传 unit=页：loc.chapter 在 PDF 里是一基页码，⛔ 不能被写成「第 N 章」', () => {
+        expect(excerptCardLocLabel('活着', { chapter: 7, pct: 62 }, '页')).toBe('摘自《活着》 · 第 7 页 · 62%');
+        expect(excerptCardLocLabel('活着', { chapter: 7, pct: 0 }, '页')).toBe('摘自《活着》 · 第 7 页');
+        // 缺省仍是「章」—— TXT / EPUB 的调用点一个字都不用改
+        expect(excerptCardLocLabel('活着', { chapter: 7, pct: 62 })).toBe('摘自《活着》 · 第 7 章 · 62%');
+    });
 });
 
 describe('placeCard（就地浮层落位：贴锚点上方、放不下转下方、四周钳制）', () => {

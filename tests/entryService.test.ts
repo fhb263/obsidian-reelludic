@@ -181,7 +181,7 @@ describe('EntryService 笔记生成', () => {
         const e = await svc.create({ type: 'tv', title: '葬送的芙莉莲', status: 'watching', rating: 5 });
         const path = await svc.writeNote(e.id);
         expect(path).toBe('ReelLudic/笔记/teleplay/葬送的芙莉莲.md');
-        expect(io.files[path]).toContain('> [!bookinfo]+ **《葬送的芙莉莲》**');
+        expect(io.files[path]).toContain('## 个人评语'); // #596 起笔记表格缺省关 ⇒ 顶部无 bookinfo callout
         expect(io.files[path]).toContain('status: watching');
         expect((await svc.get(e.id))!.notePath).toBe(path);
     });
@@ -200,7 +200,7 @@ describe('EntryService 自定义数据目录（libraryDir 接入）', () => {
         expect(io.files['MyLib/catalog.json']).toContain('沙丘');
         const path = await svc.writeNote(e.id);
         expect(path).toBe('MyLib/entries/movie/沙丘.md');
-        expect(io.files['MyLib/entries/movie/沙丘.md']).toContain('> [!bookinfo]+ **《沙丘》**');
+        expect(io.files[path]).toContain('## 个人评语');
     });
 
     it('空目录回退默认 ReelLudic（不产生 /catalog.json 根路径）', async () => {
@@ -309,7 +309,7 @@ describe('EntryService writeNote 合并写入策略 C', () => {
         const svc = new EntryService(io);
         const e = await svc.create({ type: 'book', title: '债务危机' });
         const path = await svc.writeNote(e.id);
-        expect(io.files[path]).toContain('> [!bookinfo]+ **《债务危机》**');
+        expect(io.files[path]).toContain('## 个人评语');
         expect(io.files[path]).not.toContain('## 摘抄');
     });
 });
@@ -403,51 +403,75 @@ describe('EntryService addExcerpt 摘抄追加', () => {
     });
 });
 
-describe('EntryService addPlaySession/removePlaySession 游玩记录', () => {
-    it('仅游戏可用，非 game 抛错', async () => {
+// #685 契约变更：旧的 addPlaySession/removePlaySession（仅游戏）已泛化为
+//   addTimeSession/removeTimeSession（书籍/音乐/游戏共用时长明细），
+//   并新增 addRoundLog/removeRoundLog（重温/周目）、setEntryComment（短评）、setEntryGuide（攻略）。
+describe('EntryService 时长明细（#685 addTimeSession/removeTimeSession）', () => {
+    it('仅书籍/音乐/游戏可用，其它类型抛错', async () => {
         const svc = new EntryService(memIO());
-        const e = await svc.create({ type: 'book', title: '置身事内' });
-        await expect(svc.addPlaySession(e.id, { date: '2026-08-01', minutes: 30 })).rejects.toThrow('only for game');
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        await expect(svc.addTimeSession(e.id, { date: '2026-08-01', minutes: 30 })).rejects.toThrow('only for book/music/game');
     });
 
-    it('追加游玩记录：明细入账 + 笔记「游玩记录」章节同步更新；playtimeMinutes（手动总时长）不受影响', async () => {
+    it('游戏：明细入账 + 笔记「游玩记录」章节同步更新；playtimeMinutes（手动总时长）不受影响', async () => {
         const io = memIO();
         const svc = new EntryService(io);
         const e = await svc.create({ type: 'game', title: '黑神话悟空', playtimeMinutes: 120 });
-        const r = await svc.addPlaySession(e.id, { date: '2026-08-01', minutes: 45, note: '刚打过虎先锋' });
+        const r = await svc.addTimeSession(e.id, { date: '2026-08-01', minutes: 45, note: '刚打过虎先锋' });
         expect(r.playSessions).toHaveLength(1);
         expect(r.playSessions![0]).toMatchObject({ date: '2026-08-01', minutes: 45, note: '刚打过虎先锋' });
         // 总时长手动填写，记录不自动累计
         expect(r.playtimeMinutes).toBe(120);
-        // 笔记已生成且包含新记录
         const note = io.files['ReelLudic/笔记/game/黑神话悟空.md'];
         expect(note).toBeTruthy();
         expect(note).toContain('## 游玩记录');
         expect(note).toContain('**2026-08-01** · 0.8h · 刚打过虎先锋');
     });
 
-    it('多次追加按序入账，playtimeMinutes 不变', async () => {
+    it('书籍：明细入账 + 累加 readMinutes + 笔记章节名为「阅读记录」', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'book', title: '置身事内', readMinutes: 30 });
+        const r = await svc.addTimeSession(e.id, { date: '2026-08-01', minutes: 45 });
+        expect(r.playSessions).toHaveLength(1);
+        expect(r.readMinutes).toBe(75);
+        const note = io.files['ReelLudic/笔记/book/置身事内.md'];
+        expect(note).toContain('## 阅读记录');
+        expect(note).toContain('**2026-08-01** · 0.8h');
+    });
+
+    it('音乐：明细入账 + 累加 listenMinutes + 笔记章节名为「收听记录」', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'music', title: '孤勇者' });
+        const r = await svc.addTimeSession(e.id, { date: '2026-08-01', minutes: 20 });
+        expect(r.listenMinutes).toBe(20);
+        const note = io.files['ReelLudic/笔记/music/孤勇者.md'];
+        expect(note).toContain('## 收听记录');
+    });
+
+    it('多次追加按序入账，游戏总时长不变', async () => {
         const svc = new EntryService(memIO());
         const e = await svc.create({ type: 'game', title: '塞尔达', playtimeMinutes: 300 });
-        await svc.addPlaySession(e.id, { date: '2026-08-01', minutes: 30 });
-        const r = await svc.addPlaySession(e.id, { date: '2026-08-02', minutes: 90 });
+        await svc.addTimeSession(e.id, { date: '2026-08-01', minutes: 30 });
+        const r = await svc.addTimeSession(e.id, { date: '2026-08-02', minutes: 90 });
         expect(r.playSessions).toHaveLength(2);
         expect(r.playtimeMinutes).toBe(300);
     });
 
-    it('无 playtimeMinutes 时保持 undefined（不自动派生）', async () => {
+    it('无总时长字段时保持 undefined（不自动派生）', async () => {
         const svc = new EntryService(memIO());
         const e = await svc.create({ type: 'game', title: '星露谷' });
-        const r = await svc.addPlaySession(e.id, { date: '2026-08-03', minutes: 60 });
+        const r = await svc.addTimeSession(e.id, { date: '2026-08-03', minutes: 60 });
         expect(r.playtimeMinutes).toBeUndefined();
     });
 
-    it('删除指定游玩记录并同步重写笔记；playtimeMinutes 不受影响', async () => {
+    it('删除指定时长明细并同步重写笔记；总时长不受影响', async () => {
         const svc = new EntryService(memIO());
         const e = await svc.create({ type: 'game', title: '艾尔登法环', playtimeMinutes: 200 });
-        await svc.addPlaySession(e.id, { date: '2026-08-01', minutes: 30 });
-        await svc.addPlaySession(e.id, { date: '2026-08-02', minutes: 90 });
-        const r = await svc.removePlaySession(e.id, 0);
+        await svc.addTimeSession(e.id, { date: '2026-08-01', minutes: 30 });
+        await svc.addTimeSession(e.id, { date: '2026-08-02', minutes: 90 });
+        const r = await svc.removeTimeSession(e.id, 0);
         expect(r.playSessions).toHaveLength(1);
         expect(r.playSessions![0].date).toBe('2026-08-02');
         expect(r.playtimeMinutes).toBe(200);
@@ -456,12 +480,128 @@ describe('EntryService addPlaySession/removePlaySession 游玩记录', () => {
     it('index 越界抛错', async () => {
         const svc = new EntryService(memIO());
         const e = await svc.create({ type: 'game', title: '双人成行' });
-        await expect(svc.removePlaySession(e.id, 0)).rejects.toThrow('session index');
+        await expect(svc.removeTimeSession(e.id, 0)).rejects.toThrow('session index');
     });
 
     it('不存在的条目抛 not found', async () => {
         const svc = new EntryService(memIO());
-        await expect(svc.addPlaySession('nope', { date: '2026-08-01', minutes: 30 })).rejects.toThrow('entry not found');
+        await expect(svc.addTimeSession('nope', { date: '2026-08-01', minutes: 30 })).rejects.toThrow('entry not found');
+    });
+});
+
+describe('EntryService 重温 / 周目记录（#685 addRoundLog/removeRoundLog）', () => {
+    it('重温只给影视：书籍抛错', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({ type: 'book', title: '置身事内' });
+        await expect(svc.addRoundLog(e.id, { kind: 'rewatch', date: '2026-08-01', round: 2 })).rejects.toThrow('rewatch only for');
+    });
+
+    it('周目只给游戏：影视抛错', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        await expect(svc.addRoundLog(e.id, { kind: 'playthrough', date: '2026-08-01', round: 2 })).rejects.toThrow('playthrough only for game');
+    });
+
+    it('影视重刷次数 + 感想写入笔记「重温记录」章节', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        const r = await svc.addRoundLog(e.id, { kind: 'rewatch', date: '2026-08-01', round: 2, note: '二刷更懂' });
+        expect(r.roundLogs).toHaveLength(1);
+        expect(r.roundLogs![0]).toMatchObject({ kind: 'rewatch', date: '2026-08-01', round: 2, note: '二刷更懂' });
+        const note = io.files['ReelLudic/笔记/movie/沙丘.md'];
+        expect(note).toContain('## 重温记录');
+        expect(note).toContain('**2026-08-01** · 第 2 次重刷 · 二刷更懂');
+    });
+
+    it('游戏周目序号 + 感想写入笔记「周目记录」章节', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'game', title: '艾尔登法环' });
+        await svc.addRoundLog(e.id, { kind: 'playthrough', date: '2026-08-01', round: 1 });
+        const r = await svc.addRoundLog(e.id, { kind: 'playthrough', date: '2026-09-01', round: 2, note: '二周目' });
+        expect(r.roundLogs).toHaveLength(2);
+        const note = io.files['ReelLudic/笔记/game/艾尔登法环.md'];
+        expect(note).toContain('## 周目记录');
+        expect(note).toContain('**2026-09-01** · 第 2 周目 · 二周目');
+    });
+
+    it('删除指定轮次记录并同步重写笔记', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({ type: 'game', title: '塞尔达' });
+        await svc.addRoundLog(e.id, { kind: 'playthrough', date: '2026-08-01', round: 1 });
+        await svc.addRoundLog(e.id, { kind: 'playthrough', date: '2026-09-01', round: 2 });
+        const r = await svc.removeRoundLog(e.id, 0);
+        expect(r.roundLogs).toHaveLength(1);
+        expect(r.roundLogs![0].date).toBe('2026-09-01');
+    });
+
+    it('轮次下标越界抛错', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({ type: 'game', title: '双人成行' });
+        await expect(svc.removeRoundLog(e.id, 0)).rejects.toThrow('round log index');
+    });
+});
+
+describe('EntryService 短评 / 攻略（#685 setEntryComment/setEntryGuide）', () => {
+    // 🔴 2026-10-25 用户：「添加短评不要追加到个人评语，另起个标题追加」
+    //   ⇒ 口径迁移：短评 **不再拼进 `notes`（个人评语）**，而是落 `commentLog[]`，
+    //     由 noteGenerator 渲染成笔记里独立的 `## 短评` 章节。下面断言跟着新规格走，
+    //     ⛔ 不是「改到能过」——不变量仍是「追加、不覆盖、带日期前缀、进笔记」。
+    it('短评落 commentLog（⛔ 不再污染 notes/个人评语），并进笔记「短评」章节', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '沙丘', notes: '第一句' });
+        const r = await svc.setEntryComment(e.id, '第二句', '2026-10-22');
+        // 个人评语**原样不动**
+        expect(r.notes).toBe('第一句');
+        expect(r.commentLog).toEqual([{ date: '2026-10-22', text: '第二句' }]);
+        const note = io.files['ReelLudic/笔记/movie/沙丘.md'];
+        expect(note).toContain('## 短评');
+        expect(note).toContain('- **2026-10-22** · 第二句');
+        // 短评不该再出现在「个人评语」章节里（两章节都在时才切片，缺一个就跳过这项）
+        const iNotes = note.indexOf('## 个人评语');
+        const iComment = note.indexOf('## 短评');
+        if (iNotes >= 0 && iComment > iNotes) {
+            expect(note.slice(iNotes, iComment)).not.toContain('第二句');
+        }
+    });
+
+    it('短评追加语义：连写两条都在，⛔ 不是覆盖', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        await svc.setEntryComment(e.id, '好看', '2026-10-22');
+        const r = await svc.setEntryComment(e.id, '更好看', '2026-10-23');
+        expect(r.commentLog).toEqual([
+            { date: '2026-10-22', text: '好看' },
+            { date: '2026-10-23', text: '更好看' },
+        ]);
+    });
+
+    it('短评不传日期 ⇒ 用本地今天（与「今日记录」同一口径）', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        const r = await svc.setEntryComment(e.id, '好看');
+        const d = new Date();
+        const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        expect(r.commentLog).toEqual([{ date: today, text: '好看' }]);
+    });
+
+    it('攻略只给游戏：影视抛错', async () => {
+        const svc = new EntryService(memIO());
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        await expect(svc.setEntryGuide(e.id, '攻略')).rejects.toThrow('guide only for game');
+    });
+
+    it('游戏攻略写入笔记「攻略」章节', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'game', title: '黑神话悟空' });
+        const r = await svc.setEntryGuide(e.id, 'boss 打法');
+        expect(r.guide).toBe('boss 打法');
+        const note = io.files['ReelLudic/笔记/game/黑神话悟空.md'];
+        expect(note).toContain('## 攻略');
+        expect(note).toContain('boss 打法');
     });
 });
 
@@ -572,7 +712,7 @@ describe('removeHighlightSection（#528：清理存量笔记里的「## 高亮�
         expect(io.files[notePath]).not.toContain('## 高亮');
         expect(io.files[notePath]).not.toContain('hlCCC');
         expect(io.files[notePath]).toContain('## 摘抄'); // 摘抄是另一功能，必须留下
-        expect(io.files[notePath]).toContain('> [!bookinfo]+ **《坛经》**'); // 模板其余部分不动
+        expect(io.files[notePath]).toContain('## 摘抄'); // 模板其余部分不动
     });
 
     it('无该区 → false 且不写盘、指纹不刷新（幂等：不是每次启动都改笔记）', async () => {

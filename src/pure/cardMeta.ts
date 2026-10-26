@@ -1,7 +1,7 @@
 // 卡片元信息文本（pure/cardMeta）
 // 海报墙 grid 卡片同列依赖 subtitle / creator 两行高度一致，
 // 数据缺失时返回「—」占位以保持行占位，杜绝同列卡片错位。
-import { ENTRY_TYPES, type EntryType, type MediaEntry } from 'data/types';
+import { ENTRY_TYPES, type BookKind, type EntryType, type MediaEntry } from 'data/types';
 import { seriesGenres, seriesYearSpan, type SeriesGroup } from 'pure/seriesGroup';
 
 /** 缺失字段占位符：与同列卡片保持行对齐 */
@@ -214,6 +214,40 @@ export function resolveCardFieldsByType(byType: unknown): Record<EntryType, Card
         out[t] = v === undefined ? [...CARD_FIELD_DEFAULTS_BY_TYPE[t]] : normalizeCardFieldsForType(t, v);
     }
     return out;
+}
+
+/**
+ * 🔴🔴 #653：**书籍按子分类**（文学 / 网文 / 漫画）各自的卡片信息栏。
+ *
+ * 用户点名的类型顺序把「书籍」拆成了三格 ⇒ 三格各存一份：`settings.cardFieldsByKind[kind]`。
+ * 🔴 **零迁移的回落链**：`cardFieldsByKind[kind]` → **`cardFieldsByType.book`** → 书籍预填。
+ *    中间那一跳是保命的 —— 老用户只配过「书籍」那一份，三个子类必须一起继承它，
+ *    ⛔ 而不是各自回到预填（否则升级后用户配好的书籍信息栏在网文卡片上会「消失」）。
+ *    （与 `pure/fieldOrder.orderForBookKind` 同一条口径。）
+ * ⚠️ 三键齐全，⛔ 不留 `undefined`：调用方一律按 `kind` 直接取，不必再判空。
+ */
+export function resolveCardFieldsByKind(byType: unknown, byKind: unknown): Record<BookKind, CardFieldKey[]> {
+    const base = resolveCardFieldsByType(byType);
+    const src = byKind && typeof byKind === 'object' ? (byKind as Record<string, unknown>) : {};
+    return {
+        book: src.book === undefined ? base.book : normalizeCardFieldsForType('book', src.book),
+        novel: src.novel === undefined ? base.book : normalizeCardFieldsForType('book', src.novel),
+        comic: src.comic === undefined ? base.book : normalizeCardFieldsForType('book', src.comic),
+    };
+}
+
+/**
+ * 某条条目（或某张系列卡）该用哪一份卡片信息栏 —— **唯一取值出口**。
+ * 🔴 书籍看 `bookKind`（缺省按「文学」，与 `pure/bookKind` 的缺省口径一致），其余按 `type`。
+ */
+export function cardFieldsFor(
+    type: EntryType,
+    kind: BookKind | undefined,
+    byType: Record<EntryType, CardFieldKey[]>,
+    byKind: Record<BookKind, CardFieldKey[]>,
+): CardFieldKey[] {
+    if (type === 'book') return byKind[kind === 'novel' || kind === 'comic' ? kind : 'book'] ?? byType.book;
+    return byType[type] ?? [];
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

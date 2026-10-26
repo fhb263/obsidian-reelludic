@@ -33,10 +33,19 @@ export interface ReleaseNote {
  * ⚠️ 顺序即展示顺序；`RELEASE_NOTES[0]` = 当前版本（弹窗第一行）。
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
+    // 🔴 1.4.1 的 summary 是**用户 2026-10-25 裁定的归档口径**（「修复 TMDB 同步问题的列入 1.4.1 版本更新规划，
+    //    以后的修改都列入 1.4.1」）⇒ 本版主题 = TMDB 同步修复链 + 紧随的界面收口。
+    //    ⚠️ 注释**不许插在 `version`/`date`/`summary` 三行之间** —— 断言脚本用
+    //    /version: '…',\s*date: '…',\s*summary: '…'/ 抽这张表，插一行注释就会漏掉本条（1.4.0 那批实测过）。
+    {
+        version: '1.4.1',
+        date: '2026-10-25',
+        summary: '修复 TMDB 清单同步（清单地址单复数、v4 令牌认证、access_token 换 session_id）；TMDB 凭据两格各归各位；精简其说明文案；微信读书状态标签改「未配置」。',
+    },
     {
         version: '1.4.0',
-        date: '2026-10-16',
-        summary: '修复 EPUB 正文插图无法显示与漫画阅读卡顿，打开章节更快；Steam 凭据行取消副标题、提示并入说明，两个按钮间距统一。',
+        date: '2026-10-25',
+        summary: '列表改可编辑表格；新增元数据批量导入、评分看板、Bases模板与高级设置；增强PDF/漫画阅读；修复同步覆盖、漫画进度；右键“编辑条目”更名“编辑属性”。',
     },
     {
         version: '1.3.0',

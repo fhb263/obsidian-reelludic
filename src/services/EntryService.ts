@@ -17,6 +17,7 @@ import {
 import { dropsReadingProgress } from 'pure/bookProgress';
 import { parseNoteMarks, type VideoMark } from 'pure/videoMarks';
 import { HIGHLIGHT_SECTION } from 'pure/highlight';
+import { RELATED_SECTION, extractRelatedSectionBody } from 'pure/noteEditable';
 import { lrcBlockLyrics, withLrcLyrics } from 'pure/lrcSource';
 import { DIR_NOTES } from 'pure/dirs';
 // 1.3.1 ① 字段映射：写笔记时按用户配置改名（缺省恒等）
@@ -24,9 +25,35 @@ import { EMPTY_FIELD_MAP, compileFieldMapText, type CompiledFieldMap } from 'pur
 // 1.3.1 ① 第 3 件：各类型笔记属性顺序（按 `e.type` 取值后传给 entryFrontmatter）
 import { resolveAllKindOrders, resolveAllOrders } from 'pure/fieldOrder';
 import { normalizeBookKind } from 'pure/bookKind';
+// 短评缺省日期 = 本地今天（与「今日记录」同一口径：⛔ 别用 toISOString 的 UTC 日期）
+import { todayLocal } from 'pure/dailyLog';
 
 function notFound(id: string): Error {
     return new Error('entry not found: ' + id);
+}
+
+/**
+ * 🔴 #635 笔记「## 关联」区的**重写保留**（`writeNote` 的保留区之一）。
+ *
+ * 三种情形（**顺序不能换**）：
+ *  ⑴ 目录侧**没有**关联（模板写的是提示行）而旧笔记该区**有内容** ⇒ 把旧内容**搬回**
+ *    （用户手改的关联是真数据；不搬 = 保存一次就没了）。
+ *  ⑵ 目录侧**有**关联 ⇒ 以目录为准（模板已经写好），⛔ 不搬回旧内容 ——
+ *    否则「在表单里加了一条关联 → 保存」会被旧笔记的关联区原样盖回去。
+ *  ⑶ 旧笔记**没有**该区 ⇒ 什么都不做（模板自带）。
+ *
+ * 🔴 为什么判据是「目录侧有没有」而不是「两边是否不同」：目录是**结构化真源**，
+ *    它能表达「没有关联」；笔记侧只有文本，判不出「用户删了这区」与「老笔记本来就没有这区」。
+ */
+function preserveRelatedSection(template: string, oldNote: string): string {
+    const oldBody = extractRelatedSectionBody(oldNote);
+    // 情形 ⑶ / 旧区为空：不动模板
+    if (oldBody === null || oldBody === '') return template;
+    // 情形 ⑵：模板该区已经有内容 ⇒ 目录说了算
+    const templBody = extractRelatedSectionBody(template);
+    if (templBody !== null && templBody !== '') return template;
+    // 情形 ⑴：搬回
+    return replaceAnnotationSection(template, RELATED_SECTION, oldBody);
 }
 
 export class EntryService {
@@ -265,7 +292,7 @@ export class EntryService {
         // 🔴 #640e：顺序按条目取 —— **书籍走 `bookKind` 那一份**（文学/网文/漫画各存各的），
         //    其余类型走 `type`。⛔ 别退回 `this.fieldOrders[e.type]`（那会让书籍三者共用一份，
         //    用户拆出来的三个子类分组当场失效）。
-        const md = entryFrontmatter(e, libraryDir, this.fieldMap, this.orderForEntry(e)) + '\n\n' + generateNoteMarkdown(e, libraryDir, { table: this.noteTable });
+        const md = entryFrontmatter(e, libraryDir, this.fieldMap, this.orderForEntry(e)) + '\n\n' + generateNoteMarkdown(e, libraryDir, { table: this.noteTable, allEntries: await this.list() });
         let final = md;
         if (e.notePath) {
             try {
@@ -275,6 +302,11 @@ export class EntryService {
                 }
                 // 歌词正文：整段搬回（`withLrcLyrics` 自己处理「无块 / 无歌词 / 无变化」三种情况）
                 final = withLrcLyrics(final, lrcBlockLyrics(old));
+                // 🔴 #635 关联区：**必须是保留区** —— 否则用户手动改过的关联行会在下一次保存时被模板覆盖掉
+                //    （本仓在 #396 的 LRC 上踩过同款）。⚠️ 与上面几个标注区不同：catalog 里**有** `related`
+                //    时以数据为准（模板已写），只有用户在笔记里手改**且**目录侧没有关联时才搬回，
+                //    否则「笔记手改 → 保存」会随手改把新加的关联冲掉。
+                final = preserveRelatedSection(final, old);
             } catch {
                 // 旧笔记不存在/不可读：跳过合并（首次写入或文件被外部移除）
             }
@@ -483,34 +515,44 @@ export class EntryService {
         }
     }
 
-    /** 追加游玩记录（仅游戏）：明细追加 + 同步重写笔记「游玩记录」章节（记录立即可见）。
-     *  playtimeMinutes 为手动填写的总时长，与明细解耦——记录不自动累计。 */
-    async addPlaySession(id: string, session: { date: string; minutes: number; note?: string }): Promise<MediaEntry> {
+    // ── #685 时长明细 / 重温 / 周目 / 攻略 / 短评 ──────────────────────────────────
+    // 🔴 这一族方法的共同约定：**落库后立刻重写笔记**（`writeNote`）—— 用户录完在笔记里就能看到，
+    //    不靠"下次打开笔记才刷新"。章节名与渲染在 noteGenerator 里（⛔ 别在两处各写一份）。
+
+    /** 追加一条**时长明细**（#685 泛化：游戏游玩 / 书籍阅读 / 音乐收听共用一套结构）。
+     *  - **游戏**：明细与 `playtimeMinutes` **解耦**（总时长手填或 Steam 同步 ⇒ 记录不自动累计，沿用旧口径）
+     *  - **书籍**：累加到 `readMinutes`（与内置阅读器自动累计同一字段 ⇒ 手动补记 = 再加一次）
+     *  - **音乐**：累加到 `listenMinutes`（同上：手动补记累加）
+     *  ⚠️ 书籍/音乐的总时长**删除明细时不回退**（明细与总数解耦，和游戏同口径 —— 读者累加的部分无法区分）。 */
+    async addTimeSession(id: string, session: { date: string; minutes: number; note?: string }): Promise<MediaEntry> {
         const c = await this.load();
         const idx = c.entries.findIndex((e) => e.id === id);
         if (idx < 0) throw notFound(id);
         const cur = c.entries[idx];
-        if (cur.type !== 'game') throw new Error('addPlaySession only for game');
+        if (cur.type !== 'game' && cur.type !== 'book' && cur.type !== 'music') {
+            throw new Error('addTimeSession only for book/music/game');
+        }
         const sessions = [...(cur.playSessions ?? []), { date: session.date, minutes: session.minutes, note: session.note }];
-        const merged = normalizeEntry({
-            ...cur,
-            playSessions: sessions,
-            updatedAt: this.now(),
-        });
+        const patch: Partial<MediaEntry> = { playSessions: sessions, updatedAt: this.now() };
+        if (cur.type === 'book') patch.readMinutes = (cur.readMinutes ?? 0) + session.minutes;
+        if (cur.type === 'music') patch.listenMinutes = (cur.listenMinutes ?? 0) + session.minutes;
+        const merged = normalizeEntry({ ...cur, ...patch });
         c.entries[idx] = merged;
         await this.save(c);
-        // 同步重写笔记：游玩记录章节由模板生成（含摘抄区合并回填），记录后立即出现在笔记
+        // 同步重写笔记：时长明细章节由模板生成（含摘抄区合并回填），记录后立即出现在笔记
         await this.writeNote(merged.id);
         return merged;
     }
 
-    /** 删除指定游玩记录（仅游戏）：删明细 + 同步重写笔记。playtimeMinutes（手动总时长）不受影响 */
-    async removePlaySession(id: string, index: number): Promise<MediaEntry> {
+    /** 删除一条**时长明细**（#685）。⚠️ 总时长（readMinutes / listenMinutes / playtimeMinutes）**不受影响** —— 与游戏旧口径一致 */
+    async removeTimeSession(id: string, index: number): Promise<MediaEntry> {
         const c = await this.load();
         const idx = c.entries.findIndex((e) => e.id === id);
         if (idx < 0) throw notFound(id);
         const cur = c.entries[idx];
-        if (cur.type !== 'game') throw new Error('removePlaySession only for game');
+        if (cur.type !== 'game' && cur.type !== 'book' && cur.type !== 'music') {
+            throw new Error('removeTimeSession only for book/music/game');
+        }
         const sessions = cur.playSessions ?? [];
         if (index < 0 || index >= sessions.length) throw new Error(`session index out of range: ${index}`);
         const next = sessions.filter((_, i) => i !== index);
@@ -519,6 +561,89 @@ export class EntryService {
             playSessions: next.length ? next : undefined,
             updatedAt: this.now(),
         });
+        c.entries[idx] = merged;
+        await this.save(c);
+        await this.writeNote(merged.id);
+        return merged;
+    }
+
+    /** 追加一条**重温 / 周目**记录（#685）：影视「重刷次数 + 感想」、游戏「周目序号 + 感想」—— 感想落笔记内 */
+    async addRoundLog(id: string, log: { kind: 'rewatch' | 'playthrough'; date: string; round: number; note?: string }): Promise<MediaEntry> {
+        const c = await this.load();
+        const idx = c.entries.findIndex((e) => e.id === id);
+        if (idx < 0) throw notFound(id);
+        const cur = c.entries[idx];
+        // 🔴 类型闸门：重温 = 影视（movie/tv/anime）；周目 = 游戏。错类型直接拒，不静默改 kind
+        if (log.kind === 'rewatch' && cur.type !== 'movie' && cur.type !== 'tv' && cur.type !== 'anime') {
+            throw new Error('rewatch only for movie/tv/anime');
+        }
+        if (log.kind === 'playthrough' && cur.type !== 'game') throw new Error('playthrough only for game');
+        const logs = [
+            ...(cur.roundLogs ?? []),
+            { kind: log.kind, date: log.date, round: Math.max(1, Math.round(log.round)), note: log.note },
+        ];
+        const merged = normalizeEntry({ ...cur, roundLogs: logs, updatedAt: this.now() });
+        c.entries[idx] = merged;
+        await this.save(c);
+        await this.writeNote(merged.id);
+        return merged;
+    }
+
+    /** 删除一条**重温 / 周目**记录（#685）：按 roundLogs 下标删，笔记同步重写 */
+    async removeRoundLog(id: string, index: number): Promise<MediaEntry> {
+        const c = await this.load();
+        const idx = c.entries.findIndex((e) => e.id === id);
+        if (idx < 0) throw notFound(id);
+        const cur = c.entries[idx];
+        const logs = cur.roundLogs ?? [];
+        if (index < 0 || index >= logs.length) throw new Error(`round log index out of range: ${index}`);
+        const next = logs.filter((_, i) => i !== index);
+        const merged = normalizeEntry({
+            ...cur,
+            roundLogs: next.length ? next : undefined,
+            updatedAt: this.now(),
+        });
+        c.entries[idx] = merged;
+        await this.save(c);
+        await this.writeNote(merged.id);
+        return merged;
+    }
+
+    /** 写入**短评**（#685）：落 `commentLog`（笔记独立的「短评」章节），保存后立刻重写笔记
+     *  🔴 **追加**语义（⛔ 别改成覆盖）：右键「添加短评」是「再加一句」——
+     *     覆盖会把用户之前的短评吃掉。
+     *  🔴 用户 2026-10-25：「添加短评不要追加到个人评语，另起个标题追加」——
+     *     ⇒ 存到 `commentLog` 数组，由 `noteGenerator` 渲染成 `## 短评` 章节（日期倒序）。
+     *     ⛔ **别再往 `notes`（个人评语）里拼**：那会和用户手写的整段评语混成一段，
+     *        既分不清哪句是评语哪句是流水，也把评语正文越拖越长。
+     *  `date` 缺省 = 本地今天（老调用方 / 单测不必都传）。 */
+    async setEntryComment(id: string, text: string, date?: string): Promise<MediaEntry> {
+        const c = await this.load();
+        const idx = c.entries.findIndex((e) => e.id === id);
+        if (idx < 0) throw notFound(id);
+        const cur = c.entries[idx];
+        const body = text.trim();
+        if (!body) throw new Error('comment text is empty');
+        const logs = cur.commentLog ?? [];
+        const merged = normalizeEntry({
+            ...cur,
+            commentLog: [...logs, { date: date?.trim() || todayLocal(), text: body }],
+            updatedAt: this.now(),
+        });
+        c.entries[idx] = merged;
+        await this.save(c);
+        await this.writeNote(merged.id);
+        return merged;
+    }
+
+    /** 写入**攻略**（#685，游戏）：落 `guide`（笔记「攻略」章节），保存后立刻重写笔记 */
+    async setEntryGuide(id: string, text: string): Promise<MediaEntry> {
+        const c = await this.load();
+        const idx = c.entries.findIndex((e) => e.id === id);
+        if (idx < 0) throw notFound(id);
+        const cur = c.entries[idx];
+        if (cur.type !== 'game') throw new Error('guide only for game');
+        const merged = normalizeEntry({ ...cur, guide: text.trim(), updatedAt: this.now() });
         c.entries[idx] = merged;
         await this.save(c);
         await this.writeNote(merged.id);

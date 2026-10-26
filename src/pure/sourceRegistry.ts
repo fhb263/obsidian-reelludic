@@ -64,6 +64,19 @@ export interface ProviderMeta {
     keyField: string | null;
     /** 第二凭据字段名（双凭据源专用，如 IGDB Client Secret；单凭据源省略/undefined）。非 null 时「已配置」判定需两字段同时有值 */
     keyField2?: string | null;
+    /**
+     * 🔴🔴 #690（1.4.1，用户报障 2026-10-20）：「tmdb 我填了 API 连接成功但未填 id，为什么显示未配置」。
+     *
+     * 「已配置」徽标的判据 = **搜索能不能用**，不是「同步能不能跑」。
+     *   · 缺省（undefined）= 主凭据（`keyField`）与第二凭据（`keyField2`）**都得有** —— IGDB 的
+     *     Client ID + Client Secret 是一对，少一个连 **token 都换不出来**，搜索直接废 ⇒ 双缺即未配置，口径不变。
+     *   · **显式声明 =「只有主凭据是搜索的硬前置」**：TMDB 的 access_token 只服务**账号同步**
+     *     （watchlist / favorite），搜索走 API Key 就够 ⇒ 只填 API Key 应当显示「已配置」。
+     *     用户上一轮实测「测试连接 ✓ 成功，徽标却写未配置」，就是这两处判据**互相打架**（测试只查 API Key）。
+     *   ⚠️ 只影响**徽标文案**；同步入口（`renderTmdbSyncButton` / `TmdbSyncModal.readAll`）
+     *      在发请求前仍会自己拦「还缺 access_token」—— ⛔ 别因为本字段把同步的前置校验也放宽了。
+     */
+    keyField2OptionalForConfigured?: boolean;
     /** 已实现（可被搜索/进设置候选）；false = 注册位 */
     implemented: boolean;
     /**
@@ -77,15 +90,6 @@ export interface ProviderMeta {
      */
     domestic: boolean;
     /**
-     * 空态徽标文案（`keyField` 为空时设置页凭据行右侧显示的那两个字）。
-     *
-     * 🔴 存在的理由：徽标的默认两态是「未配置 / 可选 Key」，而后者里的 **Key** 是**写死**的 ——
-     *    #580 的微信读书凭据是**Cookie 不是 Key** ⇒ 借用「可选 Key」会让用户在凭据栏里找一个
-     *    根本不存在的 key。有此字段的源按它显示，其余源一字不变（⛔ 别顺手把所有源都写成这个字段）。
-     * ⚠️ **仅对「未配置」态生效**：一旦填了值，徽标恒为「已配置」（与所有源同一条口径）。
-     */
-    emptyBadge?: string;
-    /**
      * 设置页说明文案（凭据行展开后的那行提示）。
      *
      * 🔴 **#489 口径（用户 2026-10-02：「元数据源凭据项下只说明：获取网址、平台特色、用途就行了」）**：
@@ -94,6 +98,19 @@ export interface ProviderMeta {
      *    静默降级 / 索引什么别名）写进来，那些属于代码注释，不属于用户要读的一行。
      *    ⚠️ 本条**只管需凭据的那六个源**（`KEY_SOURCE_ORDER`）；免 Key 源不渲染凭据行，
      *       它们的 hint 保留原样（注册位数据按红线只增不删）。
+     *    🔴🔴 **2026-10-20 用户裁定：`用途：` 段按该源服务的类别写「返回 X 元数据」。**
+     *     用户原话：「还有一些源的描述文案去掉这些『用途：书籍的并排源，与豆瓣一起参与搜索』；
+     *     改成『用途：返回书籍等元数据源』」→ 随后修正：「用途描述按对应服务的类来改啊：『返回书籍（影视等）元数据』」。
+     *     ⇒ ① 原来按源写「X 的并排源 / 第二源 / 第三源 / 默认首源 / 补充源」那一套**全部收掉**：
+     *          哪一类搜索由「元数据搜索源启用」那张表的勾选决定，凭据行里再讲一遍既重复又容易过期。
+     *       ② **类别必须按 `groups` 写，⛔ 不许一律套「书籍」** —— TMDB / OMDb 是 movieTv（影视），
+     *          Bangumi 是 anime+comic（动画、漫画），Steam / IGDB 是 game，MusicBrainz / iTunes 是 music。
+     *          类别名的真源 = `GROUP_LABELS`（书籍 / 影视 / 动画 / 漫画 / 音乐 / 游戏）。
+     *       ③ 只服务**一个**组 ⇒「返回书籍元数据」；**多组** ⇒ 按 `SOURCE_GROUPS` 顺序**全列举**，
+     *          不再用「等」字收尾（豆瓣六组全占 ⇒「返回书籍、游戏、音乐、影视、动画、漫画元数据」）。
+     *     ⚠️ 段后若还有该源**专属的凭据提示**（豆瓣「缺 Cookie 会 403」、微信读书「Cookie 只在同步书架时需要」、
+     *       TMDB「API Key 参与搜索，Session ID 用于同步…」）**逐字保留**，只换「用途：」开头那一句。
+     *       ⛔ Steam 不在此列：它的长尾「个人资料与愿望单需公开可见」是硬前置，不是用途描述。
      */
     hint: string;
 }
@@ -103,43 +120,63 @@ export const PROVIDERS: readonly ProviderMeta[] = [
         id: 'douban', label: '豆瓣', groups: ['book', 'game', 'music', 'movieTv', 'anime', 'comic'], hosts: ['douban.com'],
         keyField: 'doubanCookie', implemented: true,
         domestic: true,
-        hint: '获取：登录 douban.com 后按 F12，复制任意请求的 Cookie（含 dbcl2）。特色：中文条目最全，带评分、评价人数与简介。用途：书籍 / 漫画 / 影视 / 动画 / 音乐 / 游戏的默认首源；缺 Cookie 会 403。',
+        hint: '获取：登录 douban.com 后按 F12，复制任意请求的 Cookie（含 dbcl2）。特色：中文条目最全，带评分、评价人数与简介。用途：返回书籍、游戏、音乐、影视、动画、漫画元数据；缺 Cookie 会 403。',
     },
     // 🔴 #580：微信读书（book 组第三源；用户 2026-10-09 点名「新增微信读书搜索源导入」）。
     //    位置紧跟豆瓣 —— 书籍组候选顺序 = 本表顺序 ⇒ 启用组那一行读作
     //    「豆瓣 / 微信读书 / Open Library / Google Books」（与用户原话的列举同序）。
     //    ⚠️ `keyField` 是 **Cookie** 而非 Key：**搜索本身免登录**（实测），
     //       Cookie 只在「测试连接」与后续的「从微信读书同步书架」里用得上 ⇒ 空 Cookie 时
-    //       它**照常参与搜索**（`OPTIONAL_KEY_SOURCES` / `OPTIONAL_KEY_AUX` 两处都放行，见各自注释）。
+    //       它**照常参与搜索**（放行逻辑在 `main.ts` 的 `OPTIONAL_KEY_AUX`，见该处注释）。
     {
         id: 'weread', label: '微信读书', groups: ['book'], hosts: ['weread.qq.com'],
         keyField: 'wereadCookie', implemented: true,
-        domestic: true, emptyBadge: '可选 Cookie',
-        hint: '获取：登录 weread.qq.com 后按 F12，复制任意请求头里的整条 Cookie。特色：中文电子书与网络文学平台，条目自带简介、出版方与评分。用途：书籍的并排源，与豆瓣一起参与搜索；Cookie 只在同步书架时需要。',
+        // 🔴 2026-10-25 用户裁定：「微信读书未配置时的状态标签从『可选 cookie』改成『未配置』以统一」
+        //    ⇒ 设置页徽标走全组统一的两态（已配置 / 未配置），⛔ 别为它单开第三套文案。
+        //    ⚠️ 与 steam 那次（#640e）同一口径：同页出现两套词比「Cookie 不是 Key」更影响理解 ⇒ 服从统一。
+        domestic: true,
+        hint: '获取：登录 weread.qq.com 后按 F12，复制任意请求头里的整条 Cookie。特色：中文电子书与网络文学平台，条目自带简介、出版方与评分。用途：返回书籍元数据；Cookie 只在同步书架时需要。',
     },
     {
         id: 'tmdb', label: 'TMDB', groups: ['movieTv'], hosts: ['themoviedb.org'],
-        keyField: 'tmdbApiKey', implemented: true,
+        // 🔴 #665：双凭据源（keyField2 = session_id）—— 搜索只用 API Key，账号同步（watchlist / favorite）
+        //    必须再有一个 session_id。
+        // 🔴🔴 #690（用户报障「填了 API Key 连接成功却显示未配置」）：与 igdb **不再同构** ——
+        //    igdb 两个字段是一对（换不出 token 就搜不了），tmdb 的 session_id **只服务同步** ⇒
+        //    已配置判定**只看 API Key**（`keyField2OptionalForConfigured`，判据见 createApiKeyRow 的 refreshBadge）。
+        //    上一版按 igdb 同构写「两字段同有值」，与「测试连接」（只查 API Key）**互相打架**，用户一眼就撞上了。
+        keyField: 'tmdbApiKey', keyField2: 'tmdbSessionId', keyField2OptionalForConfigured: true, implemented: true,
         domestic: false,
-        hint: '获取：themoviedb.org 注册后到「设置 → API」申请 API Key（免费）。特色：全球影视库，海报、剧集与演职员齐全。用途：影视的并排源，与豆瓣一起参与搜索。',
+        // 🔴 2026-10-25 用户裁定（原文：「Session ID 那一格填的只能是 access_token 近 300 位字符串，
+        //    第二格填的只能是从 themoviedb.org 的「设置 → API」获取的 32 位字符串，占位说明也是」）：
+        //    这段 hint 是「用户到底该怎么填」的唯一直白说明（设置页顶部就渲染它）⇒ **两格各说各的**，
+        //    ⛔ 不再写「凭据支持两种、任填其一」—— 那句正是 #700/#701 两轮返工的病根：两格都能填两种，
+        //    用户填错了界面上毫无反馈，只能点同步撞 401 再回来猜。
+        // 🔴 2026-10-25 二轮（用户原文：「描述文案精简一下 / API Key（v3）去 TMDB 官网「设置 → API」
+        //    获取（32位）；access_token（v4）需用同页的读取令牌，依次通过 `request_token` 接口获取、
+        //    浏览器批准、再通过 `access_token` 接口换取（eyJ开头）」）：
+        //    ⛔ 别再补「填上面/下面那格」「负责搜索/负责同步」这类**界面指路**——用户已明确要精简，
+        //    而且指路会和设置页实际渲染顺序耦合（上下顺序变过一次，文案就骗人）。
+        //    「哪格填哪种」由**输入框自己的占位文字 + 就地校验提示**负责（这两处才是紧贴输入框的位置）。
+        hint: '获取：TMDB 官网「设置 → API」页取两种凭据 —— API Key（v3）是 32 位字符串；access_token（v4）用同页的读取令牌，依次通过 request_token 接口获取、浏览器批准、再通过 access_token 接口换取（eyJ 开头）。特色：全球影视库，海报、剧集与演职员齐全。用途：返回影视元数据；access_token 用于同步想看清单与收藏。',
     },
     {
         id: 'bangumi', label: 'Bangumi', groups: ['anime', 'comic'], hosts: ['bangumi.tv', 'bgm.tv'],
         keyField: 'bangumiToken', implemented: true,
         domestic: false,
-        hint: '获取：bgm.tv 的「设置 → 开发」创建 Access Token。特色：中文动画与漫画条目最全，含章节与放送信息。用途：动画的并排源，兼作漫画的第二源。',
+        hint: '获取：bgm.tv 的「设置 → 开发」创建 Access Token。特色：中文动画与漫画条目最全，含章节与放送信息。用途：返回动画、漫画元数据。',
     },
     {
         id: 'openLibrary', label: 'Open Library', groups: ['book'], hosts: ['openlibrary.org'],
         keyField: null, implemented: true,
         domestic: false,
-        hint: '书籍第二源（免 Key）：openlibrary.org 开放检索，书名/作者/出版社/年份/ISBN/封面。',
+        hint: 'Open Library（免 Key）：返回书籍元数据 —— openlibrary.org 开放检索，书名/作者/出版社/年份/ISBN/封面。',
     },
     {
         id: 'googleBooks', label: 'Google Books', groups: ['book'], hosts: ['books.google.com'],
         keyField: 'googleBooksApiKey', implemented: true,
         domestic: false,
-        hint: '获取：console.cloud.google.com 启用 Books API 后创建 API Key。特色：书目元数据较全，含 ISBN、页数与分类。用途：书籍的补充源；Key 可选，不填也能用，只是免费额度受限。',
+        hint: '获取：console.cloud.google.com 启用 Books API 后创建 API Key。特色：书目元数据较全，含 ISBN、页数与分类。用途：返回书籍元数据；Key 可选，不填也能用，只是免费额度受限。',
     },
     {
         id: 'steam', label: 'Steam', groups: ['game'], hosts: ['steampowered.com', 'steamcommunity.com'],
@@ -147,9 +184,11 @@ export const PROVIDERS: readonly ProviderMeta[] = [
         //    ⇒ 这里挂上凭据字段，设置页才渲染凭据行（用户要的「新增 steam 凭据入口」）。
         // 🔴 #640e（1.4.0，用户点名）：「这个元数据配置源 steam 未配置标签**改成『未配置』**」——
         //    原先 `emptyBadge: '可选 Key'`。⛔ 已删除该字段 ⇒ 走全组统一的两态（已配置 / 未配置）。
-        //    ⚠️ 「可选 Key」那套原本是为「不填也能用」的源准备的（googleBooks / weread 仍在
+        //    ⚠️ 「可选 Key」那套原本是为「不填也能用」的源准备的（现在只剩 googleBooks 还在
         //       `OPTIONAL_KEY_SOURCES` 里）；Steam 的 Key **不填就同步不了**，
         //       标「可选」反而误导 ⇒ 按用户要求统一成「未配置」。
+        //    🔴 2026-10-25 追加：`weread` 也按用户要求移出了该集合（徽标改「未配置」），
+        //       但它免登录可搜的能力**不受影响**（放行在 `main.ts` 的 `OPTIONAL_KEY_AUX`）。
         keyField: 'steamApiKey', implemented: true,
         domestic: false,
         // 🔴🔴 #641（1.4.1，用户点名）：「steam 凭据行上的副标题取消并移动到（获取：… 用途：…）后面」。
@@ -157,46 +196,48 @@ export const PROVIDERS: readonly ProviderMeta[] = [
         //      「公开可见」硬前置，现在**收进本 hint 的末尾**（副标题已取消）。
         //    ⚠️ 位置 = 三个既有段落（获取 / 特色 / 用途）**之后** —— 用户给的落点逐字是「后面」。
         //    ⚠️ 文案里的引号用「」：本行是纯文本（`createDiv({text})`），⛔ 别写 markdown。
-        hint: '获取：steamcommunity.com/dev/apikey（另需 64 位 SteamID）。'
+        hint: '获取：Key 去 steamcommunity.com/dev/apikey 申请（32 位十六进制）。'
+            + 'SteamID 取 Steam 个人资料页网址里 /profiles/ 后面那串 17 位数字。'
             + '特色：搜索免 Key；填 Key 后可同步游戏库、愿望单与游玩时长。'
-            + '用途：游戏搜索与「同步 Steam」。'
+            + '用途：返回游戏元数据与「同步 Steam」。'
+            + '不支持 Cookie 登录：同步走的是官方 Web API（只认 Key + SteamID），不是网页会话。'
             + '「个人资料」与「愿望单」需设为公开可见，否则读不到库、同步会失败。',
     },
     {
         id: 'musicbrainz', label: 'MusicBrainz', groups: ['music'], hosts: ['musicbrainz.org'],
         keyField: null, implemented: true,
         domestic: false,
-        hint: '音乐数据源（免 Key）：厂牌/年份/专辑-曲目关系规范；中文曲库一般。',
+        hint: 'MusicBrainz（免 Key）：返回音乐元数据 —— 厂牌/年份/专辑-曲目关系规范，中文曲库一般。',
     },
     {
         id: 'itunes', label: 'iTunes', groups: ['music'], hosts: ['music.apple.com', 'itunes.apple.com'],
         keyField: null, implemented: true,
         domestic: false,
-        hint: '音乐数据源（免 Key）：中文曲库 + 高清封面，与 MusicBrainz 互补。',
+        hint: 'iTunes（免 Key）：返回音乐元数据 —— 中文曲库 + 高清封面，与 MusicBrainz 互补。',
     },
     {
         id: 'omdb', label: 'OMDb', groups: ['movieTv'], hosts: ['imdb.com'],
         keyField: 'omdbApiKey', implemented: true,
         domestic: false,
-        hint: '获取：omdbapi.com 申请免费 API Key（1000 次/日）。特色：IMDb 评分与上映信息，以英文为主。用途：影视的第三源，补 IMDb 数据；需在上方「元数据源启用」勾上。',
+        hint: '获取：omdbapi.com 申请免费 API Key（1000 次/日）。特色：IMDb 评分与上映信息，以英文为主。用途：返回影视元数据（IMDb 评分）；需在上方「元数据搜索源启用」勾上。',
     },
     {
         id: 'anilist', label: 'AniList', groups: ['anime'], hosts: ['anilist.co'],
         keyField: null, implemented: true,
         domestic: false,
-        hint: '动画第三源（免 Key，GraphQL）：默认关，中文弱。',
+        hint: 'AniList（免 Key，GraphQL）：返回动画元数据 —— 默认关，中文弱。',
     },
     {
         id: 'igdb', label: 'IGDB', groups: ['game'], hosts: ['igdb.com'],
         keyField: 'igdbClientId', keyField2: 'igdbClientSecret', implemented: true,
         domestic: false,
-        hint: '获取：dev.twitch.tv/console/apps 注册应用，取得 Client ID 与 Client Secret。特色：游戏库覆盖广，含平台、发售日与评分。用途：游戏的补充源；需在上方「元数据源启用」勾上。',
+        hint: '获取：dev.twitch.tv/console/apps 注册应用，取得 Client ID 与 Client Secret。特色：游戏库覆盖广，含平台、发售日与评分。用途：返回游戏元数据；需在上方「元数据搜索源启用」勾上。',
     },
     {
         id: 'mangadex', label: 'MangaDex', groups: ['comic'], hosts: ['mangadex.org'],
         keyField: null, implemented: true,
         domestic: false,
-        hint: '漫画并排源（免 Key）：api.mangadex.org 公开检索。⚠️ 标题以日文罗马音/英文为主，但**索引中文别名**（实测搜「海贼王」能中 One Piece）；官方要求带可标识 User-Agent，并禁止用于含广告或付费的产品（本插件为本地个人工具，符合）。元数据来源：MangaDex。',
+        hint: 'MangaDex（免 Key）：返回漫画元数据 —— api.mangadex.org 公开检索。⚠️ 标题以日文罗马音/英文为主，但**索引中文别名**（实测搜「海贼王」能中 One Piece）；官方要求带可标识 User-Agent，并禁止用于含广告或付费的产品（本插件为本地个人工具，符合）。元数据来源：MangaDex。',
     },
 ];
 
@@ -304,14 +345,31 @@ export function platformLabelFromUrl(url: string | undefined): string {
  *     ⚠️ bangumi 需要 Access Token：未配置时它在这条链里静默降级（unconfigured），漫画仍能用豆瓣 + MangaDex。 */
 // 🔴 #580：**微信读书不进任何默认链**（book 仍是 douban + openLibrary）—— 它是**用户自选**才加入的源
 //    （与 googleBooks / omdb / anilist 同一条口径：新源默认关 ⇒「升级后搜索结果与旧版逐条一致」）。
-//    要加它 = 到「设置 → 元数据源配置 › 元数据源启用」把「书籍」那一行的**微信读书**勾上。
+//    要加它 = 到「设置 → 元数据源配置 › 元数据搜索源启用」把「书籍」那一行的**微信读书**勾上。
+/**
+ * 🔴🔴 2026-10-25 用户裁定（默认值收紧）：「默认配置下 设置-启用元数据凭据源 默认全部为仅豆瓣勾选启用，
+ *   其他不勾选」⇒ **六组默认链一律只剩豆瓣一个源**。旧默认链（book=douban+openLibrary、
+ *   movieTv=douban+tmdb……）全部作废，⛔ 别按下面的历史注释把备用源写回去。
+ *
+ * 为什么可以只留豆瓣：豆瓣的 `groups` 覆盖全部六组（book/game/music/movieTv/anime/comic，
+ *   见 `PROVIDERS` 里 `id: 'douban'`），所以六组都不会出现「归一后整链为空 → 回退默认链」的死循环。
+ *   ⚠️ 副作用（已向用户披露）：豆瓣搜索要 Cookie，未配置 `doubanCookie` 时新用户第一次搜索会 403；
+ *   且豆瓣不再是「链首 + 备用源」结构，单一源失败时没有同组兜底 —— 这是用户明确选择的默认形态，
+ *   想恢复多源要到设置页自己勾回来。
+ *
+ * 下面是**历史口径**，仅作演变记录，⛔ 不是现役值（现役值就是每组 `['douban']`）：
+ *   T1 落上游 D2 表：book=douban+openLibrary；game=douban+steam；music=douban+musicbrainz+itunes；
+ *   movieTv=douban+tmdb；anime=douban+bangumi；comic=douban+bangumi+mangadex。
+ *   🔴 2026-09-30 用户裁定加回 comic 组并接三个源；⚠️ 与 1.0.3 那版（`['bangumi','douban']`）不同。
+ *   🔴 #580：微信读书不进任何默认链（用户自选才加入）。
+ */
 export const DEFAULT_CHAINS: Record<SourceGroup, readonly ProviderId[]> = {
-    book: ['douban', 'openLibrary'],
-    game: ['douban', 'steam'],
-    music: ['douban', 'musicbrainz', 'itunes'],
-    movieTv: ['douban', 'tmdb'],
-    anime: ['douban', 'bangumi'],
-    comic: ['douban', 'bangumi', 'mangadex'],
+    book: ['douban'],
+    game: ['douban'],
+    music: ['douban'],
+    movieTv: ['douban'],
+    anime: ['douban'],
+    comic: ['douban'],
 };
 
 /**
@@ -348,13 +406,13 @@ export function resolveSourceChain(
 }
 
 // ── 全链失败错误文案（设置区顶层标题已改：原「服务集成」撤除 → 数据源配置 / AI集成 各自成标题，
-//    故路径文案按新层级写：`元数据源配置 › 元数据源凭据 · Douban`）──
+//    故路径文案按新层级写：`元数据源配置 › 元数据搜索源凭据 · Douban`）──
 // 批B：每条文案除「哪里出问题」外必须给出「怎么办」，且路径具体到设置项名，避免用户去设置页里自己翻找
-const ERR_COOKIE_INVALID = '豆瓣 Cookie 已失效或过期 — 请到 设置 → 元数据源配置 › 元数据源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试';
-const ERR_DOUBAN_UNREACHABLE = 'Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源';
-const ERR_ANIME_NO_TOKEN = '未配置 Bangumi Access Token，且 Douban 也未找到匹配结果 — 到 设置 → 元数据源配置 › 元数据源凭据 填 Bangumi Token 可扩大动画结果覆盖';
+const ERR_COOKIE_INVALID = '豆瓣 Cookie 已失效或过期 — 请到 设置 → 元数据源配置 › 元数据搜索源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试';
+const ERR_DOUBAN_UNREACHABLE = 'Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据搜索源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源';
+const ERR_ANIME_NO_TOKEN = '未配置 Bangumi Access Token，且 Douban 也未找到匹配结果 — 到 设置 → 元数据源配置 › 元数据搜索源凭据 填 Bangumi Token 可扩大动画结果覆盖';
 const ERR_ANIME_COOKIE = ERR_COOKIE_INVALID + '，或填写 Bangumi Token';
-const ERR_ANIME_UNREACHABLE = '未配置 Bangumi Access Token，且 Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据源凭据 · Douban 填登录态 Cookie，或填写 Bangumi Token';
+const ERR_ANIME_UNREACHABLE = '未配置 Bangumi Access Token，且 Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据搜索源凭据 · Douban 填登录态 Cookie，或填写 Bangumi Token';
 
 /** 链内非 douban 源在本次搜索中的结果状态（调用方只在「整体无结果」时调用 derive，故无需 'ok'） */
 export type AuxState = 'absent' | 'unconfigured' | 'failed' | 'empty';
@@ -401,7 +459,7 @@ export function deriveGroupSearchError(s: GroupErrorState): string | null {
     const fixes: string[] = [];
     if (unconfigured.length > 0) {
         causes.push(`${labelOf(unconfigured)} 未配置凭据`);
-        fixes.push('到 设置 → 元数据源配置 › 元数据源凭据 填入对应凭据后点「测试连接」');
+        fixes.push('到 设置 → 元数据源配置 › 元数据搜索源凭据 填入对应凭据后点「测试连接」');
     }
     if (failed.length > 0) {
         causes.push(`${labelOf(failed)} 请求失败`);

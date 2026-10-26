@@ -100,17 +100,32 @@ export function exclusiveFieldsFor(type: EntryType): string[] {
  *     🔴 这一步是保命的：少了它，新增字段会从「没配过顺序」直接变成「写不出来」。
  */
 export function normalizeFieldOrder(type: EntryType, v: unknown): string[] {
-    const fallback = defaultOrderFor(type);
-    if (!Array.isArray(v)) return fallback;
-    const allowed = new Set(fallback);
+    return narrowOrder(v, defaultOrderFor(type));
+}
+
+/**
+ * 把「任意顺序数组」按 `allowed`（= 该分组的**允许字段集**，其顺序即缺省序）**收窄 + 补齐**：
+ *   · 非数组 ⇒ 直接给允许集（缺省）；
+ *   · 丢掉不在允许集里的键（拼错 / 旧版本残留 / 手改 data.json / **被子类排除表剔掉的键**）；
+ *   · 去重；
+ *   · 允许集里有、配置里没有的 ⇒ 按允许集顺序**追加到末尾**（同上，保命的那一步）。
+ *
+ * 🔴 类型（`normalizeFieldOrder`）与书籍子类（`normalizeFieldOrderForKind`）**共用这一份实现**，
+ *    ⛔ 别复制第二份：两处口径一旦漂移，类型页与子类页的归一行为就不一致，而单测只钉得住其中一份。
+ * 🔴 它同时也是 `orderForBookKind` **回落链**的收窄器（把 `fieldOrder.book` 掐成该子类的字段集），
+ *    所以这里的 `allowed` 是参数而非「某类型」—— 调用方决定口径。
+ */
+function narrowOrder(v: unknown, allowed: readonly string[]): string[] {
+    if (!Array.isArray(v)) return [...allowed];
+    const allowedSet = new Set(allowed);
     const seen = new Set<string>();
     const out: string[] = [];
     for (const k of v) {
-        if (typeof k !== 'string' || !allowed.has(k) || seen.has(k)) continue;
+        if (typeof k !== 'string' || !allowedSet.has(k) || seen.has(k)) continue;
         seen.add(k);
         out.push(k);
     }
-    for (const k of fallback) if (!seen.has(k)) out.push(k);
+    for (const k of allowed) if (!seen.has(k)) out.push(k);
     return out;
 }
 
@@ -139,32 +154,74 @@ export function orderForType(cfg: unknown, type: EntryType): string[] {
 //
 // 🔴 存储口径（**零迁移**）：新增一个**并行的可选键** `fieldOrderByKind`（`{ book|novel|comic: string[] }`），
 //    `fieldOrder` **原样保留**（继续服务六类型，也是书籍三子类的**回落**）。
-//    ⇒ 没配过的用户：`fieldOrderByKind` 缺席 ⇒ 逐字回落 `fieldOrder.book` ⇒ **观感零变化**。
+//    ⇒ 没配过的用户：`fieldOrderByKind` 缺席 ⇒ 回落 `fieldOrder.book`，**再按子类排除表收窄**
+//      （见下面的 `BOOK_KIND_EXCLUDED_FIELDS`）⇒ 用户配好的顺序照旧生效，
+//      只是该子类真不写的字段（如网文的 ISBN）被剔掉。
 //    ⛔ 别把书籍那一份从 `fieldOrder` 里删掉（老用户的数据在它里面）。
 // ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 🔴🔴 书籍三子类的**字段集分叉**（用户 2026-10-19 裁定，本轮新增）。
+ *
+ * 用户原话：「文学」「网文」分类下**不该出现画师**（画师只属漫画）；
+ *          「网文」分类下**不该出现 ISBN**（ISBN 是出版实体书特有 ⇒ 文学 / 漫画留，网文去）。
+ *
+ * ## 两个字段的语义归属（注释即口径，⛔ 别按别的理解改这张表）
+ * · `artist`（画师）—— **漫画**单行本的作画者。文学 / 网文是纯文字作品，没有「画师」这一栏。
+ * · `isbn` —— **已出版实体书**的国际标准书号。网文是网络连载（上架年 / 元数据章数那一套），
+ *   没有 ISBN；文学（出版书）与漫画（单行本）都有。
+ *
+ * ## 为什么是「排除表」而不是「三个子类各写一份允许表」
+ * `artist` / `isbn` 在 `MetaField.appliesTo` 里仍然是 `['book']` —— 它们是 **book 这一个大类**
+ * 的专属字段（判据是写出侧的类型门控，与子类无关），五类之外本来就没有。
+ * 三个子类的差异**只在 `fieldOrder` 这一层**表达：
+ *
+ *     子类字段集 = 大类字段集 − 该子类的排除键
+ *
+ * ⇒ 以后给书籍加字段，三个子类自动继承，⛔ 不用（也不该）维护三份清单。
+ * ⛔ 别去改 `MetaField.appliesTo` 的既有语义来硬套子分类 —— 那会把「类型门控」和
+ *   「子类字段集」两个问题搅成一处，`fieldAppliesTo` 的所有调用方都会跟着变味。
+ */
+export const BOOK_KIND_EXCLUDED_FIELDS: Readonly<Record<BookKind, readonly string[]>> = {
+    book: ['artist'],
+    // 🔴 2026-10-21（用户「字段字典按表重置」）网文那一列只留：作者 / 首发平台 / 连载状态 / 字数 /
+    //    已读字数 / 阅读时长 ⇒ 出版物那一套（ISBN、出版社、译者、装帧、定价）与**按页计**的进度
+    //    （总页数 / 已读页数）都不是网络连载的计量口径（网文按字数），⛔ 别因为「代码能写」就留着 ——
+    //    网文笔记里出现「出版社」「装帧」「定价」三行，正是用户这次点名要修的「冗余/错配」。
+    novel: ['artist', 'isbn', 'translator', 'publisher', 'binding', 'price', 'reading_total_page', 'reading_page', 'page_count'],
+    comic: ['isbn'],
+};
+
+/**
+ * 某书籍子类的**专属字段** = `exclusiveFieldsFor('book')` **减掉**该子类的排除键。
+ * 顺序沿用 `META_FIELDS` 的登记序（`exclusiveFieldsFor` 已保证，这里只做过滤、不重排）。
+ * 🔴 设置页「文学 / 网文 / 漫画」那三页显示的就是它 —— 与类型页的 `exclusiveFieldsFor(t)` **对称**。
+ */
+export function exclusiveFieldsForBookKind(kind: BookKind): string[] {
+    const excluded = BOOK_KIND_EXCLUDED_FIELDS[kind];
+    return exclusiveFieldsFor('book').filter((k) => !excluded.includes(k));
+}
 
 /** 书籍子分类的顺序配置（`Partial` ⇒ 只存被改过的子类） */
 export type FieldOrderByKindConfig = Partial<Record<BookKind, string[]>>;
 
-/** 某书籍子分类的**缺省**顺序 —— 与 `defaultOrderFor('book')` 同一份（见模块头：子类暂不换字段集） */
-export function defaultOrderForBookKind(_kind: BookKind): string[] {
-    return defaultOrderFor('book');
+/**
+ * 某书籍子分类的**缺省**顺序 = `defaultOrderFor('book')` 减掉该子类的排除键
+ * （见 {@link BOOK_KIND_EXCLUDED_FIELDS}）。
+ *
+ * ⚠️ 沿革（⛔ 别留旧说法的影子）：本函数此前是「`defaultOrderFor('book')` 原样返回，
+ *    子类暂不换字段集」—— #640e 当时只拆了「各排各的顺序」。**2026-10-19 用户裁定字段集真的分叉**：
+ *    文学无画师 / 网文无画师无 ISBN / 漫画无 ISBN ⇒ 三份缺省**不再同一份**，
+ *    ⛔ 别再按「三个子类字段集相同」的假设写调用方（对比视图那三列也是因此才拆开的）。
+ */
+export function defaultOrderForBookKind(kind: BookKind): string[] {
+    const excluded = BOOK_KIND_EXCLUDED_FIELDS[kind];
+    return defaultOrderFor('book').filter((k) => !excluded.includes(k));
 }
 
-/** 归一化某书籍子分类的顺序数组（口径与 `normalizeFieldOrder` 逐条相同，只是字段集取书籍那份） */
+/** 归一化某书籍子分类的顺序数组（口径与 `normalizeFieldOrder` 逐条相同，只是字段集取该子类那份） */
 export function normalizeFieldOrderForKind(kind: BookKind, v: unknown): string[] {
-    const fallback = defaultOrderForBookKind(kind);
-    if (!Array.isArray(v)) return fallback;
-    const allowed = new Set(fallback);
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const k of v) {
-        if (typeof k !== 'string' || !allowed.has(k) || seen.has(k)) continue;
-        seen.add(k);
-        out.push(k);
-    }
-    for (const k of fallback) if (!seen.has(k)) out.push(k);
-    return out;
+    return narrowOrder(v, defaultOrderForBookKind(kind));
 }
 
 /** 该子分类顺序是否就是缺省 */
@@ -178,11 +235,17 @@ export function isDefaultKindOrder(kind: BookKind, order: readonly string[]): bo
  * 🔴 回落链：`fieldOrderByKind[kind]` → **`fieldOrder.book`** → 缺省。
  *    中间那一跳是**零迁移的关键**：老用户只配过「书籍」那一份，文学/网文/漫画要一起继承它，
  *    ⛔ 而不是各自回到缺省（否则升级后用户配好的书籍顺序在网文笔记里会「消失」）。
+ *
+ * 🔴🔴 回落那一跳**必须再按子类收窄**（⛔ 不能直接 `return orderForType(cfg, 'book')`）：
+ *    `fieldOrder.book` 是**完整的书籍顺序**，里面通常就带着 `artist` / `isbn`（缺省序里本来就有）
+ *    ⇒ 原样带回网文 = 排除表对「没配过子类」的用户**完全失效**，而那恰恰是**绝大多数用户**
+ *    （2026-10-19 之前根本不存在 `fieldOrderByKind`）。旧数据里被人排进网文的 `isbn`/`artist`
+ *    也会在这一步被自然清掉 —— 与 `normalizeFieldOrderForKind` 共用同一个收窄器，不另写一份。
  */
 export function orderForBookKind(cfg: unknown, kindCfg: unknown, kind: BookKind): string[] {
     const kRec = (kindCfg ?? {}) as Record<string, unknown>;
     if (Array.isArray(kRec[kind])) return normalizeFieldOrderForKind(kind, kRec[kind]);
-    return orderForType(cfg, 'book');
+    return narrowOrder(orderForType(cfg, 'book'), defaultOrderForBookKind(kind));
 }
 
 /** 一次算出三个书籍子分类的生效顺序 */

@@ -768,6 +768,17 @@ export class DoubanClient {
         return h;
     }
 
+    /**
+     * 🔴 #662：**抓任意豆瓣页面**（收藏列表页用）。
+     *
+     * 收藏页与搜索走**同一套反爬**（挑战页 / 禁止访问 / 登录跳转），所以必须复用 `request()`
+     * —— ⛔ 别在 main 里另调一次 `http`：那会绕过 PoW 求解，豆瓣一拦就直接失败。
+     * ⚠️ `request` 是 private，这里只开一个**受控出口**，⛔ 不要把 `request` 改成 public。
+     */
+    async fetchPage(url: string): Promise<string> {
+        return this.request(url);
+    }
+
     /** 发起 GET 并自动处理豆瓣安全验证：检测 PoW 挑战 → 求解 → POST 验证 → 验证响应即结果。
      *  非挑战页时检测反爬拦截页（禁止访问/登录跳转），精确报错而非误判为「无结果」。 */
     private async request(url: string): Promise<string> {
