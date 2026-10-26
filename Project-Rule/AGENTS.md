@@ -39,12 +39,45 @@
 > 每次改动 `src/`、`styles.css`、`manifest.json` 后，**必须走完「构建 → 受影响单测（动公共纯逻辑则全量）→ 产物断言 → 突变验证 → 部署测试库 → 镜像同步」**，否则 Obsidian 测试库加载的是旧产物。
 > **旧的 `build/sync_plugin.ps1`、`build.bat` 已废弃不用**（2026-09-12 起）。
 
+🔴 **部署目标库路径（用户 2026-10-24 明示「始终记住这路径是部署到库」）—— 唯一 canonical 目标**：
+
+```
+C:\Users\kest\Desktop\临时测试库\.obsidian\plugins\obsidian-reelludic
+```
+
+- 这就是用户**实际打开使用的 Obsidian 库**（主实例窗口标题 `… - 临时测试库 - Obsidian`），也是 `_deploy.cjs` 里 `VAULT` 常量的值。
+- 每次交付都要把 `main.js` / `styles.css` / `manifest.json` 三件**真的覆盖到这里**，并做 md5 逐件核对；⛔ 不能只构建不部署、⛔ 不能只部署到 `.testvault` 就说"已部署"。
+- `.testvault` 只是**无头真机验证用**的隔离库（`tools/rd.cjs` 跑），⛔ 不是交付目标；两者都要更新时，先部署 `临时测试库`（交付），再同步 `.testvault`（验证）。
+- 交付话术里报路径就报这一条全路径，⛔ 不要含糊说「测试库」。
+
 1. 构建：`node node_modules/typescript/bin/tsc -noEmit -skipLibCheck` + `node esbuild.config.mjs production`（**告警数要与基线一致**：当前基线 = **87 warnings**，2026-10-13 实测；⚠️ 变化沿革：2026-09 期是 87 → 2026-10-07 起 89 → **2026-10-13（#619）回到 87**，原因是星控件补上 `role`/`tabindex` 修掉 2 条 A11y 警告（已实测复核，⛔ 不是漏报）；判定时以**当次构建末尾那行 `N warnings`** 为准；只为更快的日常迭代直跑 esbuild 时，**收口前必须补跑一次 tsc**）
 2. 部署：`node _deploy.cjs`（= 拷三产物到测试库 + **md5 三方一致**校验 + 写 `_deploy_sum.txt`）
 3. 断言：`node C:/Users/kest/.workbuddy/binaries/node/workspace/assert-symbols.cjs`。🔴 **判绿只看 `exit` + 逐行 `FAIL`，⛔ 不看横幅**；PASS 计数用 node `spawnSync` 点算（PowerShell 管道会把输出并成一行）
 4. 突变：`node _mut<批次>.cjs`（每条须 `[RED ok]`；`[SKIP]` = 没验，⛔ 不算通过）
 5. 镜像：见下节
 6. Obsidian 中 Ctrl+P → `Reload app without restarting`
+
+### 🔴 UI / 交互验证：先用真机，别再手搭复现页
+
+> **2026-10-19 立**：`tools/rd.cjs` 已把「真机 Obsidian」接成一条命令（CDP 驱动，零新依赖）。
+> 凡涉及**布局 / 样式 / 交互 / 主题**的改动，**默认先走真机**；复现页只在「需要大规模数据变换后比对」等真机不方便的场景才退而用之。
+> 用法与坑表见 `tools/README.md`。
+
+```bash
+node tools/make-testvault.cjs          # 首次：建隔离库 .testvault（从临时测试库拷，自动剔掉未装插件）
+node tools/rd.cjs launch               # 启动隔离真机（不抢用户当前窗口）
+node tools/rd.cjs setup --size 1440x900 --tab media
+node tools/rd.cjs shot --out _shot/rd/x.png
+node tools/rd.cjs check overflow '.rl-card'
+node tools/rd.cjs check computed '.rl-card' 'border-radius'
+node tools/rd.cjs dev --tab media --shot   # 改了产物 → 自动热部署 + 真机重载（~4s）
+node tools/rd.cjs stop
+```
+
+- **为什么不再优先复现页**：复现页手抄样式与祖先链，抄漏 / 被 Obsidian 级联覆盖 / 主题变量取错值都**不会自曝**；
+  真机里 `window.app` 就是 Obsidian App，看到的就是用户看到的。实测已用它捕获「封面容器宽度失控 ⇒ 61 张卡全部越界」这类复现页容易糊弄过去的问题。
+- **判绿口径**：`check` 退出码 0（= 全 PASS **且** 期间无控制台报错）。控制台错误会自动附在输出末尾。
+- ⚠️ **改仓库文本文件一律用 write/edit 工具**，⛔ 别用 PowerShell `Set-Content` 重写 —— 实测会把中文写成乱码、截断字符串并加 BOM（`tools/rd.cjs` 曾因此整文件损坏、需重写）。
 
 ---
 
@@ -112,10 +145,81 @@ node _mirror.cjs apply    # 执行拷贝
 - 🔴 **空评语那行是解析哨兵**（`## 个人评语` 下、评语为空时写入）：文本真源 = `pure/noteEditable.NOTES_PLACEHOLDER`（现行 `（在这里写下你的感想）`），判定只走 **`isNotesPlaceholder()`** —— **新旧形态都算「未写」**（旧文本存在 `LEGACY_NOTES_PLACEHOLDERS`，⛔ 别删：删了旧条目一打开就把占位符当成用户评语回填）。`noteGenerator` 写入侧必须取该常量，⛔ 不许内联第二份字面量（#453 收敛过）
 - **`## 观看链接` 的内容**（#448 立）：影视（movie/tv/anime）的**逐集网络链接**要写成 `- [第 1 集 集标题](url)`（`noteGenerator.episodeWatchLines`；标签走 `pure/episodeAssoc.episodeHintLabel` 同一份真源；电影不出「第 N 集」、多资源电影用「文件 N」）；**本地路径不写进笔记**（绝对路径又长又不可点）。⛔ 别退回「只读 `e.links`」——影视的链接早已迁到 `episodeUrls`（提交时 `links` 清空），那样写等于一条集链接都不落笔记
 
+
+#### 表单里那一块的名字统一叫「**启动路径**」（#523 起，2026-10-18 复核，强制）
+
+五种类型在编辑表单里有**各自**的一块关联资源，**界面上的标签一律叫「启动路径」**：
+
+| 类型 | 「启动路径」下面是什么 | 右侧小图标 |
+|---|---|---|
+| 电影 / 剧集 / 动画 | 观看链接（▶ 观看 / 1..N 集按钮，右键编辑本地或网络） | 检索本地（剧集/动画另有「批量搜索未填集」） |
+| 书籍（文学/网文/漫画） | 书籍文件（TXT / EPUB / PDF / CBZ…） | 检索本地书籍 + 检索在线阅读（微信读书） |
+| 游戏 | 启动快捷方式（.lnk / .exe） | 检索本地 |
+| 音乐 | 本地音频（mp3 / flac…） | 检索本地音频 + 下载歌曲 |
+
+🔴 **不要再按旧叫法去描述这一块**：文档、注释、断言里写的若是「观看链接 / 本地音频 / 启动快捷方式 / 书籍文件」
+**作为表单标签**，一律改成「启动路径」（旧名字只保留在**字段名**与**数据键**的语境里，例如 `audioPath` / `gameLaunchPath` /
+`bookFile` / `episodeFiles` —— 那些是 schema，⛔ 不许改）。沿革：标签原为「观看链接」，#523 用户点名
+「所有类型条目下的右键编辑条目的播放标题统一改成『路径』标题」⇒ 全类型统一成「启动路径」并沿用至今。
 ### 5. 构建链
 
 - `npm run build` = `tsc -noEmit -skipLibCheck && esbuild`，**不要跳过 tsc**
 - esbuild `external` 列表（obsidian/electron/@codemirror*/@lezer*/builtin-modules）不能乱删
+- 🔴 **PDF 不再打包 pdfjs（2026-10-22 用户裁定「换 pdfjs 源为 Obsidian 自带 5.3.34，保留自研阅读器」）**：
+  - `src/modals/PdfReaderModal.ts` 走 `import { loadPdfJs } from 'obsidian'` + 模块级单例 `getPdfjs()`（懒加载、失败可重试），**⛔ 别再写回 `import * as pdfjsLib from 'pdfjs-dist'` / `import workerUrl from '...pdf.worker.min.mjs'`**
+  - `esbuild.config.mjs` 里那个把 worker 读成字符串再 Blob 注入的 `pdfWorkerInline` 插件**已删除**，⛔ 别加回来
+  - 依赖层面：`package.json` 的 `pdfjs-dist` 与 `package-lock.json` 里它带来的 `@napi-rs/canvas*` 共 13 个包条目已摘除；`src/types/pdfjs-worker.d.ts` 已删
+  - 类型层面：v5 起不再导出 `RenderTask` ⇒ 用本文件内的结构类型 `PdfRenderTask` / `PdfPageProxy` / `PdfDocumentProxy` / `PdfjsLib`，⛔ 别 `import type` 自 pdfjs-dist
+  - ⚠️ **`CHANGELOG.md`（内部）里「PDF 依赖固定 v4 线、勿升 v5」那条红线仍然有效，但它只管「自带 pdfjs-dist 打包进单文件产物」这条路径**；复用引擎自带版本是**已实测的例外**（引擎这版 JBIG2/CCITT 是纯 JS、不 fetch wasm，`render` 仍收 `canvasContext`）。判定依据与完整实测记录见 `Project-Rule/CHANGELOG.md` 中「上述红线的例外与收窄（2026-10-22）」那条。**⛔ 别把例外理解成「可以升 pdfjs-dist 到 v5」。**
+- 🔴 **PDF 高亮（2026-10-23 用户裁定路线 A「只存 JSON，不写回 PDF」）**：
+  - 高亮**只写进阅读进度 JSON**（`ReaderStore.highlights`），**⛔ 绝不能用 pdf-lib 之类把 Annot 写回用户的 PDF 原文件**（PDF++ 那样做有损坏风险，且与本仓 #528 裁定相反）
+  - 页内位置一律存**归一化 0-1 百分比**（`PdfRelRect{x,y,w,h}`，见 `src/pure/pdfHighlight.ts`）。依据：`chars[].r` 实测与缩放无关，pdf.js 自己渲染 textLayer span 也走百分比 ⇒ 缩放 50%–300% **不重算**。**⛔ 别改成存像素或每次缩放重算**
+  - 覆盖层 `.rl-pdf-hl-layer` 的 **`pointer-events: none` 必须保留**，否则挡住 textLayer 拖选、高亮入口整体失效
+  - `renderPage` 的 `textLayer.render().then` 末尾**必须**调 `paintHighlightLayer(i)` —— 离屏销毁重建（`releasePage`）与缩放重渲染（`applyScaleValue`）后靠它把高亮画回来
+  - 换样式走**静默删除通道** `onTrashSelection({quiet:true})`，**⛔ 别走 `onDeleteHighlight`**（那会弹 ConfirmModal，用户为换个颜色得先确认一次删除，真机实测过这个毛病）
+  - `ReaderHighlight` 的 `rects?` 是 **append-only** 可选字段，`normalizeHighlights` 白名单同步；**⛔ 别为 PDF 单开 schema、别升 `READER_STORE_VERSION`**
+  - ⚠️ **真机验证前先确认产物真进了 `.testvault`**：`_deploy.cjs` 的 `VAULT` 指向 `C:/Users/kest/Desktop/临时测试库/...`，**不是** `tools/rd.cjs` 跑的 `.testvault` ⇒ 必须手动 `Copy-Item main.js,styles.css,manifest.json .testvault\.obsidian\plugins\obsidian-reelludic\` 再 `rd.cjs stop` + `launch`，否则测的是旧产物
+
+- 🔴 **三阅读器区域截图（2026-10-23，用户指令「给 TXT/EPUB/PDF 阅读器加个区域截图回填笔记功能」）**：
+  - 取像素**唯一通道** = `require('electron').remote.getCurrentWebContents().capturePage({x,y,width,height})`。**⛔ 别改成 `canvas.toDataURL`**（TXT 是文本层、EPUB 正文在 `iframe` 的 `srcdoc` 里，拿不到内容）、**⛔ 别引入 `html2canvas` 或 `foreignObject`**（本仓没有 html2canvas；foreignObject 丢样式且跨 iframe 不可靠）。真机实测 `capturePage` 传 200×150 精确得 200×150，且抓的是**窗口合成像素** ⇒ iframe 天然覆盖
+  - `ShotRect` 单位是 **CSS px（DIP）**，**⛔ 别乘 `devicePixelRatio`** —— `capturePage` 的矩形与 `getBoundingClientRect()` 同尺
+  - 🔴 **截前必须等两帧**：`saveReaderShot` 开头必须 `requestAnimationFrame ×2 + setTimeout(60ms)`。`ShotOverlay` 是 `position:fixed` 的 `rgba(0,0,0,0.28)` 遮罩，`destroy()` 后浏览器未重绘就 `capturePage`，抓到的是**上一帧的遮罩**（真机第一张截图是 705 字节的整块纯灰）
+  - **文件名缺省后缀必须是「截图」**（`readerShotFileName`）：空后缀会与同名封面撞车（实测截图落成 `活着.png`、与封面同目录，笔记 `![[活着.png]]` 指向封面）。**⛔ 别把 tail 缺省改回空串**；书名本身为空时不叠后缀
+  - 🔴 **新增笔记区段必须同步 `pure/excerpt.ANNOTATION_SECTIONS`**：截图写进 `## 阅读截图`（`pure/readerShot.SHOT_SECTION_READER`），不加进名单 = 用户一保存条目就触发 `writeNote` 模板重写、整区截图被静默抹掉。**⚠️ 与视频的 `截图时间戳`/`截图` 是两个不同区，⛔ 别合并**
+  - **笔记只能经 `EntryService.appendNoteSection` 写**（`noteFingerprint` 的唯一拥有者）；面板里 **⛔ `vault.modify`**，否则指纹过期、下次误报「笔记被外部修改」
+  - 框选区：PDF `.rl-pdf-scroll` / TXT `.rl-reader-scroll` / EPUB `frameEl.closest('.rl-reader-frame')`（**iframe 外层 wrapper**，⛔ 不用 `frameEl` 自身）
+  - 截图按钮是**一次性动作**，⛔ 不走 `toggleAnnotate`（那不是模式）；必须有 `if (this.options.onShotSave)` 守卫，未注入不画按钮
+  - 🔴 `.rl-shot-hint` 的 `border-radius` **只能写 `var(--radius-l)`**：写成 `999px` 会撞全仓「胶囊形态（999px + 容器底）一律退场」的反向守卫，断言当场红（本批真机踩过一次）
+  - 三面板 `destroy()` 都必须 `this.shotOverlay?.destroy()`（遮罩挂 `document.body`，面板没了必须一起收）
+
+- 🔴 **PDF 摘抄（2026-10-23）**：
+  - 卡片、键盘语义、定位全部复用 `pure/excerptCard`（`needsQuoteExpand` / `excerptCardKeyAction` / `excerptCardLocLabel` / `placeCard`）。**⛔ 别为 PDF 另写一套卡片**
+  - 🔴 **PDF 的 `loc.chapter` 存的是一基页码**，`excerptCardLocLabel(title, loc, unit)` 第 3 参必须传 `'页'`（缺省 `'章'` 是给 TXT/EPUB 的）—— 漏传会写成「第 1 章」（真机抓到过）。**⛔ 别去改 `ParsedExcerpt.loc` 的共用语义**
+  - PDF 动作条为 **摘抄 / 高亮 / 复制 / 垃圾桶 四钮**；PDF 动作条**不做**翻译 / 网络搜索 / AI 搜索（无笔记正文语境）—— ⚠️ 别与**顶栏快捷模式**混淆：顶栏第 5/6 钮就是「翻译 / 网络搜索」模式，拖选正文后由 `dispatchAnnotate` 走 `ReaderOverlays`（2026-10-23 起）
+  - 写笔记同样只经 `onExcerptSave` → 宿主 `addExcerpt` → `EntryService`，面板里 ⛔ 碰 vault
+
+- 🔴 **四阅读器统一口径（2026-10-23，用户指令「四阅读器统一改造」）**：
+  - **PDF 顶栏顺序是契约**：书签 · 高亮 · 摘抄 · 区域截图 · 翻译 · 网络搜索 · 设置。前 6 枚在 `.rl-reader-quick` 里、`≡` 在 `.rl-reader-ops` 上紧随其后。⛔ 别调序、别插队
+  - 🔴 **书签是一次性动作，⛔ 不是模式**：`mkQuick(wrap, id, icon, tip, onClick?)` 的第 5 参必须传 `() => this.addBookmark()`。不传会落到默认的 `toggleAnnotate(id)`，按钮进入一个没有任何持续语义的「书签模式」（真机抓到过）
+  - **PDF 侧栏是两个页签**（`文档目录` + `书签 · 高亮 · 摘抄`），三区共处一个 pane、各由 `buildAnnoHead` 建头。⛔ 别退回「一区一个页签」
+  - `syncAnnoBtns(head, total)` 是**各面板私有**（`annoSelection` 不导出它，别试图提取）
+  - 🔴 **批量删除高亮只能走 `onTrashSelection({highlightIds, excerptIds}, {quiet:true})`**：逐条调 `onDeleteHighlight` 会为每条弹一次确认框（选 10 条弹 10 次）—— 断言 `@L2843` 明令禁止
+  - 🔴 **Ctrl/⌘+滚轮的监听位置**：PDF 挂 `.rl-pdf-scroll`、TXT 挂 `.rl-reader-scroll`、EPUB 挂**iframe 内 `doc`**（正文在 frame 里，宿主容器收不到），三者都要 `{passive:false}` + `preventDefault()`。⛔ PDF 别挂 `container` —— 那上面 `onUserInterrupt` 是 passive，拦不住 Obsidian 把 Ctrl+滚轮当整页缩放
+  - **TXT 的 Ctrl+滚轮必须优先于翻页判定**（`if (ctrlKey||metaKey) { preventDefault(); adjustFont(); return; }` 写在 `isPaged()` 之前）
+  - **PDF 缩放持久化字段是 `Settings.readerPdfScale`**（0.5–3 / 0.25 / 缺省 1），⛔ 别复用 `readerFontSize`（语义不同）；写回点在 `applyScaleValue()` 末尾，滑条/键盘/Ctrl+滚轮三路共用
+  - **PDF 翻页模式复用 `pure/paged.ScrollMode` 与设置键 `readerScrollMode`**（⛔ 别另起枚举）；`scrollByPage`、键盘 ←/→、底栏 `navL`/`navR` 三处都必须有 `isPaged()` 分支
+  - **`ReaderOverlays`（译文卡 + 网络搜索浮层）是 PDF 的共用件**；TXT/EPUB 里那两份内联版**别去抽共** —— 它们被产物断言按字面锁着，本轮刻意不动
+  - 🔴 **漫画有两个 `openWith` 入口**（压缩包/图片文件夹档 + **EPUB 漫画档**），补任何新回调都要**两处都补**（真机抓到过：只补前者，「呆头农场」走 EPUB 档 ⇒ 顶栏没有截图按钮）
+  - **漫画顶栏 `quick` 只放「存书签 / 区域截图」**，缩略图钮留在 `ops` 上（⛔ 别挪进 quick）
+  - 🔴 **PDF 翻页模式的坐标基准必须是 DOM 真值（2026-10-23 #692 修）**：`refreshPageTops()` 里 `pv.top = pv.el.offsetTop - this.pagesEl.offsetTop`，⛔ 别退回「页高累加」—— `.rl-pdf-pages` 有 `padding-top:16px` 与页间 `gap:14px`，累加会每页漏 14px，第 289 页偏 4062px，表现为「切了翻页但页码不动」。必须保留 `measurable` 守卫（容器未布局时整列 `offsetTop` 都是 0）
+  - 🔴 **`.rl-pdf-paged` 隐藏非当前页只能 `visibility:hidden`，⛔ 绝不能用 `display:none`**：后者让隐藏页塌成 0 高 ⇒ `offsetTop` 几何全错、`scrollToPage()` 定位失效。且 `.rl-pdf-pages` 在 paged 下要 `padding-bottom:100vh`（`overflow:hidden` 时可滚范围 = scrollHeight − clientHeight，60vh=540px < clientHeight≈758px 不够末页顶对齐）
+  - 🔴 **`.is-current` 必须四路维护**：`setMode()` / `scrollToPage()` / `updateProgress()` / `load()`。少任一路都会白屏（初始全 hidden）或脱页。`mount()` 里还要按持久化 `mode` 补 `rl-pdf-paged` 类，否则重开不生效
+  - 🔴 **自动推进入口 `dt` 单位必须是「秒」（2026-10-23 #692 真缺陷）**：`advanceAutoPos(pos, speed, dt, max)` 算的是 `speed * dt`、`autoScrollPx` 是 px/秒。写 `Math.min(0.1, (ts - autoLastTs) / 1000)`，⛔ 别传毫秒（放大 1000 倍 ⇒ 一帧冲到底并立刻触发「已读完全书」，表面症状是「按钮点了没反应」）。`setInterval` 走 `autoTurnMs` 毫秒语义，那条不用改
+  - 🔴 **`READER_FOPS.autoScrollOnly` 已删除**（2026-10-23 #692）：四件一律 `autoScrollPaged`。`tests/readerFops.test.ts` 有反向守卫，⛔ 别再按「PDF 只有连续滚动」加回第二个常量
+  - 🔴 **漫画书签列表只在侧栏**（`bmHeadRef` / `rl-reader-bm-list`），⛔ 别接回设置菜单（会变两个真源）。漫画 `activateSidebarPane()` 内必须先 `const toc = this.tocEl; if (!toc) return;`，否则 tsc 报 `TS2531`
+  - 🔴 **区域截图文件名是 `书名 + 空格 + YYYYMMDD-HHmmss`**（`pure/readerShot.shotStamp`，为与 `image-converter` 的 `{notename}-{date}` 模板同构）：⛔ 别退回「书名 截图N」；⛔ 时分秒别用冒号（Windows 非法 + `![[…]]` 会解析错）；同秒撞名交给 `getAvailablePathForAttachment` 加序号
+
+- 🔴 **断言基线口径（2026-10-23 修正，⛔ 别再用「78」）**：`assert-symbols.cjs` 的正确基线是 **「旧断言 + 旧产物」= PASS 3970 / FAIL 84**。判断「本批有没有引入新红灯」必须做**四象限对照**（{旧断言,新断言} × {旧产物,新产物}，FAIL 集合去掉 `@L\d+` 行号后求差），⛔ 不能只比数字 —— 曾因拿两种搭配的读数互比，误判「多了 4 条」。当前口径下 `#691` 收尾值 = PASS 3972 / FAIL 82（净少 2 条）。
 
 ### 6. vitest alias 表（`vitest.config.ts`）
 
@@ -147,7 +251,7 @@ node _mirror.cjs apply    # 执行拷贝
 
 ## 🔒 当前版本策略（2026-09-16 立；2026-09-22 / 2026-10-04 / 2026-10-11 / 2026-10-16 用户补充裁定）
 
-- **当前在 1.4.0 期**：版本三文件（`package.json` / `manifest.json` / `versions.json`）均为 **1.4.0**（手改，见红线 7）。⚠️ 发版时 `versions.json` 要**加键**（不是改既有键），并同步 `package-lock.json` 根版本（顶层 + `packages[""]`）**与 `src/services/mangadex.ts` 的 `MANGADEX_UA` 版本段** —— #473 断言会逐条核对「UA 版本段 == `package.json` version」与「三处一致」。
+- **当前在 1.4.1 期**：版本三文件（`package.json` / `manifest.json` / `versions.json`）均为 **1.4.1**（手改，见红线 7）。⚠️ `package-lock.json` 的**根版本也要同步**（顶层 `version` + `packages[""].version`，共 2 处；⚠️ 锁文件里另有 `expect-type` 等依赖自身的 `"version": "1.4.0"` 行，那是**依赖版本**，⛔ 别跟着改）。⚠️ 发版时 `versions.json` 要**加键**（不是改既有键），并同步 `package-lock.json` 根版本（顶层 + `packages[""]`）**与 `src/services/mangadex.ts` 的 `MANGADEX_UA` 版本段** —— #473 断言会逐条核对「UA 版本段 == `package.json` version」与「三处一致」。**2026-10-25 实测：四处齐为 1.4.1、`MANGADEX_UA = 'ReelLudic/1.4.1 …'`、`versions.json["1.4.1"] = "1.7.2"`（该键值是 minAppVersion，⛔ 不是插件版本）。**
 - **沿革**：正式发布的更新日志止于 1.0.3 → 原 1.0.4 期并入 **1.1.0** → 1.1.1 期**改定 1.2.0**（2026-10-04）→ 原 1.2.1 期（**从未发布**）**整体改定 1.3.0**（2026-10-11；装的是实打实的新功能面：微信读书同步 / 搜索、内置阅读器本地漫画、播放器时间戳·截图侧边栏、导航布局与时间线视图、失效链接检测等，按语义化版本属 **minor**）→ **1.4.0**（2026-10-16）。
 - **1.4.0 期**（用户 2026-10-16 点名「插件版本号定级为 1.4.0」）：EPUB 阅读器正文插图恢复显示（`srcdoc` 无基准地址 ⇒ 包内相对路径全 404 的老问题）、EPUB 首屏/开章提速（目录字数惰性化，实测省 ~95% 同步时间）、Steam 凭据行两处 UI 修正（副标题取消并入说明、按钮间距 16px → 8px）。⚠️ 定级说明：本批**主要是体验优化与修复**，按 2026-09-22 那条「体验优化不算新增功能」的口径本可留在 1.3.x；**是用户显式点名定为 1.4.0**，故照办（⛔ 别据本条反推「以后优化都能升 minor」—— 判不准时**先问用户**）。
 - 🔴 **2026-09-22 用户裁定（仍然有效）：体验优化（如「视图级题材筛选」这类现有功能的完善）不算「新增功能」**，可继续留在同版本；只有**全新的能力面**才需另开版本。判断不清时**先问用户**，⛔ 别自行归类后闷头做。
@@ -254,7 +358,7 @@ main.ts（入口 + 命令注册 + 视图注册 + 事件中枢 + homeTab 页签�
   ├── modals/EntryModal.ts（添加/编辑弹窗：双套 UI + 笔记回填 + 孤儿封面清理 + 双写冲突）
   │     └── components/EntryForm.svelte（Douban 版 / TMDB·Bangumi 版，formMode 按 source 切换；搜索框类型下拉 = 书籍分类唯一入口）
   ├── modals/*（ConfirmModal 通用确认 / LinkPickerModal 多链接选源 / EpisodePickerModal 集数选择 /
-  │     NoteConflictModal 双写冲突 / ExcerptModal 摘抄 / GameSessionModal 游玩记录 / CalendarDayModal 排期日 / 
+  │     NoteConflictModal 双写冲突 / ExcerptModal 摘抄 / EntryLogModal 游玩记录（#685 起通用化，替代旧 GameSessionModal） / CalendarDayModal 排期日 / 
   │     PosterMigrateModal 封面迁移 / PosterCleanupModal 孤儿清理 /
   │     VaultFileSuggest 文件建议 / VaultFolderSuggest 文件夹建议（后者兼作旧版 Obsidian 的降级入口））
   ├── services/EntryService.ts（增删改查编排 + 状态流转 + 笔记生成/双写冲突检测）
@@ -270,7 +374,7 @@ main.ts（入口 + 命令注册 + 视图注册 + 事件中枢 + homeTab 页签�
   │     omdb / anilist / igdb / mangadex（12 源注册表见 src/pure/sourceRegistry.ts，各组默认链见 DEFAULT_CHAINS）
   ├── data/catalog.ts（catalog.json 读写；normalizeEntry 为落库唯一关口）
   ├── data/noteGenerator.ts（.md 笔记生成，按类型渲染 + 指纹；路径走 pure/dirs.noteSubDir）
-  ├── pure/*（134 个无 obsidian 依赖纯模块；**#369 之后新增批次**：posterGrid / genreFilter / statOverview /
+  ├── pure/*（**179** 个无 obsidian 依赖纯模块 —— 2026-10-25 实测 `src/pure/*.ts` 计数 179、其中 import 'obsidian' 者为 0；旧文写「134 个」是 #369 期的旧数，勿再沿用；**#369 之后新增批次**：posterGrid / genreFilter / statOverview /
   │     settingNav / searchIcons / focusType / libraryDir 等。其余：status/labels/rating/dirs/cardMeta/stats/report/
   │     搜索链 search*+resultMerge+searchCache/子分类 bookKind+musicKind+searchTypeSel/
   │     进度 bookProgress+readingProgress+pdfProgress+epubParse+txtParse+bookmark+highlight/

@@ -3,6 +3,2496 @@
 > 版式：按版本分节，节内分「新增功能 / 界面美化 / 体验优化 / 问题修复 / 内部开发者」五类。
 > 版本号规则：manifest.json 与 package.json 同步，`npm run version` 统一回写。
 
+### 体验优化 · #716（2026-10-25）：默认值收紧 —— 元数据源「仅豆瓣」+ AI 用途「不启用」
+
+**用户原话（2026-10-25）**
+> 默认配置下设置-启用元数据凭据源默认全部为仅豆瓣勾选启用，其他不勾选
+> 默认配置下设置-AI集成-用途默认全部为不启用
+
+**改动**
+- `src/pure/sourceRegistry.ts`：`DEFAULT_CHAINS` 六组（`book / game / music / movieTv / anime / comic`）全部收成 `['douban']`。
+- `src/pure/translate.ts`：新增 `export const AI_PURPOSE_DEFAULT: AiProviderChoice = AI_PROVIDER_OFF`（带口径注释）。
+- `src/Settings.ts`：`DEFAULT_SETTINGS` 里 `readerTranslateProvider / readerSummaryProvider / readerSearchProvider / readerPrefillProvider` 四项取 `AI_PURPOSE_DEFAULT`。
+
+**为什么不能改 `normalizeAiChoice` 的兜底（关键决策）**
+`normalizeAiChoice(undefined)` 现回退 `DEFAULT_TRANSLATE_PROVIDER`（= `'zhipu'`）。若把兜底改成 `'off'`：
+① 所有**脏数据**（拼错的字符串、旧版遗留怪值）会静默变成「不启用」，用户以为功能坏了且查不出原因；
+② `DEFAULT_TRANSLATE_PROVIDER` 的类型是 `TranslateProvider`（不含 `'off'`），改不得。
+⇒ 正道是**在 `DEFAULT_SETTINGS` 里显式声明默认值**：新装 / 未存过该键的用户拿到 `'off'`，显式设过服务商的用户由 `Object.assign` 覆盖、行为不变。
+
+**为什么默认值抽成 pure 常量**
+`src/Settings.ts` 依赖 `modals/*` 等别名，而 `vitest.config.ts` 的 alias 只配了 `pure / data / services` ⇒ 单测里 import `Settings.ts` 会连带整棵依赖树失败（`Cannot find package 'modals/ReleaseNotesModal'`）。默认值落 `pure/translate` 后断言可直测纯模块。
+
+**测试（新增/改写，守不变量而非放宽）**
+- `tests/translate.test.ts` 新增 3 条：① `AI_PURPOSE_DEFAULT === 'off'` 且 `normalizeAiChoice` 后仍为 `'off'`（同时守「常量对」与「解析链路对」，只断言其一必漏）② 显式设过 `deepseek` 的用户不被默认值覆盖 ③ 兜底**仍是 zhipu** 不是 off。
+- `tests/sourceRegistry.test.ts`：6 条默认链断言改为 `['douban']`；`resolveSourceChain` 4 条同步；新增 1 条守不变量 —— 豆瓣必须在六组的 `PROVIDER_META.groups` 里，否则「仅豆瓣」会被归一滤空、回退默认链成死循环。
+
+**验证与边界**
+- `tsc --noEmit` EXIT=0；全量 **4506 passed / 216 files**；`esbuild production` EXIT=0，`main.js` 4,312,851 B。
+- 产物核验 `_chk_defaults.cjs` **22 项 ALL PASS**，含反向锚（四条用途不再默认成任何服务商、`DEFAULT_CHAINS` 片段内无 `openLibrary/weread/tmdb/bangumi/mangadex/steam`、`aiOffBlocked` 守卫仍在）。
+- ⚠️ **只改默认值，没有做一次性迁移**（用户 2026-10-25 明确选 A）。已存过设置的库（如 `临时测试库` 的 `data.json` 里四项用途是 `zhipu/zhipu/zhipu/deepseek`、`sourceChains` 是 `book:["douban","weread"]` 等）不会被改写 —— 这是刻意行为，避免覆盖用户的显式选择。
+
+### 内部开发者 · #715（2026-10-25）：**撤除「音乐搜索 B 站视频转 LRC 歌词」整条链路（含 #712/#713/#714 三代实现）**
+
+**用户原话（2026-10-25）**
+> 算了，去除掉音乐搜索b站视频转LRC歌词的代码和样式功能
+
+**裁定口径**
+保留 B 站 Cookie（它服务「B站音频流」下载与那行的「测试连接」），只拆「拿视频字幕当歌词」这一路。
+在线歌词源回到 #712 之前的**四源**：`netease / kuwo / qq / kugou`。
+
+**整文件删除**
+- `src/pure/biliSubtitle.ts`（wbi 签名 / 字幕列表与正文解析 / LRC 转换 / 标题猜测）
+- `src/services/biliLyric.ts`（buvid3 与 wbi 密钥缓存 / 搜索候选 / 双端点取轨 / 正文）
+- `tests/biliSubtitle.test.ts`、`tests/biliLyric.test.ts`
+
+**逐处收敛**
+- `src/pure/lyricOnline.ts`：`LyricSourceId` 去掉 `bilibili`；`LYRIC_SOURCE_LABELS` / `LYRIC_SOURCE_HEADERS` 同步去掉该键；顶部对 `pure/dl/bilibili` 的 import 删除（那枚 import 只为 B 站歌词的 UA/Referer 存在）。
+- `src/services/lyricSearch.ts`：`LyricAdapterCtx` 接口删除；`LYRIC_SOURCE_ORDER` 末位去掉 `bilibili`；`ADAPTERS` 删 bilibili 分支、类型回到三参；`searchLyrics` / `fetchLyric` 去掉 `ctx` / `extra` 形参与透传。
+- `src/views/components/EntryForm.svelte`：删 `biliTrackPop` 浮层、`lrcBiliTracks` / `lrcBiliNeedLogin` / `lrcBiliTracksError` / `lrcBiliBvid` 等状态与 `openBiliTracks` / `applyBiliTrack` 两个函数；B 站那一支从「先进弹窗选轨」改回与四源同一路径；浮层标题去掉三元，固定「选择歌词来源」。
+- `src/modals/EntryModal.ts`：删 `onBiliTracks` prop 的接线。
+- `main.ts`：删 `biliLyricTracks()` / `biliLyricTrackText()` 两个出口；`searchOnlineLyrics` / `fetchOnlineLyric` 不再传 `{ biliCookie }`（`biliCookie` 字段本身保留，下载面仍在用）。
+- `src/pure/dl/bilibili.ts`：`BiliPart.cid` 是 #713 为取字幕轨加的，随功能一并撤除（`parseBiliView` 回到不产出 `cid`）。
+- `tests/lyricSearch.test.ts`：`BILI_SEARCH_OK` fixture 与 B 站路由分支删除；三处断言从「五源」回到「四源」。
+- `tests/dl-bilibili.test.ts`：`cid` 相关断言删除。
+
+**样式**
+`.rl-lrc-pop` 系列是四源共用的选歌词浮层，**不复用即不删**（清点确认没有只服务 B 站字幕的规则）；未新增也未删除任何 CSS。
+
+**产物断言（`assert-symbols.cjs`）按新口径改写 5 处**
+1. A 组源顺序数组 `LYRIC_ORDER_5` → `LYRIC_ORDER_4`。
+2. B 组 `fetchLyric` 签名从 `(http, source, id, ctx)` 回到 `(http, source, id)`。
+3. J 组「歌词源 = 五个」→「四个」+ **反向守卫**：`need_login_subtitle` / `/x/player/wbi/v2` / `fetchBiliTracks` / `BiliSubtitleTrack` / `openBiliTracks` 一个都不许留在产物里。
+4. S 组 `ADAPTERS.search` 签名去掉 `extra?: LyricAdapterCtx`，调用点不再透传 `ctx`。
+5. A 组「状态码判定只有一处」的 `GETTEXT_WRAPPERS` 从 `['getText','getText2']` 收敛为 `['getText']` —— `getText2` 是 #712 为 B 站字幕服务层专设的第二个薄壳，B 站退场后**已无任何调用者**；守的不变量（状态码判定只在 `getTextWithHeaders` 体内 1 次）不变。
+
+**验证（实测）**
+- `tsc --noEmit` EXIT=0
+- 全量单测 **4502 passed / 216 files**（较拆除前 4553/218 少 51 条 = 两个 B 站测试文件）
+- `esbuild production` EXIT=0；`main.js` **4,311,498 B**（拆除前 4,343,909 B，少 32,411 B）
+- `styles.css` 449,051 B **未变**（确认无专属样式被遗留）
+- 产物关键词核验：`need_login_subtitle` / `/x/player/wbi/v2` / `fetchBiliTracks` / `BiliSubtitleTrack` / `openBiliTracks` / `biliSubtitle` / `biliLyric` **全部 absent**
+- 产物断言 **87 FAIL**，按本批关键词（bilibili / biliSubtitle / biliLyric / need_login / wbi / LYRIC_SOURCE 等）筛 **命中 0 条**
+- 部署测试库三件 SHA256 全 MATCH；镜像 DRY-RUN 待拷贝 0 / 已一致 528 / 多余 0 / LICENSE 一致 ⇒ **判绿**
+
+### 问题修复 · #714（2026-10-25）：**B 站字幕「全部显示没有开放字幕」——双端点并集 + 限流重试 + 假结论消除**
+
+**用户原话（2026-10-25）**
+> 什么鬼全部显示没有开放字幕，我在浏览器明明看全都有字幕，给我参考金标准项目啊
+
+#### ① 定性过程：先证明服务层没问题，再找真差异
+
+用户库 `临时测试库` 的 `data.json` 里 `biliCookie` 长度 **1390**（已登录，`nav` 实测 `isLogin:true` / `uname: Isolair`），部署产物 4,341,534 B / 21:42:51 与仓库 `main.js` 逐字节同大小同 mtime ⇒ **不是没配凭据、也不是没部署新代码**。
+
+用真 Cookie 实测（`_probe_bili_real.cjs` / `_run_bili_node.mjs`，走宿主真正的 `services/nodeHttp.ts`）：
+
+| 路径 | `BV1GJ411x7h7` 结果 |
+| --- | --- |
+| `x/player/v2?bvid=&cid=`（无签名） | `code 0` / `need_login_subtitle false` / **`subs 1`** |
+| `x/player/wbi/v2`（wbi 签名） | `code 0` / `need_login_subtitle false` / **`subs 12`** |
+
+两端点**同时**可用、Cookie 透传正确、wbi 签名正确 ⇒ 「服务层整体挂了」这条排除。
+
+#### ② 🔴🔴 真根因：两个端点返回的轨集**互有出入**，旧实装只问一个
+
+`_run_bili_matrix.mjs` 对 20 条候选逐条比对 A（无签名）vs B（有签名）：
+
+| 视频 | A `player/v2` | B `wbi/v2` | 旧行为（只问 B） |
+| --- | --- | --- | --- |
+| `BV1jQ4y147ig` | **1**（`ai-zh`） | **0** | 显示「没有开放字幕」 |
+| `BV1UT42167xb` | **1** | **0** | 显示「没有开放字幕」 |
+| `BV11dnw6NEju` | **1** | **0** | 显示「没有开放字幕」 |
+| `BV1V94y1K7GK` | 4 | 4 | 正常 |
+| `BV1GJ411x7h7` | 1（偶发） | 12 | 正常 |
+
+⇒ 只打 wbi 一端点，**必然有一整类视频被吞成「没有开放字幕」**。这解释了用户「浏览器里明明全都有字幕」。
+
+#### ③ 第二层根因：同一 URL 的**周期性限流**，一次空就判死
+
+同 URL 隔 1.2s 连打 10 次，轨数为 `1,0,0,1,0,0,1,0,0,1` —— **约三次里成一次**，呈规律而非随机抖动（`_run_buvid.mjs` 定量）。追加新鲜 `buvid3` 不能改善 ⇒ 不是身份问题，是频率窗口。
+
+旧实装 `TRACK_ATTEMPTS = 3` / 间隔 `350ms`：三发全落在同一个限流窗口内，等于没重试（复测 3 轮里仍出现 `0` 轨）。
+
+#### ④ 改法
+
+- `src/pure/biliSubtitle.ts` 新增 `mergeSubtitleTracks(a, b)`：两端点取**并集**。
+  - 🔴 去重键必须是 `lan`（小写），**不能带 `subtitleUrl`**：B 站每条轨的 `subtitle_url` 带一次性签名参数，两端点拿到的 URL 必然不同 ⇒ 按 URL 去重等于没去重，实测 `BV1GJ411x7h7` 直接翻倍成 **24 条**（12 种语言各两遍）。
+  - `needLogin` 只在两份都空时采信；`error` 只在两份都失败时带出（一份成功一份失败 ⇒ 以成功那份为准）。
+- `parseSubtitleList` 对 `code !== 0` 不再吞成空数组，改为回 `{ tracks: [], needLogin: false, error: msg }` —— `-403`（签名/Cookie）/ `-412`（风控）以前都被显示成「没有开放字幕」，同样是假结论。
+- `src/services/biliLyric.ts`：`fetchBiliTracks` 依次打无签名端点（先，不需密钥）与签名端点，结果交 `mergeSubtitleTracks`；两端点各自走 `tracksWithRetry`，有轨立即返回（⛔ 不为凑次数白打）。
+- 重试参数按定量结论调整为 **5 次 × 900ms**（最坏 3.6s）：必须跨过限流窗口，否则重试等于白打。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**
+- 全量单测 **4553 passed / 218 files**
+  - 🔴 修了一条**测试自身缺陷**：`tests/biliLyric.test.ts:120`「Cookie 只非空才进请求头」原本 mock 恒回空轨，会触发满重试（5×900ms×2 端点）而撞 vitest 5s 超时；改为回一条轨（该用例只关心请求头，不关心轨数）。
+  - 顺带暴露：三条「空结果」用例各耗时 3.6s（走满重试）。**接受**——真实场景就该等这么久才能下结论，⛔ 不为跑得快给测试开后门。
+- 真机稳定性复测（`_run_stable.mjs`，5 条视频 × 3 轮）：改前 `47ig` 在 0/1 之间抖动、`NEju` 同理、`x7h7` 出现 13（重复）；改后 3 轮**全部稳定**：`47ig=1 67xb=1 x7h7=12 K7GK=4 NEju=1`，无重复。
+- `node esbuild.config.mjs production` **EXIT=0**；`main.js` **4,343,909 B** / `styles.css` **449,051 B** / `manifest.json` **439 B**
+- 产物核验 `_chk_bili4.cjs` **12 项全 PASS**，含两条反向锚：旧「只打 wbi」痕迹已消失、其余四源「该源没有这首歌的歌词」文案仍在（那句对它们仍准确，⛔ 不是要删）。
+- 部署 `临时测试库`：三件 SHA256 三方一致（`main.js 99DC76119B9560A7` / `styles.css A129827C814494A8` / `manifest.json 048792BB6A19BC46`）。
+- 镜像 DRY-RUN：`待拷贝 0 / 已一致 532 / 多余 0 / LICENSE 一致` ⇒ **[OK] 判绿**。
+
+⚠️ 边界：**未在 Obsidian 本体点过**（本机无该运行时），验证强度 = tsc + 4553 单测 + 构建 + 产物核验 + 真机 Chrome/Node 实测。用户需 Reload 插件后重试。
+
+---
+
+### 新增功能 · #713（2026-10-25）：**B 站字幕改「弹窗选轨」+ 未登录不再谎报「没有歌词」+ B站音频流补测试连接**
+
+**用户原话（2026-10-25）**
+> 在b站音频流凭据行底下加个测试连接按钮，还有这个搜索b站视频不要提示没有歌词，是再弹窗获取字幕填入啊，根本就获取不到时间戳
+
+#### ① 报障的真实根因：不是「没字幕」，是「未登录一律不给」
+
+真机实测（`_probe_bili_sub6.cjs`，三条路径全验，视频 `BV1GJ411x7h7`）：
+
+| 路径 | 结果 |
+| --- | --- |
+| `x/player/v2?bvid=&cid=`（带播放页 Referer） | `code=0`、**`need_login_subtitle=true`**、`subtitles` 空数组 |
+| `x/player/wbi/v2?…w_rid=&wts=`（带 aid） | `code=0`、`need_login_subtitle=true`、`subtitles` 空 |
+| 播放页 SSR `https://www.bilibili.com/video/<bvid>` | `status=301`，SSR 里没有 `subtitle` 字段 |
+
+⇒ **未登录时 B 站一个字幕轨都不返回，但接口照样回 `code: 0`**。旧实装把「未登录」和「真没字幕」压成同一个 `null`，界面只能笼统说「该源没有这首歌的歌词」—— 用户看到的是**假结论**，这正是「根本就获取不到时间戳」的来源。
+
+#### ② 两级出口拆开（`services/biliLyric.ts`）
+
+- `fetchBiliTracks(http, bvid, cookie)` → `{ tracks: BiliSubtitleTrack[]; needLogin: boolean }`
+  - 有轨 ⇒ `needLogin` **恒为 false**（已经拿到就不采信 `need_login_subtitle`，那个字段只用来解释「为什么是空的」）。
+  - 0 轨 + `need_login_subtitle === true` ⇒ `needLogin: true`。
+  - 0 轨 + 字段缺失/false ⇒ `needLogin: false`（此时才能说「这条视频没有开放字幕」）。
+  - 空 `bvid` ⇒ `{ tracks: [], needLogin: false }` 且**一个请求都不发**。
+- `fetchBiliTrackText(http, track, cookie)` → `string | null`（正文只有空白行 ⇒ `null`；HTTP 非 2xx ⇒ **抛错**，由界面显示具体原因，⛔ 不吞成 `null`）。
+- 老入口 `fetchBiliLyric` 语义保持（自动取第一条 / 拿不到回 `null`），供「自动填入」路径继续用。
+
+#### ③ 界面：先弹窗选轨，再填入
+
+- `EntryForm.svelte` 新增 `biliTrackPop` 浮层（复用既有 `.rl-lrc-pop` 系列样式，与歌词候选浮层同款）：列出语种、条数，人工中文排最前、AI 字幕排最后；选中即调 `onLoadBiliTrack` 取正文并填入。
+- B 站那一支在 `fetchOnlineLyrics` 里**先进弹窗**，⛔ 不再直接 `onLoadLyric` 然后报「没有歌词」。
+- 未登录 ⇒ 弹窗内明示「B 站字幕需要登录才给」并指路「B站音频流」那一行的 Cookie；真无字幕 ⇒ 「这条视频没有开放字幕」。
+- 其余四源文案**一字未动**（仍说「该源没有这首歌的歌词」——对它们来说那句话是准确的）。
+
+宿主接线：`main.ts:4924 biliLyricTracks(bvid)` / `:4935` 取正文；`EntryModal.ts:385` 传 `onBiliTracks`。
+
+#### ④ B站音频流：补「测试连接」
+
+`services/dl/index.ts` 的 `dlTestConnection` 新增 `bilibili` 分支，判据 = `x/web-interface/nav` 回 `code === 0 && data.isLogin === true`：
+
+| 情形 | 结论 |
+| --- | --- |
+| 未填 | 「未粘贴 B 站 Cookie」 |
+| `isLogin=false` | 「未登录…」（⛔ **这是最容易判错的**：「能不能取字幕」那种判据在这里会把匿名请求判成有效） |
+| `code !== 0` | 「Cookie 无效或已过期」 |
+| 有效 | 「B 站 Cookie 有效（用户名）」 |
+
+设置页 `Settings.ts` 在 B 站 Cookie 输入框下按三条音乐 Cookie 行**逐字同款**建 `.rl-key-actions` + 行首回执槽 + 右贴「测试连接」；结论**只做就地回执**，⛔ 不写进行头徽标（本行徽标只表示 yt-dlp 路径配没配，两件事不混）。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**
+- 全量单测 **4545 passed / 218 files**（新增 `tests/biliLyric.test.ts` 11 条：未登录/真没字幕/有轨排序/空 bvid 不发请求/Cookie 只非空才发/多行共用时间标签；`tests/dl-service.test.ts` 新增 1 条四态）
+- `node esbuild.config.mjs production` **EXIT=0**；`main.js` **4,341,534 B** / `styles.css` **449,051 B** / `manifest.json` **439 B**
+- 产物核验 `_chk_bili2.cjs` **14 项全 PASS**（含反向锚：「B 站分支必须先 `openBiliTracks` 再填入」；以及「其余四源仍保留『该源没有这首歌的歌词』」—— 那句对它们仍然准确，⛔ 不是要删）
+- **产物断言 93 FAIL = 与本批零相关（已用旧产物对照证明）**：把上一批部署的 `main.js`（21:14）换进去跑同一份断言，同样 **93 FAIL**，且新旧 FAIL 集合**逐条完全相同** ⇒ 本批没引入任何新断言失败。另外核实 `#575` 那条是与本批无关的 CRLF 长期假红（`src/pure/dl/bilibili.ts` 是 CRLF，断言写死 `\n`）。
+- 已部署 `临时测试库`（三件 md5 三方一致，`main.js dfcec580898f`）并镜像同步（532 项全一致、无多余）
+
+⚠️ 边界：**未在 Obsidian 本体点过**（本机无该运行时）。字幕能否取到取决于**用户是否已在「B站音频流」行填了已登录的 Cookie** —— 没填时按设计会提示「需要登录」，这是事实陈述而非报错。
+
+---
+
+### 新增功能 · #712（2026-10-25）：**LRC 歌词第五源 = B 站视频字幕（wbi 签名）+ B 站 Cookie 归位 + 编辑窗右键菜单平铺**
+
+**用户原话（2026-10-25）**
+> 编辑属性窗口右键封面的菜单样式也要和在海报墙上右键菜单样式平铺统一，音乐条目LRC歌词小图标按钮窗口增强，增加B站搜索转时间戳字幕歌词，b站cookie凭据放音乐下载源"B站音频流"下
+
+#### ① 第五源：B 站字幕 → LRC
+
+**为什么不是又一家的「曲库检索」**：B 站没有歌词库，它有**视频字幕**。所以这一源的语义是「搜到那首歌的视频，把字幕转成带时间戳的 LRC」，天然能对上播放位置；代价是命中率取决于有没有人做过字幕。
+
+**接口链（三步，每步都可能失败且失败态不同）**
+1. `https://api.bilibili.com/x/web-interface/search/type?search_type=video` —— 搜索投稿，拿 `bvid`。
+2. `https://api.bilibili.com/x/web-interface/view?bvid=` —— 只有 view 才带 `cid`（播放器 id）。**搜索接口不返回 cid**。
+3. `https://api.bilibili.com/x/player/wbi/v2?bvid=&cid=&wts=&w_rid=` —— 字幕轨清单（**wbi 签名版**），再从 `subtitle_url` 取正文 JSON。
+
+**wbi 签名（`src/pure/biliSubtitle.ts`，纯逻辑、可单测）**
+- 密钥来自 `x/web-interface/nav` 的 `data.wbi_img.{img_url,sub_url}`；从 URL 里取文件名主体（去目录去扩展名）。
+- `${imgKey}${subKey}` 按官方 **64 项混淆表** `MIXIN_KEY_ENC_TAB` 重排后 `slice(0,32)` —— 该表顺序不可改，改了签名恒错且接口只回笼统 `-403`。
+- 参数按 key 字典序拼；值要**先** `.replace(/[!'()*]/g,'')` **再** `encodeURIComponent`，顺序反了同样对不上。
+- `w_rid = md5(query + mixinKey)`；`wts` 由调用方显式传入（⛔ 不在纯函数里读时钟，否则单测不可复现）。
+
+**为什么 `id` 只放 `bvid` 不放 `cid`**：搜索 20 条候选若都带 cid，就得为 20 条各打一次 view；用户实际只点 1 条。所以 view 的成本放进 `lyric()` 里付，20 次降到 1 次。
+
+**字幕 → LRC 的三个坑（都已在纯逻辑里处理）**
+- 轨排序：人工中文（`zh` 前缀）> 其它人工 > `ai-` 前缀的机器字幕，稳定排序。
+- 时间戳：两位小数，先把秒×100 取整再拆，避免 `59.999` 抖成 `[00:60.00]`。
+- 一条字幕内的 `\n` 拆成多行 LRC 且**共用同一时间标签** —— 否则高亮一次跳两行。
+
+**风控**：搜索前先打一次首页拿 `buvid3` 写进 Cookie；已有 `buvid3` 时**不覆盖**（重复取会被判异常）；`code !== 0` 时强制重取并重试一次。
+
+**排序位置**：`LYRIC_SOURCE_ORDER` 里追加在**末位**。B 站强项是「视频里正好有字幕」，抢先展示会让「自动填入」经常落到字幕上。
+
+#### ② B 站 Cookie 归位
+
+新增 `settings.biliCookie`（不再借用别处字段），设置行挂在「B站音频流」那一组下，与网易云 / QQ / 酷狗三家的 Cookie 同组；`MusicSourceId` 未扩（B 站不是音乐*下载源*，它只是共用这一行的凭据）。凭据同时服务下载面与新歌词源，`main.ts` 两处歌词调用透传 `{ biliCookie }`（⛔ 不拼进检索词，否则污染弹窗显示的 query）。
+
+#### ③ 编辑窗封面右键菜单平铺
+
+`EntryForm.svelte` 的 `.rl-ctx` 样式段整段重写为与 `MediaList.svelte` 海报墙菜单同款：相同行高、相同悬停底色、相同分组间距与圆角。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**；全量单测 **4533 passed / 217 files**（新增 `tests/biliSubtitle.test.ts` 32 条 + `tests/biliLyric.test.ts`）
+- `node esbuild.config.mjs production` **EXIT=0**；`main.js` **4,318,897 B**
+- 产物核验 `_chk_bili.cjs`：9 条正向锚（`x/player/wbi/v2` / `wbi_img` / `w_rid=` / `buvid3` / `bilibili` / `B站` / `biliCookie` …）+ 2 条反向锚 **全 PASS**
+- 产物断言 97 → **87 FAIL**，本批相关**归零**（顺手修掉 `#555`/`#575` 三处写死 `\n` 的 CRLF 长期假红）
+- 已部署 `C:\Users\kest\Desktop\临时测试库\.obsidian\plugins\obsidian-reelludic`（三件 SHA256 一致）并镜像同步（531 项全一致、无多余）
+
+⚠️ 边界：**未在 Obsidian 本体点过歌词检索**（本机无该运行时），本条验证强度 = 单测 + 产物锚 + 接口契约实证。真实字幕命中率取决于具体视频，用户需 Reload 后实测。
+
+---
+
+### 新增功能 · #711（2026-10-25）：**Steam 评分改「好评率百分比」+ 双源同源化**
+
+**用户原话（2026-10-25）**
+> 库内已有19个游戏条目，勾选覆盖同步导入的有评价人数没评分是怎么回事，镜像目录嵌套目录清理一下
+>
+> （追问后裁定）能不能显示为%专属
+
+#### 根因（两条，叠在一起）
+
+① **「有人数没评分」不是 bug，是两个不同源的字段各填一半**：
+`scoreTextOf` 之前只看 `communityScore`，而 Steam 的 `communityScore` 取自
+`appdetails.metacritic.score ÷ 10` —— Metacritic **未收录**的游戏这个字段天然为空，
+可 `recommendations.total` 有值 ⇒ 界面上就是「有评价人数、没有评分」。
+
+② **10 分制根本不适合 Steam**：Steam 商店页给玩家看的是「特别好评 97%」，
+换算成 `9.5` 与用户实际看到的数对不上，用户会以为插件取错了。
+
+#### 数据源选型（实测，非猜）
+
+| 端点 | 结论 |
+|---|---|
+| `appdetails.metacritic.score` | 0–100 媒体分；**仅部分游戏有**（用户库 19 条里缺的就是这批） |
+| `appdetails.recommendations.total` | 玩家测评数；与媒体分**不同源** |
+| `appreviews?json=1` | **HTTP 302**，免 key 拿不到，弃用 |
+| `appreviewhistogram/{appid}` | ✅ 免 key、可达；`results.rollups[]` 每周 `recommendations_up/down`，**累加即好评率与总测评数** |
+
+⚠️ **实测差异**：`histogram` 累加恒 **≥** `recommendations.total`（19 条全命中，平均高 5–9%）——
+因为 histogram 是全量历史、`recommendations` 可能只统计某口径子集。
+⇒ 结论：**百分比与人数必须同时取自 histogram**，混用会得到
+「97% 好评 · 但人数只有 556」这种自相矛盾的展示。`appdetails` 的 `recommendations.total`
+降级为 **histogram 挂掉时的兜底值**。
+
+#### 改动
+
+- **新建 `src/pure/scoreDisplay.ts`**（纯逻辑，零 obsidian/DOM，展示口径唯一真源）：
+  - `export function scoreTextOf(e: Pick<MediaEntry, 'communityScore' | 'reviewPercent'>): string`
+    —— 有 `reviewPercent` ⇒ `` `${Math.round(pct)}%` ``；否则退回历史口径
+    （整数直出、非整数 `toFixed(1)`，⛔ 不改：那会让全仓笔记快照翻天）。
+  - `export function hasScoreOf(e): boolean` —— `scoreTextOf(e) !== ''`。
+  - `export function scoreIsPercentOf(e): boolean` —— 模板据此决定要不要加 `★`
+    （`★` 是 10 分制符号，`97%★` 荒谬）。
+  - 🔴 抽出的理由：原先 4 处各自 `e.communityScore` 直出，加规则后若各写一遍
+    `e.reviewPercent ?? e.communityScore`，迟早漏一处 ⇒「列表 97%、笔记里还是 9.6」。
+- `src/data/types.ts`：`MediaEntry.reviewPercent?: number`（0–100 整数），
+  大段注释说明**为什么不复用 `communityScore`**（那是 10 分制，`communityScoreIssue` 上限 10，
+  塞 97 会被 catalog 校验丢掉）。
+- `src/data/catalog.ts`：`reviewPercent` 进白名单，`0 <= v <= 100` 且 `Math.round`。
+- `src/services/steam.ts`：
+  - `SteamDetail` 新增 `reviewPercent?: number`；`SteamReviewStats` + `parseReviewHistogram(text)`。
+  - `buildReviewHistogramUrl(appid)` —— ⚠️ 刻意**不带** `cc` / `l`：该端点返回全语言全历史周汇总，
+    加语言参数会变成子集，与商店页 All Reviews 那个百分比对不上。
+  - `fetchDetail` 改发**两次**请求（appdetails + histogram），合并点选在这里而不是调用侧 ——
+    它是所有详情路径的唯一入口（搜索回填 / 弹窗导入 / 静默同步补详情），一处补齐三处都拿到。
+    histogram 失败**绝不连累详情**（`try` 单独兜，少一个百分比不等于整条作废）。
+  - 🔴 **口径改判（与旧注释相反）**：全差评（`up === 0`）现在**给 `percent: 0`** ——
+    0% 是「有人评、零好评」的真实结论；旧实现（宁缺勿假只回 `total`）还导致一个收敛 bug：
+    补详情判据若写成「有 total 没 percent 就再拉」，那类游戏会**每次开机重拉、永不收敛**。
+    「没人评过」仍回 `{}`（undefined）——两者在源头就分开。
+- `src/pure/steamSync.ts`：`SteamDetailFields` 新增 `reviewPercent`；
+  `steamDetailFields` 采信 `0 <= v <= 100` 并 `Math.round`，⛔ **绝不写进 `communityScore`**。
+- 展示层四处（全部走 `scoreDisplay`，⛔ 不各自手搓）：
+  `src/views/components/MediaList.svelte`（海报墙封面角标 / 列表行 / 表格行 / 缩略图视图）、
+  `src/views/components/EntryForm.svelte`（标题行，且空态判据补 `reviewPercent`）。
+- `src/data/noteGenerator.ts` 的「大众评分」行：有 `reviewPercent` ⇒
+  `97%（好评率 · 1,348,121 人评价）`；无 ⇒ **逐字保持旧行为**（`String(communityScore)`）。
+- 落库两个入口都写（同上一批的教训：两条路各写一半必然烂一条）：
+  - `main.ts` `importSteamRows`（弹窗勾选导入）→ `input.reviewPercent`
+  - `main.ts` `syncSteamNow` 的 `detailOf`（开机静默 / 立即同步）→ `out.reviewPercent`
+- `src/views/components/EntryForm.svelte` 提交时**原样透传** `entry.reviewPercent`：
+  表单没有这个输入框，若不显式带上，`service.update` 的 patch 会把它抹掉 ⇒
+  「列表 97% → 打开编辑保存一次 → 百分比没了」。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**
+- 全量单测 **4501 passed / 216 files**（新增 `tests/scoreDisplay.test.ts` 13 条；
+  `tests/steam.test.ts` 新增 histogram 合并/降级/口径 6+6 条；`tests/steamSync.test.ts` 新增 4 条）
+- `node esbuild.config.mjs production` **EXIT=0**，`main.js` 4,307,178 B / `styles.css` 449,051 B
+- 产物核验 `_chk_rating.cjs` **ALL PASS 9 项**（含反向锚：旧「全差评只回 total」已消失）
+- ⚠️ 踩坑：esbuild 会把括号去掉（`Math.round((up * 100) / total)` → `Math.round(up * 100 / total)`）
+  ⇒ 产物断言的正则别照抄源码形态；中文仍要先还原 `\uXXXX` 再比对。
+
+⚠️ 边界：**未在 Obsidian 本体运行**（本机无该运行时），验证强度 = 单测 + 产物断言；
+用户需 Reload 后到设置页点「立即同步」实测百分比是否落地。
+
+---
+
+### 问题修复 · #709（2026-10-25）：**同步导入的 Steam 条目没评分 —— 两个落库入口各写一份映射**
+
+**用户原话（2026-10-25）**
+> 为什么有些同步导入的steam条目没有大众评分和评价人数，还有清理一下仓库根目录未调用临时产物
+
+#### ① 根因：同一件事写了两遍，必然有一遍先烂
+
+存在**两个落库入口**，只有一个走详情：
+
+| 入口 | 位置 | 修前行为 |
+|------|------|---------|
+| A 弹窗勾选导入 | `main.ts:2673 importSteamRows` | 调 `this.steam.fetchDetail(r.appid)`，落 platform/developer/year/genres/summary/**rating/ratingCount** |
+| B 启动静默同步 / 同步按钮 | `main.ts` `syncSteamNow` | 新建条目只写 `{ type:'game', title, status:'want', playtimeMinutes }` —— **一个详情字段都不拉** |
+
+⇒ 用户库里「弹窗导入的」有评分，「静默同步进来的」永远空白。这正是用户看到的「**有些**条目没有」。
+
+#### 改动
+
+1. **抽出唯一映射真源** `src/pure/steamSync.ts`：
+   - `export interface SteamDetailFields { platform?, developer?, year?, genres?, summary?, rating?, ratingCount? }`
+   - `export function steamDetailFields(d: unknown): SteamDetailFields` —— 入参是不确定形态（详情经 `Record<string, unknown>` 跨层），逐字段校验：
+     - 文本字段 `asText` 只认非空 trim 后的字符串
+     - `year` 需 `Number.isFinite && > 0`
+     - `genres` 过滤空串后**最多前 3 个**（与豆瓣回填同一截断口径）
+     - 🔴 `rating` 只采信 `0 < v <= 10` —— `0` 是「没有媒体分」而不是「0 分」，落成 0 会让界面显示假结论
+     - `ratingCount` 只认正数并 `Math.round`（`12.6 → 13`）
+2. **`main.ts` 两条路都改成调这一个函数**：`importSteamRows` 的详情块与 `syncSteamNow` 的 `detailFieldsOf(appid)` 都走 `steamDetailFields(...)`。
+3. **老条目补详情**：`syncSteamNow` 对**已配对但缺字段**的条目也补一次，否则用户库里已有的空条目永远补不上。
+4. **加预算上限** `export const STEAM_DETAIL_FILL_LIMIT = 40`：`syncSteamNow` 是**启动时静默跑**的（`autoSyncSteamQuietly`），2000 款游戏的库若开机逐条拉详情 = 开机卡顿 + 撞限流。每轮 40 条足够收敛。
+5. **收敛判据** `export function steamEntryNeedsDetail(cur): boolean` —— **只看 `poster` 是否为空**：
+   - 老条目全部来自旧 `syncSteamNow`，一个字段都没写、连 `poster` 都没有 ⇒ 一轮全捞出
+   - 补齐时 `poster` 一定被写上（`steamCoverUrl` 本地拼、不依赖网络）⇒ 下一轮不再命中，预算不被长期占用
+   - ⚠️ **刻意不以「缺评分」为判据**：很多游戏根本没有 Metacritic 收录（`rating` 本就 undefined），按「缺评分」判会让它们**每轮启动重拉一次**，白耗配额且永远补不上 —— 那不是收敛，是漏水
+   - ⚠️ 用户自己的 `rating`（个人评分）不参与判断，永不从 Steam 覆盖
+
+#### 验证
+
+- `tsc --noEmit` → **EXIT=0**
+- 全量单测 → **4473 passed / 215 files**
+- `node esbuild.config.mjs production` → **EXIT=0**（`main.js` 4,296,660 B / `styles.css` 449,051 B / `manifest.json` 439 B）
+- `tests/steamSync.test.ts` 新增 4 组：七字段全映射 / `rating` 边界（0、负数、10.1、NaN 一律不落键）/ `ratingCount` 正整数（0、负数丢弃，12.6→13）/ genres 截断前 3
+- 产物核验 `_chk_steamdetail.cjs`：含 `steamDetailFields` / `steamEntryNeedsDetail` 定义、`STEAM_DETAIL_FILL_LIMIT = 40`、`steamEntrySeed` 调用点 ≥3、`steamDetailFields` 调用点 ≥3；反向锚「旧裸 create 只写 title/status/playtimeMinutes」已消失
+- 真机链路断言（真实 `services/steam.ts` 的 `parseAppDetails` → 真实 `pure/steamSync.steamDetailFields`，Portal 2 appid 620 真实字段子集）：评分 9.5、评价人数 392382、题材截断 3 个，全 PASS
+
+#### ② 仓库根目录临时产物清理
+
+- 判据：`_*` 开头且**未被任何非临时文件引用**（含传递引用闭包 —— 被已保留的 `_*.cjs` 引用的也保留）
+- 结果：309 个 `_*` 文件中保留 45 个（`_deploy.cjs`、22 个文档引用过的 `_gen_*_sim` / `_preview_*` 脚本、`_stub635_obsidian.js` 等），**删除 264 个，释放 14.79 MB**
+- 护栏：`_deploy.cjs`、`_recon_m00002.md` 硬编码禁删（后者虽无引用但是唯一的只读侦察报告），脚本内断言拦截
+- 清理后复验 `tsc` **EXIT=0** / `esbuild production` **EXIT=0** ⇒ 未误删被构建引用的文件
+
+#### ③ 镜像同步（顺带修掉两处历史遗留）
+
+重建了 AGENTS.md 指定但已丢失的 `_mirror.cjs`（白名单驱动 + LICENSE 只读核对 + Buffer 原样写，⛔ 不做编码转换/换行归一）。DRY-RUN 发现镜像侧两处**历史遗留**（非本批产生）：
+
+- 镜像 `tests/tests/` 嵌套目录 215 个文件（182 个与顶层逐字节相同、33 个是旧版残留）—— 正是 AGENTS.md:108 警告过的 `cp -rf tests "$DST/"` 少了 `/.` 的形态事故；这些文件**已被镜像 git 跟踪**（`git ls-files tests/tests` = 216）
+- 镜像根 `main.js`（构建产物，AGENTS.md:95 明确「不进镜像」；`.gitignore` 已忽略，未被跟踪）
+
+⇒ **未擅自删除**（涉及镜像 git 已跟踪内容，属环境修改权，须用户裁定）；本批先把 78 项真实改动拷入，全量 **525 项逐字节比对差异 = 0**、LICENSE 一致。
+
+🔴 **用户裁定（2026-10-25）：两处历史遗留「都先别动」** —— 仅在本日志记录，不做任何删除。镜像当前状态：`tests/tests/` 嵌套目录与根 `main.js` 均保留原样。**下次要清理时，注意 `tests/tests` 有 216 个文件被镜像 git 跟踪，删除后镜像 `git status` 会出现大量 `D`，commit 时机归用户。**
+
+⚠️ 边界：**未在 Obsidian 本体运行**（本机无该运行时），本条验证强度 = 单测 + 产物核验 + 真实 parse 链路断言。用户需 Reload 后实测下次同步是否补上评分。
+
+---
+
+### 新增功能 · #708（2026-10-25）：**Steam 补齐评分/评价人数；「下载封面」一键迁移改成先勾选**
+
+**用户原话（2026-10-25）**
+> 拉取到的怎么没有steam的评分和评价人数，还有设置页的下载封面功能项点击"一键迁移"先弹窗列出当前可以迁移的封面条目出来然后用户勾选再迁移，默认全选
+
+#### ① Steam 评分与评价人数
+
+`_probe_steam_rating.cjs` 实测 appid 620（Portal 2）的 `appdetails` 返回：
+
+- `recommendations: { total: 392382 }` —— 可用
+- `metacritic: { score: 95 }` —— 可用
+- `appreviews?json=1` —— **HTTP 302 空 body**，免 key 拿不到好评率 ⇒ 不采用
+
+取法（`src/services/steam.ts`）：
+
+- `rating` = `metacritic.score ÷ 10`（10 分制，与豆瓣同制式；`tenScaleOf` 只采信 `0 < score <= 100`，⛔ `score: 0` 是「没收录」，不许变成 0 分）
+- `ratingCount` = `recommendations.total`（`countOf` 只认正整数，缺失/0 → `undefined`）
+- ⚠️ 两者**不同源**（媒体分 vs 玩家测评数），注释与单测都锁住「不许互相凑数」
+
+接线两条路都要落库，否则从同步进来的游戏永远空白：
+- `src/views/components/EntryForm.svelte:1753-1763` steam 分支：`applyDoubanDetail(d)` 后补 `if (d.rating != null && !communityScore) communityScore = String(d.rating);`（`applyDoubanDetail` 只读 `ratingCount`、不读 `rating`）
+- `main.ts` `importSteamRows` 详情块补 `if (d.rating != null) input.communityScore = d.rating;` 与 `if (d.ratingCount != null) input.ratingCount = d.ratingCount;`
+
+单测 `tests/steam.test.ts` 新增 4 条（÷10 换算 / score 0 与越界 → undefined / total 缺失为 0 → undefined / 不同源不许凑数）。
+
+#### ② 「一键迁移」改成先勾选后迁移
+
+- 新建 `src/modals/PosterMigratePickModal.ts`：`PosterMigrateCandidate { id, title, poster }` + `Modal` 子类 `(app, candidates, onConfirm: (ids) => void)`；默认**全选**、全选/全不选二态、计数「共 N 条 · 已选 M 条」、按钮「迁移 N 条」（0 条 disabled）；⛔ 底部不放「取消」（右上角 ✕ 即退出，与其余弹窗同口径）。职责边界：弹窗**不扫库**，只渲染调用方给的候选集。
+- `main.ts` 新增 `async openPosterMigrate()`：`isMigratingPosters` 早退 → `service.list()` 过滤 `!!e.poster && /^https?:\/\//` → 无候选 Notice 早退 → 弹窗 → 确认后开 `PosterMigrateProgressModal` 并 `localizeAllPosters(..., ids)`。
+- `localizeAllPosters` 新增第 2 参 `ids?: readonly string[]`，内部 `const wanted = ids ? new Set(ids) : null;`，过滤条件 `e.poster && /^https?:\/\//.test(e.poster) && (!wanted || wanted.has(e.id))`。⚠️ 候选判据必须与内部同源，否则「弹窗列 50 条实际迁 48 条」会被当故障。
+- `src/Settings.ts` 一键迁移 onClick 简化为 `void this.plugin.openPosterMigrate();`。
+
+#### ③ 顺带修掉的真缺陷：勾选弹窗标题被压扁
+
+真机复现页截图暴露「下载封面」标题与说明行**视觉重叠**，量测 `标题高 11.0px` / `说明行高 8.2px`。
+
+根因正是 `styles.css` #634 段写明的风险：`.rl-scroll-inside .modal-content > * { min-height: 0 }` 让**所有**直接兄弟可被压缩，此前只给 `.rl-pc-foot` / `.rl-pc-hint` 加了 `flex: 0 0 auto`，**h2 与 `.rl-pc-desc` 漏了**。
+
+修法（`styles.css`，`.modal-content > h2:has(+ .rl-pc-desc)` 之后）：
+
+```css
+.rl-scroll-inside .modal-content > h2,
+.rl-scroll-inside .modal-content > .rl-pc-desc { flex: 0 0 auto; }
+```
+
+⚠️ 受益者不止本弹窗 —— `AssetCleanupModal` / `DeleteEntryModal` 同为 h2 + `.rl-pc-desc` + `.rl-scroll-inside` 结构，一并治好；特异性 (0,3,0) 高于列表 `flex: 1 1 auto` 的 (0,2,0)。
+
+#### 验证
+
+- `tsc --noEmit` → **EXIT=0**（首跑报 8 个 `TS2531 Object is possibly null`，均在 `tests/steam.test.ts:241-252`，是断言未用 `?.` 收窄，已修）
+- 全量单测 → **4464 passed / 215 files**
+- `node esbuild.config.mjs production` → **EXIT=0**（`main.js` 4,293,226 B / `styles.css` 449,051 B / `manifest.json` 439 B；87 warnings 是 svelte 既有告警）
+- `_chk_poster.cjs` 产物+源码双向核验 **ALL PASS 10 项**
+- 真机复现页 `_shot/posterpick.html`（458,968 B，link=0/缺失=0/残留=0）+ `_probe_posterpick.cjs`：13 条断言 **ALL PASS**；`listScroll 1027 > 348`（内部滚动真实生效）、标题高恢复 30px、页脚高 34px
+- 产物断言 84 FAIL / 3971 PASS，本批关键词（steam / metacritic / recommendations / PosterMigratePick / openPosterMigrate / localizeAllPosters / ratingCount / communityScore / 17 位 / 64 位 / 立即同步）**零命中** ⇒ 全为批前历史基线
+- 部署 `C:\Users\kest\Desktop\临时测试库\.obsidian\plugins\obsidian-reelludic` + 镜像，三件 SHA256 `A9B6CC06 / A129827C / 048792BB` 三处一致
+
+#### 踩坑（记下来，别重犯）
+
+1. **探针页没有 Obsidian 的 `setText` 扩展**：原生 DOM 上 `el.setText(...)` 抛 TypeError ⇒ 断言假红。修法：仿真元素补 `setText = (t) => { el.textContent = t }`。**这是「探针缺陷伪装成实现缺陷」，别误判成实装 bug。**
+2. **仿真 `.modal` 必须给固定可用高度**：不给高度 ⇒ 列表把页面撑长、`scrollH == clientH`，「内部滚动」这条等于没测。给 `.modal { height:560px; display:flex; flex-direction:column; overflow:hidden }` 后才有意义。
+3. **`assert-symbols.cjs` 输出是 UTF-16LE + BOM，行首带两个空格**：用 `startsWith('FAIL')` 判恒为 0（会得到 0 FAIL 的假绿），必须先 `trim()` 再判，且用 `readFileSync(..., 'utf16le')` 并剥 BOM。
+
+---
+
+### 问题修复 · #707（2026-10-25）：**同步弹窗里勾上「库里已有」的行，落库时却被当同名跳过**
+
+**用户原话（2026-10-25）**
+> 同步窗口的勾选是覆盖操作啊不是跳过
+
+#### 根因（两层，缺一个都解释不了现象）
+
+`main.ts` `importSteamRows` 的判重是「先按 `steam:{appid}` 找，找不到就查同名 ⇒ **跳过**」。这里有两个问题叠在一起：
+
+1. **落库层**：`findTitleConflict` 命中就直接 `skipped++ / continue` —— 但那一行在弹窗里是被标成「库里已有 · 勾选=覆盖」的，用户勾了它，意图就是覆盖。**勾了却跳过**，正是用户报的。
+2. **显示层的判据不全**：`steamKnownKeys()` 只按 `sourceUrl` 里的 appid 认条目。而上一版 `syncSteamNow()` 建条目时**根本没写 `sourceUrl`**（只有 `{ type, title, status }`）⇒ 那些老条目 appid 认不出来，在弹窗里显示成「库里没有」、默认被勾上，落库时才撞上同名保护。**用户看到的是「勾了 → 跳过了」**。
+
+#### 改动
+
+- `main.ts` `fetchSteamSyncCandidates`（两处返回分支）：`imported` 判据由「只看 appid」改为「appid **或** 归一标题命中 `type: 'game'` 的既有条目」。
+- `main.ts` `importSteamRows`：`prev` 的查找在 appid 之外补一次标题匹配，**但只在 `r.imported` 为真时**做。
+- 同名保护**没有拆掉**：`r.imported` 为假却撞同名（真·同名不同作品）仍走 `sameName / skipped` —— 笔记落盘路径按标题派生（`entryNotePath`），覆盖会把别人的 `.md` 原位改掉（`importConflict.ts:7-21` 有完整推导）。所以「覆盖」只对**用户明确勾了「库里已有」那一行**生效。
+- `src/modals/SteamSyncModal.ts` 顶部说明重写：明确「勾选 = 写入」「库里已有的勾上就是覆盖」「覆盖只换 Steam 来源字段，评语/进度/摘抄/标签/个人评分不会被动」。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**
+- 全量单测 **4460 passed / 215 files**
+- `node esbuild.config.mjs production` **EXIT=0**；`main.js` 4,287,471 B
+- 产物字符串核验（先还原 `\uXXXX` 再比对）6 项全 PASS，含一条反向锚：旧文案「库里已有的条目默认不勾，勾上 = 覆盖 Steam 来源字段」已消失
+- 部署测试库 + 镜像，三件 SHA256 逐件一致
+
+⚠️ 边界：未在 Obsidian 本体实点（本机无该运行时）。用户需 Reload 后实测「勾一条库里已有点导入」。
+
+---
+
+### 新增功能 · #706（2026-10-25）：**Steam 同步改「先弹窗列游戏供勾选」＋ 补齐封面与元数据 ＋ SteamID 位数文案纠错**
+
+**用户原话（2026-10-25）**
+> steam凭据行下的框占位符怎么说明是64位，改成17位，还有这个所有类型账号同步是要先列出弹窗列出游戏让我勾选才同步（库内已有要提示覆盖）还有拉取到的steam游戏怎么连封面和任何信息都没有啊只拉了个标题
+
+#### ① 文案：`64 位` → `17 位`（**原文案本身就是错的**）
+
+`SteamID64` 是 **17 位十进制数字**（如 `76561198xxxxxxxxx`），旧占位符写「64 位」是把格式名 `SteamID64` 里的 `64` 误当成了字符数 —— 而校验函数 `steamIdIssue` 一直判的就是 `s.length !== 17`，**文案与校验自相矛盾**，用户照着填只会反复被拒。
+
+#### ② 同步改「先弹窗列游戏供勾选」（`src/modals/SteamSyncModal.ts` 新建）
+
+之前点「立即同步」是**直接全量入库**，用户既不能挑、也看不到将要发生什么。现在改为：
+
+- 弹窗列出 Steam 库 + 愿望单的**全部候选**（表格，可勾选），带搜索过滤与全选/反选。
+- **库里已存在的默认不勾选**，并标「库里已有」——用户要的「库内已有要提示覆盖」。
+- 勾选后才落库；`steam:` 判重键避免重复条目。
+- 底部「取消」**保留**（与 #639 那批「去取消」相反）：这里顶部**没有** ✕ 关闭按钮，去掉就无路可退。这是有意的例外，不是漏改。
+
+#### ③ 封面与元数据：从「只有标题」到「完整条目」
+
+旧路径只写 `{ type: 'game', title: g.name, status: 'want' }`，所以用户看到的是「只拉了个标题」。现在：
+
+- 封面取 `library_600x900`（竖版，适合海报墙），无则回退 `header_image`。
+- 补齐 `poster` / `playtimeMinutes` / `steamAppId` 等字段，时长按 Steam 累计值直接覆盖（⛔ 不增量累加，会翻倍）。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**
+- 全量单测 **4460 passed / 215 files**（新增 `tests/steamSync.test.ts` 4 组 19 条）
+- `node esbuild.config.mjs production` **EXIT=0**；`main.js` 4,286,603 B
+- 产物断言 **91 → 86 FAIL**，**Steam / #639 相关 FAIL 归零**（其中 5 条为断言锚点过期，已按新口径改写：占位符 64→17 位、`keyField` 窗口 600→1400（新增注释把字段推后）、两颗同步按钮文案统一「立即同步」后旧锚点失效、`\r?\n` 兼容 CRLF）
+- 已部署测试库 + 镜像同步，三件 SHA256 与源一致
+
+⚠️ 边界：**未在 Obsidian 本体点过同步**（本机无该运行时），验证强度 = tsc + 单测 + 产物断言 + 哈希核验。
+
+---
+
+### 体验优化 · #705（2026-10-25）：**Steam 凭据说明补全「Key 与 SteamID 怎么拿」＋ 明确不支持 Cookie**
+
+**用户原话（2026-10-25）**
+> 还有Steam的apiKey和id怎么获取的，用cookie不行吗有限制
+
+#### 改动
+
+`src/pure/sourceRegistry.ts` 的 `steam.hint` 从
+`获取：steamcommunity.com/dev/apikey（另需 64 位 SteamID）。`
+改为逐段可执行：
+
+- `获取：Key 去 steamcommunity.com/dev/apikey 申请（32 位十六进制）。`
+- `SteamID 取 Steam 个人资料页网址里 /profiles/ 后面那串 17 位数字。`
+- 新增 `不支持 Cookie 登录：同步走的是官方 Web API（只认 Key + SteamID），不是网页会话。`
+- 原有「特色 / 用途 / 公开可见」三段一字不动（顺序判据 `获取 < 特色 < 用途 < 需设为公开可见` 保持成立）。
+
+#### 为什么是「不支持」而不是「没做」（实测依据，非推断）
+
+`src/pure/steamSync.ts` 文件头留档的真机实测（2026-10-15）：
+
+- `IPlayerService/GetOwnedGames/v1` **无 key 直接 401**，响应体逐字 `Access is denied… Please verify your key= parameter` ⇒ 库与游玩时长离不开 Web API Key。
+- `IWishlistService/GetWishlist/v1?steamid=…` **只需 steamid、免 key**，但资料非公开时返回 `{"response":{}}`（HTTP 200）⇒ 「空」与「失败」必须分开报。
+- 两个端点都是 **api.steampowered.com 的 Web API**，鉴权走 `key=` / `steamid=` 查询参数，**不接受** `steamLoginSecure` 之类的网页会话 Cookie（那是 store.steampowered.com 购物车/年龄门那套的凭据）。
+
+⚠️ 外部限制：API Key 需 Steam 账号满足「已消费 ≥ 5 美元」才能申请；个人资料与愿望单必须设为公开可见，否则读不到库。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**；全量单测 **4448 passed / 215 files**；`node esbuild.config.mjs production` **EXIT=0**
+- 产物核对（`_chk.cjs`：先把 esbuild 的 `\uXXXX` 转义还原再比对，⛔ 直接搜中文会全是 MISSING —— 本批踩过一次）：`获取：Key 去 …`、`SteamID 取 …`、`不支持 Cookie 登录`、`需设为公开可见` 四段全部 **FOUND**（35,436 个转义序列）
+- 产物断言 `assert-symbols.cjs`：**真 FAIL 88 条，与改动前同数**；与 Steam 相关的 2 条（#639 ①、#589 ⑤）均**不是本次引入**（前者是 `id: 'steam'` 到 `keyField` 的窗口距离判据，后者是 `onLayoutReady` 时机判据，两条的锚点都没被我碰）
+- 已部署测试库 + 镜像同步，三件 SHA256 **OK**
+
+---
+
+### 体验优化 · #704（2026-10-25）：**TMDB 动作行与上方输入框的间距也统一了 —— 校验提示槽改挂「动作行之后」**
+
+**用户原话（2026-10-25）**
+> TMDB行的立即同步测试连接按钮和上面的框间隔怎么和其他行的间隔不同，给我统一下
+
+#### 根因（量测，不是目测）
+
+#703 把那唯一一条共用提示槽挂在了「两格之后、动作行之前」（`mountIn(body)`），于是：
+
+- 两格之间 → 6px ✔（#703 修好的那处）
+- **最后一格 → 按钮行 → 6 + 2 + 16.8 + 2 ≈ 32.8px ✘** —— 而 IGDB / Steam 等所有单格源这一处只有 `gap 6 + margin-top 2 = 8px`
+
+也就是说 #703 只修了「两框之间」，漏了「框与按钮行之间」——用户这一条正是说的后者。
+
+#### 改动
+
+- `src/Settings.ts` `makeIssueSlot()` 返回值**新增 `mountAfter(anchor: HTMLElement)`**：把槽 `insertAdjacentElement('afterend', ...)` 插到给定节点之后，并带 `rl-secret-issue-tail` 标记类。
+- `renderKeyRow`：`issueSlot?.mountIn(body)` **删除**，改在动作行（同步 / 测试连接）建完之后调 **`issueSlot.mountAfter(actions)`**。
+- `styles.css` 新增 `.rl-secret-issue-tail.is-empty { display: none; }`。
+
+#### 为什么是「动作行之后」这一个位置（两个历史要求同时成立）
+
+1. **间距与别行一致**：槽不再夹在框与按钮之间 ⇒「最后一格 → 按钮行」= `gap 6 + margin-top 2` = **8px**，与单格源逐像素相同。
+2. **提示出现不许挪按钮**（#699 的口径继续成立）：槽是这一行的**最后一个子项**，按钮在它**上方** ⇒ 提示展开只把下方内容往下推，按钮 rect 一个像素不动。
+3. ⚠️ 空态必须 `display: none`（⛔ 不能保留高度）：它下面是空的，保留高度会让 TMDB 行常年比别的行高一截，又变回「间距不一致」。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**；全量单测 **4448 passed / 215 files**；`node esbuild.config.mjs production` **EXIT=0**（main.js 4,268,658 B / styles.css 448,029 B）
+- 真机量测（无头 Chrome + CDP + **仓库真实 `styles.css`**，复现页 `_shot/src/tmdbgap2.html` → `node tools/mk-sim.mjs`，三行 `rl-key-open` 展开态，DOM 逐字复刻创建顺序）：
+  - TMDB 末格→按钮行 **8px** / IGDB **8px** / Steam **8px** ⇒ 三者逐像素一致
+  - TMDB 两格净间距 **6px**（#703 的成果保持）
+  - 空态尾部槽 `display = none`
+  - 提示展开后：同步按钮 `left 604.67 → 604.67`、`top 174.00 → 174.00`；测试按钮 `left 690.67 → 690.67` ⇒ **零位移**
+  - 提示槽高度 `0 → 16.80`，文字色 `rgb(229, 83, 75)` = `--text-error`（证明 CSS 真的命中）
+  - `fails: []`
+- 产物断言 `assert-symbols.cjs`：**真 FAIL 88 条，与改动前同数**；按 `secret-issue|mountAfter|issueSlot|tmdb|间隔|按钮` 过滤**无一条涉及本次改动**。
+  - 🔴 踩坑留档：该脚本输出是 **UTF-16LE**，用 `readFileSync(..., 'utf8')` 读会是乱码、`FAIL` 一条都数不出来（第一次统计出「0 FAIL」是假绿）；必须 `.toString('utf16le')`。且计数要看**行首 `FAIL` 标记**，`PASS` 行里也有「FAIL」字样（判据描述里引用历史），混在一起会把 88 数成 94。
+
+⚠️ 边界：未在 Obsidian 本体运行（本机无该运行时）；验证强度 = tsc + 4448 单测 + 构建 + 真机 Chrome 量测。
+
+---
+
+### 体验优化 · #703（2026-10-25）：**TMDB 双格间距对齐 IGDB —— 校验提示改成「整行共用一条、挂在两格之后」**
+
+**用户原话（2026-10-25）**
+> TMDB行下的各个框间隔要同步IGDB行的
+
+#### 根因（量测，不是目测）
+
+IGDB 那两格之间只有 `.rl-key-body` 的 `gap: 6px`；TMDB 那两格各挂一条 `.rl-secret-issue`（`min-height: 1.4em` ≈ 16.8px + `gap` 6 + `margin-top` 2），于是两框实际间距 **34px**，同一页里两行规格不一致。
+
+#### 改动
+
+- `src/Settings.ts` `makeIssueSlot()` 从「创建即插入 DOM」改为「**先建对象、`mountIn(body)` 时才插入**」：
+  - 返回值新增 `mountIn: (body: HTMLElement) => void` —— 内部建 `div.rl-secret-issue`、`addClass('is-empty')`、跑首次 `render()`。
+  - `render()` 开头加 `if (!slot) return;` 防御（`register` 可能在 mount 之前被调用，此时无槽可写，静默跳过即可）。
+- `renderKeyRow` 里：TMDB 双格（`meta.id === 'tmdb' && keyField2`）**整行只建一个** `issueSlot`，两格的 `issue` 都传 `issueSlot` 而不再自建；分支结束（两格都建完）后才 `issueSlot?.mountIn(body)`。
+  - ⚠️ 顺序是有语义的：`mountIn` 提前 = 槽又夹在两框之间，等于没修。
+- `createSecretField` 新增可选入参 `issueSlot`：传了就走共用槽（`issueSlot.register(input, issue)`），没传仍是「本格自建一条」的老路径（单格源不受影响）。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**；全量单测 **4448 passed / 215 files**；`node esbuild.config.mjs production` **EXIT=0**
+- 真机量测（无头 Chrome + CDP + **仓库真实 `styles.css`**，复现页 `_shot/src/secretgap.html` → `node tools/mk-sim.mjs`，DOM 逐字复刻 `renderKeyRow` 的创建顺序）：
+  - IGDB `gapBetweenRows = 6px`，TMDB `gapBetweenRows = 6px` ⇒ **逐像素一致**
+  - `fails: []`（另两断言：TMDB 的 `.rl-secret-issue` 恰 1 条、IGDB 恰 0 条）
+- 产物断言 `assert-symbols.cjs`：**FAIL 88 条，与改动前完全同数**，按 `secret|issue|slot|tmdb|间隔` 过滤**无一条涉及本次改动**。
+
+⚠️ 边界：未在 Obsidian 本体运行（本机无该运行时）；验证强度 = tsc + 4448 单测 + 构建 + 真机 Chrome 量测。
+
+#### 教训
+
+- 仿真页里**不能调 Obsidian 的 `createDiv` 补丁**（`body.createDiv is not a function`）—— 原生 DOM 建节点、但类名与层级必须逐字对齐实装，否则量的不是实装。
+- CDP 探针必须**显式 `Page.navigate` + 校验 `location.href`**；这次还加了「`__PROBE` 缺失就把 `Runtime.exceptionThrown` 打出来」，一次就看清是仿真页自己的脚本炸了而不是样式不对。
+
+---
+
+### 问题修复 · #702（2026-10-25）：**TMDB 两格凭据各归各位 + 就地校验/半途报错，且提示出现不得推移按钮**
+
+**用户原话（2026-10-25）**
+> 还是统一一下吧， Session ID 那一格填的只能是access_token近300位字符串，第二格填的只能是从themoviedb.org 的「设置 → API」获取的32位字符串，占位说明也是
+
+#### 为什么改（承接 #700 / #701）
+
+#701 之后 Session 格「两种都收」，但用户明确否掉了这个模糊口径：一格收两种 = 用户永远不知道自己填对没有。这一轮把两格**收成一格一种**，并把「填错了」从「点同步后 401」提前到「打字当下就看见」。
+
+#### 改动
+
+- `src/pure/tmdbAuth.ts`：新增 `export function isTmdbV3ApiKey(credential: string): boolean`（`/^[0-9a-fA-F]{32}$/`）、`export function isTmdbV4AccessToken(sessionId: string): boolean`（复用 `isTmdbV4Token`：`eyJ` 前缀 + 至少两个点）；新增两个纯函数校验器 `tmdbApiKeyFieldIssue` / `tmdbSessionFieldIssue`，返回 `null` = 这一格没问题，否则返回面向用户的中文原因（**填错格时直接点明「你填的是另一种、该去哪拿」**）。
+  - ⚠️ 长度**不写死**「近 300 位」：官方不保证固定位数，写死会在官方改长度那天误杀合法令牌。判据只看 `eyJ` 前缀 + 段数。
+  - ⚠️ `isTmdbV3ApiKey` 与 `isTmdbV4Token` 是**互补的两条边界**，⛔ 别拿后者替换前者 —— 前者只决定「这框里的东西像不像一把 v3 Key」（用于就地校验），后者决定「请求怎么带凭据」（用于请求分流，老用户填的 v4 Read Access Token 仍要能搜）。
+- `src/Settings.ts` `createSecretField`：新增可选 `issue?: (v: string) => string | null`，在 `.rl-secret` 行**之后**（同属 body，⛔ 不塞进那个 flex 行，否则把输入框挤窄）建一个 `.rl-secret-issue` 提示槽，`input` 事件实时更新。
+  - 🔴🔴 高度**恒定预留**（`min-height: 1.4em`，空态只清文字、不收起元素）：若改成 `display:none` 收起，用户打字时提示一闪现就把下面的动作行（立即同步 / 测试连接）整体**往下顶**——那正是用户在 #699 里刚提过的同一类毛病（「立即同步按钮后出来的提示文字也不要更改同步和连接按钮的位置」）。预留一行 = 固定 1.4em 空白，换来提示出现/消失时**零位移**。
+  - ⚠️ 该提示槽只在传了 `issue` 的行才有（当前仅 TMDB 两格），其余元数据源不受影响。
+- `styles.css`：`.rl-secret-issue { min-height: 1.4em; margin-top: 2px; font-size: var(--font-ui-smaller); line-height: 1.4; color: var(--text-error); overflow-wrap: anywhere; }`。
+- 两格占位值与提示文案按新口径写死：Key 格 `TMDB v3 API Key（32 位，设置 → API）`、Session 格 `TMDB v4 access_token（eyJ 开头长串，账号同步用）`；`src/pure/sourceRegistry.ts` 的 tmdb hint 同步改写。
+- `tests/tmdb.test.ts`：旧断言把「Session 格两种都收」锁成了正确行为，已按新口径改写；新增 `isTmdbV3ApiKey` / `isTmdbV4AccessToken` / 两个 `*FieldIssue` 的边界单测（空值不报、填错格报、填对不报、32 位非 hex 报、JWT 段数不足报）。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**
+- 全量单测 **4448 passed / 215 files**
+- `node esbuild.config.mjs production` **EXIT=0**；产物断言：`isTmdbV3ApiKey`、两个 `*FieldIssue`、`authentication/session/convert/4` 均已编译进 `main.js`；`styles.css` 内 `.rl-secret-issue` 的 `min-height:1.4em` 在、旧的 `display:none` 收起已不在
+- **真机量测**（无头 Chrome + 仓库真实 `styles.css`，复现页逐字复刻 `createSecretField` 接线、判据用 esbuild 打包的真实 `pure/tmdbAuth`）：
+  - 初始 `actions.top=160.59`、`sync.left=498.34`、`test.left=575.67`、两提示行高均 `16.8px`
+  - Session 格填 32 位 hex（填错格）→ 出现「这一格只填 v4 access_token…」，上述三个坐标**一个都没变**
+  - 清空 → 提示消失，坐标仍不变
+  - Key 格填合法 JWT（填错格）→ 出现「这一格只填 32 位 v3 API Key…」，坐标仍不变
+  - 两格都填对 → 无提示，坐标仍不变
+  - 已部署 `C:\Users\kest\Desktop\临时测试库\.obsidian\plugins\obsidian-reelludic` 并 SHA256 核验，镜像同步亦核验一致
+
+#### 验证过程中踩到的两个「假红」（记录，避免下次重犯）
+
+1. **复现页少了 `.rl-key-row.rl-key-open`**：`.rl-key-body` 默认 `display:none`，只有 `.rl-key-row.rl-key-open > .rl-key-body` 才展开。少了它整块高度=0，所有 `getBoundingClientRect()` 都是 0 ⇒ 「提示前后位置不变」变成 **0==0 的假绿**。已加前置守卫：动作行高/按钮宽必须 >0，否则直接判探针失败、后续量测无意义。
+2. **测试数据不是合法 JWT**：一开始用 `'eyJ' + 'a'.repeat(280)`（没有点），`isTmdbV4Token` 要求 `split('.').length >= 3` ⇒ 判成非法 ⇒「Key 格填 JWT 不该有提示」必然误报。**测数据不合法 ≠ 实装错**，别把这种红当回归。
+
+⚠️ 边界：**未在 Obsidian 本体点过「立即同步」**（本机无该运行时），本条的验证强度 = 单测 + 产物断言 + 真实样式真机量测。用户需 Reload 后实测。
+
+---
+
+### 问题修复 · #701（2026-10-25）：**v4 用户认证拿到的 `access_token` 被当成 v3 `session_id` 用 ⇒ 同步必然 401**
+
+**用户原话（2026-10-25）**
+> 这怎么回事，同步id到底怎么获取，我是用TMDB v4 用户认证操作流程 ①获取"API Read Access Token…②生成临时 request_token…③在浏览器中批准…④用已批准的 request_token 换取最终的 access_token…⑤在设置页该元数据源凭据行下填写Session ID — 获取的但依然同步不了
+
+#### 根因（官方文档实证）
+
+TMDB 有**两套**「认证产物」，形态很像、用途不同：
+
+| 产物 | 来源 | 形态 | 用途 |
+| --- | --- | --- | --- |
+| v4 `access_token` | `POST /4/auth/access_token`（用户批准后） | JWT，`eyJ` 开头 | **v4 接口**的 `Authorization: Bearer` |
+| v3 `session_id` | `POST /3/authentication/session/new` 或 convert(4) | 32 位十六进制 | **v3 账号接口**的 `?session_id=` |
+
+用户按官方 v4 用户认证流程走到第 ⑤ 步「填 Session ID」，手上只有 `access_token` ⇒ 就填了它。
+而 `pure/tmdbSync` 把它原样拼成 `?session_id=<JWT>` 发给 `/3/account/...` ⇒ 必然 401。
+**这不是用户填错，是插件没给 v4 流程留落点** —— #700 修的是「凭据怎么发」，这条修的是「填进来的到底是什么」。
+
+#### 改动
+
+- `src/pure/tmdbAuth.ts` 新增：
+  - `export function tmdbSessionNeedsConvert(sessionId: string): boolean` —— 判据复用 `isTmdbV4Token`（`eyJ` 前缀 + 两个点）。v3 session_id 是纯十六进制、无点 ⇒ 两种输入不会互相误判。
+  - `export function parseTmdbConvertedSessionId(text: string): string` —— 取 `session_id`；非法 JSON / 未批准时抛带定位的中文错误（⛔ 不返回空串，否则上层拿空 session 去请求，只会得到更难懂的 401）。
+- `src/services/tmdb.ts`：
+  - 新增 `export type HttpPost = (url: string, body: string, headers?: Record<string, string>) => Promise<string>;`（**可选**注入，不打断既有 `new TmdbClient(key, get)` 的全部写法与单测）。
+  - 构造函数第 4 参 `httpPost?: HttpPost`；第 3 参 `lang` 保持原位（`main.ts` 显式传 `undefined` 占位 —— 曾因少传这一位把 POST 函数当 lang 字符串，tsc 直接报 TS2345）。
+  - 新增 `private resolveSessionId(raw: string): Promise<string>` —— v3 原样返回；v4 调 `POST /3/authentication/session/convert/4`，body `{"access_token": "<token>"}`，header `Authorization: Bearer <token>`。**结果缓存在 `sessionIdCache`（Map）**：一轮同步会对 `accountId` + 多个 `accountPage` 反复用到同一 sid，不缓存就每页换一次。
+  - `accountId` / `accountPage` 改为先过 `resolveSessionId`。
+- `main.ts` 注入第 4 参 POST 通道：`requestUrl({ url, method: 'POST', body, headers, contentType: 'application/json' })`，401/404 给专门文案。
+- 文案：`src/Settings.ts` `secondField` 的 placeholder → `TMDB Session ID 或 v4 access_token（账号同步用）`；缺 Session 的就地提示、`accountItems` 的空值报错、`src/pure/sourceRegistry.ts` 的 hint 全部写明「这一格两种都收，填 access_token 会自动换」。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**
+- 全量单测 **4439 passed / 215 files**（新增 4 条：判据、解析器成功/未批准/非 JSON、**v4 token 只换一次且后续请求用换来的 v3 sid**、v3 sid 不发转换请求）
+- `node esbuild.config.mjs production` **EXIT=0**；产物 `main.js` 4,260,375 B，已确认编译出 `authentication/session/convert/4`
+- 已部署 `C:\Users\kest\Desktop\临时测试库\.obsidian\plugins\obsidian-reelludic` 并 SHA256 核验；镜像同步亦核验一致
+
+⚠️ 边界：**未在 Obsidian 本体实点同步**（本机无该运行时）。验证强度 = 官方接口文档 + 单测（含「只换一次」的行为断言）+ 产物断言。
+
+---
+
+### 问题修复 · #700（2026-10-25）：**TMDB 收藏/想看同步必然失败 —— 两层根因叠加（路径单复数 + v4 令牌当 v3 Key 用）**
+
+**用户原话（2026-10-25）**
+> 我临时测试库的为什么不能同步tmdb的收藏，我填写了id名了
+
+#### 根因（外部文档实证，不是猜）
+
+`pure/tmdbSync` 的 `tmdbAccountUrl` 把 `mediaType`（`'movie'`）**原样**拼进路径，请求成了：
+
+- `GET /account/{id}/watchlist/movie` ← **单数，路由不存在**
+- `GET /account/{id}/favorite/movie` ← **单数，路由不存在**
+
+TMDB v3 官方 API Reference 的四个真实路由（2026-10-25 抓取 `developer.themoviedb.org` 页面实测确认）：
+
+| 清单 | 真实路由 |
+| --- | --- |
+| 想看 · 电影 | `https://api.themoviedb.org/3/account/{account_id}/watchlist/movies` |
+| 收藏 · 电影 | `https://api.themoviedb.org/3/account/{account_id}/favorite/movies` |
+| 想看 · 剧集 | `https://api.themoviedb.org/3/account/{account_id}/watchlist/tv` |
+| 收藏 · 剧集 | `https://api.themoviedb.org/3/account/{account_id}/favorite/tv` |
+
+⇒ **电影段是复数 `movies`，剧集段就是 `tv`**。旧实现里 tv 那两段恰好对，所以只有**电影**两个清单 404 —— 用户看到的就是「填了 Session ID，剧集能同步、收藏拉不到」，表象极像凭据问题，实际是路径单复数。
+
+⚠️ 别「统一加 s」：`tv` 段加 s 变 `/tvs` 同样 404。所以映射必须分两种情况。
+
+#### 第二层根因（用户补充后才发现，同样外部实证）
+
+修完路径之后用户补了一句关键信息 ——「是 v4 的令牌认证的」。查下来插件把所有凭据**一律当成 v3 API Key** 塞进查询串：
+
+- `?api_key=eyJhbGciOi...`（**v4 Read Access Token 是 JWT**，TMDB 不认这种传法）
+- v4 令牌必须走请求头 `Authorization: Bearer <token>`
+
+对照实验（`GET /3/account` 与 `/3/movie/550`，三种传法）：
+
+| 传法 | 结果 |
+| --- | --- |
+| v4 令牌放 `?api_key=` | **401**，报错文案还偏偏写 `Invalid API key` |
+| v4 令牌放 `Authorization: Bearer` | **200** |
+| v3 Key 放 `?api_key=` | 200（旧行为，必须保留） |
+
+⇒ 两层根因叠在一起：**电影清单 404 + 令牌用户 401**，而 401 的报错把人引向「Key 填错了」，实际是传法不对。这就是用户反复重填凭据也修不好的原因。
+
+⚠️ 反过来也不行：v3 Key 塞进 `Bearer` 头同样 401。**必须按凭据形态分流**，不能统一走一种。
+
+#### 改动
+
+- `src/pure/tmdbSync.ts`：新增 `export function tmdbAccountSegment(mediaType: 'movie' | 'tv'): 'movies' | 'tv'`（电影→`movies`，剧集→`tv`），`tmdbAccountUrl` 改走它。模块头补了上面那张四条 URL 的实证表 + 「⛔ 别统一加 s」的告诫。
+- **新建 `src/pure/tmdbAuth.ts`**（纯逻辑，零 obsidian/DOM）—— 凭据分流的唯一真源：
+  - `isTmdbV4Token(credential)`：`trim()` 后以 `eyJ` 开头且 `split('.').length >= 3`（JWT 就是 `eyJ` 前缀 + 两个点）。⛔ 别用「长度大于 60」判 —— 老 v3 Key 也有长串，会误判成令牌。
+  - `tmdbAuthKind(credential)` → `'v4' | 'v3'`
+  - `tmdbAuthHeaders(credential)`：v4 ⇒ `{ Authorization: 'Bearer <token>' }`；v3 ⇒ `{}`（空对象，不是 undefined —— 调用侧要能靠 `Object.keys()` 判断「有没有头」）。
+  - `tmdbApiKeyQuery(credential)`：v3 ⇒ `&api_key=...`；v4 ⇒ **空串**（⛔ 带着 api_key 会让 TMDB 优先报「Invalid API key」，把 Bearer 那层的成功盖掉）。
+- `src/pure/tmdbSync.ts`：`tmdbAccountUrl` / `tmdbAccountSelfUrl` 的第二参 `apiKey` 更名 `credential`，`api_key` 段改走 `tmdbApiKeyQuery(credential)`（因此 v3 时 `api_key` 出现在 `session_id` **之后**，参数顺序变了 —— 单测的逐字 URL 断言已同步）。
+- `src/services/tmdb.ts`：
+  - `HttpGet` 类型加**可选**第二参 `headers?: Record<string, string>`（可选是为了不动既有的四处 `async (url) => ...` 单测）。
+  - 新增私有 `authHeaders(): Record<string, string> | undefined` —— v3 返回 `undefined` 而不是 `{}`，宿主才能用 `headers ? {url,headers} : {url}` 分流，保证「v3 行为与旧版逐字节一致」。
+  - `search` / `detail` / `accountId` / `accountPage` 全部把 `this.authHeaders()` 透传给 `this.http(...)`。
+- `main.ts` `rebuildClients` 的 TMDB HTTP 口：
+  - 签名改 `async (url, headers) => requestUrl(headers ? { url, headers } : { url })` —— v3 时 `headers` 为 `undefined`，行为与旧版逐字节一致。
+  - 401 文案按**请求是否带 `session_id=`** 分流 —— 账号同步的 401 可能只是 Session ID 失效（搜索仍正常），旧文案一律报「API Key 无效」会把用户引到错的排查方向；并把「API Key / Read Access Token」两种凭据都写进提示。
+  - 新增 404 分支，直接打印 `HTTP 404` + 路径（去掉 query），以后再有人写错路由能一眼看见。历史教训：这个缺陷此前只表现为「没有读到任何条目」，用户完全无从下手。
+- ⚠️ **踩坑记录**：用 `node -e` 做全局字符串替换把 `tmdbAuthHeaders(this.apiKey)` 改成 `this.authHeaders()` 时，**把 `authHeaders()` 自己方法体里那一行也替换掉了** ⇒ 无限递归 + `TS2769 No overload matches this call`（`Record<string,string> | undefined` 不能传给 `object`）。**基于字符串的批量替换必须排除方法自身的定义行。**
+- `src/pure/sourceRegistry.ts` tmdb 的 `hint` 与 `src/Settings.ts` 的 `credentialPlaceholder` 都写明「v3 API Key 或 v4 Read Access Token 任填其一」，避免用户猜该填哪个。
+- `tests/tmdbSync.test.ts`：**旧断言本身把 404 缺陷锁成了「正确」** —— 它期望 `/watchlist/movie`。已按官方路由改写，并新增两条守卫：`/favorite/movies?`、剧集段必须是 `tv`（⛔ 不是 `tvs`）、外加 `tmdbAccountSegment` 的直接断言。
+- `tests/tmdb.test.ts`：新增三条 v4 守卫（`isTmdbV4Token` 认 JWT / 否 v3 Key / 否空串 / 否「只有 eyJ 没有点」的伪 JWT；`tmdbApiKeyQuery` v3 拼参、v4 空串；`tmdbAuthHeaders` v4 带 Bearer、v3 空对象）。
+
+#### 验证
+
+- `tsc --noEmit` **EXIT=0**
+- 全量单测 **4435 passed / 215 files**（首轮 2 条失败来自 `tests/tmdbSync.test.ts` 的逐字 URL 断言 —— 参数顺序按新分流调整后同步改写，改的是断言不是实现）
+- **突变验证**（防「测试恒绿」）：把 `isTmdbV4Token` 打成恒 `false`（所有凭据都当 v3），`tests/tmdb.test.ts` + `tests/tmdbSync.test.ts` 立即 **7 failed / 23 passed** ⇒ 新增守卫真的在拦；随后已还原（`src/pure/tmdbAuth.ts` 无 `// MUTANT` 残留）
+- `node esbuild.config.mjs production` **EXIT=0**；产物 `main.js` **4,255,678 B**、`styles.css` **446,015 B**；产物内已确认编译出 `mediaType === "movie" ? "movies" : "tv"`
+- 产物断言 `assert-symbols.cjs`：**98 条 FAIL，无一条涉及本批**（`tmdb|Bearer|api_key|Read Access|Session ID|sourceRegistry|credentialPlaceholder` 零命中；`#489` 三段句式 hint 断言全 PASS）。⚠️ 该日志是 **UTF-16LE**，用 `Select-String "^FAIL"` 计数会得 0 的假绿 —— 必须按 UTF-16 读
+- 已部署 `C:\Users\kest\Desktop\临时测试库\.obsidian\plugins\obsidian-reelludic`（`main.js` / `styles.css` / `manifest.json` 三件 SHA256 全 OK），镜像同步亦核验一致
+
+⚠️ 边界：**未在 Obsidian 本体点过「立即同步」**（本机无该运行时），本条的验证强度 = 官方文档实证 + 对照实验 + 单测 + 突变验证 + 产物断言。用户需 Reload 后实测。
+
+---
+
+### 问题修复 · #699（2026-10-25）：**「立即同步」的就地提示不再推走两颗按钮**
+
+**用户原话（2026-10-25）**
+> 元数据源的立即同步按钮后出来的提示文字也不要更改同步和连接按钮的位置
+
+#### 根因（两层，缺一不可）
+
+1. **提示是多出来的一个 flex 项**。旧 `flashInlineHint` 走 `host.appendChild(tip)`，而动作行是 `.rl-key-actions`（`display:flex` + `justify-content:flex-end`），回执槽 `.rl-key-result` 是 `flex:1 1 auto` —— 提示一进来就抢空间，**两颗按钮被整体左推**。真机实测（`_probe_inlinehint.cjs`，文案取最长那条 TMDB Session ID 提示）：`立即同步` left **638.34 → 185.91**、`测试连接` left **715.67 → 263.23**（左移 452.43px）。
+2. **按钮可被压缩**。把提示塞进行首回执槽后，宽面板已零位移；但窄面板（实测 330px）下按钮仍是 `flex-shrink:1` ⇒ 被压到 53.61px、标签折两行 ⇒ 行高 25 → **44**，按钮照样下移。修法是 `.rl-key-actions > button { flex: 0 0 auto; }`，让空间只从回执槽扣。
+
+#### 改动
+
+- `src/Settings.ts`：`flashInlineHint(host, text)` 改为**写入行首回执槽**（新增 `actionRowResultSlot(host)`，只认 `host.children` 里的 `.rl-key-result`）；提示 `title` 挂全文；2.4s 后 `tip.remove()` 并把被顶掉的回执文字 `slot.setText(prev)` 还原。找不到槽时保留 `host.appendChild` 兜底并注释「此处仍会位移，但只有结构真变了才会走到」。
+- `styles.css`：`.rl-inline-hint` 改为 `display:inline-block; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis` —— **必须单行**，一旦允许换行槽就长高、`align-items:center` 会把按钮整体下推（实测两行 +8.5px）。另加 `.rl-key-actions > button { flex: 0 0 auto; }`（⛔ 别写成全局 `button` 规则）。
+- ⚠️ **不要用 `position:absolute` 逃出布局流**：动作行是 `flex-end`，绝对定位会让提示叠在按钮上，且基线对不齐。
+- ⚠️ 用 `inline-block` 而非 `inline-flex`：`text-overflow` 对 flex 容器里的匿名文本不可靠。
+
+#### 顺带修掉的事故
+
+`styles.css` 原第 2609 行被写坏：12 处换行是**字面量反引号+n**、另有两处 `*/` 后直接跟规则文本，CSS 解析失败后从该处起的规则整条被丢弃（`.rl-douban-picker` / `.rl-douban-group` / `.rl-inline-hint` 等全挤在一行）。已还原为正常多行，现 `*/` 后紧跟规则的情况全仓 0 处。
+🔴 **教训**：含反引号 / 反斜杠的修复脚本必须写成独立 `.cjs` 用 `node` 跑，⛔ 绝不在 `pwsh -Command "..."` 里内联 —— 本次就因为 PowerShell 把反引号当转义符，把第 2609 行逐字符拆成了 1009 行（文件 7659 → 8667 行），靠 `_l2609.txt` 存原行 + 字符级还原才修复。
+
+#### 验证（真 Chrome + 仓库真实 styles.css，非目测）
+
+- 复现页 `_shot/src/inlinehint.html` → `node tools/mk-sim.mjs` → `_shot/inlinehint.html`；DOM 逐字复刻 `src/Settings.ts:2612-2632` 的创建顺序（回执槽 → 立即同步 → 测试连接），`flashInlineHint` 逐字复刻。
+- 780px：按钮 left/right/top/bottom **逐位相等**，行高 25→25。
+- 330px：按钮 left/right/top/bottom **逐位相等**，行高 25→25（这条是加了 `flex:0 0 auto` 之后才过的）。
+- `.rl-inline-hint` 计算样式：`display=inline-block`、`white-space=nowrap`、`text-overflow=ellipsis`、`title` 有全文；`.rl-key-actions` 子节点恒 3 个（不再多出 flex 项）。
+- `tsc --noEmit` EXIT=0；全量单测 **4426 passed / 215 files**；`node esbuild.config.mjs production` EXIT=0；产物断言 `assert-symbols.cjs` **93 FAIL 与上一轮基线逐条一致，无一条涉及 inline-hint / key-actions / key-result**。
+
+### 体验优化 · #698（2026-10-25）：**搜索结果退出即清 / 同步弹窗去底部取消 / 1.4.0 更新说明改文案**
+
+**用户原话（2026-10-25）**
+> 添加条目窗口保存逻辑仅搜索完毕不关闭窗口才保存，退出再重新搜索为清除
+> 豆瓣、Bangumi、TMDB、Steam 账号同步批量导入窗口底部把「取消」按钮去掉，因为与顶部的叉关闭冲突了
+> 关于页-更新日志-1.4.0的更新说明改成「列表改可编辑表格；新增元数据批量导入、评分看板、Bases模板与高级设置；增强PDF/漫画阅读；修复同步覆盖、漫画进度；右键"编辑条目"更名"编辑属性"。」
+
+**口径**：①**推翻 #697 的持久化**（#697 的 ⑬ 把累积池写 `{库}/search-pool.json`，用户现在要「退出再搜索为清除」⇒ 落盘链路整体拆除）；②是**去掉与右上角 ✕ 重复的入口**，不是取消「能取消」这个能力；③只是文案与日期的字面量替换。
+
+#### ① 搜索累积池：落盘 → 纯会话内存
+
+- `main.ts`：**整段删除**落盘链路 —— `loadSearchPool` / `saveSearchPool` 的读写调用、`search-pool.json` 的路径拼接、启动时的注回，全部移除（该 import 换成注释留档）。⛔ **不要按 #697 的文档把它加回来**。
+- `src/modals/EntryModal.ts`：`private searchPool: SearchPool = {}` 退化成本实例字段。用户「关掉弹窗再点添加」看到空列表 = 实例重建 ⇒ 正是要的「清除」。
+- ⚠️ **唯一仍沿用池子的地方**是 `repeat.results`（「保存并继续」带回来的本次会话列表）：属同一实例、窗口没关，与「退出再重新搜索」不冲突。
+- `src/pure/searchAccum.ts`：**保留** `mergeSearchResults` / `withBucket` / `bucketOf` / `searchBucketKey` / `SEARCH_POOL_KEEP`（累积+去重仍然要）；`parseSearchPool` / `serializeSearchPool` / `normalizePool` / `normalizeBucket` 这批**落盘专用**函数现在**无生产调用方**，仅作「万一恢复落盘」的现成工具 + 单测留存（文件头与各函数注释已按新口径改写，⛔ 别再当成在用的链路）。
+- 旧的 `{库}/search-pool.json`（若有）不再被读写，可手工删除。
+
+#### ② 四个账号同步批量导入弹窗：去掉底部「取消」
+
+四处同款写法（`const cancelBtn = ops.createEl('button', { cls: 'rl-b…', text: '取消' })` + `cancelBtn.onclick = () => this.close()`）**整体删除**，并在原位置留注释说明「与右上角 ✕ 重复」（⛔ 别再加第二个关闭入口）：
+- `src/modals/DoubanSyncModal.ts`、`src/modals/BangumiSyncModal.ts`、`src/modals/TmdbSyncModal.ts`、`src/modals/WereadShelfSyncModal.ts`
+- Steam 本身**没有**独立的批量导入弹窗（走设置页动作行），故不涉及。
+
+#### ③ 关于页 › 更新日志 · 1.4.0【更新说明】
+
+- `src/pure/releaseNotes.ts`：`1.4.0` 的 `summary` 换成用户给定原文（逐字），`date` 从 `2026-10-22` → **`2026-10-25`**（本版实际收尾日）。
+- `CHANGELOG.md:8`：`## [1.4.0] - 2026-10-22` → `- 2026-10-25`，与关于页口径对齐。
+- 🔴 **踩坑留档**：注释**不许插在 `version` / `date` / `summary` 三行之间** —— 产物断言脚本用 `/version: '…',\s*date: '…',\s*summary: '…'/` 抽这张表，插一行中文注释就会漏掉该条，进而误报「版本与日期未对齐」。#492 那条 FAIL 就是这么来的（本批已修，现 PASS）。
+
+**门禁（全部实测）**
+- `tsc --noEmit` **EXIT=0**
+- 全量 vitest **215 files / 4426 tests passed**
+- `esbuild production` **EXIT=0**，`▲ [WARNING]` **88 条**（A/B 对比 HEAD=88 / WORK=88，**零差异** ⇒ 本批未新增任何警告；历史口头基线「87」是更早的旧数）
+- `main.js` **4,251,822 B** / `styles.css` 444,497 B
+- 产物断言 `PASS=3961 / FAIL=93`；93 条中经逐条核对**无一涉本批**（`#635` 的「同步豆瓣收藏」是 2026-10-20 裁定改「立即同步」的旧锚点、`#591` 那处「取消」指「取消缩小上限」与弹窗无关）
+- 部署测试库三件哈希一致；镜像同步 146 文件、产物 MD5 一致
+
+### 体验优化 · #697（2026-10-25）：**短评独立成章节 / 区域截图悬停文案 / 集数分区改选项卡**
+
+**用户原话（2026-10-25）**
+> 添加短评不要追加到个人评语，另起个标题追加
+> 区域截图的图标鼠标hover文案改成「区域截图：框选区域截图回填笔记内」
+> 编辑属性窗口的总选集如1000集，分区应该按选项卡切换而不是平铺
+
+**口径**：#697 的第三项**取代** #695 里 ⑩ 的「每 10 行分区 + 标题吸顶」——同一诉求（1000 集别一次性铺开）换了实现方式，旧口径作废（吸顶标题 `.rl-ep-sec-hd` 已随平铺一起删除，⛔ 不要按旧文档把它加回来）。
+
+#### ① 短评独立成「## 短评」章节
+
+- `src/data/types.ts`：新增 `export interface CommentLog { date: string; text: string }`；`MediaEntry.commentLog?: CommentLog[]`。与 `notes`（个人评语）**并列而非合并**。
+- `src/data/catalog.ts:181-192`：`commentLog` 进白名单，filter 掉空 `date`/`text` 并 trim。
+- `src/data/noteGenerator.ts:436-446`：独立 `## 短评` 章节，位置在 `## 个人评语` 之后、记录章节之前，**日期倒序**，每行走 `commentRecordBlock`。
+- `src/services/EntryService.ts` `setEntryComment(id, text, date?)`：从「拼进 notes」改为「push 进 `commentLog` 数组 + 重写笔记」，追加语义不变。
+- `src/modals/EntryTextModal.ts`：`META.comment.section` 由「个人评语」→**「短评」**；现有内容只读区改为展示已有短评流水（**⛔ 不读 `entry.notes`**，否则会把总评混进短评区）；提示文案改成「保存后追加到笔记独立的「短评」章节（日期倒序）」。
+- `src/views/components/MediaList.svelte` 右键「添加短评」`data-tip`：「写一句短评 → 写入笔记独立的「短评」章节」。
+- `src/pure/logLine.ts` `commentRecordBlock` 注释同步。
+- ✅ **不迁存量**：老短评仍在 `notes` 里，只改新写入路径。理由：强行搬用户手写原文风险大于收益。
+- ✅ **回读安全**：`src/pure/noteEditable.ts:117` 只认 `## 个人评语`，其它章节置 `null` ⇒「短评」不会被误读回 `notes`（已核实，无需改）。
+- 单测 `tests/entryService.test.ts` 3 条旧断言按新规格重写（原断言期望短评拼进 `notes`）：改判 `r.notes` 原样不动、`r.commentLog` 累积、笔记含 `## 短评`、章节切片互不污染；另加一条「连写两条都在，⛔ 不是覆盖」。
+
+#### ② 区域截图悬停文案（四处逐字一致）
+
+`attr: { 'data-tip': '区域截图：框选区域截图回填笔记内' }`
+- `src/modals/EpubReaderModal.ts:793`、`src/modals/TxtReaderModal.ts:725`、`src/modals/PdfReaderModal.ts:685`、`src/modals/ComicReaderModal.ts:542`
+
+#### ③ 集数分区改选项卡（取代 #695 ⑩ 的吸顶口径）
+
+**新增纯逻辑 `src/pure/episodeAssoc.ts`**（⛔ 特意放纯模块：内联在 Svelte 里无法单测，复现页只能照抄 ⇒ 照抄=测的不是实装）
+- `export function clampTabIndex(n: number, len: number): number` —— 0 基钳制；`len ≤ 0` / NaN / Infinity → 0；小数向下取整。
+- `export function tabIndexOfEpisode(ep: number, secs: EpisodeSection[]): number` —— 1 基集号→0 基分区下标；无进度/非法→0；**超出末区→末区**（⛔ 不返回 -1）。
+
+**`src/views/components/EntryForm.svelte`**
+- import 增加 `clampTabIndex, tabIndexOfEpisode`；组件内 `const clampEpTab = clampTabIndex; const epTabOfEpisode = tabIndexOfEpisode;`
+- 新状态 `let epTab = 0`、`let epTabInited = false`、`$: epCurSec = epSecs.length > 0 ? epSecs[clampEpTab(epTab, epSecs.length)] : undefined`
+- `$:` 首次进表单跳到「已看到」那集所在区；另一条 `$:` 防越界。
+- 模板：`{#each epSecs as sec, si}` 渲染 `.rl-ep-tabs > button.rl-chip.rl-ep-tab`（`role="tab"`、`aria-selected`、`class:on`）；**只渲染 `epCurSec` 一区**；底部 `.rl-ep-tab-nav` 上一区 / `{epTab+1} / {epSecs.length}` / 下一区（首尾自动 disabled）。
+- CSS：新增 `.rl-ep-tabs`（`display:flex; flex-wrap:nowrap; overflow: auto hidden`）、`.rl-ep-tab`、`.rl-ep-tab-nav`、`.rl-ep-tab-count`；**删除 `.rl-ep-sec-hd` 与其 `::after`**。
+
+#### 闸门
+
+| 项 | 结果 |
+| --- | --- |
+| `tsc --noEmit -p tsconfig.json` | **0** |
+| 全量 vitest | **215 files / 4426 tests passed** |
+| `esbuild production` | exit 0 |
+| `main.js` / `styles.css` | 4,254,953 B / 444,497 B |
+| 测试库部署 + 镜像同步 | 三文件 SHA256 逐个 match |
+| 真机级验证（无头 Chrome） | **22/22 断言全过**（真实 `episodeAssoc` 打包 + 真实 scoped CSS） |
+
+#### 真机验证的关键实测值（1000 集 / 500px 字段区）
+
+- 每区 `120` 集（12 列 × 10 行）、共 **9 区**、首区「第 1-120 集」、末区「第 961-1000 集」
+- 默认落区 = 下标 4「第 481-600 集」（含第 500 集）
+- DOM 里只有 **1 个** `.rl-ep-sec`、**120 枚**按钮、`.rl-ep-sec-hd` 归零
+- 选项卡 9 个、选中唯一、`aria-selected=true`、选中底色 `rgb(123,92,214)` = `--interactive-accent`、`border-radius: 999px`
+- 点首选项卡 ⇒ 显示首区、按钮从第 1 集开始、上一区禁用；连点到末区 ⇒ 下一区禁用、计数 `9 / 9`
+- `.rl-ep-tabs` 计算样式 `flex-wrap: nowrap` / `overflow-x: auto` / 高度 37px（没塌成 0）
+
+#### 坑（复用价值高）
+
+- 🔴 **手写复现页必须补 svelte scope 类**：`_shot/src/eptab685.html` 最初 `.rl-ep-tabs` 少了 `svelte-156cn8n`，导致 `display:block`、`overflow-x:visible`（scoped 规则一条都不匹配）。**这看起来完全像实装 bug，实则是复现页自己的缺陷** —— 探针必须断言 `SCOPE` 探到且元素 `className` 含 scope，否则整页样式白验。
+- 🔴 **探针断言不要拿「首区容量」比「末区实际」**：页面跑完最后一组交互停在末区（40 集），却用 `perSection`（120）比 ⇒ 假红。正确判据是「按钮数 == 当前选区标题覆盖的集数区间」，并额外断言「按钮数 ≠ 总集数」（防平铺回归）。
+- 🔴 **CDP 必须显式 `Page.navigate` 并校验 `document.URL`**：命令行给 chrome 的 `file://` 参数不保证带上来的是目标页（上一轮已踩过，本轮防回归）。
+- 🔴 **改写 pure 模块后必须重新 esbuild 打包复现页的 `_epassoc.js`**：否则 `EP.clampTabIndex` 是 `undefined`，整页白屏。
+
+---
+
+### 体验优化 · #696（2026-10-25）：**四阅读器侧栏统一「推挤式（Push）」/ 漫画结构同构化 / 四器默认收起 / 图标统一**
+
+**用户原话（2026-10-24）**
+> 还有我这个漫画阅读器的侧边栏怎么不是独立显示隔开底部栏啊，漫画阅读器的侧边栏图标给我保持其他阅读器图标统一，这所有阅读器基本UI样式不照用的吗（给我统一其他阅读器的侧边栏布局啊用「推挤式（Push）」布局。侧边栏不要悬浮遮挡底部栏，而是把底部栏（及主内容区）整体往右推挤，底部栏的宽度自适应缩减），还有每次新打开所有类型阅读器的侧边栏都要默认收起来
+
+**口径**：另三个阅读器本来就已是「推挤式」——`.rl-reader-body` 是横向 flex，`.rl-reader-toc` 是它的第一列（`width: var(--rl-toc-w, 220px); flex-shrink: 0`），`.rl-reader-main` 是第二列（column，内含底栏）⇒ 侧栏展开会把 main 与底栏一起推右。**漫画是唯一的结构异类**：`main(row)` 里同时装 toc 与 body，底栏挂在 `.rl-reader` 上（`width:100%`）⇒ 底栏横跨整行、从侧栏底下穿过去。所以 A 项不是「加样式」而是**把漫画结构改成与另三个同构**。
+
+#### A · 漫画结构同构化（`src/modals/ComicReaderModal.ts` + `styles.css`）
+
+- **改前**：`.rl-reader`(column) > [`.rl-reader-main`(row) > [toc, `.rl-reader-body`, thumbs], footer(绝对/整行)]。
+- **改后**（`buildBody` `:713` 一带，注释已写在源码里）：
+  ```
+  .rl-reader`(column) > `.rl-reader-body`(row)
+    > [ `.rl-reader-toc`(左列), `.rl-reader-main`(column)
+          > [ `.rl-comic-main-row`(row) > [正文, `.rl-comic-thumbs`], `.rl-reader-footer` ] ]
+  ```
+- `buildBody` `:724` 改为 `this.container.createDiv({ cls: 'rl-reader-body' })`，侧栏作为其**第一个子项**（`:725`），`main` 建在 body 里（`:728`），正文/舞台进 `main.createDiv({ cls: 'rl-comic-main-row' })`（`:733`）。
+- `styles.css:6083-6086` 写下结构契约注释；`:6092` 新增 `.rl-comic .rl-comic-main-row { ... }`（正文 + 缩略图栏横排，`#671` 的语义收进这一层，main 恢复 column）；`:6119` `.rl-comic .rl-reader-body { align-items: stretch; }`。
+- 🔴 **`margin-top: 54px` 必须删掉**（原 `.rl-comic .rl-reader-toc { margin-top: 54px }`）：侧栏现在挂进 `.rl-reader-body`，后者自带 `padding-top: 54px` 避让悬浮顶栏，再补 margin 会叠成 **108px**。`:6109-6111` 有守卫注释。
+- `setViewMode` 重建正文时（`:1543` 起）：旧的是 `.rl-comic-main-row`（不是 `.rl-reader-body`），新 row 必须 `insertBefore(row, foot)` —— 底栏现在是 main 的**最后一个子项**，`createDiv` 追加会跑到正文**上面**去。`:1584` 补了「⛔ 别在这里再挂一次 mountThumbs 到 main」的注释（`mountThumbs` 只认 `.rl-comic-main-row`）。
+- 另删掉一行重复挂载：`if (this.thumbsOn && main) this.mountThumbs(main);`（原 `:1580`）——缩略图栏已在 row 内挂好。
+
+#### B · 四器侧栏图标统一
+
+- 漫画顶栏的侧栏开关改用与 EPUB/TXT/PDF 同一对 lucide 图标：展开态 `panel-left-close`、收起态 `panel-left-open`（`setIcon` 走同一常量，`data-tip` 仍是「展开目录 / 收起目录」）。同步方法注释在 `:4312` 一带。
+
+#### C · 四器默认收起
+
+- 漫画 `private tocCollapsed = false` → **`true`**。另三器本来就是 `true`，本项只动漫画。
+- ⚠️ 侦察时排掉一个**假线索**：`EpubReaderModal.ts:696` / `TxtReaderModal.ts:641` / `PdfReaderModal.ts:513` 各有一处 `this.toggleToc()`，看起来像「build 时补一枪把默认翻回展开」——实际它们都在 `scope.register([], 'T', ...)` 的**键盘回调**里，不会在构建时执行。
+
+#### D · 真机级验证（24 项断言全过）
+
+- 方法：`_verify_push.html` 直接 `<link rel="stylesheet" href="styles.css">` 引用**仓库真实样式表**（不复制、不改写、不追加布局属性），只补 `:root` 的 Obsidian 语义变量；DOM 按改后结构搭最小垫片。无头 Chrome 经 CDP 注入，逐项断言。
+- 关键实测值（1440 宽，侧栏展开 220px）：`main 1060x746 @(220,54)`、`row 1060x700 @(220,54)`、`footer 1060x46 @(220,754)` ⇒ **底栏从侧栏右缘 x=220 起始、宽 1060（= 1440-220-160 相关列）**，不再横跨到侧栏下方；侧栏收起后 `main` 回到 `@(0,54)`。
+- 唯一一次**假红**：「无横向溢出」首轮 FAIL（`scrollW=1280 clientW=785`）—— headless 窗口宽度没生效，与布局无关；设 `Emulation.setDeviceMetricsOverride` 后复测通过，断言未放宽。
+
+#### 闸门
+
+| 项 | 结果 |
+| --- | --- |
+| `tsc --noEmit -p tsconfig.json` | **0** |
+| 全量 vitest | **215 files / 4419 tests passed** |
+| `esbuild production` | exit 0（87 warnings = 基线） |
+| `main.js` / `styles.css` | 4,242,280 B / 444,497 B |
+| 测试库部署 | 三文件 SHA256 逐个 match，`C:\Users\kest\Desktop\临时测试库\.obsidian\plugins\obsidian-reelludic\` |
+| 真机 Push 布局 | 24/24 断言全过（无头 Chrome + 仓库真实 styles.css） |
+
+#### 坑（复用价值高）
+
+- **改布局前先确认「谁是谁的兄弟」**：漫画底栏历史上挂在 `.rl-reader` 上，只要侧栏不是 `.rl-reader-body` 的第一列，底栏就必然横跨 —— 加 `width` / `margin` 都是治症状。
+- **`createDiv` 只会 append**：往有尾随元素的容器里塞新节点必须 `insertBefore`，否则顺序反了且**不报错**。
+- **同构化的收益是「复用另三器的既有结论」**：删 `margin-top` 这类调整不是优化，是结构变了之后的必然清理。
+
+---
+
+### 体验优化 · #695（2026-10-22）：**实验性目录提示去除 / 弹窗取消按钮清理 / 测试结果靠右 / 凭据失败记忆 / 集数分区吸顶（⚠️ 已被 #697 取代）/ 记录行日期前缀 / 搜索候选池 / Bases 视图 30→20 / CSS 片段类名修复**
+
+> ⚠️ 本节 ⑩「集数分区每 10 行 + 标题吸顶」的**实现口径已被 #697 取代**为「选项卡切区」。诉求不变，`.rl-ep-sec-hd` 已删除，⛔ 不要按本节把它加回来。
+
+**用户原话（2026-10-22，十五项逐条见 `CHANGELOG.md` 1.4.0 节）**
+> 实验性功能里文学目录路径那个提示去掉 …（其余十四项同批）
+
+**口径**：本批 15 项都是「用户逐条点名的收口」，其中 **⑩ / ⑬ / ⑮ 三项给了根因级修法**（不是改文案），其余是明确的可见改动。
+
+#### ① 文学目录路径状态提示整条去掉（`src/Settings.ts` `createLocalDirRow` `:4405`）
+
+- 原逻辑：`const hint = row.descEl.createDiv({ cls: 'rl-hint-note' })` + `showState()` 在「未配置」时写「未配置 — 单集本地检索不可用」、配置后写实路径。两态都删除，整块连同 `showState` 调用一并移除。
+
+#### ② 起始页描述文案（`src/Settings.ts`）
+
+- 按用户给的新句子替换 `desc`。
+
+#### ③ 五处弹窗按钮收口 + 附件管理默认折叠 + 失效链接渐进显示
+
+- **删「取消」按钮**：`AssetCleanupModal.ts:73`、`EntryRestoreModal.ts:88`、`LinkCheckModal.ts:105`、`AssetManagerModal.ts:310`、`PosterMigrateProgressModal.ts:215` —— 与右上角 ✕ 重复，只留 ✕。`EntryTextModal.ts` 的取消按钮同批删除（`:90`）。删前确认过 footer 里没有「只靠它触发的收尾逻辑」。
+- **附件管理默认折叠**：类型分组初始 `collapsed = true`，标题行带条目数。
+- **失效链接渐进显示**：`src/services/linkCheck.ts` `checkEpisodeLinks` 加第 3 参 `onResult?: (index: number, status: LinkStatus | undefined) => void`，每扫完一条就回调；`LinkCheckModal` 先弹空窗口再逐条填。**为什么不批量渲染**：一次 `setText` 一千行会卡住主线程，且用户看不到进度。
+
+#### ④ 测试按钮不跳 + 结果文字靠右（`styles.css`）
+
+- `.rl-key-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }`、`.rl-key-result { flex: 1 1 auto; min-width: 0; text-align: end; }`。
+- 🔴 历史坑：`.rl-key-result` **本身也是 flex item**，若再加 `margin-left` 会把 gap 算两次（8+8=16px），所以位置只由 `flex:1 + text-align:end` 决定（`styles.css:1744` 附近已有同型守卫注释）。
+
+#### ⑤ 凭据「连接失败」标签持久化（新增 `src/pure/credentialCheck.ts`，140 行）
+
+- 新增 `CredentialStatusMap = Record<string, boolean>` 与 `normalizeCredentialStatus(raw)` / `withStatus` / `withoutStatus` / `statusOf` / `isExpired`；键由 `sourceCheckKey` / `musicCheckKey` / `aiCheckKey` 派生。状态存 `data.json`，重启后红标仍在。
+- 单测 `tests/credentialCheck.test.ts`（20 例）。
+
+#### ⑥ B 站音频流标题
+
+- 搜到的候选是**音频流**时标题取音频流名，不再留空标题。
+
+#### ⑦ 内置候选模型可删除（`src/pure/aiPick.ts`）
+
+- 新增 `hiddenKey(provider, value)` / `isHidden` / `toggleHidden` / `canHideModel(it, keep?)` / `visibleModels` / `hiddenCount` / `clearHiddenFor`；设置存 `readerHiddenModels: string[]`（`Settings.ts:494`）。
+- 🔴 **`canHideModel` 把默认模型挡在门外**：当前正在用的 `keep` 与 `/models` 动态拉回来的行不给隐藏入口（`AiPickerModal.ts:426-428` 有注释），否则用户能把自己锁在门外。
+- 删除口径只在**本仓预置清单**内成立 —— 官方模型 ID 会变、会下线，不声称「全部可用模型」。
+
+#### ⑧ 播放阅读升 v2（`src/modals/RoadmapModal.ts:54`）
+
+- `level: 'v1'` → `'v2'`；文件头补了档位口径注释（四档 v0/v1/v2/v3）。
+
+#### ⑨ 条目回收站文件名（`src/pure/entryTrash.ts:28`）
+
+- `TRASH_FILE_NAME = 'trash.json'`，`TRASH_FILE_NAME_LEGACY = '条目回收站.json'` 保留为**一次性只读回退**（升级用户不丢回收站），⛔ 不再写入。
+
+#### ⑩ 总集数每 10 行分区 + 标题吸顶（`src/pure/episodeAssoc.ts` + `EntryForm.svelte`）
+
+- 新增 `EP_BTN_W = 36` / `EP_BTN_GAP = 6` / `EP_SECTION_ROWS = 10` / `episodeSectionSize(width, rows = EP_SECTION_ROWS)` / `episodeSections(total, per)` / `EpisodeSection`。
+- **每区集数 = 列数 × 10，按真实宽度算**，⛔ 不写死 130（`:51` 注释）。13 列 ⇒ 130/区，1000 集 ⇒ 8 区，末区标题「第 911-1000 集」。
+- 吸顶靠 `.rl-ep-sec` 的 `position: sticky`，偏移基准是滚动容器 `.rl-fields` 的 padding 边。
+- 真机级验证（无头 Chrome，esbuild 打包真实 `episodeAssoc.ts` + 逐字抄自 `EntryForm.svelte:5751-5781` 的 CSS）：14 项全过 —— 13 列/130 区、6 列/60 区、20 列/200 区、宽度 0 回落 130、sticky 贴合差值 **0px**。
+- 🔴 **验证时踩的假红**：复现页给滚动容器擅自加了 `padding: 8px` ⇒ sticky 差值 8px。真实 `.rl-fields` 是 `margin-top:10px; flex:1 1 auto; min-height:0; overflow-y:auto`、**无 padding**。**测试不忠实于被测对象就等于伪造证据** —— 去掉后 0px，断言未放宽。
+
+#### ⑪ 关联入口总集数不失焦保存（`QuickAssociateModal.ts:825`）
+
+- `this.totalInput.onchange = ...` → **`oninput`**。根因：`onchange` 只在失焦/回车时触发，用户输完直接关窗口就丢了。
+
+#### ⑫ 记录行日期前缀 + 预览（新增 `src/pure/logLine.ts`）
+
+- 唯一真源：`datedRecordLine(date, body, note?)` → `` - **2026-10-22** · <正文>[ · <备注>] ``；`commentRecordBlock(date, text)` 处理多行短评（首行挂日期，后续行缩进两空格保持列表项归属，否则会被渲染成游离段落）。
+- `src/data/noteGenerator.ts:443/453/462` 三处（时长 / 重温 / 周目）改为调用；弹窗里加「将写入的这行」预览。
+- 🔴 **为什么抽模块**：`#453` 的占位文案就是内联了两份，改一处就不同步了。
+
+#### ⑬ 搜索候选池：20 条上限可突破 + 持久化（新增 `src/pure/searchAccum.ts`，114 行）
+
+- `SEARCH_POOL_FILE_NAME = 'search-pool.json'`、`SEARCH_POOL_VERSION = 1`、`SEARCH_POOL_KEEP = 200`；`searchBucketKey(type, bookKind?)`、`mergeSearchResults(prev, fresh, keep)`、`withBucket` / `bucketOf` / `normalizePool` / `parseSearchPool` / `serializeSearchPool`。
+- 落盘 `{lib}/search-pool.json`，读写挂在 `main.ts`（`loadSearchPool` / `saveSearchPool`），`EntryModal.ts:102-106/209-212` 接线（`onMergeSearchPool`）。
+- 🔴 **旧行为真因**：`EntryModal` 每次搜索第一句就 `results = []` —— 上一批不是被服务端挤掉，是被前端主动清了。
+- 读盘失败 / 没有池子 ⇒ 空数组，与旧行为逐字一致（`loadSearchPool` 自带 try/catch，不抛）。
+
+#### ⑭ Bases 视图 30 → 20（`src/pure/baseTemplate.ts`，用户选方案 C）
+
+- 两组「按类型」模板各合并成一个 `groupBy: type` 的视图：海报墙侧删 `ENTRY_TYPE_VIEWS` 展开，表格侧 `TYPE_VIEWS`（6 条带类型专属列）保留为唯一数据源但不再逐类型铺开。
+- 实测 `buildBaseTemplate(ctx)` 输出 **20 个视图**（全部海报墙 / 海报墙·按类型分段 / 全部收藏 / 全部收藏·按类型分段 / 状态×4 / 高分×2 / 最近添加 / 分组·按类型 / 分组·按题材 / 类型·按状态×6 / 今年看的）。
+- `tests/baseTemplate.test.ts` 6 条旧断言按新口径重写（下限 20→10 等），守护的仍是「按类型分段存在」这一真语义，不是改到能过。
+
+#### ⑮ CSS 片段不生效 / 无悬停动效（`src/pure/baseTemplate.ts` + 老用户升级路径）
+
+- 🔴 **双重根因**：① 旧片段全用 `body .bases-*` 一类**不存在于 Obsidian Bases DOM 的类名** ⇒ 规则永远不命中；② 片段只在**首次生成模板时**写入 `.obsidian/snippets/`，老用户已经生成过就不会再写 ⇒ 即使修好类名也到不了老用户手里。
+- 修法：类名对齐真实 DOM（`.bases-view` / `.bases-tbody-row` 等，实测确认），并把片段写入改成**每次生成都覆盖 + 检测旧片段版本号提示更新**。
+
+#### 闸门
+
+| 项 | 结果 |
+| --- | --- |
+| `tsc --noEmit -p tsconfig.json` | **0** |
+| 全量 vitest | **215 files / 4419 tests passed**（本批新增 `credentialCheck` 20 例、`searchAccum`、`logLine`、`episodeAssoc`、`aiPick` 若干） |
+| `esbuild production` | exit 0（87 warnings = 基线） |
+| `main.js` 体积 | 4,242,280 B |
+| ⑩ 真机级 | 无头 Chrome + 真实 `episodeAssoc.ts` + 真实 CSS，14 项全过 |
+
+#### 坑（复用价值高）
+
+- **`onchange` ≠ `oninput`**：想「输完就存」必须 `oninput`，`onchange` 要等失焦。
+- **`sticky` 的偏移基准是滚动容器的 padding 边**：复现页多给 1px padding 就能造出 1px 假红，验证环境必须与真实 DOM 逐属性一致。
+- **「文案内联两份」是必然漂移**：`logLine` 抽出来之前，`#453` 就已经踩过一次。
+- **片段类名不改等于没修**：CSS 片段只有命中真实 DOM 才算生效，改之前先去 Bases 里实测类名。
+
+---
+
+### 体验优化 · #694（2026-10-24）：**侧栏宽度按阅读器独立 / 空态收敛四句 / 修漫画侧栏被顶栏遮挡 / 修渐隐切页签失效**
+
+**用户原话（2026-10-24 第一批）**
+> 各个阅读器的侧边栏展开不要同步，都是独立的
+> 顺便把阅读器里的侧边栏各个空态的显示提示统一处理一下
+> 漫画阅读器侧边栏被顶部栏遮挡了
+
+**口径**：① 「同步」的**真因不是 `tocCollapsed`**（那是四个面板各自的私有字段，本来就不共享），而是 `localStorage` 里侧栏宽度只有一个全局键 `rl-reader-toc-width`，四个阅读器读同一份 ⇒ 拖宽一个、四个一起变，被读成「同步」。改**按阅读器分键**，旧全局键保留为只读回退。② 空态**只收敛成四句**（暂无目录 / 暂无书签 / 暂无高亮 / 暂无摘抄），⛔ 不再带操作指引括号。③ 遮挡是**结构性**的：另三个阅读器的侧栏在 `.rl-reader-body` 里，被它的 `padding-top: 54px` 顶下来避开悬浮顶栏；漫画的 `.rl-reader-toc` 是 `.rl-reader-main`（`flex-direction: row`）的直接子元素，没有这层留白 ⇒ 侧栏顶边落在 40px，被底边 92px 的顶栏压住 52px。
+
+#### A 路 侧栏宽度按阅读器独立（`src/pure/readerToc.ts`）
+
+- 新增 `export type TocScope = 'txt' | 'epub' | 'pdf' | 'comic'` 与 `export function tocWidthKey(scope: TocScope): string`（`` `${TOC_WIDTH_KEY_PREFIX}:${scope}` ``）。
+- `TOC_WIDTH_KEY_PREFIX = 'rl-reader-toc-width'`；`TOC_WIDTH_KEY` 保留为**旧全局键名**，⚠️ 仅作**一次性只读回退**，⛔ 不再写入。
+- `loadTocWidth(scope)` / `attachTocResizer(tocEl, scope)` 签名加 scope 参数；读不到本阅读器自己的键时回退读旧全局键（升级用户不丢已调好的宽度）。
+- 四处调用点全部传 scope：`TxtReaderModal.ts:1884 attachTocResizer(this.tocEl, 'txt')`、`EpubReaderModal.ts:2177 ... 'epub'`、`PdfReaderModal.ts:1191 ... 'pdf'`、`ComicReaderModal.ts:763 ... 'comic'`。
+- `tests/readerToc.test.ts` 新增 `tocWidthKey` 用例（四个 scope 互不相同 + 前缀正确），较上批 4336 → **4342** 条。
+
+#### B 路 空态收敛成四句
+
+- `PdfReaderModal.ts:1439` 目录空态「本书没有目录（PDF 无 outline）」→ **「暂无目录」**（这是本批唯一一处还在带解释的）。全仓最终口径：
+
+| 位置 | 文案 |
+| --- | --- |
+| `PdfReaderModal.ts:1439` | 暂无目录 |
+| `ComicReaderModal.ts:630` / `PdfReaderModal.ts:1594` / `TxtReaderModal.ts:3368` / `EpubReaderModal.ts:3897` | 暂无书签 |
+| `TxtReaderModal.ts:3294` / `PdfReaderModal.ts:1772` / `EpubReaderModal.ts:2771` | 暂无高亮 |
+| `TxtReaderModal.ts:2966` / `PdfReaderModal.ts:1702` / `EpubReaderModal.ts:3756` | 暂无摘抄 |
+
+#### C 路 漫画侧栏遮挡（`styles.css`）
+
+- 新增（`.rl-comic` 段内，`:6062` 一带）：
+  ```css
+  .rl-comic .rl-reader-toc { margin-top: 54px; }
+  ```
+- 真机实测（1440×900, 1x）：改前 `toc.top 40` / `head.bottom 92` ⇒ 遮挡 52px；改后 `toc.top 94` / `head.bottom 92` ⇒ **gap 2px 齐平**。
+- 为什么是 margin 而不是在 main 上加 padding：`.rl-comic .rl-reader-main` 是 `flex-direction: row`，加 padding 会把右侧正文一起挤，margin 只作用于侧栏这一个 flex 子元素。
+
+#### D 路（顺带修真 bug）渐隐在切页签后失效
+
+- 上一批的门控渐隐里，`activatePane` / `activateSidebarPane` 末尾会 `resyncScrollFade(...)` 手动补一次状态（因为 pane 从 `display:none` 恢复时 ResizeObserver 未必回调）。
+- 但目录页的渐隐挂在 **list 元素**（`.rl-reader-toc-list`，`flex:1; overflow-y:auto`），标注页挂在 **pane 本身** —— `resyncScrollFade` 用 `WeakMap` 按元素索引，传错节点就是**静默空转**。
+- 三处传错：`TxtReaderModal.ts:2923`、`EpubReaderModal.ts:3738`、`ComicReaderModal.ts:789`（PDF `:1178` 本来就对）。统一改成 `pane === 'toc' ? this.tocListEl : …`。
+- 真机复测场景：切到标注页再切回目录页 → `is-overflow-end` 仍正确挂着（`afterTabRoundTrip` 断言）。这是上一批**漏掉的真 bug**，不是新功能。
+
+#### 闸门
+
+| 项 | 结果 |
+| --- | --- |
+| `tsc -noEmit -skipLibCheck` | **0** |
+| 全量 vitest | **212 files / 4342 tests passed** |
+| 真机漫画 | toc.top 94 vs head.bottom 92（gap 2）；四态渐隐全对 |
+| 真机 PDF | 目录空态「暂无目录」；45 书签 pane 760/1664 四态渐隐全对 |
+| 真机 EPUB | 目录 748/1993 四态 + `afterTabRoundTrip` 全对 |
+| 真机 TXT | 四态全对 |
+
+#### 坑（复用价值高）
+
+- **`attachTocResizer` 加了必填参数后，四处调用点漏传会 str 报错而不是静默** —— 这次靠 tsc 一次抓出，别用可选参数蒙过去。
+- **`resyncScrollFade` 传错元素不报错**：`WeakMap.get` 未命中直接返回。凡是「手动补状态」的 API，都要在调用处注释清楚「补的必须是挂载时的那个元素」。
+- **`.rl-reader-toc` 自带 `margin-top` 后，`.collapsed { width: 0 }` 仍正常** —— 收起时纵向留白不影响横向宽度动画。
+
+---
+
+### 体验优化 · #693（2026-10-24）：**侧栏门控渐隐（修「书签显示不全」）/ 书签空态瘦身 / 四阅读器设置菜单统一**
+
+**用户原话（2026-10-24）**
+> 把书签的空态提示「点顶栏书签按钮存当前位置」去掉；漫画阅读器书签侧边栏「书签显示不全」；阅读器设置的排序和样式列出来看看是否统一
+
+**口径**：① 空态只留「暂无书签」，四个阅读器同一口径；② 「显示不全」**不是丢数据也不是被截断**——真机实测内容全在、也滚得到底，是**侧栏藏了滚动条（2026-09-16 用户要求）且没有任何「下面还有」的可视提示**，最后一行在半行处被裁断 ⇒ 用仓库**既有的门控遮罩语言**补提示，⛔ 不新造视觉件、⛔ 不做常亮遮罩（到底还挂着渐隐会「说谎」）；③ 设置菜单按用户 2026-10-24 裁定**全部统一**。
+
+#### A · 侧栏门控渐隐 —— 真机先证明，再动代码
+
+- **实测（真机 CDP，1440×900，漫画 26 书签）**：书签 pane `clientHeight 766` / `scrollHeight 908`；`scrollbarWidth = "none"`、`offsetWidth - clientWidth = 0` ⇒ **一根滚动条都不画**；`scrollTop` 能到 `max 142`，滚到底时最后一条 `lastBottom 795 < paneBottom 806` 完整可见。四档窗口扫（1440×900 / 1280×720 / 1024×640 / 900×600）分别 22/26、16/26、14/26、12/26 可见，**每一档 `reachable: true`**。⇒ 用户看到的「显示不全」= **无提示 + 半行裁断**，不是数据问题。
+- **落点必须是滚动宿主**：`.rl-reader-toc-pane`（标注区，`overflow-y:auto`）与 `.rl-reader-toc-list`（目录区，`flex:1; overflow-y:auto`）**不是同一个元素** —— `.rl-reader-bm-list` / `.rl-reader-ex-list` 自身**没有**滚动盒（`styles.css:4383-4386` 只有 pane 有）。所以用**标记类**而不是写死选择器。
+- **新增 `src/pure/readerToc.ts`**：
+  - `OVERFLOW_START_CLASS = 'is-overflow-start'` / `OVERFLOW_END_CLASS = 'is-overflow-end'` / `FADE_Y_CLASS = 'rl-fade-y'`；判据 `overflowFlags(scrollTop, clientHeight, scrollHeight)` → `max > 1` 才算溢出、`scrollTop > 1` 才算离开顶、`scrollTop < max - 1` 才算未到底（**亚像素容差**，避免 1px 抖动把遮罩闪出来）。
+  - `attachScrollFade(el)`：挂 `rl-fade-y` + `scroll`(passive) + `ResizeObserver` + `MutationObserver`(childList+subtree)。⚠️ **必须有 MO** —— 列表重绘是 `list.empty()` + 重建子节点，元素尺寸可以一点不变。
+  - 三路事件用一个 rAF 合并（`schedule()` 里 `raf !== null || timer !== null` 双守卫，无 rAF 时回退 `setTimeout(sync, 0)`）；`sync` 只在类名真变时才写 DOM。dispose 清 rAF/timer、摘监听、断 RO+MO、删 WeakMap 项、摘三个类。
+  - `attachScrollFades(els)` 一次收多宿主一个 disposer；`resyncScrollFade(el)` 给**从 `display:none` 里出来**的页签手动补一次同步（RO 不保证会因此触发）。
+- **CSS**（插在 `.rl-reader-toc-pane.hidden` 之后）：`.rl-fade-y.is-overflow-end` / `.is-overflow-start` / 两者同时在（四段渐变，写在单端规则**之后**，靠顺序覆盖）。`linear-gradient(to bottom, transparent, #000 20px)` 一族，`-webkit-mask-image` + `mask-image` **两行都写**，`#000` 作 alpha 字面量（本文件唯一允许的色值写法）。遮罩**不参与布局**，20px 只吃掉行尾 padding。
+- **四阅读器接线**（每个都：import + `private disposeFade: (() => void) | null` + 侧栏构建处赋值 + `destroy()` 顶部 dispose + 切页签处 `resyncScrollFade`）：
+  - `ComicReaderModal.buildSidebar`（`:723` 一带）→ `attachScrollFades([tocPane, exPane])`；`activateSidebarPane`（`:750`）末尾 resync；`destroy()`（`:402`）dispose。
+  - `TxtReaderModal`：`attachScrollFades([this.tocListEl, exPane])`；`activatePane`（`:2900`）。
+  - `PdfReaderModal`：`attachScrollFades([this.tocListEl, exPane])`（用 `:339` 已捕获的字段，⛔ 不 querySelector）；局部 `setTab()` 里 resync。
+  - `EpubReaderModal`：`attachScrollFades([this.tocListEl, exPane])`；`activatePane` 里 resync。
+- **真机验收**：漫画（40 书签，pane 766/1370）与 TXT（60 章，`.rl-reader-toc-list` 748/1993）四态全对 —— 顶部→只有 `is-overflow-end`；中间（scrollTop 60）→两类都在、渐变变四段；底部（scrollTop = max）→ `is-overflow-end` **被摘掉**；滚回顶部→重新挂上。`.rl-reader-bm-list` 自身**不带**渐隐类，类挂在 pane 上。截图 `_repro/shots/fade-txt-top.png` 目视确认最后一行是「淡出」而不是「切平」。
+
+#### B · 书签空态瘦身
+
+- `ComicReaderModal.ts:617` 与 `PdfReaderModal.ts:1579` 的「暂无书签（点顶栏书签按钮存当前页 / 当前位置）」→ **「暂无书签」**。全仓 grep `点顶栏书签按钮` 只有这两处带这个括号说明，其余空态（暂无高亮 / 暂无摘抄）本来就是纯文本。
+
+#### C · 四阅读器设置菜单统一
+
+- **统一前测出来的五处不一致**（真机 + 源码双证）：① 只有 TXT/EPUB 有「显示」分组标题，PDF/漫画没有；② 漫画模式行标签是**「翻页」**（与它自己的选项名撞车，读成「翻页：滚动 翻页」），另三处都是**「阅读」**；③ 漫画选项顺序是 `翻页 → 滚动`，与 `SCROLL_OPTIONS` 的 `滚动 → 翻页` 相反；④ 漫画用**胶囊分段**（第三个视觉方言），另三处是 `.rl-seg rl-seg-text` 纯字变色；⑤ TXT/EPUB 的行包在 `.rl-reader-menu-group` 里，而该容器默认 `display:block` ⇒ **行间距 0**，PDF/漫画的行直接挂菜单吃 `gap:2px` ⇒ 同一张菜单在两个库里疏密不同。
+- **改法**：`COMIC_VIEW_MODES` 改 `['scroll','single']`；漫画模式行标签 → 「阅读」、控件换成 `.rl-seg rl-seg-text`（删掉 `.rl-comic-mode-seg` 4 条胶囊规则，留注释说明退场）；漫画与 PDF 补 `menu.createDiv({cls:'rl-reader-menu-sec', text:'显示'})` + `rl-reader-menu-group` 容器、三行改挂在组里；`styles.css` 给 `.rl-reader .rl-reader-menu-group` 补 `display:flex; flex-direction:column; gap:2px`。
+- **真机复测**：TXT 行间距 `[0,0,0,0,0,0,0,0] → [2,2,2,2,2,2,2,2]`，`groupDisplay block → flex`；漫画/PDF 均为 `directChildren = [menu-sec「显示」, menu-group]`、`rowGaps [0,2,2]`（首行紧贴分组标题，与 TXT 同）、`segCls = "rl-seg rl-seg-text"`、`segLabels` 顺序对（漫画 `滚动 / 翻页*`，PDF `滚动* / 翻页`）、主题 6 色块。
+
+#### 门禁
+
+| 项 | 结果 |
+| --- | --- |
+| `tsc -noEmit -skipLibCheck` | **0** |
+| 全量 vitest | **212 files / 4336 tests passed**（较 4335 多 1 条：`tests/readerToc.test.ts` 新增 `overflowFlags` 5 条中的净增） |
+| `esbuild` production | exit 0（87 warnings = 基线） |
+| `main.js` 体积 | 4,208,644 B |
+| 真机 | `.testvault` 手动部署 + `rd.cjs stop/launch`，漫画/TXT 四态 + 四菜单结构全对 |
+
+#### 坑（复用价值高）
+
+- **探针读到 0×0 的残影实例**：漫画阅读器关闭中途的实例 `getBoundingClientRect()` 全 0 ⇒ **一律按 `clientHeight > 0` 过滤、取最高的那个**，⛔ 不要按下标取。
+- **DOM 会攒垃圾**：反复开探针堆出 34 个 `.rl-reader-toc-pane` ⇒ 按可见性查，不按索引。
+- **PowerShell 会吃掉内联 `node -e` 的引号** ⇒ 写成 `_repro/eval.js <file>` 的「文件驱动」再跑（`Uncaught SyntaxError: Unexpected end of input` 就是这么来的）。
+- **`setViewState({type})` 只挂 `.rl-reader-empty` 占位**，真面板要接着 `view.openWith({...})`。
+
+---
+
+### 体验优化 · #692（2026-10-23）：**PDF 翻页模式真修（双因）/ 截图改 image-converter 同构名 / 漫画侧栏 + 自动滚动**
+
+**用户原话（2026-10-23）**
+> PDF阅读器的切换翻页模式不生效，始终是滚动模式，还有所有阅读器区域截图生成的图片文件名不要是`书名 截图1`这类改成是否能适配https://github.com/xryul/obsidian-image-converter这个插件接管的生成的图片文件？②给漫画阅读器加侧边栏【目录、书签】底部栏"自动滚动功能"统一
+
+**口径**：A 是**真 bug 且是双因**（CSS 缺规则 + 页顶坐标漏算 gap/padding）；B 不是「加 API」而是**改成同构文件名**（对方没有对外接口）；C/D 是**把 PDF/TXT 已有能力搬到漫画**。
+
+#### A · PDF 翻页模式不生效 —— 双因双修
+
+- **根因 1：样式表里根本没有翻页规则。** `styles.css` 全文 grep `rl-pdf-paged` 命中 **0**（只有 TXT 的 `.rl-reader-scroll.rl-paged`）。`setMode()` 里 `toggleClass('rl-pdf-paged')` 挂了类等于什么都没挂。
+- **根因 2：页顶坐标漏算容器留白与页间距。** `PdfReaderModal.refreshPageTops()` 原为纯页高累加 `let acc = 0; for (const pv of this.pages) { pv.top = acc; acc += pv.height; }`，**漏了 `.rl-pdf-pages` 的 `padding-top: 16px` 与页间 `gap: 14px`**（`styles.css` 的 `.rl-pdf-pages { padding: 16px 0 60vh; gap: 14px }`）。
+  - 真机实测（《资本论》3022 页）：`pages[289]` 模型值 `316521` vs 真实 `el.offsetTop` `320583`、`[290] 317638 / 321714`、`[291] 318733 / 322823` ⇒ **每页累积 +14.06px，第 289 页已偏 4062px**。
+  - 后果链：`scrollToPage()` 写的 `scrollTop` 落在页中/上一页 → `currentPageIndex()` 立刻判回原页 ⇒ 用户看到「切了翻页、滚轮也不滚了，但页码纹丝不动」。修前真机证据：`mode:'paged'`、`isPaged:true`、`prevented:true`，`t0=318711 → t1=319806`（只挪 1095px = 一页高）、`idx0=291 → idx1=291`。
+  - 附带事实：`pages[].el.offsetParent` 是 `.rl-reader-main`（**不是** `.rl-pdf-pages`），`pagesEl.offsetTop = 0`、`pages[0].el.offsetTop = 16`（= padding-top）、`pages[1].el.offsetTop = 1125`（= 16 + 1095 + 14）。
+- **修法 1（坐标，`refreshPageTops()`）**：改用 DOM 真值 —— `const base = this.pagesEl.offsetTop;` + 可量性守卫 `const measurable = this.pages.length > 0 && (this.pages.length === 1 || this.pages[1].el.offsetTop > 0);`，measurable 时 `pv.top = pv.el.offsetTop - base`，否则退回累加兜底（容器未布局时整列 `offsetTop` 都是 0）。
+- **修法 2（样式，`styles.css` 在 `.rl-pdf-pages` 之后新增「翻页模式」段）**：
+  `.rl-pdf-scroll.rl-pdf-paged { overflow-y: hidden; }` / `.rl-pdf-scroll.rl-pdf-paged .rl-pdf-pages { padding-bottom: 100vh; }` / `.rl-pdf-scroll.rl-pdf-paged .rl-pdf-page { visibility: hidden; }` / `.rl-pdf-scroll.rl-pdf-paged .rl-pdf-page.is-current { visibility: visible; }`
+  - 🔴 用 `visibility: hidden` **不用** `display: none`：后者会让被隐藏页塌成 0 高，`refreshPageTops()` / `currentPageIndex()` 的几何全错、`scrollToPage()` 定位失效。
+  - 🔴 `padding-bottom: 100vh`：`overflow: hidden` 下 `scrollTop` 仍有效，但可滚范围 = `scrollHeight - clientHeight`；末几页要能顶对齐必须留 ≥ 一屏空白（原 60vh = 540px < clientHeight ≈ 758px 不够）。
+- **配套（`.is-current` 四路维护）**：新增 `private markCurrentPage(pageIndex)`（`for (const pv of this.pages) pv.el.toggleClass('is-current', pv.el === target)`，索引无效则全清）；在 `setMode()`（paged 分支 rAF 里先 `refreshPageTops()` 再 `scrollToPage(currentPageIndex())`）、`scrollToPage()` 末尾、`updateProgress()` 末尾（`if (this.isPaged())`）、`load()` 末尾（否则翻页模式初始全 hidden = 白屏）四处调用；`mount()` 里按持久化 `mode` 补 `rl-pdf-paged` 类（否则重开不生效）。
+- **真机验收（四项全过）**：切翻页后 `cls=rl-pdf-scroll rl-pdf-paged`、`visiblePages=1`、`isCurrent=1`、页码 `第 293 页`；`pages[293].offsetTop=325019` 与 `scrollTop=322757` 只差约 20–40px（原 4062px 漂移消失）；滚轮 `deltaY:120` 连跳 294→295→296；关标签重开 `savedMode=paged` 且停在第 295 页；切回滚动 `visibleScroll=3022`（全部恢复可见）。
+  - ⚠️ 探针踩坑：「有文本选区时不翻页」是**正确行为**（`window.getSelection()` 非空即让位给用户），首次测不出是残留选区。
+
+#### B · 区域截图文件名改成 image-converter 同构
+
+- **调研结论**：`xRyul/obsidian-image-converter` **不提供「把图片交给它管」的 API**。它的接管方式只有两条 —— ①自己处理拖入/粘贴的图片；②对库内已有图片按用户模板改名/压缩。其默认命名模板是 `{notename}-{date:YYYYMMDDHHmmss}`（官方 `docs/Variables Reference Guide.md` 的 Example 1），即「笔记名 + 紧凑时间戳」。本机两个库都**没装**该插件，读不到它的 `data.json` ⇒ 走**形态兼容**而非读配置。
+- **改法（`src/pure/readerShot.ts`）**：
+  - `readerShotFileName(title: string, at: Date = new Date()): string` —— 从 `书名 截图N` 改为 `` `${sanitizeShotStem(title, '阅读截图')} ${shotStamp(at)}` ``。
+  - 新增导出 `shotStamp(at: Date = new Date()): string` —— 本地时区 `YYYYMMDD-HHmmss`；🔴 用 `-` 不用 `:`（Windows 文件名禁冒号，且 Obsidian `![[…]]` 会解析错）；非法 `Date` 回落 `new Date()`。
+  - 保留不动：`sanitizeShotStem`、`readerShotLabel`、`readerShotBlock`、`SHOT_SECTION_READER`、`SHOT_MIN_SIZE`、`ShotRect`、`ShotLoc`、`normalizeShotRect`。
+  - 同秒撞名交给 `getAvailablePathForAttachment` 加 ` 1` / ` 2` 序号兜底；⛔ 别退回「书名 + 截图」，⛔ 别为此引入模板变量引擎。
+- **调用点**：`main.ts:saveReaderShot(entry, info: { rect: ShotRect; loc?: ShotLoc; at?: Date })`（原 `stem?: string`），路径拼接改为 `` `${readerShotFileName(entry.title, info.at)}.png` ``。
+- **真机验收**：落盘 `4-Archive/Attach/Covers/呆头农场 20261023-231545.png`，笔记尾部正确追加 `## 阅读截图` + `![[呆头农场 20261023-231545.png]]`。
+- **单测**：`tests/readerShot.test.ts` 重写文件名 7 条（固定 `at = new Date(2026, 9, 23, 15, 30, 12)` → `20261023-153012`）+ 新增 `describe('shotStamp 时间戳片段')` 3 条；`32 tests passed`。
+
+#### C · 漫画阅读器补侧边栏【目录、书签】
+
+- `buildBody()` 里 `buildSidebar(main)` 作为 `main` 的**第一个子项**（`.rl-comic .rl-reader-main` 是 `flex-direction: row` ⇒ 侧栏自然在左）；`main` 仍是 `rl-reader-main`，正文容器 `body` 保持 `flex: 1 1 auto; min-width: 0`。
+- 两页签：`页面目录`（`data-tip`，icon `list-tree`）/ `书签`（icon `bookmark`）；`activateSidebarPane(pane, expand = true)` 按 `querySelectorAll('.rl-reader-toc-tab')` 下标切（与 `TxtReaderModal.activatePane` 同口径）。
+  - 🔴 函数内必须先 `const toc = this.tocEl; if (!toc) return;` —— 否则 tsc 报 3 处 `TS2531 Object is possibly 'null'`。
+- 书签区走 `buildAnnoHead`：`this.bmHeadRef = buildAnnoHead(exPane, { countCls: 'rl-reader-ex-hlcount', listCls: 'rl-reader-bm-list', text: '书签（0）', onDelete: (ids) => this.deleteSelectedComicBookmarks(ids), allIds: () => this.bookmarks.map(b => b.id), refresh: () => this.buildComicBookmarks() })` ⇒ 自动获得「选择 / 全选 / 删除所选 / 取消」四钮，与另三件同构。
+- 目录 `ensureComicToc()` 懒建（`tocBuilt` 守卫），每页一行 `button.rl-reader-toc-item` + `span.rl-reader-toc-label`（`第 N 页`）；`syncComicTocActive()` 让 `is-on` 跟 `pageIndex`。
+- 顶栏最左新增 `.rl-reader-sidebar-toggle`（icon `panel-left-close`，tip `收起侧栏`/`展开侧栏`）；`applySidebarCollapsed()` 只切 `.collapsed` 类 + 按钮 `active` 态。
+- **设置菜单里原来的「书签」行整段删除** —— 书签列表只在侧栏，⛔ 别接回设置菜单（会变成两个真源）。
+- **真机验收**：`hasToc=true`、`tabs=页面目录/书签`、`panes=2`；目录 191 行、点第 21 行 → `第 28 / 191 页`；点顶栏存书签 → `书签（1）` + `第 28 页 · 12%`，三钮在位。
+
+#### D · 漫画底栏补「自动滚动」，与另三个阅读器统一
+
+- `buildFooter()` 的 `fops` 从 2 枚补到 **3 枚**：新增 `this.autoBtnEl = mkFop('timer', READER_FOPS.autoScrollPaged, () => this.setAuto(!this.autoOn)); this.autoBtnEl.addEventListener('contextmenu', (ev) => this.openAutoMenu(ev));`。
+- 两种模式两套推进：连续模式走 rAF 匀速滚动（`advanceAutoPos` 浮点累加，⛔ 不能读回 `scrollTop`，否则丢精度），单页模式走 `setInterval` 定时 `goto(pageIndex + 1)`；到底/到末页 → `stopAuto()` + `syncViewBtns()` + `Notice('已读完全书')`。
+- 右键弹窗按 `viewMode` 二选一：连续给「滚动速度」（px/s，`saveAutoScrollPx` 持久化），单页给「翻页间隔」（`AUTO_TURN_MIN_MS ~ MAX_MS`）。
+- **🔴 修掉一个自己引入的真缺陷（dt 量纲）**：`startAutoScroll` 里原写 `const dt = Math.min(64, ts - this.autoLastTs);` —— 传的是**毫秒**，而 `advanceAutoPos(pos, speed, dt, max)` 算的是 `speed * dt`、`autoScrollPx` 单位是 **px/秒** ⇒ 速度放大 1000 倍，一帧就冲到底（8462px）并立刻触发「已读完全书」自动停机。表面症状极具误导性：**「点了自动滚动按钮没反应 / 按钮不高亮 / 500ms 后 `autoOn` 自己变回 false」**。
+  - 修法（与 `PdfReaderModal.ts:1031` 同口径）：`const dt = this.autoLastTs > 0 ? Math.min(0.1, (ts - this.autoLastTs) / 1000) : 0; this.autoLastTs = ts;`
+  - 定时器路径 `window.setInterval(..., this.autoTurnMs)` 本身就是毫秒语义，**无需改**。
+- **真机验收**：连续模式 150px/s 精确（0.5s 走 75px、1.5s 走 225px），按钮 `rl-quick-active` 正常亮/灭，停机后 `frozen=true`；单页模式每 5s 翻一页（24 → 25），右键弹窗 `popTitle=翻页间隔`、滑条 `1500~20000`；连续模式右键弹窗 `滚动速度`。
+
+#### `pure/readerFops` 常量合并
+
+- **删除 `READER_FOPS.autoScrollOnly`，四件统一 `autoScrollPaged`。** 理由：PDF 本轮补了翻页模式、漫画本轮补了自动推进，原常量注释里「PDF 只有连续滚动、漫画压根没有自动推进」的前提**不再成立**，留着就是死配置面。
+- `src/pure/readerFops.ts` 现只导出两条：`immersive`、`autoScrollPaged`；顶部注释改写（含「⛔ 别为了某处措辞更贴切再造第三个常量」）。
+- `tests/readerFops.test.ts` 加反向守卫：`expect(Object.keys(READER_FOPS).sort()).toEqual(['autoScrollPaged', 'immersive'])` 且 `expect('autoScrollOnly' in READER_FOPS).toBe(false)`。
+
+#### 门禁
+
+| 项 | 结果 |
+| --- | --- |
+| `tsc -noEmit -skipLibCheck` | **0**（中途修 3 处 `TS2531`） |
+| `esbuild.config.mjs production` | **exit 0 / 87 warnings = 基线** |
+| `main.js` 体积 | **4,204,545 B** |
+| `_deploy.cjs` | exit 0 / `ALL_MATCH=1`（`main.js 958a14348a84` / `manifest.json fda6ca5d1f89` / `styles.css 1316d1d3018d`） |
+| 全量 vitest | **212 files / 4330 tests passed** |
+| `assert-symbols.cjs` | **PASS=3972 / FAIL=82 / total=4054**（本批起点 103 FAIL） |
+
+- **断言四象限对照（关键方法论）**：只比数字无法归因，改用 {新/旧断言} × {新/旧产物}。结果 —— 新断言+旧产物 = `PASS 3955 / FAIL 99`；集合差 **ADDED = 0 / REMOVED = 17** ⇒ **本批零新增红灯，反而转绿 17 条**。
+- **断言改动（21 处，用户已授权）**：`mkFop("timer")` 3→4、`"timer"` 3→4、`eye` 3→4、自动右键弹窗 3→4、`advanceAutoPos` 3→4、`attachTocResizer(this.tocEl)` 3→4、`书签（0）` 3→4、`annoCountText("书签")` 3→4、`buildAnnoHead` 接线 9→10、`restartAutoIfOn` 6→8、`"data-tip": "书签"` 0→1（漫画 bmTab 用了这个 tip）、`#603` 组改为 `autoScrollOnly` 整组退场 + `autoScrollPaged === 4`。
+
+#### 环境坑（复用价值高）
+
+- **`_deploy.cjs` 的 `VAULT` 指向 `C:/Users/kest/Desktop/临时测试库/...`，与 `tools/rd.cjs` 跑的 `.testvault` 不是同一个库。** ⇒ `_deploy.cjs` 报 `ALL_MATCH=1` 只证明「根产物 → 临时测试库」一致，真机验证前**必须手动** `Copy-Item main.js,styles.css,manifest.json .testvault\.obsidian\plugins\obsidian-reelludic\` 再 `tools/rd.cjs stop` + `launch`。
+- 探针基建：`_r.cjs <exprFile> [outFile]`（读表达式 → 逐行剥 `//` → 压一行 → `execFileSync('node',['tools/rd.cjs','check','expr',expr],{encoding:'utf8',maxBuffer:64MB})` → 写 UTF-8）。渲染进程里 **`plugin` 未定义** ⇒ 必须 `app.plugins.plugins['obsidian-reelludic']`；`openBookReader(...)` **不能 await**（要等阅读器关闭）；多实例先 `getLeavesOfType(...).forEach(l => l.detach())` + sleep。
+- 计数断言真值时必须先解码：产物里中文字面量是 `\uXXXX`，`raw.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))` 之后计才准（未解码时中文字面量一律 0）。
+
+#### 遗留
+
+- 镜像里 36 项历史删除遗留（`BookDownloadModal.ts` / `GameSessionModal.ts` / `novelPack.ts` 等）待用户逐项确认后再清。
+- 版本号仍锁 **1.4.0** 未改：本批属「体验优化 + 补端口径」，按 2026-09-22 裁定不另开版本。
+
+---
+
+### 新增功能 · #691（2026-10-23）：**四阅读器统一改造（PDF 顶栏 7 钮 / 三器侧栏合并 / Ctrl+滚轮 / 漫画书签+截图 / PDF 双模式）**
+
+**用户原话（2026-10-23）**
+> PDF阅读器顶部工具栏需同步TXT/EPUB阅读器的快捷功能，并按"快捷书签、快捷高亮、快捷摘抄、区域截图、文本翻译、网络搜索、设置"的顺序展示；TXT/EPUB/PDF阅读器侧边栏统一为"目录"和"书签/高亮/摘抄"两个选项卡，其中书签、高亮、摘抄合并展示；TXT/EPUB/PDF阅读器均支持通过Ctrl+滚轮调整显示大小，TXT/EPUB调整字体大小、PDF调整页面缩放大小，并记住用户通过Ctrl+滚轮调整过的大小；漫画阅读器需提供书签、区域截图功能和顶部快捷按钮；PDF阅读器需支持翻页模式和滚动模式两种阅读方式
+
+**口径**：这轮**没有一处新算法**，全是「把已有能力在四端拉平」—— TXT/EPUB 早有快捷模式 / 两页签 / 字号持久化（PDF 缺），PDF 早有一致的 `openWith` 通道（漫画缺）。做法 = **对齐真源 + 补接线**，⛔ 不为某一端特化。
+
+**① PDF 顶栏 7 钮（顺序即契约）** `src/modals/PdfReaderModal.ts` `buildHeader()`
+- `.rl-reader-quick` 内依次：`bookmark` → `highlighter` → `quote` → 区域截图（`if (this.options.onShotSave)` 守卫）→ `languages` → `netsearch`(icon `globe`)；第 7 项 `≡ 设置` 挂 `.rl-reader-ops`，紧随 quick 之后。
+- `mkQuick(wrap, id, icon, tip, onClick?)` 第 5 参：书签传 `() => this.addBookmark()`。
+- 🔴 **修掉一个自己引入的真缺陷**：书签钮初版无 `onClick`，落到默认 `toggleAnnotate('bookmark')` 会进一个没有任何持续语义的「书签模式」（真机抓到）。加第 5 参后 `click = onClick ?? (() => this.toggleAnnotate(id))`。
+
+**② PDF 侧栏四 tab → 两 tab** `buildBody()`
+- `tocTab`（`data-tip '文档目录'`，icon `list-tree`）+ `exTab`（`'书签 · 高亮 · 摘抄'`，icon `quote`）；`exPane`（`rl-reader-toc-pane rl-reader-ex-pane hidden`）内三区各 `buildAnnoHead` → `bmHeadRef` / `hlHeadRef` / `exHeadRef`；字段 `hlTabEl`/`exTabEl` 已删。
+- `syncAnnoBtns(h, total)`：**`annoSelection` 不导出它，是各面板私有**（TXT/EPUB/PDF 各一份），决策别提取。
+- 三条批量删除通道 `deleteSelectedBookmarks` / `deleteSelectedHighlights` / `deleteSelectedExcerpts`（都先 `onConfirmClear` 二次确认）。
+- 🔴 **一条真实回归（断言 `@L2843` 直接抓到）**：`deleteSelectedHighlights` 初版「有 `onDeleteHighlight` 就逐条 await」—— 会为每条弹一次确认框（选 10 条弹 10 次）。改成只走批量通道 `onTrashSelection({highlightIds: ids, excerptIds: []}, {quiet: true})`。
+- 三区列表项补多选：`if (headRef?.sel.on) appendAnnoCheck(item, isAnnoSelItem(...))`；click 在选择模式下 `toggleAnnoSelItem` + 重绘；contextmenu 在选择模式下直接 return。
+
+**③ Ctrl/⌘ + 滚轮**
+- **PDF**：`applyScaleValue(this.scale ± SCALE_STEP)`，监听挂 **`.rl-pdf-scroll`**（`{passive:false}` + `preventDefault()`）。🔴 ⛔ 别挂 `container` —— 那上面 `onUserInterrupt` 是 passive，拦不住 Obsidian 把 Ctrl+滚轮当整页缩放。
+- **PDF 持久化**：`Settings.readerPdfScale?: number`（0.5–3 / 0.25 / 缺省 1，⛔ 与 `readerFontSize` 语义不同）；`applyScaleValue()` 末尾 `this.options.onScaleChange?.(clamped)` —— 滑条 / 键盘 / Ctrl+滚轮三路共用；`main.ts` 侧 `const pdfScale = this.settings.readerPdfScale ?? 1` + `onPdfScaleChange` 写回 `saveData`；`openWith` 传 `scale: pdfScale` / `onScaleChange: onPdfScaleChange`。
+- **TXT**：`const FONT_STEP = 2;`（= 滑条一格的两倍）；翻页 wheel 监听里**优先判** `ctrlKey||metaKey` → `preventDefault()` + `adjustFont()` + return（🔴 不优先判则 Obsidian 抢走整页缩放且不再翻页）。
+- **EPUB**：`const FONT_STEP = 2;`；监听**必须挂 iframe 内 `doc`**（正文在 frame 里，宿主容器收不到），同样 `{passive:false}` + `preventDefault()`。
+
+**④ 新建 `src/modals/ReaderOverlays.ts`（约 270 行）**
+- 译文卡 + 网络搜索浮层共用件：`showTranslate/hideTranslate`、`showNet/hideNet/isNetOpen`、`buildCard/buildNetPanel`、`openEngine`、`place`（rAF 量尺寸后钳进父容器）、`destroy`；`ReaderOverlayHost{translate?, openExternal?}`。
+- ⛔ **TXT/EPUB 那两份内联版本轮刻意不动** —— 它们被产物断言按字面锁着，抽共会连累断言；PDF 是**新增消费方**，不动老真源。
+
+**⑤ 漫画补书签 + 截图** `src/modals/ComicReaderModal.ts`
+- `ComicReaderOptions` 加 `bookmarks?` / `onBookmarksChange?` / `onConfirmClear?` / `onShotSave?`。
+- 顶栏 `quick` 只放「存书签」「区域截图」两枚（**缩略图钮仍留 `ops`**）。
+- 设置菜单加「书签」行（`rl-comic-bm-row` / `rl-comic-bm-list`，空态「暂无书签（点顶栏书签按钮存当前页）」）。
+- 方法：`addBookmark` / `startShot` / `buildComicBookmarks` / `jumpToComicBookmark` / `deleteComicBookmark`（`onConfirmClear` 二次确认，⛔ 不静默删）；`destroy()` 补 `shotOverlay?.destroy()`。
+- `ComicReaderView.prepare()` 注入 `onConfirmClear`（与 TXT/EPUB/PDF 同款）。
+- 🔴 **真机抓到一个漏接线（已修）**：漫画有**两个** `openWith` 入口 —— 压缩包/图片文件夹档（`main.ts:7164`）与 **EPUB 漫画档**（`main.ts:7263`）。只补前者时「呆头农场」走 EPUB 档 ⇒ 顶栏只有书签、没有截图。两处都补后复验通过。
+
+**⑥ PDF 翻页 / 滚动双模式**
+- `scrollMode?: ScrollMode` 与 TXT/EPUB **共用 `pure/paged` 与同一设置键 `readerScrollMode`**（⛔ 别另起枚举）+ `onScrollModeChange?`。
+- 设置菜单加「阅读」行（`buildSeg` + `rl-seg rl-seg-text`，与 TXT 同款）。
+- `setMode(m)`：`normalizeScrollMode` → `scrollEl.toggleClass('rl-pdf-paged', m==='paged')` + rAF 对齐当前页 + 回调。
+- `isPaged()` / `goNextPage()` / `goPrevPage()`；**`scrollByPage(dir)`、键盘 ←/→、底栏 `navL`/`navR` 三处都加 `isPaged()` 分支**（翻页 = 整页跳，连续 = 0.9 屏）。
+- PDF 页是固定尺寸 canvas，**不需要** TXT 那套 multicol 重排。
+
+**门禁（全绿）**
+| 项 | 结果 |
+|---|---|
+| `tsc -noEmit -skipLibCheck` | **0**（多轮） |
+| `esbuild production` | **exit 0 / 87 warnings = 基线** / `main.js` **4,185,590 B** |
+| `_deploy.cjs` | exit 0，`ALL_MATCH=1`（三产物三方 md5 一致） |
+| `assert-symbols.cjs` | **PASS 3972 / FAIL 82**（四象限对照后确认无新增红灯，净少 2 条） |
+| 全量 vitest | **212 文件 / 4326 用例全过** |
+| `_mirror.cjs` | 已同步（本批 10 项） |
+
+**真机证据（`tools/rd.cjs`，库 `.testvault`，窗口 1440×900@1）**
+| 端 | 样本 | 实测 |
+|---|---|---|
+| PDF | 《资本论》3022 页 | 顶栏 6 枚 tip 顺序全对 + `≡`；`tabs=文档目录/书签 · 高亮 · 摘抄`、`panes=2`、三区头均带「选择/全选/删除所选」；Ctrl+滚轮 canvas `612px→765px` 且 `scrollUnmoved=true`；`savedScale=1.25`；`menuSegs=滚动/翻页`；翻页滚轮 `第 290 页→291 页`、底栏 `291→292→291` |
+| EPUB | 《百年孤独》 | iframe 内 Ctrl+滚轮 `font 23→25px`、`savedFont=25`、`tabs=章节目录/书签 · 高亮 · 摘抄` |
+| TXT | 临时样本 | `font 25→27px`、`savedFont=27`、`quickN=7`（含区域截图） |
+| 漫画 | 《呆头农场》（EPUB 档） | `quickTips=存书签/区域截图`、`opsBtns=页面缩略图/设置`、`menuRows=缩放,主题,翻页,书签`；点书签 `bmList=第 2 页 · 1%`；框选落图 33081 B、笔记写入 `## 阅读截图` + `![[呆头农场 截图 1.png]]` |
+
+**🔴 断言基线口径修正（本轮最重要的方法论沉淀）**
+- 此前一律沿用的「PASS 3976 / FAIL 78」是**另一种搭配的读数**，不是基线。
+- 四象限实测：旧断言+旧产物 = **3970/84（真基线）**；新断言+旧产物 = 3949/105；旧断言+新产物 = 3949/105；新断言+新产物 = **3972/82**。
+- 「旧断+旧产里 PASS、现在 FAIL」= **0 条** ⇒ 本批未引入新红灯；另有 2 条顺带转绿。
+- ⛔ 以后比断言必须做四象限（FAIL 集合去掉 `@L\d+` 行号后求差），**不能只比数字** —— 曾因拿两种搭配的读数互比，误判「多了 4 条」。
+
+**改动面**
+`src/modals/PdfReaderModal.ts`（顶栏/侧栏/双模式/Ctrl+滚轮/缩放持久化/标注分派）｜`src/modals/TxtReaderModal.ts`（FONT_STEP + Ctrl 滚轮优先）｜`src/modals/EpubReaderModal.ts`（FONT_STEP + iframe 内 Ctrl 滚轮）｜`src/modals/ComicReaderModal.ts`（书签 + 截图 + quick）｜`src/modals/ReaderOverlays.ts`（新）｜`src/views/ReaderViews.ts`（`ComicReaderView.prepare`）｜`main.ts`（PDF 四个新回调 + 漫画两处 `openWith`）｜`src/Settings.ts`（`readerPdfScale`）｜`styles.css`（`.rl-comic-bm-*`、`.rl-pdf-paged`）
+
+**工具教训**
+- `tools/rd.cjs check expr` 输出会被终端栏宽截断 ⇒ 探针必须返回**短字符串**；长表达式落成 `_run3.cjs` + 表达式文件跑。
+- 探针里 **`plugin` 未定义**，必须写 `app.plugins.plugins['obsidian-reelludic']`。
+- `plugin.openBookReader(entry)` 的 Promise **要等阅读器关闭才 resolve**，⛔ 不能 await，用 `.catch(()=>{})` + sleep。
+- 多实例污染：先 `getLeavesOfType(...).forEach(l=>l.detach())` + sleep 600–800，否则 `document.querySelector('.rl-reader')` 抓到旧实例。
+- `ShotOverlay` 用 **PointerEvent**（`pointerdown/move/up` + `pointerId` + `pointerType` + `buttons`），且必须用**容器内坐标**（整屏坐标会被 `normalizeShotRect` 判越界当误触静默取消）。
+- 断言脚本按行号改会漂（前面替换新增了注释行）⇒ **按内容锚定**；正则里括号本身被转义时，用 `edit` 工具直接改那行最稳。
+- `_deploy.cjs` 的 `VAULT` 指向 `临时测试库`、**不是** `.testvault` ⇒ 真机验证前必须手动 `Copy-Item main.js,styles.css,manifest.json .testvault\.obsidian\plugins\obsidian-reelludic\` 再 `rd.cjs stop` + `launch`。
+
+### 新增功能 · #690（2026-10-23）：**PDF 阅读器摘抄 + 三阅读器区域截图回填笔记**
+
+**用户原话（2026-10-23）**
+> 继续做PDF阅读器的摘抄功能，再给TXT/EUPB/PDF阅读器加个区域截图回填笔记功能
+
+**一句话口径**
+摘抄是**接线活** —— `pure/excerptCard` 与 `onExcerptSave` 通道 TXT/EPUB 早就在用，PDF 分支的 `openWith` 只是漏传。区域截图是**取像素通道的活** —— 三端统一到 Electron `webContents.capturePage(rect)`，不赌 `html2canvas` / `foreignObject`。
+
+**🔴 取像素通道的取证（2026-10-23 真机，`.testvault` + Obsidian 1.14.4）**
+
+| 探测项 | 实测结果 |
+| --- | --- |
+| `typeof html2canvas` | `'false'`（本仓没有） |
+| `typeof window.desktopCapturer` | `'false'`（不走整屏选择那条路） |
+| `typeof require` / `electron.remote` | `'function'` / `object` |
+| `remote.getCurrentWebContents().capturePage` | `'function'` |
+| `capturePage({x:100,y:100,width:200,height:150})` | 返回 `200x150`（**精确命中**）、`pngLen=459`、`isBuffer=true` |
+| `capturePage({x:0,y:0,width:1,height:1})` | `1x1` |
+| `getCurrentWindow().capturePage()` | `1440x900`；`.crop({...}).toPNG()` 同效 |
+
+⇒ **三端一条通道**，且 `capturePage` 抓的是**窗口合成像素** ⇒ EPUB 的 `iframe` 正文天然覆盖。
+
+**新增 `src/pure/readerShot.ts`（119 行，纯逻辑无 DOM / 无 electron）**
+
+- `SHOT_SECTION_READER = '阅读截图'` —— 🔴 改这里必须同步 `pure/excerpt.ANNOTATION_SECTIONS`，否则条目一保存触发 `writeNote` 模板重写，整区截图被静默抹掉。
+- `ShotRect { x, y, width, height }` —— **CSS px（= DIP）**，⛔ 别乘 `devicePixelRatio`：`capturePage` 的矩形与 `getBoundingClientRect()` 同尺（本机 dpr=1 精确命中，且 Electron 文档口径一致）。
+- `ShotLoc { page?, chapter?, pct? }` —— PDF 给 `page`，TXT/EPUB 给 `chapter` + `pct`。
+- `SHOT_MIN_SIZE = 12` —— 小于此尺寸视为误点/手抖。
+- `normalizeShotRect(drag, bounds, min)` —— 摆正方向（可从右下往左上拖）+ 钳进容器（避免把工具栏/侧栏截进去、越界黑边）+ 过小返 `null`。
+- `readerShotFileName(title, stem?)` —— 🔴 **缺省后缀必须是「截图」**：只写书名会与同名封面撞车（真机实测截图落成 `活着.png`，与封面同目录，笔记里 `![[活着.png]]` 指向了封面）。书名本身为空（兜底「阅读截图」）时不再叠后缀。
+- `sanitizeShotStem(name, fallback)` —— 去路径分隔符与 Obsidian 链接禁用字符，与 `videoLink.sanitizeFileStem` 同口径。
+- `readerShotLabel(title, loc)` —— **页码优先**（PDF 的章节号无意义），逐级省略。
+- `readerShotBlock({fileName,label?})` —— **fail-closed**：文件名空返空串，调用方据此不写笔记（宁可留未引用附件，也不要在笔记里留 `![[]]` 破图框）。
+
+`tests/readerShot.test.ts` 覆盖：`normalizeShotRect` 方向/钳制/过小、`readerShotFileName` 六个边界（含「默认带截图后缀」「空书名不叠后缀」）、`sanitizeShotStem`、`readerShotLabel` 页码优先与逐级省略、`readerShotBlock` fail-closed。
+
+**新增 `src/modals/ShotOverlay.ts`**
+
+`position:fixed` 全窗遮罩 + 十字光标 + 拖拽画框 + `Esc` 取消；`destroy()` 幂等。三个阅读器的 `destroy()` 都调它（遮罩挂 `document.body`，面板没了必须一起收）。拖拽用 **pointer capture + 捕获阶段监听**，所以探针必须把 `pointerdown/pointermove/pointerup` 派发到 overlay 自身、并带 `pointerId/isPrimary/buttons`。
+
+**三面板接线**
+
+| 文件 | 按钮位置 | 定位传参 | 收菜单 |
+| --- | --- | --- | --- |
+| `PdfReaderModal.ts` | `quick` 内书签之后 | `{ page: idx + 1, pct: Math.round(ratio * 100) }` | `hideSelbar()` + `hideSettings()` |
+| `TxtReaderModal.ts` | `mkQuick('aisearch', …)` 之后 | `this.currentLoc()` | `hideSelbar()` + **`hideMenu()`** + `hideMore()` |
+| `EpubReaderModal.ts` | `mkQuick('aisearch', …)` 之后 | `this.currentLoc()` | `hideSelbar()` + `hideMenu()` |
+
+- 都带 `if (this.options.onShotSave)` 守卫 —— 未注入就不画按钮（⛔ 不造点了没反应的按钮）。
+- 是一**次性动作**，⛔ 不走 `toggleAnnotate`（那不是模式，点一次框一次）。
+- ⚠️ TXT 侧菜单收起叫 `hideMenu()`；首次误写 `hideSettings()` → `TS2339: Property 'hideSettings' does not exist on type 'TxtReaderPanel'`。
+- 🔴 EPUB 的框选区用 **iframe 外层 wrapper** `this.frameEl?.closest('.rl-reader-frame')`，⛔ 不用 `frameEl` 自身（wrapper 更贴合用户看到的正文区域）。
+
+**宿主 `main.ts`**
+
+- `saveReaderShot(entry, { rect, loc, stem? })`（`main.ts:6578`）：`captureViewRect(rect)` → `getAvailablePathForAttachment` → `createBinary` → `readerShotBlock` → `openNoteBeside` → `service.appendNoteSection(entry.id, block, SHOT_SECTION_READER)` → `scrollNoteToLine` → `Notice`。🔴 **笔记只能经 `EntryService.appendNoteSection` 写**（`noteFingerprint` 的唯一拥有者），⛔ 面板里 `vault.modify` 会让指纹过期。
+- `captureViewRect(rect)`（`main.ts:6611`）：`require('electron').remote.getCurrentWebContents().capturePage(rect)` → `buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)` 转独立 `ArrayBuffer`（Buffer 底层可能带池偏移）。
+- 🔴 **等重绘**：`saveReaderShot` 开头插双 `requestAnimationFrame` + `setTimeout(60ms)`。原因：`ShotOverlay.destroy()` 刚摘掉 `rgba(0,0,0,0.28)` 遮罩，浏览器还没重绘，`capturePage` 抓到的是**上一帧的遮罩** ⇒ 真机第一张截图是 705 字节的**整块纯灰**。
+- 三个 `openWith` 各补 `onShotSave`。
+
+**PDF 摘抄接线**
+
+- `PdfReaderOptions` 加 `onExcerptSave?: (quote: string, note: string | undefined, loc: {chapter; pct}) => Promise<boolean>`。
+- 动作条从三钮扩到**四钮**：摘抄 / 高亮 / 复制 / 垃圾桶（顺序：摘抄 · 高亮 · 复制 · 垃圾桶）。
+- 移植 `TxtReaderModal` 的 `rl-excard` 就地卡片：`buildExcerptCard` / `showExcerptCard` / `hideExcerptCard` / `submitExcerptCard` / `addSelExcerpt` / `selbarAnchorClient`，复用 `pure/excerptCard` 的 `placeCard` / `excerptCardKeyAction` / `needsQuoteExpand` / `excerptCardLocLabel`。
+- `main.ts` 新增 `onPdfExcerptSave`（`main.ts:6981`）包一层写 `label = '第 N 页'`，`onExcerptSave: onPdfExcerptSave`。
+- 🔴 **缺陷（真机抓到并已修）**：卡片信息行写成「第 1 章」。根因 `pure/excerptCard.excerptCardLocLabel` 把 `loc.chapter` 硬拼「章」，而 PDF 存的是页码。修法：加第 3 参 `unit: '章' | '页' = '章'`（缺省不变 ⇒ TXT/EPUB 零改动），PDF 传 `'页'`；`tests/excerptCard.test.ts` 补 1 条断言。
+- 改掉 6 处过期注释（`PdfReaderModal.ts:3/14/485/512/532` 原写「PDF 只做书签 / 高亮摘抄按用户裁定不做」）。
+
+**`styles.css`**
+
+- `.rl-shot-overlay`：`position:fixed; inset:0; z-index:9000; cursor:crosshair; background:rgba(0,0,0,0.28); touch-action:none; user-select:none`。
+- `body.rl-shot-dragging`、`.rl-shot-hint`、`.rl-shot-box` + 两个 `.hidden`。
+- 🔴 `.rl-shot-hint` 的 `border-radius` **必须是 `var(--radius-l)`**：首次写成 `999px`，撞上全仓反向守卫「胶囊形态（999px + 容器底）一律退场」，断言当场红。
+
+**`ANNOTATION_SECTIONS` 扩名单**
+
+`src/pure/excerpt.ts:397` → `['摘抄', '阅读截图', '单时间戳', '截图时间戳', '时间戳', '截图']`。注释写明「不加进本名单 = 用户一保存条目，整区截图就被模板重写抹掉；⚠️ 与视频的 `截图时间戳`/`截图` 是两个不同区，别合并」。`tests/excerpt.test.ts:814` 同步。
+
+**门禁**
+
+| 项 | 结果 |
+| --- | --- |
+| `tsc -noEmit -skipLibCheck` | 0 |
+| `esbuild production` | **87 warnings = 基线**，`main.js` = 4,154,275 字节（#689 的 4,127,476 → +26,799 B） |
+| `_deploy.cjs` | `ALL_MATCH=1`（三产物三方 md5 一致） |
+| 全量 `vitest` | **212 文件 / 4326 例全过**（#688 是 211/4297 ⇒ +1 文件 +29 例） |
+| `assert-symbols.cjs` | **PASS=3976 / FAIL=78 = 基线** |
+
+**断言 13 条期望值更新（用户 m03897 明确授权「改断言期望值（推荐）」）**
+
+`assert-symbols.cjs` 里把计数写死的判据，因 PDF 成为**第 3 个阅读器**、`ANNOTATION_SECTIONS` 多了**「阅读截图」**而漂移。逐条核对后改期望值（备份 `_assert_backup2.cjs`）：
+
+| 位置 | 改前 | 改后 | 原因 |
+| --- | --- | --- | --- |
+| `L2445` 摘抄保存直写 | `{ quote, note, loc }` 字面 | `label ? { quote, note, loc, label } : { quote, note, loc }` | 闭包多了可选 `label`（PDF 传「第 N 页」） |
+| `L2461` 想法输入 | 3 | 4 | 就地卡片 2 → 3（+PDF） |
+| `L2780` 摘抄卡片 | 2 | 3 | 同上 |
+| `L2781` 卡片三件齐 | 2 / 2 | 3 / 3 | 同上 |
+| `L2784` 四纯函数接线 | 3/3/5/3 | 4/4/6/4 | 同上 |
+| `L2789` placeCard | 5 | 6 | 调用 4 → 5（3+2） |
+| `L2794` Ctrl+Enter | 2 / 2 | 3 / 3 | 同上 |
+| `L2797` 点空白收卡片 | 2 | 3 | 同上 |
+| `L3475` 标注区名单 | 5 项 | 6 项（+`阅读截图`） | 新区段 |
+| `L4307` 产物侧同一串 | 5 项 | 6 项 | 同上 |
+| `L4393` 滚动接线 | 2 | 3 | 新增阅读截图路径 |
+| `L21735` #587 源码侧名单 | 5 项 | 6 项 | 同上 |
+| `L21739` #587 单测同步 | 5 项 | 6 项 | 同上 |
+
+⚠️ **有意不改的 2 条**：`smooth`（实得 4）与 `onRoot`（实得 1）—— 多出来的分别来自 `ComicReaderModal.ts:1111/1120` 与 `:1273`，是**改动前就存在的历史红灯**，不能算本批。
+
+**真机验证（`.testvault` + 插件 1.4.0 + 1440×900 + 样本 10 页 PDF）**
+
+| 项 | 结果 |
+| --- | --- |
+| PDF 动作条 | `摘抄,高亮,复制,删除该高亮`（四钮） |
+| PDF 摘抄卡片 | `title=添加摘抄`、`quote=Ocean Depths`、想法输入框在、`save=保存摘抄` |
+| PDF 摘抄落盘 | 侧栏「摘抄 · 已有 2 条」；笔记 `## 摘抄` 出现 `> [!quote] [[_probe.pdf#^bk…\|第 1 页 · 6%]]` + `[↩ 回到原文]` |
+| PDF 截图 | 330×210 / 7452 B / `distinct=254` / **目视真实 PDF 内容**；`![[活着 截图.png]]` + `*摘自《活着》 · 第 1 页 · 0%*` |
+| EPUB 截图 | 26751 B / `distinct=256`；`![[百年孤独 截图.png]]` + `*摘自《百年孤独》 · 第 24 章 · 0%*` |
+| TXT 截图 | 299×190 / 18694 B / `distinct=256` / **目视正文文字清晰**；`*摘自《TXT 截图纸质样本》 · 第 1 章 · 0%*` |
+| 遮罩自毁 | `pointerup` 后 `.rl-shot-overlay` 立即消失 |
+
+**🔴 环境坑（第三次踩到，已记入 `AGENTS.md`）**
+
+`_deploy.cjs` 的 `VAULT` 指向 `C:/Users/kest/Desktop/临时测试库/.obsidian/plugins/obsidian-reelludic`，**不是** `tools/rd.cjs` 跑的 `.testvault` ⇒ `ALL_MATCH=1` 只说明三方 md5 一致，真机仍加载旧产物。必须先手动 `Copy-Item main.js,styles.css,manifest.json .testvault\.obsidian\plugins\obsidian-reelludic\` 再 `rd.cjs stop` + `launch`。
+
+**遗留（明示）**
+1. 标注评论（给高亮写心得）仍未做 —— `ReaderHighlight` 不含 `note`。
+2. 镜像 36 项历史删除遗留待人工逐项确认。
+3. 未改版本号（同 #688/#689 口径：体验优化不算新增功能，且 1.4.0 未发布）。
+
+### 内部开发者 · #689（2026-10-23）：**PDF 高亮用法的文档化（5 文件 6 处，代码 0 改动）**
+
+**用户原话（2026-10-23）**
+> 「PDF阅读器怎么才能高亮，更新project-rule，」
+
+**一句话口径**：#688 把能力做完了，手册里却只有**实现侧**约束（`AGENTS.md` 的 7 条硬规范），缺「**用户怎么用**」这一面。本批纯文档：把真实交互次序、三钮口径、只存 JSON 的边界写进 `UI-GUIDE` / `PRODUCT` / `README` / `DESIGN` 与根 `README.md`。
+
+**🔴 写文档前的代码核对（避免写出「看着对、实际不成立」的步骤）**
+- `PdfReaderModal.ts` 的 `toggleSelHighlight()`：**先**按当前默认样式（`DEFAULT_HL_STYLE='hl'` + `DEFAULT_HL_COLOR='yellow'`）调 `doHighlight(...)` 落一条，**成功后**才 `showHlPicker()` 浮出色板。⇒ 用户体感 = 「点高亮就黄了，再点颜色换色」，**不是**「先选颜色再确认」。这条最容易凭直觉写反，已作为强制契约写进 UI-GUIDE。
+- `buildSelbar()` 只有三钮：`高亮`(`highlighter`) / `复制`(`copy`) / `垃圾桶`(`trash-2`)，注释原文「PDF 没有笔记正文，不做摘抄/翻译/AI —— 只保留这几件真能用的」。
+- 命中已有高亮时 `syncSelbarHlTip()` 把 tip 改「取消高亮」、垃圾桶去 `.hidden`；点它 `trashSelection()` 直删（**不弹确认**）。
+- 换样式 `pickHlStyle()` = **删旧建新**（宿主只有 add/delete），删旧走静默通道 `onTrashSelection({quiet:true})`；⛔ 走 `onDeleteHighlight` 会弹 ConfirmModal（#688 真机实测过的毛病）。
+
+**落地清单（5 文件 6 处）**
+| 文件 | 位置 | 补了什么 |
+|---|---|---|
+| `Project-Rule/UI-GUIDE.md` | 第 8 节，`mkQuick` 条之后 | 新增 1 组 5 条 PDF 动作条契约（三钮口径 / 先落一条的次序 / 取消高亮的反向行为 / 换样式删旧建新必须走静默通道 / 界面与逻辑真源路径） |
+| `Project-Rule/PRODUCT.md` | 「播放与阅读」条目 | PDF 高亮能力面 + 三钮口径；头部「最后更新」改 `2026-10-23` |
+| `Project-Rule/README.md` | 「最新功能」段 | PDF 高亮一句（含「⛔ 不改 PDF 文件本身」） |
+| `Project-Rule/DESIGN.md` | 目录树 `阅读进度/` 注释 | 三端共用 schema + PDF 额外带可选 `rects`、⛔ 不写回 PDF |
+| `Project-Rule/DESIGN.md` | 视图注册表 `reelludic-pdf-reader` 行 | 由空单元格补「复用 Obsidian 自带 pdfjs（`loadPdfJs()`，5.3.34）；高亮/书签/进度/目录同放阅读存档 JSON」 |
+| `README.md`（根，进公开镜像） | 阅读器小节 | 新增「**PDF 高亮**」独立 bullet：三步操作、再点取消、侧栏第三页签、只存 JSON、三钮口径 |
+
+**门禁**：纯文档批 ⇒ `tsc` / `esbuild` **未重跑**（无代码、无样式改动，产物字节数应与 #688 一致）；镜像 `_mirror.cjs` dry-run `成员总数 511` / 待拷贝 1 项 `[修改] README.md`（`Project-Rule/` 不在镜像白名单）→ apply `已拷贝 1 项`；`LICENSE` cmp 一致未写入。
+
+**遗留（明示）**：① 标注评论（给高亮写心得）仍未做 —— `ReaderHighlight` 不含 `note` 字段，要做得先扩 schema；② 镜像 36 项历史删除遗留待人工逐项确认；③ 本批未改版本号（同 #688 口径）。
+
+---
+
+### 新增功能 · #688（2026-10-23）：**PDF 阅读器高亮（路线 A：只存 JSON，不写回 PDF）**
+
+**用户原话（2026-10-23）**
+> 「PDF阅读器高亮和标注能否参考PDF++」→ 我给出四条路线后用户回「**A**」。
+
+**一句话口径**：本仓的**高亮基础设施早就是现成的**（`pure/highlight` 的三样式五色 + `pure/readerStore` 的 `highlights` 数组 + `main.ts` 的 `addBookHighlight`/`deleteBookHighlight`，TXT 与 EPUB 一直在用），**PDF 只是没接线** —— `main.ts` 的 PDF 分支 `reader.openWith({...})` 漏传了 `highlights` / `onHighlight` / `onDeleteHighlight` 三项。本次把这根线接上，并按用户裁定的**路线 A** 只写进阅读进度 JSON（⛔ 不动 PDF 文件本身），顺带补了 PDF 侧的页内覆盖层、动作条、色板、侧栏高亮列表。
+
+**为什么不选 PDF++ 的写回方案**
+- PDF++ 是 **DOM 覆盖层 + 用 `@cantoo/pdf-lib` 组 Annot 字典写回 PDF** 两条腿走；写回那条会 `vault.modifyBinary(file, pdfDoc.save())` **改用户的 PDF 原文件**，零容错空间，且与本仓 #528「高亮只存阅读进度文件」的既有裁定相反 ⇒ **不采纳**。
+- 原生 `pdf` 视图的批注 UI 通道也已证伪：`_annotationEditorUIManager` 在 pdf.js **构造期注入**，Obsidian 没传，`annotationEditorMode` 赋值后图层恒带 `disabled`（`getPageView(0).annotationEditorLayer` 上既无 `_uiManager` 也无 `_annotationEditorUIManager`）⇒ 外部打补丁开不了高亮。PDF++ 不受此限是因为它**不依赖那条通道**。
+- 反过来说，PDF++ 依赖的三项专有 API —— `window.pdfjsLib.setLayerDimensions`、`Util.normalizeRect`、`getTextContent({includeChars:true})` —— 真机实测 5.3.34 **全都有**；本仓最后没用 `includeChars`（走 DOM Range 取框即可，省掉一条 pdfjs 版本耦合），但前两项的替代逻辑（百分比定位）已吃透并落到 `pure/pdfHighlight`。
+
+**新增 `src/pure/pdfHighlight.ts`（200 行，纯逻辑，无 obsidian / DOM 依赖）**
+- 类型：`RectLike{left,top,right,bottom}`、`PdfRelRect{x,y,w,h}`（**全 0-1 归一化**）。
+- `sameLine(a,b)`：垂直重叠 > 较矮者高度 50%。
+- `horizontallyAdjacent(a,b)`：水平 gap ≤ 较窄者宽度 20%（有重叠直接 true）。
+- `mergeLineRects(rects)`：过滤退化框 → 按 top/left 排序 → 逐条与 last 判「同行且水平相邻」则合并。对应 PDF++ `areRectanglesMergeableHorizontally` / `areRectanglesMergeableVertically`。
+- `normalizeRects(rects, origin, pageW, pageH)`：**先减原点再除页宽页高**（与缩放无关）、`clamp01` 夹取、`round4` 四位小数、`MIN_SIZE=0.0005` 过滤亚像素、按 y→x 排序成阅读顺序。注释里写明「纵向翻转只在从 `chars[].r` 换算时才需要，那条路本模块不用」。
+- `relRectStyle(r)` → 百分比字符串；`rectsOverlap(a,b)`（交集 > 较窄者 50%，动作条垃圾桶显隐/命中判定用）；`normalizeRelRects`（白名单收口，配 `ReaderHighlight.rects?`）；`pageChunks`；`highlightLabel`（压空白 + `…` 截断）。
+- `tests/pdfHighlight.test.ts`：**26 例**（8 个 describe），覆盖上述全部导出。
+
+**共享 schema 扩展（append-only）**
+- `src/pure/highlight.ts`：`ReaderHighlight` 加 `rects?: PdfRelRect[]`（JSDoc 写明「存矩形不存字符偏移，因为 textLayer span 切分随 pdf.js 版本/字体度量变化；缺省时回退按 quote 重新定位」）；`normalizeHighlights` 白名单同步。
+- `src/pure/readerStore.ts:35`：原注释「高亮（PDF 阅读器无高亮功能 → 恒空数组，不为 PDF 特化 schema）」→ 改为「TXT/EPUB/PDF 三端共用同一条 schema；PDF 自 2026-10-23 起也写入这里，额外带可选 `rects`」。**没有为 PDF 单开 schema、没升 `READER_STORE_VERSION`。**
+
+**`src/modals/PdfReaderModal.ts`（1371 → 1963 行）**
+- `PdfReaderOptions` 加 `highlights?: ReaderHighlight[]`、`onHighlight?: (quote, loc, style?, color?, rects?) => Promise<string|null>`、`onDeleteHighlight?: (blockId) => Promise<boolean>`。
+- 类内新增高亮态：`highlightList`、`hlListEl`、`hlTabEl`、`hlStyle`、`hlColor`、`selbar`、`selbarParent`、`selbarHlBtn`、`hlPickerEl`、`hlStyleBtns`、`hlColorBtns`、`hlTrashBtn`、`hlPickerAnchor`、`selRecord{text,pageIndex,rects}`、`selHighlightId`。
+- `buildBody()`：`body.style.position='relative'` + `selbarParent=body`；侧栏 **2 tab → 3 tab**（目录 `list-tree` / 书签 `bookmark` / **高亮 `highlighter`**），`setTab('toc'|'bm'|'hl')` 互斥，非目录 tab 自动 `removeClass('collapsed')` 展开；`scrollEl` 上除 `scroll` 再加一个 `hideSelbar()` 监听；新增 `scrollEl.addEventListener('mouseup', ev => this.onTextMouseUp(ev))`；末尾 `this.selbar = this.buildSelbar()` 挂到 `body`。
+- 新方法：`buildHighlightToc`（空态「暂无高亮（选中文字后点动作条的高亮按钮）」、按 `loc.chapter`+`pct` 排序、`第N页 · P%`、click 跳转 / contextmenu 删除）、`jumpHighlight`、`removeHighlight`、`selectionPageEl`（`getRangeAt(0).startContainer.closest('.rl-pdf-page')` + `findPageIndex`）、`selectionRects`（`getClientRects()` 只留重心落在页内的框 → `normalizeRects`）、`buildSelbar`（`mkBtn` 纯图标 + `.rl-sr` 读屏名，**PDF 只有高亮/复制/垃圾桶三枚**，不做摘抄/翻译/AI）、`onTextMouseUp`、`syncSelbarHlTip`、`findHighlightAt`、`showSelbarAt`、`hideSelbar`、`copySelection`、`buildHlPicker` / `showHlPicker` / `hideHlPicker`（含「动作条隐藏后 `getBoundingClientRect` 全 0，改读上次写入的 `style.left/top`」那个坑的解）、`toggleSelHighlight`、`doHighlight`、`pickHlStyle`、`trashSelection`、`applyHighlights`、`paintHighlightLayer`、`locateHighlightRects`（无 `rects` 时按 quote 在 span 里反查兜底）。
+- `renderPage` 的 `textLayer.render().then(...)` 末尾补 `this.paintHighlightLayer(i)` —— **离屏销毁重建（`releasePage`）与缩放重渲染（`applyScaleValue`）后靠这一条把高亮画回来**，漏了就会出现「一缩放高亮全没」。
+- `onDocMouseDown` 追加 `hideSelbar()`。
+
+**🔴 坐标系铁证（决定整个设计，别改回去）**
+- `chars[].r` 在 `scale=1`（viewport 612×792）与 `scale=2`（1224×1584）下**完全相同** ⇒ 它是 **PDF 用户空间坐标、与缩放无关**。
+- pdf.js 自己渲染 textLayer span 用的就是百分比：span `style="left: 8.17%"`，而 `50/612 = 8.17%`；`top` 需翻转 `(pageH - bottom) / pageH`。
+- ⇒ **高亮矩形一律存归一化 0-1 百分比**，缩放 50%–300% **完全不重算**。真机实测五档（612→1224→1836→306→612 px）高亮像素宽 210→420→630→105→210 同步变化，而 `pct=34.31/3.66` 五档一个数都没变。
+- ⛔ 别改成「存像素」或「每次缩放重算」——那会在缩放时抖动并引入累积误差。
+
+**CSS（`styles.css`，插在 `.rl-pdf-page .textLayer span.rl-pdf-hl` 之后）**
+- `.rl-pdf-hl-layer{position:absolute;inset:0;pointer-events:none;z-index:1}` —— 🔴 **`pointer-events:none` 必须保留**，否则覆盖层会挡住 textLayer 的拖选，整个高亮入口失效。
+- `.rl-pdf-hl{position:absolute;box-sizing:border-box;opacity:0.38}` + 五个 `[data-color]` 定 `--rl-pdf-hl-c`（与 `HL_COLOR_HEX` 同一组色值）。
+- `[data-style="hl"]` 实底 + 圆角；`[data-style="underline"]` 透明底 + 2px 下边框；`[data-style="wavy"]` 用 `mask-image` 铺 SVG 波浪（`mask-size:8px 4px`、`height:4px!important`、`bottom:0;top:auto!important`）+ `background-color:var(--rl-pdf-hl-c)` —— ⛔ 别改成写死颜色的 SVG data URI，那样五色会失效。
+
+**`main.ts` 接线（只改一处）**
+- `addBookHighlight(entryId, title, quote, loc, style?, color?, rects?)` 加第 6 参并 `normalizeRelRects(rects)`；`onHighlight` 闭包加第 5 参。
+- PDF 分支 `openWith({...})` 补 `highlights` / `onHighlight` / `onDeleteHighlight`。
+- 🔴 **这三项刻意排在 `onPdfReady` 之后**：`assert-symbols.cjs` 有条判据拿 `onPdfReady:` 当右锚、窗口只有 300 字符，插在中间会撑爆成假红（实测 `onBookmarksChange` 到 `onPdfReady:` 距离 6000 字符）。注释已写在代码里。
+
+**🔴 真机抓到并修掉一个真实交互缺陷（换样式多弹一次确认框）**
+- 现象：在色板点绿色后弹出「将从《…》的高亮中移除该条（删除后不可恢复）。」⇒ 用户为了换个颜色得先确认一次「删除」。
+- 根因：初版 `pickHlStyle` 走 `onDeleteHighlight` → 宿主 `deleteBookHighlight` 内部弹 `ConfirmModal`。
+- 修法：改走**静默通道** `onTrashSelection({highlightIds:[id],excerptIds:[]},{quiet:true})`（与 TXT/EPUB 同一个入口），删旧 → 用同样 `quote/loc/rects` 按新样式重建 → 末尾**只报一条**「已更新高亮样式」。
+
+**门禁**
+- `tsc -noEmit -skipLibCheck` → **0 输出**。
+- `rm main.js build/main.js` + `node esbuild.config.mjs production` → **87 warnings（= 基线）**，`main.js` **4,100,179 → 4,127,476 字节（+27,297 B ≈ 26.7 KB）**。
+- `vitest run` → **211 files / 4297 tests 全绿**（较 #687 的 210/4271 **+1 文件 +26 例**）。
+- `assert-symbols.cjs` → **PASS 3976 / FAIL 78 = 基线**（详见下条）。
+- `_deploy.cjs` → **ALL_MATCH=1**：`main.js dd40df377a3c` 4,127,476B / `styles.css 8bd79c8a4e69` 436,523B / `manifest.json fda6ca5d1f89` 438B。
+- `_mirror.cjs apply` → **已拷贝 8 项**（含新增 `src/pure/pdfHighlight.ts`、`tests/pdfHighlight.test.ts`）。
+
+**🔴 断言期望值按用户授权更新了 10 条（外部校验资产）**
+- 该脚本在 `C:/Users/kest/.workbuddy/binaries/node/workspace/assert-symbols.cjs`，**不在本仓库**，属外部校验资产 ⇒ 按「评分资产红线」先向用户说明，用户 m02607 明确选「**改断言期望值**」后才动。
+- 改的 10 条：`:1968 hlWire`（2→3）、`:1971 hlBtnRef`（2→3）、`:2271 trash`（6→8）、`:2300 posFix`（2→3）、`:2534 quiet`（2→3）、`:2535 已更新高亮样式`（2→3）、`:2761 box.height-8`（2→3）、`:2768 pickHlStyle 定义数`（2→3）、`:2938 barTrash/barTrashHidden`（2→3）、`:2951 barTrashWire`（2→3），每处各加一行带日期的注释说明原因。
+- **有意没动两条**：`:2103 onRoot`（多出的 1 处来自 `ComicReaderModal.ts:1273`）、`:1154 smooth`（多出的 2 处来自 `ComicReaderModal.ts:1111/1120`）—— 都与 PDF 无关，属既有历史红灯（`smooth` 实得 4 = TXT 1 + EPUB 1 + 漫画 2），不能算到本批头上。
+- 备份：仓库根 `_assert_backup.cjs`。
+
+**真机实测（`.testvault`，1440×900，插件 1.4.0，样本 10 页 PDF）**
+- UI：`tabs=["文档目录","书签","高亮"]`、`panes=3`、`.rl-selbar` 初始 `hidden=true`、`barBtns=["高亮","复制","删除该高亮"]`、垃圾桶初始带 `hidden`。
+- 选区→动作条：`style="left: 442px; top: 4px;"`，96×42。⚠️ **别先 `span.scrollIntoView()`** —— 滚动会触发 `hideSelbar()`。
+- 建高亮：`.rl-pdf-hl-layer` 1、`.rl-pdf-hl` 1（`data-color=yellow`、`style="left: 8.17%; top: 5.86%; width: 34.31%; height: 3.66%;"`）、侧栏 1 条。该 `left: 8.17%` 与 pdf.js 自己的 span 逐字一致 ⇒ 坐标系对齐。
+- 持久化：`媒体库/阅读进度/PDF 探针-阅读-_probe_pdf.json` 里 `highlights[0]={quote:"Modern Minimalist",id:"hlmvksscsyer4c",loc:{chapter:4,pct:6},style:"hl",color:"yellow",rects:[…]}`；关标签页重开仍在、跳转后覆盖层重绘成功。
+- 取消高亮：点已有高亮 → tip 变「取消高亮」→ 点它弹 ConfirmModal → 确认后 `items 2 → 1`。右键删除同样生效。
+- ⚠️ **「右键删除无反应」曾误判为 bug**：真因是探针用了**不在 catalog 里的临时条目**，`deleteBookHighlight` 第一步 `service.get(entryId)` 返 null 就 `return false`（静默）。**非代码缺陷，是测试数据不合法** —— 用真实条目复测通过。
+
+**⚠️ 环境坑（留档，代价很大）**
+- `_deploy.cjs:10` 的 `VAULT` 指向 `C:/Users/kest/Desktop/临时测试库/.obsidian/plugins/obsidian-reelludic`，而 `tools/rd.cjs` 跑的是仓库内 `.testvault` ⇒ **`_deploy.cjs` 报 ALL_MATCH=1 但真机加载的仍是旧产物**（实测 vault md5 `05DCA6371E26` vs root `D7A5B49798BC`）。
+- 真机验证前必须手动 `Copy-Item main.js,styles.css,manifest.json .testvault\.obsidian\plugins\obsidian-reelludic\` 再 `rd.cjs stop` + `launch`。**这一步已写进本文件，别下次再踩。**
+- 探针写法：把表达式落成仓库根 `_probe_*.js`，用 `_run_expr.cjs`（内部 `execFileSync('node',['tools/rd.cjs','check','expr',expr])`）跑并写 UTF-8 文件再 `read`。⛔ 别把含中文/双引号/正则的 JS 直接塞 PowerShell 命令行（会被编码吃掉）。`rd.cjs check expr` 输出会被栏宽截断 ⇒ 探针只返回短字符串。
+
+**遗留（明示）**
+- **标注评论（给高亮写心得）没做** —— `ReaderHighlight` 不含 `note` 字段，用户未明确要求。若要做得先扩 schema（`pure/excerpt.ts:20` 的 `note?` 是摘抄那边的先例）。
+- 镜像另有 36 项历史删除遗留待逐项确认，非本批。
+- 本批**未改版本号**（按 2026-09-22 裁定「体验优化不算新增功能」，且 1.4.0 尚未发布）。
+
+### 问题修复 · #686（2026-10-22）：**音乐「关联弹窗」网络地址旁补 B 站检索图标 + 全仓「编辑条目」统一改「编辑属性」**
+
+**用户原话（2026-10-22，两条）**
+> ①「这个音乐类型的右键菜单-关联弹窗的网络地址旁没有搜索b站的小图标按钮啊」
+> ②「全仓 4 处也改成编辑属性名称」
+
+**一句话口径**：① #685 给音乐「网络地址」加的检索入口**加错了地方** —— 落到了**条目编辑浮层**（`EntryForm`），而用户点的是**右键 → 关联入口**那张弹窗（`QuickAssociateModal`），两处是不同组件，所以「还是没找着按钮」；本次把弹窗侧那枚**在线曲库**换成 **B 站检索**（与影视侧同一个 `biliSearch` 出口，填的是**打开就能播**的视频页）。② 上一轮只改了右键菜单那一处，本次把剩下 4 处用户可见字面量一并统一。
+
+**改法**
+- `src/modals/QuickAssociateModal.ts`：`candMode: 'weread' | 'songlib'` → `'weread' | 'bili'`；`buildSongLibBtn` **整体替换**为 `buildMusicNetBtn`（`if (!this.cbs.biliSearch) return;` ⇒ 没注入能力就不画假按钮 + `data-tip='在 B 站按歌名搜，点一条把可播放链接填进网络地址'` + `setIcon(b,'globe')` + 读屏名「在 B 站按歌名搜索」+ `b.onclick = () => this.openCandCard('bili')`）；`openCandCard(mode)` / `fetchCands` 去掉 songlib 分支、改走 `cbs.biliSearch` ⇒ `{videos}` 折成 `PlayableCand{title, sub: v.author || '未知 UP 主', url: String(v.webUrl), coverUrl: v.coverUrl}`（**空 `webUrl` 过滤掉** —— 裸 bv 号填进网络地址打不开）；`pickCand` Notice 按 `candMode` 分流「阅读 / 播放」；`renderCandCard` 标题「在 B 站搜歌（点一条填可播放链接）」、空态「没搜到能播的视频，换个检索词试试」；`QuickAssociateCallbacks` **删除** `searchSongLibrary` 成员（那枚曲库按钮在本弹窗撤掉，曲库检索仍在编辑浮层 / 搜索页曲库栏 / 下载窗口）。
+- `src/views/components/MediaList.svelte`：音乐行 ✎、列表铅笔、右键项三处 `data-tip` / 正文 / `.rl-sr` 统一「编辑属性」。`src/views/components/TrackingBoard.svelte`：追更表按钮。`src/views/components/EntryForm.svelte`：编辑浮层标题 `编辑属性：${title}`。`src/modals/CalendarDayModal.ts`：空态提示。
+- `main.ts`：三条用户可见兜底 Notice（启动快捷方式 .lnk / 本地音频 / 书籍网络地址）改「编辑属性」；`quickAssociateEntry` 删掉 `searchSongLibrary` 接线、改注释指向 `biliSearch`；**`searchSongLibraryForAssociate` 保留**（编辑浮层仍在用）。
+- 注释 / 文档里的「编辑条目」**有意保留**（那是历史语境与用户原话引用，不是用户看到的字）。
+
+**门禁**：`tsc -noEmit -skipLibCheck` **0 输出** → 构建 **87 warnings（= 基线，口径数 `^▲` 行；⚠️ 统计前先剥 BOM，否则首条警告漏数成 86）** → `vitest run` **225 files / 4539 tests 全绿** → 守卫链 **PASS 4188 / FAIL 79**（相对改动前 80 FAIL **唯一变化是 `#464` 由红转绿**：产物 `"songlib"` 字面量 2 → 1；新增 FAIL = 0）→ 突变 **`_mut686.cjs` 14/14 `[RED ok]` · 0 GREEN · 0 SKIP**，复原后 31 条判据全过 → 部署 **ALL_MATCH=1**（`main.js 0b5be40a86da` 6,414,089B / `styles.css 1e012ecf01ae` 431,060B / `manifest.json fda6ca5d1f89`）→ 镜像 **members=544 diff=0**。
+
+**🔴 本批的方法论要点（写下来免得下次白跑）**：这批改动全在 DOM 弹窗与 Svelte 文案里，**vitest 覆盖不到**（`QuickAssociateModal` 是手搓 DOM 类，没有可挂的纯函数）。⇒ 突变改成**产物级**：改源码 → **重新构建** → 跑「源码 19 条 + 产物 12 条」共 31 条判据 → 期望变红 → 复原再构建自证。判据必须**两面都钉**（源码改了但没进产物 = 没交付）。`_mut686.cjs` 内 `checkAll()` 即这套判据的单一真源。
+
+**⚠️ 一条假红的教训**：M14 首版拿 `biliSearch:` 当锚点，但 `main.ts` 里这个键有 **3 处**（影视侧 `:3330` 早就注入了同一出口），`replace` 只改第一处 ⇒ 判据照绿。**不是漏检，是这条突变根本不是本批的落点**。改成本批真正新增的「列表铅笔 data-tip」后才 `[RED ok]`。⇒ 突变锚点必须先 `grep` 确认**只命中本批那一处**，命中多处就先收窄锚点。
+
+### 体验优化 · #685（2026-10-22）：**右键补录组（摘抄 / 短评 / 攻略 / 重温 / 周目 / 时长）+ 记录体系泛化 + 音乐「网络地址」在线曲库检索**
+
+**用户原话（2026-10-22，一整条）**
+> 「音乐也要加网络检索小图标按钮，参考弹出搜索b站视频链接回填就行了，还有右键菜单要在加- 【添加摘抄】（文学、网文）/ 【添加短评】（电影、剧集、动画、漫画、音乐）/【添加攻略】（游戏）- 【记录重温】重刷次数+感想放在笔记内（电影、剧集、动画）【记录周目】游戏/ 【记录时长】（文学、网文、漫画、音乐、游戏）其中文学、网文、漫画、音乐的【记录时长】可通过内置阅读器和播放器自动累计或手动记录，但只有游戏要完全手动记录时长」
+
+**一句话口径**：右键菜单从「打开 / 关联 / 编辑 / 删除」四件事扩到十件事，**按条目类型给动作**；「记录时长」从游戏专属泛化成三类型共用一套结构（游戏保留手填总时长）；重刷 / 周目 / 短评 / 攻略的**感想落笔记内**（用户原话「感想放在笔记内」）。
+
+**改法**
+- `src/data/types.ts`：新增 `RoundLog { kind: 'rewatch' | 'playthrough'; date; round; note? }`；`MediaEntry` 增 `listenMinutes?` / `roundLogs?` / `guide?`；新增 `EntryLogKind = 'time' | RoundLog['kind']` 与 `EntryTextKind = 'comment' | 'guide'`（⛔ 联合类型**唯一真源**放 schema 模块，⛔ 别在弹窗 / 视图各写一份）。
+- `src/data/catalog.ts`：`normalizeEntry` 白名单新增三字段（`listenMinutes` 有限正数取整；`roundLogs` 只收两种合法 kind + 正整数 round；`guide` 空串不落库）—— ⚠️ **MediaEntry 增字段必须同步白名单**，否则读取端静默丢弃（本仓踩过 bookKind / readUrl / gameUrl 三次）。
+- `src/services/EntryService.ts`：删 `addPlaySession/removePlaySession`（旧「仅游戏」契约），改 `addTimeSession/removeTimeSession`（门控 book/music/game；书籍累加 `readMinutes`、音乐累加 `listenMinutes`、**游戏明细与 `playtimeMinutes` 解耦不累加**）、`addRoundLog/removeRoundLog`（rewatch 只给 movie/tv/anime；playthrough 只给 game）、`setEntryComment`（**追加**语义 `prev + '\n\n' + incoming`，⛔ 别改成覆盖）、`setEntryGuide`（仅 game）；五个方法落库后都 `writeNote` 重写笔记。
+- `src/modals/EntryLogModal.ts`（新建 232 行）：time / rewatch / playthrough 三形态共用一个弹窗（`KIND_META` 定标题与字段名；「已有记录」列表可删；预览行与写入笔记的行一致）。`src/modals/EntryTextModal.ts`（新建 121 行）：comment（append）/ guide（replace）两形态。`src/modals/GameSessionModal.ts` **删除**（旧「记录游玩」弹窗已被上面两个通用弹窗取代）。
+- `main.ts`：`openEntryLogModal` / `openEntryTextModal` / `recordEntryLog` / `deleteEntryLog` / `saveEntryText`，都 `await this.refreshViews()`。
+- `src/views/components/MediaList.svelte`：右键菜单补录组，**按类型门控**（摘抄 = 文学/网文且 ⛔ 漫画不算；短评 = 电影/剧集/动画/漫画/音乐；攻略 = 游戏；重温 = 影视；周目 = 游戏；时长 = 书籍/音乐/游戏）；新增 prop `onOpenEntryLogModal(e, kind)` / `onOpenEntryTextModal(e, kind)`；prop 贯通 `HomeView.svelte` / `HomeView.ts` / `EntryModal.ts` / `EntryForm.svelte`。
+- `src/views/components/EntryForm.svelte`：音乐「网络地址」标签行加 `globe` 按钮（`{#if songLibOn}` = `type === 'music' && songLibraryEnabled`），复用**已存在**的 `openSongUrlPicker/runSongUrlSearch/pickSongUrl`（⛔ 别写第二份）；`src/modals/EntryModal.ts` 注入 `onSearchSongLibrary: (kw) => this.plugin.searchSongLibraryForAssociate(kw)`（宿主出口 `main.ts:4158` 早就有了，**缺口只在编辑表单**）。
+- `styles.css`：补 `.rl-ex-log-list/-item/-date/-note/-del` 五条（⛔ 缺了会破 87-warnings 的 Unused CSS 基线）。
+
+**测试契约变更（明示）**：`tests/entryService.test.ts` 旧契约（`addPlaySession/removePlaySession` + 「only for game」断言）随需求变更整体改写为新契约（`addTimeSession` 三类型门控 + readMinutes/listenMinutes 累加口径 + 游戏解耦 + roundLogs 闸门 + 短评追加语义 + 攻略闸门）。
+
+**门禁**：`tsc -noEmit -skipLibCheck` **0 输出** → 构建 **87 warnings（= 基线，口径数 `^▲` 行）** → `vitest run` **225 files / 4539 tests 全绿** → 守卫链真实红 **84 条**（`#533` 块 ①②③④⑤ 全 PASS；#685 相对上一轮已部署产物 **ADDED = 0**，顺带 RESOLVED 6 条存量红）→ 突变 **`_mut685.cjs` 13/13 `[RED ok]` · 0 GREEN · 0 SKIP**，复原后自证 83 passed → 部署 **ALL_MATCH=1**（`main.js 2ac651ccb8e4` 6,413,840B / `styles.css 1e012ecf01ae` 431,060B）→ 镜像 **已拷贝 82 项**。
+
+**守卫翻面（2 处，均带 #685 注记）**：`#533 ⑤` 产物级 `icon: "globe", size: 13` 计数 **3 → 5**（书籍「网络地址」旁的在线阅读检索 = #531 引入；音乐「网络地址」旁的在线曲库检索 = #685 新增 —— 两者都是**网络检索**语义与既有 globe 同名，故计数只增不改名）；`#533 ②` 「网络检索」三处 → **四处**（追加 `'在线曲库检索'`）。
+
+**遗留（明示）**
+- ~~全仓另有 4 处「编辑条目」字面量未统一~~ → ✅ **#686 已全部统一为「编辑属性」**（音乐行 ✎ / 列表铅笔 / 追更表 / 编辑浮层标题；注释与文档里的历史引用有意保留）。
+- 书籍「网络地址」旁的 globe 与「启动路径」那枚**并存**（用户第 1 轮已披露，**待用户裁定**是否收敛成一枚）。
+- **base 模板视图的排序与分组依据**（用户第 1 轮需求 ②）**仍未做**，等用户给指针。
+
+### 体验优化 · #683（2026-10-21）：**关联入口「网络地址」补齐可播放 / 可读的网络入口**
+
+**用户原话（两轮，第二轮覆盖第一轮）**
+1. 「所有类型关联入口还要加个网络回填小图标」。
+2. 🔴 「关联入口网络地址回填要 的是**可播放的网络**，如b站搜索」—— 第一轮做成了「按标题在元数据源搜一次，填豆瓣资料页」，被这句否掉：资料页打开既不能播也不能读。
+
+**为什么原来空着（这不是"漏写按钮"）**
+- `QuickAssociateModal` 单路径三类的「网络地址」行此前**只有文学**有 `globe`（微信读书候选卡）；网文 / 漫画 / 游戏 / 音乐一枚都没有 —— #534 / #601 当时的裁定是「没有可用在线源就不画假按钮」。
+- 电影的「网络地址」行同样整行无图标：#536 / #599 里「电影不挂」指的是 **B站 那枚**（它按「这一集」搜，电影没有集的概念），不是「电影不需要任何网络入口」。
+
+**改法（最终形态：一切走「候选卡」，⛔ 不再有「一键填首条命中」）**
+- `src/modals/QuickAssociateModal.ts`
+  - 新增 `PlayableCand { title; sub; url; coverUrl? }` 与 `PlayableCandOutcome { cands; error? }`；回调 `searchSongLibrary?: (keyword) => Promise<PlayableCandOutcome>`（宿主按 `canUseSongLibrary()` 注入，未注入 ⇒ 不渲染）。
+  - 原来的「微信读书候选卡」通用化：`bookCard/bookBooks/...` → `candMode ('weread' | 'songlib')` / `candCard` / `candQuery` / `cands` / `candBusy` / `candErr`，方法 `openCandCard(mode)` / `fetchCands(kw)` / `runCandSearch()` / `pickCand()` / `closeCandCard()` / `renderCandCard()`；壳类仍是全仓那套 `.rl-bili-*`（与 B站 卡同款外观）。
+  - 新增 `buildSongLibBtn()`（音乐「网络地址」行那枚 `globe`，tip「在线曲库检索：找一首能直接试听的平台页」）。
+  - 挂载：书籍侧 `(t === 'book' || t === 'comic') && cbs.searchOnlineBook` ⇒ 文学 / 网文 / 漫画**同一枚**「检索在线阅读」（⛔ 只写 `t === 'book'` 会让漫画那行空掉 —— `singleType()` 把漫画单独归成 `'comic'`，真机普查实测踩过）；音乐 ⇒ 曲库卡；**游戏不挂**（无可播放在线源）。
+  - 影视区：删掉 `if (e.type !== 'movie')` 门控 ⇒ **电影也挂 B站 那枚**（tip 按类型分流「在 B 站按片名搜…」/「在 B 站搜这一集…」），复用既有 `openBiliPicker()`（它对 `movie` 取 `epNo = 0`，只按片名搜）。
+- `main.ts`：新增 `async searchSongLibraryForAssociate(keyword)`，走**同一链** `dlSearchSongs` ⇒ `songLibraryResults`（与「下载歌曲」窗口、音乐表单曲库栏同源），回传 `sourceUrl` = **平台页**（kuwo / 网易云等，打开即试听）；⛔ 不另拼四平台请求。
+
+**关键坑（都实测踩过）**
+1. 源页链接**不能读结果对象上的 `sourceUrl`**（豆瓣 / Steam / MangaDex 那几路不带），第一轮靠 `describeSearchResult(r).sourceUrl` 兜底才对；但第二轮语义变了 —— 元数据链本身给不出「可播放」，所以最终**不再用元数据链**，音乐改走曲库、书籍走微信读书、视频走 B站。
+2. 微信读书「书名 + 作者」检索是包含匹配，**多带一个作者名会把结果全滤掉**：实测《呆头农场》带作者 → 0 条；只搜书名 → 命中 1 条带 `readUrl`。⇒ `runCandSearch()` 里加了「0 条且无错 ⇒ 退一步只用标题重搜一次」。
+3. `singleType()` 的漫画是 `'comic'` 不是 `'book'`（见上）。
+
+**真机验证（`.testvault`，全部实测数字）**
+- 8 类图标普查：电影 1 枚「在 B 站按片名搜…」；剧集 / 动画 1 枚「在 B 站搜这一集…」；文学 / 网文 / 漫画各 1 枚「检索在线阅读（微信读书）…」；游戏 **0 枚**（有意）；音乐 0 枚（`canUseSongLibrary()` = false 时正确不渲染）。
+- 点击端到端：
+  - 电影《流浪地球2》：卡「搜索 B 站」→ 19 条候选 → 点第一条填 `https://www.bilibili.com/video/BV1mT411U7V7`（可播放）+ 提示「这条没有可勾的分P，已直接填入本集」；落盘核验 `savedEqual: true`。
+  - 网文《斗罗大陆1》：卡「检索在线阅读（微信读书…）」→ 1 条 → 填 `https://weread.qq.com/web/reader/fda329e0811e50721g013b1a`。
+  - 漫画《呆头农场》：标题兜底后 1 条 → 填 `https://weread.qq.com/web/reader/56a32450811e33827g015590`。
+  - 音乐《七里香》（探针内临时开 `musicSongLibrary`，跑完还原 false）：卡「在线曲库检索…」→ 39 条 → 填 `https://www.kuwo.cn/play_detail/622257`（平台试听页）。
+
+**门禁**：`tsc -noEmit -skipLibCheck` **0 输出** → 构建 **87 warnings（= 基线，口径数 `^▲` 行）** → `vitest run` **225 files / 4527 tests 全绿** → 守卫链真实红 **86 条 = 与 #682 收口时一致（无回归）**。守卫侧改了两条过期断言（`#599 ③` 电影不挂 → 电影也挂且 tip 分流；`#601 ②` 书籍只限文学 → 三子类全挂），均带 2026-10-21 supersede 注记。
+
+**遗留（明示）**
+- 游戏**没有**网络入口：本仓没有可播放在线源（启动路径是本地 `.lnk`），按 #534 纪律不画假按钮 —— 用户要「可播放」，这里给不出就是给不出。
+- 漫画 / 网文的候选来自微信读书，库里没有对应电子书时会是空态「没搜到可读的电子书」；⛔ 不退回「填豆瓣资料页」凑数。
+
+### 体验优化 · #682（2026-10-21）：**设置页/弹窗 9 条收口（附件管理折叠塌陷 · 下载封面禁自动关+日志 · 卡片统一 · 导入同名 · 字段字典重置 · 未来规划精简+重构 · 关联弹窗音乐下载 · 列表分组切换）**
+
+**根因（两条，都是「弹性布局 / 状态机」而不是"样式没写"）**
+1. 附件管理「互斥折叠、挤成一条线」：**代码里没有任何 toggle 监听**（两级折叠全用原生 `<details>`）。真因是 flex —— `.rl-am-list` 是 `display:flex; flex-direction:column`（`styles.css` `.rl-am-list` 块），而 `.rl-am-l1` 带 `overflow:hidden`（`.rl-am-l1` 块）⇒ 按 flex 规范「`overflow != visible` 的弹性项自动最小尺寸退化为 0」，再叠加 `.rl-scroll-inside .modal-content > * { min-height: 0 }`（该窗走 `markScrollInside`，`AssetManagerModal` 的 `onOpen`）⇒ 内容超高时浏览器**不滚列表，而是等比例压扁所有一级组**，`summary` 的 8px 内距被压掉 = 「挤成一条线」；组越大压得越狠，于是看起来像"打开一个就把别的折叠了"。
+2. 导入「静默覆盖同名文件」：笔记落盘路径**按标题派生**（`src/data/noteGenerator.ts` `entryNotePath()` = `${baseDir}/${noteSubDir(e)}/${safeFilename(e.title)}.md`），而 `src/services/vaultIO.ts` `writeText()` 遇已存在 `TFile` 直接 `app.vault.modify()` ⇒ **同名标题 = 同一个 .md**；四个导入器判重只看来源平台 id ⇒ 同名不同 id 必然新建并覆盖，零提示。
+
+**改法**
+- ① 附件管理：`styles.css` 加 `.rl-am-list > * { flex: 0 0 auto; }`（钉死自动最小尺寸）+ `.modal.rl-am-modal { max-height: 92vh; }`（宿主封顶是 `.modal{max-height:var(--dialog-max-height)}`=85vh；列表自身 max-height 已被 `.rl-scroll-inside` 改成 `none`，调它无效）+ `AssetManagerModal` 的 `applyScrollPref` → `forceHideScroll`（用户本轮点名「隐藏滚动条」= 显式授权；先例 `EpisodePickerModal` / `QuickAssociateModal`）。
+- ② 下载封面：`src/modals/PosterMigrateProgressModal.ts` 删 `AUTO_CLOSE_MS` 常量、`autoCloseTimer` 字段与 `finish()` 里的 `setTimeout(() => this.close(), …)`；新增 `private logEl` + `private appendLog(step?: ComiclikeProgressStep)`（`setProgress` 末尾调用，受 `finished` 闸门保护），每行 `《条目名》` + `from`（`data-tip` 全文）+ `→` + `to`，`to` 为空串时加 `is-fail` 并显示「下载失败」，追加后 `scrollTop = scrollHeight`。新类 `.rl-pm-log` / `.rl-pm-log-item(.is-fail)` / `-title` / `-from` / `-arrow` / `-to`（`.rl-pm-log` 已进 `overscroll-behavior: contain` 名单与 `grid-column: 1 / -1` 名单两种写法）。
+- ③ 实验性功能背景统一：`src/Settings.ts` 的 `createGroupSection(parent, '实验性功能', …, false)` → **`true`**（借核心 `.setting-group` + `.setting-items`，与「外观与体验」「数据与备份」同源同值，一格卡样式都不手写 —— #541 手写卡 → #551 手写压制 → #567 不套卡，已栽三次）。`styles.css` 撤掉 `.rl-exp-list > .rl-exp-row` 里的 `padding: 10px 0`（卡回来后它会让文字贴边），只留拍平四件 `border/background/box-shadow/border-radius`；面板 `.rl-exp-panel.is-open` 从「透明底」改为 `background: var(--background-modifier-hover)` + `border-left: 2px solid var(--background-modifier-border)`（用户「折叠下拉容器可深色一点」），左线从「每行各画一条」**上移到面板本身**（行间有空隙，线画在行上会断），行上 `border-left: none`。⚠️ 改完发现同选择器有**两条规则**（新写的 + 旧的 #655 那条），旧的赢 ⇒ 行上出现 2px 线 + 6px 内距，已删旧块并留墓碑注释。
+- ④ 导入同名：新建 `src/pure/importConflict.ts`（`normalizeTitleForMatch` NFKC + 空白折叠 + 小写、`titleKeyOf`、`indexByTitleKey`、`findTitleConflict`、`SameNameReport`），`main.ts` 四个导入器（`importWereadShelf` / `importTmdbAccount` / `importBangumiRows` / `importDoubanCollection`）返回值加 `sameName` / `sameNames`，命中即 `skipped++` + `onProgress('跳过（库内同名）…')` + `continue`，查名放在 `fetchDetail` / `fetchSubject` **之前**（跳过就别发网络）；四个 `*SyncModal` 结果行加「库内存在同名文件 N 条，已跳过」。⛔ 没有升级成「自动改名后落库」（会在库里造出用户不要的第二条同名条目）。
+- ⑤ 字段字典：`src/pure/metaFields.ts` 的 `META_FIELDS` 整体重排成用户表顺序（全局 16 → 影视 11 → 游戏 3 → 书籍 11 → 音乐 1，共 42 键不变），`MetaField` 加 `labelFor?: Partial<Record<EntryType,string>>` 与 `labelOf(key, type?)`；`appliesTo` 变更 `developer` game→game+anime（`labelFor:{anime:'制作公司'}`）、`author` book→book+music（`{music:'艺术家'}`）、`duration_min` 加 `{tv/anime:'单集片长'}`、`producer` 去掉 anime、`progress_percent` 去掉 book；改名 `progress_episode`→「已看集数」、`watched_date`→「观看/阅读/游玩日期」、`page_count`→「页数（阅读器）」。三个显示层接上：`fieldOrderCompare.ts` 的 `fieldLabelOf(key, type?)`、`src/Settings.ts` 对比预览按列类型取名（`t:` / `k:` 前缀解析）、`renderFieldOrderPane` 的 `labelOf`、`src/pure/tableColumns.ts` 的 `label: labelOf(f.key, type)`。`BOOK_KIND_EXCLUDED_FIELDS.novel` 扩到 **9 条**（`artist,isbn,translator,publisher,binding,price,reading_total_page,reading_page,page_count`）。**13 个本仓没有数据通道的字段位一个都没先占坑**（键一旦写进用户笔记即永久存在，空键 = 永远填不上的行）。
+- ⑥⑦ `src/modals/RoadmapModal.ts` 整文件重写：9 条换成用户新表（搜索添加/视图展示/计划追踪/播放阅读/统计报告/AI 增强/个性化/数据运维/生态联动，等级 `[v1,v1,v0,v1,v1,v0,v1,v1,v0]`，**无 v2**）；删 `ROADMAP_LEGEND` / `.rl-rm-foot` / `.rl-rm-sub` / `.rl-rm-legend*` / `.rl-rm-swatch` / `.rl-rm-key`（图例与「知道了」按钮整体退场），标题改单行整句「ReelLudic 组成——颜色越深，完成度越高」。
+- ⑧ `src/modals/QuickAssociateModal.ts`：`QuickAssociateCallbacks` 加 `musicDownload?`，音乐「本地路径」行加 `.rl-ai-btn`（`data-tip='下载音频并回填路径'`、`setIcon(dl,'download')`、`.rl-sr`='下载歌曲'），`private downloadMusicInto()` 走既有 `markDirty()` 自动保存通道；音乐「网络地址」行**仍不加**检索图标（无可用在线源，加了就是假按钮）。宿主 `main.ts` 的 `quickAssociateEntry` 按 `canUseAudioDownload()` 门控注入（与编辑表单同源），未注入则整枚不渲染。
+- ⑨ 列表视图工具栏：`src/views/components/MediaList.svelte` 把「批量管理」「列」整块上移到 `.rl-vb-view` **之前**，并新增单循环按钮（`class:is-on={!listGrouping}`、`aria-pressed={!listGrouping}`、图标 `list-tree` ⇄ `list`、文案「展示分组 ⇄ 不并组展示」）；设置字段 `settings.listGrouping?: boolean`（undefined/true = 分组、false = 摊平）、宿主 `main.ts` `setListGrouping()`、`HomeView.ts` / `HomeView.svelte` 透传 `onToggleGrouping`、纯函数 `src/pure/seriesGroup.ts` 的 `listFlatRows()`。
+
+**验证（全部实测）**：`tsc -noEmit -skipLibCheck` exit 0 零输出｜`esbuild production` **87** warnings = 基线（数 `^▲` 行）｜`vitest` **224 文件 / 4514 用例全绿**（含新增 `tests/importConflict.test.ts` 13 例 + 字段字典 6 例 + 对齐既有断言）｜真机 `.testvault` 全套探针（`_rd_settings.cjs` + `_probe_*`）：
+- 附件管理：6 组全开时高度 `2587/500/2645/792/590/539`、每组 `headH` **恒 36**；全关时每组 **38**（= 36 + 上下边框，**header 高度没被折掉**）；列表 `scrollH 7691 / clientH 602`、`sbWidth 0`（滚动条已隐藏）；弹窗 `828px = 92vh`。
+- 下载封面：日志真跑出 `《活着》https://picsum.photos/… → 封面/活着-2.jpg`（`is-fail:false`），状态「完成：成功 1 个，跳过 0 个，失败 0 个」、计数 `1/1`；**完成 3.5s 后窗口仍在**（不再自动关）。
+- 卡片统一：四组体 `bg rgb(245,245,245)` / `radius 12px` / `border 0` / `padding 0` / `width 688`，行全 `bg rgba(0,0,0,0)` + `padding 20px`；展开面板 `rgba(117,117,117,0.12)` vs 卡 `rgb(245,245,245)`（深一档）、面板单条 2px 左线、行 `border-left 0px`（无双线）。
+- 字段字典：42 行顺序逐位 = 用户表；9 列逐字 `["全局","电影","剧集","动画","文学","网文","漫画","游戏","音乐"]`，列计数 `16/7/11/11/10/2/10/5/2`。
+- 工具栏：`批量管理(3) → 列(4) → 展示分组(5) → 切换视图(6)`（`allBeforeView:true`）；点分组按钮 `settings.listGrouping: true→false`、列表行 **61 → 131**、文案「展示分组 ⇄ 不并组展示」、`aria-pressed` 同步，再点回 61。
+- 关联弹窗（音乐「七里香」）：本地路径行两枚图标（既有「检索本地」+ 新「下载音频并回填路径」，`.rl-sr`='下载歌曲'、20px、enabled），**网络地址行 0 枚**。
+- 未来规划：标题单行、`cells 9`、`levels [v1,v1,v0,v1,v1,v0,v1,v1,v0]`、`hasFoot/hasLegend/hasKnowBtn/hasV2Text` 全 false。
+
+**守卫改写（共 7 处，全部因「用户新指令覆盖旧决定」；⛔ 未删任何无关断言、⛔ 未放宽其它检查）**：`#553 ③`（传 `true` 计数 3→4）｜`#565 ①`（行拍平四件补 `border-radius: 0`）｜`#567 ①` ×2（「不套卡」→ 套卡；行内距不再自写 `padding`）｜`#574 ①`（行内距改为「一格都不自己写」+ 反向守卫禁 `padding`/`margin`）｜`#588 ⑤` ×2（灰底 chip → 面板深底 + 整体左线，且**同选择器只许一条规则**）｜`#562 ①`（`is-open` 允许更多声明）｜`#560`（`scrollbar-gutter: stable` 计数 6→7，逐个点名含 `.rl-pm-log`）。改完守卫链真实红 **92 → 86**，剩下 86 条经逐条比对**全部属于 #682 之前的批次**，与本批无交集。
+
+**遗留（明示，不藏）**：需求 ④「导入同名冲突」只在**代码层 + 13 条纯函数单测**上证成（真机要连账号拉真实收藏，本批未走那条链路）；`src/modals/PosterMigrateModal.ts` 仍为 **0 处实例化**的死码（删除需搬 `PosterMigrateResult` 类型，超范围）；`LinkCheckModal` 空状态仍只在代码层核对。
+
+
+
+### 体验优化 · #681（2026-10-21）：**设置页 5 处交互/视觉收口 ＋ 关于页「新手引导」→「未来规划」九宫格**
+
+需求原文与冻结契约落在 `docs/superpowers/plans/2026-10-19-settings-ux-overhaul.md`（四包并行、文件域互斥）。
+
+**根因（两处都是「状态没复位 / 层级没隔离」，不是样式没写）**
+1. 附件管理二次打不开：`src/modals/AssetManagerModal.ts:393-398` 的 `onClose()` 原只 `contentEl.empty()`，宿主 `main.ts:3033` 的 `assetManagerOpen` 标志**永远不复位**。修法三处缺一不可 —— 构造器加第 5 参 `private onClosed?: () => void`（`:82-99`）、`onClose()` 里 `this.onClosed?.()`、`main.ts:3030-3051` `openAssetManager()` 传复位闭包并**每次重新 `listEntryAssets()`**（不复用旧实例）。同款 `*= true` 防重入标志全仓只有 `credentialRunning`（`main.ts:2673`，`finally`:2697 已复位）⇒ 无第二处。
+2. Tab 栏被对比预览表头穿透：真因是 `styles.css:1477` `.rl-fo-cmp-scroll` 的 `overflow-x:auto` 造了**新的层叠/包含上下文**，内部 `thead th{position:sticky;z-index:2}` 能压过外层 `.rl-set-bar`。修法 = 外层提层 `.rl-set-bar{z-index:40}`（`styles.css:858`）＋ 给滚动容器 `isolation:isolate` 把 sticky 关在里面。JS 侧零内联 `zIndex`（全仓 grep 0 命中），收敛点唯一。
+
+**改法**
+- ③④ 附件管理：新建 `src/modals/AssetManagerModal.ts`（409 行，全 `.rl-am-*`），`EntryRestoreModal.ts` 347→115 行只留条目还原（行为不变）；`AssetGroup` 真源搬进 `AssetManagerModal.ts:28-41` 并加 `series?: string`。列表改双层 `<details>`：一级按 `ENTRY_TYPES`，二级按 `entry.series` 保序聚合，散件 `l1 > .rl-am-row.is-loose` 平铺，另留第 7 组「已删条目」。
+- ⑤ 变换：Bases 按钮删 `.setCta()`（`src/Settings.ts:4920-4927`）；失效链接检测删页内 `scanStatus` 改 `LinkCheckModal`（`Settings.ts:5075-5111` + `main.ts:5184-5220`，`scanLibraryLinks` 返回值加 `items: DeadLinkItem[]`）；下载封面删五个 `.rl-mig-*` 节点改 `PosterMigrateProgressModal`（`Settings.ts:5013-5037` + `main.ts:8030`，`localizeAllPosters` 回调加第 3 参 `step`）。
+- ⑦ 字段字典：`src/pure/fieldOrder.ts:185-188` `BOOK_KIND_EXCLUDED_FIELDS`（book 去 `artist`、novel 去 `artist`+`isbn`、comic 去 `isbn`），`orderForBookKind` 回落链补 kind 过滤（`:241-245`），复用同一个 `narrowOrder`（`:118-130`，收窄逻辑只一份）。`fieldOrderCompare.ts` 整文件重写成 9 列（列键 `__global` / `t:*` / `k:*`）。🔴 `renderFieldOrderCompare`（`Settings.ts:3275-3320`）**没有**照整表传 `typeOrders.movie`：`fieldAppliesTo` 对全局字段恒 true，整表传会让九列前十几行完全相同，退化成 #653 被点名过的「同一列抄九遍」；改为「用户已配次序 ∩ 该列专属字段集」，理由固化在 `Settings.ts:3292-3300` 注释里。
+- ⑧ 关于页 `guideBtn` → `roadmapBtn`（不带 accent），`RoadmapModal` 九宫格 9 格 + `[data-level]` 三档配色；`main.ts` 删 `import { GuideModal }`、`isFirstInstall` 字段与首次安装自动弹窗整块；`src/modals/GuideModal.ts` 删除；`styles.css` 18 条 `.rl-guide-*` 一并清。**schema 零改动**：全仓 grep `guideSeen` 本就 0 命中。
+
+**验证（全部实测）**：`tsc` exit 0 零输出｜`esbuild production` 87 warnings = 基线（口径是数 `^▲` 行，⛔ 不是搜 `warning` 字样，那会数到 105）｜`vitest` 224 文件 / 4503 用例全绿（新增 62 例：fieldOrder 43 + fieldOrderCompare 19）｜真机 `.testvault` + `_rd_settings.cjs`（设置是独立 BrowserWindow/独立 CDP target，`tools/rd.cjs` 连的是主窗口）：Tab 栏沿中线横扫 12 点 `hitsThrough:0`；对比预览 9 列逐字对；关于页按钮 `["更新日志","未来规划",…]`、`hasGuide:false`；九宫格 9 格三档底色可分；附件管理 `l1Bg` 灰 / `l2Bg` 白、open-1/2/3 各 `amCount:1`；失效链接真扫 6s 出 54 行、链接是可点 `<a>`；下载封面完成态「成功 0 跳过 0 失败 0」+ 100% + 自动收窗。
+
+**口径备注（收口时补的两条，都与「编号/旧守卫」有关，⛔ 不是功能改动）**
+- **编号撞号**：本批在 `styles.css` 注释里沿用了 **`#655`** 这个号，而 `#655` 已是 2026-10-17 的 Steam 单（本文件 `:593`）。对外编号统一以 **`#681`** 为准；真 #655 残留 4 处（`src/Settings.ts:974 / 2631 / 2862`、`styles.css:1979`）**不许**跟着批量替换。别名说明已写在 `styles.css:1678` 那一段的抬头。
+- **守卫改写（共 4 处，全部因「用户新指令覆盖旧决定」，⛔ 未删任何无关断言、未放宽其它检查）**：
+  1. `#588 ⑤`：旧断言要求子面板是**灰底 chip**（`background: var(--background-modifier-hover)` + 圆角令牌）且**不许**出现 `border-left`；用户 2026-10-19 原话「展开后……灰色容器底色调浅 / 改透明，避免「灰块套灰块」」**晚于并覆盖**它 ⇒ 改为断言现行形态（`background: transparent` + `border-left: 2px solid var(--background-modifier-border)` + `border-radius: 0` + `box-shadow: none`，且 `border: none;` 必须在 `border-left` 之前），并加反向守卫禁止回潮灰底 chip。
+  2. `#567 ①` 与 `#574 ①`（两条）：旧断言要求容器 `.rl-exp-list` **自己就是那张卡**（`gap:0` + 6px 圆角 + 1px 描边）＋ 行 `padding: 9px 14px`；用户 2026-10-19「移除……外层深灰包裹底色，与顶部常规选项背景**平铺一致**」⇒ 容器连卡都不要（`background / border / border-radius / overflow` 四件全撤），行距改 `padding: 10px 0`（水平必须归零：那 14px 原是卡片内衬，留着会让文字整体右缩）。改写后仍钉住 `gap: 0` + `box-shadow: none` **恰一条** + 行间 `:not(:first-child) > border-top` 分割线。
+  3. `#560`：旧断言钉 `scrollbar-gutter: stable;` **全表恰 1 处**（#647 时是 1）；本批给五个弹窗列表加了同一属性（`.rl-pc-list` / `.rl-am-list` / `.rl-lc-list` / `.rl-pm-fails` / `.rl-rm-body`，**全部挂在插件自己的容器上，无一处全局**，用途都是「搜索过滤/条目增删时有无滚动条都不让行宽跳」）⇒ 计数改 **1 → 6** 并逐处点名，`字段映射` 那条反向守卫原样保留。
+  ⚠️ 判据：这 4 条改完全部 **PASS**，守卫链真实红 `91 → 84`；剩下 84 条经逐**条比对全部属于 #681 之前的批次**（如 `#490` 的 `infoBtns/aboutBtns` 已被 #686 改名成 `supportBtns`、`#595/#598` 表格与缩放、`#589` 徽标），与本批交付物无交集。
+
+**遗留（明示，不藏）**：`src/modals/PosterMigrateModal.ts` 现已 **0 处实例化**（只剩 `PosterMigrateProgressModal.ts:2` 的 `import type`）⇒ 文件与其 `.rl-mig-*` 样式是死码，本批按「不超范围」保留；`LinkCheckModal` 空状态（0 条失效）只在代码层核对（`LinkCheckModal.ts:74-75`），测试库本身有 54 条死链，真机没走到那一支。
+
+### 体验优化 · #680（2026-10-20）：**生成的 `.base` 排序改「一组」= 原生「添加排序」**
+
+**用户**：「继续优化base，比如排序按这个添加」＋附图（Obsidian 原生「排序依据」面板：一行 `updated` + `从新到旧` +
+拖拽把手 + 🗑，底部「+ 添加排序」）。
+
+**口径**：Bases 的 `sort:` 本来就是**数组** —— 多写一项 = 在原生面板里多按一下「+ 添加排序」，前一项相同才比后一项。
+此前每个视图只写**一条**，主序一打平 Bases 就回落到**文件名** ⇒ 用户看到的正是「明明按更新时间排的，这几条怎么乱插」。
+**兜底键才是让顺序稳定的那一项。**
+
+**落地**（全在 `src/pure/baseTemplate.ts`）：`export type BaseSortKey`、`export function sortChain(...keys)`
+（主序在前、同名属性只留第一次出现的）、`TITLE_ASC`；四条链 `SORT_RECENT` = `updated DESC → title ASC`、
+`SORT_CREATED` = `created DESC → title ASC`、`SORT_RATING` = `rating DESC → updated DESC → title ASC`、
+`SORT_ALPHA` = `title ASC → rating DESC`、`export function sortCommunity()` = `communityScore DESC → rating DESC → title ASC`。
+30 个视图逐一对号替换。`ViewSpec.sort` 类型改为 `BaseSortKey[]`；文件头补 5 行（含「想只留一条就删掉多余的
+`- property:` + `direction:` 两行」）。
+
+⚠️ **必须写成函数、⛔ 不能写成常量**：`COMMUNITY_SCORE_PROP` 在文件末尾才声明，模块级常量读它会**踩 TDZ 直接崩**。
+
+**门禁**：tsc 0 ／ 构建 87 warnings（= 基线）／ `tests/baseTemplate.test.ts` 54/54、全量 224 files · 4488 tests 全绿 ／
+`_mut680.cjs` **9/9 `[RED ok]`**、0 GREEN、0 SKIP、复原后 54 passed ／ 部署 ALL_MATCH=1 ／ 镜像待拷贝 0。
+产物：30 个 `sort:` 块不变、`- property:` 项数 **30 → 62**、模板 10484 → 15249 字节。
+
+🔴 **口径（下次别再白跑）**：`assert-symbols.cjs` 里**没有任何 baseTemplate 锚点**（实测 6 个关键词各 0 处），且末尾
+`process.exit(0)` ⇒ 退出码恒 0 不能当判绿信号。本批 `FAIL` 98 条与改动前**逐条零差异**（全在 #6xx 未提交改动的地盘上），
+`PASS` 均 4170 ⇒ 产物级守卫交给真 yaml 解析的单测 + 突变，⛔ 不往那脚本里硬塞新块。
+
+⚠️ **突变首轮 1 条假绿**：M2 原写成 `sortChain(TITLE_ASC, {title…})`，被 `sortChain` 自己的去重吃掉 ⇒ 改动没落地、测试照绿。
+**假绿 ≠ 测试漏检**，得先确认突变真进了文件；重复键在真实回归里只能来自**手写数组**。
+
+### 修复 · #670（2026-10-19）：**#669 上机三条报障**（缩略图栏跑到左侧 ／ 评分看板行内折行 ／ hover 双层气泡）
+
+**用户**（附图）：「启用缩略图栏就变成这样了」＋「评分看板最后显示的一个封面作品间隔开了，但有几个放大能塞进去」＋
+「鼠标 hover 轻提示还有覆盖两层不可见」。
+
+**① 缩略图栏**：根因两件叠一起 —— 栏是 `flex-direction: column` 容器，子项默认 `min-width: auto` 被卡片撑宽，
+把 `flex: 1` 的正文压成几像素；再叠 Obsidian 全局 **content-box**，`width:112px + padding 6 + border 1` 实际占 119
+⇒ 右侧多 7px 横向溢出。修法 `_probe_670_strip.cjs` 7/7：`flex: 0 0 auto` + `width/min/max 112` + `min-width: 0`
++ `box-sizing: border-box`；轨道 / 卡片同加 `min-width: 0`。
+
+**② 评分看板**：`1244px` 宿主槽内宽 1044；旧 64/10/12 ⇒ 每行上限 **14**（第 15 件折行 = 用户说的「间隔开了」）。
+改 **56×84 / 8 / 10** ⇒ 每行 **16**；14 件时空档 **18px → 160px**，15/16 件两种行均不折行（`_probe_670_board.cjs` 8/8）。
+
+**③ 双层气泡**：全仓 `data-tip` 373 / `aria-label` 28，**同元素双挂仅 1 处**（`MediaList` 切换视图按钮，同名两属性）
+⇒ 删 `aria-label`（按钮有可见文字）。其余 28 处是唯一名称，删则读屏哑，⛔ 不动。
+
+**门禁**：tsc 0 / 87 warnings（= 基线）/ 60 例单测 / 探针 7/7 + 8/8 / 源码级 `_verify670_src.cjs` 1 次 data-tip、0 次
+aria-label（带 14 处反向对照）/ 部署 ALL_MATCH=1 / 镜像 0。
+⚠️ **排雷（取证方式）**：为证「产物里 aria-label 已消失」连写 6 个探针都在猜「按钮段范围」，而 esbuild **复用同名变量**
+（`button` 全文件反复赋值）⇒ 按变量归并 = 把全文件按钮合成一个巨型元素，判据怎么判都假。最后改**源码级**一次定。
+⇒ 产物文本取证两版自相矛盾时，**换证据层级**（源码 / 编译链 / 运行时），别继续调窗口大小。
+
+### 新增功能 · #669（2026-10-19）：**漫画阅读器「缩略图同步滚动 + 连续滚动」加回来**
+
+**用户**：「继续优化漫画阅读器，把右侧缩略图同步滚动和连续滚动效果加回来」。四项裁定：滚轮**自由滚** /
+缩放默认**适屏 contain** 且支持 **Ctrl+滚轮** / 缩略图栏开关**移出设置页**只留顶栏按钮 / 默认值随按钮。
+
+**🔴 先把话说清**：#636 ⑤ 那两件**在代码里是有的**，问题是「在、但用不了」。逐条真因（都复现过）：
+⒜ 连续滚动里 `onWheel` 无条件 `preventDefault` + `go()` ⇒ 滚轮被拦去**翻页**（与「连续滚动」自相矛盾）；
+⒝ `setViewMode` 里 `buildScrollPages()` 调了**两次**，第二次 `col.empty()` 把正在插图的块全摘掉 ⇒ 图挂到孤儿节点 = **整屏空白**；
+⒞ 页块靠 `min-height:240px` 占位、图回来再撑开 ⇒ 边看边跳、缩略图同步跟着抖；
+⒟ 缩略图栏只在**换页后** `scrollIntoView({block:'nearest'})` ⇒ 正文滚动时栏不动；
+⒠ 连续滚动位置从不回写 `scrollRatio` ⇒ 关了再开回到页首。
+
+**① 纯模块 `src/pure/comicScroll.ts`**（无 obsidian 依赖，41 例单测）：`pageAtViewport`（判据 = **覆盖视口中线**那页；
+末尾留白有**贴底补偿**，但只在中线确实够不着末页时才补偿）、`thumbScrollTarget`（在视野里零位移，不在才居中，1px 容差）、
+`ratioToScrollTop` / `scrollTopToRatio`（分母是**可用行程**，不是 `scrollHeight`）、`pageBox`（contain 双约束 × 缩放，
+高永远 ≥1）、`sortByDistance`（补图优先级）、`wheelDeltaOf`（行/页制换算）、`zoomAfterWheel`（档位吸附）、`restoreScrollTop`。
+
+**② 连续滚动重写**：IntersectionObserver（`root` 余量 = 视口高 ×1.5）决定解压/卸载；页块**先按已知纵横比写死行内宽高**
+（`pageRatios` 由缩略图/正文加载时记下），卸载只撤 `<img>`、块高由 `data-h` 撑住 ⇒ ⛔ 不跳位。
+滚动同步进 **rAF**（纯几何一帧一次）：页码 / 高亮 / 栏跟随 / 进度滑块 / `scrollRatio`；**补图另走 60ms 防抖**
+（解压塞进每帧 = #642 的死法）。`enterScrollMode` 只还原一次位置（`progress.scrollRatio`）。
+
+**③ 缩略图栏**：加**进度滑块**（高度按可视比、位置按全书比；可拖、可点轨道、栏上滚轮驱动正文 ×4 并拦下，
+不让它穿透去翻页）。🔴 滑块样式用**结构选择器** `.rl-comic-thumbs > :first-child` —— `addClass()` 出来的类名
+在产物里不存在（源码/单测全绿、真机不生效，本轮踩到）。
+
+**④ 滚轮与缩放**：连续模式滚轮自由滚（滚到头放行给外层，别像卡死）；`Ctrl/⌘ + 滚轮` 两种模式都缩放。
+
+**⑤ `main.openComicArchive`**：CBZ/ZIP 补上**解压缓存 + 并发去重 + 64MB LRU**（与 `unpackEpub.loadBinary` 同口径；
+原来只有 EPUB 有，同一张图被反复解压，实测单张 8ms）。
+
+**⑥ 默认值**：`thumbsVisible` 改「只有显式 `false` 才关」（老用户 data.json 无此键 ⇒ 升级后可见）；设置页
+`renderComicReaderRows` 只留「漫画阅读方式」一行。
+
+**门禁**：tsc 0 / 构建 87 warnings（= 基线）/ `comicViewer` 19 + `comicScroll` 41 全绿 / 全量 4415 passed 4 failed
+（`entryService` 4 条**基线即红**，`git stash` 前后对跑核实无关）/ 真 Chrome 复现页 **10/10**（含两条**反向对照**）/
+`_deploy.cjs` ALL_MATCH=1 / 产物核验：设置页「漫画缩略图栏」字面量 0 处。
+
+### 新增功能 · #668（2026-10-18）：**编辑条目的关联图谱**（手动关联 + 双向镜像 + 点节点切条目）
+
+**用户**：「继续做编辑条目的关联图谱功能」——按 `docs/superpowers/plans/2026-10-15-related-graph-design.md`
+（象形稿 `_shot/graph630_mock.png` 那张，用户已裁定的四项：带关系词 / 点节点切条目 / 自动镜像且反向取反 / 新字段 append-only）。
+
+**① 数据层**：新字段 `related?: RelatedLink[]`（`{ id, label? }`，append-only，老条目零迁移）。
+🔴 已同步 `normalizeEntry` 白名单（红线 2），逐项校验的**唯一收口点** = `pure/relatedGraph.normalizeRelatedList`：
+脏项单丢（不整批废）/ 同 id 后写的赢 / **自环丢** / `label` 空**不落键**（⛔ 不落空串）/ 非数组落 `undefined`（⛔ 不落 `[]`）。
+
+**② 纯模块 `src/pure/relatedGraph.ts`**（无 obsidian 依赖，48 例单测）：
+`collectRelated` 出边 + 入边合并（**互相挂按出边优先**，图上不出两条重线）、
+`invertRelLabel` 取反表成对（原唱↔翻唱 / 改编↔原作 / 续作↔前作）、**表外一律「被关联」**（⛔ 不猜、不做模糊匹配）、
+`graphLayout` 只出「角度 + 半径 + 标签显隐 + 节点圆大小」**不出坐标**（坐标在组件里换算 ⇒ 纯几何可单测），
+退化安全：`count<=0` 空数组、宽高非有限数回落常量、**任何字段都不产出 NaN**（NaN 进 SVG = 元素静默不渲染）。
+
+**③ 录入区**：`RelatedChips.svelte` 放在**「个人评语」之下、「观看/相关链接」之上**（与笔记章节顺序一致）。
+chips 一行（关系词徽标可**就地改** + 标题 + ✕）+「＋ 添加关联」搜**库内**条目（⛔ 不发网络请求；已挂的从候选里隐藏）。
+关系词走 `<datalist>` 建议（⛔ 只是建议，不是白名单）。保存后才落库（与其它字段同口径）。
+
+**④ 图谱**：放射状 SVG，当前条目居中实心；出边实心、入边（别人挂了我）**空心虚线**；标签默认显示门槛 8 条、
+≥6 条起交替半径、**不设节点数硬上限**（多则节点圆变小 + 标签转悬停）。悬停节点 ⇒ 该边加粗、其余淡出。
+🔴 **下半圈（6 点方向）的文案翻到节点上方** —— 实测不翻的话中心标题会被节点压在下面。
+文字加 `paint-order: stroke` 白描边（取 `--background-primary`）⇒ 与线交叉仍可读。
+空态**不画空图**，直接摆入口；失效引用显示「N 条关联已失效」（⛔ 不删数据、不弹窗）。
+
+**⑤ 点节点 ⇒ 同一个弹窗里切到那条继续编辑**（裁定 ②）。脏检查 → `ConfirmModal`（**脏了才拦**）；
+切换 = 复用 #632 的 `mountForm` 重建。🔴 **必须同时换 `this.entry`** —— 漏了就是「B 的字段保存进 A」，
+本批为它单独设了一条突变（M13）。顺带把 `onOpen` 里那段「读笔记覆盖 catalog」抽成 `readEntryForForm`
+（切条目走**同一份口径**，⛔ 两处各写一遍必漂）。⚠️ **没有「返回上一条」**（设计 §6 已登记待议）。
+
+**⑥ 笔记侧**：新增 `## 关联` 章节（`- 关系词：[[标题]]`，只写**出边**），并纳入 `writeNote` 的**重写保留区** ——
+否则用户手改的关联下一次保存就被抹掉（#396 LRC 的同款教训）。保留口径：目录侧**有**关联时以目录为准，
+只有「笔记里有、目录里没有」才搬回（否则表单新加的会被旧笔记盖回去）。
+
+**⑦ 二轮（同日，用户上手截图三处）**：用户：「**怎么显示两个关联按钮**，还有这个关系图谱模块**移动到启动路径下方**，还有**取消下拉**」。
+⒜ **两个按钮**：#668 首版把「＋ 添加关联」同时放在**标题行**与**空态块**里 —— 0 条关联时两枚上下并排、各带边框，
+   用户读成两个不同功能。⇒ **全组件只留标题行那一枚**（它对「0 条 / N 条」都适用），空态块只留一行「还没有关联条目」。
+⒝ **挪到「启动路径」下方**：整块（含说明注释）从「个人评语」之下移到影视那一支 `{#if type === movie||tv||anime}` 的末尾；
+   ⚠️ 顺带把那段注释里「个人评语之下」的描述一并改掉（⛔ 注释不许撒谎）。移动用脚本做，并加了两道自检：
+   块自身 `{#if}/{#each}/{#key}` 配平 + 整份文件结构计数**一字不变**（纯移动 ⇒ 一处都不该变）。
+   ⚠️ **只有影视会出图谱**：用户点名的是「启动路径下方」，而只有影视有那个锚点（书籍/游戏/音乐的关联字段照常存，只是表单里暂无图）。
+⒞ **取消下拉**：标题从折叠开关（`<button>` + 箭头 + `aria-expanded`）降成**一行说明**；
+   折叠态 `collapsed` 与那个从未被读过的死变量 `collapseToggle` 一并退场（本仓「死码不留」）。
+**⒟ 二轮·补（同日晚，用户三条）**：用户：「**全类型都要有图谱**，且我早就改了（本地音频 / 启动快捷方式 / 书籍文件）
+现在显示为**启动路径**，给我把**记忆**改成现在最新的啊，而且**根本搜索不到条目、没有自动搜索功能**」。
+—— 三条都成立，其中两条是我上一轮的判断错误：
+
+  · 🔴 **「只有影视有启动路径」是错的**：五种类型**各有**一块「启动路径」（影视=观看链接、书籍=书籍文件、
+    游戏=启动快捷方式、音乐=本地音频），它们**在同一列里按类型条件渲染**。我上一轮只 grep 到影视那一处就下了结论 ⇒
+    把图谱塞进了影视分支。**修法**：图谱移到 `rl-fields-col` **末尾**（不在任何类型分支里）⇒ 每种类型都落在
+    「它自己的启动路径之后」。移动脚本带「块配平 + 整份结构计数不变 + 顺序」三道自检。
+  · 🔴 **「搜索不到条目」也是真的**：候选计算里 `if (!q) return []` —— 空关键词直接返回空数组，
+    于是点开只有一个框、下面一片空白（用户理解成「没有自动搜索」）。**修法**：空关键词 = **列出全部可挂条目**
+    （同类型优先、前缀命中优先），渲染仍限 8 条，但下方显示「共 N 条，已列 8 条 —— 输入关键字可继续缩小」；
+    库里一条别的条目都没有时给「先去添加一条」的说明，⛔ 不再留空白。
+  · 📝 **记忆更正**：`AGENTS.md` 新增「表单里那一块的名字统一叫**启动路径**」一节（五类型对照表 + 沿革 +
+    「旧名字只留在字段名/数据键语境」的口径）；UI-GUIDE §16.39 的「位置」改成「全类型都出」并写明为什么放列末；
+    公开 CHANGELOG 同步。⛔ 以后描述这一块一律叫「启动路径」。
+
+  · 📍 **位置三次**：用户先要「个人评语之下」，再要「启动路径下方」，最后「**还是放在系列和系列序号框下方**」。
+    最终落点 = 系列 / 系列序号那个 `rl-2col` 块**之后**（仍在 `rl-fields-col` 直下、不在任何类型分支里 ⇒ 六种类型都出）。
+    ⚠️ 每次挪动都走「整份读入 → 整份写出 + 结构计数不变 + 顺序断言」的脚本，⛔ 不手搬大段模板（搬错一个 `{/if}`
+    就会「产物没更新、断言拿旧产物判绿」—— 本仓 #624 假绿的来历）。
+
+**二轮门禁**：tsc **0** ／ 构建 **87 warnings** ／ 单测 **4355 passed** ／ 断言 **4231 PASS、既有红仍 37**（涉本批 0 条）／
+突变 **18-18 RED** ／ 真 Chrome 复现页 **5 档全绿** + `_probe668_fix.cjs` 三处量证（每档入口按钮**恰 1 枚**、标题非 button、空态无空图）／
+md5 三方一致 `f1b7360a628f` ／ 部署 ✅ ／ 镜像「待拷 0 / 无多余 / LICENSE 一致」✅。
+⚠️ 一课：**同一功能的入口只许有一处** —— 首版为「空态也要能加」而多放一枚，结果用户第一眼就报「两个按钮」。
+   空态的正确形态是「**说明 + 复用已有的那一枚**」，不是「再造一枚」。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4355 passed**（4 条既有红 `[!bookinfo]+` 与本批无交集）／
+断言 **4231 PASS、既有红仍 37** ／ 突变 `_mut635.cjs` **18-18 RED · 0 GREEN** ／
+真 Chrome 复现页（`_probe635_render.cjs`，真 scoped CSS + 真组件实例 + 真算法）**5 档全绿**
+（3/6/12 条 + 空态 + 失效态：节点不重叠、不出界、空心数对、标签显隐对、悬停淡出、点节点回传）／
+部署三方 md5 一致 `ed247030f6c8` ／ 镜像「待拷 0 / 无多余 / LICENSE 一致」。
+
+⚠️ **五条排雷（都是本批亲自踩的）**：
+⒜ 🔴🔴 **突变脚本的恢复必须「整份快照 + 收尾逐字节还原」** —— 原写法只在 `finally` 里回滚单条 patch，
+判据一 throw 恢复就被跳过 ⇒ `relatedGraph.ts` 里**同时留着 4 条突变**，后面整轮验证都在坏源码上跑，
+还差点把「白名单已漏」这种假红当真去改别处。现在开跑前把 9 个文件整份备份、收尾 md5 逐个核对。
+⒝ 🔴 **Svelte 4 的 `class:xxx={item.flag}` 放在 `{#each}` 的 `<circle>` 上会被静默丢弃** ——
+`.rl-rel-node.mirror` 被判「未使用选择器」，**整条 CSS 被删 + class 不切换** ⇒ 入边与出边长得一模一样
+（构建告警从 87 变 88 才露的馅）。改**三目 class 字符串** + 独立类名 `.rl-rel-mirror` 后恢复 87。
+⚠️ 同族的 `class:on` / `class:dim` 读的是组件级变量 `hovering`，不受影响 —— **判据是「读不读 each 项」**。
+⒞ 🔴 **导出的组件方法要先「绑定」才有代码**：`export function isDirty()` 在本仓没被 `bind:this` 绑过，
+产物里只剩 `function isDirty() { return false; }`（脏检查恒不拦，且看源码看不出来）。已显式调
+`svelte/internal.bind(component, 'form', cb)`（= `<Component bind:this>` 编译出的那一句；`svelte/internal`
+本就在 esbuild external 名单内，另补了 `src/types/svelte-internal.d.ts` 的最小类型声明）。
+⒟ 🔴 **别用「产物文本」验源码级逻辑**：esbuild 压缩后中间值全被消掉（`if (x && f(x))` → `if (f(x))`、
+`return false && …` → `return false;`）⇒ 判据会**恒 GREEN**（假绿）。本批把 M13~M17 的判据全部挪到源码级。
+⒠ ⚠️ **`indexOf` 比位置别拿「不存在的那段」比**：我先用音乐条目验「关联排在链接之前」，而音乐**刻意没有**
+链接章节 ⇒ `indexOf = -1`，恒假红；换电影条目才对。
+
+**用户**：「tmdb 怎么多显示了一行 key 框，还有我要的是 steam 的 id 框与 key 框调换」。
+
+**① TMDB 的 Key 框出现两个**：#666 重构时主字段（`keyField`）在分支外**无条件先建**了一次，
+tmdb 分支里又建一遍 ⇒ API Key 框**出现两次**（Session ID 上面一个、下面一个）。
+⇒ 重构：主字段**只在分支里建**（`mainField` / `secondField` 两个闭包，三分支各排各的序），
+⛔ 任何路径都只建一次。**产物核对当场抓到**（数 `renderSteamExtra(body)` 调用次数同样抓到了 ②）。
+
+**② Steam 的 ID 与 Key 调换**：#640f 定的是「Key 在上、SteamID 在下」；用户这次点名调换。
+⇒ Steam 走 `renderSteamExtra(body); mainField();`——SteamID（明文框）在上、API Key（密文）在下。
+SteamID 的就地校验 / 失焦落盘逻辑全在 `renderSteamExtra` 里（⛔ 不搬）；动作行仍在输入之后（#640f 口径不变）。
+🔴 **残留调用清理**：分支外的旧 `if (meta.id === 'steam') this.renderSteamExtra(body);` 没删 ⇒
+SteamID 框**出现两个**——产物核对数调用次数抓到（1 次，已修）。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4280 passed** ／
+断言 **4230 PASS、既有红仍 37**（#666 锚按三分支重写（含 steam 分支）；#640e 顺序锚翻面
+（新形态在、旧形态无——⛔ 旧形态 = SteamID 出现两个）；其余不动）／ 部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 一课：**产物核对（数编译产物里的调用次数）是查"重复渲染"类 bug 的直通车**——
+源码肉眼审了两遍没看出来，`grep main.js` 数一次就现形。改"建行顺序"这类代码后必须数一遍产物。
+
+### 体验优化 · #666（2026-10-18）：**双凭据源输入框统一「标识在上、密钥在下」**
+
+**用户**：「统一 id 框在上，key 框在下调整顺序」。
+
+**现状**：两个双凭据源的建序不一致——igdb 是 Client ID（上）→ Secret（下）（`keyField` 天然在前），
+但 TMDB 是 API Key（上）→ Session ID（下）（`keyField=tmdbApiKey` 在前，#665 直接沿用）。
+
+**现在**：统一口径 = **「标识」在上、「密钥」在下**：
+· igdb：Client ID → Client Secret（不变）；
+· 🔴 TMDB：**Session ID → API Key**（按源倒序建——`meta.id === 'tmdb'` 分支先建 secondField 再建主字段）；
+· 占位符按源给出（TMDB = 「TMDB Session ID（账号同步用）」；⛔ 不再写死 IGDB 的字样）。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 4280 passed ／
+断言 **4230 PASS、既有红仍 37**（新增 1 条 #666 锚：tmdb 分支建序 + 反向守卫「不许写死 IGDB 占位符」）／
+部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 一课（断言写法）：**判"调用顺序"要数调用点，⛔ 别把闭包定义体里的同名调用混进来**——
+`secondField = (): void => { this.createSecretField(...) }` 定义体里的那次 `createSecretField`
+会把 `indexOf` 比较搅乱（本批实测假红）。做法 = 剥掉定义体再比，或者只锚调用形态。
+
+### 新增功能 · #665（2026-10-18）：**Bangumi / TMDB 凭据行同步按钮 —— Bangumi 收藏导入 ＋ TMDB 想看清单/收藏接入**
+
+**用户**：「设置页 Bangumi 元数据源凭据行加个同步按钮并排，也做 TMDB 的同步接入（同先参考金标准）」。
+
+**① Bangumi**：凭据行动作行加**「同步 Bangumi 收藏」**（与 Steam / 微信读书 / 豆瓣**同款同位置**——五个同步源动作行同构）。
+弹窗**打开即读**三个状态（想看 0 / 在看 2 / 看过 1，与既有 `importBangumiCollections` 同一映射），
+逐项报进度、按状态分组。判重键 = Bangumi id（全站唯一，无需类型前缀）；
+详情补全走既有 `fetchSubject` + `fetchPersons`（评分/制作公司/导演/主演），失败不阻断。
+落库字段与 `importBangumiCollections` **同一套**（⛔ 不另写一份字段拼装——那是两份判据的起点）。
+
+**② TMDB**：接入账号同步（**先查了官方文档** [ACCOUNT 组](https://developer.themoviedb.org/reference/account-details)：
+`GET /account/{id}/watchlist/{movie,tv}` 与 `.../favorite/{movie,tv}`，金标准 = 官方接口本身）。
+🔴 **双凭据**：搜索只用 API Key，账号接口必须再有一个 **Session ID**（TMDB「设置 → API」生成）——
+TMDB 升级为**双凭据源**（`keyField2: 'tmdbSessionId'`，与 igdb 的双字段同构）；
+🔴 **account_id 用户不用填**：用 session_id 调 `GET /account` 现场换回来。
+弹窗**打开即读** 4 个组合（想看/收藏 × 电影/剧集），列表按组合分组、逐项报进度、组合失败不中断。
+🔴 **判重键 = `tmdb:{movie|tv}:{id}`**（movie 与 tv 的 id 空间独立，裸 id 会误合并——同 #663 豆瓣那条教训）。
+🔴 **TMDB 的 10 分制社区分落 `communityScore`，⛔ 不写用户 rating**——用户没在 TMDB 打过分
+（Rated Movies 是另一套接口，本批不做；别把社区分硬塞进个人评分）。
+详情走既有 `detail()`（credits 一起回），失败不阻断。
+
+**两处共用的口径**（#663/#664 定稿，⛔ 不为单源另立）：**打开即一键全量**（选择退化为过滤/分组）、
+**勾上库里已有的 = 覆盖**（只换来源字段，⛔ 不动用户评语/进度/摘抄/标签）、覆盖计数**单独报**、
+详情失败**不阻断**、翻页按 `total` 判（⛔ 不靠"这页不满 N 条"猜）。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4280 passed**
+（新增 `tmdbSync` **11 例**：解析容错 / URL 与 session 位置 / 映射与判重键；`sourceRegistry` 双凭据判定翻面）／
+断言 **4229 PASS、既有红仍 37**（新增 2 条 #665 锚：五源动作行同构 + TMDB 双凭据前置拦截、
+判重键共用出口 + 社区分不冒充个人评分）／ 部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 两条工程教训：
+⒜ **注释里的字面量也会进产物**：`main.ts` 方法注释里写了「我的评分」三个字，撞上了一条
+  "旧 label 已撤"的全仓反向守卫（那条守卫查的是**编译产物**，而注释跟着代码一起进了 bundle）。
+  ⇒ 反向守卫查产物时，**源码注释也要过一遍关键词**（⛔ 别只查代码）。
+⒝ **接口现实要如实暴露**：Bangumi `fetchUserCollections` 单次 limit=50（分页参数没接）——
+  收藏超 50 的用户读不全，弹窗**如实提示**，⛔ 不假装拉全了（分页补全留给下一批）。
+
+### 修复 · #664（2026-10-18）：**同步导入可勾选覆盖 ／ Steam 未配置给轻提示不再收起 ／ 其它源的同步能力摸底**
+
+**用户**：「为什么无法勾选库内已有的覆盖，（微信读书同步也是），还有未配置 steam 点击同步怎么不是轻提示误而是直接收起了，还有其他源凭据是否也支持同步，音乐源也？」
+
+**① 豆瓣 / 微信读书导入：库里已有的**可以勾选覆盖**了**。
+   上一版把「库里已有」的行 `disabled`（豆瓣）/ `disabled`（微信读书）—— 用户想覆盖那条时**完全无路可走**。
+   ⇒ 两个弹窗都改成：**默认不勾、勾上 = 覆盖**；行上标「库里已有 · 勾选=覆盖」；
+      覆盖口径 = **只换来源侧字段**（详情/评分/状态/标记时间），⛔ 不动用户的评语 / 进度 / 摘抄 / 标签；
+      「全选」也把已有行算进来。微信读书没有稳定 id ⇒ 判重仍是**书名**（与 Bangumi 导入同族口径），
+      但导入从「跳过」翻面成「`service.update` 覆盖 + `writeNote` 重写笔记」。
+
+**② Steam 未配置点同步：就地轻提示，⛔ 不再"整行收起"**。
+   真因两层叠着：`syncSteamNow()` 会先失败返回"缺 Key"，而回调末尾**无条件**调 `this.display()`
+   ⇒ 整页重建 ⇒ 那一行回到**收起态**、回执槽是**新的空 span** —— 用户看到的就是"点了以后自己合上了"。
+   ⇒ 修三层：⑴ 发请求**之前**先拦（`steamCredsIssue` 改 `public`，设置页可以直接问），
+      未配置只给**按钮旁的就地轻提示**（`rl-inline-hint`，2.4s 淡出，⛔ 不弹 Notice）；
+   ⑵ 行容器挂 `data-source-id`，重建后靠它**找回同一行**恢复展开态与回执文字；
+   ⑶ 只有**真的同步过**才重建页面（没同步就没必要重建 —— 无谓重建正是 bug 的来源）。
+
+**③ 其它源能不能同步（摸底结论，⛔ 不假装支持）**：按 `src/services/*` 逐源核查"有没有用户收藏/列表类接口"：
+   · **已有同步**：微信读书（书架）、Bangumi（收藏列表）、Steam（库+愿望单）、**豆瓣（本次新增）**；
+   · **接口存在但插件未接**：TMDB（account/favorite/watchlist）、AniList（MediaList/viewer）、
+     MangaDex（follow/library）、MusicBrainz（collection）—— 接得做，但每个都是**一整个功能面**
+     （UI + 进度 + 判重 + 字段映射），⛔ 不在本批顺手加；
+   · **接口不存在**：Open Library / Google Books（无个人列表 API）、OMDb（只查详情）、
+     iTunes / MusicBrainz / IGDB（纯元数据查询，无用户数据）—— **做不了**，⛔ 不做假按钮。
+   音乐源（网易云 / QQ / 酷狗）同理：插件只做**下载**，它们的"我喜欢"列表接口要么要额外授权、要么没有。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4269 passed**（4 条 `[!bookinfo]+` = 既有红）／
+断言 **4227 PASS、既有红仍 37**（**就地翻面 3 条** #581 ⑭/⑯、#582 ⑥ —— 原来钉"跳过已有/已导入禁用"，现在钉"可勾选覆盖"；
+放宽 1 条 #488 行形态锚 —— 行多了 `data-source-id`；新增 1 条 #664「覆盖只换来源字段」）／
+部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 一课：**"禁用 + 标原因"是防误操作，不是防覆盖** —— 上一版把两者混在一起，
+   把"防止误改"做成了"禁止操作"。正确形态 = **默认安全（不勾），操作可达（可勾）+ 结果可见（覆盖计数）**。
+
+### 体验优化 · #663（2026-10-18）：**豆瓣同步改成「打开即一键读取全部」，类型 / 状态降级为过滤条**
+
+**用户**：「不能一键读取所有导入吗。还要我选」。
+
+**上一版的问题**：#662 让用户先选「类型 + 状态」再点「读取」（2 次选择 + 1 次点击），
+而用户**不可能知道**自己在豆瓣标记过哪几类、哪几个状态 —— 让他选等于让他先记住豆瓣那边的数据。
+
+**现在**：
+· **打开即读**：自动依次跑 **4 类 × 3 状态 = 12 个组合**，逐项报进度（「正在读取 书籍 · 想读（5/12）…」）；
+· 列表**按类型分组**（一键读取后四类混在一起，分组才看得出每类拉到多少）；
+· 类型 / 状态改成**列表上方的过滤条**（可选、⛔ 不挡路），另有「重新读取」；
+· 单个组合失败**不中断**整轮（否则一个类型没收藏就全白跑），失败项在底部**如实列出**。
+
+🔴🔴 **去重键必须带类型前缀**（`movie:1292052`）：豆瓣各站点的 subject 编号**互相独立**，
+一键读取把四类一起拉回来 ⇒ 裸 id 会把「同号电影」与「同号书」**误合并**成一条。
+`doubanKnownKeys()` 与弹窗侧去重**共用**同一个 `doubanItemKey`。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4269 passed**（豆瓣 15 例：新增「全部 = 12 项」「去重键带类型」）／
+断言 **4227 PASS、既有红仍 37**（#662 判据按位置翻面成 `kind:id`；新增「一键读取才是主路径」+ 反向守卫「不许再有前置读取按钮」）／
+部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 取舍说明：12 个组合是豆瓣的**接口现实**（四类分属四个子域、每类三种状态，没有"一次全给"的接口）。
+串行 + 每页 900ms 间隔是为了不触发风控；代价是收藏很多时要等一会儿 —— 所以进度**逐项显示**，⛔ 不是静默卡住。
+
+### 新增功能 · #662（2026-10-18）：**豆瓣凭据行新增「同步豆瓣收藏」（想看 / 在看 / 看过 → 条目）**
+
+**用户**：「元数据源凭据-豆瓣凭据入口再添加个同步导入按钮的功能」→ 追问「能不能导入曾标记想读在读等的条目」。
+
+**做了什么**：豆瓣凭据行的动作行里多了**一颗同步按钮**（与 Steam「同步 Steam」、微信读书「从微信读书同步书架」
+**同款同位置同色**），点开是「从豆瓣同步收藏」弹窗：选**类型**（影视 / 书籍 / 音乐 / 游戏）+ **状态**
+（想看·在看·看过 / 想读·在读·读过 …）→ 读取 → 勾选 → 导入。
+
+**数据来源**（先做了取证，不是拍脑袋）：豆瓣**没有**公开的「我的收藏」JSON 接口 ⇒ 只能抓收藏列表页
+`https://{类型}.douban.com/people/{用户ID}/{doType}?start=N&sort=time&rating=all&filter=all&mode=list`
+（游戏走 `www.douban.com/people/{id}/games?…&action=wish|do|collect`）。做法与金标准项目
+[Wanxp/obsidian-douban](https://github.com/Wanxp/obsidian-douban) 一致（它有「同步个人听过/看过的…+ 个人评分/评语/状态」）。
+🔴 **用户 ID 不再单独要填**：Cookie 里的 `dbcl2="<uid>:<hash>"` 那段数字就是用户 ID（`doubanUserIdFromCookie`）。
+
+**口径**（与微信读书 / Bangumi 两个导入**完全一致**，⛔ 不为豆瓣另立一套）：
+· 勾选导入，库里已有的**禁用 + 标「库里已有」**；已有的**跳过、不覆盖**评语 / 评分 / 进度；
+· 🔴 **判重键 = 豆瓣 id**（`sourceUrl` 里的 `/subject/<id>/`）—— 比按标题更准（同名重制 / 同名剧集不会互相顶掉），
+  且弹窗与导入侧共用 `doubanKnownIds()` 一份判据；
+· 状态映射三态：`wish → want`、`do → watching`、`collect → watched`（⛔ 不造第五态）；
+· 列表页只有标题 / 评分 / 标记时间 ⇒ 逐条**拉详情**补简介年份等，**详情失败不阻断**（列表级字段照常落地）；
+· 翻页按页面上的 `1/234` 判断，⛔ 不靠"这页不满 15 条"猜（豆瓣最后一页常常正好 15 条，猜会永久漏尾）；
+  页间隔 900ms（豆瓣风控）。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4267 passed**（新增 `doubanSync` **13 例**：
+解析容错 / 实体解码 / 日期归一 / 地址与用户 ID / 状态映射）／ 断言 **4226 PASS、既有红仍 37**
+（新增 2 条 #662 锚：按钮同款同位置、判重键与共用出口）／ 部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 两条实现教训：
+⒜ **解析要容错**：`parseDoubanCollectionPage` 对认不出的块**跳过不抛**；但「页面说有几条、却一条也解析不出」
+  必须**明确报错**（⛔ 不能静默当"没有收藏" —— 那会让豆瓣改版看起来像"你没收藏"）。
+⒝ **夹具要用真实形态**：单测第一版拿 1 位数 id（`subject/1/`）当夹具，撞上 `\d{5,10}` 的判据假红了一次 ——
+  夹具必须**照真数据的形态**造（豆瓣 id 都是 5~10 位）。
+
+### #661（2026-10-17）：**统计页列宽改成「内容优先」（每块都能半行）／ 半栏内用容器查询重排 ／ 去掉把手的悬停提示**
+
+**用户**：「能正常排变化了，但月度看完趋势和分类概览怎么不能自适应一整行，而且动态、核心指标我希望也能半行显示，且悬停不要有轻提示」。
+
+**① 列宽规则翻面：硬编码名单 → **内容优先**。
+   上一版是 `hero / feed / board` 永远整行、其余永远半行 —— 用户实测两头都不对：
+   趋势与概览能撑满却只给半行（右半空着），核心指标与动态明明能半行却永远占满。
+   ⇒ 现在每块都有 `minHalf`（**半栏最小可用宽度**，按内部结构实测：hero 520 / feed 420 / trend 380 / overview 360 / board 620），
+   `statsBlockCols()` 只回答一个问题：**半栏放得下吗？** 放得下就给半行（由用户拖拽决定和谁并排），放不下才整行。
+   ⛔ 不再有"某块天生整行"的名单。
+
+**② 半栏内的重排用 `@container`**（⛔ 不用媒体查询 —— 媒体查询认的是**窗口**宽度，
+   而这里要认的是**区块自己**的宽度）：给 `.rl-sb-block` 加 `container-type: inline-size`，
+   于是核心指标被拖到半栏时「1 主 + 4 辅」自动改成上下堆叠、概览的 4 个指标格折成 2×2。
+
+**③ 把手的悬停提示去掉**：`data-tip` 与 `aria-label` **两个都撤**（`aria-label` 同样会触发 Obsidian 官方气泡，见 #659），
+   读屏语义改用屏幕阅读器专用隐藏文本（`.rl-sb-sr`，`clip` 裁切，⛔ 不参与布局也不出气泡）。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4254 passed**（布局 16 例：新增半栏边界逐像素判据）／
+断言 **4224 PASS、既有红仍 37**（**按位置翻面 2 条**仓级反向守卫 —— 原来钉「`container-type` 恰 1 处、`@container` 全仓 0 处」，
+现在改成「只许两处 + 查询只许出现在统计页那三条」；#658 那条把手判据放宽切片长度）／
+部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 一课：**正则式的"全仓 0 处"守卫会被合法新用法撞红**，而且报错指向的地方与改动毫无关系。
+守这类资源（`@container` / `container-type`）要用「**按位置钉**」而不是「数总量」，
+否则每加一处合法用法都要去改守卫。
+
+### #660（2026-10-17）：**拖动"有变色效果但 UI 无变动"—— 增量刷新漏推 `statsOrder`**
+
+**用户**：「按住拖动有变色效果但UI无变动啊」——这句把范围缩到了**落点计算之后**那一段：
+拖拽确实起来了（有落点指示线），`onOrderChange` 也调了，但**界面顺序回弹**。
+
+**真因**：`HomeView.render()` 里那条**增量刷新**是逐个列 prop 的：
+
+```ts
+this.component.$set({ entries, tableColumnsByType, … , ctrlWheelZoom, excerptCounts, … })
+```
+
+`applyStatsOrder()` 写设置后调 `refreshViews()` → 走的正是这条增量路径 → 里面**没有 `statsOrder`**
+⇒ 组件手里的 `order` 还是旧值 ⇒ 画回原位。🔴 这与 #626（`wallColumns`）、#621（`tableColumnsByType`）
+是**同一个坑的第三次**：这条 `$set` 每加一个响应式 prop 都得同步加进去，漏了就是"改了没反应"。
+
+**两处一起修**：
+⒜ 增量刷新补上 `statsOrder: normalizeStatsOrder(...)`（真源归一，⛔ 不在这里另写一份缺省）；
+⒝ **组件侧不再依赖宿主往返**：拖动**先在本地生效**（`localOrder` → `shownOrder` 渲染），再通知宿主落盘。
+   落地收成一个出口 `applyOrder()`（容器级 / 区块级两个 drop 入口都走它，⛔ 别各写一份），
+   宿主把新顺序推回来时本地乐观值自动让位（单一真源仍回到设置）。
+   ⇒ 落盘慢、甚至落盘失败，界面也**立刻**看到变化，不会"看起来没反应"。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4252 passed** ／
+断言 **4224 PASS、既有红仍 37**（新增 2 条 #660 锚：增量 `$set` 必须带 `statsOrder`；
+拖动必须「先本地生效、再通知宿主」且 two drop 入口走同一出口）／ 部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 一课：**"有反馈但无变化"＝ 数据回推那一环断了**。排查顺序应该是
+「事件到达 → 回调触发 → **状态真的变了吗** → 界面读的是哪个状态」——
+   #659 我补了"回调接上"，却没检查"组件渲染读的是 `order` 这个 prop，而它不会自己更新"。
+
+### #659（2026-10-17）：**拖动为什么"零报错地失效"／ 行悬停提示的真凶是 `aria-label`／「编辑」按钮首屏不高亮**
+
+**用户**：「还是拖动无变化，还有我说评分看板每个行鼠标 hover 不要出现如『评分 5』之类的轻提示，
+② 插件设置页-高级设置-笔记属性顺序，怎么不默认高亮『编辑』按钮啊，要切换一下才能正常高亮」。
+
+**① 拖动"拖了没反应"——两个静默失效叠在一起**（都零报错，只看代码看不出来）：
+   · 🔴🔴 **prop 名不一致**：`StatsBoard` 声明的是 `onOrderChange`，`HomeView` 传的却是 `onStatsOrderChange`
+     ⇒ Svelte 4 对**多传的 prop 静默忽略** ⇒ 回调永远是默认空函数 ⇒ 落点算对了也**写不回去**。
+   · 🔴 **落点只靠各区块的 `dragover` 记**，而 `drop` 又挂在区块上 —— 只要有一次 `dragover` 没按预期到达，
+     `dropTarget` 就是 `null`，`onBlockDrop` 直接 return。
+   ⇒ 两处都修：prop 名对齐（`order=` / `onOrderChange=`）；`drop` 改挂**容器**，落点**在松手那一刻从指针位置反推**
+     （`elementFromPoint` → `closest('.rl-sb-block')` → 算前后/左右），`dragover` 记的只当加速。
+
+**② 行悬停提示的真凶是 `aria-label`**：#658 只删了 `data-tip`，但行容器上还留着 `aria-label="评分 5"` ——
+   而 Obsidian 会给带 `aria-label` 的元素**自绘官方气泡**（本仓 UI-GUIDE §3 记过）。
+   ⇒ 行容器**不再带 `aria-label`**；读屏语义由行首那段**已有的评分文字**承担。
+
+**③「编辑」按钮首屏不高亮**：`syncMode()` 只在**点击时**调 —— 首屏两个按钮都没有 `is-on`
+   （初始 `aria-selected="true"` 只是 HTML 字面量，类名没跟上）。⇒ 首次渲染也跑一次 `syncMode()`。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线；中途给容器加 drop 处理器多出 1 条 a11y，补 `role="group"` 压回）** ／
+单测 **4252 passed**（4 条 `[!bookinfo]+` = 既有红）／ 断言 **4222 PASS、既有红仍 37**
+（新增 4 条 #659 锚：行不带 `aria-label`、prop 名两边逐字一致、`drop` 不依赖 `dragover`、首次渲染跑 `syncMode()`）／
+部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 三条工程教训：
+⒜ **Svelte 4 对「多传的 prop」静默忽略**：改名时两端必须**逐字对齐**，编译器不提醒 —— 只能靠断言钉住。
+⒝ **`aria-label` 会触发 Obsidian 官方 tooltip**：想"去掉悬停提示"时，光删 `data-tip` 不够，得连 `aria-label` 一起清。
+⒞ **「拖拽不生效」的排查顺序**：先确认**回调是否真被调用**（prop 名 / 事件是否到达），再看落点算得对不对 ——
+   上一轮我一直在调落点算法，而真正断掉的是"回调根本没接上"。
+
+### #651（2026-10-17）：**「字段映射」第二次改观 —— 表格语汇换成 Obsidian 属性面板那一套**
+
+**用户**：「这UI太丑了，改改」（附截图）。
+
+**先量再改**（`_gen_fm651_sim.cjs` + `_probe651.cjs`：真核心 `app.css` 变量 + 真规则 + `META_FIELDS` 真数据，
+一次一页、一进程一页，图在 `_shot/fm651-*.png`）：
+
+| | 改前（实测） | 改后（实测） |
+|---|---|---|
+| 行高 | **42.5px**（30px 输入框把行撑满） | **29.5px** |
+| 42 行总高 | 1805px（滚 4 屏） | **1267px**（滚 2.8 屏） |
+| 输入框 | 每格画一个白框（浅/深色都是 h36） | **没值就没有框**（h23，占位即灰字） |
+| 表头 | 700 / `--text-normal`（比表体还抢眼） | 600 / `--text-muted` |
+| 已映射的行 | 与未映射**长得一样** | 名字前一枚主题色小点 + 600 字重 |
+
+**前五轮（#644~#650）为什么没治好**：一直在**同一个框里挪像素**（改对齐 / 改内距 / 改描边），越改越挤。
+这一轮改的是**语汇**：输入框改成**表格式输入**（透明底 + 无框，悬停给淡底、聚焦给主题色圈），
+与表头、原键名共享同一条 12px 文字左缘；行间只留一条发丝线；整行悬停。
+
+**接线（`Settings.renderFieldMapRows`）**：`tr.is-mapped` 由 `syncMapped()` 维护（判据 = 有值且不等于原键名，
+与提交口径一致）；`input` 事件**只切这个类**（零写盘），落盘仍走 `change`（回车 / 失焦）。
+错误回执补 `role="alert"`（读屏能听见）。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4219 passed**（4 条 `[!bookinfo]+` = 既有红，与本次无关）／
+断言 **4202 PASS、既有红仍 37**（与 #650 基线一致）／ 自建接线核实 `_verify651.cjs` **14 PASS / 0 FAIL** ／ 截图双主题核实。
+
+⚠️ **本批最贵的一课（工具链，不是插件）**：仿真页第一版**整张表掉颜色**，排查四轮才发现是提取器
+`([^{}]+)\{([^{}]*)\}` 把规则的 `{…}` 两两配错 ⇒ 产出的 CSS 被浏览器整段丢弃。**改 CSS 的仿真页，先确认
+「规则真的被解析了」**（量 `getComputedStyle` 的变量 + `document.styleSheets[i].cssRules.length`），
+⛔ 别拿一张没样式的截图去判断「是插件样式没生效」。
+
+### #652（2026-10-17）：**高级设置页四条 —— 去 Dataview 徽标 ／ 三列按比例 ／ 卡片信息栏换控件 ／ 三组加恢复默认**
+
+**用户**：「字段映射还有那几个不要dataview标签了，还有表头和其下字段三者隔开按比例分一下，
+还有卡片信息栏也重构一下，像切换条目类型用选择不用下拉了，还有高级设置下的三个组都要有恢复默认项」。
+
+**① Dataview 徽标整体撤掉**：样式表里 `.rl-fm-badge` 规则与产物里的渲染代码一并删除。
+⚠️ `pure/metaFields.dataviewAligned` 字段**保留**（语义仍在、只是不再渲染），将来要提示还能用。
+断言就地**翻面**：#650 那条「徽章可见且紧挨」→ #652「徽章与渲染代码都不许回来」（反向守卫）。
+
+**② 字段映射三列按比例**：`COL_WIDTHS` 由 **26 / 22 / 52** 改成 **30 / 24 / 46**
+（实测 166 / 133 / 255px）。旧比例第一列放不下最长中文名（「进度百分比」6 字）、输入区却吃掉一半以上。
+🔴 列宽真源只在 JS 的 `COL_WIDTHS`，CSS ⛔ 不得再写 `td { width }`。
+
+**③ 卡片信息栏：条目类型 下拉 → 分段 chips**（用户：「像切换条目类型用选择不用下拉了」）。
+六个类型是平级枚举，下拉把五个藏进一次点击里；chips 一眼看全、一点即切，与下面那排字段 chip **同款几何**
+（`height: 26px` / `radius-m` / 选中实心主题色）—— 同一种「选中」手势必须是同一种样子。
+
+**④ 三组「恢复默认」**：统一挂 `mountGroupReset(body, …)` → 按钮在**组标题行右侧**（三组位置一致）、
+**只有有配置时才渲染**、二次确认走既有的 `ConfirmModal`：
+
+| 组 | 清掉的键 |
+|---|---|
+| 字段映射 | `fieldMap = ''` |
+| 笔记属性顺序 | `fieldOrder = {}` + `fieldOrderByKind = {}`（六类 + 文学/网文/漫画） |
+| 卡片信息栏 | `cardFieldsByType = {}`（**六类一起**，不只是当前类型） |
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4219 passed**（4 条 `[!bookinfo]+` = 既有红）／
+断言 **4205 PASS、既有红仍 37**（#650 那条就地翻面 + 新增 4 条 = **30 PASS / 0 FAIL**）／
+真 Chrome 量测：列宽 30.0 / 24.0 / 46.0、表头与表体逐列相等、徽标残留 0 ／ 部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 过程教训：仿真页仍按旧的 26/22/52 渲染，第一轮量出来「列还是 26%」——**改完源码要同步改仿真页的常量**，
+否则量的是假数据（本批当场发现并修正）。
+
+### #653（2026-10-17）：**属性顺序加「对比预览」／ 卡片信息栏八格按点名顺序 ／ 恢复默认常显 + 轻提示**
+
+**用户**：「笔记属性顺序编辑视图，再加个对比视图，如一整个表格滑动并览，②卡片信息栏条目类型选择按
+『电影、剧集、动画、文学、网文、漫画、游戏、音乐』排序，还有要始终出现『恢复默认』，未修改时误点击要轻提示」。
+
+**① 属性顺序 · 对比预览**（新标签「编辑 / 对比预览」）：一整个表格，七列（全局 + 六类型）横向滑动并览。
+🔴 **行是「位次」不是「字段」**——七组字段集不同（全局 16、电影 23、剧集 27、书籍 28），
+按字段取并集会得到一张**大部分格子为空的稀疏矩阵**，读不出「对比」；按位次做行，任意两列都能逐行对齐着看。
+🔴🔴 **实测纠正**：第一版直接用了 `orderForType`，而那是 **42 键全量表**（`defaultOrderFor` 只按 `types` 门控，
+绝大多数 `MetaField` 没有 `types`）⇒ 七列几乎一模一样，退化成把同一列抄了七遍。现在每列只保留
+`fieldAppliesTo(key, type)` 为真的那些键（真源在 `pure/metaFields`）。纯逻辑 = `pure/fieldOrderCompare`（11 例单测）。
+表头与首位次列 `position: sticky`（滑到右边仍知道自己在看哪一列 / 第几位）。
+
+**② 卡片信息栏 · 八格**：`CARD_TYPE_SLOTS` = 电影 / 剧集 / 动画 / **文学 / 网文 / 漫画** / 游戏 / 音乐
+（书籍原位展开，与属性顺序那组一致）。🔴 **存储零迁移**：仍是 `cardFieldsByType` 的六类型口径，
+子分类各写新增的可选键 `cardFieldsByKind`，没配过 ⇒ 回落 `cardFieldsByType.book`
+（同 `fieldOrderByKind → fieldOrder.book` 的回落链）。取数出口收敛成 `pure/cardMeta.cardFieldsFor`，
+`HomeView` / `MediaList` 都走它 —— 否则子分类那三格存了也不生效。
+
+**③「恢复默认」常显 + 轻提示**：上一版「没配置就整枚不渲染」⇒ 按钮时有时无。现在**一律显示**：
+有配置 → `ConfirmModal` 二次确认后清键；没配置 → 只在按钮旁浮出一枚「已经是默认值」（1.5s 淡出），
+⛔ 不改数据、⛔ 不开弹窗、⛔ 不发 Notice（Notice 跑到右上角，点了只会觉得没反应）。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4238 passed**（+19 新例；4 条 `[!bookinfo]+` = 既有红）／
+断言 **4208 PASS、既有红仍 37**（`1.3.1①` **33 PASS / 0 FAIL**，新增 3 条 #653 锚）／
+真 Chrome 截图（`_shot/fo653-light.png`、`fo653-scrolled.png`、`cf653-light.png`）／ 部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 教训两条：⒜ **改完源码要同步改仿真页的取数方式**（第一版仿真页还按旧口径生成，量出来「列全一样」）；
+⒝ 表格表头格**不能改成 `display: flex`**（一改就与数据行算不到一处，表头塌成梯形）。
+
+### #654（2026-10-17）：**元数据源凭据 —— Steam 两个值框对齐 IGDB，同步 / 测试按钮对齐微信读书**
+
+**用户**：「设置页-元数据源凭据的 steam 下的两个值框对齐 IGDB 凭据样式，
+且 steam 的同步与测试连接按钮要对齐微信读书的同步与测试连接按钮」。
+
+**① 两个值框对齐**：SteamID 原来走裸 `<input class="rl-input rl-steam-id">`，只给了 `max-width: 320px`
+⇒ 同一张卡里**第一个框（Key）跟 IGDB 一样宽、第二个框短一截**，两个框自己都不齐。
+现在 SteamID 也落进 `.rl-secret` 那一行（输入框 `flex: 1` + 右侧「显示」），几何与 IGDB 完全同源。
+🔴 `createSecretField` 拆出 `fillSecretRow()`，Key 与 SteamID 共用**同一份**行布局 ——
+⛔ 别再往 `.rl-steam-id` 上写宽度（那正是这次不齐的根因）。
+SteamID 是**明文**（要能核对位数），右侧那枚「显示」保留位置但做成 `is-static`（不可点、半透明）——
+对齐靠它，但它没有「隐藏」可言。
+
+**② 按钮对齐**：实测两行动作按钮**间距不同**（Steam 16px / 微信读书 8px）。
+根因与 #641 修过的那处**同型、漏了一处**：`renderSteamActions` 自己 `createSpan` 了一个 `.rl-key-result`
+夹在**两颗按钮中间** ⇒ 空 flex item 把 `gap: 8px` **多计一次**。现在回执槽由调用点**只建一次**
+（在两颗按钮之后），两条同步行同构：「同步 → 测试连接 → 回执」。
+
+**真 Chrome 实测**（`_shot/cred654-{light,dark}.png`）：
+
+| | 改前 | 改后 |
+|---|---|---|
+| Steam 框2 左缘 / 右缘 | 90 / 1122（比框1 短 665px） | **45 / 1122（= IGDB 逐像素相同）** |
+| 「显示」列左缘 | Steam 593 / IGDB 593（框2 那枚 90 处起、跑到右缘外） | 593 / 593 |
+| 两颗按钮间距 | **16 / 8** | **8 / 8** |
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4238 passed**（4 条 `[!bookinfo]+` = 既有红）／
+断言 **4208 PASS、既有红仍 37**（3 条就地翻面：`renderSteamActions` 签名收 `resultEl`、weread 调用点传 `syncSlot`、
+播放器那条 `display: contents` 改**限定段落内**计数 —— 它原本数全表，被本批新增的 `.rl-key-syncslot` 撞红）／
+部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 教训：**「同名守卫数全表」是最脆的判据**。`display: contents 全表恰 2 处` 这种写法，
+任何一处合法新用法都会把它撞红（而且报错指向的地方跟改动毫无关系）。守卫要**限定在自己的段落里**，
+锚点也得用**选择器**而不是注释文案（`cssDecl` 已剥注释，拿注释文案锚会得到 0 字符 —— 本批也踩了一次）。
+
+### #655（2026-10-17）：**修 Steam 按钮顺序反了 ／ 间距 ／ SteamID「显示」点不动（用户截图报障）**
+
+**用户**（附截图，语气很急）：「给我对齐啊，steam 同步和测试按钮应该调换位置，间隔要和微信读书的同步和测试按钮一样，
+说了多少次了快点给我改啊，还有 steamid 的显示按钮点击无反应」。
+
+🔴🔴 **先说清楚我上一轮为什么「量对了却是错的」**：#654 我用**手写**的仿真页量间距，把 DOM 次序写成了
+「同步 → 测试连接」—— 而真实 DOM 是反的。于是「间距 8px」量得再准也没用，用户看到的是**顺序反了 + 间距还大**。
+这是本轮最贵的一课：**仿真页必须复刻代码里的创建顺序，⛔ 不能复刻「我以为的顺序」**。
+
+**① 按钮顺序**：根因是 `resultEl.before(slot)` **连续插两次**——每次都插在回执槽正前方，
+所以后插的「测试连接」反而排到了最前（真实 DOM：测试连接 · 同步 Steam · 回执）。
+现在**按创建顺序建 DOM**，不做任何事后重排：同步按钮（各源自己的）→ 测试连接 → 回执槽。
+
+**② 间距**：同样因为回执槽先建、夹在插入点与按钮之间，`gap: 8px` 仍被多计一次。现在回执槽最后建，
+两颗按钮**相邻** ⇒ 与微信读书逐像素一致。
+
+**③ SteamID 的「显示」按钮点不动**：上一轮为了让它与 IGDB 的「显示」对齐，我把它做成了 `is-static`
+（`pointer-events: none`）⇒ 点了**真的什么都不发生**。现在明文项也走同一个「显示 / 隐藏」切换
+（起步显示「隐藏」，点一下变圆点、再点回明文）；`.rl-secret-eye.is-static` 规则整体退场。
+
+**真 Chrome 实测**（`_shot/cred655-{light,dark}.png`，DOM 次序由**构建产物**读出，不是手写）：
+
+| | 改前（截图） | 改后（实测） |
+|---|---|---|
+| Steam 按钮次序 | 测试连接 · 同步 Steam | **同步 Steam · 测试连接** |
+| 按钮间距 Steam / 微信读书 | 16 / 8 | **8 / 8** |
+| 最右按钮右缘 | 不齐 | **631 / 631** |
+| Steam 两个值框水平范围 | 框2 短一截 | **45~587 ／ 45~587（三个框逐像素一致）** |
+| SteamID「显示」 | 点了没反应 | **可点，显示 / 隐藏来回切** |
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4238 passed**（4 条 `[!bookinfo]+` = 既有红）／
+断言 **4210 PASS、既有红仍 37**（`1.3.1①` **35 PASS / 0 FAIL**；新增 2 条 #655 锚：创建次序严格递增、
+明文「显示」可点 + 反向守卫不许 `is-static`）／ 部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 两条工程教训：
+⒜ **`Node.before(x)` 连用 ≠ 按顺序插入**：它每次都插到参考节点**正前方**，后插的会顶到最前。
+要定序就**按顺序 append**，别用「插到某个占位节点前面」来模拟。
+⒝ 新写的注释里**叙述了旧写法**，会被自己的反向守卫撞红（本批两次）——守卫判据一律**先剥注释**，
+且定位要锚「紧跟着某调用的那一处」，⛔ 别用全局第一个 `indexOf`（同一个字符串在别处也有一份）。
+
+### #656（2026-10-17）：**统计页「评分看板」改版（参考 AnimeList 的 Score Dashboard）**
+
+**用户**：「这个统计页的评分看板太丑了，参考 https://github.com/kougami132/AnimeList 这评分看板」。
+
+**先取证**：把参考项目的 Score Dashboard 截图拉下来逐条对照（`_shot/ref/anime-score.png`），
+再用**真数据**（`pure/ratingBoard.buildBoard`）+ 组件真样式渲一张现状图（`_shot/board656-before.png`）。
+量出来三条「丑」都成立：
+
+| | 改前 | 参考版 / 改后 |
+|---|---|---|
+| 评分列 | **六色渐变铺满 15% 宽**（每行一块大彩条，页面被颜色吃掉） | **112px 窄列 + 淡底 + 左缘 4px 色条** |
+| 评分文本 | 大「4」+ 小「.5」拼字（小块字号下易读成「4 .5」） | **「5.0」+「N 部作品」** 两行，等宽数字 |
+| 封面 | 40×54 | **64×96** |
+| 标题 | 两行，把行撑到 **88px** | **单行省略** |
+| 空行 | 88px 的**虚线大框** | **一行灰字**（空行 52px） |
+| 内容区 | 各自 `overflow-y: auto`（右边缘多一条滚动条） | **不滚**，行高随内容 |
+| 行 | 每行一个独立圆角卡 | **行间一条发丝线**（表格观感） |
+
+🔴 **行为一行没动**：拖拽改分 / 落点激活态 / 乐观更新 + 失败回滚 / Ctrl+滚轮缩放全部保留（25 例单测钉着）。
+
+⚠️🔴 **本批最贵的一课（又栽在特异度上）**：第一版我在 `styles.css` 里加了一层覆盖规则，
+结果**行高、封面完全没变** —— Svelte 编译后每条规则都带 `.svelte-<hash>`（0,2,0），
+而覆盖层写的是 `.rl-board-anchor`（0,1,0），**压不过**。我在仿真页里也照抄了这个错误，于是「改完截图没变化」。
+⇒ 结论：**组件的样式就改在组件里**，⛔ 别在外部文件加覆盖层去「压」scoped 样式。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4238 passed**（4 条 `[!bookinfo]+` = 既有红）／
+断言 **4214 PASS、既有红仍 37**（#635 两条就地翻面：固定行高 → 行高自适应、行内滚动 → 不滚动；新增 4 条 #656 锚）／
+浅色 + 深色截图核实（`_shot/board656-after{,-dark}.png`）／ 部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+### #657（2026-10-17）：**统计页 —— 重复标题 ／ 评分行悬停提示 ／ 封面提示只留标题 ／ 五个区块自由排序 + 自适应**
+
+**用户**：「统计页-评分看板怎么显示了两个标题，去掉外部的那个，还有鼠标悬停评分行不显示如『评分5』提示，
+用户能看到，鼠标 hover 评分行里的封面不显示『拖到其它行改评分』只显示标题就好了，
+② 统计页的所有元素支持自由排序，自适应」。
+
+**① 重复标题**：`StatsBoard` 里那行 `rl-s-title`（「评分看板」）+ 看板**自带的** `.rl-board-titlebar` 叠成了两个。
+⇒ 删掉外部那个（看板自己带标题，⛔ 别再在外层补一个小标题）。
+
+**② 评分行悬停提示**：整行槽（`.rl-board-slot`）挂 `data-tip`：「评分 5.0 · 拖封面到其它行改评分」/
+「未评分 · 拖封面到这里清除评分」。数字与行里显示**同源**（同一个 `rowText()`）⇒ 不会出现「行里 5.0、提示里 5」。
+
+**③ 封面提示只留标题**：`data-tip` 从「《标题》· 拖到其它行改评分」改成**只有标题** ——
+拖拽改分是整行的能力，不是每张封面的属性，把操作说明塞进每个封面只会一直刷屏。
+
+**④ 自由排序 + 自适应**（新纯模块 `pure/statsLayout`，14 例单测）：
+· 五个区块（核心指标 / 动态 / 趋势 / 概览 / 看板）各自**左上一个把手，可拖动排序**，落点在目标块的上/下半
+  （`dropSide` 按**纵向中线**判断），拖完写 `settings.statsOrder` 并重渲；
+· 🔴 **落盘口径**：归一后与缺省逐位一致 ⇒ **删键**（⛔ 不存缺省副本），以后新增区块能自动落到缺省位置；
+· 🔴 **扁平化**：原来的「趋势 + 概览并排」整体退场 —— 一旦允许自由排序，"并排"就与顺序打架
+  （排到后面的区块会被塞进别人旁边的空档，拖出来的顺序就不是看到的顺序）。现在**单列按顺序排**；
+· 🔴 **自适应**：`statsBlockSpan()` 按容器宽度给列档（窄屏一律 1 列；宽屏下核心指标 / 趋势 / 概览可并排，
+  动态与看板占满整行 —— 它们内部本来就是横向列表）。宽度用 `ResizeObserver` 跟随侧栏 / 分屏。
+
+⚠️ 单测当场抓到一个真 bug：`moveStatsBlock` 只校验了目标键、没校验来源键 ⇒ 一个脏的 `from`
+会被**插进**结果里变成第六个区块。已修（两个键都必须本来就在表里）。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4252 passed**（+14；4 条 `[!bookinfo]+` = 既有红）／
+断言 **4217 PASS、既有红仍 37**（**就地翻面 4 条**：`rl-s-title` 2→1 处、页眉标题与看板小节的先后、
+「趋势/概览并排」→「单列顺序容器」；另放宽一条 Tab 容器判据 —— 原来钉死 `attr(div\d+` 与明文中文，
+编译产物一变就假红；新增 3 条 #657 锚）／ 部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+### #658（2026-10-17）：**修「注释漏到页面上」／ 拖动为何不生效 ／ 补自由左右布局 ／ 去掉行悬停提示**
+
+**用户**：「评分看板全部作品出现错乱『不能出现在属性列表中间。-->』，自由拖动无法生效，
+而且怎么没设计自由左右布局啊？鼠标 hover 评分看板不要出现『评分5.0·拖封面到其它行改评分』这些轻提示了，
+③ 拖封面到其它行改评分这提示放在【未评分 62 / 131】右旁边」。
+
+**① 一条注释漏到页面上**（最严重的那个）：Svelte 的模板注释是**非嵌套**的 ——
+我在注释正文里写了一句「模板里 `<!-- -->` 不能出现在属性列表中间」，其中的左尖括号 + 叹号 + 连字符
+**把注释提前收掉了**，剩下的 `-->` 就作为文本渲染在**每一张卡片**上（用户看到的就是那句残文）。
+⇒ 改写成不出现该记号的措辞。**判据**：加了单测式守卫 —— 模板注释里⛔ 不许再出现嵌套的注释开记号。
+
+**② 自由拖动不生效的真因**：`draggable="true"` 挂在**整个区块**上。
+区块里有按钮 / 链接 / 可选中文本，浏览器在这些子元素上**根本不触发 `dragstart`**，
+一拖就变成选文字。⇒ **拖动只从把手发起**（把手是一个独立小元素，自己带 `draggable`）。
+
+**③ 自由左右布局**（用户：「怎么没设计自由左右布局啊？」）：上一版是单列，确实没有左右。
+现在 `.rl-sb-blocks` 是**两列等分网格**：
+· 区块按 `statsBlockCols()` 决定占 **2 列（整行）** 还是 **1 列（半行）**，相邻两个半行 ⇒ **自动并排**；
+· 核心指标 / 动态 / 评分看板**永远整行**（内部是横向长列表，切一半会挤成一团），趋势 / 概览默认半行；
+· 拖到目标**中间** ⇒ 并排到它的**左半 / 右半**（有竖线提示）；拖到**上缘 / 下缘**（20% 边带）⇒ 整行插到前 / 后。
+  边缘带是必须的：没有它，任何落点都会被判成"并排"，用户没法插到两行之间。
+
+**④ 去掉行悬停提示**：每行挂 `data-tip` 意味着鼠标一划过就弹，属于常驻噪声。
+⇒ 行槽**不再挂** `data-tip`；「拖封面到其它行即可改评分」改成顶部「未评分 N / M」**右边一处静态文字**。
+
+**门禁**：tsc **0** ／ 构建 **87 warnings（= 基线）** ／ 单测 **4252 passed**（布局模块 14 例同步重写：新增两列落点 /
+边缘带 / 列数档）／ 断言 **4218 PASS、既有红仍 37**（**就地翻面 2 条**：#657「单列按顺序排」→「两列网格」、
+#657「行有悬停提示」→「行不再挂提示 + 顶部一处静态文字」；新增 1 条「拖动只从把手发起」反向守卫）／
+部署三方 md5 一致 ／ 镜像 0 项待拷。
+
+⚠️ 两条工程教训：
+⒜ **Svelte 模板注释不嵌套**：注释正文里只要出现注释开记号（哪怕是在讲它），评论会**提前结束**、
+   残余字符变成页面文字。要在注释里提到它，只能绕开书写。
+⒝ **`draggable` 别挂在"有内容的容器"上**：只要子树里有按钮 / 链接 / 可选文本，指针就抢不到 `dragstart`。
+   拖动一律用**独立把手**承载 `draggable`。
+
 ## 1.4.0 · 两件（#641 EPUB 插图恢复显示＋开章提速 · Steam 凭据行两处 UI 修正 · 版本定级）· #642 EPUB 漫画卡死修复
 
 > 用户 2026-10-16 点名「插件版本号定级为 1.4.0」。
@@ -14,6 +2504,295 @@
 
 > 用户一条消息四项 + 中途追加一项；版本三文件手改 **1.2.0 → 1.2.1**（`MANGADEX_UA` 版本段同步）。
 > 🔴 **2026-10-11 用户裁定：1.2.1 从未发布 ⇒ 整体改名为 1.3.0**（用户：「把1.2.1版本号改成1.3.0」+「[1.2.1] 整节替换为 1.3.0 内容」）。本节标题由 `1.2.1` 改为 `1.3.0`，用户向 `CHANGELOG.md` 的 1.2.1 整节替换为 1.3.0 定稿内容，弹窗表 1.2.1 那句换成 1.3.0 那句（#587/#554 口径：**未发布**的版本说明只描述最终形态，可改名；历史批次记录里的「1.2.1」字样保留不动）。
+
+### #650（2026-10-17）：**字段列「名字 + Dataview 徽标」紧挨**（用户反馈三条里只有第 1 条属实）
+
+用户：「比起上一版，这一版引入了新的问题……散架感」，并给了三条。照例先量再说：
+
+| 用户反馈 | 量测结论 |
+|---|---|
+| ① 第一列「个人评分」与 Dataview 之间空隙太大（怀疑 `space-between`） | ✅ **属实**（但不是 `space-between`，全仓 0 处）。上一版用 grid 定宽名字列 `6.5em auto`，让每行都留一段**固定空档**：名字右缘 123 → 徽标左缘 131 |
+| ② 表头与下方数据完全未对齐 | ❌ **不成立**：表头三列文字左缘 `45 / 202.55 / 335.86` 与首行值 `45 / 202.55` **精确相等**（按「文字范围」量，不是格框） |
+| ③ 第二列文字左侧有一条若隐若现的垂直浅灰线 | ❌ **找不到对应物**：三列 `border-left/right = 0px`、`::before` content = `none`、背景透明；深色帧同样 |
+
+#### ✅ 修法（只动属实的那一条）
+
+- 字段列由 grid 定宽 → **flex 左对齐 + `gap: 4px`**：名字按内容宽、徽标紧跟着。
+  对齐靠「左对齐 + 同名起点」**天然成立**，⛔ 不需要定宽列 —— 上一版是为了对齐做的过度设计。
+- Dataview 按用户建议做成**可见的小徽章**（淡底 + 圆角 + 10px 字号），⛔ 不再是几乎看不见的灰字。
+- 复量：名字↔徽标空隙 **8px 起的固定空档 → 4px 紧挨**；表头/值左缘仍 `45 / 202.55` 共线；三列仍无左右边框。
+
+#### ⚠️ 顺带发现的一个**验证工具自身**的 bug（值得记）
+
+验证页第一版**完全没加载样式**（量到 `display=table-cell`、名字左缘 = 11px）。根因：抠核心变量块时用 `split(';')` 切声明，
+而 `--xfa-unfocused-field-background` 的值是 **data URI、里面带分号** ⇒ 值被切断、留下未闭合引号 ⇒ **整张样式表被浏览器吞掉**。
+改成按引号/括号配平切声明后数据才可信（本仓老坑，这是第三次踩在同一个地方）。
+
+#### 门禁
+
+tsc 0 ／ 87 warnings ／ 断言 **4202 PASS**、既有红仍 **37**（翻面 1 条 + 新增 3 条）／
+突变 `_mut650.cjs` **3-3 RED**（首轮 **M1 假 GREEN**：`space-between` 把名字与徽标推到两端没人管 ⇒ 补反向守卫）／
+部署核实 **6/6** ／ 镜像已同步。
+
+### #649（2026-10-17）：**「字段映射」表格回归左对齐 + 统一左内距 + 输入框恢复边框**
+
+用户对上一条「居中」的反馈：「文本居中导致边缘参差不齐、缺乏扫读基准线」，并给了三条改法。
+
+- **① 表头与所有列统一左对齐，左内距一致**：`text-align: left`；表头 `th`、表体 `td`、字段列都是 **12px**
+  （`--size-4-3`）⇒ 表头文字 / 字段名 / 原属性名 / 输入框值落在**同一条竖线**上。
+- **② 带 Dataview 徽标的行，主文本要与其他纯文本行完美左对齐** —— 🔴 **这是结构问题，不是样式问题**：
+  徽标与名字原本是两个**行内兄弟**，`text-align` 管不到「每个 span 从哪儿开始」，徽标一撑宽或换行，
+  那一行的中文起点就跟纯文本行错开。⇒ 改成 **grid 两列**（`grid-template-columns: 6.5em auto`），
+  名字列定宽 ⇒ 两种行的名字左缘**必然相同**（实测都是 681px，零误差）。
+- **③ 第三列恢复输入框的框**（浅一档底色 + 一圈描边 + 圆角，聚焦换主题色圈），明确「这里能改」。
+  🔴 描边用 **`inset box-shadow`** 而不是 `border`：`border` 要占 1px 布局宽度，而 input 的内部文字排版
+  拿不到 `Range`（`setEnd` 在 input 上不可用）⇒ 任何 ±1px 补偿都只能靠推算，实测 0 / −1 / −2 三种写法来回了四轮都不稳。
+  内嵌描边**不参与盒模型**，值起点 = 格内距 = 表头文字左缘，对齐变成确定性的。
+
+#### 复量（四条竖线，全部精确相等）
+
+| 位置 | 表头 | 值 |
+|---|---|---|
+| 字段列 | 681 | 681（**纯文本行与带标签行都是 681**） |
+| 原属性名 | 833.36 | 833.36 |
+| 新属性名 | 962.27 | 962.27（输入框值起点） |
+
+#### 门禁
+
+tsc 0 ／ 87 warnings ／ 断言 **4200 PASS**、既有红仍 **37**（**翻面 3 条** #648 的居中口径 + 新增 **5** 条 #649）／
+突变 `_mut649.cjs` **5-5 RED**（首轮 **M5 假 GREEN**：「表体格内距与表头同值」没人管 ⇒ 补锚后咬住）／
+部署核实 **6/6** ／ 镜像已同步。
+
+⚠️ 本批改验收脚本用的是「整份读入 → 计算 → 整份写出 + **命中数必须恰为预期，否则直接放弃**」，
+比上一批的裁剪法安全得多；期间一次扫描误命中 5 条（#647 的说明文字里也提到了 #648）⇒ 收窄到**语句首两行**才对准。
+
+### #648（2026-10-17）：**「字段映射」表头与字段列居中**（用户：「表头和字段名都给我居中对齐啊」）
+
+- `.rl-fieldmap-head th { text-align: center }`、`.rl-fm-label { text-align: center }`。
+- 🔴 **居中取代了 #645 的「左缘对齐」**：那套「表头左内距 16px ⇔ 三列值各 8px 共享文字左缘」的判据随之作废，
+  对应的内距**一起收回**（`.rl-fm-label-text` → `padding-inline-start: 0`、输入框 → `padding: 0`），
+  否则居中的格子里残留 8px 内缩，会让那一列看起来偏 8px。
+- 保留：表头字重 700 + `--text-normal`、底边 `--text-faint` + 底色 `--background-primary-alt`；
+  **原属性名仍左对齐**（它是等宽键名，那 8px 是字形留白，且居中会让 42 行参差、输入时 caret 乱跑）。
+- 复量：表头 / 字段列的文字中心偏移 **−0.01px / −0.01px**（改前 **−54.6 / −47.2**）｜部署核实 **7/7**。
+
+#### 🔴🔴 事故记录：我截断了验收脚本（必须留痕）
+
+改这条时我要「删掉一条已被取代的旧断言」，用的是「找到起始行 → 向后找到以 `);` 结尾的行」这种裁剪，
+结果**匹配到了文件的最后一个 `);`** —— 把 `assert-symbols.cjs` 第 24330 行到末尾（约 **1100 条断言**，
+覆盖 #645 之后的全部批次）**整段删掉**。该脚本**不在 git 里、没有 .bak、`vssadmin` 需管理员权限**，
+我搜过 `.workbuddy` / 工作区 / Temp / 回收站，**没有可恢复的副本**。已做：按原形态重建了 #648 这一段，
+并在文件末尾加了「本文件其余批次待补」的显式标注；保留部分的断言 **4198 PASS / 37 FAIL**，
+那 37 条与事故前逐条一致（既有红没有被破坏）。
+
+**两条新纪律**（此后一律执行）：
+
+- 🔴 **改验收脚本 ⛔ 不做「找行 → splice 到某处」** —— 一律先 `write` 出替换后的**整份内容**再覆盖；
+  裁剪类脚本必须先打印「命中区间 + 前后行数」并核对。
+- 🔴 **改样式 ⛔ 不按行文本全局替换** —— 本批第一版按 `text-align: left` 匹配，误改了
+  `.rl-ai-dd-panel .rl-ai-dd-item` 与 `.rl-pick-list .rl-pick-item` 两条无关规则（已还原，并补了反向守卫）。
+
+### #647（2026-10-16）：**「字段映射」滚动条直接隐藏**（用户：「还是有问题，隐藏滚动条吧」）
+
+#646 的「把滚动条收进表体、上下各留 6px 槽」仍不满意 ⇒ 换思路：**不显示滚动条，但保留滚动能力**
+（滚轮 / 触摸板 / 把行拖到底部时的自动滚全部照旧）。
+
+#### ✅ 落地
+
+- `.rl-fieldmap-wrap { scrollbar-width: none; }`（标准属性兜底）
+- `::-webkit-scrollbar` / `-thumb` / `-track` / `-corner` 四组全零宽 + `display: none`
+- 🔴 **必须 `!important`**：核心有 `body.styled-scrollbars ::-webkit-scrollbar { width: var(--scrollbar-width) }`，
+  特异度 (0,2,0) 且带元素名，我们的 `.rl-fieldmap-wrap::-webkit-scrollbar`（0,1,0）**压不过它** ——
+  实测不写 `!important` 滚动条照样出现。这是本仓**唯一**允许用 `!important` 的场合（压核心的滚动条钉样式）。
+
+#### 🔴 隐藏之后有三样必须**一起**撤（漏一样就是新瑕疵）
+
+⑴ `scrollbar-gutter: stable` —— 它占的正是「滚动条」的位置，条没了就白留 12~14px；
+⑵ 表头的 `padding-right: 12px` —— 那是为对齐滚动条预留的，不撤就**表头比表体窄 12px**（#640 修掉的老毛病）；
+⑶ `#646` 的 `padding-block: 6px` + `box-sizing: content-box` —— 条都不显示了，槽只是白边。
+
+复量：滚动条占宽 **2px → 0**（`scrollbarWidth: none`）｜表头与表体**同宽** ✅｜右列偏差 **0** ✅｜容器**仍可滚** ✅｜可视高 438。
+
+#### 门禁
+
+tsc 0 ／ 87 warnings ／ 断言 **4464 PASS**、既有红仍 **37**（**就地翻面 4 条**：#560 的 gutter 计数 **2 → 1**
+并补「字段映射不许再挂 gutter」反向守卫；#646 三条改口径为「隐藏 + 不留槽 + 仍可滚」）／
+突变 `_mut647.cjs` **6-6 RED** ／ md5 三方一致 ／ 部署核实 **7/7** ／ 镜像已同步。
+
+#### ⚠️ 两课
+
+- ⚠️ **反向守卫必须先剥注释**：本批注释里为写明「为什么撤掉」而引用了 `scrollbar-gutter` / `padding-right: 12px`，
+  探针直接查原文就撞上了自己的注释（本仓老坑）。
+- ⚠️ **判据别只看「容器规则体」**：`scrollbar-width: none` 写在**单独一条规则**里，只查容器规则体必然恒假。
+
+### #646（2026-10-16）：**「字段映射」滚动条不再穿透表头**（用户第三轮）
+
+用户：「滚动条轨道顶穿了表头 / 表头右侧被侵占 / sticky 表头与滚动条视觉穿透」。
+
+#### 🔴 先澄清前提：表头**本来就**在滚动容器外面
+
+量测：表头容器 `bottom` 与表体容器 `top` **相等**，两者同宽、同左右缘 —— 也就是说
+「sticky 表头被滚动条盖住」这个假设**不成立**（#640 起表头就是独立的一块`<table>`，不参与滚动）。
+真因是：滚动条槽（12~14px）**贴着表头右缘一路通到容器顶部**，而表头右侧那 12px 留白
+（`padding-right`，为对齐滚动条预留）与它**等宽且相邻** ⇒ 这两件事叠在一起，读起来就是「轨道穿进表头」。
+
+#### ✅ 修法：把滚动条收进表体这一块
+
+- `.rl-fieldmap-wrap` 加 `padding-block: 6px` —— 轨道上下各留 6px 的槽，**上端离开表头的下边线**；
+  ⚠️ 必须是 `padding` 而不是 `margin`：后者只挪容器本身，表头与表体就错宽了（那是 #640 修掉的老毛病）。
+- 配 `box-sizing: content-box`，让这 12px 槽**不从可视高度里扣**（列表可视 438 → **452px**）。
+- 滚动条本体**限定在 `.rl-fieldmap-wrap` 上**（⛔ 不碰全局滚动条 —— #560 的红线）：轨道透明、宽度/圆角/颜色全部走核心变量
+  （`--scrollbar-width` / `--scrollbar-radius` / `--scrollbar-thumb-bg`），⛔ 不写死像素与色值。
+- 🔴 **`scrollbar-gutter: stable` 保留**：它是 #640「拆两表后列宽恒定对齐」的必要条件，断言也钉着它。
+
+#### 复量
+
+轨道起点 **174.4** > 表头下边 **168.4** ✅｜表头与表体同宽 ✅ 同左右缘 ✅｜列表可视 **452px**（未缩水）｜三列文字左缘 **0 / 0 / 0**。
+
+#### 门禁
+
+tsc 0 ／ 87 warnings ／ 断言 **4465 PASS**、既有红仍 **37**（新增 **4** 条锚）／ 突变 `_mut646.cjs` **6-6 RED** ／
+md5 三方一致 ／ 部署核实 **6/6** ／ 镜像已同步。
+
+#### ⚠️ 两课
+
+- 🔴 **断言语句里 label 行末尾的 `,` 会把 `+'…'` 切成第二个参数** ⇒ 条件被挤到第三参 ⇒ `c131(label, cond)` 只读两参 ⇒
+  条件位变成一个字符串 = **恒真**。我在这上面绕了四轮（本仓「`&& (() => {…})()` 换行触发 ASI」的同族）。
+- ⚠️ **复现页缺 `body.styled-scrollbars` 时滚动条宽 17px**（核心只在那个类下给 `::-webkit-scrollbar` 定宽，真机 12px）——
+  量滚动物件之前先补上这个类，否则量的是另一套滚动条。本批就因此先量出 17px、后修正到 14px。
+
+### #645（2026-10-16）：**「字段映射」表头：横向对位 ／ 层级 ／ 分割线**（用户第二轮）
+
+用户逐条给了四条观察与改法。**先分清哪些已经成立、哪些不成立**，再动手：
+
+| 用户的观察 | 量测结论 |
+|---|---|
+| ⑴ 表头与下方值视觉错位（原属性名 7.3px、新属性名 6.6px） | ✅ **真实，但那是 #644 改之前的样子**（药丸与输入框都带内距）。#644 后只剩 0.7~1.4px |
+| ⑵ 左侧边距不统一（表头比重少） | ❌ **不成立**：表头与值的左缘**都是 8px** |
+| ⑶ 表头不够突出 | ⚠️ 字重**本来就是 600**（不是更小），但可以再提档 |
+| ⑷ 表头下没有明显分隔线 | ⚠️ 底边**本来就有** 1px，只是与行分隔线**同色**，几乎看不出 |
+
+⇒ 只落真需要改的：表头左内距 **16px**（= 格内距 8 + 值元素内距 8，与三列「值」的**文字左缘**同一条线）、
+字重 **700** + 字色 `--text-normal`、底边换 `--text-faint` + 底色换 `--background-primary-alt`（**颜色差 + 一条实线**双重分隔）。
+
+复量（同一页、真样式）：三列文字左缘偏差 **0 / −0.78 / −1.44px**（改前 0 / +3.22 / +6.56px）。
+
+#### 🔴 本批最花时间的一处（写下来免得再踩）
+
+第 1 列要让「值」也内缩 8px 才能与表头同线，但 **`.rl-fieldmap-table td` 的 `padding` 简写会把 td 上的左内距竞掉**：
+实测该 td 的 computed `padding-left` **恒为 8px** —— 连内联 `style="padding-left:16px"` 都不动（要 `!important` 或删掉 td 那条才生效），
+而同一个选择器在 CSSOM 里明明解析出 `padding-left: 16px`。⇒ 不赌这个诡癖，改**结构**：
+8px 内缩落在**内层 `<span class="rl-fm-label-text">`** 上，与另两列「`<code>` / `<input>` 自己带内距」**同构**。
+
+#### 门禁
+
+tsc 0 ／ 87 warnings ／ 断言 **4461 PASS**、既有红仍 **37**（新增 **5** 条锚；**就地翻面 1 条**：输入框内距判据 0 → 8px，
+因为「不再双框」守的是描边/底色，不是「内距必须为 0」）／ 突变 `_mut645.cjs` **7-7 RED** ／
+md5 三方一致 ／ 部署核实 **6/6** ／ 镜像已同步。
+
+#### ⚠️ 三课
+
+- 🔴 **「表头与值对齐」必须按文字左缘量**：按格框量会得出相反的结论；而 `Range.getClientRects()` **已经含**元素自身的
+  `padding-left`，再减一次就会凭空多出 8px —— 本批因此误判过两轮。
+- 🔴 **与浏览器较劲之前先问「这条规则到底能不能改到那个盒子」**：改不动就换一层（内层 span），比 `!important` 稳。
+- ⚠️ **翻面时每条锚都要问它守的是什么**：这条改内距的锚，守的是「不再双衬里」，不是「内距必须是 0」。
+
+### #644（2026-10-16）：**「字段映射」UI 改观**（用户：「也改一下字段映射的UI」）
+
+用户把这张表的形态逐条描述了一遍。**照例先量再改**（`_shot/fm644.html`，同一套口径：真核心 `app.css` +
+`styles.css` 真规则 + 现场 bundle 的 `META_FIELDS` 真数据；改前快照 `_shot/rl-fm-644-old.css`）。
+
+#### 🔴 量出来的第一条结论：**列对齐本来就没问题**
+
+表头「新属性名」与表体第三格左缘只差 **1.4px** —— **用户描述的形态正是现状**（浅灰表头 / 右侧滚动条 / 行间极细横线），
+字面上没有可改的。⇒ 这次**没有拆结构**，只改量出来的三处真问题：
+
+| # | 现象 | 实测 |
+|---|------|------|
+| ⑴ | **同一格画两层框** | 格 296.9 / 输入框 280.9（左右各被吃 8px），框自己还有 1px 描边 + 8px 内距；「原属性名」另裹一层 `<code>` 药丸 ⇒ 全表 **84 个框** |
+| ⑵ | **三段说明各占一行** | 说明 /「未配置映射…」/ 表格；未配置时那行「什么都没发生」白占 **31px** |
+| ⑶ | 行高 34.5、42 行全高 **1469px**（滚 4 屏），而表头只有 26px、字号比输入框还小半档 | — |
+
+#### ✅ 改法
+
+- **输入框去掉自己的框**（透明底 + 无描边 + 无横向内距），聚焦时才给一圈主题色 `box-shadow`（⛔ 不用 `border`，那会改宽度挤歪列）；
+  ⚠️ 必须两级选择器才压得住核心 `input[type=text]`（0,1,1）。
+- **「原属性名」去药丸** → faint 等宽小字（与 #643 的 `.rl-fo-key code` 同一口径）。
+- **「未配置」折进说明行**（`rl-fieldmap-idle` 灰字打头），回执槽 `:empty` 连外距一起收掉 ⇒ 表格不再被一句「什么都没发生」往下推。
+- 表头内距 4 → 8px（与表体同档）、表体视野 380 → 440px。
+
+#### 🔴 一处行为翻面：**空值就是「没配过」**
+
+用户描述「输入框内显示的均是默认的原属性名……对应了上方『未配置映射』的提示」——那句描述的是 `value` 回显，
+但它意味着**用户无法把某个字段改成空**（想不写出 `writer` 就只能删光，而回显态下删光又跳回原键名），
+也让 42 行里出现 42 个重复键名。裁定后改成：**原键名只做 `placeholder`，⛔ 不再进 `value`**。
+
+#### 门禁
+
+tsc 0 ／ 87 warnings ／ 断言 **4456 PASS**、既有红仍 **37**（⛔ 无一条原有 FAIL 消失；新增 **8** 条锚）／
+突变 `_mut644.cjs` **7-7 RED**（首轮 **M4 假 GREEN**：未配置分支里把说明文字挤掉没人管 ⇒ 补锚后才咬住）／
+md5 三方一致 ／ 部署核实 **10/10** ／ 镜像已同步。
+
+#### ⚠️ 三条排雷
+
+- 🔴 **别靠「注释文本」猜代码在哪个断言块**：我把 #644 的锚插进了 `1.3.1①-3` 块，而那个块里的源码变量叫 `sSet614`、
+  这段逻辑用的是 `sSet131` ⇒ `ReferenceError`，PASS 从 4456 掉到 4260。
+- ⚠️ **注入片段里带反引号就别用模板字面量**（本批连踩两次）⇒ 改成数组 `join`。
+- ⚠️ **`Object.values(F)` 不是 `Object.keys(F)`**：后者给的是键名，`orig[键名]` 为 undefined ⇒ **还原静默跳过**
+  （#636 那笔学费的同族变体；这次是还原那句先炸了才被发现）。
+
+### #643（2026-10-16）：**「笔记属性顺序」UI 改观**（用户：「这个太丑了」）
+
+用户一句话：「这个太丑了，高级设置-笔记属性顺序 UI，改改」。**没有等他说哪儿丑，先把它量出来。**
+
+#### 🔴 先量：四处「丑」，前三处其实是**错位**
+
+复现页 `_shot/fo643.html`（`_gen_fo643_sim.cjs` 生成）用的是**真东西**，不是手写替身：
+
+- **核心** = 从 `obsidian.asar` 现取的 `app.css`（变量块 base + light + dark，以及 `button` / `input` / `setting-*` 那批规则）——
+  这组的「框感」有一半来自核心给 `button:not(.clickable-icon)` 的 (0,1,1) 灰底 + 内描边环，替身证不了；
+- **本插件** = `styles.css` 里真实的 `.rl-fo-*` 规则（去注释后逐条抠）；**改前**那一份存成 `_shot/rl-fo-643-old.css`，落地后仍能对比；
+- **数据** = 现场 esbuild bundle `pure/fieldOrder` + `pure/metaFields` 跑出来的真字段表（⛔ 不手抄）。
+- 量测走 `_probe_txt.cjs` 读页面**自报的计算样式**（本机模型看不了图，只认数值）。
+
+量出来的四条：
+
+| # | 现象 | 实测 |
+|---|------|------|
+| ⑴ | **两块不同高** —— 左栏 10 枚导航按钮没有上限，右栏是「表头 + 340px 的框 + 脚注」 | 左 **150×299** / 右 **354×410**，**底边差 112px** |
+| ⑵ | 行行自带 `border-bottom` | 框里一排横杠，列表被切成条纹 |
+| ⑶ | 当前分组 = `--interactive-accent` **实心块** | 设置页最抢眼的元素成了导航 |
+| ⑷ | 键名带 `<code>` 底片 | 每行末尾一枚灰药丸 |
+
+#### ✅ 改法：从「两块各滚各的」改成「一整块封顶」
+
+- `.rl-fo-wrap` = **一整块 400px 封顶**：左栏 `background-secondary`、右栏 `background-primary`、中间 1px 分隔线，
+  `overflow: hidden` 只裁不滚；**只有列表在滚**（`flex: 1 1 auto; min-height: 0`，⛔ 不再写死 `max-height: 340px` —— 那正是错位的来路）。
+- 左栏收窄到 **116px** 并**自带滚动**（`min-height: 0` + `overflow-y: auto`；少了 `min-height: 0` 它只会把整块撑高）。
+- 行**不再画下边框**；键名去掉 `<code>` 底片（降成小一号 faint 等宽字）。
+- 当前分组改**凸起白卡片 + `inset` 细描边**（⛔ 不再涂主题色）—— 色值全走变量 / 语义色，深色主题自动翻转（C 帧逐条同样成立）。
+- 表头文案：原来标题与说明**各说一遍「全局」**、中间还夹个悬浮间隔号 ⇒ 收成「全局属性 ／ 所有类型共用，改动对全部类型生效」。
+- `rl-fo-nav` 补进 `overscroll-behavior: contain` 的滚动穿透名单。
+- **数据模型一行未动**（`fieldOrder` / `fieldOrderByKind` 与写出逻辑都不碰）。
+
+#### 🔴 复量（同一页、同一套真样式）
+
+两块 **116×398 / 410×398 同高同底**｜列表 **312/488** 自滚｜行 `border-bottom: 0px`｜选中项 `rgb(255,255,255)`（≠ 主题色）｜键名底片 `rgba(0,0,0,0)`；深色帧逐条一致。
+
+#### 门禁
+
+tsc 0 ／ 构建 **87 warnings**（基线不变）／ 全量单测 **4219 passed**（4 条 `[!bookinfo]+` = **既有红**，已 `git stash` 复跑证实与本批无关）／
+断言 **4448 PASS**、既有红仍 **37**（⛔ 没有一条原有 FAIL 消失；**就地翻面 2 条 + 新增 6 条**，`1.3.1①-3` 小节 **26 PASS / 0 FAIL**）／
+突变 `_mut643.cjs` **7-7 RED**（首轮 M7 假 GREEN —— 表头文案变了没人管，补锚后才咬住）／ md5 三方一致 ／ 部署测试库 ✅。
+
+#### ⚠️ 三条排雷（都是本批自己踩的）
+
+- 🔴 **注释会进源码级反向守卫的射程**：我在 `Settings.ts` 注释里复述了旧表头文案，于是那条「旧措辞不许回潮」**被自己的注释撞红**
+  （本仓老坑第 N 次，这次偏偏写在被守卫的那段代码正上方）⇒ 注释改成**不复述旧文案**。
+- 🔴 **别跨函数体做全局 `split/join` 改名**：为了改一个变量名把 `sSet` 全改，打到了**另一个函数里的同名变量** ⇒ 断言中途 `ReferenceError`，
+  PASS 从 4447 掉到 4131 —— 看上去像「大面积坏掉」，实际只坏了一处。
+- ⚠️ **仿真页的 `@media` 要按大括号配平整块抠**：第一版按第一个 `}` 截断、少收一层 ⇒ 紧跟的下一条规则被浏览器当垃圾吞掉，
+  「现状帧右栏宽 528 = 没吃到 `flex: 0 0 150px`」，白忙一轮。
 
 ### #642（2026-10-18）：**修「阅读 EPUB 漫画时卡住完全动不了」（重复 zip 解压）**
 
@@ -11150,6 +13929,8 @@ url = ruleToc.getUrl().formatted(id);                   // toc.url 的 %s ← ID
 > **「隐藏插件内滚动条」作用范围收窄——阅读器滚动条始终显示（用户澄清，tsc+esbuild 通过，产物断言 PASS，已部署测试库 cmp IDENTICAL）：** 用户原意是**不要**隐藏阅读器滚动条（PDF 阅读器此前从未接该设置，TXT/EPUB 却跟随隐藏，三格式不一致）。改动：删除 TxtReaderOptions/EpubReaderOptions.hideScrollbars 字段 → ReaderModal 两 Modal onOpen 不再 `addClass('rl-hide-scroll')`、EpubReader iframe 文档不再注入 `::-webkit-scrollbar{display:none}` → main.ts 两处传参删除；设置项 desc 同步改为「隐藏主界面与编辑弹窗内滚动条…阅读器（TXT/EPUB/PDF）不受影响，滚动条始终显示」。保留：HomeView 主界面 + EntryModal 编辑弹窗仍跟随设置。产物断言：rl-hide-scroll 在 bundle 恰 2 处（HomeView+EntryModal）、EPUB iframe 隐藏滚动条注入 0 残留。
 
 > **扫描版 PDF 整页空白（pdfjs v5 wasm 解码缺失，用户报《资本论（全三卷）》3022 页全空，tsc+esbuild 通过，已部署测试库 cmp IDENTICAL，待真机验证）：** 根因——该文件为 CCITT(G3/G4) 传真压缩扫描版（57.6MB/3022 页、零文字层）；pdfjs-dist **v5 起把 CCITT/JBIG2 解码改为外部 WASM**（需 `getDocument({ wasmUrl })` 提供 `jbig2.wasm`），而本插件是「单文件产物 + Blob 内联 worker」，Obsidian 环境拿不到 wasm → 每页图像 XObject 被 pdf.js 直接忽略（`ignoring XObject: "Jbig2Error: JBig2 failed to initialize"`）→ canvas 全空白。**复现与验证（Node 离线）**：v5 下 3022 页抽样全部 0 图像操作；同文件喂 v4.10.38 无警告、CCITT 页正常出图像操作。**修复**：pdfjs-dist ^5.7.284 → **^4.10.38**（传真/JPEG2000/色彩解码纯 JS 内联 worker，无外部资源依赖，单文件产物与三件套 cmp 流程不变）；唯一 API 适配——v4 `page.render` 参数是 `canvasContext`（v5 才改 `canvas`），改传 ctx（HiDPI 预变换不变）。产物 3.57MB→3.51MB。**红线沉淀**：本项目 PDF 依赖**固定 v4 线**，勿升 v5（除非改用非单文件部署并解决 wasm 资源加载）。
+
+> **上述红线的例外与收窄（2026-10-22，pdfjs 改走引擎自带 5.3.34；tsc 0 / esbuild 87 warnings = 基线 / 断言 PASS 3976·FAIL 78 = 基线 / 真机渲染通过）：** 红线针对的是**「自带 pdfjs-dist 打包进单文件产物」**这条路径 —— 那种部署方式下 wasm 无处可放，v5 必踩。**Obsidian 引擎自带的 pdfjs 不属于该路径**：`loadPdfJs()` → `/lib/pdfjs/pdf.min.mjs`（实测 5.3.34），worker / `wasm/` / `standard_fonts/` / `cmaps/` 由引擎以 `wasmUrl:"/lib/pdfjs/wasm/"`、`cMapUrl:"/lib/pdfjs/cmaps/"`、`standardFontDataUrl:"/lib/pdfjs/standard_fonts/"` 等参数现成提供，`fetch` 实测全部 200。**关键实测（这条例外成立的全部依据）**：① 引擎这版 `pdf.worker.min.mjs` 里 `jbig2.wasm` 与全小写 `jbig2` 计数**均为 0**、`Jbig2Image` 3 处 ⇒ **JBIG2 走纯 JS 内联**，与当年 `pdfjs-dist@5.7.284` 把 JBIG2 外置成外部 wasm 的行为**根本不同**；CCITT 亦为纯 JS（`ccitt`/`CCITTFax` 各 8 处）；`wasm` 关键字只出现在 OpenJPEG（JPEG2000）与 QCMS（ICC 色彩）两条路径，而这两者的 wasm 引擎侧已就位 ⇒ **复用引擎自带版本不触发该红线**。② 该版 `page.render` 参数**仍是 `canvasContext`**（2026-10-22 真机实测：传 `canvasContext` 正常，传 `canvas` 报 `Cannot read properties of undefined (reading 'canvas')`）、`new TextLayer({ textContentSource, container, viewport })` 签名与 v4 完全一致 ⇒ **渲染代码一行未改**。③ 唯一 API 差异：v5 起不再导出 `RenderTask` ⇒ `PdfReaderModal.ts` 改用本地结构类型 `PdfRenderTask` / `PdfPageProxy` / `PdfDocumentProxy` / `PdfjsLib`，不再 `import type` 自 pdfjs-dist。④ 顺带消除的真实隐患：原先打包的 pdfjs-dist 会执行 `globalThis.pdfjsLib = {}` 覆盖引擎同名全局（真机实测：未开原生 PDF 时 `window.pdfjsLib.version` = 4.10.38，打开原生 PDF 视图后变 5.3.34）⇒ 旧代码随时可能吃到 v5 的对象。**结果**：产物 6,228,995 → **4,100,179 字节（−2,128,816 B ≈ 2.03 MB）**；`pdfjs-dist` 依赖与 `esbuild.config.mjs` 的 `pdfWorkerInline` 插件、`src/types/pdfjs-worker.d.ts` 一并删除。**⛔ 别把这条例外反向理解成「可以升 pdfjs-dist 到 v5」—— 打包路径上的红线原样有效。**
 
 > **EPUB 目录「只显示 chapter1.html 等文件名」解析（用户报《活着》截图，TDD 7+12 用例全绿，tsc+esbuild 通过，已部署测试库 cmp IDENTICAL）：** 根因——廉价导出的 EPUB 往往既无 `nav.xhtml` 也无标准名 `toc.ncx`（用 `fb.ncx` 之类），`parseTocNav` 找不到入口 → 兜底用 spine href 末段做 label（OPF 顺序是 coverpage → chapter1 → chapter13 → chapter2 → …），侧栏就成了「coverpage.html / chapter13.html」字样。**修复策略（pure/epubParse + main.unpackEpub）**：①保留 nav.xhtml/toc.ncx 优先；②兜底扫 manifest 中 `application/x-dtbncx+xml` 媒体类型条目（解析 NCX），命中即取；③最终兜底从每个 spine 章节 XHTML 抽 `<h1>` > `<title>` 作 label，**剔除等于书名的 title**（扉页 chapter1.html 的 `<title>` 常写「活着」无信息不参与，否则会污染目录），仍抽不出才用文件名。**OPF spine 顺序保持权威**——本例中 chapter13.html 实为「作者简介」被前置是 EPUB 自身导出顺序问题，不自动重排（用户可一目了然看出问题）。**TDD**：extractChapterLabel 新增 7 用例（h1 优先/inline 标签折叠/title 排除书名/空字符串/空 title），与原 12 用例一同 19/19 绿。
 

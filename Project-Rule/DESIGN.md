@@ -68,7 +68,9 @@
 │   ├── book/ novel/ comic/              # 书籍按子分类分：文学 / 网文 / 漫画
 │   └── movie/ teleplay/ animation/ game/ music/
 ├── 封面/               # 本地封面图片（原 covers/，{标题}.jpg 命名）
-├── 阅读进度/           # 书签 / 高亮 / 阅读进度三者同放的 JSON
+├── 阅读进度/           # 书签 / 高亮 / 阅读进度三者同放的 JSON（TXT / EPUB / PDF 三端共用同一 schema；PDF 高亮额外带可选 `rects` 归一化页内矩形，⛔ 不写回 PDF 文件）
+│                       # ⚠️ 摘抄不在这里 —— 摘抄写进条目笔记的 `## 摘抄` 区（`ParsedExcerpt`）
+│                       # ⚠️ 区域截图也不在这里 —— 图片进附件目录、笔记 `## 阅读截图` 区（`SHOT_SECTION_READER`）
 ├── 下载续传/           # 书籍抓章的中间态存档（*.ndjson，抓完即删）
 ├── 备份/               # 导出备份（原 backups/）
 ├── 报告/               # 年度总结等（原 reports/）
@@ -231,9 +233,9 @@ type Rating = 0 | 1 | 2 | 3 | 4 | 5;
 | 书架 / 统一视图 | `reelludic-home` | 页签容器，**三种导航布局**（顶部胶囊 / 右上角文字菜单 / 合并视图） |
 | 视频播放器 | `reelludic-video-player` | 自绘控件，画面撑满内容区 |
 | 音频播放器 | `reelludic-audio-player` | 独立标签页或侧边栏；侧边栏在播时**就地切歌** |
-| TXT 阅读器 | `reelludic-txt-reader` | 编码嗅探（BOM / UTF-8 / GB18030） |
-| EPUB 阅读器 | `reelludic-epub-reader` | |
-| PDF 阅读器 | `reelludic-pdf-reader` | |
+| TXT 阅读器 | `reelludic-txt-reader` | 编码嗅探（BOM / UTF-8 / GB18030）；摘抄就地卡片 + 区域截图（`ShotOverlay`，框选区 `.rl-reader-scroll`） |
+| EPUB 阅读器 | `reelludic-epub-reader` | 正文在 `iframe`（`srcdoc`，`sandbox=allow-same-origin`）；摘抄 + 区域截图（框选区取 iframe 外层 `.rl-reader-frame`） |
+| PDF 阅读器 | `reelludic-pdf-reader` | 复用 Obsidian 自带 pdfjs（`loadPdfJs()`，5.3.34）；高亮/书签/进度/目录同放阅读存档 JSON（⛔ 不改 PDF 文件）；摘抄写笔记 `## 摘抄`（`loc.chapter` 存的是**一基页码**）；区域截图（框选区 `.rl-pdf-scroll`） |
 | 漫画阅读器 | `reelludic-comic-reader` | 单页制；图片文件夹 / CBZ·ZIP·CBT·TAR |
 
 ## 6. 扩展点（已全部落地）
