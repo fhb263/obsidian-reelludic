@@ -112,11 +112,14 @@ export class HomeView extends ItemView {
     }
 
     private async render(): Promise<void> {
-        const [entries, excerptCounts, yearReports, activityLog] = await Promise.all([
+        const [entries, excerptCounts, yearReports, activityLog, seriesRatings] = await Promise.all([
             this.plugin.service.list(),
             this.plugin.excerptCounts(),
             this.plugin.listYearReports(),
             this.plugin.listActivity(),
+            // 🔴 系列（合集）评分：与 entries **同一个 Promise.all** 里取（不多开一趟磁盘读）。
+            //    它是 catalog 的**顶层字段**（不是条目字段）⇒ 必须单独取一次。
+            this.plugin.service.seriesRatings(),
         ]);
         this.entries = entries;
         // 🔴 #630：隐藏插件内滚动条（外观设置）—— 走 `services/scrollPref` 那一处真源（跟随开关）
@@ -132,7 +135,7 @@ export class HomeView extends ItemView {
             //    ⇒ 走到这条**增量**刷新，而这里逐个列出的 prop **没有 statsOrder**
             //    ⇒ 组件里的 `order` 还是旧值 ⇒ **拖完画面纹丝不动**（用户：「按住拖动有变色效果但UI无变动」）。
             //    ⛔ 以后在本条新增任何「响应式 prop」都必须同步加进这里。
-            this.component.$set({ entries, tableColumnsByType: resolveTableColumnsByType(this.plugin.settings.tableColumnsByType), colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), navLayout: normalizeNavLayout(this.plugin.settings.navLayout), defaultViewMode: this.plugin.settings.defaultViewMode, posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity), posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns), ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom, statsOrder: normalizeStatsOrder(this.plugin.settings.statsOrder), viewOrder: this.plugin.settings.viewOrder, timelineZoom: this.plugin.settings.timelineZoom, listGrouping: this.plugin.settings.listGrouping !== false, excerptCounts, yearReports, activityLog });
+            this.component.$set({ entries, tableColumnsByType: resolveTableColumnsByType(this.plugin.settings.tableColumnsByType), colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), navLayout: normalizeNavLayout(this.plugin.settings.navLayout), defaultViewMode: this.plugin.settings.defaultViewMode, posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity), posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns), ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom, statsOrder: normalizeStatsOrder(this.plugin.settings.statsOrder), viewOrder: this.plugin.settings.viewOrder, timelineZoom: this.plugin.settings.timelineZoom, listGrouping: this.plugin.settings.listGrouping !== false, excerptCounts, yearReports, activityLog, seriesRatings });
             return;
         }
         this.contentEl.empty();
@@ -140,6 +143,9 @@ export class HomeView extends ItemView {
             target: this.contentEl,
             props: {
                 entries,
+                // 🔴 系列（合集）评分：**初始 props 与增量 `$set` 两处都要传**（#678 那条坑的镜像面）。
+                //    漏这里 ⇒ 存档里的合集分永远读不回来（重开 Obsidian 就归零）。
+                seriesRatings,
                 excerptCounts,
                 yearReports,
                 activityLog,
@@ -290,6 +296,18 @@ export class HomeView extends ItemView {
                  * ⚠️ 失败**向上抛**（组件据它回滚乐观更新并显示红字），⛔ 不在这里静默吞。
                  */
                 onSetRating: (id: string, rating: Rating) => this.plugin.commitTableCell(id, { rating }),
+                /**
+                 * 🔴 用户 2026-10-27 裁定「加合集分」：海报墙/评分看板上给**整个系列**打分。
+                 *
+                 * 🔴 走 `service.setSeriesRating` 那一条出口（catalog 顶层 `seriesRatings` 字段），
+                 *    ⛔ 绝不落到组内某条 `entry.rating` 上 —— 那会把用户手打的单条分抹掉且不可逆。
+                 * 🔴 落库后要 `refreshViews()`：评分看板与海报墙都读这份数据，不刷就停在旧值。
+                 * ⚠️ 失败**向上抛**（组件据它回滚乐观更新 + 显示红字），⛔ 不在这里静默吞。
+                 */
+                onSetSeriesRating: async (key: string, rating: Rating) => {
+                    await this.plugin.service.setSeriesRating(key, rating);
+                    this.plugin.refreshViews();
+                },
             },
         });
     }

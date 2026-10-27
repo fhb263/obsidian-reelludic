@@ -17,14 +17,18 @@
     import {
         BOARD_TABS,
         BOARD_TAB_LABELS,
-        buildBoard,
         tabCounts,
-        unratedRatio,
         ratingForRow,
         dropHint,
         type BoardTab,
-        type RatingRow,
     } from 'pure/ratingBoard';
+    import {
+        buildSeriesBoard,
+        seriesUnratedRatio,
+        readSeriesRating,
+        type SeriesBoardItem,
+        type SeriesBoardRow,
+    } from 'pure/seriesRating';
     import type { Rating } from 'pure/rating';
 
     export let entries: MediaEntry[] = [];
@@ -40,10 +44,24 @@
      */
     export let onSetRating: (id: string, rating: Rating) => Promise<void> = async () => {};
 
+    /**
+     * 🔴 系列（合集）评分（用户 2026-10-27 裁定「加合集分」）：`分组键 → 0~5`。
+     * ⚠️ catalog 的**顶层字段**，不挂在条目上 ⇒ 宿主单独取、逐层透传到这里。
+     */
+    export let seriesRatings: Record<string, number> = {};
+    /**
+     * 写某系列的合集分（宿主落盘 + 刷视图）。
+     * 🔴 **与 `onSetRating` 是两条独立通道**：合集分绝不落到组内某条 `entry.rating` 上
+     *    （那会真的抹掉用户手打的单条分，不可逆）。
+     */
+    export let onSetSeriesRating: (key: string, rating: Rating) => Promise<void> = async () => {};
+
     /** 当前页签 */
     let tab: BoardTab = 'all';
     /** 本地乐观覆盖（id → rating）：拖入后立刻变位置，落库失败时回滚 */
     let optimistic: Record<string, Rating> = {};
+    /** 🔴 合集分的本地乐观覆盖（分组键 → rating）：与 `optimistic` 分开存 —— 两者键空间不同、落库通道也不同 */
+    let optimisticSeries: Record<string, number> = {};
     /** 正在提交的条目 id（显示保存态、防重复拖） */
     let busy: Record<string, true> = {};
     /** 错误提示（落库失败时给一句话，⛔ 不静默吞） */
@@ -63,25 +81,52 @@
 
     /** 应用乐观值后的条目集合（渲染与统计都吃它 ⇒ 拖完立刻看到变化） */
     $: merged = entries.map((e) => (optimistic[e.id] !== undefined ? { ...e, rating: optimistic[e.id] } : e));
+    /** 应用乐观值后的合集分表（同上，但键是分组键） */
+    $: mergedSeries = { ...seriesRatings, ...optimisticSeries };
     $: counts = tabCounts(merged);
-    $: rows = buildBoard(merged, tab);
-    $: ratio = unratedRatio(merged, tab);
+    /**
+     * 🔴 用户 2026-10-27 裁定「加合集分」：看板改用 `buildSeriesBoard`。
+     *
+     * 它把**系列折叠成一张合集卡**（组内成员不再各占一格），合集卡的分数读 `seriesRatings` 的
+     * **独立字段**（⛔ 不是组内平均）；单条组照旧各占一格。
+     * 行序 / 配色仍然复用 `pure/ratingBoard.boardRows()` + `toneOf` 那一套单一真源。
+     *
+     * ⚠️ 用户在象形稿上看到的「94 张 → 34 张」就是这个函数的产出（真实数据实测 -64%）。
+     */
+    $: rows = buildSeriesBoard(merged, mergedSeries, tab);
+    $: ratio = seriesUnratedRatio(merged, mergedSeries, tab);
 
     /** 拖拽中的条目 id（`dataTransfer` 在某些环境读不到，本地留一份更可靠） */
     let draggingId: string | null = null;
+    /**
+     * 🔴 拖拽中的**合集卡**分组键（用户 2026-10-27「加合集分」）。
+     * ⚠️ 与 `draggingId` **互斥**：一次只拖一样东西，两个变量同时有值就是状态坏了。
+     */
+    let draggingKey: string | null = null;
     /** 当前悬停的行下标（−1 = 没悬停）—— 就是规格里的「视觉激活态」 */
     let hoverRow = -1;
 
     function onDragStart(ev: DragEvent, e: MediaEntry) {
         draggingId = e.id;
+        draggingKey = null;
         errorMsg = '';
         // `text/plain` 给浏览器一个「这是可拖内容」的最小信息；真正读的是本地 `draggingId`
         ev.dataTransfer?.setData('text/plain', e.id);
         if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move';
     }
 
+    /** 🔴 拖合集卡：写的是分组键，前缀 `series:` 让 `onDrop` 能区分两条通道 */
+    function onDragStartSeries(ev: DragEvent, g: { key: string }) {
+        draggingId = null;
+        draggingKey = g.key;
+        errorMsg = '';
+        ev.dataTransfer?.setData('text/plain', `series:${g.key}`);
+        if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move';
+    }
+
     function onDragEnd() {
         draggingId = null;
+        draggingKey = null;
         hoverRow = -1;
     }
 
@@ -91,7 +136,7 @@
      *    「属性里跨行的箭头函数体」很脆（会报 `Unexpected token`）—— 本仓记过同族坑。
      */
     function onDragOver(ev: DragEvent, i: number) {
-        if (!draggingId) return;
+        if (!draggingId && !draggingKey) return;
         if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
         hoverRow = i;
     }
@@ -103,16 +148,50 @@
 
     /** 拖住的条目（视角高亮与提示文案都要它） */
     $: draggingEntry = draggingId ? merged.find((e) => e.id === draggingId) ?? null : null;
+    /** 拖住的合集卡显示名（提示文案用） */
+    $: draggingTitle = draggingKey
+        ? rows.flatMap((r) => r.items).find((it) => it.kind === 'series' && it.key === draggingKey)?.title ?? null
+        : null;
 
-    async function onDrop(ev: DragEvent, row: RatingRow) {
+    async function onDrop(ev: DragEvent, row: SeriesBoardRow) {
         ev.preventDefault();
-        const id = draggingId ?? ev.dataTransfer?.getData('text/plain') ?? '';
+        const raw = draggingKey
+            ? `series:${draggingKey}`
+            : draggingId ?? ev.dataTransfer?.getData('text/plain') ?? '';
         hoverRow = -1;
         draggingId = null;
-        if (!id) return;
+        draggingKey = null;
+        if (!raw) return;
+        // ⚠️ `ratingForRow` 的形参是 `RatingRow`，这里的 row 是 `SeriesBoardRow` ——
+        //    两者差异**只在 `items`**（`RatingRow` 是 `MediaEntry[]`，这里是 `SeriesBoardItem[]`），
+        //    而该函数只读 `unrated` / `rating`。⇒ 传一份 `items` 置空的等价行，
+        //    ⛔ 别用 `as RatingRow`（那会连 `unrated`/`rating` 的类型校验一起关掉），
+        //    ⛔ 也别把 `ratingForRow` 的签名改宽 —— 产物断言 `#635 ①` 锚的就是那行字面形态。
+        const next = ratingForRow({ ...row, items: [] });
+        // 🔴 合集卡走**独立通道**：写 catalog 顶层 `seriesRatings`，⛔ 绝不碰组内任何 entry.rating
+        if (raw.startsWith('series:')) {
+            const key = raw.slice('series:'.length);
+            const prev = readSeriesRating(seriesRatings, key);
+            if (prev === next) return;
+            optimisticSeries = { ...optimisticSeries, [key]: next };
+            busy = { ...busy, [key]: true };
+            try {
+                await onSetSeriesRating(key, next);
+            } catch (err) {
+                const back = { ...optimisticSeries };
+                delete back[key];
+                optimisticSeries = back;
+                errorMsg = `保存合集分失败：${err instanceof Error ? err.message : String(err)}（已还原为 ${prev} 星）`;
+            } finally {
+                const b = { ...busy };
+                delete b[key];
+                busy = b;
+            }
+            return;
+        }
+        const id = raw;
         const e = merged.find((x) => x.id === id);
         if (!e) return;
-        const next = ratingForRow(row);
         // 拖到自己原来那一行 ⇒ 什么都不做（⛔ 别白写一次笔记）
         if (e.rating === next) return;
         const prev = e.rating;
@@ -146,9 +225,50 @@
      *    拼字在小字号下容易读成「4 .5」，而补两位的定点数在等宽数字下上下对齐得好。
      * ⚠️ 同一个函数也喂**悬停提示**（`评分 5.0`）⇒ 提示里的数字与行里显示的**逐字一致**（⛔ 别另算一份）。
      */
-    function rowText(row: RatingRow): string {
+    function rowText(row: SeriesBoardRow): string {
         if (row.unrated) return '未评分';
         return row.half !== null ? `${row.whole}.5` : `${row.whole}.0`;
+    }
+
+    /**
+     * 🔴 点合集卡 = 打开该系列**组内第一条**（合集卡本身不是一个可打开的实体）。
+     *
+     * ⚠️ 为什么抽成具名函数而不写在模板属性里：
+     *    Svelte 4 的模板表达式按 **JS** 解析，`on:click={() => { const f = it.group?.items[0]; ... }}`
+     *    这种「箭头函数块体 + 可选链 + 多语句」会直接报 `Unexpected token`（本仓记过同族坑：
+     *    模板里不能写 TS 注解）。⇒ 逻辑一律搬进 `<script>`，模板里只留一眼能读的调用。
+     */
+    function openSeriesFirst(it: SeriesBoardItem): void {
+        const first = it.group?.items[0];
+        if (first) onOpenEntry(first.id);
+    }
+
+    /** 合集卡封面用组内第一条的海报（组内没有封面时走首字占位） */
+    function seriesFirstOf(it: SeriesBoardItem): MediaEntry | undefined {
+        return it.group?.items[0];
+    }
+
+    /** 合集卡的封面 URL（模板里再套一层 `coverUrlOf(...)` 会重复求值，且可选链在模板里不可用） */
+    function coverOfSeriesFirst(it: SeriesBoardItem): string | null | undefined {
+        const first = seriesFirstOf(it);
+        return first ? coverUrlOf(first) : undefined;
+    }
+
+    /**
+     * 拖合集卡 / 拖单条卡的两个具名入口。
+     *
+     * ⚠️ 为什么要这两个包装：Svelte 4 的**模板表达式按 JS 解析**，`it.group!` 这种
+     *    TS 非空断言会直接报 `Unexpected token`（与本仓记过的「模板里不能写类型注解」同族）。
+     *    ⇒ 模板只传 `it`，TS 收窄在 `<script>` 里做。
+     */
+    function dragSeriesOf(ev: DragEvent, it: SeriesBoardItem): void {
+        const g = it.group;
+        if (g) onDragStartSeries(ev, g);
+    }
+
+    function dragEntryOf(ev: DragEvent, it: SeriesBoardItem): void {
+        const e = it.entry;
+        if (e) onDragStart(ev, e);
     }
 
     /**
@@ -254,31 +374,56 @@
                     on:drop={(ev) => void onDrop(ev, row)}
                 >
                     {#if row.items.length === 0}
-                        <span class="rl-board-placeholder">{draggingId && hoverRow === i ? dropHint(row, draggingEntry?.title) : '暂无作品'}</span>
+                        <span class="rl-board-placeholder">{draggingId || draggingKey ? (hoverRow === i ? dropHint(row, draggingTitle ?? draggingEntry?.title) : '暂无作品') : '暂无作品'}</span>
                     {:else}
-                        {#each row.items as e (e.id)}
-                            <!-- 🔴 #657：封面只挂**标题**（拖拽改分是整行的能力，不是这一张封面的属性）。
-                                 🔴🔴 踩过的坑：Svelte 模板注释是**非嵌套**的 —— 注释正文里一旦再写一个
-                                 左尖括号 + 叹号 + 两个连字符，浏览器 / 编译器会在**那里**提前收掉注释，
-                                 剩下的右箭头就成了**页面上看得见的文字**（用户报障：「不能出现在属性列表中间」）。
-                                 ⇒ 注释里要提到这个记号，只能像本节这样绕开书写，⛔ 别原样再写一遍。 -->
-                            <div class="rl-board-card" class:busy={!!busy[e.id]}>
-                                <button
-                                    class="rl-board-cov"
-                                    draggable="true"
-                                    data-tip={e.title}
-                                    on:dragstart={(ev) => onDragStart(ev, e)}
-                                    on:dragend={onDragEnd}
-                                    on:click={() => onOpenEntry(e.id)}
-                                >
-                                    {#if coverUrlOf(e)}
-                                        <img src={coverUrlOf(e)} alt="" loading="lazy" decoding="async" />
-                                    {:else}
-                                        <span class="rl-board-cov-ph">{e.title.slice(0, 1)}</span>
-                                    {/if}
-                                </button>
-                                <span class="rl-board-title" role="link" tabindex="0" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>{e.title}</span>
-                            </div>
+                        <!-- 🔴 用户 2026-10-27 裁定「加合集分」：格子分两种 —— 合集卡（一个系列一格）与单条卡。
+                             两者 key 空间不同（分组键 vs 条目 id）⇒ keyed each 的键必须带 kind 前缀，
+                             ⛔ 否则某个条目 id 恰好等于某分组键时 Svelte 会认成同一条并复用错节点。
+                             🔴 #657：封面只挂**标题**（拖拽改分是整行的能力，不是这一张封面的属性）。 -->
+                        {#each row.items as it (it.kind + ':' + it.key)}
+                            {#if it.kind === 'series' && it.group}
+                                <div class="rl-board-card rl-board-card-coll" class:busy={!!busy[it.key]}>
+                                    <button
+                                        class="rl-board-cov rl-board-cov-coll"
+                                        draggable="true"
+                                        data-tip={`${it.title}（${it.group.items.length} 部）`}
+                                        on:dragstart={(ev) => dragSeriesOf(ev, it)}
+                                        on:dragend={onDragEnd}
+                                        on:click={() => openSeriesFirst(it)}
+                                    >
+                                        {#if coverOfSeriesFirst(it)}
+                                            <img src={coverOfSeriesFirst(it)} alt="" loading="lazy" decoding="async" />
+                                        {:else}
+                                            <span class="rl-board-cov-ph">{it.title.slice(0, 1)}</span>
+                                        {/if}
+                                        <!-- 叠角数量：一眼看出这一格代表几部作品（否则和单条卡长得一样） -->
+                                        <span class="rl-board-coll-n">{it.group.items.length}</span>
+                                    </button>
+                                    <span class="rl-board-title rl-board-title-coll" role="link" tabindex="0" on:click={() => openSeriesFirst(it)} on:keydown={(ev) => { if (ev.key === 'Enter') openSeriesFirst(it); }}>{it.title}</span>
+                                </div>
+                            {:else if it.entry}
+                                <!-- ⚠️ 这里刻意 `{@const e = it.entry}` 再用 `e.*`：
+                                     单条卡与改版前逐字一致，产物断言 `#635 ⑤` 锚的就是 `data-tip={e.title}` 这个字面形态。
+                                     ⛔ 别图省事直接写 `it.entry.title`（断言会红，而它锚的是「封面只挂标题」这条用户口径）。 -->
+                                {@const e = it.entry}
+                                <div class="rl-board-card" class:busy={!!busy[e.id]}>
+                                    <button
+                                        class="rl-board-cov"
+                                        draggable="true"
+                                        data-tip={e.title}
+                                        on:dragstart={(ev) => dragEntryOf(ev, it)}
+                                        on:dragend={onDragEnd}
+                                        on:click={() => onOpenEntry(e.id)}
+                                    >
+                                        {#if coverUrlOf(e)}
+                                            <img src={coverUrlOf(e)} alt="" loading="lazy" decoding="async" />
+                                        {:else}
+                                            <span class="rl-board-cov-ph">{e.title.slice(0, 1)}</span>
+                                        {/if}
+                                    </button>
+                                    <span class="rl-board-title" role="link" tabindex="0" on:click={() => onOpenEntry(e.id)} on:keydown={(ev) => { if (ev.key === 'Enter') onOpenEntry(e.id); }}>{e.title}</span>
+                                </div>
+                            {/if}
                         {/each}
                     {/if}
                 </div>
@@ -459,4 +604,52 @@
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .rl-board-title:hover { color: var(--interactive-accent); }
+
+    /* ── 合集卡（整个系列折成一格）────────────────────────────────────────
+       🔴 2026-10-27 用户裁定「评分看板按系列合集展示」+「合集分与单卡同位」。
+       几何参数取自象形稿 `_shot/src/rating-board-collection.html` 的方案 A 定稿（该稿 14 项探针全绿、
+       卡片高 97.9px 与单条卡 105px 齐平、小字 1 行不折）。
+       ⚠️ 两条实测踩过的坑，改之前先读：
+         ① ⛔ 别只加 `grid-column: span 2` 而不改 `flex-direction` —— 封面会按 `aspect-ratio: 2/3`
+            被拉到约 190px 高，整行被撑爆，比不加还糟；
+         ② 58px 的窄列装不下「标题 + 部数」，折 3 行会把卡从 105px 撑到 139px。 */
+    .rl-board-card-coll {
+        grid-column: span 2;
+        max-width: none;
+        flex-direction: row;
+        align-items: stretch;
+        gap: 6px;
+    }
+    .rl-board-card-coll .rl-board-cov-coll {
+        position: relative;
+        width: 62px;
+        flex: 0 0 62px;
+    }
+    .rl-board-title-coll {
+        flex: 1 1 auto;
+        min-width: 0;
+        text-align: left;
+        /* 合集名普遍比单条标题长（如「熊出没之探险日记2」），给 3 行折行空间，
+           但必须配 `min-width: 0` 否则 flex 子项不肯缩、ellipsis 不生效。 */
+        white-space: normal;
+        display: -webkit-box;
+        line-clamp: 3;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+    /* 叠角部数：一眼看出这一格代表几部作品（否则和单条卡长得一样） */
+    .rl-board-coll-n {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        padding: 0 5px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, .62);
+        color: #fff;
+        font-size: .72em;
+        line-height: 1.6;
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
+    }
 </style>

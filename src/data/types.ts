@@ -381,6 +381,19 @@ export interface Catalog {
      *  仅记状态变更——「新增条目」以 MediaEntry.createdAt 为准（存量数据同样可回溯），避免双份真相。
      *  超上限由写入侧截断最旧（见 ACTIVITY_LOG_LIMIT）。 */
     activityLog?: ActivityEvent[];
+    /**
+     * **系列（合集）评分**：`分组键 → 0~5 步长 0.5`（用户 2026-10-27 裁定「加合集分」）。
+     *
+     * 🔴 分组键 = `pure/seriesGroup.seriesKeyOf` 产出的 `type\u0001归一化系列名`
+     *    —— ⛔ 别用「组内首条 id」当键：首条一删，这个分就跟着丢了。
+     * 🔴 **独立字段，不是组内平均**。真实数据里组内分歧极大（`movie|周星驰` 是
+     *    「9 部 5 分 + 9 部未评分」、`anime|海绵宝宝` 17 部只有首季 5 分），
+     *    平均会被未评分条目稀释成一个谁也不认得的数；而「整个系列值几分」与
+     *    「我看了其中几部、各打几分」本来就是两个概念（⛔ 别互相推算）。
+     * ⚠️ **0 不落库**（见 `pure/seriesRating.writeSeriesRating` 的删键口径）。
+     * ⚠️ append-only 可选字段：老 catalog 没有它照常读（缺省 = 全都是未评分）。
+     */
+    seriesRatings?: Record<string, number>;
 }
 
 /** 一条状态翻转记录（谁、何时、变成什么状态；标题展示时按 id 现查，条目删除后该条不再展示） */

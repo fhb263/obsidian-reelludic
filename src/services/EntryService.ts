@@ -2,6 +2,7 @@
 // 纯逻辑：文件 IO 通过注入的 VaultIO 完成（obsidian 适配器在插件侧提供）
 import type { ActivityEvent, BookKind, Catalog, EntryType, MediaEntry } from 'data/types';
 import { CatalogStore, normalizeEntry, type VaultIO } from 'data/catalog';
+import { writeSeriesRating, type SeriesRatingMap } from 'pure/seriesRating';
 import { canTransition, type MediaStatus } from 'pure/status';
 import { entryFrontmatter, entryNotePath, generateNoteMarkdown, hashNoteContent } from 'data/noteGenerator';
 import {
@@ -151,6 +152,28 @@ export class EntryService {
     /** 活动日志（状态翻转记录）：「今日记录」/ 日记打卡的数据源，按时间升序 */
     async activityLog(): Promise<ActivityEvent[]> {
         return (await this.load()).activityLog ?? [];
+    }
+
+    /** 系列（合集）评分表：`分组键 → 0~5`（用户 2026-10-27 裁定「加合集分」）。
+     *  缺省 / 老 catalog ⇒ 空表（视图据此显示「全部未评分」）。 */
+    async seriesRatings(): Promise<SeriesRatingMap> {
+        return (await this.load()).seriesRatings ?? {};
+    }
+
+    /**
+     * 写某系列的合集分（**只有这一条出口** —— 视图不碰磁盘，与 `commitTableCell` 同架构）。
+     *
+     * 🔴 归一 + 「0 删键」全部委托给 `pure/seriesRating.writeSeriesRating`，
+     *    ⛔ 别在这里再判一次（两份口径必然漂）。
+     * 🔴 合集分**不是**条目的字段 ⇒ 走 `catalog.seriesRatings`，⛔ 别去改组内任何一条的 `rating`
+     *    （那会真的把用户手打的单条分数抹掉，且不可逆）。
+     */
+    async setSeriesRating(key: string, rating: unknown): Promise<SeriesRatingMap> {
+        const c = await this.load();
+        const next = writeSeriesRating(c.seriesRatings, key, rating);
+        c.seriesRatings = next;
+        await this.save(c);
+        return next;
     }
 
     async get(id: string): Promise<MediaEntry | undefined> {

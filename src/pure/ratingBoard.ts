@@ -158,6 +158,12 @@ export function buildBoard(entries: readonly MediaEntry[], tab: BoardTab = 'all'
  * 拖放落点判定：拖到**这一行**上，意味着把评分改成什么？
  * 🔴 「未评分」行 ⇒ **清除评分**（0）—— 用户裁定「拖进去 = 清除评分」；
  *    ⛔ 别返回 `undefined`（那会让视图侧再判一次「是不是未评分行」，两份口径必然漂）。
+ *
+ * 🔴 2026-10-27 起看板还有 `SeriesBoardRow`（合集卡版，`items` 是 `SeriesBoardItem[]`），与
+ *    `RatingRow` 的结构差异**只在 `items`**，而这个函数只读 `unrated` / `rating`。
+ *    解法是在视图侧做一次窄转（见 `RatingBoard.svelte` 的 `rowForDrop`），
+ *    ⛔ 别把这里的签名改宽 —— 产物断言 `#635 ①` 锚的就是 `row: RatingRow` 这行字面形态；
+ *    ⛔ 也别为此加第二个 `seriesRatingForRow` —— 两份判定必然漂。
  */
 export function ratingForRow(row: RatingRow): Rating {
     return row.unrated ? 0 : row.rating;
@@ -166,8 +172,13 @@ export function ratingForRow(row: RatingRow): Rating {
 /**
  * 拖拽中的那句提示（用户规格：「松开即评 3 星」）。
  * ⚠️ 「未评分」行说的是**清除**，不是「评 0 星」—— 后者读起来像给了一个很低的分数。
+ *
+ * 🔴 形参只收**结构子集**（`unrated` / `half` / `whole`）而不是 `RatingRow`：
+ *    2026-10-27 起看板的行还有 `SeriesBoardRow`（合集卡那一版，`items` 是 `SeriesBoardItem[]`），
+ *    两者的提示文案逻辑完全一样。收宽成 `RatingRow` 会逼调用方做一次无意义的结构转换，
+ *    ⛔ 也别为此再写一份 `seriesDropHint`（两份文案必然漂）。
  */
-export function dropHint(row: RatingRow, title?: string): string {
+export function dropHint(row: Pick<RatingRow, 'unrated' | 'half' | 'whole'>, title?: string): string {
     const who = title ? `《${title}》` : '';
     if (row.unrated) return `松开即清除评分${who ? ` · ${who}` : ''}`;
     const stars = row.half !== null ? `${row.whole}.5` : String(row.whole);

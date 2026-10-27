@@ -65,6 +65,13 @@
     export let coverUrlOf: (e: MediaEntry) => string | null | undefined = () => null;
     /** 🔴 #635：拖入即落库（宿主写 rating + 生成笔记，成功后刷新视图） */
     export let onSetRating: (id: string, rating: Rating) => Promise<void> = async () => {};
+    /**
+     * 🔴 系列（合集）评分（用户 2026-10-27 裁定「加合集分」）：`分组键 → 0~5`，透传给 `RatingBoard`。
+     * 它是 catalog 的**顶层字段**（不挂在任何条目上）⇒ 由宿主单独取、逐层透传到这里。
+     */
+    export let seriesRatings: Record<string, number> = {};
+    /** 写某个系列的合集分（宿主落盘 + 刷视图；看板拖入即调用） */
+    export let onSetSeriesRating: (key: string, rating: Rating) => Promise<void> = async () => {};
     /** 🔴 #635：Ctrl+滚轮缩放开关（跟随设置页那条既有开关，⛔ 不新开） */
     export let ctrlWheelZoom = false;
     /** 🔴 #657：统计页区块顺序（`settings.statsOrder` 归一后的值；缺省 = 原视觉顺序） */
@@ -657,6 +664,8 @@
             {coverUrlOf}
             {onOpenEntry}
             {onSetRating}
+            {seriesRatings}
+            {onSetSeriesRating}
             {ctrlWheelZoom}
         />
     </section>

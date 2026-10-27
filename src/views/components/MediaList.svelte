@@ -91,7 +91,8 @@
     import type { SortBy } from 'pure/search';
     import { statusLabel, overviewUnitLabel } from 'pure/labels';
     import { actionAriaLabel, actionIcon, actionMenuTitle, actionReadyHint, actionUnavailableHint, associateMenuLabel, hasActionEntry, hasLocalEntry } from 'pure/actionLabel';
-    import { starClass } from 'pure/rating';
+    import { starClass, type Rating } from 'pure/rating';
+    import { readSeriesRating } from 'pure/seriesRating';
     import { describeBulkApply } from 'pure/bulkConfirm';
     import { filterAndSort } from 'pure/search';
     // 🔴 #552：`BOOK_KIND_TOP_UNITS` 随库概览一起恢复 —— 阅读页签选中某个子分类时，
@@ -202,6 +203,15 @@
     export let onOpenEntryTextModal: (e: MediaEntry, kind: EntryTextKind) => void = () => {};
     /** 批量设置个人评分（rating 0 = 清除） */
     export let onBulkRating: (ids: string[], rating: number) => Promise<void> = async () => {};
+    /**
+     * 🔴 系列（合集）评分（用户 2026-10-27 裁定「加合集分 · 海报墙上与单卡同位」）。
+     *    键 = `seriesKeyOf` 产出的 `type\u0001归一化名`；缺键 = 未评分。
+     * ⛔ 别在组件里算平均：整个系列的分数是用户直接打的独立数据（见 `pure/seriesRating` 顶部注释）。
+     * ⚠️ 这里**只读不写**：改合集分的入口在评分看板（拖入即落库，走 `onSetSeriesRating`），
+     *    海报墙上没有「拖到某行」这种交互 ⇒ ⛔ 别为了对称在这里也加一个写入 prop
+     *    （Svelte 4 会给未使用的 export 报 unused 警告，被 `npm run check` 记为基线之上）。
+     */
+    export let seriesRatings: Record<string, number> = {};
     /** 批量追加标签（合并去重） */
     export let onBulkTags: (ids: string[], tags: string[]) => Promise<void> = async () => {};
     /**
@@ -1073,6 +1083,20 @@
     /** 状态 Badge 语义图标（○想看 / ●在看 / ✓已看 / ▢存档，字符统一风格） */
     function statusIcon(s: MediaStatus): string {
         return s === 'want' ? '○' : s === 'watching' ? '●' : s === 'watched' ? '✓' : s === 'archived' ? '▢' : '';
+    }
+
+    /**
+     * 🔴 系列（合集）评分读取（用户 2026-10-27 裁定「加合集分」）。
+     *
+     * 为什么不在模板里直接写 `seriesRatings[g.key] ?? 0`：
+     *   模板是 `strictNullChecks` 下的表达式，`Record<string, number>` 的索引回 `number`
+     *   （不含 undefined，除非开 `noUncheckedIndexedAccess`，本仓没开）⇒ 类型上「永远有值」，
+     *   于是一个**被外部改坏的 catalog**（字符串/越界数）会原样喂进 `--fill`，CSS 拿到
+     *   `NaN` / `"abc"` 就静默不填充（看起来像「有分但星是空的」）。这里统一走 `normalizeRating`
+     *   钳到合法档位 —— 与 `readSeriesRating` 同一口径，⛔ 别各写一份。
+     */
+    function seriesRatingOf(g: SeriesGroup): Rating {
+        return readSeriesRating(seriesRatings, g.key);
     }
 
     /** 豆瓣图床防盗链：无 Referer 返回 418，需 img referrerpolicy="unsafe-url" */
@@ -3131,6 +3155,15 @@
                                 <span class="rl-badge rl-badge-{gStatus}" data-tip={`系列状态：${statusLabel(g.type, gStatus)}`}>
                                     {statusIcon(gStatus)} {statusLabel(g.type, gStatus)}
                                 </span>
+                            {/if}
+                            <!-- 🔴 用户 2026-10-27 裁定「加合集分 · 海报墙上同单卡同位」：
+                                 落在**和单卡个人评分完全相同的那一行、同一个渲染形态**（`.rl-my-inline` 的
+                                 5 满星 + `--fill` 按比例裁切，见 #619 那条注释：⛔ 别改回字符星，U+2BE8 字体覆盖不稳）。
+                                 ⚠️ 值来自 `seriesRatings[g.key]`（独立字段），⛔ **不是**组内平均 —— 见 `pure/seriesRating` 顶部注释。
+                                 ⚠️ 用 `> 0` 判断而非 `truthy`：0 与缺键同义（都是未评分），不渲染空星。 -->
+                            {#if seriesRatingOf(g) > 0}
+                                <span class="rl-my-inline" style={`--fill:${seriesRatingOf(g)}`} aria-hidden="true">★★★★★</span>
+                                <span class="rl-sr">合集评分 {seriesRatingOf(g)} 星</span>
                             {/if}
                         </div>
                     {/if}

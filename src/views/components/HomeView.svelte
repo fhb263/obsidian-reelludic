@@ -101,6 +101,17 @@
     export let yearReports: { year: number; path: string }[] = [];
     /** 活动日志（状态翻转）：统计页「今日」面板数据源 */
     export let activityLog: ActivityEvent[] = [];
+    /**
+     * 🔴 系列（合集）评分（用户 2026-10-27 裁定「加合集分」）：`分组键 → 0~5`。
+     *    键 = `pure/seriesGroup.seriesKeyOf` 产出的 `type\u0001归一化名`。
+     * ⚠️ 它是 catalog 的**顶层字段**，不挂在任何条目上 ⇒ 必须由宿主单独取一次再传进来
+     *    （`HomeView.ts` 的 `render()` 已并进 `Promise.all`，初始 props 与增量 `$set` 两处都传）。
+     * ⛔ 别在这里「算」合集分：整个系列的分数是**用户直接打的**，不是组内单条分的平均
+     *    （真实数据组内分歧极大，平均会被未评分条目稀释成一个谁也不认得的数）。
+     */
+    export let seriesRatings: Record<string, number> = {};
+    /** 写某个系列的合集分（宿主落盘 + 刷视图；组件只报告，不碰磁盘） */
+    export let onSetSeriesRating: (key: string, rating: Rating) => Promise<void> = async () => {};
     /** 一键把动态写进当天日记（范围跟随面板的 日/周/月/年 切换） */
     export let onRecordJournal: (range: FeedRange) => Promise<void> = async () => {};
     /** 打开某份年度报告（统计页「往年报告」入口） */
@@ -584,7 +595,9 @@
                  🔴 `#635 ③` 的产物断言锚的正是 `coverUrlOf={posterUrl}` 这个字面形态
                  （`assert-symbols.cjs:12976`）—— 包一层 `(e) => posterUrl(e) ?? null` 会让它判红。
                  ⛔ 反过来也别把 `StatsBoard` / `RatingBoard` 收窄成 `string | null`（那会逼着这里包一层）。 -->
-            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} order={statsOrder} onOrderChange={onStatsOrderChange} />
+            <!-- ⚠️ 新增 prop 一律**追加在 `{ctrlWheelZoom}` 之后**，⛔ 别插进 `coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom}`
+                 这段里面 —— 产物断言 `#635 ③` 锚的就是这三者**连续字面**相邻的形态。 -->
+            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} {seriesRatings} {onSetSeriesRating} order={statsOrder} onOrderChange={onStatsOrderChange} />
         {:else}
             <MediaList
                 entries={listEntries}
@@ -623,6 +636,7 @@
                 {onOpenEntryLogModal}
                 {onOpenEntryTextModal}
                 {onBulkRating}
+                {seriesRatings}
                 {onBulkTags}
                 {onConfirmBulk}
                 lockType={mediaListLockType}

@@ -7,6 +7,7 @@ import { normalizeRating } from 'pure/rating';
 import { BOOK_KINDS } from 'pure/bookKind';
 import { MUSIC_KINDS } from 'pure/musicKind';
 import { normalizeRelatedList } from 'pure/relatedGraph';
+import { normalizeSeriesRatings } from 'pure/seriesRating';
 import {
     BACKUP_FILE,
     BACKUP_KEEP,
@@ -256,6 +257,10 @@ export function parseCatalog(text: string): Catalog {
     const out: Catalog = { version, entries };
     // 活动日志（今日记录）：逐条校验，脏数据丢弃；字段缺失保持 undefined（不凭空造空数组）
     if (Array.isArray(obj.activityLog)) out.activityLog = normalizeActivityLog(obj.activityLog);
+    // 系列（合集）评分：脏值丢弃、0 不存（与写侧同口径，见 `pure/seriesRating`）；
+    // 空表也保持 undefined —— ⛔ 别给每个存量文件凭空添一个 `"seriesRatings": {}`
+    const seriesRatings = normalizeSeriesRatings(obj.seriesRatings);
+    if (Object.keys(seriesRatings).length > 0) out.seriesRatings = seriesRatings;
     return out;
 }
 
@@ -279,6 +284,9 @@ export function serializeCatalog(c: Catalog): string {
     const clean: Catalog = { version: CATALOG_VERSION, entries: c.entries.map(normalizeEntry) };
     const log = normalizeActivityLog(c.activityLog ?? []);
     if (log.length) clean.activityLog = log;
+    // 系列（合集）评分：同样归一后再写（0 / 脏值不进盘）；空表不写键
+    const seriesRatings = normalizeSeriesRatings(c.seriesRatings);
+    if (Object.keys(seriesRatings).length > 0) clean.seriesRatings = seriesRatings;
     return JSON.stringify(clean, null, 2);
 }
 
