@@ -36,7 +36,9 @@
     function open(ev: MouseEvent, id: string): void {
         ev.stopPropagation();
         // 🔴 清掉鼠标点击留下的焦点环：关掉子弹窗回来时这行还亮着描边很扎眼（与卡片上那几枚同一处理）
-        ev.currentTarget?.blur?.();
+        // ⚠️ `EventTarget` 上没有 `blur()`（只有 `HTMLElement` 有）⇒ 先收窄再调，别直接写 `?.blur?.()`。
+        const el = ev.currentTarget;
+        if (el instanceof HTMLElement) el.blur();
         const e = byId.get(id);
         if (e) onOpenRow(e);
     }

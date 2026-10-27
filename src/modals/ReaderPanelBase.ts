@@ -39,6 +39,7 @@ import type { ReaderQuickMode } from 'pure/readerQuick';
 import { LETTER_DEFAULT, formatLetterSpacing, normalizeFontFamily, normalizeFontWeight, type ReaderFontFamily, type ReaderFontWeight, type ReaderTypoPayload, type SegOption } from 'pure/readerTypography';
 import { isTypingTarget, resolveReaderHotkey } from 'pure/readerHotkeys';
 import { READER_THEMES, readerThemeClass, type ReaderThemeId } from 'pure/readerTheme';
+import { safeSetIcon } from '../services/safeIcon';
 
 
 /** 两个阅读器 options 的公共字段（两侧声明逐字一致才放这里） */
@@ -1690,14 +1691,6 @@ protected onUserInterrupt = (): void => {
 }
 
 const SAVE_THROTTLE = 300;
-
-function safeSetIcon(el: HTMLElement, icon: string): void {
-    try {
-        setIcon(el, icon);
-    } catch {
-        // 图标不可用：忽略
-    }
-}
 
 function setSearchEngineIcon(host: HTMLElement, id: SearchEngineId): void {
     const box = host.createSpan({ cls: 'rl-search-net-icon' });

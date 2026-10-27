@@ -18,8 +18,14 @@
     // #570「回到顶部」的显隐判据 + 「只认本视图滚动容器」的归属判定（纯模块，配单测）
     // 🔴 #624：`shouldShowTop` 不再直接引用 —— 显隐统一走 `topVisible`（它内部就是 `shouldShowTop` + 静止/悬停两条）
     import { topVisible, wrapsRoot, TOP_IDLE_MS } from 'pure/topButton';
+    // 🔴 #541：主导航布局的 id 真源（`navLayout` prop 的类型从这里取，⛔ 别手写字面量联合）
+    import type { NavLayout } from 'pure/navLayout';
     import { type ColorTheme, type EntryType } from 'data/types';
-    import type { ActivityEvent, BookKind, MediaEntry, MediaStatus, EntryLogKind, EntryTextKind } from 'data/types';
+    import type { ActivityEvent, BookKind, MediaEntry, EntryLogKind, EntryTextKind } from 'data/types';
+    // 🔴 `MediaStatus` 的真源在 `pure/status`（`data/types` 只是 import 进来自用，**没有再导出**）。
+    //    ⛔ 别改成从 `data/types` 拿：那样 svelte-check 报「declares MediaStatus locally, but it is not exported」，
+    //    而 tsc 因为 `include` 不含 `.svelte` 看不见这条错（P1-4 债）。全仓其余 13 处都走 `pure/status`。
+    import type { MediaStatus } from 'pure/status';
     // 🔴 #635：评分看板「拖入即改评分」的载荷类型（与存储口径同源 `pure/rating`）
     import type { Rating } from 'pure/rating';
     import type { FeedRange } from 'pure/activityFeed';
@@ -109,6 +115,17 @@
     /** 1.3.1 ①：海报墙卡片显示哪几行（高级设置 › 海报墙卡片）。
      *  🔴 #617 起**按条目类型各一份**（六键齐全）；缺省 = 三类全显（与 1.3.1 前一致） */
     export let cardFieldsByType: Record<EntryType, CardFieldKey[]> = DEFAULT_CARD_FIELDS_BY_TYPE;
+    /** 🔴 #653：书籍**按子分类**（文学 / 网文 / 漫画）各一份的信息栏，只对书籍生效。
+     *  ⚠️ 这个 prop 曾经**漏声明**（`HomeView.ts` 传了，本组件没有 `export let`）——
+     *     Svelte 4 对「多传的 prop」**静默忽略**（与 L558 记的 #659 是同一类坑），后果是
+     *     用户在设置页给网文 / 漫画单独配的信息栏**完全不生效**，且零报错、零警告。
+     *     ⛔ 别再让它只存在于宿主的 props 字面量里：改 prop 名/增删时必须两侧同步。
+     *  缺省 = 三个子类都等于书籍那一份（回落链在 `pure/cardMeta.resolveCardFieldsByKind`）。 */
+    export let cardFieldsByKind: Record<BookKind, CardFieldKey[]> = {
+        book: DEFAULT_CARD_FIELDS_BY_TYPE.book,
+        novel: DEFAULT_CARD_FIELDS_BY_TYPE.book,
+        comic: DEFAULT_CARD_FIELDS_BY_TYPE.book,
+    };
     /** 1.3.1 ②（#621）表格视图的列（按类型各一份；六键齐全，宿主已归一） */
     export let tableColumnsByType: Record<EntryType, string[]> = DEFAULT_TABLE_COLUMNS_BY_TYPE;
     /** 列配置变更（表头拖序 / 列菜单勾选）⇒ 回推宿主落盘 */
@@ -152,12 +169,15 @@
     export let uiTheme: 'native' | 'modern' = 'native';
     /**
      * 🔴 #541 主导航布局：`'top'` 顶部横向胶囊（默认 = 1.2.0 观感）/ `'sidebar'` **文字菜单**
-     * （内容区右上角一行当前页名，hover 从它正下方展开页签列表；#545 定形）。
+     * （内容区右上角一行当前页名，hover 从它正下方展开页签列表；#545 定形）/ `'merged'` 合并视图（#547）。
      * ⚠️ 与 `uiTheme` **正交** —— 后者管顶部胶囊「长什么样」（下划线 vs 描边指示器），本 prop 管导航「排在哪」。
      * ⚠️ 整块都在**同一个视图内**（视图仍是同一个 ItemView），⛔ 与 Obsidian 工作区侧栏无关。
      * ⚠️ id `'sidebar'` 是**存量数据里的值**（旧 data.json 存过它）⇒ 只改文案，⛔ 别改 id（见 `pure/navLayout`）。
+     * 🔴 类型直接取 `NavLayout`（真源 `pure/navLayout`），⛔ 别在这里手写 `'top' | 'sidebar'` ——
+     *    漏掉 `'merged'` 时下面 `navLayout === 'merged'` 会被 TS 判成「两个类型没有重叠」的恒假比较，
+     *    而 `HomeView.ts` 推 `normalizeNavLayout()` 的返回值又塞不进来（P1-4 债，svelte-check 4 条错）。
      */
-    export let navLayout: 'top' | 'sidebar' = 'top';
+    export let navLayout: NavLayout = 'top';
     /**
      * 🔴 #541 起始页的**一次性请求**：设置页改了「起始页」后宿主推一个新值进来，本组件消费掉就置回 null。
      * ⚠️ 为什么不复用 `initialTab`：那个 prop 只在**创建时**播种 `activeTab`，之后再改它不会让任何东西动
@@ -228,6 +248,15 @@
         ? mergedLockType(mergedScope)
         : activeTab === 'media' ? null : activeTab;
     $: listTypePool = mergedOn ? null : activeTab === 'media' ? MEDIA_TYPES : null;
+    /** `MediaList` 的 `lockType` 只认条目类型（`EntryType | null`），而 `listLockType` 还可能是
+     *  「非条目页签」的 `'tracking'` / `'stats'`（`HomeTab` 比 `EntryType` 宽）。
+     *  ⚠️ 这不是把值改坏：`effPage` 的三分支已保证 `'tracking'` / `'stats'` 那两页根本**不渲染**
+     *  `MediaList`（见下方 `{#if effPage === 'tracking'}` / `{:else if effPage === 'stats'}`），
+     *  所以那两个值走到这里时本来就该是「不锁类型」。
+     *  ⛔ 别用 `as EntryType`（等于对类型系统撒谎）；也⛔ 别把 `MediaList.lockType` 放宽成
+     *  `EntryType | 'tracking' | 'stats' | null`（那会让组件内部 20+ 处 `lockType === 'book'`
+     *  之类的判断失去穷尽性检查）。 */
+    $: mediaListLockType = listLockType === 'tracking' || listLockType === 'stats' ? null : listLockType;
     $: listEntries = mergedOn
         ? entries
         : activeTab === 'media' ? entries.filter((e) => MEDIA_TYPES.includes(e.type)) : entries;
@@ -549,6 +578,12 @@
             <!-- 🔴🔴 #659：prop 名必须与 `StatsBoard` 的 `export let` **逐字一致** ——
                  上一版 StatsBoard 里叫 `onOrderChange`、这里传的是 `onStatsOrderChange`，
                  Svelte 4 对「多传的 prop」**静默忽略** ⇒ 拖动后回调永远是默认空函数 ⇒ **拖了没反应**（零报错）。 -->
+            <!-- ⚠️ `coverUrlOf` 的契约是 `(e) => string | null | undefined`（见 `StatsBoard.svelte` /
+                 `RatingBoard.svelte` 的 `export let coverUrlOf`），与 `posterUrl` 的
+                 `(e) => string | undefined` 直接兼容 ⇒ **字面复用 `{posterUrl}`**，不新造 prop、也不包包装函数。
+                 🔴 `#635 ③` 的产物断言锚的正是 `coverUrlOf={posterUrl}` 这个字面形态
+                 （`assert-symbols.cjs:12976`）—— 包一层 `(e) => posterUrl(e) ?? null` 会让它判红。
+                 ⛔ 反过来也别把 `StatsBoard` / `RatingBoard` 收窄成 `string | null`（那会逼着这里包一层）。 -->
             <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} order={statsOrder} onOrderChange={onStatsOrderChange} />
         {:else}
             <MediaList
@@ -556,6 +591,7 @@
                 {posterUrl}
                 {colorTheme}
                 {cardFieldsByType}
+                {cardFieldsByKind}
                 {tableColumnsByType}
                 {onTableColumnsChange}
                 {onCellCommit}
@@ -589,7 +625,7 @@
                 {onBulkRating}
                 {onBulkTags}
                 {onConfirmBulk}
-                lockType={listLockType}
+                lockType={mediaListLockType}
                 typePool={listTypePool}
                 scope={mergedOn ? mergedScope : null}
                 scopeStatus={mergedOn ? mergedStatus : null}

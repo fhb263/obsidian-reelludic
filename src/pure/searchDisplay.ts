@@ -5,7 +5,10 @@
 // 改走内部查表 SOURCE_VIEW（label + url(result)）：形状分支仍决定类型上下文与 meta 行拼法，
 // 识别出的结果对象给 source 字段后 → 查表输出徽标与直达 URL。
 // 旧数据无 source / 未知 source → 兜底现行为（豆瓣文案与 URL；影视/动画无 source 旧数据保持 TMDB/Bangumi）。
-import { posterUrl, type TmdbSearchResult } from 'services/tmdb';
+// P1-8：posterUrl 从 pure/tmdbImage 取（值与类型分开导入）—— 原先从 services/tmdb
+// 值导入会让 pure 层在运行时依赖 services，pure 的零副作用承诺作废。
+import { posterUrl } from 'pure/tmdbImage';
+import type { TmdbSearchResult } from 'services/tmdb';
 import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
 import type { BangumiSearchResult } from 'services/bangumi';
 import type { ProviderId } from 'pure/sourceRegistry';

@@ -1,28 +1,10 @@
-// 附件管理弹窗（设置页 › 封面与清理 › 附件管理）。
-//
-// 历史沿革：本类原先与 `EntryRestoreModal` 同住 `modals/EntryRestoreModal.ts`，共用一套 `.rl-pc-*` 类名。
-// 🔴 2026-10-19 用户指令（设置页 UX 改版 ③④）：**整体搬出来重写** ——
-//    · 类名换成 `.rl-am-*`：`.rl-pc-*` 那套还被 `AssetCleanupModal` / `EntryRestoreModal` 用着，
-//      两者混用会让 CSS 改动互相牵连（用户报障的排版问题就是这么糊起来的）；
-//    · 结构从「一级（条目）→ 文件」升级成**双层折叠**：一级 = 条目类型（电影/剧集/…），
-//      二级 = 系列（`熊出没系列 · 共 N 部`）；没有系列名的条目作为「散件」直接平铺在一级里。
-//      用户原话：「附件管理的分类再多一层，按条目类型分，一个类型里再按系列分」。
-//    · 标题与副标题必须是 **DOM 兄弟节点**（⛔ 别用 position:absolute / 负 margin 摆位）——
-//      用户报障的正是「这两个叠在一起了」。
-//
-// 🔴 口径（与旧实现一致，⛔ 别在重构里改掉）：
-//  ⑴ 删除一律 `fileManager.trashFile`（尊重用户「删除文件」偏好，可从回收站还原），⛔ 不用 `vault.delete`。
-//  ⑵ 库外绝对路径媒体只展示、`deletable: false`（本插件不碰库外文件）。
-//  ⑶ 删文件只是删文件 —— 用户在这里是「管理文件」，不是「删条目」；⛔ 不动 catalog 记录。
-//  ⑷ 底部另有一组「已删条目遗留」：那是**已经删掉**的条目留在 `trash.json` 里的路径，
-//     条目已不在列表里（所以文件是「没人引用」的）；只有文件仍在库里时才列出来 —— 这是
-//     「条目已删、附件还留着」那条尾巴的唯一出口。
-import { App, Modal, Notice, TFile, normalizePath, setIcon } from 'obsidian';
+import { App, Modal, Notice, TFile, normalizePath } from 'obsidian';
 import { parseTrashFile, type TrashRecord } from 'pure/entryTrash';
 import { ENTRY_ASSET_LABEL, type EntryAsset } from 'pure/orphanAssets';
 import { ENTRY_TYPES, ENTRY_TYPE_LABELS, type EntryType } from 'data/types';
 import { forceHideScroll, markScrollInside } from 'services/scrollPref';
 import { createVaultIO } from 'services/vaultIO';
+import { safeSetIcon } from '../services/safeIcon';
 
 /** 一个条目在附件管理里的分组（宿主 `listEntryAssets()` 的产物形状） */
 export interface AssetGroup {
@@ -53,15 +35,6 @@ const ASSET_TYPE_ICON: Record<EntryType, string> = {
     game: 'gamepad-2',
     music: 'music',
 };
-
-/** `setIcon` 遇到不存在的图标名会抛 ⇒ 图标只是装饰，失败**不该**让整个弹窗挂掉（与各 modal 同款兜底） */
-function safeSetIcon(el: HTMLElement, icon: string): void {
-    try {
-        setIcon(el, icon);
-    } catch {
-        // 图标名不认识：留空即可，不影响功能
-    }
-}
 
 /**
  * 附件管理弹窗（设置页 › 封面与清理 › 附件管理）。

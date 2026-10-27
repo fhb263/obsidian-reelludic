@@ -50,6 +50,10 @@ export function parseAiJsonObject(text: string | null | undefined): Record<strin
     if (!jsonText) return null;
     try {
         const obj = JSON.parse(jsonText) as unknown;
+        // `Array.isArray` 是**不可达的纯防御**：extractFirstJsonObject 的切片起点固定是首个 `{`，
+        // 所以 jsonText 必然以 `{` 开头，JSON.parse 只可能给出对象或抛错，拿不到数组/标量。
+        // 留着它只为「万一以后有人改 extract 的起点」时挡住数组，别当它被测试覆盖过
+        // （突变测试里删掉它不会红，这与 tests/aiJson.test.ts 的不变式用例互为印证）。
         if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
         return obj as Record<string, unknown>;
     } catch {

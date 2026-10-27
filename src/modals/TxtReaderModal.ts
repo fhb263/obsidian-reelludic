@@ -1,8 +1,4 @@
-// TXT 书籍阅读器面板（原 Modal 弹窗，随 ReaderView 视图渲染）：目录侧栏 + 正文连续滚动 + 进度持久化
-// 排版：字号/行距（设置页后续统一，先默认跟随 --font-text）；目录跳转；滚动位置按章节+比例恢复
-// DOM API 渲染（参照 ImportBangumiModal 范式），样式写入 styles.css rl-read-*
-// 由 ReaderView 传入容器/scope 挂载；closeView 由视图层注入（detach leaf）
-import { Notice, requestUrl, setIcon, type Scope } from 'obsidian';
+import { Notice, requestUrl, type Scope } from 'obsidian';
 import { ReaderPanelBase } from 'modals/ReaderPanelBase';
 import { parseTxtBook, chapterParagraphs, txtChapterUnits, type TxtBook } from 'pure/txtParse';
 import { attachScrollFades, resyncScrollFade, attachTocResizer, formatCharCount } from 'pure/readerToc';
@@ -116,6 +112,7 @@ import { formatChapterTitle } from 'pure/chapterTitle';
 import { READER_THEMES, normalizeReaderTheme, readerThemeClass, type ReaderThemeId } from 'pure/readerTheme';
 // 🔴 #603：底栏图标组里「描述行为」的悬停轻提示真源（TXT / EPUB / PDF / 漫画 四件共用）
 import { READER_FOPS } from 'pure/readerFops';
+import { safeSetIcon } from '../services/safeIcon';
 
 export interface TxtReaderOptions {
     /** 书籍标题（弹窗标题） */
@@ -2263,15 +2260,6 @@ export class TxtReaderPanel extends ReaderPanelBase<TxtReaderOptions> {
         });
     }
 
-}
-
-/** setIcon 安全包装：图标名不存在时抛错静默（不影响面板其余功能） */
-function safeSetIcon(el: HTMLElement, icon: string): void {
-    try {
-        setIcon(el, icon);
-    } catch {
-        // 图标不可用：忽略
-    }
 }
 
 /**

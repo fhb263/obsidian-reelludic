@@ -1,44 +1,4 @@
-// 漫画阅读器面板（宿主由 views/ReaderViews.ts 的 ComicReaderView 提供：工作区新标签页打开）。
-//
-// 1.2.1 #537：内置阅读器新增漫画阅读支持。用户 2026-10-05 点定**零依赖档**（A1）：
-//   图片文件夹 / CBZ · ZIP / CBT · TAR（rar · 7z · Kindle 本批不做）。三类来源在宿主侧统一折成
-//   「总页数 + 按需取第 i 页」两个面（`ComicReaderOptions.pageCount` / `loadPage`），面板**不关心**
-//   来源是文件夹还是压缩包 —— 解包与读盘都在宿主，面板只管画。
-//
-// 交互（对齐 manga 阅读器惯例，**单页制**）：
-//   · 一次只渲染一页：整页 contain 居中；`←/→`（或 `↑/↓`、`PgUp/PgDn`）翻页；滚轮也翻页（带冷却，防触控板连翻）；
-//   · 缩放：`= / + / -` 或设置菜单滑条（0.5×~4×；>1× 时图片溢出舞台，用舞台滚动平移）；
-//   · 底栏沿用 TXT/EPUB/PDF 同一套：`[‹] 第 N / M 页 ━━━ 已读 X%  [全屏][沉浸] [›]`；
-//   · 顶栏：标题 + 打开笔记（⛔ 无关闭按钮 —— 阅读器只经关闭标签页退出，全仓一条口径）。
-//
-// 🔴 #540（用户 2026-10-05 报障两连）：
-//   ⑴「默认是拉伸的」—— 旧写法 `width:100%` + `max-height:100%`，浏览器只压高度、宽仍是 100% ⇒ 竖版页横向拉伸。
-//      现在整页尺寸走 `fitWidth()`（可用宽/高双约束的 contain 基准）**× 缩放 = 显式像素宽 + height:auto**，
-//      纵横比恒定；`onResize` 也据此重算（拖侧栏后不再失真）。
-//   ⑵「翻页会闪屏」—— 旧写法先把新 `<img>` 塞进 DOM、再等 `load` ⇒ 未解码时是 0×0、舞台只剩背景色 = 白闪。
-//      现在**先 `decode()` 再换位**，旧页在换位前一直可见；并预取下一页（单槽）让翻页零等待。
-//
-// 进度：`chapterIndex` = 页码索引（0 基）；`scrollRatio` **单页制恒 0**，连续滚动下是
-//   「读到全书哪个比例」（= `scrollTop / (scrollHeight - clientHeight)`，与滑块位置同一口径，见 #669）；
-//   `percent` 走 `pure/readingProgress.estimatePercent`（每页权重 1 ⇒ (页序+1)/总页数），
-//   与 PDF/EPUB 落库同一口径（`readingProgress.percent` 是唯一进度真源）。
-//   ⚠️ 图片**没有**摘抄/高亮/书签（选中无反馈、也没有「块」概念）⇒ 本批不做书签（登记为后续可选）。
-//
-// ══ 🔴 #669（用户 2026-10-19）：「把右侧缩略图同步滚动和连续滚动效果加回来」 ══════════════════════
-// 上一批（#636 ⑤）那两件**在代码里是有的，但用不了**。逐条真因与修法（每条都有复现/实测量过）：
-//   ⑴ 连续滚动下滚轮被 `onWheel` 拦去**翻页**（与「连续滚动」自相矛盾）⇒ 按模式分流：
-//      连续滚动里滚轮就是滚动（`wheelDeltaOf` 换算行/页制），`Ctrl/⌘ + 滚轮` = 缩放；单页制维持翻页。
-//   ⑵ 切模式时 `buildScrollPages()` 被调用**两次**，第二次 `col.empty()` 把第一批正在插图的 DOM 摘掉
-//      ⇒ 图回来了却挂到已摘掉的节点上 = **整屏空白**。现在按模式各建一次。
-//   ⑶ 页块靠 `min-height:240px` 占位、图回来后再撑开 ⇒ 边看边跳。现在用已知纵横比**先写死宽高**
-//      （`pageBox`），图片到位后尺寸几乎不变；每页占位块常驻，卸载只撤 `<img>`（`data-h` 撑高）。
-//   ⑷ 缩略图栏只在**换页后** `scrollIntoView({block:'nearest'})` ⇒ 正文滚动时它不动。现在滚动同步进
-//      **rAF**（一帧一次），同时做三件事：高亮当前格 / 让当前格落到栏中位（`thumbScrollTarget`）/
-//      进度滑块跟随；90ms 防抖只留给**补图**（别把解压塞进每一帧）。
-//   ⑸ 缩略图栏没有「读到全书哪儿」的指示 ⇒ 加一条**进度滑块**（仿参考仓 `cbz-reader` 的 minimap thumb）：
-//      可拖动、可点轨道跳页、可在栏上滚轮驱动正文（×4），拖动期间不走自动跟随（⛔ 免得打架）。
-//   ⑹ 连续滚动位置**从不回写** `scrollRatio` ⇒ 关了再开回到页顶。现在 rAF 里顺带记下比例并落库。
-import { Notice, Scope, setIcon } from 'obsidian';
+import { Notice, Scope } from 'obsidian';
 import { READER_THEMES, normalizeReaderTheme, readerThemeClass, type ReaderThemeId } from 'pure/readerTheme';
 // 🔴 #603：底栏图标组里「描述行为」的悬停轻提示真源（与另外三件共用）
 import { READER_FOPS } from 'pure/readerFops';
@@ -98,6 +58,7 @@ import {
     loadAutoScrollPx,
     saveAutoScrollPx,
 } from 'pure/readerAuto';
+import { safeSetIcon } from '../services/safeIcon';
 
 /** 缩放范围与步进（与 PDF 面板同值，用户切阅读器时手感一致） */
 const ZOOM_MIN = 0.5;
@@ -170,15 +131,6 @@ export interface ComicReaderOptions {
     /** 区域截图（拖框 → 宿主 capturePage 取像素 → 写笔记「## 阅读截图」）。
      *  面板只交矩形 + 定位，⛔ 不碰 vault / electron。 */
     onShotSave?: (rect: ShotRect, loc?: ShotLoc) => void;
-}
-
-/** `setIcon` 遇未知名**静默失败**（空白按钮）⇒ 统一走这层，异常只吞不炸 */
-function safeSetIcon(el: HTMLElement, icon: string): void {
-    try {
-        setIcon(el, icon);
-    } catch {
-        // 图标不可用：忽略
-    }
 }
 
 function clampInt(v: number, min: number, max: number): number {

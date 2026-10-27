@@ -1,10 +1,4 @@
-// PDF 书籍阅读器面板（宿主由 views/ReaderViews.ts 的 PdfReaderView 提供：工作区新标签页打开）：
-// 连续滚动逐页 canvas 渲染（视口虚拟化：IntersectionObserver 只渲染可视 ± 缓冲页，离屏销毁释放内存）
-// + textLayer 文本层选中（高亮 + 摘抄 + 区域截图，2026-10-23 补齐）+ PDF outline 目录侧栏 + 缩放 ±
-// + 进度持久化（ReadingProgress 复用：chapterIndex = 页码索引 0 基，scrollRatio = 页内滚动比例）
-// 渲染：复用 Obsidian 自带的 pdfjs（loadPdfJs 懒加载 5.3.34 + 自带 worker/wasm/cmaps 资源），
-// 不再随产物打包 pdfjs-dist —— 见下方 `getPdfjs` 注释
-import { Notice, Scope, setIcon, loadPdfJs } from 'obsidian';
+import { Notice, Scope, loadPdfJs } from 'obsidian';
 import { estimatePdfPercent, normalizePdfOutline, resolveFlushPos, flattenPdfOutline, chooseActivePdfIndex, type PdfOutlineItem, type ReaderPos, type FlatPdfOutlineItem } from 'pure/pdfProgress';
 import { READER_THEMES, normalizeReaderTheme, readerThemeClass, type ReaderThemeId } from 'pure/readerTheme';
 // 🔴 #603：底栏图标组里「描述行为」的悬停轻提示真源（与另外三件共用）
@@ -63,6 +57,7 @@ import {
     loadAutoScrollPx,
     saveAutoScrollPx,
 } from 'pure/readerAuto';
+import { safeSetIcon } from '../services/safeIcon';
 
 /** pdf.js 运行时最小结构类型（刻意只声明用到的成员）：
  *  ① v5 起不再导出 `RenderTask`，`import type` 拿不到，只能结构化描述；
@@ -2754,15 +2749,6 @@ export class PdfReaderPanel {
             }
         }
         // 未命中：保留待重试（textLayer 就绪后由 render 回调驱动）
-    }
-}
-
-/** setIcon 安全包装：图标名不存在时抛错静默（不影响面板其余功能） */
-function safeSetIcon(el: HTMLElement, icon: string): void {
-    try {
-        setIcon(el, icon);
-    } catch {
-        // 图标不可用：忽略
     }
 }
 

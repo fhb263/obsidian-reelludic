@@ -1,26 +1,4 @@
-// 内置视频播放器（工作区标签页视图，Media Extended 式；用户 2026-09-15 裁定「从新标签页打开而不是弹窗」）
-// 结构（2026-09-18 按 B 站控制条口径重排）：
-//   顶栏 = **只剩片名 · 集号**（不再承载任何入口，见下）；
-//   视频区 = 白底舞台 + 点画面播放/暂停、双击全屏、暂停时中央播放按钮；点黑边**不关闭**（2026-09-17 裁定）；
-//   底部控制条 = **单行三段式**（左组：上一集 / 播放暂停 / 下一集 ｜ 中段：进度条 + 时间 ｜
-//        右组：选集 / 倍速 / 字幕 / 音量 / 设置齿轮 / 全屏）；进度条含缓冲段、已播段、悬停「落点 / 总长」预览与拖动；
-//   浮层 = 选集 / 倍速 / 设置 / 字幕**共用同一容器**，贴触发按钮右缘向上浮出（内容与定位全在 pure/playerMenu）；
-//   低频项（画中画、用系统播放器打开）收进设置齿轮。Esc 一级优先关浮层，但仍**不退出播放器**。
-// 增强：字幕（同目录自动挂载 + 面板手动选，见 renderSubtitleMenu）、连播（播完倒计时切下一集）、记忆播放位置
-// 沉浸：鼠标移入浮出、移出/静止 3s 淡出（暂停时不隐藏，见 pokeIdle）
-// 省电（用户 2026-09-18）：不可见（切走页签 / 窗口最小化 / 元素不在视口）→ 停渲染释放 GPU；
-//       不可见超 5 分钟 → 连解码缓冲一起放掉（clearSource），回来按落盘位置重建
-// 纯逻辑（时间/进度/倍速/快捷键/续播判定、SRT→VTT、字幕候选匹配）在 pure/player.ts 与 pure/subtitle.ts，均有单测
-// 播放源 URL 由 main 层算好传入（库内 getResourcePath / 库外 app://），本视图只负责渲染与交互
-// Chromium 解码不了的格式（mkv/h265 等）由 main 层 isEmbeddableVideoPath 预判直接转系统播放器；<video> error 时也自动兜底
-//
-// 🔴 控件样式特异性（2026-09-15 实测踩坑，勿回退）：播放器控件样式**一律以 .rl-vp-root 打头**（0,2,0）。
-//    旧写法是单类 .rl-vp-btn（0,1,0），会被两条更重的规则压过：
-//      ① Obsidian 核心 button:not(.clickable-icon)（0,1,1）→ 背景变成主题 --interactive-normal（浅灰）、字色变 --text-normal；
-//      ② 插件自己的 .modal-content button.rl-btn（0,2,1）→ padding: 4px 14px。
-//    两者叠加后：30px 宽的图标按钮左右各吃 14px 内距 → 内容盒宽度 0px → <svg> 作为可收缩的 flex 子项被压成宽度 0
-//    → 图标整片消失（用户看到的就是「按钮显示空白」）。无头复现页实测：svg 的 rect = 0 × 15。
-import { ItemView, Notice, Scope, WorkspaceLeaf, setIcon } from 'obsidian';
+import { ItemView, Notice, Scope, WorkspaceLeaf } from 'obsidian';
 import {
     clampSeek,
     clampVolume,
@@ -68,6 +46,7 @@ import {
 // 进度条打点/标记（#333）：标记的**解析与过滤全在纯模块**里，视图只负责画 + 命中判定 + 分发。
 import { markCaption, markPct, marksForEpisode, type VideoMark } from 'pure/videoMarks';
 import { dirOfPath, fileNameOfPath, subtitleLangLabel, subtitleLangTag, type SubtitleCandidate } from 'pure/subtitle';
+import { safeSetIcon } from '../services/safeIcon';
 
 /** 视图类型（main 层 registerView 与打开入口共用） */
 export const VIDEO_PLAYER_VIEW_TYPE = 'reelludic-video-player';
@@ -2090,14 +2069,5 @@ export class VideoPlayerView extends ItemView {
         if (!item) return;
         this.opts?.onExternalFallback(item.path);
         this.closePlayer();
-    }
-}
-
-/** setIcon 安全包装：图标名不存在时抛错静默（不影响面板其余功能） */
-function safeSetIcon(el: HTMLElement, icon: string): void {
-    try {
-        setIcon(el, icon);
-    } catch {
-        // 图标不可用：忽略
     }
 }

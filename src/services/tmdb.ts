@@ -80,7 +80,6 @@ export interface MetadataSource {
 }
 
 const API_BASE = 'https://api.themoviedb.org/3';
-const IMAGE_BASE = 'https://image.tmdb.org/t/p';
 
 export function buildSearchUrl(apiKey: string, query: string, mediaType: 'movie' | 'tv', lang: string, page: number = 1): string {
     const endpoint = mediaType === 'movie' ? 'search/movie' : 'search/tv';
@@ -109,10 +108,9 @@ export function parseSearchResults(text: string, mediaType: 'movie' | 'tv'): Tmd
         .filter((r) => r.id > 0);
 }
 
-export function posterUrl(path: string | undefined, size: string = 'w500'): string | undefined {
-    if (!path) return undefined;
-    return `${IMAGE_BASE}/${size}${path}`;
-}
+// 实现在 pure/tmdbImage（P1-8：让 pure 层能取到它，不必反向值导入 services）。
+// 这里保留同名 export ⇒ `main.ts:30` 与 `tests/tmdb.test.ts:6` 的既有 import 路径不变。
+export { posterUrl } from 'pure/tmdbImage';
 
 /** 解析详情 + 演职员 JSON */
 export function parseDetail(detailText: string, creditsText: string, mediaType: 'movie' | 'tv'): TmdbDetail {

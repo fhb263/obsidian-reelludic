@@ -150,7 +150,11 @@
     // 🔴 2026-10-25 大众评分展示口径先收敛到 `pure/scoreDisplay`（Steam 好评率百分比优先）
     import { scoreTextOf, scoreIsPercentOf } from 'pure/scoreDisplay';
     import { ENTRY_TYPES, ENTRY_TYPE_LABELS, TYPE_COLORS, type ColorTheme, type EntryType } from 'data/types';
-    import type { MediaEntry, MediaStatus, BookKind, EntryLogKind, EntryTextKind } from 'data/types';
+    import type { MediaEntry, BookKind, EntryLogKind, EntryTextKind } from 'data/types';
+    // 🔴 `MediaStatus` 的真源在 `pure/status`（`data/types` 只是 import 进来自用，**没有再导出**）。
+    //    ⛔ 别改成从 `data/types` 拿 —— svelte-check 会报「declares locally, but it is not exported」，
+    //    而 tsc 因 `include` 不含 `.svelte` 看不见（P1-4 债）。全仓其余 13 处都走 `pure/status`。
+    import type { MediaStatus } from 'pure/status';
     import Icon from './Icon.svelte';
     // #566：受控下拉的自绘版（原生 `<select>` 的 popup 在 Windows 上不受 CSS 控制 ⇒ 列表无法居中）
     import MiniSelect from './MiniSelect.svelte';
@@ -406,7 +410,10 @@
                 const nextZ = timelineZoomStep(tlZoom, dir);
                 if (nextZ === normalizeTimelineZoom(tlZoom)) return; // 已到边界 ⇒ no-op，不落盘
                 lastZoomAt = now;
-                onTimelineZoomChange(nextZ);
+                // ⚠️ 上面 L400 已经 `if (isTimeline && !onTimelineZoomChange) return;` 挡过空值 ——
+                //    但 TS 不会跨那几条早退语句把收窄带到这里（`onTimelineZoomChange` 是组件 prop，可能被重赋）
+                //    ⇒ 就地再判一次。多余判断的代价是一次 `!== null`，比非空断言安全。
+                onTimelineZoomChange?.(nextZ);
                 return;
             }
             const isWall = kind === 'wall';
@@ -424,7 +431,9 @@
             const next = posterZoomColumns(cur, dir, max);
             if (next === normalizePosterColumns(cur, max)) return;   // 已在边界 ⇒ 不动（天然 no-op，不落盘）
             lastZoomAt = now;
-            onPosterZoom('custom', next, isWall ? 'wall' : 'grid');
+            // ⚠️ 同 L400 的 `if (!isTimeline && !onPosterZoom) return;` —— TS 不把早退收窄带进闭包尾部，
+            //    这里再判一次（`?.` 比非空断言安全：宿主没传就静默不动，不抛 TypeError）。
+            onPosterZoom?.('custom', next, isWall ? 'wall' : 'grid');
         };
         node.addEventListener('wheel', onWheel, { passive: false });
         return { destroy() { node.removeEventListener('wheel', onWheel); } };
@@ -856,6 +865,11 @@
      */
     $: seriesPoolEntries = activeSeriesKey ? entries.filter((e) => seriesKeyOf(e) === activeSeriesKey) : [];
     /** 题材池 = 当前子视图池（类型 / 分类收窄之后、状态与搜索之前 —— 与状态 chips 计数同口径） */
+    // ⚠️ `genreScope` 为 null 时三元直接给 `[]`（该视图不提供题材筛选）。
+    //    `matchesGenreScope` 刻意接受 `GenreScope | null`（见 `pure/genreFilter.ts` 的注释）——
+    //    因为 `$:` 响应式变量可被重赋，TS 不把三元里的 `genreScope ?` 收窄带进 `filter` 的回调闭包。
+    //    ⛔ 别为了消类型错误改成 IIFE 包装：两条产物断言锚的就是**下面这个字面形态**
+    //    （`assert-symbols.cjs:5622` 与 `:10568`），换写法会当场判红。
     $: genrePool = activeGroup ? seriesPoolEntries : genreScope ? entries.filter((e) => matchesGenreScope(e, genreScope)) : [];
     $: genreOptions = buildGenreOptions(genrePool);
     $: genrePill = genrePillLabel(genreOptions, genreSel);
@@ -955,12 +969,15 @@
         const pool = activeType === 'all'
             ? entries
             : entries.filter((e) => e.type === activeType);
-        const out: Record<MediaStatus | 'all', number> = { all: pool.length };
+        // ⚠️ 初值只有 `all`，其余键紧接的 for 循环一次填满 —— 所以这里是**先声明后填充**，
+        //    用断言让 TS 接受这个不完整字面量（写成 `Record<...>` 注解会被判缺 want/watching/watched/archived）。
+        const out = { all: pool.length } as Record<MediaStatus | 'all', number>;
         for (const s of MEDIA_STATUSES) out[s] = pool.filter((e) => e.status === s).length;
         return out;
     })();
     $: typeCounts = (() => {
-        const out: Record<'all' | EntryType, number> = { all: entries.length };
+        // 同上：`all` 先给，六类型由下面的循环补齐（EntryType 六个成员，手写全会和 ENTRY_TYPES 重复）。
+        const out = { all: entries.length } as Record<'all' | EntryType, number>;
         for (const t of ENTRY_TYPES) out[t] = entries.filter((e) => e.type === t).length;
         return out;
     })();
@@ -2161,6 +2178,16 @@
         if (cells.length === 0) return;
         const target = dir > 0 ? cells[0] : cells[cells.length - 1];
         focusCellAt(target.r, target.c);
+    }
+
+    /**
+     * 表格单元格的 keydown 处理器工厂。
+     * 🔴 为什么不直接在模板里写 `(ev: KeyboardEvent) => ...`：**Svelte 4 的模板表达式按 JS 解析**，
+     *    参数上的 TS 类型注解是语法错误（`Unexpected token`）。把类型收窄挪进 `<script lang="ts">`
+     *    里的工厂函数，模板只留一个不带注解的调用 —— 既有类型、又合法。
+     */
+    function cellKeydownFor(r: number, c: number, e: MediaEntry, def: TableColumnDef): (ev: KeyboardEvent) => void {
+        return (ev) => onCellKeydown(ev, r, c, e, def);
     }
 
     function onCellKeydown(ev: KeyboardEvent, r: number, c: number, e: MediaEntry, def: TableColumnDef): void {
@@ -3462,7 +3489,7 @@
                                 data-tip={ed && !shown ? `点击填写「${d.label}」` : undefined}
                                 on:click={ed ? () => beginEdit(e, d, ri, c) : undefined}
                                 on:focus={ed ? () => setCellCursor(ri, c) : undefined}
-                                on:keydown={ed ? (ev) => onCellKeydown(ev, ri, c, e, d) : undefined}>
+                                on:keydown={ed ? cellKeydownFor(ri, c, e, d) : undefined}>
                                 {#if d.key === 'rating'}
                                     <!-- 🔴 #619/#620 半星同卡片：恒排 5 个满星 + `--fill` 比例裁切（⛔ 不用字符星） -->
                                     {#if e.rating > 0}

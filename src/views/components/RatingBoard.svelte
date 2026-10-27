@@ -28,8 +28,11 @@
     import type { Rating } from 'pure/rating';
 
     export let entries: MediaEntry[] = [];
-    /** 封面 URL 解析（与主视图同一条出口；拿不到时显示占位块） */
-    export let coverUrlOf: (e: MediaEntry) => string | null = () => null;
+    /** 封面 URL 解析（与主视图同一条出口；拿不到时显示占位块）
+     *  ⚠️ 允许 `undefined` 一并表示「没封面」：模板只用 `{#if coverUrlOf(e)}` 判真假，
+     *  `null` 与 `undefined` 行为完全一致；而宿主真源 `plugin.resolvePoster()`
+     *  （`main.ts:8001`）的返回类型就是 `string | undefined`。见 `StatsBoard.svelte` 同名字段的注释。 */
+    export let coverUrlOf: (e: MediaEntry) => string | null | undefined = () => null;
     export let onOpenEntry: (id: string) => void = () => {};
     /**
      * 🔴 拖入即落库：宿主写 `rating` + 生成笔记，成功后刷新视图。

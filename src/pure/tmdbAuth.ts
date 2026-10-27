@@ -32,11 +32,6 @@ export function isTmdbV4Token(credential: string): boolean {
     return s.split('.').length >= 3;
 }
 
-/** 该凭据该走哪种认证（v4 token / v3 api key） */
-export function tmdbAuthKind(credential: string): 'v4' | 'v3' {
-    return isTmdbV4Token(credential) ? 'v4' : 'v3';
-}
-
 /**
  * 该凭据需要的请求头。v3 ⇒ 空对象（认证在 query 里）；v4 ⇒ `Authorization: Bearer <token>`。
  * ⛔ 别给 v3 key 也套 Bearer：TMDB 会当 token 解析失败。

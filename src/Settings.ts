@@ -114,6 +114,7 @@ import {
     CARD_STYLES, CARD_STYLE_LABELS, MOTION_MODES, MOTION_MODE_LABELS,
     normalizeCardStyle, normalizeMotionMode, type CardStyle, type MotionMode,
 } from 'pure/appearance';
+import { safeSetIcon } from 'services/safeIcon';
 
 export interface ReelLudicSettings {
     /** TMDB API Key（免费注册，设置页引导） */
@@ -809,20 +810,6 @@ export interface SourceTestResult {
     message: string;
     /** 完整链路耗时（ms，发起请求到收到响应/失败/超时），恒返回 */
     elapsedMs: number;
-}
-
-/**
- * 挂内置图标并**吞掉异常**（与三个阅读器里的同名函数同款）。
- * 🔴 `setIcon()` 遇到不存在的图标名是**静默失败** —— 不抛错、不警告，只留一个**空白 span** ——
- *    界面上「图标不见了」却查不到任何日志。所以图标名一律取自 `pure/settingNav` 真源，
- *    并由 `tests/settingNav.test.ts` 的**实测白名单**兜住；⛔ 不要在调用点现写字符串。
- */
-function safeSetIcon(el: HTMLElement, icon: string): void {
-    try {
-        setIcon(el, icon);
-    } catch {
-        // 图标不可用：忽略
-    }
 }
 
 /**

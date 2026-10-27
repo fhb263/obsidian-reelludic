@@ -35,7 +35,11 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import type { TmdbDetail, TmdbSearchResult } from 'services/tmdb';
     import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
     import type { BangumiSearchResult } from 'services/bangumi';
-    import { describeSearchResult, sourceIdOf, SOURCE_VIEW } from 'pure/searchDisplay';
+    // OMDb 详情投影（与 `onFetchOmdbDetail` 的 prop 契约同源；⛔ 别退成 `Record<string, unknown>`）
+    import type { OmdbDetailFields } from 'services/omdb';
+    import { describeSearchResult, sourceIdOf } from 'pure/searchDisplay';
+    // 源展示名一律走注册表 `sourceLabel`（单一真源）—— 原来这里查 `SOURCE_VIEW[id]` 表，
+    // 但 `id` 是 `string`（来自 `onSourcesForType(): string[]`），无索引签名 ⇒ svelte-check 报 TS7053。
     import { sourceEnList, sourceEnLabel, sourceLabel, platformLabelFromUrl, providerFromUrl } from 'pure/sourceRegistry';
     import { mergeTmdbDetail } from 'pure/resultMerge';
     import type { LyricCandidate, LyricSourceId } from 'pure/lyricOnline';
@@ -100,7 +104,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import type { LyricFetchOutcome, LyricSearchOutcome } from 'services/lyricSearch';
     import { communityScoreIssue, entrySourceLabel, parseCommunityScore, parseRatingCount, parseSourceName, ratingCountIssue, sourceNameIssue, sourceUrlIssue, splitScoreCount } from 'pure/sourceMeta';
     // #619 半星：存储恒为 0~5 步长 0.5；界面按 10 分制显示与输入（`ratingToTenths` / `tenthsToRating`）
-    import { isHalfStarClick, ratingToTenths, stepRating, tenthsToRating } from 'pure/rating';
+    import { isHalfStarClick, normalizeRating, ratingToTenths, stepRating, tenthsToRating } from 'pure/rating';
     import type { SearchProgressCb, SearchProgress } from 'pure/searchProgress';
     // 🔴 #559：模拟进度条的**时间线**（五段曲线 + 慢网络提示 + 重试阈值）全在 `pure/simProgress`
     // ⛔ 别在本组件里再写一套「每 N ms 随机加几」——那正是本批要换掉的旧形态。
@@ -155,7 +159,11 @@ export let initialBookKind: BookKind | undefined = undefined;
     export let canSearch: boolean = false;
     export let canSearchBook: boolean = true;
     export let canSearchGame: boolean = false;
-    export let onSearch: (q: string, t: 'movie' | 'tv', onProgress?: SearchProgressCb) => Promise<TmdbSearchResult[]> = async () => [];
+    /** 影视搜索（TMDB 主源 + OMDb 兜底，可能同时返回两种形状）——
+     *  ⚠️ 返回类型必须写宽：宿主的 `searchWithFallback` 返回 `MovieTvSearchResult[]`
+     *     （= `TmdbSearchResult | OmdbSearchResult`，见 `main.ts` 的 `type MovieTvSearchResult`）。
+     *     这里原来写死 `TmdbSearchResult[]` 是**声明过窄**，靠 tsc 不查 .svelte 才没报错。 */
+    export let onSearch: (q: string, t: 'movie' | 'tv', onProgress?: SearchProgressCb) => Promise<SearchResult[]> = async () => [];
     export let onSearchBook: (q: string, kind?: BookKind, onProgress?: SearchProgressCb) => Promise<BookSearchResult[]> = async () => [];
     export let onSearchGame: (q: string, onProgress?: SearchProgressCb) => Promise<GameSearchResult[]> = async () => [];
     export let onSearchAnime: (q: string, onProgress?: SearchProgressCb) => Promise<BangumiSearchResult[]> = async () => [];
@@ -169,8 +177,12 @@ export let initialBookKind: BookKind | undefined = undefined;
      * 宿主侧实现 = `main.mergeSearchPool`（合并 + 落盘 `{lib}/search-pool.json`，口径在 `pure/searchAccum`）。
      * ⛔ 组件不碰 vault、不碰磁盘：这里只是个回调，拿合并后的完整列表回去渲染。
      * ⚠️ 缺省实现 = **不累积**（直接返回本次结果），保证单测里裸挂组件时行为与旧版逐字一致。
+     * ⚠️ 返回类型是**同步** `SearchResult[]`，不是 Promise —— 宿主的 `EntryModal.mergeSearchPool`
+     *    只做「取桶 → 合并 → 存回桶」三步纯内存簿记，合并算法在 `pure/searchAccum`（纯同步）。
+     *     这里原来声明成 `Promise<SearchResult[]>` 是**声明过宽**；调用处 `results = await ...`
+     *     对非 Promise 值同样合法（`await` 会原样穿透），所以改正后调用点不用动。
      */
-    export let onMergeSearchPool: (type: EntryType, bookKind: BookKind | undefined, fresh: SearchResult[]) => Promise<SearchResult[]> = async (_t, _k, fresh) => fresh;
+    export let onMergeSearchPool: (type: EntryType, bookKind: BookKind | undefined, fresh: SearchResult[]) => SearchResult[] = (_t, _k, fresh) => fresh;
     export let onFetchDetail: (r: TmdbSearchResult) => Promise<Partial<TmdbDetail> & { posterPath?: string }> = async () => ({});
     /** 豆瓣兜底详情按需补全：选中搜索结果时动态拉取 JSON-LD + #info（仅前 3 条搜索时预补全） */
     export let onFetchDoubanDetail: (id: string, type: EntryType) => Promise<Record<string, unknown> | null> = async () => null;
@@ -191,8 +203,10 @@ export let initialBookKind: BookKind | undefined = undefined;
      * ⚠️ 需要已填 Cookie；没填 / 失败 ⇒ 返回 `null`，本组件**静默保留搜索级字段**（与豆瓣详情同款降级）。
      */
     export let onFetchWereadDetail: (bookId: string) => Promise<WereadBookInfo | null> = async () => null;
-    /** OMDb（IMDb）影视详情按需补全（选中结果时调用：i= 详情 → Plot/导演/演员/评分；失败返回 null 静默） */
-    export let onFetchOmdbDetail: (imdbID: string) => Promise<Record<string, unknown> | null> = async () => null;
+    /** OMDb（IMDb）影视详情按需补全（选中结果时调用：i= 详情 → Plot/导演/演员/评分；失败返回 null 静默）
+     *  ⚠️ 契约是宿主的 `OmdbDetailFields`（`services/omdb` 的投影，字段键名对齐 `applyDoubanDetail`），
+     *     不是 `Record<string, unknown>` —— 那个宽泛写法会让「宿主多返回/少返回字段」都不报错。 */
+    export let onFetchOmdbDetail: (imdbID: string) => Promise<OmdbDetailFields | null> = async () => null;
     export let onSubmit: (input: Record<string, unknown>) => Promise<void> = async () => {};
     export let onCancel: () => void = () => {};
     /** 点击来源徽标直达数据源官方页（弹窗侧校验 http/https） */
@@ -1471,14 +1485,14 @@ export let initialBookKind: BookKind | undefined = undefined;
                 const id = sourceIdOf(r);
                 const col = map.get(id);
                 if (col) col.items.push(r);
-                else map.set(id, { id, label: SOURCE_VIEW[id]?.label ?? id, items: [r], empty: false });
+                else map.set(id, { id, label: sourceLabel(id) || id, items: [r], empty: false });
             }
             return Array.from(map.values());
         }
         // 固定占栏：按参与源建栏，结果按 sourceIdOf 归入对应栏；无该源结果 → empty 占位
         return sourcePlan.map((id) => {
             const items = results.filter((r) => sourceIdOf(r) === id);
-            return { id, label: SOURCE_VIEW[id]?.label ?? id, items, empty: items.length === 0 };
+            return { id, label: sourceLabel(id) || id, items, empty: items.length === 0 };
         });
     })();
 
@@ -1816,7 +1830,9 @@ export let initialBookKind: BookKind | undefined = undefined;
                 // 豆瓣动画兜底：豆瓣搜索级不含题材/导演/主演（parseDoubanItem 只出标题/年份/封面/简介），
                 // 点选豆瓣动画结果时按需拉详情回填（JSON-LD + #info 有 导演/编剧/主演/类型/国家/集数 等）。
                 // ⚠️ 此前动画分支没有此段，豆瓣结果只停留在搜索级 → 题材/导演/主演恒空（电影/剧集分支一直有）。
-                if (r.source === 'douban' && !r.director && !r.cast?.length && !r.author && !r.developer) {
+                // ⚠️ 原条件还带 `!r.author && !r.developer`：本支的 `r` 是 `BangumiSearchResult`，
+                //    根本没有这两个字段 ⇒ 那两项恒为 true，是死条件，已删（行为不变，少两处类型打架）。
+                if (r.source === 'douban' && !r.director && !r.cast?.length) {
                     try {
                         const d = await onFetchDoubanDetail(String(r.id), type);
                         if (d) {
@@ -1829,8 +1845,17 @@ export let initialBookKind: BookKind | undefined = undefined;
                 }
             } else {
                 // 影视/剧集：TMDB/OMDb（IMDb）搜索后按源拉详情回填；豆瓣兜底结果直接可用（封面为完整 URL）
-                originalTitle = r.originalTitle;
-                if (r.year) year = String(r.year);
+                //
+                // 🔴 为什么要这行别名：上面四道 `'author' in r` / `'platform' in r` / `'album' in r` /
+                //    `'studio' in r` 的**否定分支不会收窄联合类型** —— 因为那四个差异字段在各自类型里
+                //    全是**可选属性**（`author?: string` 等），`in` 运算符对可选键没有排除力，
+                //    走到这里的 `r` 仍是 `Book|Game|Music|Tmdb|Bangumi` 五元联合。
+                //    而本支只可能是影视（豆瓣影视结果由 `services/douban.toTmdbResult` 产出，
+                //    形状就是 `TmdbSearchResult`）⇒ 用一次显式断言把形状钉死，
+                //    ⛔ 别改成 `r as any`（那会连字段名拼错都不报）。
+                const tv = r as TmdbSearchResult;
+                originalTitle = tv.originalTitle;
+                if (tv.year) year = String(tv.year);
                 if (r.source === 'omdb') {
                     const om = r as OmdbSearchResult;
                     // IMDb 海报搜索级直填（服务端 Poster=N/A 已滤除 → 无封面走占位图）
@@ -1839,20 +1864,27 @@ export let initialBookKind: BookKind | undefined = undefined;
                     try {
                         const d = await onFetchOmdbDetail(om.imdbID);
                         if (d) {
-                            applyDoubanDetail(d); // director/cast/genres/summary/cover/ratingCount/year 幂等回填
+                            // ⚠️ `OmdbDetailFields` 是**闭合接口**（`services/omdb` 里逐字段声明，无字符串索引签名），
+                            //    而 `applyDoubanDetail` 的入参是 `Record<string, unknown>`（它要按豆瓣那套键名宽松取值）
+                            //    ⇒ 这里必须显式过一道断言，与下方豆瓣支 `tv as unknown as Record<string, unknown>`
+                            //    同一口径。⛔ 别为了消这条错去给 `OmdbDetailFields` 加索引签名 —— 那会让宿主
+                            //    多返/少返字段都不报错，正是本批要修掉的那类「声明过宽」。
+                            applyDoubanDetail(d as unknown as Record<string, unknown>); // director/cast/genres/summary/cover/ratingCount/year 幂等回填
                             if (d.rating != null && !communityScore) communityScore = String(d.rating); // applyDoubanDetail 不读 rating → 评分单独回填
                         }
                     } catch {
                         // 详情补全失败静默：保留搜索级字段，不阻塞保存
                     }
                 } else if (r.source === 'douban') {
-                    if (shouldAdoptCover(poster, r.posterPath)) poster = r.posterPath;
-                    if (r.overview) summary = r.overview;
+                    if (shouldAdoptCover(poster, tv.posterPath)) poster = tv.posterPath;
+                    if (tv.overview) summary = tv.overview;
                     // 详情字段：优先用 r 自带（仅前 3 条搜索时已补）；其余点击时按需拉详情补全
-                    applyDoubanDetail(r as unknown as Record<string, unknown>);
-                    if (!r.director && !r.cast?.length && !r.author && !r.developer) {
+                    applyDoubanDetail(tv as unknown as Record<string, unknown>);
+                    // ⚠️ 原条件还带 `!r.author && !r.developer`：影视结果（`TmdbSearchResult`）根本没有
+                    //    这两个字段 ⇒ 那两项恒为 true，是死条件，已删（行为不变，少两处类型打架）。
+                    if (!tv.director && !tv.cast?.length) {
                         try {
-                            const d = await onFetchDoubanDetail(String(r.id), type);
+                            const d = await onFetchDoubanDetail(String(tv.id), type);
                             if (d) {
                                 applyDoubanDetail(d);
                                 new Notice('已自动补全豆瓣详情字段', 2000);
@@ -1872,7 +1904,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                     //     任何一次详情失败都会让整个 `pick` 抛错（外层 catch 把 `picked` 复位、**条目加不进去**），
                     //     用户看到的就是那句「回填详情失败」——明明搜索级数据已经够用了。
                     try {
-                        const d = await onFetchDetail(r);
+                        const d = await onFetchDetail(tv);
                         if (shouldAdoptCover(poster, posterUrl(d.posterPath))) poster = posterUrl(d.posterPath) ?? '';
                         if (d.genres?.length) genres = d.genres.join(' / ');
                         if (d.director) director = d.director;
@@ -3693,7 +3725,10 @@ export let initialBookKind: BookKind | undefined = undefined;
      * · 点**同一个当前值** ⇒ 清回 0（保留原先「再点一下取消」的手感）
      */
     function setStar(n: number, half: boolean) {
-        const next = half ? n - 0.5 : n;
+        // `rating` 是 `Rating`（0~5 步长 0.5 的**字面量联合**，见 `pure/rating`），
+        // 而 `n - 0.5` / `n` 算出来是宽 `number` ⇒ 必须过 `normalizeRating` 收口，
+        // ⛔ 别写 `as Rating`（那等于关掉这道校验，越界值会直接写进 frontmatter）。
+        const next = normalizeRating(half ? n - 0.5 : n);
         rating = rating === next ? 0 : next;
     }
 
@@ -4100,7 +4135,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                             <input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" />
                         </div>
                         <div>
-                            <label class="rl-lbl">{type === 'movie' ? '上映年' : type === 'game' || type === 'music' ? '发行年' : '首播年'}</label>
+                            <label class="rl-lbl">{type === 'movie' ? '上映年' : type === 'game' ? '发行年' : '首播年'}</label>
                             <input class="rl-input" bind:value={year} placeholder="如 2024" />
                         </div>
                     </div>

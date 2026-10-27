@@ -113,11 +113,22 @@ export function resolveGenreScope(
     return { key: `type:${typeFilter}`, type: typeFilter };
 }
 
-/** 池成员判定：与 resolveGenreScope 成对使用（池 = entries.filter(matchesGenreScope)） */
+/**
+ * 池成员判定：与 resolveGenreScope 成对使用（池 = entries.filter(matchesGenreScope)）。
+ *
+ * ⚠️ `scope` 刻意允许 `null`：调用侧照惯例是
+ *    `genreScope ? entries.filter((e) => matchesGenreScope(e, genreScope)) : []` ——
+ *    三元已经把 null 挡在外面（真为 null 时整支返回 `[]`），但那道收窄**带不进 `filter` 的闭包**
+ *    （`genreScope` 是 `$:` 响应式变量，回调用可能晚于重赋执行），TS 会报
+ *    「GenreScope | null 不能赋给 GenreScope」。这里放宽参数类型即可，运行时行为不变。
+ * 🔴 真为 null 时返回 `false`（**不是** true）：无作用域时「全收」会让池悄悄变成整库，
+ *    而「全不收」最坏只是筛选条空着 —— 故障方向必须选收敛的那一侧。
+ */
 export function matchesGenreScope(
     e: { type: EntryType; bookKind?: BookKind },
-    scope: GenreScope,
+    scope: GenreScope | null,
 ): boolean {
+    if (!scope) return false;
     if (e.type !== scope.type) return false;
     if (scope.bookKind === undefined) return true;
     return normalizeBookKind(e.bookKind) === scope.bookKind;

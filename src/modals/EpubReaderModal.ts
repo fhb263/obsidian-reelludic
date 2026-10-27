@@ -1,11 +1,4 @@
-// EPUB 书籍阅读器面板（原 Modal 弹窗，随 ReaderView 视图渲染）：目录侧栏 + iframe 渲染章节 + 单页连续滚动/翻页式切换 + 进度持久化
-// 排版：字号 ±（注入 iframe 内样式，会话级默认 16px，行距 1.8）；目录跳转（href 定位章节）；
-// 滚动比例按章节持久化（与 TXT 阅读器共用 阅读进度/{id}.json，由 main.ts 读写）
-// 渲染：章节 XHTML 文本 → iframe.srcdoc（注入基础 CSS；二进制资源如图片本期不支持，占位）
-// 由 ReaderView 传入容器/scope 挂载；closeView 由视图层注入（detach leaf）
-// batch1 镜像（T7）：头部三键 + auto-hide 外壳、侧栏 书签/摘抄 三 pane、选中动作条（书签/摘抄）、设置下拉、底部工具条；
-// 正文为 iframe：选中/滚动/鼠标事件发生在 frame 内文档（不冒泡到宿主），监听在 onFrameLoad 内挂到 contentDocument。
-import { Notice, requestUrl, setIcon, type Scope } from 'obsidian';
+import { Notice, requestUrl, type Scope } from 'obsidian';
 import { ReaderPanelBase } from 'modals/ReaderPanelBase';
 import { estimatePercent, readerRatio } from 'pure/readingProgress';
 import { chapterTextLength, epubTocCharCounts, xhtmlToText } from 'pure/epubParse';
@@ -130,6 +123,7 @@ import {
     isEpubResourcePath,
     rewriteEpubResourceUrls,
 } from 'pure/epubResource';
+import { safeSetIcon } from '../services/safeIcon';
 
 export interface EpubReaderOptions {
     /** 书籍标题（弹窗标题） */
@@ -2626,15 +2620,6 @@ ${highlightMarkCss()}`;
         this.applyLineValue((readerLineHeight ?? this.lineHeight) + delta, true);
     }
 
-}
-
-/** setIcon 安全包装：图标名不存在时抛错静默（不影响面板其余功能） */
-function safeSetIcon(el: HTMLElement, icon: string): void {
-    try {
-        setIcon(el, icon);
-    } catch {
-        // 图标不可用：忽略
-    }
 }
 
 /**

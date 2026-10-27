@@ -55,8 +55,14 @@
     export let onRecordJournal: (range: FeedRange) => Promise<void> = async () => {};
     /** 打开某份年度报告（main.openReport） */
     export let onOpenReport: (path: string) => void = () => {};
-    /** 🔴 #635：封面 URL 解析（评分看板用；与主视图同一条出口） */
-    export let coverUrlOf: (e: MediaEntry) => string | null = () => null;
+    /** 🔴 #635：封面 URL 解析（评分看板用；与主视图同一条出口）
+     *  ⚠️ 返回类型收 `string | null | undefined` 三种「没封面」形态：本组件与 `RatingBoard`
+     *  都只用 `{#if coverUrlOf(e)}` 判真假，`null` / `undefined` 行为一致；而宿主那边追到
+     *  `plugin.resolvePoster()`（`main.ts:8001`）返回的是 `string | undefined`。
+     *  ⛔ 别把它收窄成 `string | null` —— 那样 `HomeView.svelte` 就必须在传参处包一层
+     *  `(e) => posterUrl(e) ?? null`，而 `#635 ③` 的产物断言锚的正是**字面复用** `coverUrlOf={posterUrl}`
+     *  （`assert-symbols.cjs:12976`，⛔ 不新造 prop / 不新造包装函数）。 */
+    export let coverUrlOf: (e: MediaEntry) => string | null | undefined = () => null;
     /** 🔴 #635：拖入即落库（宿主写 rating + 生成笔记，成功后刷新视图） */
     export let onSetRating: (id: string, rating: Rating) => Promise<void> = async () => {};
     /** 🔴 #635：Ctrl+滚轮缩放开关（跟随设置页那条既有开关，⛔ 不新开） */
