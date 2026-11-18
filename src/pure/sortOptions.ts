@@ -43,6 +43,44 @@ export const SORT_OPTIONS_BASE: readonly SortOption[] = SORT_OPTIONS.filter(
     (o) => !o.value.startsWith('series-'),
 );
 
+/**
+ * 🔴 m08754 ②：「统计时长」两档 —— 用户点名只在**文学 / 网文 / 音乐 / 游戏**四个页签要。
+ *
+ * 为什么不并进 {@link SORT_OPTIONS_BASE}：影视三类没有时长字段（`data/types.ts` 只有
+ * `readMinutes`/`playtimeMinutes`/`listenMinutes`），若全类型视图也挂这两档，选了之后整屏条目
+ * 全是 0 分钟、顺序与「最近更新」一模一样 —— 用户会判定「这个排序坏了」。
+ * ⇒ 单独成一份池，由 {@link sortOptionsFor} 按页签下发（⛔ 别在调用点各写一遍 filter）。
+ * ⚠️ 位置放在「个人评分」之后、「系列序号」之前：时长是**个人使用量**的延续（评分 → 时长），
+ *    而系列序号是**结构**维度，两者不该夹在一起。
+ */
+export const SORT_OPTIONS_DURATION: readonly SortOption[] = [
+    { value: 'duration-desc', label: '统计时长 ↓' },
+    { value: 'duration-asc', label: '统计时长 ↑' },
+];
+
+/** 把时长两档插进一份池的「系列序号」之前（没那两档就接在末尾） */
+function withDuration(pool: readonly SortOption[]): readonly SortOption[] {
+    const at = pool.findIndex((o) => o.value.startsWith('series-'));
+    if (at < 0) return [...pool, ...SORT_OPTIONS_DURATION];
+    return [...pool.slice(0, at), ...SORT_OPTIONS_DURATION, ...pool.slice(at)];
+}
+
+/**
+ * 按页签给出该用哪一份排序池（**唯一分叉点**）。
+ *
+ * - `seriesMode`（单系列视图）：给全量（含系列序号两档）
+ * - `type` 为 `book`（文学 / 网文 / 漫画共用 `EntryType='book'`）、`music`、`game`：加上「统计时长」
+ * - 其余（电影 / 剧集 / 动画 / 全类型 / 合并视图）：`SORT_OPTIONS_BASE`
+ *
+ * ⚠️ 「文学」与「网文」在本仓是**同一个 `EntryType='book'`**（靠 `BookKind` 区分），
+ *    所以两者在这里走同一条分支 —— 这正是用户要的（两个页签都该有时长排序）。
+ */
+export function sortOptionsFor(type: string | null | undefined, seriesMode: boolean): readonly SortOption[] {
+    if (seriesMode) return withDuration(SORT_OPTIONS);
+    if (type === 'book' || type === 'music' || type === 'game') return withDuration(SORT_OPTIONS_BASE);
+    return SORT_OPTIONS_BASE;
+}
+
 /** 归一：只接受本表里真有（且**属于给定子集**）的排序值，其余一律回 `recent`（历史缺省）。 */
 export function normalizeSortBy(raw: unknown, pool: readonly SortOption[] = SORT_OPTIONS_BASE): SortBy {
     const v = typeof raw === 'string' ? raw : '';

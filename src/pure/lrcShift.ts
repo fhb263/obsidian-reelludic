@@ -160,10 +160,22 @@ export function lyricOffsetLabel(ms: number): string {
  *  真实错位很少超过这个量级（超过通常是拿错了歌词文件，该换文件而不是硬挪）；
  *  再放开会让用户一格格点到天荒地老，也让「重置」变成唯一出路。 */
 export const LYRIC_OFFSET_LIMIT = 30_000;
-/** 每档步长（浮层的 ± 按钮一次挪这么多） */
-export const LYRIC_OFFSET_STEP = 500;
+/**
+ * 细档步长（浮层里 `<` / `>` 一次挪这么多）。
+ *
+ * 🔴 m08754 用户改判：「把偏移值按改成 -+0.1s、1s 调整：UI 按 `<<  <  0s  >  >>` 显示」
+ *    ⇒ 从原来单一的 0.5s 拆成**细 0.1s + 粗 1s** 两档。0.1s 是听感上「刚好能对上」的最小刻度
+ *    （音乐卡农/现场版错位常在半秒以内），而 1s 用来快速跨过整段前奏/间奏。
+ * ⚠️ 本常量同时是 {@link clampLyricOffset} 的**吸附网格**（下面直接拿它取整）——
+ *    换成 100 之后网格一并从 0.5s 变 0.1s，所以 `1200ms` 不再被吸成 `1000ms`。
+ *    这是有意的：细档既然能落到 0.1，网格就不该再把它吃掉。
+ */
+export const LYRIC_OFFSET_STEP = 100;
 
-/** 把任意偏移量夹到 ±30s 并对齐 0.5s 网格（幂等：`clamp(clamp(x)) === clamp(x)`） */
+/** 粗档步长（浮层里 `<<` / `>>` 一次挪这么多 —— 整秒跨段用） */
+export const LYRIC_OFFSET_COARSE = 1000;
+
+/** 把任意偏移量夹到 ±30s 并对齐 0.1s 网格（幂等：`clamp(clamp(x)) === clamp(x)`） */
 export function clampLyricOffset(ms: number): number {
     if (!Number.isFinite(ms)) return 0;
     const snapped = Math.round(ms / LYRIC_OFFSET_STEP) * LYRIC_OFFSET_STEP;

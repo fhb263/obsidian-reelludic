@@ -22,7 +22,7 @@ import type { MediaStatus } from './status';
 import type { SortBy } from './search';
 // 🔴 #472：组级进度**必须复用单卡那份取值口径**（`percent` 优先、无则按 `page/totalPage`）——
 //   卡面那行 `.rl-readrow` 用的是什么，这里就得是什么，⛔ 别在本文件里另写一套百分比判定。
-import { readPercent } from './mediaProgress';
+import { readPercent, entryDurationMinutes } from './mediaProgress';
 import { ENTRY_TYPE_LABELS } from 'data/types';
 
 /** 分组键里分隔「类型」与「系列名」的字符（不可打印 ⇒ 真实系列名不可能含它；与 pageKey 同款惯例） */
@@ -397,6 +397,13 @@ function groupAvg(items: readonly MediaEntry[], pick: (e: MediaEntry) => number 
     return sum / items.length;
 }
 
+/** 组内「统计时长」之和（分钟）—— 合集在 `duration-*` 档下的代表值（口径见 `compareSeriesGroups`） */
+function groupDuration(items: readonly MediaEntry[]): number {
+    let sum = 0;
+    for (const it of items) sum += entryDurationMinutes(it);
+    return sum;
+}
+
 /** 组内 `updatedAt`（ISO 串，可直接字典序比）的极值；组内全空 ⇒ 空串（排在最早） */
 function groupUpdatedAt(items: readonly MediaEntry[], want: 'newest' | 'oldest'): string {
     let out: string | null = null;
@@ -450,6 +457,16 @@ export function compareSeriesGroups(a: SeriesGroup, b: SeriesGroup, sortBy: Sort
             break;
         case 'recent-asc':
             primary = groupUpdatedAt(a.items, 'oldest').localeCompare(groupUpdatedAt(b.items, 'oldest'));
+            break;
+        // 🔴 m08754 ②：统计时长的合集代表值 = **组内时长之和**（不是平均）。
+        //    理由：合集卡上那行读数是「这一系列总共看了多久」，用户按它排就是想「哪个系列吃时间最多」；
+        //    用平均会让「1 部 100 小时」排在「5 部各 30 小时」之后，与直觉相反。
+        //    ⚠️ 取值走 `mediaProgress.entryDurationMinutes`（与条目排序同一份），⛔ 别在这里另写三元。
+        case 'duration-asc':
+            primary = asc(groupDuration(a.items), groupDuration(b.items));
+            break;
+        case 'duration-desc':
+            primary = -asc(groupDuration(a.items), groupDuration(b.items));
             break;
         // `recent` 与下拉里没有的 `status-*` 一律按「最近更新 ↓」处理
         default:

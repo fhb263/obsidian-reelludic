@@ -13,6 +13,7 @@ import {
     clampLyricOffset,
     loadLyricOffset,
     lyricOffsetLabel,
+    LYRIC_OFFSET_COARSE,
     LYRIC_OFFSET_KEY_PREFIX,
     LYRIC_OFFSET_LIMIT,
     LYRIC_OFFSET_STEP,
@@ -135,16 +136,19 @@ describe('🔴 m08028 shiftLrcLines：渲染侧平移', () => {
     });
 });
 
-describe('🔴 m08028 偏移量夹取与文案', () => {
-    it('夹到 ±30s 并对齐 0.5s 网格', () => {
+describe('🔴 m08028 / m08754 ① 偏移量夹取与文案', () => {
+    it('夹到 ±30s 并对齐 0.1s 网格', () => {
         expect(clampLyricOffset(1000)).toBe(1000);
-        expect(clampLyricOffset(1200)).toBe(1000); // 吸附到 0.5s 网格
+        // 🔴 m08754 ①：网格从 0.5s 改 0.1s（细档步长就是 0.1s）⇒ 1200 不再被吸成 1000。
+        //    ⛔ 别把这条改回「吸附到 0.5s 网格」：那会让 `<`/`>` 按了不生效（落不到细档上）。
+        expect(clampLyricOffset(1200)).toBe(1200);
+        expect(clampLyricOffset(1260)).toBe(1300); // 仍会吸到最近的 0.1s
         expect(clampLyricOffset(99_000)).toBe(LYRIC_OFFSET_LIMIT);
         expect(clampLyricOffset(-99_000)).toBe(-LYRIC_OFFSET_LIMIT);
     });
 
     it('幂等：clamp(clamp(x)) === clamp(x)', () => {
-        for (const x of [0, 250, 1200, -7700, 99_000, Number.NaN]) {
+        for (const x of [0, 250, 1200, 1260, -7700, 99_000, Number.NaN]) {
             const once = clampLyricOffset(x);
             expect(clampLyricOffset(once)).toBe(once);
         }
@@ -156,11 +160,15 @@ describe('🔴 m08028 偏移量夹取与文案', () => {
         expect(lyricOffsetLabel(-0)).toBe('0s');
     });
 
-    it('文案：整秒不带小数、半秒保留一位、正数带 +', () => {
+    it('文案：整秒不带小数、非整秒保留一位、正数带 +', () => {
         expect(lyricOffsetLabel(0)).toBe('0s');
         expect(lyricOffsetLabel(2000)).toBe('+2s');
         expect(lyricOffsetLabel(-1500)).toBe('-1.5s');
-        expect(lyricOffsetLabel(LYRIC_OFFSET_STEP)).toBe('+0.5s');
+        // 🔴 m08754 ①：细档变成 0.1s ⇒ 文案必须是 `+0.1s`（一位小数够用，刻度只到 0.1）
+        expect(lyricOffsetLabel(LYRIC_OFFSET_STEP)).toBe('+0.1s');
+        expect(lyricOffsetLabel(-LYRIC_OFFSET_STEP)).toBe('-0.1s');
+        // 粗档整秒仍不带小数
+        expect(lyricOffsetLabel(LYRIC_OFFSET_COARSE)).toBe('+1s');
     });
 });
 

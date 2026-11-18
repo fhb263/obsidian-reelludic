@@ -14255,15 +14255,19 @@ body.rl-shot-dragging {
 }
 /* 非 1×，所以强调色提示（不复用 `is-on`：那个语义是「浮层开着」） */
 .rl-ap-root .rl-ap-btn-speed.is-var { color: var(--interactive-accent); font-weight: 600; }
-/* —— 🔴 m08028 歌词偏移按钮 / m08545 改判为**铅笔图标** ——
-   用户 m08545：「在音乐播放器工具栏倍速按钮旁加编辑铅笔样式的图标点击展开可调整偏移值实时调整」。
-   ⚠️ 这里**不能**再写 `width: auto; padding: 0 8px; font-size: 12px; font-variant-numeric` 那一套：
-      那是「纯文字按钮」的度量，套到图标按钮上会让 16px 的 svg 在 8px 横padding 里发虚、
-      与左侧那几个方形图标按钮（`.rl-ap-btn` 的 `padding: 5px`）对不齐。
-      ⇒ 完全继承 `.rl-ap-btn` 的方形度量，本类只保留「非 0 时强调色」这一条增量语义。
-   非零时 `.is-var` 提示，与倍速「非 1× 才高亮」同一套视觉语言（`.is-on` 仍归「浮层开着」）。 */
-.rl-ap-root .rl-ap-btn-offset.is-var { color: var(--interactive-accent); font-weight: 600; }
-/* 偏移浮层：读数 + 两排按钮，比滑条型窄一些 */
+/* —— 🔴 m08028 歌词偏移按钮 / m08545 改判为**铅笔图标** / m08754 改判高亮语义 ——
+   m08545：「在音乐播放器工具栏倍速按钮旁加编辑铅笔样式的图标点击展开可调整偏移值实时调整」。
+   m08754 ①（用户原话）：「调整偏移值图标按钮要和其他工具栏图标大小一致**且仅在保持点击时高亮
+   显示图标（取消后正常显示灰色图标）**」。
+   ⛔ 这里**不写任何度量** —— 原来的 `width:auto / padding:0 8px / font-size:12px` 是文字按钮的，
+      套到图标按钮上会让它比左侧那排 16px 图标的方形按钮更宽（用户报的「大小不一致」就是它）。
+      完全继承 `.rl-ap-btn` 的 `padding:5px` + `svg 16×16` 方形度量。
+   ⛔ 也**不再给 `.is-var` 上色**：m08545 那一版是「偏移非 0 就常亮强调色」，与 m08754 的
+      「取消后正常显示灰色图标」直接冲突（用户看到的是没开浮层图标也一直亮着）。
+      ⇒ 高亮只由 `.is-on` 承担（只在 `openPop`/`closePop` 里翻转，与倍速/音量同款）。
+      `.is-var` 退化为纯数据标记，本文件不再为它写配色规则。
+   📌 真源：`src/views/audioPlayerMount.ts` 的 `syncOffsetButton()` 注释。 */
+/* 偏移浮层：读数 + 五段步进 + 图标动作，比滑条型窄一些 */
 .rl-ap-root .rl-ap-offset-head {
     display: flex;
     flex-direction: column;
@@ -14288,14 +14292,23 @@ body.rl-shot-dragging {
 }
 .rl-ap-root .rl-ap-offset-row {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* 🔴 m08754 ①：五段一行 `<<  <  读数  >  >>` —— 两头的粗调固定宽（`<<`/`>>` 比单字符宽），
+       中间读数吃掉剩余空间，细调贴读数 ⇒ 用 `auto auto 1fr auto auto` 而不是等分 5 份：
+       等分会让读数（`0s` / `+12.3s`）在窄空格里换行，而粗调按钮又过宽。 */
+    grid-template-columns: auto auto minmax(52px, 1fr) auto auto;
+    align-items: center;
     gap: 4px;
     padding: 0 2px;
+}
+/* 读数在行中间 ⇒ 居中 + 等宽数字（跳动时行宽不抖） */
+.rl-ap-root .rl-ap-offset-row .rl-ap-offset-val {
+    text-align: center;
+    align-self: center;
 }
 /* 微调按钮：与播放器其余小按钮同尺寸语言（不是纯文字链接，要能一眼看出可点） */
 .rl-ap-root .rl-ap-offset-step {
     width: auto;
-    min-width: 0;
+    min-width: 26px;
     height: 26px;
     padding: 0 6px;
     font-size: 12px;
@@ -14316,21 +14329,26 @@ body.rl-shot-dragging {
     border-top: 1px solid var(--background-modifier-border);
     margin-top: 4px;
 }
+/* 🔴 m08754 ①（用户：「重置和写入笔记文字按钮都改成图标按钮」）：
+   两颗按钮现在都是 `iconButton()` 造的**图标按钮** ⇒ 度量按方形图标按钮来（同 `.rl-ap-btn` 的 padding:5px
+   + `svg 16×16`），⛔ 别再留 `padding: 0 8px; font-size: 12px` 那套文字按钮度量（图标会被挤歪）。
+   `flex: 1 1 0` 仍均分宽度 —— 让两颗按钮各占一半、底部对齐，而不是各按自己内容宽。 */
 .rl-ap-root .rl-ap-offset-act {
-    flex: 1 1 auto;
-    width: auto;
+    flex: 1 1 0;
     min-width: 0;
     height: 26px;
-    padding: 0 8px;
-    font-size: 12px;
-    line-height: 1;
+    padding: 5px;
     font-family: inherit;
     color: var(--text-normal);
     background: var(--background-modifier-hover);
     border: 1px solid var(--background-modifier-border);
     border-radius: var(--radius-s, 4px);
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
+.rl-ap-root .rl-ap-offset-act svg { width: 16px; height: 16px; }
 .rl-ap-root .rl-ap-offset-act.is-primary {
     color: var(--text-on-accent);
     background: var(--interactive-accent);

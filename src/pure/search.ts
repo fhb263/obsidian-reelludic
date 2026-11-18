@@ -11,6 +11,10 @@ import { isIncomplete } from 'pure/incomplete';
 // 🔴 #441：系列序号排序档（series-asc / series-desc）的比较逻辑借 `seriesGroup` 那份**单一真源**。
 //    ⚠️ 依赖方向是单向的（seriesGroup 不反过来依赖 search），不会成环。
 import { compareSeriesIndex, compareSeriesIndexDesc } from 'pure/seriesGroup';
+// 🔴 m08754 ②「统计时长」排序档的取值真源（书籍/网文/漫画 readMinutes、游戏 playtimeMinutes、
+//    音乐 listenMinutes 的分家映射）—— 在 `pure/mediaProgress`，与「合集代表值」共用同一份。
+//    ⛔ 别在本文件里内联三元表达式：`seriesGroup` 也要它，而它不能反向引本文件（会成环）。
+import { entryDurationMinutes } from 'pure/mediaProgress';
 
 /** 状态排序基准（想看 0 < 在看 1 < 已看 2 < 存档 3） */
 const STATUS_RANK: Record<MediaStatus, number> = Object.fromEntries(MEDIA_STATUSES.map((s, i) => [s, i])) as Record<MediaStatus, number>;
@@ -61,7 +65,8 @@ export function matchesStatus(e: MediaEntry, statusFilter: MediaStatus | 'all'):
  *  status-asc=状态 想看→在看→已看→存档 / status-desc=反之
  *  🔴 #441 追加 series-asc=系列序号 小→大（**没填序号的置后**）/ series-desc=反之 ——
  *     比较逻辑的单一真源是 `pure/seriesGroup.compareSeriesIndex`，⛔ 别在这里另写一份。 */
-export type SortBy = 'recent' | 'recent-asc' | 'release-desc' | 'release-asc' | 'score-desc' | 'score-asc' | 'title-desc' | 'title-asc' | 'myrating-desc' | 'myrating-asc' | 'status-asc' | 'status-desc' | 'series-asc' | 'series-desc';
+export type SortBy = 'recent' | 'recent-asc' | 'release-desc' | 'release-asc' | 'score-desc' | 'score-asc' | 'title-desc' | 'title-asc' | 'myrating-desc' | 'myrating-asc' | 'status-asc' | 'status-desc' | 'series-asc' | 'series-desc' | 'duration-desc' | 'duration-asc';
+
 
 /**
  * 排序（**唯一真源**）：`filterAndSort` 与「合集视图的排序栏」共用这一份。
@@ -101,6 +106,14 @@ export function sortEntries<T extends MediaEntry>(entries: readonly T[], sortBy:
                 return compareSeriesIndex(a, b);
             case 'series-desc':
                 return compareSeriesIndexDesc(a, b);
+            // 🔴 m08754 ②：统计时长排序 —— 取值走 `entryDurationMinutes`（本文件上方，单一真源）。
+            //    没有时长的条目（影视全类、以及未记录时长的书籍/游戏/音乐）恒 0：
+            //    ↓ 档里它们排在最后（最短时长），↑ 档里排最前 —— 与「从小到大」的字面语义一致，
+            //    ⛔ 别额外加「空值一律置后」的特判（那会让「↑」不再是从小到大，读数与顺序自相矛盾）。
+            case 'duration-desc':
+                return entryDurationMinutes(b) - entryDurationMinutes(a);
+            case 'duration-asc':
+                return entryDurationMinutes(a) - entryDurationMinutes(b);
             case 'recent':
             default:
                 return b.updatedAt.localeCompare(a.updatedAt);

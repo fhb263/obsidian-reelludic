@@ -77,6 +77,7 @@ import {
 // 🔴 m08028：歌词**整体时间戳偏移**（用户：「LRC 歌词整体所有时间戳向后加N秒…对齐歌曲与LRC歌词」）。
 // 纯逻辑全在 `pure/lrcShift`（含 localStorage 记忆与夹取），本层只负责按钮 / 浮层 / 重算。
 import {
+    LYRIC_OFFSET_COARSE,
     LYRIC_OFFSET_STEP,
     clampLyricOffset,
     loadLyricOffset,
@@ -1144,36 +1145,45 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     /**
      * 🔴 m08028：歌词偏移浮层的内容。
      *
-     * 四段：读数 → 左右各半的微调按钮（±0.5s / ±1s）→ 重置 → 写回笔记。
+     * 四段：读数 → 五段步进（`<<  <  0.0s  >  >>`）→ 重置 → 写回笔记。
      * ⚠️ 全部走 `setLyricOffset()` 这一个入口（⛔ 别在这里直接改 `lyricOffset` ——
      *    那样会漏掉记忆落库与 `lines` 重算，表现为「按钮点了但画面不动」）。
      *
      * 🔴 用 `-` 而不是「往前/往后」：偏移方向本身就容易讲反。
      *    本按钮的语义是「把**歌词时间轴**整体挪动」，`+` = 歌词更晚出现（歌跑到歌词后面去了）。
+     *
+     * 🔴 m08754 ①（用户：「把偏移值按改成 -+0.1s、1s 调整：UI 按 `<<  <  0s  >  >>` 显示，
+     *    重置和写入笔记文字按钮都改成图标按钮」）⇒ 从「四个文字按钮 ±1s/±0.5s」改成
+     *    「五段同行：`<<`(−1s) `<`(−0.1s) 读数 `>`(+0.1s) `>>`(+1s)」，动作区改图标。
      */
     function fillOffsetPop(): void {
         const head = el('div', 'rl-ap-offset-head');
-        head.appendChild(el('div', 'rl-ap-offset-val', lyricOffsetLabel(lyricOffset)));
         head.appendChild(el('div', 'rl-ap-offset-hint', '歌词整体挪动，点「写回笔记」后永久生效'));
         pop.appendChild(head);
 
-        const build = (label: string, delta: number): HTMLElement => {
+        const build = (label: string, tip: string, delta: number): HTMLElement => {
             const b = el('button', 'rl-ap-offset-step', label) as HTMLButtonElement;
             b.type = 'button';
+            // ⚠️ 只挂 aria-label、⛔ 不挂 title（Obsidian 会给 title 再套一层气泡，与 aria 双弹，见 #465）
+            b.setAttribute('aria-label', tip);
             b.addEventListener('click', () => setLyricOffset(lyricOffset + delta));
             return b;
         };
+        // 五段同一行：粗调在两头、细调贴着读数 —— 手指/鼠标从左往右扫，步长依次变细再变粗。
+        // ⚠️ 文案就用用户给的原样 `<<` / `<` / `>` / `>>`（⛔ 别换成 `«‹›»` 这类排版引号：
+        //    用户是照着「像播放器的快退/快进」的直觉写的，换字形会让它读起来像书名号）。
         const row = el('div', 'rl-ap-offset-row');
-        // 左减右加：负号那侧放「更早」，与读数里的 `+/-` 同向
-        row.appendChild(build('−1s', -1000));
-        row.appendChild(build('−0.5s', -LYRIC_OFFSET_STEP));
-        row.appendChild(build('+0.5s', LYRIC_OFFSET_STEP));
-        row.appendChild(build('+1s', 1000));
+        row.appendChild(build('<<', '提前 1 秒', -LYRIC_OFFSET_COARSE));
+        row.appendChild(build('<', '提前 0.1 秒', -LYRIC_OFFSET_STEP));
+        row.appendChild(el('div', 'rl-ap-offset-val', lyricOffsetLabel(lyricOffset)));
+        row.appendChild(build('>', '延后 0.1 秒', LYRIC_OFFSET_STEP));
+        row.appendChild(build('>>', '延后 1 秒', LYRIC_OFFSET_COARSE));
         pop.appendChild(row);
 
         const actions = el('div', 'rl-ap-offset-actions');
-        const reset = el('button', 'rl-ap-offset-act', '重置') as HTMLButtonElement;
-        reset.type = 'button';
+        // 动作区两颗**图标按钮**（m08754 ①：「重置和写入笔记文字按钮都改成图标按钮」）——
+        // 走与工具栏同一个 `iconButton()`，尺寸/描边/悬停态自动与左侧那排图标同族。
+        const reset = iconButton('rl-ap-offset-act', 'rotate-ccw', '重置偏移为 0');
         reset.addEventListener('click', () => setLyricOffset(0));
         actions.appendChild(reset);
 
@@ -1181,8 +1191,7 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
         // ⛔ 偏移为 0 时写了也没意义（等于把文件重写一遍），按钮置灰说明原因。
         // ⚠️ 可用态与 aria **不在这里写**：建节点时先给个占位，函数末尾交给 `syncOffsetPop()`
         //    统一刷（偏移一变就要跟着变，写两处必然漂）。
-        const save = el('button', 'rl-ap-offset-act is-primary', '写回笔记') as HTMLButtonElement;
-        save.type = 'button';
+        const save = iconButton('rl-ap-offset-act is-primary', 'save', '把当前偏移写进歌词文件');
         save.disabled = true;
         save.addEventListener('click', () => {
             const track = items[idx];
@@ -1240,8 +1249,14 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     /**
      * 偏移按钮状态同步（**唯一写入口**）。
      * 🔴 m08545 起按钮是**铅笔图标**，所以这里 ⛔ 不写 `textContent`（写一次图标就没了），
-     * 只维护三件事：`.is-var` 高亮、`aria-label` 读数、`data-offset` 便于真机/断言核对。
+     * 只维护 `.is-var` 与 `aria-label` / `data-offset`（便于真机与断言核对）。
      * 读数本身在浮层 `.rl-ap-offset-val` 里（`syncOffsetPop` 负责）。
+     *
+     * 🔴🔴 m08754 ① 用户改判：「仅在保持点击时高亮显示图标（取消后正常显示灰色图标）」——
+     *    此前的 `.is-var`（偏移非 0 就常亮强调色）与这条**直接冲突**：用户看到的是「没开浮层
+     *    图标也一直亮着」，误以为按钮卡住了。⇒ `.is-var` 退化成**纯数据标记**（不再带任何配色），
+     *    高亮只由 `.is-on` 承担，而 `.is-on` **只**在 `openPop`/`closePop` 里翻转（与倍速/音量同款）。
+     *    ⛔ 别再把 `.is-var` 写回 `styles.css` 的着色规则：那会让「关闭后回灰」失效。
      */
     function syncOffsetButton(): void {
         const label = lyricOffsetLabel(lyricOffset);

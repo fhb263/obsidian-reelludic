@@ -11,6 +11,25 @@ import { statusLabel } from 'pure/labels';
 import { formatBadgeTime } from 'pure/playtime';
 
 /** 书籍进度单位：关联 TXT（按章节解析）→ 章，其余（PDF / 手填 / 豆瓣兜底）→ 页 */
+/**
+ * 「统计时长」（分钟）—— 排序档 `duration-asc`/`duration-desc` 与合集代表值的**唯一真源**。
+ *
+ * 🔴 m08754 ②（用户：「在页签为文学/网文/音乐/游戏的排序中加两个按『统计时长』上下的项」）：
+ *    三种时长字段是**按类型分家**的（`data/types.ts`）——
+ *      书籍/网文/漫画 `readMinutes`(:358)、游戏 `playtimeMinutes`(:390)、音乐 `listenMinutes`(:402)。
+ *    ⛔ 别在「条目排序」（`pure/search.sortEntries`）与「合集代表值」（`pure/seriesGroup`）
+ *       各写一遍这层映射：两份必然漂移，而这两处本来就是「同一档排序」的两种呈现。
+ * ⚠️ 为什么放在**这里**而不是 `pure/search`：`seriesGroup` 要从 `search` 取 `SortBy` 这个**类型**，
+ *    若再让 `seriesGroup` 去 `search` 取一个**值**，就成了运行期循环依赖（`search` 反过来还引
+ *    `seriesGroup.compareSeriesIndex`）。本文件只被两边同时引用，是唯一无环的落点。
+ * ⚠️ 影视三类没有时长字段 ⇒ 恒 0（未记录时长的书籍/游戏/音乐同样 0）—— 这是有意的：
+ *    「统计时长 ↓」把没时长的沉到最后才是用户想要的语义，⛔ 别在这里改成「空值跳过」。
+ */
+export function entryDurationMinutes(e: MediaEntry): number {
+    const raw = e.type === 'music' ? e.listenMinutes : e.type === 'game' ? e.playtimeMinutes : e.readMinutes;
+    return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
 export function bookUnitOf(e: { bookFile?: string } | null | undefined): string {
     return String(e?.bookFile ?? '').toLowerCase().endsWith('.txt') ? '章' : '页';
 }

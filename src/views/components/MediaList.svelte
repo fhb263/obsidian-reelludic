@@ -107,7 +107,7 @@
     import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_TOP_UNITS, bookKindCounts, normalizeBookKind } from 'pure/bookKind';
     // 🔴 #547：排序选项表搬到 `pure/sortOptions`（合并视图的顶端筛选栏要用**同一份**）——
     //    ⛔ 别在本组件里再写一张表：加一档排序时必然只改一处。
-    import { SORT_OPTIONS, SORT_OPTIONS_BASE } from 'pure/sortOptions';
+    import { sortOptionsFor } from 'pure/sortOptions';
     // 🔴 #547 / #550 合并视图：作用域由宿主推下来，本组件只负责把它翻译成 typeFilter / kindFilter。
     //    🔴 #550：那枚「媒体类型」下拉也搬进本组件渲染（并入内容区筛选行，取消顶端独立行）⇒
     //    还要它的**选项表与文案**（⛔ 不在组件里手写第二份中文）。
@@ -1160,7 +1160,24 @@
      * ⚠️ 系列视图**默认**就是 `series-asc`（`openSeries` 切的）⇒ 下拉里必须有它，
      *    否则 `bind:value` 匹配不到任何选项、下拉会显示成空白。
      */
-    $: sortOptions = activeGroup ? SORT_OPTIONS : SORT_OPTIONS_BASE;
+    /**
+     * 🔴 #444 + m08754 ②：排序池由**一处**函数下发（`pure/sortOptions.sortOptionsFor`）。
+     * - 系列视图 ⇒ 全量池（含「系列序号 ↑↓」两档）
+     * - 文学 / 网文 / 音乐 / 游戏页签 ⇒ 再并入「统计时长 ↑↓」两档
+     * - 其余 ⇒ `SORT_OPTIONS_BASE`
+     * ⛔ 别在这里用三元拼池：影视页签多出「统计时长」时整屏条目时长都是 0、顺序与「最近更新」一致，
+     *    用户只会判定「这个排序坏了」（语义说明写在 `sortOptionsFor` 的注释里）。
+     */
+    $: sortOptions = sortOptionsFor(lockType, !!activeGroup);
+    /**
+     * 🔴 m08754 ②：切页签后 `sortBy` 可能停在**新池里没有的档**（如音乐页选「统计时长 ↓」后切到影视页签）。
+     * `MiniSelect` 匹配不到选项 ⇒ 下拉显示成空白，用户看不出自己选了什么（与 #449 同一个症状）。
+     * ⚠️ 判空写进函数体：Svelte 4 的依赖分析不穿透函数体，避免 `$:` 与 `sortBy` 自环。
+     */
+    function dropVoidSort(): void {
+        if (!sortOptions.some((o) => o.value === sortBy)) sortBy = 'recent';
+    }
+    $: if (sortOptions && !sortOptions.some((o) => o.value === sortBy)) dropVoidSort();
 
     /**
      * 行序列。🔴 系列视图下**只喂这一组的条目**（当作散卡）⇒ 分页 / 「共 N 条」/ 批量选择

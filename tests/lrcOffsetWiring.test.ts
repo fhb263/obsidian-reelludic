@@ -22,11 +22,27 @@ const ROOT = 'C:/Users/kest/Desktop/obsidian-reelludic/';
 const view = readFileSync(ROOT + 'src/views/audioPlayerMount.ts', 'utf8');
 const main = readFileSync(ROOT + 'main.ts', 'utf8');
 const pure = readFileSync(ROOT + 'src/pure/lrcShift.ts', 'utf8');
+const css = readFileSync(ROOT + 'styles.css', 'utf8');
 
 /** 取 `from` 之后的一段（找不到返回空串，让断言红而不是抛错） */
 function sliceAfter(src: string, from: string, len: number): string {
     const i = src.indexOf(from);
     return i < 0 ? '' : src.slice(i, i + len);
+}
+
+/**
+ * `fillOffsetPop()` 的**整段**（不是截固定字数）。
+ * ⚠️ 2026-11-18 m08754：这函数从「读数 + 四颗文字按钮」变成「五段步进 + 两颗图标按钮 + 写回回调」，
+ *    字数翻了近一倍；原先 `sliceAfter(..., 3000)` 会截在 `.finally()` 里，
+ *    于是 `syncOffsetPop();` 那条守卫变成**假红**（代码明明还在）。
+ *    ⇒ 改用「到下一个成员（`function` / JSDoc 注释）为止」定界。
+ */
+function funcBody(src: string, from: string): string {
+    const i = src.indexOf(from);
+    if (i < 0) return '';
+    const stops = [src.indexOf('\n    function ', i + from.length), src.indexOf('\n    /**', i + from.length)]
+        .filter((n) => n > -1);
+    return src.slice(i, stops.length ? Math.min(...stops) : i + 8000);
 }
 
 describe('🔴 m08028 歌词偏移 · 播放器装配', () => {
@@ -52,6 +68,58 @@ describe('🔴 m08028 歌词偏移 · 播放器装配', () => {
         // 关闭时三颗按钮的 `is-on` 都要摘掉，漏一颗会「关掉了还亮着」
         const close = sliceAfter(view, 'const closePop = (): void => {', 260);
         expect(close).toContain("offsetBtn.classList.remove('is-on');");
+    });
+
+    /**
+     * 🔴 m08754 ①：用户逐字「把偏移值按改成 -+0.1s、1s 调整：UI 按 `<<  <  0s  >  >>` 显示，
+     *    重置和写入笔记文字按钮都改成图标按钮」。
+     */
+    it('m08754 ① 五段步进：<<(−1s) <(−0.1s) 读数 >(+0.1s) >>(+1s)', () => {
+        const pop = funcBody(view, 'function fillOffsetPop');
+        expect(pop.length).toBeGreaterThan(0);
+        // 四颗步进按钮的**字面量与顺序**：粗调在两头、细调贴读数
+        const iCoarsePrev = pop.indexOf("build('<<', '提前 1 秒', -LYRIC_OFFSET_COARSE)");
+        const iFinePrev = pop.indexOf("build('<', '提前 0.1 秒', -LYRIC_OFFSET_STEP)");
+        const iVal = pop.indexOf("el('div', 'rl-ap-offset-val', lyricOffsetLabel(lyricOffset))");
+        const iFineNext = pop.indexOf("build('>', '延后 0.1 秒', LYRIC_OFFSET_STEP)");
+        const iCoarseNext = pop.indexOf("build('>>', '延后 1 秒', LYRIC_OFFSET_COARSE)");
+        for (const i of [iCoarsePrev, iFinePrev, iVal, iFineNext, iCoarseNext]) expect(i).toBeGreaterThan(-1);
+        // 顺序必须严格是 `<< < 读数 > >>`（读数在正中）
+        expect(iCoarsePrev).toBeLessThan(iFinePrev);
+        expect(iFinePrev).toBeLessThan(iVal);
+        expect(iVal).toBeLessThan(iFineNext);
+        expect(iFineNext).toBeLessThan(iCoarseNext);
+        // ⛔ 旧的四个文字按钮（±1s / ±0.5s）不许长回来
+        expect(pop).not.toContain("build('−1s'");
+        expect(pop).not.toContain("build('+0.5s'");
+        // 读数节点不再挂在 head 里（它现在是五段行的中间格）
+        expect(pop).not.toContain("head.appendChild(el('div', 'rl-ap-offset-val'");
+    });
+
+    it('m08754 ① 动作区两颗按钮都是图标按钮（⛔ 不是文字）', () => {
+        const pop = funcBody(view, 'function fillOffsetPop');
+        expect(pop).toContain("const reset = iconButton('rl-ap-offset-act', 'rotate-ccw', '重置偏移为 0');");
+        expect(pop).toContain("const save = iconButton('rl-ap-offset-act is-primary', 'save', '把当前偏移写进歌词文件');");
+        // ⛔ 反向守卫：不许再出现「文字按钮」形态的建法
+        expect(pop).not.toContain("el('button', 'rl-ap-offset-act', '重置')");
+        expect(pop).not.toContain("el('button', 'rl-ap-offset-act is-primary', '写回笔记')");
+    });
+
+    /**
+     * 🔴 m08754 ①：用户逐字「调整偏移值图标按钮要和其他工具栏图标大小一致**且仅在保持点击时高亮
+     *    显示图标（取消后正常显示灰色图标）**」。
+     * ⚠️ 这条是**反向守卫**：`styles.css` 里一旦又给 `.rl-ap-btn-offset.is-var` 上色，
+     *    「关闭浮层后回灰」立刻失效（按钮会在偏移非 0 时常亮强调色）。
+     */
+    it('m08754 ① 高亮只归 `is-on`：`.is-var` 不许再带配色', () => {
+        expect(css).not.toContain('.rl-ap-btn-offset.is-var');
+        // 图标尺寸必须继承 `.rl-ap-btn`（⛔ 不许给偏移按钮单写文字按钮度量）
+        const seg = sliceAfter(css, 'm08754 改判高亮语义', 2400);
+        expect(seg.length).toBeGreaterThan(0);
+        expect(seg).not.toMatch(/\.rl-ap-btn-offset\s*\{/);
+        // 反向守卫：这一段的声明区（剥掉注释）里不许再出现这个选择器
+        const decl = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+        expect(decl).not.toMatch(/rl-ap-btn-offset/);
     });
 
     it('🔴 写回成功后的顺序：先归零、再重载', () => {
@@ -107,7 +175,7 @@ describe('🔴 m08028 歌词偏移 · 播放器装配', () => {
         expect(sync).toContain("'偏移为 0，无需写回'");
         expect(sync).toContain("'把当前偏移写进歌词文件'");
         // 建节点那段不许再自己算一遍（两处写必然漂）
-        const fill = sliceAfter(view, 'function fillOffsetPop', 3000);
+        const fill = funcBody(view, 'function fillOffsetPop');
         expect(fill).toContain('save.disabled = true;');
         expect(fill).not.toContain('const canWrite =');
         // 建完立刻刷一遍，首帧就正确

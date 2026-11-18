@@ -317,6 +317,67 @@ describe('filterAndSort · 系列序号排序（#441）', () => {
     });
 });
 
+/**
+ * 🔴 m08754 ②（用户逐字）：「在页签为文学/网文/音乐/游戏的排序中加两个按『统计时长』上下的项」。
+ * 时长字段按类型各取一处（⛔ 不跨类型混读，免得音乐卡读到 `readMinutes`）：
+ *   书籍/网文/漫画 → `readMinutes`、音乐 → `listenMinutes`、游戏 → `playtimeMinutes`。
+ */
+describe('filterAndSort · 统计时长排序（m08754 ②）', () => {
+    const book = (id: string, readMinutes: number | undefined) =>
+        e({ id, type: 'book', title: id, readMinutes });
+    const music = (id: string, listenMinutes: number | undefined) =>
+        e({ id, type: 'music', title: id, listenMinutes });
+    const game = (id: string, playtimeMinutes: number | undefined) =>
+        e({ id, type: 'game', title: id, playtimeMinutes });
+
+    it('duration-desc：时长大的在前（读 / 听 / 玩三种各自取自己的字段）', () => {
+        const g = [book('b1', 30), book('b2', 300), book('b3', 90)];
+        expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'duration-desc' }).map((x) => x.id))
+            .toEqual(['b2', 'b3', 'b1']);
+        const m = [music('m1', 5), music('m2', 500)];
+        expect(filterAndSort(m, { status: 'all', type: 'all', query: '', sortBy: 'duration-desc' }).map((x) => x.id))
+            .toEqual(['m2', 'm1']);
+        const p = [game('g1', 1), game('g2', 1200)];
+        expect(filterAndSort(p, { status: 'all', type: 'all', query: '', sortBy: 'duration-desc' }).map((x) => x.id))
+            .toEqual(['g2', 'g1']);
+    });
+
+    it('duration-asc 是**严格反向**（不是「同 recent」）', () => {
+        const g = [book('b1', 30), book('b2', 300), book('b3', 90)];
+        expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'duration-asc' }).map((x) => x.id))
+            .toEqual(['b1', 'b3', 'b2']);
+    });
+
+    it('🔴 没有时长（undefined / 0 / 负数）一律按 0 计，⛔ 不把 undefined 当最大', () => {
+        const g = [book('none', undefined), book('zero', 0), book('neg', -5), book('some', 60)];
+        const desc = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'duration-desc' }).map((x) => x.id);
+        // 有时长的一定排第一；其余三个按 0 处理，谁先谁后不重要（稳定序），但不能跑到 some 前面
+        expect(desc[0]).toBe('some');
+        expect(desc.slice(1).sort()).toEqual(['neg', 'none', 'zero']);
+        const asc = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'duration-asc' }).map((x) => x.id);
+        expect(asc[asc.length - 1]).toBe('some');
+    });
+
+    it('⛔ 跨类型不串字段：音乐条目没 listenMinutes 时不会拿 readMinutes 顶上', () => {
+        // 故意给音乐条填 readMinutes（脏数据）—— 排序必须忽略它
+        const m = e({ id: 'mix', type: 'music', title: '混', readMinutes: 999 });
+        const m2 = e({ id: 'real', type: 'music', title: '真', listenMinutes: 10 });
+        const out = filterAndSort([m, m2], { status: 'all', type: 'all', query: '', sortBy: 'duration-desc' });
+        expect(out.map((x) => x.id)).toEqual(['real', 'mix']);
+    });
+
+    it('影视三类没有时长字段 ⇒ 全部 0，排序不退化成崩溃（保持稳定原序）', () => {
+        const g = [
+            e({ id: 'v1', type: 'movie', title: '甲' }),
+            e({ id: 'v2', type: 'tv', title: '乙' }),
+            e({ id: 'v3', type: 'anime', title: '丙' }),
+        ];
+        const out = filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'duration-desc' });
+        expect(out.map((x) => x.id).sort()).toEqual(['v1', 'v2', 'v3']);
+        expect(filterAndSort(g, { status: 'all', type: 'all', query: '', sortBy: 'duration-asc' })).toHaveLength(3);
+    });
+});
+
 // 🔴 #689（用户 2026-10-19）：「列表视图全局搜索框可按导演筛选显示条目」
 //   —— 影视/动画额外命中 导演 / 演员 / 编剧。
 describe('matchesSearch · 导演 / 演员（#689）', () => {
