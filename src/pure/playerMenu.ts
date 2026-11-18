@@ -14,9 +14,11 @@ import { SPEED_STEPS, formatSpeed, episodeLabel } from 'pure/player';
 
 /**
  * 浮层种类（同一时刻只开一个）。'volume' 是唯一的**滑条型**浮层（点击音量图标后浮出的竖向滑条）；
- * 'subtitle' 是 #606 收进来的**字幕面板**（此前是一个独立的 Obsidian Modal，用户裁定「同设置面板一样上浮出来」）。
+ * 'subtitle' 是 #606 收进来的**字幕面板**（此前是一个独立的 Obsidian Modal，用户裁定「同设置面板一样上浮出来」）；
+ * 'lyricOffset' 是 🔴 m08028 的**歌词时间偏移**浮层（只有内置音频播放器开它；视频播放器的 `fillMenu`
+ *   对它走不到任何分支 ⇒ 加了也不会多出按钮）。
  */
-export type PlayerMenuKind = 'episodes' | 'speed' | 'settings' | 'volume' | 'subtitle';
+export type PlayerMenuKind = 'episodes' | 'speed' | 'settings' | 'volume' | 'subtitle' | 'lyricOffset';
 
 /** 倍速项：value 直接写 `video.playbackRate` */
 export interface SpeedMenuItem {

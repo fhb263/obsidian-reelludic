@@ -501,6 +501,8 @@ import { NOTE_CARD_LANG, applyNoteCardEdit } from 'pure/noteCard';
 import { setReviewAt, normalizeEpisodeReviews, type EpisodeReview } from 'pure/episodeReview';
 // ④ 歌词：四路来源优先级与 ` ```lrc ` 块围栏口径的唯一真源（生成侧 noteGenerator 与消费侧播放器共用）
 import { extractLrcBlock, parseLrcBlock, parseLrcRef, pickLyrics, siblingLrcPath, type LrcBlock, type LrcLyricsOrigin } from 'pure/lrcSource';
+// 🔴 m08028：歌词整体时间戳偏移（写回笔记时逐条重写时间标签；纯模块，与播放器实时偏移同源）
+import { shiftLrcText } from 'pure/lrcShift';
 import { readEmbeddedLyrics } from 'pure/embeddedLyrics';
 import { normalizeAudioPlayMode, playersToPause, type PlayerKind } from 'pure/audioQueue';
 import { clampAudioVolume } from 'pure/audioVolume';
@@ -9118,6 +9120,8 @@ export default class ReelLudicPlugin extends Plugin {
              *  ⚠️ 只有**标签页 / 侧边栏**这条构造传它；内联块（笔记里的小卡片）**不传** ——
              *  那段笔记就在眼前，没必要再放一个「打开笔记」按钮（不传 ⇒ 按钮自动禁用）。 */
             onOpenNote: (track) => void this.openEntryNote(track.entryId),
+            /** 🔴 m08028：歌词整体偏移写回（详见 `writeBackLyricOffset`） */
+            onWriteBackLyricOffset: (track, deltaMs) => this.writeBackLyricOffset(track, deltaMs),
             /**
              * 🔴 m02288：音乐收听时长**自动累计**（用户：「用音乐播放器播放每首音乐要统计总时长…
              * 而不是让用户手动记录」）。
@@ -9152,6 +9156,48 @@ export default class ReelLudicPlugin extends Plugin {
         const note = await this.service.readNoteText(track.entryId);
         const block = parseLrcBlock(extractLrcBlock(note ?? '') ?? '');
         return this.pickLyricsFor(block, track.path);
+    }
+
+    /**
+     * 🔴 m08028：把**歌词整体时间戳偏移**真正写进笔记。
+     *
+     * 用户裁定（m08075）：「播放器实时偏移 + 一键写回笔记」——边听边校不改文件，
+     * 校好再点「写回笔记」一次落盘。
+     *
+     * 返回 `true` = 真的改了盘 ⇒ 视图侧接着 `重载歌词 + 偏移归零`
+     * （偏移已经进文件了，再叠一次实时偏移就是双倍）。
+     *
+     * ## 三条硬约束
+     * ⑴ **只写块内歌词**：走 `service.setNoteLrc`（` ```lrc ` 块的唯一写入口），
+     *    ⛔ 不碰笔记其余部分，也不碰同期 `.lrc` 文件 —— 那是另一条来源，动它会超出用户预期。
+     * ② **来源判定**：`setNoteLrc` 改的是笔记里的块。若当前歌词来自**指令文件 / 同名 `.lrc`**，
+     *    写回会变成「笔记块留空、文件还是旧的」这种半截状态 ⇒ 直接提示并返回 `false`。
+     *    这里不另判来源（视图侧已经知道 origin）—— 只用 `readNoteLrc` 是否为空来兜底：
+     *    空 ⇒ 没有可写的块 ⇒ 说清楚「这条歌词不在笔记里」。
+     * ③ **幂等**：偏移为 0 / 非法直接返回 `false`（⛔ 不改写一遍字节却报告「已写回」）。
+     */
+    private async writeBackLyricOffset(track: AudioPlayerTrack, deltaMs: number): Promise<boolean> {
+        if (!track.entryId) return false;
+        if (!Number.isFinite(deltaMs) || deltaMs === 0) return false;
+        const current = await this.service.readNoteLrc(track.entryId);
+        if (!current.trim()) {
+            new Notice('这条歌词不在笔记里（来自 .lrc 文件或音频内嵌），无法从这里写回');
+            return false;
+        }
+        const next = shiftLrcText(current, deltaMs);
+        if (next === current) {
+            // 一个时间标签都没变（纯文本歌词 / 全是畸形标签）⇒ 别假装写了
+            new Notice('没有可偏移的时间戳，歌词未改动');
+            return false;
+        }
+        const wrote = await this.service.setNoteLrc(track.entryId, next);
+        if (!wrote) {
+            // `setNoteLrc` 内容无变化 / 无笔记时返回 false
+            new Notice('歌词没有变化，未写入');
+            return false;
+        }
+        new Notice(`歌词时间已整体${deltaMs > 0 ? '延后' : '提前'} ${Math.abs(deltaMs) / 1000} 秒`);
+        return true;
     }
 
     /**
@@ -10367,6 +10413,8 @@ export default class ReelLudicPlugin extends Plugin {
             onSaveMode: (mode) => void this.persistAudioSetting('mode', mode),
             onSaveVolume: (volume) => void this.persistAudioSetting('volume', volume),
             onPlayStart: (kind) => this.pauseOtherPlayers(kind),
+            /** 🔴 m08028：笔记内联块同样能写回（歌词就在这块笔记里，`setNoteLrc` 天然指对） */
+            onWriteBackLyricOffset: (track, deltaMs) => this.writeBackLyricOffset(track, deltaMs),
             /**
              * 🔴 m02288：内联块**也**自动累计收听时长 —— 在笔记里听歌同样是收听，
              * 没理由只算标签页那一份（否则同一首歌换个入口打开，时长就少了一半）。

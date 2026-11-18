@@ -74,6 +74,16 @@ import {
     lyricScaleAfterWheel,
     saveLyricScale,
 } from 'pure/lyricZoom';
+// 🔴 m08028：歌词**整体时间戳偏移**（用户：「LRC 歌词整体所有时间戳向后加N秒…对齐歌曲与LRC歌词」）。
+// 纯逻辑全在 `pure/lrcShift`（含 localStorage 记忆与夹取），本层只负责按钮 / 浮层 / 重算。
+import {
+    LYRIC_OFFSET_STEP,
+    clampLyricOffset,
+    loadLyricOffset,
+    lyricOffsetLabel,
+    saveLyricOffset,
+    shiftLrcLines,
+} from 'pure/lrcShift';
 
 /** 播放模式 → 图标名（**与 LyricFlux `LyricsView.renderModeIcon` 同形**：single→repeat-1、
  *  shuffle→shuffle、其余（off / sequential）→ repeat，靠 `.is-on` 区分「关」与「顺序」）。
@@ -166,6 +176,18 @@ export interface AudioPlayerMountOptions {
      */
     onOpenNote?: (track: AudioPlayerTrack) => void;
     /**
+     * 🔴 m08028：把**当前歌词偏移**写回笔记（用户裁定「播放器实时偏移 + 一键写回笔记」）。
+     *
+     * 宿主负责「读 lrc 块 → `pure/lrcShift.shiftLrcText` → 写回」，本层负责按钮与传值。
+     * 返回 `true` 表示**真的写了盘** ⇒ 本层接着做 `reloadLyrics() + resetLyricOffset()`
+     * （写盘 → 重载 → 归零；顺序反了会叠加两次偏移，或显示旧文件内容）。
+     * 返回 `false`（无笔记 / 内容无变化 / 来源不可写）⇒ 什么都不做，由宿主自己给用户交代。
+     *
+     * 缺省（内联块且没有可写来源）⇒ 浮层里那颗按钮置灰并说明原因，
+     * ⛔ 不画一个点了没反应的按钮。
+     */
+    onWriteBackLyricOffset?: (track: AudioPlayerTrack, deltaMs: number) => Promise<boolean>;
+    /**
      * 🔴 m02288：**这一曲又听够了 N 个整分钟**（用户：「用音乐播放器播放每首音乐要统计总时长…
      * 而不是让用户手动记录」）。
      *
@@ -194,6 +216,13 @@ export interface AudioPlayerHandle {
     pause(): void;
     /** 🔴 #408：重载当前曲目的歌词（笔记 / 同名 `.lrc` 被改后调用） */
     reloadLyrics(): void;
+    /**
+     * 🔴 m08028：把实时歌词偏移归零（宿主写回成功后调）。
+     *
+     * 顺序必须是 `写盘 → reloadLyrics() → resetLyricOffset()` ——
+     * 只归零不重载会显示旧文件内容，只重载不归零会叠加两次偏移。
+     */
+    resetLyricOffset(): void;
     /** 🔴 #408：宿主推新队列（库里条目变了：新增 / 改关联音频 / 删除）—— 语义见 `updateQueue` */
     updateQueue(next: readonly AudioPlayerTrack[]): void;
     /** 🔴 #410：隐藏 / 恢复「打开笔记」按钮（侧边栏实例整颗不显示）；幂等 */
@@ -250,7 +279,16 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     /** 🔴 洗牌袋：`decideTrack` 会回传新袋，**必须存住**（不存 = 每首重洗 = 隔两首又重复） */
     let bag: string[] = [];
     let idx = items.length ? Math.min(Math.max(0, opts.startIndex), items.length - 1) : -1;
+    /**
+     * 🔴 m08028：**原始**解析结果（未加偏移）。`lines` 是它按当前偏移平移后的「显示用」副本。
+     *
+     * ⚠️ 两套必须分开存：偏移随时可调、要能调回 0；如果直接原地改 `lines` 的 timestamp，
+     *    「-1s 再 +1s」就回不到原点了（每次都在上一次的结果上累加）。
+     */
+    let parsedLines: LrcLine[] = [];
     let lines: LrcLine[] = [];
+    /** 当前歌词偏移（毫秒，正 = 歌词整体往后挪）。按条目记忆，切曲时重读。 */
+    let lyricOffset = 0;
     /** 歌词不是 LRC（解析后 0 行但有正文）⇒ 按纯文本列出来，不做高亮/跳转 */
     let plainLyrics = false;
     let curLine = -1;
@@ -326,6 +364,7 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
             isPlaying: () => false,
             pause: () => undefined,
             reloadLyrics: () => undefined,
+            resetLyricOffset: () => undefined,
             updateQueue: () => undefined,
             setOpenNoteHidden: () => undefined,
             destroy: () => root.remove(),
@@ -365,12 +404,19 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     // （⛔ 别手拼 `${v}×`：`0.5` 会变成 `.5×` 之类），并**只在 `syncSpeedButton()` 一处写**。
     const speedBtn = el('button', 'rl-ap-btn rl-ap-btn-speed', formatSpeed(apSpeed));
     speedBtn.type = 'button';
+    // 🔴 m08028：**歌词偏移**入口。用户 m08545 改判：「在音乐播放器工具栏倍速按钮旁加编辑铅笔
+    //    样式的图标点击展开可调整偏移值实时调整」⇒ 从「纯文字显示偏移量」改成**铅笔图标**，
+    //    数值只在浮层里出现（`.rl-ap-offset-val`），按钮本身靠 `.is-var` 高亮表示「当前非 0」。
+    //    ⛔ 别再往按钮里写文字：图标按钮的 `setIcon` 已经把 `<svg>` 放进去了，再写 `textContent`
+    //    会把图标整个抹掉（这正是上一版文字按钮不能直接换成图标的原因）。
+    const offsetBtn = iconButton('rl-ap-btn rl-ap-btn-offset', 'pencil', '歌词时间偏移（对齐歌曲与歌词）');
     controls.appendChild(modeBtn);
     controls.appendChild(prevBtn);
     controls.appendChild(playBtn);
     controls.appendChild(nextBtn);
     controls.appendChild(volBtn);
     controls.appendChild(speedBtn);
+    controls.appendChild(offsetBtn);
 
     const right = el('div', 'rl-ap-right');
     const meta = el('div', 'rl-ap-meta');
@@ -713,6 +759,10 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     const loadLyrics = async (track: AudioPlayerTrack): Promise<void> => {
         const seq = ++lyricsSeq;
         lines = [];
+        parsedLines = [];
+        // 🔴 m08028：偏移**按条目记忆**（用户：「每条目各自记住」）⇒ 切曲先取出这首歌的偏移量。
+        //    ⚠️ 必须在 `renderLyrics()` 之前取：渲染时要用它决定 `lines` 的内容。
+        lyricOffset = loadLyricOffset(track.entryId);
         plainLyrics = false;
         renderLyrics();
         let got: { text: string; origin: LrcLyricsOrigin } | null = null;
@@ -726,8 +776,10 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
         const text = got?.text ?? '';
         if (text.trim()) {
             const parsed = parseLrc(text);
-            if (parsed.length) lines = parsed;
-            else {
+            if (parsed.length) {
+                parsedLines = parsed;
+                lines = shiftLrcLines(parsedLines, lyricOffset);
+            } else {
                 // 不是 LRC（同名 .lrc 里其实是整篇文本）：按纯文本列出来，不高亮、不跳转
                 plainLyrics = true;
                 lines = text.split('\n').map((t, i) => ({ timestamp: i, timestr: '', text: t })).filter((l) => l.text.trim());
@@ -735,6 +787,29 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
         }
         renderLyrics();
         syncCurrentLine(true);
+    };
+
+    /**
+     * 🔴 m08028：改偏移并立刻生效（用户：「播放器里加 ±0.5s/±1s 微调，边听边校、立即生效」）。
+     *
+     * 只做三件事：夹取 → 重算显示用 `lines` → 重渲染 + 重新对齐当前行。
+     * ⛔ 不动 `audio.currentTime` —— 用户要的是「歌词动」，不是「歌跳」。
+     * 记忆（localStorage）在这里写，因为这是**唯一**的改动入口。
+     */
+    const setLyricOffset = (next: number): void => {
+        const v = clampLyricOffset(next);
+        if (v === lyricOffset) return;
+        lyricOffset = v;
+        const track = items[idx];
+        if (track?.entryId) saveLyricOffset(track.entryId, v);
+        // 纯文本歌词没有时间轴，平移无意义；`parsedLines` 为空时也不动（避免把提示行清掉）
+        if (!plainLyrics && parsedLines.length) {
+            lines = shiftLrcLines(parsedLines, lyricOffset);
+            renderLyrics();
+            syncCurrentLine(true);
+        }
+        syncOffsetButton();
+        syncOffsetPop();
     };
 
     const switchTo = async (nextIdx: number, autoplay: boolean): Promise<void> => {
@@ -939,6 +1014,7 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
         pop.classList.add('is-hidden');
         speedBtn.classList.remove('is-on');
         volBtn.classList.remove('is-on');
+        offsetBtn.classList.remove('is-on');
     };
 
     const placePop = (btn: HTMLElement, align: 'right' | 'center'): void => {
@@ -1065,19 +1141,130 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
         syncVolumePop();
     };
 
-    const openPop = (kind: 'speed' | 'volume', btn: HTMLElement): void => {
+    /**
+     * 🔴 m08028：歌词偏移浮层的内容。
+     *
+     * 四段：读数 → 左右各半的微调按钮（±0.5s / ±1s）→ 重置 → 写回笔记。
+     * ⚠️ 全部走 `setLyricOffset()` 这一个入口（⛔ 别在这里直接改 `lyricOffset` ——
+     *    那样会漏掉记忆落库与 `lines` 重算，表现为「按钮点了但画面不动」）。
+     *
+     * 🔴 用 `-` 而不是「往前/往后」：偏移方向本身就容易讲反。
+     *    本按钮的语义是「把**歌词时间轴**整体挪动」，`+` = 歌词更晚出现（歌跑到歌词后面去了）。
+     */
+    function fillOffsetPop(): void {
+        const head = el('div', 'rl-ap-offset-head');
+        head.appendChild(el('div', 'rl-ap-offset-val', lyricOffsetLabel(lyricOffset)));
+        head.appendChild(el('div', 'rl-ap-offset-hint', '歌词整体挪动，点「写回笔记」后永久生效'));
+        pop.appendChild(head);
+
+        const build = (label: string, delta: number): HTMLElement => {
+            const b = el('button', 'rl-ap-offset-step', label) as HTMLButtonElement;
+            b.type = 'button';
+            b.addEventListener('click', () => setLyricOffset(lyricOffset + delta));
+            return b;
+        };
+        const row = el('div', 'rl-ap-offset-row');
+        // 左减右加：负号那侧放「更早」，与读数里的 `+/-` 同向
+        row.appendChild(build('−1s', -1000));
+        row.appendChild(build('−0.5s', -LYRIC_OFFSET_STEP));
+        row.appendChild(build('+0.5s', LYRIC_OFFSET_STEP));
+        row.appendChild(build('+1s', 1000));
+        pop.appendChild(row);
+
+        const actions = el('div', 'rl-ap-offset-actions');
+        const reset = el('button', 'rl-ap-offset-act', '重置') as HTMLButtonElement;
+        reset.type = 'button';
+        reset.addEventListener('click', () => setLyricOffset(0));
+        actions.appendChild(reset);
+
+        // 「写回笔记」只在宿主给了回调、且当前偏移非零时可用 ——
+        // ⛔ 偏移为 0 时写了也没意义（等于把文件重写一遍），按钮置灰说明原因。
+        // ⚠️ 可用态与 aria **不在这里写**：建节点时先给个占位，函数末尾交给 `syncOffsetPop()`
+        //    统一刷（偏移一变就要跟着变，写两处必然漂）。
+        const save = el('button', 'rl-ap-offset-act is-primary', '写回笔记') as HTMLButtonElement;
+        save.type = 'button';
+        save.disabled = true;
+        save.addEventListener('click', () => {
+            const track = items[idx];
+            const cb = opts.onWriteBackLyricOffset;
+            if (!track || !cb || lyricOffset === 0) return;
+            const delta = lyricOffset;
+            // 立刻置灰防连点（异步写盘期间再点一次会重复改写同一段）
+            save.disabled = true;
+            void cb(track, delta)
+                .then((wrote) => {
+                    // ⚠️ 只有**真写了盘**才重载 + 归零：没写（无笔记 / 内容无变化）还归零，
+                    //    会把用户刚调好的偏移凭空丢掉，而文件里根本没有那段偏移。
+                    if (!wrote) return;
+                    // 顺序：**先**归零（清掉 localStorage 里的这条记忆，否则 `loadLyrics` 会把旧偏移再读回来）
+                    //      **再**重载（把文件里刚写进去的新时间读回来）。
+                    setLyricOffset(0);
+                    void loadLyrics(track);
+                })
+                .catch(() => undefined)
+                .finally(() => {
+                    // 浮层可能已经被关掉（`closePop` 会把 pop 清空）⇒ 节点还在才恢复可点
+                    if (save.isConnected) save.disabled = lyricOffset === 0;
+                });
+        });
+        actions.appendChild(save);
+        pop.appendChild(actions);
+        // 建完立刻刷一遍可用态（首帧就正确，别等用户先点一次 ± 才变）
+        syncOffsetPop();
+    }
+
+    /**
+     * 偏移浮层读数同步（浮层没开就什么都不做；只改读数那一个节点）。
+     * 🔴 m08545 实测出来的真 bug：这里原先**只**改 `.rl-ap-offset-val`，于是一进浮层就先点
+     *    「写回笔记」的那颗按钮永远停在 `fillOffsetPop()` 建节点那一刻的状态 —— 偏移从 0 调到
+     *    `+1s` 后它仍然 `disabled`，用户点不到，功能等于没做。⇒ 写回按钮的可用态**必须**跟着
+     *    读数一起刷新（两处写必然漂，收在这一个函数里）。
+     */
+    function syncOffsetPop(): void {
+        const val = pop.querySelector('.rl-ap-offset-val');
+        if (val instanceof HTMLElement) val.textContent = lyricOffsetLabel(lyricOffset);
+        const save = pop.querySelector('.rl-ap-offset-act.is-primary');
+        if (!(save instanceof HTMLButtonElement)) return;
+        const canWrite = !!opts.onWriteBackLyricOffset && lyricOffset !== 0;
+        save.disabled = !canWrite;
+        save.setAttribute(
+            'aria-label',
+            !opts.onWriteBackLyricOffset
+                ? '当前歌词来源不支持写回'
+                : lyricOffset === 0
+                  ? '偏移为 0，无需写回'
+                  : '把当前偏移写进歌词文件',
+        );
+    }
+
+    /**
+     * 偏移按钮状态同步（**唯一写入口**）。
+     * 🔴 m08545 起按钮是**铅笔图标**，所以这里 ⛔ 不写 `textContent`（写一次图标就没了），
+     * 只维护三件事：`.is-var` 高亮、`aria-label` 读数、`data-offset` 便于真机/断言核对。
+     * 读数本身在浮层 `.rl-ap-offset-val` 里（`syncOffsetPop` 负责）。
+     */
+    function syncOffsetButton(): void {
+        const label = lyricOffsetLabel(lyricOffset);
+        offsetBtn.classList.toggle('is-var', lyricOffset !== 0);
+        offsetBtn.setAttribute('aria-label', `歌词偏移 ${label}（对齐歌曲与歌词）`);
+        offsetBtn.setAttribute('data-offset', label);
+    }
+
+    const openPop = (kind: 'speed' | 'volume' | 'lyricOffset', btn: HTMLElement): void => {
         popKind = kind;
         popTrigger = btn;
         pop.replaceChildren();
         if (kind === 'speed') fillSpeedPop();
+        else if (kind === 'lyricOffset') fillOffsetPop();
         else fillVolumePop();
         pop.classList.remove('is-hidden');
         placePop(btn, kind === 'volume' ? 'center' : 'right');
         speedBtn.classList.toggle('is-on', kind === 'speed');
         volBtn.classList.toggle('is-on', kind === 'volume');
+        offsetBtn.classList.toggle('is-on', kind === 'lyricOffset');
     };
 
-    const togglePop = (kind: 'speed' | 'volume', btn: HTMLElement): void => {
+    const togglePop = (kind: 'speed' | 'volume' | 'lyricOffset', btn: HTMLElement): void => {
         if (nextMenuState(popKind, kind) === null) closePop();
         else openPop(kind, btn);
     };
@@ -1098,6 +1285,7 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
 
     speedBtn.addEventListener('click', () => togglePop('speed', speedBtn));
     volBtn.addEventListener('click', () => togglePop('volume', volBtn));
+    offsetBtn.addEventListener('click', () => togglePop('lyricOffset', offsetBtn));
 
     /** 进度条拖动：pointerdown 起、pointerup 止（capture 到 window，手指/鼠标移出条外也不断） */
     const ratioAt = (clientX: number): number => {
@@ -1137,6 +1325,7 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     audio.playbackRate = apSpeed;
     speedBtn.classList.toggle('is-var', apSpeed !== 1);
     syncSpeedButton();
+    syncOffsetButton();
     if (typeof ResizeObserver === 'function') {
         ro = new ResizeObserver(() => applyTier());
         ro.observe(root);
@@ -1182,6 +1371,16 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     reloadLyrics(): void {
             const t = items[idx];
             if (t) void loadLyrics(t);
+        },
+        /**
+         * 🔴 m08028：**写回成功后**把实时偏移归零（宿主在写盘完成后调）。
+         *
+         * 为什么不复用 `setLyricOffset(0)` 的副作用了事：那个会顺手把 localStorage 里这条记忆删掉 ——
+         * 正是我们要的（偏移已经落进文件，不需要再记），但也必须**先重载歌词**才能让画面与文件一致。
+         * 顺序写死在宿主侧（`写盘 → reloadLyrics() → resetLyricOffset()`），这里只提供出口。
+         */
+        resetLyricOffset(): void {
+            setLyricOffset(0);
         },
         /**
          * 🔴 #410：隐藏 / 恢复「打开笔记」按钮（**侧边栏实例整颗不显示** —— 用户：
