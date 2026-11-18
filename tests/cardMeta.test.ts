@@ -341,7 +341,7 @@ describe('🔴 #617 resolveCardFieldsByType（按类型预填 + 归一）', () =
         expect(r.anime).toEqual(['year', 'creator', 'genres']);
         expect(r.book).toEqual(['year', 'author', 'genres']);
         expect(r.game).toEqual(['year', 'developer', 'platform']);
-        expect(r.music).toEqual(['year', 'creator', 'album']);
+        expect(r.music).toEqual(['year', 'creator', 'genres']);
         // 至少两类不同 ⇒ 否则「按类型预填」就是一句空话
         expect(new Set(ENTRY_TYPES.map((t) => r[t].join(','))).size).toBeGreaterThan(1);
     });
@@ -351,7 +351,7 @@ describe('🔴 #617 resolveCardFieldsByType（按类型预填 + 归一）', () =
         expect(r.book).toEqual(['author', 'translator']);
         expect(r.movie).toEqual(['year', 'creator', 'genres']);
         expect(r.game).toEqual(['year', 'developer', 'platform']);
-        expect(r.music).toEqual(['year', 'creator', 'album']);
+        expect(r.music).toEqual(['year', 'creator', 'genres']);
     });
 
     it('🔴 空数组是「刻意全关」的合法值，⛔ 不许被预填吃掉（判据必须是 `=== undefined`）', () => {
@@ -423,7 +423,7 @@ describe('🔴 #617 候选池按类型过滤（cardFieldOptionsFor / normalizeCa
 
     it('🔴 归一传非数组 ⇒ 用**该类型自己的预填**（⛔ 不是影视那一组）', () => {
         expect(normalizeCardFieldsForType('game', undefined)).toEqual(['year', 'developer', 'platform']);
-        expect(normalizeCardFieldsForType('music', null)).toEqual(['year', 'creator', 'album']);
+        expect(normalizeCardFieldsForType('music', null)).toEqual(['year', 'creator', 'genres']);
         expect(normalizeCardFieldsForType('book', [])).toEqual([]); // 空数组仍是合法值
     });
 });

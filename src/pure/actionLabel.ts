@@ -27,7 +27,8 @@ export function actionAriaLabel(type: EntryType): string {
  *   影视 = 观看链接 / 本地剧集 / 网络地址任一；
  *   书籍 = 本地书籍文件 **或** 在线阅读链接（#535：原先只看 `bookFile` ⇒ 只填了网络地址的条目
  *          在海报墙 / 右键菜单里**不给「阅读」按钮**，而左键其实打得开 —— 判可用与真能执行不一致）；
- *   游戏 = .lnk 快捷方式 **或** 网络路径（#534 新增 `gameUrl` 时这里没同步，同一处漏判）；
+ *   游戏 = .lnk 快捷方式 **或** 网络路径（#534 新增 `gameUrl` 时这里没同步，同一处漏判）
+ *          **或本地 swf**（2026-11-16 新增 `gameSwf`：能内嵌直接玩，当然算可用入口）；
  *   音乐 = 本地音频 **或** 网络地址（#601 新增 `audioUrl`；⚠️ 计数它就必须让「▶ 播放」真能打开它 ——
  *          见 `main.playAudioEntry` 的浏览器兜底，⛔ 别再造一次「判可用但点不动」）。
  * ⚠️ 一律按 **trim 后非空** 判断（⛔ 别用 `in` / 存在性判断 —— 空串与纯空格都会被当成有值）。
@@ -42,14 +43,25 @@ export function hasActionEntry(e: {
     audioPath?: string;
     readUrl?: string;
     gameUrl?: string;
+    gameSwf?: string;
+    gameEmbed?: string;
     audioUrl?: string;
 }): boolean {
     switch (e.type) {
         case 'book': return !!e.bookFile?.trim() || !!e.readUrl?.trim();
-        case 'game': return !!e.gameLaunchPath?.trim() || !!e.gameUrl?.trim();
+        // 游戏的三种入口优先级：本地 swf（插件内 Ruffle）> 内嵌网页（H5/Unity）> 拉起外部程序 / 打开网络路径
+        case 'game': return !!e.gameSwf?.trim() || !!e.gameEmbed?.trim() || !!e.gameLaunchPath?.trim() || !!e.gameUrl?.trim();
         case 'music': return !!e.audioPath?.trim() || !!e.audioUrl?.trim();
         default:
-            return (e.links?.length ?? 0) > 0 || (e.episodeFiles?.length ?? 0) > 0 || (e.episodeUrls?.length ?? 0) > 0;
+            // 🔴 m04435 ② 顺手补上实现与文档不符之处：本函数 doc 明写「一律按 trim 后非空判断」，
+            //    但这一支原先只判 `links.length > 0` —— 一条 `url: '   '` 的空链接会算「有入口」，
+            //    右键菜单给出可点的「观看」而点下去什么都不发生。
+            //    `catalog.isLinkLike` 只校验 `typeof url === 'string'`（空串能过），所以这里必须自己 trim。
+            return (
+                (e.links ?? []).some((l) => !!String(l?.url ?? '').trim()) ||
+                (e.episodeFiles ?? []).some((p) => !!String(p ?? '').trim()) ||
+                (e.episodeUrls ?? []).some((u) => !!String(u ?? '').trim())
+            );
     }
 }
 
@@ -68,11 +80,15 @@ export function hasLocalEntry(e: {
     audioPath?: string;
     readUrl?: string;
     gameUrl?: string;
+    gameSwf?: string;
+    gameEmbed?: string;
     audioUrl?: string;
 }): boolean {
     switch (e.type) {
         case 'book': return !!e.bookFile?.trim();
-        case 'game': return !!e.gameLaunchPath?.trim();
+        // 本地 swf 也是「本地」——它就在磁盘上，只是交给内置 Ruffle 播而不是 shell 拉起。
+        // ⛔ gameEmbed 不算本地：它是网页地址，命中的是「只有网络入口」那条文案分支。
+        case 'game': return !!e.gameSwf?.trim() || !!e.gameLaunchPath?.trim();
         case 'music': return !!e.audioPath?.trim();
         default: return (e.episodeFiles?.length ?? 0) > 0;
     }

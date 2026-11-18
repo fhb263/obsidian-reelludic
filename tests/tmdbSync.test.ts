@@ -13,7 +13,7 @@ import {
     tmdbItemKey,
     tmdbListToStatus,
     tmdbSubjectUrl,
-    tmdbVoteToRating,
+    tmdbVoteToCommunityScore,
 } from 'pure/tmdbSync';
 
 const sampleItem = {
@@ -42,6 +42,24 @@ describe('tmdbSync · 账号页解析', () => {
     it('🔴 缺 id / 标题的条目**跳过不抛**（TMDB 加字段不致崩）', () => {
         const p = parseTmdbAccountPage(JSON.stringify({ results: [{ id: 1 }, { title: 'x' }, sampleItem] }), 'movie');
         expect(p.items).toHaveLength(1);
+    });
+
+    it('🔴 vote_count → voteCount（评分人数兜底）；0 / 缺失 ⇒ 不写键', () => {
+        // 2026-11-08：以前根本不解析 vote_count ⇒ 账号同步建出来的条目永远没有评价人数
+        // （评分数只在详情接口里，详情超时就彻底丢了；清单接口本来就带这个字段）
+        const p = parseTmdbAccountPage(
+            JSON.stringify({
+                results: [
+                    { ...sampleItem, id: 1, vote_count: 32123 },
+                    { ...sampleItem, id: 2, vote_count: 0 },
+                    { ...sampleItem, id: 3 },
+                ],
+            }),
+            'movie',
+        );
+        expect(p.items[0].voteCount).toBe(32123);
+        expect('voteCount' in p.items[1]).toBe(false);
+        expect('voteCount' in p.items[2]).toBe(false);
     });
 
     it('results 非数组 / 整体坏 JSON：前者空页，后者抛（调用方提示）', () => {
@@ -90,11 +108,16 @@ describe('tmdbSync · URL（session_id 是 query 参数，⛔ 不是 header）',
 });
 
 describe('tmdbSync · 映射与判重键', () => {
-    it('10 分制 → 5 星（/2 四舍五入）；0 / NaN ⇒ 0（未评）', () => {
-        expect(tmdbVoteToRating(8.4)).toBe(4);
-        expect(tmdbVoteToRating(10)).toBe(5);
-        expect(tmdbVoteToRating(0)).toBe(0);
-        expect(tmdbVoteToRating(Number.NaN)).toBe(0);
+    it('🔴 10 分制 → communityScore 同刻度直传（⛔ 不 /2 换算成 5 星）；0 / NaN / >10 ⇒ undefined（未评）', () => {
+        // 这条曾经锁的是「/2 四舍五入 → 1~5 星」，与注释「10 分制社区分」自相矛盾：
+        // communityScore 是全仓 10 分制字段，8.4 存成 4 等于被低估一半（用户报障「TMDB 评分不对」）。
+        expect(tmdbVoteToCommunityScore(8.4)).toBe(8.4);
+        expect(tmdbVoteToCommunityScore(10)).toBe(10);
+        expect(tmdbVoteToCommunityScore(9.999)).toBe(10);
+        expect(tmdbVoteToCommunityScore(0)).toBeUndefined();
+        expect(tmdbVoteToCommunityScore(Number.NaN)).toBeUndefined();
+        expect(tmdbVoteToCommunityScore(11)).toBeUndefined();
+        expect(tmdbVoteToCommunityScore(-1)).toBeUndefined();
     });
 
     it('🔴 判重键带类型前缀（movie 与 tv 的 id 空间独立，同号不合并）', () => {

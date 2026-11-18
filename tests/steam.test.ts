@@ -65,11 +65,11 @@ describe('steam URL 构造', () => {
 });
 
 describe('parseSteamResults', () => {
-    it('items → RawSteamItem（type/name/id 安全读取；多余字段忽略不依赖）', () => {
+    it('items → RawSteamItem（type/name/id 安全读取；metascore 归一为 number）', () => {
         const items = parseSteamResults(fullSearchJson);
         expect(items).toHaveLength(2);
-        expect(items[0]).toEqual({ type: 'app', name: 'ELDEN RING', id: 1245620 });
-        expect(items[1]).toEqual({ type: 'app', name: 'The Witcher 3: Wild Hunt - Complete Edition', id: 292030 });
+        expect(items[0]).toEqual({ type: 'app', name: 'ELDEN RING', id: 1245620, metascore: 94 });
+        expect(items[1]).toEqual({ type: 'app', name: 'The Witcher 3: Wild Hunt - Complete Edition', id: 292030, metascore: 93 });
     });
 
     it('异常条目过滤：sub/bundle 非 app、缺 id、缺 name 均丢弃', () => {
@@ -93,12 +93,50 @@ describe('parseSteamResults', () => {
     });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// 🔴 2026-11-08 搜索侧评分（用户报障「搜索获取评分不到」的后半）
+// 真网实测（appid 570/1245620/1172470/730/2622380）：`metascore` 是**字符串**，
+// 且**无收录时是空串 `""` 而不是缺键** —— 判据必须是「转换后 0<n<=100」，⛔ 不能只判 != null。
+// ══════════════════════════════════════════════════════════════════════════════
+describe('🔴 2026-11-08 storesearch metascore（搜索侧评分）', () => {
+    const one = (extra: Record<string, unknown>) =>
+        parseSteamResults(JSON.stringify({ items: [{ type: 'app', name: 'X', id: 1, ...extra }] }));
+
+    it('metascore 字符串 "94" → number 94', () => {
+        expect(one({ metascore: '94' })).toEqual([{ type: 'app', name: 'X', id: 1, metascore: 94 }]);
+    });
+
+    it('🔴 空串 ""（无收录，CS2 730 的真实形态）⇒ 不给 metascore 键（⛔ 不编 0）', () => {
+        const r = one({ metascore: '' })[0];
+        expect(r.metascore).toBeUndefined();
+        expect('metascore' in r).toBe(false);
+    });
+
+    it('空白串 / 缺键 / 非字符串 / 非数字 / 越界 一律 undefined', () => {
+        for (const v of ['   ', undefined, 94, 'abc', '0', '101', '-5']) {
+            expect(one({ metascore: v })[0].metascore).toBeUndefined();
+        }
+    });
+
+    it('toGameResult：有 metascore ⇒ rating = metascore/10（10 分制）', () => {
+        const r = toGameResult(parseSteamResults(fullSearchJson)[0]);
+        expect(r.rating).toBe(9.4); // ELDEN RING metascore "94"
+    });
+
+    it('toGameResult：无 metascore ⇒ rating 键**不写**（界面按 rating != null 判空）', () => {
+        const r = toGameResult({ type: 'app', name: 'Counter-Strike 2', id: 730 });
+        expect(r.rating).toBeUndefined();
+        expect('rating' in r).toBe(false);
+    });
+});
+
 describe('toGameResult 字段映射', () => {
-    it('完整条目逐字段映射（id=appid number / title=name / cover=library_600x900 / source=steam / sourceUrl=app/{id}）', () => {
+    it('完整条目逐字段映射（id=appid number / title=name / rating=metascore÷10 / cover=library_600x900 / source / sourceUrl）', () => {
         const r = toGameResult(parseSteamResults(fullSearchJson)[0]);
         expect(r).toEqual({
             id: 1245620, // appid：number（对齐 GameSearchResult.id）
             title: 'ELDEN RING',
+            rating: 9.4, // 🔴 2026-11-08：metascore "94" ÷ 10（此前该字段根本没写，见下方 metascore 那组）
             cover: 'https://cdn.cloudflare.steamstatic.com/steam/apps/1245620/library_600x900.jpg', // 竖版封面拼图规则
             source: 'steam',
             sourceUrl: 'https://store.steampowered.com/app/1245620',
@@ -361,7 +399,56 @@ describe('🔴 2026-10-25 fetchDetail 合并好评率（histogram）', () => {
     });
 });
 
+describe('🔴 2026-11-08 parseReviewHistogram success 形态（线上真实返回 1，不是 true）', () => {
+    // ⚠️ 这一组是「回归锁」：用户 2026-11-08 报障「steam 同步和搜索获取评分不到」的**主因**
+    //    就是这里 —— 实测 620 / 292030 / 730 / 570 / 1091500 五个 appid 全部返回
+    //    `{"success":1,"results":{...}}`（typeof number），而旧判据 `success !== true` 每次都判假，
+    //    整个 histogram 被当失败丢掉 ⇒ reviewPercent 永远 undefined。
+    //    ⛔ 上面的老用例用 `success: true` 造 mock，把真实形态整个漏掉了 —— 测试跟着实现一起错。
+    const rollups = [{ recommendations_up: 86, recommendations_down: 14 }];
+
+    it('🔴 success 是数字 1 ⇒ 照常解析出 86%（线上就是这一种）', () => {
+        const r = parseReviewHistogram(JSON.stringify({ success: 1, results: { rollups } }));
+        expect(r.percent).toBe(86);
+        expect(r.total).toBe(100);
+    });
+
+    it('success 是布尔 true ⇒ 也要能解析（两种形态都得认）', () => {
+        const r = parseReviewHistogram(JSON.stringify({ success: true, results: { rollups } }));
+        expect(r.percent).toBe(86);
+    });
+
+    it('🔴 success 缺失 / 0 / false ⇒ 空对象（失败响应不许当成功）', () => {
+        const body = (s: unknown) => JSON.stringify({ success: s, results: { rollups } });
+        expect(parseReviewHistogram(body(undefined))).toEqual({});
+        expect(parseReviewHistogram(body(0))).toEqual({});
+        expect(parseReviewHistogram(body(false))).toEqual({});
+    });
+
+    it('🔴 字符串 "0" / "false" 也算失败（⛔ 别退回 `if (!r.success)` 那种真值判断）', () => {
+        const body = (s: unknown) => JSON.stringify({ success: s, results: { rollups } });
+        expect(parseReviewHistogram(body('0'))).toEqual({});
+        expect(parseReviewHistogram(body('false'))).toEqual({});
+    });
+
+    it('🔴 端到端：success=1 的响应喂给 fetchDetail ⇒ reviewPercent 与 ratingCount 都落地', async () => {
+        const appdetails = JSON.stringify({
+            '730': { success: true, data: { developers: ['Valve'], recommendations: { total: 5343170 } } },
+        });
+        // 730 (CS2) 实测没有 metacritic 字段 —— 正是「有评价人数、没评分」那一类
+        const histogram = JSON.stringify({ success: 1, results: { rollups } });
+        const client = new SteamClient(async (url) =>
+            url.includes('appreviewhistogram') ? histogram : appdetails,
+        );
+        const d = await client.fetchDetail(730);
+        expect(d?.reviewPercent).toBe(86);
+        expect(d?.ratingCount).toBe(100); // histogram 的 total 覆盖 recommendations 的 5343170
+        expect(d?.rating).toBeUndefined(); // 没有 Metacritic 收录 ⇒ 不编造 0
+    });
+});
+
 describe('🔴 2026-10-25 parseReviewHistogram 好评率口径', () => {
+
     const hist = (rollups: unknown[]) => JSON.stringify({ success: true, results: { rollups } });
 
     it('全部好评 ⇒ 100%（且 total 是真数，不省略）', () => {

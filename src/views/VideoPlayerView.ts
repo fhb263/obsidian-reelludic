@@ -47,6 +47,10 @@ import {
 import { markCaption, markPct, marksForEpisode, type VideoMark } from 'pure/videoMarks';
 import { dirOfPath, fileNameOfPath, subtitleLangLabel, subtitleLangTag, type SubtitleCandidate } from 'pure/subtitle';
 import { safeSetIcon } from '../services/safeIcon';
+// 🔴 m07854 ⑰：右键截图 = 即时批注（弹窗，⛔ 不画在播放器上 —— `fixed` 会被 transform 祖先偏移）
+import { ShotAnnotateModal } from 'modals/ShotAnnotateModal';
+import { StampNotePopover, type StampNoteResult } from './StampNotePopover';
+import { stampNoteCaption } from 'pure/stampNote';
 
 /** 视图类型（main 层 registerView 与打开入口共用） */
 export const VIDEO_PLAYER_VIEW_TYPE = 'reelludic-video-player';
@@ -90,13 +94,46 @@ export interface VideoPlayerOptions {
     /** 系统选择器挑一个字幕文件（返回路径；取消返回 null） */
     pickSubtitleFile?: () => Promise<string | null>;
     /**
+     * 每集已持久化的字幕路径（key = 集下标字符串，value = 字幕路径；来自 catalog.subtitlePaths）。
+     *
+     * 🔴 用户 2026-10-29「字幕要双向持久化」的**回写方向**：换集时先看这一集有没有存过字幕，
+     *    有就直接挂它（⛔ 不再让「同目录第一条」抢走用户上次的选择）。
+     * ⚠️ 与 `initialPositions` 同一形状（下标字符串键），便于按集绑定。
+     */
+    initialSubtitles?: Record<string, string>;
+    /** 字幕路径写回（选中/导入后立即调用；main 层落 catalog.subtitlePaths）。
+     *  传空串表示「清除这一集的字幕记忆」。 */
+    onSaveSubtitle?: (epKey: string, subtitlePath: string) => void;
+    /**
+     * 「回到选集页」（用户 2026-11-06 裁定，两页互跳的另一半）。
+     *
+     * 🔴 用户逐字：「新播放器页面点击全屏按钮时进入到原来的播放器页面，再点全屏按钮返回到新播放器页面」
+     *    ⇒ 播放器页那颗全屏按钮**不再是浏览器真全屏**，而是换回选集页（由宿主注入本回调）。
+     * ⚠️ 只有「从选集页交接进来」的实例才该有它：直接开播放器（如点本地文件）没有「选集页」可回，
+     *    那时全屏按钮保持原语义（`toggleFullscreen`）。判据是**回调在不在**，⛔ 不看 `netSource`
+     *    —— 本地集交接进来同样要能跳回去。
+     */
+    onBackToEpisodePage?: (seconds: number) => void;
+    /**
      * 时间戳链接定位（#326）：等 `loadedmetadata` 后跳到该集该秒并播放。
      * `index` = **真实集下标**（`episodeFiles` 位；视图内按 `items[].index` 匹配）。
      * 与续播位置**互斥**：带 pendingSeek 时不走续播（目标位置优先，免得先跳续播处再跳走）。
      */
     pendingSeek?: { index: number; seconds: number };
-    /** 插入时间戳（#326）：宿主负责构造链接 + 决定落到哪个笔记（视图只报「当前时刻 + 当前集」） */
-    onInsertStamp?: (info: { seconds: number; ep: number }) => Promise<void>;
+    /**
+     * 插入时间戳（#326）：宿主负责构造链接 + 决定落到哪个笔记（视图只报「当前时刻 + 当前集」）。
+     * 🔴 m04435 ①：`caption` 是**右键浮层**给的补充文字（`🤩 震撼 备注`）；左键单击**不传**它
+     *   ⇒ 宿主按「纯链接」落盘，与 #587 的旧口径一字不差（⛔ 别把左键也改成传空串，那会让
+     *   「有没有心情」在宿主侧分不清）。
+     */
+    onInsertStamp?: (info: { seconds: number; ep: number; caption?: string }) => Promise<void>;
+    /**
+     * 🔴 m04435 ① 右键浮层的**预览时间文字**（`0:20` / 多集时 `第3集·0:20`）。
+     * 为什么由宿主给：链接文字里带不带集号取决于「条目实际有多少集」，那个口径在宿主侧
+     * （`main.ts` 的 `videoTimeLink` 用文件/网络集/声明总集数三者取 max）。视图自己算只会算
+     * 本地项 ⇒ 纯网络条目预览不带集号、写进笔记却带，**预览对不上落盘**。
+     */
+    stampPreviewText?: (info: { seconds: number; ep: number }) => string;
     /** 截取当前帧（#326）：宿主负责落盘 + 写进条目笔记 + 提示（视图不碰 vault） */
     onCaptureShot?: (info: { png: ArrayBuffer; seconds: number; ep: number }) => Promise<void>;
     /** 打开当前视频的笔记（#326 用户 2026-09-19：顶栏最右那个按钮）—— 宿主负责分屏打开/聚焦 */
@@ -191,6 +228,8 @@ export class VideoPlayerView extends ItemView {
     private prevBtn: HTMLButtonElement | null = null;
     private nextBtn: HTMLButtonElement | null = null;
     private rootEl: HTMLElement | null = null;
+    /** 顶栏右组容器（网络流模式往里挂「在浏览器打开 / 退出播放」两枚出口；`null` = 还没建） */
+    private barToolsEl: HTMLElement | null = null;
     private progressEl: HTMLElement | null = null;
     private playedEl: HTMLElement | null = null;
     private bufferedEl: HTMLElement | null = null;
@@ -202,9 +241,18 @@ export class VideoPlayerView extends ItemView {
     private subBtn: HTMLButtonElement | null = null;
     /** 「选集」入口（单文件 / 电影不建） */
     private epBtn: HTMLButtonElement | null = null;
-    /** 设置齿轮：原画中画按钮的位置改收「低频项」（画中画 / 用系统播放器打开） */
+    /** 设置齿轮：**低频项都收在这**（画中画 / 用系统播放器打开） */
     private gearBtn: HTMLButtonElement | null = null;
-    private fsBtn: HTMLButtonElement | null = null;
+    // 🔴 2026-11-07 用户逐字：「播放器画中画按钮收到在设置里」⇒ 这里曾有 `private pipBtn`
+    //    与配套的 `syncPipBtn()`，**一并删除**（死码不留）。画中画的入口现在就一处：
+    //    齿轮弹窗里的「画中画 ›」动作行（`onSettingNav('pip')`）。
+    //    ⛔ 别在控制条上加回第二颗 —— 同一功能两个入口，用户会以为其中一个是坏的。
+    /** 「全屏」按钮（= 标签页全屏）：`protected` ⇒ 覆写 `buildFsButtons()` 的子类要把「那颗」交回来 */
+    protected fsBtn: HTMLButtonElement | null = null;
+    /** 「全屏+」按钮（= 浏览器真全屏）：`onFsChange` 靠它切 `maximize-2` / `minimize-2` 与高亮态。
+     *  ⚠️ 只有**播放器页**建这颗（基类 `buildFsPlusButton()`）；选集页覆写过 `buildFsButtons()`
+     *     且不调它 ⇒ 详情页永远没有这颗，符合用户「只在全屏页加」的原话。 */
+    private fsPlusBtn: HTMLButtonElement | null = null;
     /** 底部控制条容器：既是单行布局的父级，也是浮层定位的包含块（浮层是它的绝对定位子元素） */
     private controlsEl: HTMLElement | null = null;
     /** 浮层容器（选集 / 倍速 / 设置共用同一个，内容按 kind 重建） */
@@ -215,6 +263,10 @@ export class VideoPlayerView extends ItemView {
     private menuTriggerBtn: HTMLElement | null = null;
     /** 浮层外点关闭监听已挂（onClose 对称移除） */
     private menuOutsideBound = false;
+    /** 🔴 m04435 ① 右键「时间戳笔记」浮层的挂载点（绝对定位在 `.rl-vp-root` 内，收起时必须置 null） */
+    private stampNoteEl: HTMLElement | null = null;
+    /** 🔴 m04435 ① 浮层实例（同一时刻最多一个；再点右键先销毁旧的） */
+    private stampNotePopover: StampNotePopover | null = null;
     /** 播放器开关的**可变副本**：用户当场切换必须立即生效，不能回读 opts 快照（那是打开时的值）。
      *  初值在 openWith 里从 opts 取；缺省与「设置字段缺省」保持一致。 */
     private bgPlay = false;
@@ -225,6 +277,15 @@ export class VideoPlayerView extends ItemView {
     /** 画面中央的极简播放按钮（用户 2026-09-18 替换旧的 64px 深色圆钮；显隐由 CSS 表达，这里只管图标） */
     private centerPlayEl: HTMLElement | null = null;
     private toastEl: HTMLElement | null = null;
+    /** 舞台里的「没有可播放的本地视频」提示层（`render()` 按有无本地项显隐）。
+     *  🔴 为什么必须有它：纯网络条目（`episodeFiles` 为空、只有 `episodeUrls`）的 `items` 是空数组，
+     *     `render()` 会从 `if (!opts || !item) return;` 提前返回 ⇒ 既不设 `src` 也不给任何提示，
+     *     用户看到的就是一个 `readyState=0` 的黑壳，点它当然播不了（真机实测：退出内嵌播放器后
+     *     `videoEl.src` 为空串、`readyState=0`，`emptyBox:false` 即连占位都没有）。 */
+    private emptyStageEl: HTMLElement | null = null;
+    /** 占位层的转圈与文案（`setEmptyStageMode()` 要按「加载中 / 未关联」两种形态切换） */
+    private emptyStageSpinEl: HTMLElement | null = null;
+    private emptyStageTitleEl: HTMLElement | null = null;
     private nextPanelEl: HTMLElement | null = null;
     private nextPanelTextEl: HTMLElement | null = null;
     /** error 已触发标志：防止 error 期间再次切源/兜底重复调用 */
@@ -245,8 +306,17 @@ export class VideoPlayerView extends ItemView {
     private subUrl: string | null = null;
     /** 当前挂载的字幕标识（候选文件名 / 外部文件名；用于弹窗高亮） */
     private subFile: string | null = null;
+    /**
+     * 当前挂载字幕的**完整路径**（持久化用）。
+     * 🔴 与 `subFile` 分开存：`subFile` 只是文件名（弹窗高亮 / 高亮比对），
+     *    而写回 catalog 必须写**能重新打开它的路径**（库外字幕要是绝对路径，光存文件名下次就找不到）。
+     */
+    private subPath: string | null = null;
     /** #605「显示字幕」开关态（false = 隐藏但**保留**已挂载轨道，再打开即原样点亮） */
     private subVisible = true;
+    /** 字幕原文缓存（`subtitleRawText()` 用）：键 = 解析后的完整路径。
+     *  🔴 `timeupdate` 每秒约 4 次，⛔ 别在每条 tick 上重读文件。 */
+    private subTextCache: { key: string; text: string } | null = null;
     /** 连播：倒计时定时器 + 截止时间戳 */
     private nextTimer: number | null = null;
     private nextDeadline = 0;
@@ -328,6 +398,15 @@ export class VideoPlayerView extends ItemView {
     async onClose(): Promise<void> {
         // 位置落盘（关闭立即写，防最后一次进度丢失）
         this.savePosition(true);
+        // 🔴 m04435 ①：关播放器时摘掉右键浮层（它挂在 root 里，root 会被重建 ⇒ 留着就是孤儿 DOM）
+        this.closeStampNotePopover();
+        // 「全屏+」还开着就把标签页关了 ⇒ 主动退出浏览器全屏，别把整块屏幕留给一个已销毁的视图。
+        // （浏览器通常也会因为全屏元素被移除而自动退出，但不该指望它，尤其切标签页时不一定会派发。）
+        try {
+            if (document.fullscreenElement && document.fullscreenElement === this.playerHost()) {
+                void document.exitFullscreen?.().catch(() => {});
+            }
+        } catch { /* 环境不支持就忽略，关闭流程不能被它打断 */ }
         if (this.fsListenerBound) {
             document.removeEventListener('fullscreenchange', this.onFsChange);
             this.fsListenerBound = false;
@@ -339,10 +418,48 @@ export class VideoPlayerView extends ItemView {
         this.unbindVisibility();
         this.cancelDeepRelease();
         this.clearTimers();
+        // `landSeek` 的 250ms 重试定时器不在 `clearTimers()` 里（换集时要让它继续追落位），
+        // 但关页必须拆：否则关了标签页还在往已拆的 <video> 上写 currentTime。
+        if (this.seekLandTimer !== null) {
+            window.clearTimeout(this.seekLandTimer);
+            this.seekLandTimer = null;
+        }
+        this.seekLandTarget = null;
         this.clearSubtitle();
         // 停播释放：清除 src 释放文件句柄/解码资源
         this.releaseMedia();
+        // 🔴 用户 2026-11-10 裁定：「多音源但关闭标签页即彻底暂停」—— 关掉这个标签页，
+        //    它里面**所有**媒体都必须停，不能只停 `this.videoEl` 那一颗。
+        //    真机踩到的漏网之鱼是官方内嵌 iframe：`contentEl.empty()` 把 <iframe> 从 DOM 摘掉后，
+        //    Electron 的 OOPIF 子进程仍可能继续送音频（用户报「关了标签页声音都还在」）。
+        //    所以先把每颗 <video>/<audio> 停掉并清源，再把每个 <iframe> 打回 about:blank 后摘除。
+        this.silenceAllMedia(this.contentEl);
         this.contentEl.empty();
+    }
+
+    /** 关标签页的兜底静音：把 root 下所有媒体停掉、所有 iframe 打回空白。
+     *  ⛔ 别删：这是「关闭标签页即彻底暂停」的最后一道闸 —— `releaseMedia()` 只管 `this.videoEl` 一颗，
+     *  网络集的官方内嵌 iframe、EPUB 阅读器的 iframe 都不在它管辖内。 */
+    protected silenceAllMedia(root: HTMLElement): void {
+        root.querySelectorAll('video, audio').forEach((m) => {
+            try {
+                const el = m as HTMLMediaElement;
+                el.pause();
+                el.removeAttribute('src');
+                el.load();
+            } catch {
+                /* 尽力而为：个别元素已销毁时不阻断关闭 */
+            }
+        });
+        root.querySelectorAll('iframe').forEach((f) => {
+            try {
+                // 先打回空白（立刻掐断子帧的解码与音频），再从 DOM 摘掉
+                f.setAttribute('src', 'about:blank');
+            } catch {
+                /* 尽力而为 */
+            }
+            f.remove();
+        });
     }
 
     /** 载入播放内容（main 层在 setViewState 后调用；同一标签页可反复换片，不必新开）
@@ -361,9 +478,423 @@ export class VideoPlayerView extends ItemView {
         // 已挂载就整屏重建；未挂载（Obsidian 延迟渲染）则只记 opts，交给 onOpen
         if (this.opened) this.buildUi();
         // 标签页标题跟随片名：Obsidian 只在特定时机刷新 tab header，复用同一标签页换片时得手动刷一次，
-        // 否则标题会停在上一部片名（updateHeader 未进公开 d.ts，故窄化断言后可选调用）
+        // 否则标题会停在上一部片名。整段收进 `refreshLeafHeader()` 一处，
+        // 让「换片」与「条目改名」两条路共用同一份实现（⛔ 别再在这儿展开第二份）。
+        this.refreshLeafHeader();
+    }
+
+    // ── 子类扩展点（#691 B 站风选集页 `EpisodePageView`，2026-10-27）───────────────
+    //  🔴 这里**只加钩子**，上面任何一条既有逻辑都不动：产物断言把处数逐字钉死了
+    //    （生命周期标志的置位、rootEl 的两处赋值、`if (this.opened) …buildUi` 那行、
+    //      互斥函数里的暂停调用 —— 全部按「恰好几处」计数，多一个字面就红）。
+    //  ⚠️ 所以子类**不能**自己再写一遍这些行，只能靠下面的受保护读数 + 覆写钩子。
+    //  ⚠️ 本文档注释里也**不许**写出那些被计数的字面语句（本批首跑就这么自己撞红过）。
+
+    /** 播放器骨架挂在哪个容器下（默认 `contentEl`；选集页覆盖它，返回「两栏」里的左栏） */
+    protected playerHost(): HTMLElement {
+        return this.contentEl;
+    }
+
+    /** 控制条右组的**全屏区**：基类默认画一个全屏按钮；子类覆写它就能塞两个（全屏 / 全屏+）。
+     *  🔴 覆写者必须自己把「真全屏那个按钮」赋给 `this.fsBtn` —— `onFsChange` 靠它切 `minimize` / `maximize`。
+     *  ⚠️ 为什么不传插槽出来、让子类先建好再回填：那要求「建槽」与「填槽」跨两个时机，
+     *     子类字段还没初始化就会先被问一次（时序炸）。一个钩子把「建 + 填 + 回交 fsBtn」一次做完，没有缝隙。
+     *
+     * 🔴 用户 2026-11-06「两页互跳」：带了 `onBackToEpisodePage`（从选集页交接进来）时，这颗按钮
+     *    改义为「返回选集页」，图标用 `minimize`（语义是「退出放大态」而不是「进入全屏」）。
+     *    ⚠️ 此时**不回交 `fsBtn`**：本实例没有「浏览器真全屏」这条通路了，`onFsChange` 没东西可切。 */
+    /**
+     * 控制条右组**全屏区**。基类规则（用户 2026-11-09 裁定 + 2026-11-23 追加）：
+     *  - 有 `onBackToEpisodePage`（从选集页交接进来）⇒「返回选集页」（图标 `minimize`）+「全屏+」。
+     *  - 否则 ⇒「全屏」（走 `toggleFullscreen()` = 标签页全屏）+「全屏+」。
+     *
+     * 🔴 用户 2026-11-09 裁定（逐字）：「这个播放器的全屏按钮怎么有两种全屏状态啊，
+     *    给我改成纯以前的标签页全屏，而不是整个电脑屏幕全屏」
+     *    ⇒ 「全屏」这颗**不是**浏览器全屏，也**只有一种状态**。
+     *
+     * 🔴 用户 2026-11-23 追加（②）：**播放器页**要有一颗「全屏+」——即浏览器真全屏（`requestFullscreen`），
+     *    与「全屏」（标签页全屏）并存、语义互不覆盖；用户原话「只在全屏页加，不要加到详情页」。
+     *    ⚠️ 两条边界，改这里前先读：
+     *      · 详情页（`EpisodePageView`）**覆写**了本方法且不调 `buildFsPlusButton()` ⇒ 它永远没有这颗。
+     *        ⛔ 别在 `EpisodePageView.buildFsButtons()` 里补 —— 那就是把按钮加回详情页。
+     *      · 「全屏+」不复用 `this.fsBtn`：两颗按钮两种态，混用会让图标跟着浏览器全屏乱跳
+     *        （正是 2026-11-09 那次「两种全屏状态」困惑的成因）。它有自己的 `fsPlusBtn`。
+     *
+     * ⚠️ 为什么不传插槽出来、让子类先建好再回填：那要求「建槽」与「填槽」跨两个时机，
+     *     子类字段还没初始化就会先被问一次（时序炸）。一个钩子把「建 + 填 + 回交 fsBtn」一次做完，没有缝隙。
+     */
+    protected buildFsButtons(_right: HTMLElement): void {
+        const back = this.opts?.onBackToEpisodePage;
+        if (back) {
+            const btn = _right.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '返回选集页' } });
+            safeSetIcon(btn, 'minimize');
+            btn.addEventListener('click', () => back(this.videoEl?.currentTime ?? 0));
+            this.buildFsPlusButton(_right);
+            return;
+        }
+        const fsBtn = _right.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '全屏（F）' } });
+        safeSetIcon(fsBtn, 'maximize');
+        fsBtn.addEventListener('click', () => this.toggleFullscreen());
+        this.fsBtn = fsBtn;
+        this.buildFsPlusButton(_right);
+    }
+
+    /** 建「全屏+」按钮（= **浏览器真全屏**，把整块屏幕交给播放器）。
+     *
+     *  🔴 用户 2026-11-23（②）：「播放器全屏页加一个全屏+按钮，只在全屏页，不要加到详情页」。
+     *     与「全屏」（`toggleFullscreen()` = 纯 CSS 标签页全屏，只铺满 Obsidian 窗口）是**两件事**：
+     *       · 全屏   ⇒ 影响 Obsidian 窗口内的观感，不动显示器；
+     *       · 全屏+  ⇒ 走浏览器 Fullscreen API，接管整块显示器（Electron 层全屏）。
+     *     两颗并存正是用户这次要的：小屏看片用前者，投影/大屏用后者。
+     *
+     *  ⚠️ 目标元素用 `playerHost()` 而**不是** `this.containerEl`：
+     *     `containerEl` 是 `.workspace-leaf`，Obsidian 布局代码会往它身上写内联尺寸，
+     *     全屏后退出时容易残留错位；`playerHost()` 是视图自己的 `contentEl`（选集页覆写成左栏），
+     *     层级干净、退出即恢复。
+     *  ⚠️ 必须**在点击的调用栈里**调 `requestFullscreen()`：浏览器要求用户手势，
+     *     异步等待之后再调会被拒（`NotAllowedError`）。这里没有 await，直接在 click 回调里发。
+     *  ⚠️ 失败要静默吞掉并给提示：Obsidian 桌面端对 `requestFullscreen` 的支持随版本变化，
+     *     抛错不该连累控制条（同仓 `PdfReaderModal.toggleFullscreen` 的既有口径）。
+     *  ⚠️ 状态同步只认 `fullscreenchange`：用户可能按 Esc 或 F11 退出全屏，
+     *     那不是走这颗按钮，必须靠事件回读 `document.fullscreenElement`（见 `onFsChange`）。 */
+    private buildFsPlusButton(right: HTMLElement): void {
+        const btn = right.createEl('button', {
+            cls: 'rl-btn rl-vp-btn rl-vp-iconbtn',
+            attr: { 'data-tip': '全屏+（占满整块屏幕）', 'data-fsplus': '1' },
+        });
+        safeSetIcon(btn, 'maximize-2');
+        btn.addEventListener('click', () => void this.toggleBrowserFullscreen());
+        this.fsPlusBtn = btn;
+        this.syncFsPlusBtn();
+    }
+
+    /** 「全屏+」的真身：进出**浏览器真全屏**（整块显示器），⛔ 不是标签页全屏。 */
+    private async toggleBrowserFullscreen(): Promise<void> {
+        try {
+            if (document.fullscreenElement) {
+                await document.exitFullscreen?.();
+                return;
+            }
+            const target = this.playerHost();
+            await target.requestFullscreen?.();
+        } catch {
+            // 不支持 / 被策略拒绝 / 不是用户手势：静默，控制条照常可用
+            new Notice('当前环境不支持全屏+');
+        }
+    }
+
+    /** 按 `document.fullscreenElement` 回读真全屏态，同步「全屏+」的图标与高亮。
+     *  ⚠️ 只在**本视图自己**处于真全屏时才点亮：别的插件/别的视图推进全屏时，
+     *     这颗按钮并不代表那个状态，点亮就是假信号。 */
+    private syncFsPlusBtn(): void {
+        const el = this.fsPlusBtn;
+        if (!el) return;
+        const host = this.playerHost();
+        const on = !!document.fullscreenElement && document.fullscreenElement === host;
+        const icon = on ? 'minimize-2' : 'maximize-2';
+        // 图标重画前先清空：`setIcon()` 是「插入」，不清会叠出两层 svg（本仓踩过）
+        if (el.querySelector('svg')?.getAttribute('data-icon') !== icon) {
+            el.empty();
+            safeSetIcon(el, icon);
+        }
+        el.toggleClass('is-on', on);
+        el.setAttribute('data-tip', on ? '退出全屏+（回到窗口内）' : '全屏+（占满整块屏幕）');
+    }
+
+    /**
+     * Esc 优先级链的**最前面一层**：子类有自己的浮层（选集页的条目右键菜单）时，
+     * 在这里收掉并返回 `true`，基类就不再往下走。
+     *
+     * 🔴 用户 2026-11-08 选集页加了简介封面右键菜单，而那个组件（`EntryContextMenu`）
+     *    **自己也监听 window keydown 的 Esc**。两套 Esc 同时活着时，一次按键会关掉两层
+     *    （菜单没了、抽屉也关了）—— 本仓 #444 就是这类事故（"关掉菜单顺手把系列视图也退了"）。
+     *    ⇒ 统一到这一条链上：子类先收，收掉了就 `return true` 短路。
+     * ⚠️ 组件自带的 window 监听**不用拆**：它和这里是同一时刻消费同一个事件，
+     *    都只是把菜单关掉（幂等）。真出问题的是「关菜单」连带「关别的东西」，这里挡住的就是它。
+     */
+    protected closeExtraOverlay(): boolean {
+        return false;
+    }
+
+    /** 骨架搭好之后的追加钩子（选集页用它填右侧栏；默认什么都不做） */
+    protected buildExtra(_root: HTMLElement): void {
+        // 默认无追加内容
+    }
+
+    /** 每次换片 / 切集重画之后的追加钩子（选集页用它同步「当前集」高亮；默认什么都不做） */
+    protected afterRender(): void {
+        // 默认无追加动作
+    }
+
+    /** 字幕候选 / 当前挂载项变化后的追加钩子（选集页用它重画字幕列表；默认什么都不做） */
+    protected afterSubtitles(): void {
+        // 默认无追加动作
+    }
+
+    /** 当前播放项在 `items` 里的下标（0 基） */
+    protected curIndex(): number {
+        return this.cur;
+    }
+
+    /** `items` 长度 */
+    protected itemCount(): number {
+        return this.opts?.items.length ?? 0;
+    }
+
+    /** 真实集下标（`items[].index`，= `episodeFiles` 数组位）→ `items` 下标；找不到返回 -1 */
+    protected itemPosOf(epIndex: number): number {
+        const items = this.opts?.items ?? [];
+        return items.findIndex((it) => it.index === epIndex);
+    }
+
+    /** 切到 `items` 里的第 i 项（选集格点击用；越界 / 同一集由 `goto` 静默忽略） */
+    protected switchToItem(i: number): void {
+        this.goto(i);
+    }
+
+    /**
+     * **就地换掉播放列表**（宿主在「条目关联被人改过」时推一份新的进来）。
+     *
+     * 🔴 用户 2026-11-16 逐字：「播放器详情页的右键更新了关联入口链接，但视频播放器不刷新」
+     *    —— 根因是结构性的：`items` 是 `openEpisodePageFor` 打开那一刻算好的快照，
+     *    之后**没有任何通路**能让它变成新的（`refreshEntrySnapshot` 只重画标题块与简介卡）。
+     *    ⛔ 别改成「重新 `openWith` 一次」：那会把播放位置、当前集、字幕绑定全丢，
+     *    用户要的是「改了关联，页面自己跟上」，不是「页面被打断重开」。
+     *    ⛔ 也别试图重建整个 `opts` 对象 —— 见 `openWith` 的注释，活状态都挂在它上面。
+     *
+     * ⚠️ 当前集按 **`items[].index`（真实集下标 = `episodeFiles` 数组位）** 重新定位，
+     *    ⛔ 不能按数组位对齐：删掉中间一集就会「看着第 5 集、其实在播第 4 集」。
+     * ⚠️ 当前集的 `url` / `path` / `title` 变了 ⇒ 必须重挂源（不重挂就会一直播旧链接，
+     *    正是用户报的那个症状）；没变则一个字节都不动，播放不中断。
+     */
+    protected replaceItems(next: readonly EmbedVideoItem[]): void {
+        const opts = this.opts;
+        if (!opts) return;
+        const prevItem = opts.items[this.cur];
+        // 就地改内容而不是换数组：`opts` 是活引用，`fillMenu` / `goto` / `itemPosOf`
+        // 全都按 `opts.items` 取值，换数组就会出现「一半新一半旧」的两份真源。
+        opts.items.length = 0;
+        for (const it of next) opts.items.push({ ...it });
+        const keep = prevItem ? prevItem.index : -1;
+        const found = keep >= 0 ? opts.items.findIndex((it) => it.index === keep) : -1;
+        if (found < 0) {
+            // 当前集已被解除关联（或原本就没有本地可播集）⇒ 从头开始。
+            // 这里必须走 `render()`：它是**唯一**会重设 `src` / 空态 / 上下一集置灰的出口，
+            // 少了它画面会停在一条已经不存在的路径上（黑壳 + 点不动）。
+            this.cur = 0;
+            this.closeMenu();
+            this.render();
+            return;
+        }
+        const after = opts.items[found];
+        const changed = !prevItem
+            || after.url !== prevItem.url
+            || after.path !== prevItem.path
+            || after.title !== prevItem.title;
+        this.cur = found;
+        if (changed) {
+            this.closeMenu();
+            this.render();
+            return;
+        }
+        // 同一集、同一源 ⇒ 只同步「边界按钮」这一处派生状态（⛔ 别调 render：它会 pause + 重设 src）
+        if (this.prevBtn) this.prevBtn.disabled = after.isFirst;
+        if (this.nextBtn) this.nextBtn.disabled = after.isLast;
+        this.syncEmptyStage(false);
+        // 选集浮层若开着，它的条目还是上一份列表画的 ⇒ 收掉（⛔ 别留一份过期菜单）
+        if (this.menuKind === 'episodes') this.closeMenu();
+    }
+
+    /** 片名（选集页标题用） */
+    protected entryTitle(): string {
+        return this.opts?.entryTitle ?? '';
+    }
+
+    /**
+     * 让标签页标题跟上片名（Obsidian 不在 `setText` 时自动重画 tab header）。
+     *
+     * 🔴 为什么收成方法（2026-11-08，用户 m04478「从播放器详情页简介封面右键菜单修改了
+     *    但当前播放页没有实时生效」）：原本这段只写在 `openWith()` 里 —— 那是「换片」这条路。
+     *    「条目改名」走的是另一条路（宿主把最新条目推给已打开的页），它拿不到这段代码，
+     *    于是标签页标题永远停在打开那一刻的片名上。
+     *    ⇒ 两条路共用本方法，⛔ 别再在任何一个调用点展开第二份（产物里这个词被按次数钉死）。
+     */
+    private refreshLeafHeader(): void {
+        // 未进公开 d.ts ⇒ 窄化断言后可选调用
         const leaf = this.leaf as unknown as { updateHeader?: () => void };
         if (typeof leaf.updateHeader === 'function') leaf.updateHeader();
+    }
+
+    /**
+     * 「这一条的片名变了」—— 宿主在条目被编辑保存后调用，重画本视图里所有跟着片名走的地方。
+     *
+     * 🔴 片名在本视图里有**三个落点**，改一处漏一处就是用户看到的「没实时生效」：
+     *    ⑴ 顶栏片名（`restoreLocalTitle` 用 `opts.entryTitle` 拼「片名 · 第 N 集」）；
+     *    ⑵ 标签页标题（`getDisplayText()` 读 `entryTitle()`）；
+     *    ⑶ 播放器菜单/抽屉里由子类画的副本（子类覆写本方法的扩展点见 `onEntryTitleChanged`）。
+     * ⚠️ `opts` 是**打开那一刻的快照**（本仓既定口径，改标题只许走这里更新那一字段，
+     *    ⛔ 别试图把整个 opts 重建成新对象：`items` / 播放位置 / 字幕绑定都挂在上面）。
+     * @param title 新片名；空串按「没有片名」处理（子类会退化成「选集」这类兜底文案）
+     */
+    applyEntryTitle(title: string): void {
+        if (!this.opts) return;
+        if (this.opts.entryTitle === title) return;
+        this.opts.entryTitle = title;
+        this.restoreLocalTitle();
+        this.refreshLeafHeader();
+        this.onEntryTitleChanged(title);
+    }
+
+    /** 片名变化后的子类扩展点（默认空实现；选集页据此重画标题块）。 */
+    protected onEntryTitleChanged(_title: string): void {
+        // 默认什么都不做 —— 纯播放器页只有顶栏与标签页两处，已由 applyEntryTitle 处理完
+    }
+
+    /** 单文件 / 电影态 */
+    protected isSingle(): boolean {
+        return this.opts?.single === true;
+    }
+
+    /** 字幕现场快照（候选 + 当前挂载 + 是否显示）——
+     *  选集页右侧栏只读它，⛔ 不另存一份（两套真源必然漂）。 */
+    protected subtitleSnapshot(): { candidates: SubtitleCandidate[]; file: string | null; visible: boolean } {
+        return {
+            candidates: this.subCandidates.slice(),
+            file: this.subFile,
+            visible: this.subVisible && !!this.subFile,
+        };
+    }
+
+    /** 点一条字幕（选集页右侧栏用；内部走既有 `applySubtitle`，⛔ 不另写一套挂载） */
+    protected chooseSubtitle(fileName: string): void {
+        void this.applySubtitle(fileName);
+    }
+
+    /** 开关字幕显示（选集页右侧栏用） */
+    protected setSubtitleShown(on: boolean): void {
+        void this.setSubtitleVisible(on);
+    }
+
+    /** 让本视图的 video 停声（选集页参与播放互斥用）。
+     *  ⚠️ 刻意**不**复用 `pauseForOtherPlayer` —— 那个方法名带前导点只许 1 处调用点，是另一条计数断言。 */
+    protected pauseVideo(): void {
+        this.videoEl?.pause();
+    }
+
+    /** 当前**真实集下标**（`items[].index`，= `episodeFiles` 数组位）；没有内容 ⇒ -1。
+     *  ⚠️ 与 `curIndex()` 不是一回事：`curIndex()` 是 `items` 数组位（跳过了不可内嵌的集），
+     *     选集页画「第 N 集」必须用这个真实下标。 */
+    protected currentEpisodeIndex(): number {
+        return this.opts?.items[this.cur]?.index ?? -1;
+    }
+
+    /** 打开系统文件选择器挑一个字幕并挂载（选集页右栏的「从文件选择」用）。
+     *  ⚠️ 内部走既有 `browseSubtitleFile` —— 挂载 / 失败提示 / `subFile` 写回全在基类，
+     *     选集页只负责触发，⛔ 别另写一套。 */
+    protected browseSubtitle(): void {
+        void this.browseSubtitleFile();
+    }
+
+    /** 还原本地源需要的那点状态（`crossOrigin` 是抓帧免污染的关键，见 `#326`）。
+     *  ⚠️ 2026-11-24：原来这里还要复位 `netPlayback` 标记（网络流占着主 `<video>` 时置位），
+     *     网络源整条链路删掉后（用户 m01744）只剩「装回 crossOrigin」这一件事。 */
+    protected restoreLocalSourceHints(): void {
+        if (this.videoEl && !this.videoEl.crossOrigin) this.videoEl.crossOrigin = 'anonymous';
+    }
+
+    /**
+     * 重新按当前集挂载本地源。
+     *
+     * 🔴 为什么不能借 `switchToItem(curIndex())`：`goto()` 在 `idx === cur` 时**直接 return**
+     *    （那是防「点当前集」的空跳），这里恰恰是「集没变、但主播放器被网络流占过」的场景。
+     * ⇒ 直接走 `render()`，它是本地源的唯一入口（重设 src / 标题 / 占位层）。
+     */
+    protected rerenderCurrent(): void {
+        this.render();
+    }
+
+    /**
+     * 把顶栏片名还原成「按当前播放项算出来的」那个口径。
+     *
+     * 🔴 为什么不在这里重算一遍拼接：`render()` 里那份 `episodeLabel(item, single)` 是唯一真源
+     *    （单文件态写「文件 N」、多集写「第 N 集」，还带 entryTitle 拼接）。这里再拼一次必然走味。
+     * ⇒ 抽成这个方法给 `render()` 与「退出网络播放」两处共用。
+     */
+    protected restoreLocalTitle(): void {
+        const opts = this.opts;
+        if (!opts) return;
+        // 2026-11-24：网络源整条链路已删（用户 m01744）⇒ 标题只有「本地集」这一种口径，
+        // 原 `opts.netSource` 分支（走 `opts.netTitle`）随功能一起移除，⛔ 别再补回来。
+        const item = opts.items[this.cur];
+        const label = item ? episodeLabel(item, !!opts.single) : '';
+        this.titleTextEl?.setText(label ? `${opts.entryTitle} · ${label}` : opts.entryTitle);
+    }
+
+    /** 视频元素读数（选集页要挂自己的 `timeupdate` 监听、读当前秒）。
+     *  🔴 只交出元素本身，⛔ 不搬基类任何播放逻辑过来 —— 播放/暂停/跳转仍走基类那条唯一通路。 */
+    protected videoElement(): HTMLVideoElement | null {
+        return this.videoEl ?? null;
+    }
+
+    /**
+     * 当前播放项的**本地原始路径**（`items[cur].path`：库内相对 / 系统绝对都可能有）；没有 ⇒ `null`。
+     *
+     * 🔴 为什么必须由基类给（2026-12 加 ASR 时踩到的墙）：`opts` 是 **private**，子类拿不到
+     *    `items[].path`；而 `.src` 那条 `app://` / `http` 资源 URL 是宿主转过的，
+     *    ⛔ 反过来当文件路径喂给外部程序（ffmpeg / whisper）必然找不到文件。
+     *    字幕那条链（`subtitleRawText` / `autoLoadSubtitle`）一直用的就是这一个字段，
+     *    这里只是把同一份口径**读出去**，⛔ 不另算一条路径。
+     * ⚠️ 网络集态下 `items` 可能为空 / 不含当前网络集 ⇒ 返回 `null`（调用方按「没有本地文件」处理）。
+     */
+    protected currentVideoPath(): string | null {
+        const p = this.opts?.items[this.cur]?.path;
+        return p && p.trim() ? p : null;
+    }
+
+    /**
+     * 当前挂载字幕的**原文**（VTT / SRT / ASS 都可能，调用方按扩展名选解析器）。
+     *
+     * 🔴 只读一次就缓存：选集页面板的每次联动都发生在 `timeupdate`（每秒约 4 次）上，
+     *    在那种频率上重读文件 = 把磁盘打成筛子。
+     * ⚠️ 与 `applySubtitle` 用的是**同一份定位口径**（`subFile` + 当前集目录 + `loadSubtitleVtt`），
+     *    ⛔ 不另立第二套「字幕在哪儿」的算法。
+     */
+    protected async subtitleRawText(): Promise<string | null> {
+        const item = this.opts?.items[this.cur];
+        if (!item || !this.subFile) return null;
+        // 🔴 优先用 `subPath`（可能来自持久化记录 = 库外绝对路径，拼不上视频目录）；
+        //    没有才退回「当前集目录 + 文件名」的老口径（同目录自动挂载那条路）。
+        const dir = dirOfPath(item.path);
+        const full = this.subPath ?? (dir ? `${dir}/${this.subFile}` : this.subFile);
+        const cached = this.subTextCache;
+        if (cached && cached.key === full) return cached.text;
+        const text = await this.loadVtt(full);
+        this.subTextCache = text === null ? null : { key: full, text };
+        return text;
+    }
+
+    /** 跳到指定秒（选集页字幕行点击用）。
+     *  ⚠️ 内部走既有 `applySeek` —— 夹取 / 自动播放 / 「已跳到 …」提示一字不另写。 */
+    protected seekTo(seconds: number): void {
+        this.applySeek(seconds);
+    }
+
+    /** 当前挂载的字幕文件名（`null` = 没挂；选集页面板据此决定画不画列表） */
+    protected subtitleFileName(): string | null {
+        return this.subFile;
+    }
+
+    /**
+     * 控制条右组里「选集」「字幕」两枚按钮的就地引用（选集页按模式显隐用）。
+     *
+     * 🔴 只交出引用，⛔ 不在这里写任何显隐判断：哪一页该藏哪枚按钮是**页面口径**，
+     *    播放器（单文件/普通页）永远两枚都该有。子类拿引用后自己 `toggleClass`。
+     * ⚠️ 为什么不给「隐藏方法」：这两枚按钮的创建语句被产物断言逐字锚死（`rl-vp-textbtn` /
+     *    `safeSetIcon(subBtn, "captions")` 前后的字节），加条件下创建会直接撞红 —— 只能事后加类。
+     * 返回 `null` = 该按钮在当前上下文里根本没建（`single` 时不建选集按钮 / 没注入 `listSubtitles` 时不建字幕按钮）。
+     */
+    protected sideBarToggles(): { episodes: HTMLButtonElement | null; subtitles: HTMLButtonElement | null } {
+        return { episodes: this.epBtn, subtitles: this.subBtn };
     }
 
     // ── 构建 ──
@@ -377,7 +908,9 @@ export class VideoPlayerView extends ItemView {
         this.menuKind = null;
         this.menuTriggerBtn = null;
         this.contentEl.empty();
-        const root = this.contentEl.createDiv({ cls: 'rl-vp-root' });
+        // ⚠️ 容器由 `playerHost()` 给（默认 contentEl）—— 选集页把它换成「两栏」里的左栏，
+        //    这样播放器全套骨架 ＋ 右侧栏是**并列兄弟**，不用把播放器 DOM 搬来搬去（搬必丢播放状态）。
+        const root = this.playerHost().createDiv({ cls: 'rl-vp-root' });
         this.rootEl = root;
         this.buildBar(root);
         this.buildStage(root);
@@ -406,6 +939,7 @@ export class VideoPlayerView extends ItemView {
             this.menuOutsideBound = true;
         }
         this.render();
+        this.buildExtra(root);
         this.pokeIdle();
     }
 
@@ -430,18 +964,39 @@ export class VideoPlayerView extends ItemView {
         const bar = root.createDiv({ cls: 'rl-vp-bar' });
         const titleWrap = bar.createDiv({ cls: 'rl-vp-title-wrap' });
         this.titleTextEl = titleWrap.createDiv({ cls: 'rl-vp-title' });
+        // 🔴 顶栏右组**无条件建**：选集页的网络流模式要把「在浏览器打开 / 退出播放」挂进来
+        //    （用户 2026-11-05：网络集必须用插件自己的播放器，那两颗出口就没有别处可放了）。
+        //    ⛔ 别改成「有 entryId 才建」：单文件预览 / 无笔记条目也要能退出网络播放。
+        const tools = bar.createDiv({ cls: 'rl-vp-tools' });
+        this.barToolsEl = tools;
         // #326「插入时间戳 / 截取当前帧」入口 —— 用户 2026-09-19 指定放**顶栏右上角**：
         // 控制条右侧功能组已有 6 项（选集/倍速/字幕/音量/齿轮/全屏），再塞两个会挤窄中段进度条；
         // 顶栏原本只有片名、留白充足。仅在有条目上下文（entryId）时才建 —— 单文件预览没有笔记可写。
         // 图标名 `clock` / `camera` 已对着 obsidian-1.13.7.asar 核实（`_probe_lucide.cjs`）。
         if (this.opts?.entryId) {
-            const tools = bar.createDiv({ cls: 'rl-vp-tools' });
-            const stampBtn = tools.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '插入时间戳（T）' } });
+            const stampBtn = tools.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '插入时间戳（T）· 右键写时间戳笔记' } });
             safeSetIcon(stampBtn, 'clock');
             stampBtn.addEventListener('click', () => void this.insertStamp());
-            const shotBtn = tools.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '截取当前帧（S）' } });
+            // 🔴 m04435 ①：**右键 = 弹「时间戳笔记」浮层**（左键仍是原来的一键插入，行为一字未改）。
+            //    与相邻 `shotBtn` 的右键批注同款纪律：必须 `preventDefault()` 挡掉原生右键菜单；
+            //    ⛔ 只挂 `contextmenu` 不挂 `mousedown` 判 button（mousedown 里 preventDefault 会吞掉左键 click 派发链）。
+            stampBtn.addEventListener('contextmenu', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.openStampNotePopover(stampBtn);
+            });
+            const shotBtn = tools.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '截取当前帧（S）· 右键批注' } });
             safeSetIcon(shotBtn, 'camera');
             shotBtn.addEventListener('click', () => void this.takeShot());
+            // 🔴 m07854 ⑰：**右键 = 即时批注**（左键仍是原来的一键截图，行为一字未改）。
+            //    ⚠️ 必须 `preventDefault()`：否则会先弹浏览器/宿主的原生右键菜单，批注窗口被压在下面。
+            //    ⚠️ 只挂 `contextmenu` 不挂 `mousedown` 判 button：mousedown 里若 `preventDefault()`
+            //       会连带吞掉左键的 click 派发链（实测会让左键截图偶发失效）。
+            shotBtn.addEventListener('contextmenu', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                void this.annotateShot();
+            });
             // 🔴 #579 时间戳侧边栏入口：放在**两枚标记按钮之后、打开笔记之前** ——
             //    ⑴ 与「时间戳 / 截图」同属标记那条线（就近读得懂）；
             //    ⑵ 既有判据钉着「打开笔记」必须**最右**（`截取当前帧` 的 index < `打开视频笔记` 的 index），
@@ -522,6 +1077,24 @@ export class VideoPlayerView extends ItemView {
         safeSetIcon(ctr, 'play');
         this.centerPlayEl = ctr;
 
+        // 🔴 用户 2026-11-15：「两个播放器空状态改成正在加载视频，不要显示这没有本地集的提示了」。
+        //    改前这里写死「这一集没有本地视频 / 它是网络集，点上方集号就用插件播放器直接播；
+        //    或在条目里补一个本地视频文件」—— 两份文案都在**把内部数据模型甩给用户**：
+        //    用户不知道什么叫「本地视频」「条目里补一个」，他只知道「点开是黑的，还骂我」。
+        //    更糟的是这层在黑壳上**先于**网络流挂载点亮（纯网络条目 `items` 为空 ⇒ 走的就是这条路），
+        //    真机截图实测它压在正在播的画面正中间（同一时刻 `readyState=4` 在播）。
+        //    ⇒ 现在这一层只说一句中性的「正在加载视频…」：无论在等本地文件解析、等取流、
+        //      还是等 MSE 首片，用户看到的都是同一句「还没好，稍等」，而不是被指责配置缺失。
+        //    ⚠️ 真的播不了时**不靠这一层交代**：那条路由 `Notice` 说清原因
+        //      （见宿主 `handOffEpisodeToPlayer` 的取流失败分支），⛔ 别再往这里塞诊断文案。
+        const empty = stage.createDiv({ cls: 'rl-vp-emptystage' });
+        const emptySpin = empty.createDiv({ cls: 'rl-vp-emptystage-spin' });
+        emptySpin.createSpan({ cls: 'rl-spinner rl-spinner-lg' });
+        const emptyTitle = empty.createDiv({ cls: 'rl-vp-emptystage-title', text: '正在加载视频…' });
+        this.emptyStageEl = empty;
+        this.emptyStageSpinEl = emptySpin;
+        this.emptyStageTitleEl = emptyTitle;
+
         // 🔴 旧实现在这里监听 stage 自身 click → closePlayer（点黑边退出），用户 2026-09-17 要求移除：
         // 点击留白不产生任何关闭响应，退出只经由关闭标签页。
     }
@@ -589,6 +1162,10 @@ export class VideoPlayerView extends ItemView {
             epBtn.addEventListener('click', () => this.toggleMenu('episodes', epBtn));
             this.epBtn = epBtn;
         }
+        // 🔴 用户 2026-11-08：「算了去掉清晰度选择默认最高画质播放」
+        //    ⇒ 控制栏不再有清晰度按钮，档位由宿主固定冲最高（`biliStreamFor` 不传 qn ⇒
+        //    `BILI_DASH_TOP_QN`）。⛔ 别再挂一枚「只能看不能切」的标签按钮 —— 那是假控件。
+
         const speedBtn = right.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-speed', attr: { 'data-tip': '播放速度' }, text: SPEED_BTN_LABEL });
         this.speedBtn = speedBtn;
         // 倍速：点开面板选档（用户 2026-09-18 选定；旧的「点击循环 + Shift 反向」已撤）
@@ -611,15 +1188,19 @@ export class VideoPlayerView extends ItemView {
         volBtn.addEventListener('click', () => this.toggleMenu('volume', volBtn));
         this.volumeBtn = volBtn;
 
+        // 🔴 2026-11-07 用户逐字：「播放器画中画按钮收到在设置里」⇒ 控制条上那颗**撤掉**。
+        //    入口回到齿轮弹窗的「画中画 ›」动作行（`onSettingNav('pip')` 一直在，没动过）。
+        //    ⛔ 别再加回控制条：用户明确要它待在设置里，控制条留给高频操作（播放/选集/字幕/音量/全屏）。
+        //    ⚠️ 连带 `pipBtn` 字段与 `syncPipBtn()` 一起退场（死码不留）——
+        //      画中画状态现在由弹窗里的那一行「画中画 / 退出画中画」承担（见 `settingGroups()`）。
+
         const gearBtn = right.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '更多设置' } });
         safeSetIcon(gearBtn, 'settings');
         gearBtn.addEventListener('click', () => this.toggleMenu('settings', gearBtn));
         this.gearBtn = gearBtn;
 
-        const fsBtn = right.createEl('button', { cls: 'rl-btn rl-vp-btn rl-vp-iconbtn', attr: { 'data-tip': '全屏（F）' } });
-        safeSetIcon(fsBtn, 'maximize');
-        fsBtn.addEventListener('click', () => this.toggleFullscreen());
-        this.fsBtn = fsBtn;
+        // 全屏按钮：基类画一个；选集页覆写 `buildFsButtons()` 塞「全屏 / 全屏+」两个
+        this.buildFsButtons(right);
 
         this.buildMenu(bar);
         this.syncPlayState();
@@ -717,10 +1298,33 @@ export class VideoPlayerView extends ItemView {
         if (this.drawerBtn) safeSetIcon(this.drawerBtn, 'panel-right-open');
     }
 
+    /**
+     * 「当前这一路是网络集」时的**真实集号**；不是网络集返回 `null`。
+     *
+     * 🔴 2026-11-24：网络集已不走内置播放器（用户 m01744）⇒ 播放器页永远是本地集，
+     *    基类固定返回 `null`。选集页仍覆写它（认自己的 `netIndex`，官方 iframe 也按集号归属标记）。
+     */
+    protected netMarkEpisode(): number | null {
+        return null;
+    }
+
+    /**
+     * 标记归属用的**真实集下标**。
+     * ⇒ 网络源优先用 `netMarkEpisode()`；本地集仍是 `items[cur].index`。
+     * ⛔ 别在这里回落到 0 —— 0 是「第一集」，会把第 3 集的标记画到第 1 集上。
+     */
+    private markEpisodeIndex(): number {
+        const net = this.netMarkEpisode();
+        if (net !== null) return net;
+        return this.opts?.items[this.cur]?.index ?? 0;
+    }
+
     /** 当前集该看的标记（进度条圆点与抽屉**同一份口径**：多集时间轴不同，混着画就是画错位置） */
     private episodeMarks(): VideoMark[] {
-        const item = this.opts?.items[this.cur];
-        return item ? marksForEpisode(this.opts?.marks ?? [], { ep: item.index, fileName: item.path }) : [];
+        return marksForEpisode(this.opts?.marks ?? [], {
+            ep: this.markEpisodeIndex(),
+            fileName: this.opts?.items[this.cur]?.path,
+        });
     }
 
     /**
@@ -789,12 +1393,16 @@ export class VideoPlayerView extends ItemView {
         //    进度条上那条右键通路已整体撤除（「仅在抽屉侧边栏可点击跳转对应视频进度和关联时间戳笔记」）⇒
         //    如果这里不补，`onOpenMarkNote` 就**一个入口都不剩**（能力静默消失，而不是被挪走）。
         //    ⚠️ 与「点行 = 跳视频」**分成两个按钮**：只跳时间却被迫开一个窗口会很烦，反之亦然。
-        //    ⚠️ 图标按钮（无可见文字）⇒ 名字走 `aria-label`（⛔ 不带 `data-tip` 的祖先链 —— UI-GUIDE §3 v3 防双气泡）。
+        //    ⚠️ 图标按钮（无可见文字）⇒ 读屏名走 `.rl-sr` 隐藏文本，悬停提示走 `data-tip`。
+        //    🔴 **⛔ 不写 `aria-label`**：Obsidian 会给带它的元素**自绘官方气泡**，与插件自己的
+        //       `data-tip` 气泡叠成两层 —— 上一版两个都挂上了（注释写着「不带 data-tip」，
+        //       代码却把两个都写了），这就是用户 2026-10-30 说的「提示怎么有两种」。
         //    ⚠️ 图标与顶栏那枚「打开视频笔记」**同款**（`notebook-text`）：同一种动作两处两个图标会读成两件事。
         const open = row.createEl('button', {
             cls: 'rl-vp-dnote',
-            attr: { 'aria-label': '在笔记中打开', 'data-tip': '在笔记中打开' },
+            attr: { 'data-tip': '在笔记中打开' },
         });
+        open.createSpan({ cls: 'rl-sr', text: '在笔记中打开' });
         safeSetIcon(open, 'notebook-text');
         open.addEventListener('click', () => void this.opts?.onOpenMarkNote?.(mark));
         this.drawerRowEls[i] = row;
@@ -962,7 +1570,9 @@ export class VideoPlayerView extends ItemView {
      */
     private settingGroups(): SettingGroup[] {
         const pipOk = typeof document.pictureInPictureEnabled === 'boolean' && document.pictureInPictureEnabled;
-        return buildSettingOptions({ pip: pipOk, playMode: this.playMode });
+        // ⚠️ `pipActive` 也是**当场取**：用户可能从系统窗口把那扇画中画窗关掉，缓存会立刻失真。
+        const pipActive = !!document.pictureInPictureElement;
+        return buildSettingOptions({ pip: pipOk, pipActive, playMode: this.playMode });
     }
 
     /** 画一行的两种形态（置灰 / 循环值行 / 动作行） */
@@ -1067,8 +1677,13 @@ export class VideoPlayerView extends ItemView {
      * 会先被这里关掉、随后按钮 click 又把它打开，表现为「点了没反应」。
      */
     private onDocPointerDown = (ev: PointerEvent): void => {
-        if (!this.menuKind) return;
         const target = ev.target as Node | null;
+        // 🔴 m04435 ①：右键「时间戳笔记」浮层也走同一个「点外面就关」的口径。
+        //    放行「浮层内」—— 里面点心情/输入框/按钮都不该被这里关掉。
+        if (this.stampNotePopover && this.stampNoteEl) {
+            if (!target || !this.stampNoteEl.contains(target)) this.closeStampNotePopover();
+        }
+        if (!this.menuKind) return;
         if (target && (this.menuEl?.contains(target) || this.menuTriggerBtn?.contains(target))) return;
         this.closeMenu();
     };
@@ -1119,6 +1734,9 @@ export class VideoPlayerView extends ItemView {
         // 2026-09-18 补一级优先：浮层开着时 Esc 先收浮层（否则「想关浮层却把全屏退了」）；
         // 全屏中返回 true = 交回浏览器退全屏（否则「想退全屏却把播放器关了」）；其余返回 false 阻止传播。
         scope.register([], 'Escape', () => {
+            // 🔴 子类浮层排在最前：选集页的条目右键菜单盖在整页之上，
+            //    它开着时 Esc 只该收它（⛔ 不是顺手把大图预览 / 抽屉也收了）。
+            if (this.closeExtraOverlay()) return false;
             // #579：大图预览是**最外面那一层**（它盖着抽屉与画面）⇒ 优先关它
             if (this.lightboxOpen()) {
                 this.closeLightbox();
@@ -1144,7 +1762,20 @@ export class VideoPlayerView extends ItemView {
     private render(): void {
         const opts = this.opts;
         const item = opts?.items[this.cur];
-        if (!opts || !item) return;
+        // 🔴 先决定「有没有本地视频」再决定要不要继续：纯网络条目会在下一行提前返回，
+        //    若把显隐写在那之后，占位层永远不会出现，用户面对的仍是一片黑（真机实测的缺陷）。
+        this.syncEmptyStage(!item);
+        if (!opts) return;
+        if (!item) {
+            // 🔴 纯网络条目（`items` 为空，如单集电影只有一条 B 站链接）会走到这里：
+            //    没有本地视频可切 ⇒ 拿不到 `src`，但**「渲染完成」这件事仍然发生了**。
+            //    ⛔ 直接 `return` 会让子类的 `afterRender()` 永不执行，宿主传来的
+            //    `page.startNet`（打开就播第 N 集网络流）就此烂在 `pendingNetStart` 里，
+            //    页面停在空播放器上等用户自己点 —— 真机实测 A6 失败就是这个。
+            //    ⇒ 本地无片也必须通知一次，让子类自己决定要不要进网络流。
+            this.afterRender();
+            return;
+        }
         this.failed = false;
         this.hideNextPanel();
         // 换集一律收掉浮层：连播自动切集时浮层还开着的话，选集列表的「当前集」会停在旧的一集上
@@ -1153,16 +1784,20 @@ export class VideoPlayerView extends ItemView {
         this.closeLightbox();
         if (this.drawerOpen) this.renderDrawer(true);
         this.clearSubtitle();
-        const label = episodeLabel(item, !!opts.single);
-        this.titleTextEl.setText(label ? `${opts.entryTitle} · ${label}` : opts.entryTitle);
+        this.restoreLocalTitle();
         if (this.prevBtn) this.prevBtn.disabled = item.isFirst;
         if (this.nextBtn) this.nextBtn.disabled = item.isLast;
         // 切源：清旧 src 再设新（同一 video 复用，避免重建元素丢失播放器状态）
         this.videoEl.pause();
         this.videoEl.removeAttribute('src');
         this.videoEl.load();
+        // 🔴 抓帧免污染（`#326`）依赖 `crossOrigin`：换集时一律装回去（`releaseMedia`/
+        //    关页等路径会把它摘掉），⛔ 别指望上一集留下的状态。
+        this.restoreLocalSourceHints();
         // 换片即作废「彻底释放」现场（否则回来会拿着旧位置去重建新片）
         this.cancelDeepRelease();
+        // 2026-11-24：网络源整条链路已删（用户 m01744）⇒ 这里只剩「本地文件直连」一种挂法，
+        // 原来 `opts.netDash` 走 MSE 管线、`opts.netSource` 摘 crossOrigin 的分支都没了。
         this.videoEl.src = item.url;
         this.videoEl.playbackRate = vpSpeed;
         this.videoEl.volume = clampVolume(vpVolume ?? 1);
@@ -1170,15 +1805,67 @@ export class VideoPlayerView extends ItemView {
         this.lastSavedSeconds = -1;
         this.pendingResume = opts.initialPositions?.[this.epKey()] ?? 0;
         this.updateProgressUi();
+        // 原来这里要分「DASH 交给 startNetDash 起播 / 本地直接 play」两路，DASH 那条已删 ⇒ 无条件 play。
         void this.videoEl.play().catch(() => {
             // 自动播放被拦（部分环境）：留在暂停态让用户点播放即可，不视为失败
         });
         void this.autoLoadSubtitle();
+        // 换集后通知子类（选集页右侧栏的「当前集」高亮靠它；默认空实现）
+        this.afterRender();
+    }
+
+    /** 舞台占位层的唯一显隐口子（`on` = 没有本地可播视频）。
+     *  🔴 只认 `is-on` 一个类、只在 `render()` 里调：⛔ 不要在别处再 toggleClass，
+     *     否则「当前到底有没有可播内容」会多出第二份真源，迟早和 `items` 对不上。 */
+    protected syncEmptyStage(on: boolean): void {        if (!this.emptyStageEl) return;
+        this.emptyStageEl.toggleClass('is-on', on);
+        // 没有可播内容时把旧源也卸掉：留着上一集的 src，黑壳底下会继续挂着上一集的解码器，
+        // 看上去像「卡在上一集的最后一帧」，而且声音可能还在。
+        if (on && this.videoEl) {
+            this.videoEl.pause();
+            this.videoEl.removeAttribute('src');
+            this.videoEl.load();
+        }
+    }
+
+    /**
+     * 把占位层切成「未关联」形态：**停掉转圈**，只说「还没有关联视频」。
+     *
+     * 🔴 用户 2026-11-10（m03035）：「从播放器详情页相关推荐进入的条目播放详情页由于没有任何
+     *    关联播放器屏幕一直在转圈 改成显示未关联空态」。
+     *    病根：相关推荐点进来的条目只要 `episodeFiles` / `episodeUrls` 都是空，`items` 就是空数组，
+     *    基类 `render()` 走「没有本地项」那条路 ⇒ 占位层一直显示「正在加载视频…」+ 转圈，
+     *    而那件事**永远不会结束**（没有任何加载在进行）。用户看到的是「一直在转圈」。
+     * ⚠️ 与 `syncEmptyStage(true)` 的分工：那个只说「现在没可播的」，这个说「压根没关联过」。
+     *    ⛔ 别把「正在加载」的文案直接改掉 —— 真的在等取流时那句话是对的。
+     */
+    protected setEmptyStageMode(mode: 'loading' | 'unlinked'): void {
+        if (!this.emptyStageEl) return;
+        const unlinked = mode === 'unlinked';
+        this.emptyStageEl.toggleClass('is-unlinked', unlinked);
+        if (this.emptyStageSpinEl) this.emptyStageSpinEl.hidden = unlinked;
+        if (this.emptyStageTitleEl) {
+            this.emptyStageTitleEl.setText(unlinked ? '还没有关联视频' : '正在加载视频…');
+        }
     }
 
     /** 播放位置记忆键：集下标（与 episodeFiles 一一对应；单文件播放恒为 '0'） */
     private epKey(): string {
         return String(this.opts?.items[this.cur]?.index ?? 0);
+    }
+
+    /**
+     * 把「当前这一集的字幕路径」写回库（受保护入口，供子类在同一次操作里落库）。
+     *
+     * 🔴 为什么必须开这个口子（用户 m11423「SenseVoice转录的文件放哪了啥都没关联」）：
+     *    转写完成后字幕已经写在视频同目录了，但子类拿不到 `epKey()`（私有）与 `opts`（私有），
+     *    于是只能「重扫候选」——那只在当前会话有内容，重启就没了，用户看到文件躺在那儿没人认领。
+     * ⚠️ ⛔ 不要在子类里另存一份 `subtitlePaths`：落库口径只许有这一条（`persistSubtitlePath`）。
+     */
+    protected saveSubtitleFor(subPath: string): void {
+        const p = String(subPath ?? '').trim();
+        if (!p) return;
+        this.opts?.onSaveSubtitle?.(this.epKey(), p);
     }
 
     /** metadata 就绪后按记忆位置续播（太靠前/太靠后不续，见 pure/player.shouldResume） */
@@ -1359,9 +2046,17 @@ export class VideoPlayerView extends ItemView {
      *   ② 抽屉**只在展开时重建** —— 收起时连一行 DOM 都不该存在（#579 的「懒加载」口径）。
      */
     private refreshMarks(): void {
-        const item = this.opts?.items[this.cur];
         const dur = this.videoEl?.duration ?? 0;
-        const mine = item ? marksForEpisode(this.opts?.marks ?? [], { ep: item.index, fileName: item.path }) : [];
+        // ⚠️ 集号必须走 `markEpisodeIndex()`：网络集的占位 item 是 -1，直读会把这一集的标记全滤掉。
+        // ⛔ 也别再拿 `items[this.cur]` 当守卫：**纯网络集的 `items` 是空数组**
+        //   （没有本地文件就没有 items，连占位 item 都没有），
+        //   那样 `opts.marks` 里明明有数据也会被整批丢光 —— 用户 2026-11-01 报的
+        //   「时间戳列表没有标记」就是这个守卫干掉的。集号归集号、文件名归文件名，
+        //   缺文件名只是少一条匹配路径（`marksForEpisode` 里 `ep` 优先命中），不该连累整批。
+        const mine = marksForEpisode(this.opts?.marks ?? [], {
+            ep: this.markEpisodeIndex(),
+            fileName: this.opts?.items[this.cur]?.path,
+        });
         this.markList = mine;
         this.markPcts = mine.map((m) => markPct(m.seconds, dur));
         this.hoverMark = null;
@@ -1445,22 +2140,50 @@ export class VideoPlayerView extends ItemView {
         this.pokeIdle();
     }
 
+    /**
+     * 「全屏」= **标签页全屏**（本视图铺满 Obsidian 窗口），⛔ 不是整块电脑屏幕的浏览器全屏。
+     *
+     * 🔴 用户 2026-11-09 逐字：「这个播放器的全屏按钮怎么有两种全屏状态啊，
+     *    给我改成纯以前的标签页全屏，而不是整个电脑屏幕全屏」
+     *    ⇒ 这里**不再调 `requestFullscreen`**。原来那条路会把整块显示器都接管掉（Electron 层全屏），
+     *      与「在 Obsidian 窗口内放大这个标签页」是两种完全不同的视觉态，用户只承认后者。
+     *
+     * 实现：给自己的 `contentEl` 打一个类，CSS 让它 `position:fixed; inset:0` 盖住**应用窗口**
+     * （`inset` 相对的是 Obsidian 的渲染视口，不是显示器）⇒ 视觉上就是「这个标签页铺满了整个
+     * Obsidian」，⛔ 不会影响任务栏/其它应用，也⛔ 不需要浏览器权限。
+     * ⚠️ 类名挂在 `contentEl` 而不是 `containerEl`：`containerEl` 是 `.workspace-leaf`，
+     *    Obsidian 自己的布局代码会往它身上写内联样式，打架风险高（拖分栏时会被清掉）。
+     * ⚠️ 退出走同一个入口（再点一次 / 再双击 / 按 F），⛔ 不依赖 `fullscreenchange` ——
+     *    标签页全屏是纯 CSS，浏览器根本不会派发那条事件。
+     *    （2026-11-23 补：`fullscreenchange` 现在**会**因为「全屏+」而触发，
+     *     但那与本方法无关，⛔ 不要把两者接起来 —— 见 `onFsChange` 里的说明。）
+     */
     private toggleFullscreen(): void {
-        try {
-            if (document.fullscreenElement) {
-                void document.exitFullscreen?.().catch(() => undefined);
-            } else {
-                void this.containerEl.requestFullscreen?.().catch(() => undefined);
-            }
-        } catch {
-            // 全屏不可用：静默
-        }
+        // ⚠️ Obsidian 的 `toggleClass` 必须给第二个参数（☠️ 少传一个直接 tsc 报 TS2554），
+        //    故自己读当前态取反 —— 语义就是「切一下」。
+        const on = !this.contentEl.hasClass('rl-vp-tabfs');
+        this.contentEl.toggleClass('rl-vp-tabfs', on);
+        this.closeMenu();
     }
 
+    /**
+     * 浏览器级 `fullscreenchange` 的用途，两件事，别再加第三件：
+     *
+     * 1️⃣ **把可能残留的浮层收干净。** 全屏进出时控制条尺寸会变，浮层是控制条的绝对定位子元素，
+     *    不收就会错位到屏幕外。
+     * 2️⃣ **回读「全屏+」的真实状态。** 用户可能按 Esc / F11 退出，
+     *    那条路不过这颗按钮 ⇒ 不靠事件回读 `document.fullscreenElement`，图标就会一直停在退出态。
+     *
+     * 🔴 2026-11-23 修订（②）：这里从「唯一残留用途」变成「同步全屏+」。
+     *    2026-11-09 那版说「本视图没有进入浏览器全屏的通路」——**现在有了**（「全屏+」），
+     *    但当时那条结论的另一半仍然成立、不要推翻：
+     * ⛔ 仍然不要用这个事件去切 `fsBtn`（「全屏」= 标签页全屏）的图标。
+     *    那颗按钮和浏览器全屏无关，跟着变就是「一颗按钮两种状态」——正是 2026-11-09 要消灭的困惑。
+     *    两种全屏各管各的按钮：`fsBtn` ⇄ `rl-vp-tabfs`（纯 CSS），`fsPlusBtn` ⇄ `fullscreenElement`（浏览器）。
+     */
     private onFsChange = (): void => {
-        if (this.fsBtn) safeSetIcon(this.fsBtn, document.fullscreenElement ? 'minimize' : 'maximize');
-        // 全屏切换会改变控制条尺寸 → 浮层的绝对定位（left / bottom）当场失效，直接收掉重开
         this.closeMenu();
+        this.syncFsPlusBtn();
     };
 
     private async togglePip(): Promise<void> {
@@ -1471,6 +2194,8 @@ export class VideoPlayerView extends ItemView {
         } catch {
             new Notice('当前环境不支持画中画');
         }
+        // 事件正常会自己刷，但某些实现（如被别处退出）不回调 ⇒ 这里补一次，保证设置弹窗里那一行文案不错位
+        this.refreshSettingMenu();
     }
 
     /** 快捷键分派（映射表见 pure/player.resolveKeyAction） */
@@ -1485,8 +2210,25 @@ export class VideoPlayerView extends ItemView {
      */
     seekToEpisode(index: number, seconds: number): void {
         if (!this.opts || !this.videoEl) return;
+        // 🔴 用户 2026-11-14「网络集的时间戳…不能跳转」：网络集根本不在 `items` 里
+        //    ⇒ `findIndex` 必然 -1 ⇒ 直接 return = 点了没反应。
+        //    ⚠️ 判据走 `isNetPlayback()` 而不是 `opts.netSource`：选集页的网络态由它自己覆写
+        //    （那里没有 `netSource` 这个字段），只判 `netSource` 会把选集页漏掉。
+        if (this.isNetPlayback()) {
+            if (this.netMarkEpisode() === index) {
+                this.applySeek(seconds);
+                return;
+            }
+            this.retargetNetEpisode(index, seconds);
+            return;
+        }
         const pos = this.opts.items.findIndex((it) => it.index === index);
-        if (pos < 0) return;
+        if (pos < 0) {
+            // 目标集不在 `items` 里（网络集 / 已被移除）⇒ 交给换集钩子，
+            // ⛔ 别静默 return：用户点了没反应就是这个观感的来源。
+            this.retargetNetEpisode(index, seconds);
+            return;
+        }
         if (pos !== this.cur) {
             this.pendingSeek = { index, seconds };
             this.cur = pos;
@@ -1494,6 +2236,26 @@ export class VideoPlayerView extends ItemView {
             return;
         }
         this.applySeek(seconds);
+    }
+
+    /**
+     * 当前这一路是不是「网络流」——网络集没有本地文件、**进不了 `items`**，
+     * 所以 `consumePendingTarget` 里按 `items[].index` 找目标集必然 -1。
+     * ⚠️ 2026-11-24：播放器页已不可能播网络集（用户 m01744）⇒ 基类固定返回 `false`。
+     *    选集页覆写成认 `netIndex`（官方 iframe 态仍要按秒定位）。
+     */
+    protected isNetPlayback(): boolean {
+        return false;
+    }
+
+    /**
+     * 跳到**另一集网络流**（异集深链时间戳）。
+     *
+     * ⚠️ 2026-11-24：播放器页已不播网络集（用户 m01744）⇒ 基类这条默认路径只剩一句提示。
+     *    选集页覆写它直接换官方 iframe，⛔ 不要重开标签页（那会越点标签越多）。
+     */
+    protected retargetNetEpisode(_index: number, _seconds: number): void {
+        this.showToast('这一集还没有加载，先点开这一集再跳');
     }
 
     /**
@@ -1507,9 +2269,19 @@ export class VideoPlayerView extends ItemView {
             this.consumePendingResume();
             return;
         }
+        // 🔴 2026-11-24：网络源（`netSource`）已删（用户 m01744）⇒ 播放器页只播本地集，
+        //    集号恒为占位 -1 这种情况不复存在，直接按集号找目标集。
         const pos = this.opts?.items.findIndex((it) => it.index === seek.index) ?? -1;
         if (pos < 0) {
             this.pendingSeek = null;
+            // 🔴 2026-11-10 用户报障：「退出全屏时返回到详情页后进度就重回 0 了」。
+            //    网络集**不在 `items` 里**（没有本地文件），`findIndex` 必然 -1 ⇒ 老写法在这里
+            //    把目标秒直接丢掉、退回续播 ⇒ 从 0 重播。⇒ 集找不到但当前是网络流时，
+            //    秒数照样有效，就地按秒定位（`isNetPlayback` 由子类判）。
+            if (this.isNetPlayback()) {
+                this.applySeek(seek.seconds);
+                return;
+            }
             this.consumePendingResume();
             return;
         }
@@ -1522,33 +2294,161 @@ export class VideoPlayerView extends ItemView {
         this.applySeek(seek.seconds);
     }
 
+    /** 进场 seek 待落位的目标秒（见 `landSeek`：媒体没 seekable 前写 currentTime 会被丢弃） */
+    private seekLandTarget: number | null = null;
+    private seekLandTimer: number | null = null;
+    private seekLandTries = 0;
+
     /** 跳到指定秒并播放（时间戳链接的目标位置；越界由 clampSeek 夹住） */
     private applySeek(seconds: number): void {
-        const dur = this.videoEl.duration;
-        this.videoEl.currentTime = clampSeek(seconds, dur);
-        this.updateProgressUi();
-        // 自动播放可能被浏览器拦截（无用户手势）→ 吞掉异常：位置已就位，用户按播放即可
-        void this.videoEl.play().catch(() => undefined);
-        this.showToast(`已跳到 ${formatTime(seconds)}`);
+        this.seekLandTarget = seconds;
+        this.seekLandTries = 0;
+        this.landSeek();
+    }
+
+    /**
+     * 进场 seek 的「落位」重试。
+     *
+     * 🔴 2026-11-10 用户报障：「网络集用插件播放器播放全屏……怎么还是要刷新重置进度了」。
+     *    根因：`consumePendingTarget` 挂在 `loadedmetadata` 上，可那一刻媒体多半**还没 seekable**
+     *    （网络流/分片流尤其如此）⇒ 直接写 `currentTime` 被浏览器**静默丢弃**，于是从 0 开始播，
+     *    表现为「交接过来进度被重置」。
+     *    ⇒ 把目标秒记住，每 250ms 重试，直到 `currentTime` 真落到目标（±1.5s）或超时。
+     *    ⛔ 别改成「只在 `loadedmetadata` 里写一次 `currentTime`」——那就是本次病根。
+     *    ⛔ 落位成功才算完：`showToast('已跳到 …')` 必须等真跳到了再弹，否则是空头承诺。
+     */
+    private landSeek(): void {
+        const target = this.seekLandTarget;
+        if (target === null) return;
+        const el = this.videoEl;
+        if (!el) {
+            this.seekLandTarget = null;
+            return;
+        }
+        const want = clampSeek(target, el.duration);
+        if (el.seekable.length > 0) {
+            try {
+                el.currentTime = want;
+            } catch {
+                /* 媒体异常：等下一轮或超时，⛔ 不吞掉目标秒 */
+            }
+            if (Math.abs(el.currentTime - want) <= 1.5) {
+                this.seekLandTarget = null;
+                if (this.seekLandTimer !== null) {
+                    window.clearTimeout(this.seekLandTimer);
+                    this.seekLandTimer = null;
+                }
+                this.updateProgressUi();
+                void el.play().catch(() => undefined);
+                this.showToast(`已跳到 ${formatTime(target)}`);
+                return;
+            }
+        }
+        this.seekLandTries += 1;
+        if (this.seekLandTries > 60) {
+            // 15 秒还没落位：超时收手，但**不弹「已跳到」**（没做到就不承诺）
+            this.seekLandTarget = null;
+            return;
+        }
+        if (this.seekLandTimer !== null) return;
+        this.seekLandTimer = window.setTimeout(() => {
+            this.seekLandTimer = null;
+            this.landSeek();
+        }, 250);
     }
 
     /** 插入时间戳（#326）：把「当前时刻 + 当前集」交给宿主（宿主构造链接 + 决定落到哪个笔记）。
-     *  公开：顶栏按钮、快捷键、命令面板三条入口共用（#326 用户要求「一键」）。 */
-    async insertStamp(): Promise<void> {
+     *  公开：顶栏按钮、快捷键、命令面板三条入口共用（#326 用户要求「一键」）。
+     *  🔴 m04435 ①：`caption` 只有右键浮层会传（`🤩 震撼 备注`）；左键/快捷键/命令面板都不传
+     *     ⇒ 落盘形态与 #587 定稿**一字不差**（纯链接）。 */
+    async insertStamp(caption?: string): Promise<void> {
         const cb = this.opts?.onInsertStamp;
         if (!cb) return;
-        const item = this.opts?.items[this.cur];
-        await cb({ seconds: this.videoEl?.currentTime ?? 0, ep: item?.index ?? 0 });
+        // ⚠️ 网络集用宿主给的真实集号（占位 item 的 index 是 -1，写进笔记就是一条永远对不上的标记）
+        const base = { seconds: this.videoEl?.currentTime ?? 0, ep: this.markEpisodeIndex() };
+        const c = typeof caption === 'string' ? caption.trim() : '';
+        await cb(c ? { ...base, caption: c } : base);
+    }
+
+    /**
+     * 🔴 m04435 ①：右键时间戳按钮 ⇒ 弹「时间戳笔记」浮层。
+     *
+     * 浮层挂在 `.rl-vp-root` 内、**绝对定位到触发按钮下方 8px**（本仓 `position: fixed` 会被视图的
+     * transform 祖先整体偏移 —— 见 `src/views/components/MediaList.svelte:2228` 等三处注释，来自 #610）。
+     * 右对齐按钮、并夹在 root 宽度内（按钮在最右侧，不夹会溢出到屏幕外）。
+     *
+     * ⚠️ 同一时刻只留一个浮层：再点右键先销毁旧的（⛔ 别叠两层，那会让 Esc 只关掉上面那个）。
+     */
+    private openStampNotePopover(anchor: HTMLElement): void {
+        const cb = this.opts?.onInsertStamp;
+        const root = this.rootEl;
+        if (!cb || !root) return;
+        this.closeStampNotePopover();
+        const host = root.createDiv({ cls: 'rl-vp-stampnote hidden' });
+        this.stampNoteEl = host;
+        const seconds = this.videoEl?.currentTime ?? 0;
+        const ep = this.markEpisodeIndex();
+        const timeText = stampTimeText(this.opts, seconds, ep);
+        this.stampNotePopover = new StampNotePopover({
+            timeText,
+            onCommit: async (result: StampNoteResult) => {
+                const caption = stampNoteCaption(result.mood, result.note);
+                await this.insertStamp(caption);
+            },
+            onClose: () => this.closeStampNotePopover(),
+        });
+        this.stampNotePopover.mount(host);
+
+        // 定位：先挂上去量尺寸，再算坐标（display:none 时量不到，故先去掉 hidden 但保持不可见）
+        host.removeClass('hidden');
+        host.addClass('is-measuring');
+        const rr = root.getBoundingClientRect();
+        const ar = anchor.getBoundingClientRect();
+        const width = host.offsetWidth;
+        const left = Math.max(8, Math.min(ar.left - rr.left + ar.width - width, rr.width - width - 8));
+        const top = Math.max(8, ar.bottom - rr.top + 8);
+        host.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
+        host.removeClass('is-measuring');
+        // 浮层打开期间控制条不许闲置淡出（否则浮层会跟着一起消失）
+        this.pokeIdle();
+    }
+
+    /** 关掉右键「时间戳笔记」浮层（幂等；`onClose` 也会回到这里 ⇒ 必须可重入） */
+    private closeStampNotePopover(): void {
+        const pop = this.stampNotePopover;
+        this.stampNotePopover = null;
+        pop?.destroy();
+        this.stampNoteEl?.remove();
+        this.stampNoteEl = null;
+    }
+
+    /**
+     * 🔴 m07854 ⑰：**右键截图按钮 = 先批注再落盘**（左键 `takeShot()` 一字未改）。
+     *
+     * 复用同一个 `onCaptureShot` 出口：批注弹窗把「批注后的 PNG」交回来，宿主那边
+     * 仍然走原来的「落盘 + 写笔记」链路 ⇒ ⛔ 别在宿主里开第二条写笔记的路。
+     * 无 `onCaptureShot`（单文件预览 / 没有条目上下文）时直接返回，与 `takeShot` 同口径。
+     */
+    async annotateShot(): Promise<void> {
+        const cb = this.opts?.onCaptureShot;
+        if (!cb) return;
+        const buf = await this.captureFrame();
+        if (!buf) return;
+        const seconds = this.videoEl?.currentTime ?? 0;
+        const ep = this.markEpisodeIndex();
+        new ShotAnnotateModal(this.app, {
+            png: buf,
+            onSave: (annotated) => cb({ png: annotated, seconds, ep }),
+        }).open();
     }
 
     /** 截取当前帧（#326）：抓帧 → 交宿主落盘 + 写笔记（视图不碰 vault）。公开：三条入口共用 */
     async takeShot(): Promise<void> {
         const cb = this.opts?.onCaptureShot;
         if (!cb) return;
-        const item = this.opts?.items[this.cur];
         const buf = await this.captureFrame();
         if (!buf) return;
-        await cb({ png: buf, seconds: this.videoEl.currentTime, ep: item?.index ?? 0 });
+        await cb({ png: buf, seconds: this.videoEl.currentTime, ep: this.markEpisodeIndex() });
     }
 
     /**
@@ -1683,7 +2583,29 @@ export class VideoPlayerView extends ItemView {
         }
         // 异步返回时可能已切集：路径变了就丢弃
         if (this.opts?.items[this.cur]?.path !== videoPath) return;
+
+        // 🔴 用户 2026-10-29「字幕要双向持久化」的**恢复方向**：
+        //    这一集存过字幕 ⇒ 直接挂存过的那条（用户上次的选择优先于「同目录第一条」）。
+        const saved = this.opts?.initialSubtitles?.[this.epKey()];
+        if (saved) {
+            const vtt = await this.loadVtt(saved);
+            if (vtt) {
+                const savedName = fileNameOfPath(saved);
+                this.mountTrack(vtt, subtitleLangLabel(subtitleLangTag(savedName)) || savedName);
+                this.subFile = savedName;
+                this.subPath = saved;
+                this.afterSubtitles();
+                return;
+            }
+            // 🔴 文件丢失：存过的字幕路径现在读不到了（用户挪走了 / 删掉了）。
+            //    ⛔ 不能静默退回候选装作没事 —— 用户会以为「我设过的字幕怎么没了」。
+            //    明确告知 + 退回同目录候选兜底，并把这条失效记录清掉（否则每次打开都白读一次盘）。
+            this.showToast('已保存的字幕文件已丢失，已回退同目录字幕');
+            this.opts?.onSaveSubtitle?.(this.epKey(), '');
+        }
+
         if (this.subCandidates.length > 0) await this.applySubtitle(this.subCandidates[0].fileName, true);
+        this.afterSubtitles();
     }
 
     /**
@@ -1764,6 +2686,9 @@ export class VideoPlayerView extends ItemView {
         const name = fileNameOfPath(picked);
         this.mountTrack(vtt, subtitleLangLabel(subtitleLangTag(name)) || name);
         this.subFile = name;
+        this.subPath = picked;
+        // 🔴 手动从文件选择 = 用户明确指定 ⇒ 落库到这一集（双向持久化的「播放器 ⇒ 数据库」方向）
+        this.opts?.onSaveSubtitle?.(this.epKey(), picked);
     }
 
     /**
@@ -1785,6 +2710,7 @@ export class VideoPlayerView extends ItemView {
             }
         }
         this.syncSubBtn();
+        this.afterSubtitles();
     }
 
     /**
@@ -1809,7 +2735,12 @@ export class VideoPlayerView extends ItemView {
         }
         this.mountTrack(vtt, subtitleLangLabel(subtitleLangTag(fileName)) || fileName);
         this.subFile = fileName;
+        this.subPath = full;
         if (!silent) this.showToast(`已挂载字幕：${fileName}`);
+        // 🔴 用户 2026-10-29「字幕要双向持久化」：用户**主动**选的这条要落库到这一集。
+        //    silent=true（自动挂载）不写 —— 那是程序挑的兜底，不该盖掉用户上次的选择。
+        if (!silent) this.opts?.onSaveSubtitle?.(this.epKey(), full);
+        this.afterSubtitles();
     }
 
     private async loadVtt(path: string): Promise<string | null> {
@@ -1856,6 +2787,7 @@ export class VideoPlayerView extends ItemView {
             this.subUrl = null;
         }
         this.subFile = null;
+        this.subPath = null;
         this.syncSubBtn();
     }
 
@@ -2018,7 +2950,7 @@ export class VideoPlayerView extends ItemView {
         }, IDLE_HIDE_MS);
     }
 
-    private showToast(text: string): void {
+    protected showToast(text: string): void {
         if (!this.toastEl) return;
         this.toastEl.setText(text);
         this.toastEl.removeClass('hidden');
@@ -2070,4 +3002,34 @@ export class VideoPlayerView extends ItemView {
         this.opts?.onExternalFallback(item.path);
         this.closePlayer();
     }
+}
+
+/**
+ * 🔴 m04435 ①：右键浮层预览里的时间文字。
+ *
+ * 优先用宿主给的 `stampPreviewText`（与写进笔记的链接文字**同源** —— 多集条目带 `第3集·`，
+ * 纯网络条目也算得出集数）；宿主没接这个钩子时退回本地分钟秒格式 `3:20`。
+ *
+ * ⚠️ 退路**故意不带集号**：视图只知道 `items`（纯网络条目为空），自己判多集会把「第 3 集」
+ * 显示成「第 1 集」—— 宁可少显示，也别显示错的集号（与 `marksForEpisode` 同一条纪律：
+ * 反查不到就不画）。所以真正要准，宿主必须接 `stampPreviewText`。
+ */
+function stampTimeText(
+    opts: { stampPreviewText?: (info: { seconds: number; ep: number }) => string } | null | undefined,
+    seconds: number,
+    ep: number,
+): string {
+    const cb = opts?.stampPreviewText;
+    if (cb) {
+        try {
+            const t = String(cb({ seconds, ep }) ?? '').trim();
+            if (t) return t;
+        } catch {
+            // 宿主给不出就别让浮层开不出来 —— 落回本地格式
+        }
+    }
+    const s = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${String(r).padStart(2, '0')}`;
 }

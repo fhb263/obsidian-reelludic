@@ -47,6 +47,18 @@ describe('nodeHttpGet/nodeHttpPost：重定向跟随 + Set-Cookie 续传', () =>
             } else if (req.url === '/b') {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ cookie: req.headers.cookie || '' }));
+            } else if (req.url === '/fin') {
+                // 🔴 #756 关键形态：**200 + Set-Cookie**（B 站 poll 成功轮就是这种）
+                //    原先只有 3xx 分支才 mergeCookies ⇒ 这里的凭据会被整段丢掉。
+                res.writeHead(200, {
+                    'Content-Type': 'application/json',
+                    'Set-Cookie': ['SESSDATA=sess123; Path=/', 'bili_jct=csrf456; Path=/'],
+                });
+                res.end(JSON.stringify({ echo: req.headers.cookie || '' }));
+            } else if (req.url === '/fin-redirect') {
+                // 200 + Set-Cookie 与 302 链混在一起，锁「两种来源都要进 cookies」
+                res.writeHead(302, { Location: '/fin', 'Set-Cookie': ['buvid3=buv789; Path=/'] });
+                res.end();
             } else if (req.url === '/echo-post') {
                 res.writeHead(200, { 'Content-Type': 'text/plain' });
                 res.end(req.method + ':' + (req.headers['content-type'] || ''));
@@ -88,5 +100,21 @@ describe('nodeHttpGet/nodeHttpPost：重定向跟随 + Set-Cookie 续传', () =>
     it('404 返回状态码而非抛错', async () => {
         const res = await nodeHttpGet(`${base}/missing`);
         expect(res.status).toBe(404);
+    });
+
+    // 🔴 #756 回归：B 站扫码「测试连接失败」的真根因就在这里 ——
+    //    200 响应自带的 Set-Cookie 若被丢，凭据永远是空 ⇒ 用户看到「扫码成功但连不上」。
+    it('200 响应的 Set-Cookie 也要回报到 `cookies`（⛔ 不只在 3xx 分支合并）', async () => {
+        const res = await nodeHttpGet(`${base}/fin`);
+        expect(res.status).toBe(200);
+        expect(res.cookies).toContain('SESSDATA=sess123');
+        expect(res.cookies).toContain('bili_jct=csrf456');
+    });
+
+    it('302 与末跳 200 的 Set-Cookie 串成一条链', async () => {
+        const res = await nodeHttpGet(`${base}/fin-redirect`);
+        expect(res.status).toBe(200);
+        expect(res.cookies).toContain('buvid3=buv789'); // 302 那一跳
+        expect(res.cookies).toContain('SESSDATA=sess123'); // 末跳 200
     });
 });

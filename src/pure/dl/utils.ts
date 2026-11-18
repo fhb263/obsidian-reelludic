@@ -46,6 +46,33 @@ export function buildSongFilename(artist: string, title: string, ext = 'mp3'): s
 }
 
 /**
+ * B 站音频落盘的文件名（m07546 需求③）。
+ *
+ * 🔴 用户原话：「从 B站下载并用 ffmpeg 转录成 mp3 的文件名应该改成**该歌曲名.mp3**
+ *    而不是原来 B站视频标题名称.mp3」。
+ *
+ * 为什么会有一条专门的函数而不是直接改 `buildSongFilename` 的调用参数：
+ *   · B 站的 `title` 是**视频标题**（常带「【4K】」「官方 MV」「 - 歌手」这类噪声），
+ *     ⛔ 不该被当成歌名写进文件名；
+ *   · 而「该歌曲名」的真源是**打开下载弹窗的那条音乐条目**（`songTitle`）——
+ *     从条目里点「下载音频」时它天然就是最准的歌名，落盘后也能和库里那条对上。
+ *
+ * 回落链（用户 2026-11-09 选定）：`songTitle` 为空 ⇒ 退回 `作者 - 视频标题`。
+ *   ⚠️ 回落**不能**退成空文件名或 `Unknown`：B站搜索也可以从空条目的弹窗里用，
+ *      那时没有任何条目上下文，只有视频标题可用 —— 有信息总比 `Unknown` 强。
+ *   ⚠️ 回落走 `buildSongFilename` 而不是自己拼：净化 / ext 归一 / Unknown 兜底
+ *      三件事本仓只有那一个实现，⛔ 不写第二份。
+ */
+export function buildBiliAudioFilename(songTitle: string, artist: string, title: string, ext = 'mp3'): string {
+    const e = (ext || 'mp3').replace(/^\./, '') || 'mp3'
+    const song = sanitizeFilename((songTitle || '').trim())
+    // sanitizeFilename 对空串返回 'Unknown' ⇒ 用「原文非空」而不是「结果非 Unknown」判回落，
+    // 否则用户真把条目命名成 Unknown 时会被悄悄换成视频标题。
+    if ((songTitle || '').trim()) return `${song}.${e}`
+    return buildSongFilename(artist, title, ext)
+}
+
+/**
  * 搜索相似度打分（下载多源结果排序用，v1.4.1）：
  * 标题精确/包含关键词 + 逐 token 标题命中 + 艺术家命中 + 标题长度惩罚（Live/Remix 等附加词越短越精确）。
  * 分越高越相似，供跨平台结果按相关度而非平台顺序排列。

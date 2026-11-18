@@ -82,7 +82,26 @@ export interface MusicSearchResult {
     /** 所属专辑（豆瓣详情回填） */
     album?: string;
     year?: number;
+    /**
+     * 歌曲时长（**秒**，不是分钟）。
+     * 🔴 2026-11-09 第 15 轮（用户：「给三大音乐平台加搜索元数据的功能」）新增：
+     *    在线曲库四平台的 `DownloadSong.duration` 本来就带这个值，只是本类型没地方放。
+     * ⚠️ 与 `MediaEntry.durationMin`（**收听时长**，语义完全不同）⛔ 不是一回事，别互相赋值。
+     * 展示走 `pure/mediaInfo.formatDuration`（秒 → `mm:ss`），⛔ 别在组件里手拼。
+     */
+    duration?: number;
     cover?: string;
+    /**
+     * 曲库结果的**平台名**（网易云 / QQ音乐 / 酷狗 / 酷我）。
+     * 🔴 2026-11-09 第 15 轮（用户：「在线曲库也要显示来源平台名」）新增：
+     *    曲库栏把四平台压成一栏后，卡片原来只写「在线曲库」，用户分不清这首是哪家的。
+     * ⚠️ 只有曲库结果带这个键；豆瓣 / iTunes / MusicBrainz 的音乐结果不带 ⇒ 卡片回落到 `source`。
+     * 🔴 **⛔ 不能叫 `platform`**：`EntryForm.pick()` 用 `'platform' in r` 当**游戏形状的判别键**，
+     *    音乐结果一旦也带这个键，TS 的联合类型窄化会把剩下那一支收成
+     *    `GameSearchResult | MusicSearchResult`，`r.developer` / `r.genres` 当场变成「可能不存在」。
+     *    名字带 `Label` 也正好说明它是**展示名**，不是数据源键（后者是 `source`）。
+     */
+    platformLabel?: string;
     summary?: string;
     /** 大众评分（豆瓣 10 分制） */
     rating?: number;

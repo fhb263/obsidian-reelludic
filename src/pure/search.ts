@@ -5,6 +5,9 @@ import type { MediaStatus } from 'pure/status';
 import { MEDIA_STATUSES } from 'pure/status';
 import { matchesBookKind } from 'pure/bookKind';
 import { matchesGenres } from 'pure/genreFilter';
+// 🔴 m07854 ⑮「待补」漏斗的判据（缺关联 或 缺个人评分）—— 单一真源在 `pure/incomplete`，
+//    ⛔ 别在本文件里内联条件（本仓反复栽过的「同一件事两份真源」）。
+import { isIncomplete } from 'pure/incomplete';
 // 🔴 #441：系列序号排序档（series-asc / series-desc）的比较逻辑借 `seriesGroup` 那份**单一真源**。
 //    ⚠️ 依赖方向是单向的（seriesGroup 不反过来依赖 search），不会成环。
 import { compareSeriesIndex, compareSeriesIndexDesc } from 'pure/seriesGroup';
@@ -60,6 +63,53 @@ export function matchesStatus(e: MediaEntry, statusFilter: MediaStatus | 'all'):
  *     比较逻辑的单一真源是 `pure/seriesGroup.compareSeriesIndex`，⛔ 别在这里另写一份。 */
 export type SortBy = 'recent' | 'recent-asc' | 'release-desc' | 'release-asc' | 'score-desc' | 'score-asc' | 'title-desc' | 'title-asc' | 'myrating-desc' | 'myrating-asc' | 'status-asc' | 'status-desc' | 'series-asc' | 'series-desc';
 
+/**
+ * 排序（**唯一真源**）：`filterAndSort` 与「合集视图的排序栏」共用这一份。
+ *
+ * 🔴 2026-11-26（用户 m04553）合集视图要保留排序栏 ⇒ 必须能对一个**已分组**的条目数组排序，
+ *    而 `filterAndSort` 是「filter → sort」一体的，分组后再调它会把类型/状态过滤再跑一遍
+ *    （分组已把类型拆成行，整段再筛会串味）。把 sort 单独拆出来，是为了让两处**只有一份**排序语义。
+ *    ⛔ 别在调用点再写一份 switch —— 加一档排序时必然只改一处，那就是漂移的开始。
+ * ⚠️ 内部 `slice()` 复制，调用方传进来的数组不会被 mutate。
+ */
+export function sortEntries<T extends MediaEntry>(entries: readonly T[], sortBy: SortBy): T[] {
+    return entries.slice().sort((a, b) => {
+        switch (sortBy) {
+            case 'release-desc':
+                return (b.year ?? 0) - (a.year ?? 0);
+            case 'release-asc':
+                return (a.year ?? 0) - (b.year ?? 0);
+            case 'score-desc':
+                return (b.communityScore ?? 0) - (a.communityScore ?? 0);
+            case 'score-asc':
+                return (a.communityScore ?? 0) - (b.communityScore ?? 0);
+            case 'title-desc':
+                return b.title.localeCompare(a.title, 'zh');
+            case 'title-asc':
+                return a.title.localeCompare(b.title, 'zh');
+            case 'myrating-asc':
+                return (a.rating || 0) - (b.rating || 0);
+            case 'myrating-desc':
+                return (b.rating || 0) - (a.rating || 0);
+            case 'status-asc':
+                return STATUS_RANK[a.status] - STATUS_RANK[b.status];
+            case 'status-desc':
+                return STATUS_RANK[b.status] - STATUS_RANK[a.status];
+            // 🔴 #441 系列序号：比较逻辑走 `pure/seriesGroup.compareSeriesIndex`（**单一真源**），
+            //    ⛔ 别在这里复述一遍「序号 → 年份 → 标题、无序号置后」。
+            case 'series-asc':
+                return compareSeriesIndex(a, b);
+            case 'series-desc':
+                return compareSeriesIndexDesc(a, b);
+            case 'recent':
+            default:
+                return b.updatedAt.localeCompare(a.updatedAt);
+            case 'recent-asc':
+                return a.updatedAt.localeCompare(b.updatedAt);
+        }
+    });
+}
+
 /** 综合筛 + 排序：filter → sort；保持原数组不被外部 mutate */
 export function filterAndSort(
     entries: MediaEntry[],
@@ -74,48 +124,24 @@ export function filterAndSort(
         /** 题材（视图级题材筛选，用户 2026-09-22）：已选题材值数组（含「未分类」保留键）；缺省/空数组不过滤。
          *  多选内部是 OR；与状态/类型/分类/关键词是 AND。判定见 pure/genreFilter.matchesGenres */
         genres?: readonly string[];
+        /**
+         * 🔴 m07854 ⑮「待补」漏斗：只留**缺关联 或 缺个人评分**的条目；缺省/`false` 不过滤。
+         *
+         * ⚠️ 判据的单一真源在 `pure/incomplete.isIncomplete`（它自己又复用
+         *    `pure/seriesAssoc.assocFlagsOf` 与 `pure/rating.normalizeRating`）——
+         *    ⛔ 别在这里内联一遍条件，那是本仓反复栽过的「同一件事两份真源」。
+         */
+        incompleteOnly?: boolean;
     },
 ): MediaEntry[] {
-    return entries
-        .filter((e) => matchesStatus(e, opts.status))
-        .filter((e) => matchesType(e, opts.type))
-        .filter((e) => matchesBookKind(e, opts.bookKind ?? 'all'))
-        .filter((e) => matchesGenres(e, opts.genres ?? []))
-        .filter((e) => matchesSearch(e, opts.query))
-        .slice()
-        .sort((a, b) => {
-            switch (opts.sortBy) {
-                case 'release-desc':
-                    return (b.year ?? 0) - (a.year ?? 0);
-                case 'release-asc':
-                    return (a.year ?? 0) - (b.year ?? 0);
-                case 'score-desc':
-                    return (b.communityScore ?? 0) - (a.communityScore ?? 0);
-                case 'score-asc':
-                    return (a.communityScore ?? 0) - (b.communityScore ?? 0);
-                case 'title-desc':
-                    return b.title.localeCompare(a.title, 'zh');
-                case 'title-asc':
-                    return a.title.localeCompare(b.title, 'zh');
-                case 'myrating-asc':
-                    return (a.rating || 0) - (b.rating || 0);
-                case 'myrating-desc':
-                    return (b.rating || 0) - (a.rating || 0);
-                case 'status-asc':
-                    return STATUS_RANK[a.status] - STATUS_RANK[b.status];
-                case 'status-desc':
-                    return STATUS_RANK[b.status] - STATUS_RANK[a.status];
-                // 🔴 #441 系列序号：比较逻辑走 `pure/seriesGroup.compareSeriesIndex`（**单一真源**），
-                //    ⛔ 别在这里复述一遍「序号 → 年份 → 标题、无序号置后」。
-                case 'series-asc':
-                    return compareSeriesIndex(a, b);
-                case 'series-desc':
-                    return compareSeriesIndexDesc(a, b);
-                case 'recent':
-                default:
-                    return b.updatedAt.localeCompare(a.updatedAt);
-                case 'recent-asc':
-                    return a.updatedAt.localeCompare(b.updatedAt);
-            }
-        });
+    return sortEntries(
+        entries
+            .filter((e) => matchesStatus(e, opts.status))
+            .filter((e) => matchesType(e, opts.type))
+            .filter((e) => matchesBookKind(e, opts.bookKind ?? 'all'))
+            .filter((e) => matchesGenres(e, opts.genres ?? []))
+            .filter((e) => matchesSearch(e, opts.query))
+            .filter((e) => (opts.incompleteOnly ? isIncomplete(e) : true)),
+        opts.sortBy,
+    );
 }

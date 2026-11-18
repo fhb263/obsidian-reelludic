@@ -277,6 +277,12 @@ export function buildEpisodeOptions(
  */
 export function buildSettingOptions(opts: {
     pip: boolean;
+    /**
+     * 当前是否**已在**画中画里（🔴 2026-11-07：画中画按钮从控制条收进本弹窗后，
+     * 这里成了唯一入口 ⇒ 进去了必须能出来，否则用户只剩「拖回来」一条路）。
+     * ⚠️ 与 `pip` 分工：`pip` 是「这台设备有没有这个能力」，本字段是「现在开着没有」。
+     */
+    pipActive?: boolean;
     /** 当前播放模式（缺省 = 列表循环；调用方总会传真值） */
     playMode?: PlayMode;
 }): SettingGroup[] {
@@ -294,7 +300,7 @@ export function buildSettingOptions(opts: {
         {
             rows: [
                 opts.pip
-                    ? { id: 'pip', kind: 'nav', label: '画中画' }
+                    ? { id: 'pip', kind: 'nav', label: opts.pipActive ? '退出画中画' : '画中画' }
                     : { id: 'pip', kind: 'nav', label: '画中画', disabled: true, note: '当前设备不支持' },
             ],
         },

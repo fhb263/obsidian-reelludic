@@ -522,6 +522,59 @@ describe('describeSearchResult / sourceIdOf：#464 在线曲库（songlib）', (
     it('分栏键 = songlib（结果打什么 source，就必须有同名的那一栏 —— #458 的整批丢结果就是这么来的）', () => {
         expect(sourceIdOf(song())).toBe('songlib');
     });
+
+    // ── 第 15 轮：搜索元数据（时长）──
+    // 用户原话：「给三大音乐平台加搜索元数据的功能」。
+    // 🔴 展示层只负责**拼可见文本**，原始秒数留在 `MusicSearchResult.duration`。
+    it('歌曲时长：秒 → `mm:ss`（分钟补零，与文件大小那套 `mediaInfo` 同口径）', () => {
+        expect(describeSearchResult(song({ duration: 269 })).duration).toBe('04:29');
+        expect(describeSearchResult(song({ duration: 7 })).duration).toBe('00:07');
+    });
+
+    it('超过一小时 → `h:mm:ss`', () => {
+        expect(describeSearchResult(song({ duration: 3725 })).duration).toBe('1:02:05');
+    });
+
+    it('🔴 拿不到时长 ⇒ undefined（卡片那个 `{#if}` 整段不画，⛔ 不写「未知」也不写 `0:00`）', () => {
+        expect(describeSearchResult(song({ duration: undefined })).duration).toBeUndefined();
+        expect(describeSearchResult(song({ duration: 0 })).duration).toBeUndefined();
+    });
+
+    it('其它音乐源（豆瓣 / iTunes）没有 `duration` 键 ⇒ 同样不画（⛔ 别把 `durationMin` 收听时长当歌曲时长）', () => {
+        const douban = describeSearchResult({ id: 'douban:1', title: '不再犹豫', artist: 'BEYOND', album: '犹豫', source: 'douban' });
+        expect(douban.duration).toBeUndefined();
+        // 即便记录里带了「收听时长」，也不能被当成歌曲时长画上去
+        const withListenMin = describeSearchResult({ id: 'douban:2', title: 'x', artist: 'y', album: 'z', durationMin: 95 } as unknown as SearchResult);
+        expect(withListenMin.duration).toBeUndefined();
+    });
+
+    // ── 第 15 轮：来源平台名 ──
+    // 用户原话：「在线曲库也要显示来源平台名」。曲库栏把四平台压成一栏，只写「在线曲库」分不清哪家的。
+    it('🔴 结果带 `platformLabel` ⇒ 徽标显示平台名（网易云 / QQ音乐 / 酷狗 / 酷我）', () => {
+        for (const [label, id] of [['网易云', 'netease'], ['QQ音乐', 'qq'], ['酷狗', 'kugou'], ['酷我', 'kuwo']] as const) {
+            const d = describeSearchResult(song({ id: `songlib:${id}:1`, platformLabel: label }));
+            expect(d.source).toBe(label);
+        }
+    });
+
+    it('🔴 没有 `platformLabel` 键 ⇒ 徽标回落到「在线曲库」（行为与改版前逐字一致）', () => {
+        expect(describeSearchResult(song()).source).toBe('在线曲库');
+    });
+
+    it('🔴 平台名只改**展示名**，不改直达 URL（直达仍是那首歌的平台页）', () => {
+        const d = describeSearchResult(song({ platformLabel: '网易云' }));
+        expect(d.source).toBe('网易云');
+        expect(d.sourceUrl).toBe('https://music.163.com/#/song?id=347230');
+    });
+
+    it('🔴 音乐结果**不能**带 `platform` 键 —— 那是游戏分支的形状判别键（`platformLabel` 才是平台名）', () => {
+        // 这条守的是「字段名」本身：一旦有人把平台名写回 `platform`，
+        // `EntryForm.pick()` 的 `'platform' in r` 会把音乐结果也认成游戏，
+        // `r.developer` / `r.genres` 立刻变成「可能不存在」（svelte-check 会红 5 条）。
+        const d = describeSearchResult({ id: 'douban:1', title: '不再犹豫', artist: 'BEYOND', album: '犹豫', source: 'douban' });
+        expect(d.source).toBe('豆瓣');
+        expect('platform' in song({ platformLabel: '网易云' })).toBe(false);
+    });
 });
 
 // ──────────── #499E 作品简介原文（AI 预填的工具要照搬它）────────────

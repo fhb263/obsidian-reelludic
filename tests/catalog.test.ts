@@ -208,6 +208,11 @@ describe('normalizeEntry 缺字段兜底', () => {
         expect(normalizeEntry({ title: 'x' }).summary).toBeUndefined();
         expect(normalizeEntry({ ratingCount: 517685 }).ratingCount).toBe(517685);
         expect(normalizeEntry({ title: 'x' }).ratingCount).toBeUndefined();
+        // 🔴 2026-11-08 Steam 详情补全标记（`syncSteamNow` 的收敛判据，见 `steamEntryNeedsDetail`）：
+        //    ⚠️ 漏出这张白名单 = 每轮同步都判定「没补过」⇒ 收敛失效、开机反复拉 appdetails。
+        expect(normalizeEntry({ steamDetailFilledAt: '2026-11-08T06:00:00.000Z' }).steamDetailFilledAt).toBe('2026-11-08T06:00:00.000Z');
+        expect(normalizeEntry({ title: 'x' }).steamDetailFilledAt).toBeUndefined();
+        expect(normalizeEntry({ steamDetailFilledAt: 42 as never }).steamDetailFilledAt).toBeUndefined();
         expect(normalizeEntry({ authorIntro: '刘慈欣' }).authorIntro).toBe('刘慈欣');
         expect(normalizeEntry({ toc: '第一章' }).toc).toBe('第一章');
         // 追更检测已知最新集（v0.5 A2 落库）：数值透传、非法类型/缺失兜底 undefined——回归锁定：增字段必须同步 normalizeEntry

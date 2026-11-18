@@ -149,7 +149,14 @@ export const CARD_FIELD_DEFAULTS_BY_TYPE: Record<EntryType, readonly CardFieldKe
     anime: ['year', 'creator', 'genres'],
     book: ['year', 'author', 'genres'],
     game: ['year', 'developer', 'platform'],
-    music: ['year', 'creator', 'album'],
+    // 🔴 2026-11-09（第 16 轮，用户报「音乐类型条目从第三行专辑改成题材，还是显示为专辑」）：
+    //    音乐第三行由 `album` 改成 `genres`。
+    //    ⚠️ 两个坑同时踩过，改这里时都要想到：
+    //     ⑴ 只改这张表**不够** —— `cardFieldsByType` / `cardFieldsByKind` 若在 `data.json` 里
+    //        已经存在（哪怕只存了别的类型），本类的值仍会走 `normalizeCardFieldsForType` 而不吃这张预填。
+    //     ⑵ 「改了不生效」的另一半在 `views/HomeView.ts` 的增量 `$set(...)` —— 那里漏传
+    //        `cardFieldsByType` / `cardFieldsByKind` 会让设置页的改动画面上永不生效（第 16 轮已补）。
+    music: ['year', 'creator', 'genres'],
 };
 
 /** 缺省的「按类型」配置（六键齐全，每键是**该类型预填**的拷贝，⛔ 别共用同一个数组） */

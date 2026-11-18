@@ -22,7 +22,8 @@ describe('buildSpeedOptions（倍速面板选项）', () => {
     it('档位与顺序完全来自 SPEED_STEPS，文案走 formatSpeed', () => {
         const opts = buildSpeedOptions(1);
         expect(opts.map((o) => o.value)).toEqual([...SPEED_STEPS]);
-        expect(opts.map((o) => o.label)).toEqual(['0.5×', '0.75×', '1×', '1.25×', '1.5×', '2×']);
+        // 🔴 m07854 ⑧（2026-11-13）：档位表加了 3× ⇒ 面板文案同步多一条，且排在 2× 之后
+        expect(opts.map((o) => o.label)).toEqual(['0.5×', '0.75×', '1×', '1.25×', '1.5×', '2×', '3×']);
     });
     it('当前档高亮且只有一条', () => {
         const opts = buildSpeedOptions(1.25);
@@ -34,7 +35,12 @@ describe('buildSpeedOptions（倍速面板选项）', () => {
     });
     it('id 用档位字符串，UI 层据它回传选中的值', () => {
         const opts = buildSpeedOptions(1);
-        expect(opts.map((o) => o.id)).toEqual(['0.5', '0.75', '1', '1.25', '1.5', '2']);
+        expect(opts.map((o) => o.id)).toEqual(['0.5', '0.75', '1', '1.25', '1.5', '2', '3']);
+    });
+    it('🔴 3× 在面板里能选到且 id 是 "3"（用户 m07854 ⑧）', () => {
+        const opts = buildSpeedOptions(3);
+        expect(opts.filter((o) => o.active).map((o) => o.id)).toEqual(['3']);
+        expect(opts[opts.length - 1].id).toBe('3');
     });
 });
 
@@ -104,6 +110,21 @@ describe('buildSettingOptions（设置弹窗三组结构 #604 / #605 精简）',
         expect(off.kind).toBe('nav');
         expect(off.disabled).toBe(true);
         expect(off.note).toBe('当前设备不支持');
+    });
+
+    it('🔴 已在画中画时该行文案变「退出画中画」（2026-11-07 按钮收进设置后，这里是唯一出口）', () => {
+        // 用户原话：「播放器画中画按钮收到在设置里」⇒ 控制条上那颗删掉、
+        // 入口只剩本弹窗一行。若进去之后这行还写「画中画」，用户就没有出来的路了。
+        const inside = rowsOf({ pip: true, pipActive: true, playMode: 'listLoop' }).find((r) => r.id === 'pip')!;
+        expect(inside.kind).toBe('nav');
+        expect(inside.label).toBe('退出画中画');
+        expect(inside.disabled).toBeFalsy();
+        // 没进时仍然是「画中画」—— 别把标签写死成一档
+        expect(rowsOf(all).find((r) => r.id === 'pip')!.label).toBe('画中画');
+        // 能力都没有的机器上，即使 pipActive 传 true 也不该出现「退出」入口
+        const noCap = rowsOf({ pip: false, pipActive: true }).find((r) => r.id === 'pip')!;
+        expect(noCap.label).toBe('画中画');
+        expect(noCap.disabled).toBe(true);
     });
 
     it('🔴「用系统播放器打开」是动作行（⛔ 不带值、不带开关）', () => {

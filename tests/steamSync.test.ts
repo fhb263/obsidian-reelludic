@@ -465,20 +465,33 @@ describe('🔴 2026-10-25 steamDetailFields（详情 → 条目字段的唯一�
     });
 });
 
-describe('🔴 2026-10-25 steamEntryNeedsDetail（缺详情判据必须能收敛）', () => {
+describe('🔴 steamEntryNeedsDetail（缺详情判据必须能收敛）', () => {
     it('没有封面 ⇒ 判定为缺详情（用户报障的老条目正是这一类）', () => {
         expect(steamEntryNeedsDetail({})).toBe(true);
         expect(steamEntryNeedsDetail({ poster: '' })).toBe(true);
         expect(steamEntryNeedsDetail({ poster: '   ' })).toBe(true);
     });
 
-    it('🔴 有封面 ⇒ 不再命中（补过一轮就收敛，⛔ 不能每轮都重拉）', () => {
-        expect(steamEntryNeedsDetail({ poster: 'https://x/library_600x900.jpg' })).toBe(false);
+    it('🔴 补过详情（有盖章）⇒ 不再命中（补过一轮就收敛，⛔ 不能每轮都重拉）', () => {
+        const stamp = '2026-11-08T06:00:00.000Z';
+        expect(steamEntryNeedsDetail({ poster: 'https://x/library_600x900.jpg', steamDetailFilledAt: stamp })).toBe(false);
+        // 没封面但有盖章 ⇒ 仍要补（封面是本地拼的，永远拿得到）
+        expect(steamEntryNeedsDetail({ steamDetailFilledAt: stamp })).toBe(true);
     });
 
-    it('🔴 「没有评分」不算缺详情：多数游戏本就无 Metacritic 收录，按它判会永远补不上、白耗配额', () => {
-        // 有封面、没评分 ⇒ 不触发详情请求
-        expect(steamEntryNeedsDetail({ poster: 'https://x/a.jpg' })).toBe(false);
+    it('🔴🔴 2026-11-08 修障：有封面但**没盖章** ⇒ 必须命中（老条目「有封面、没评分」就靠这条捞出来）', () => {
+        // 上一版判据只看 poster ⇒ 这一支返回 false ⇒ 早期同步进来的条目**永远补不上评分**
+        // （用户报障「steam 同步和搜索获取评分不到」）。
+        expect(steamEntryNeedsDetail({ poster: 'https://x/a.jpg' })).toBe(true);
+    });
+
+    it('🔴 「没有评分」本身不进判据：盖章之后即使百分比永远拿不到也不再重拉（零评测游戏必须收敛）', () => {
+        // 盖章与「拿到了多少字段」无关 —— 请求发出过就算补过，这是收敛的唯一保证
+        const stamp = '2026-11-08T06:00:00.000Z';
+        expect(steamEntryNeedsDetail({ poster: 'https://x/a.jpg', steamDetailFilledAt: stamp })).toBe(false);
+        // 空串 / 空白盖章视同没盖过（脏数据不许当成已补）
+        expect(steamEntryNeedsDetail({ poster: 'https://x/a.jpg', steamDetailFilledAt: '' })).toBe(true);
+        expect(steamEntryNeedsDetail({ poster: 'https://x/a.jpg', steamDetailFilledAt: '  ' })).toBe(true);
     });
 
     it('详情补全预算是个正整数且不会大到把启动拖死', () => {

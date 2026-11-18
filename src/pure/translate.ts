@@ -410,8 +410,16 @@ export interface AiChatMessage {
 export interface TranslateRequestBody {
     model: string;
     messages: AiChatMessage[];
-    /** 关闭流式，一次返回完整译文 */
-    stream?: false;
+    /**
+     * 是否流式（`text/event-stream`）。
+     *
+     * 🔴 2026-11-12（m09565 ①-8）把类型从 `false` 放开成 `boolean`：
+     *    字幕 AI 总结要「收到片段就追加」，非流式要等模型把整段吐完（实测 8~15 秒）。
+     * ⚠️ **缺省仍是 `false`**（翻译 / 条目摘要 / 搜索 / 预填全部不动）——
+     *    只有字幕总结那条路显式传 `true`，⛔ 别在别的构造器里顺手打开。
+     * ⚠️ 打开流式后，HTTP 层必须走 `nodeHttpPostStream`（`requestUrl` 会整块返回，读不到增量）。
+     */
+    stream?: boolean;
     /** 🔴 #486：只给 ping 用 —— 限制输出长度，避免「测一下连通性」花十几秒（实测见下） */
     max_tokens?: number;
     /** 🔴 #499D：工具清单（只预填传；不带 ⇒ 与以前完全一致） */

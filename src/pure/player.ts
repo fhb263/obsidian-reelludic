@@ -10,8 +10,16 @@
 export const SEEK_STEP = 5;
 /** 方向键大步秒数（Shift + ←/→） */
 export const SEEK_STEP_LARGE = 30;
-/** 倍速档位（循环切换，含 1× 基准） */
-export const SPEED_STEPS: readonly number[] = [0.5, 0.75, 1, 1.25, 1.5, 2];
+/**
+ * 倍速档位（循环切换，含 1× 基准）。
+ *
+ * 🔴 用户 m07854 ⑧（2026-11-13）逐字：「视频播放器倍速档位增加（2x 上面加 3x）」
+ *    ⚠️ 3 必须在 2 **之后**（档位即面板顺序，也是循环切档的次序）—— 插在别处就成了「3× 比 2× 快得少」
+ *       这种看着就错的顺序。
+ * ⚠️ 档位表只许有这一份：视频播放器（`VideoPlayerView`）与音频播放器（`audioPlayerMount`）都从
+ *    `pure/playerMenu.buildSpeedOptions` 取，⛔ 别在 UI 层再写一遍数字。
+ */
+export const SPEED_STEPS: readonly number[] = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
 
 /** 快捷键语义（UI 层按此分派，键盘细节不外泄） */
 export type PlayerKeyAction =

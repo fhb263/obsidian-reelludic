@@ -62,17 +62,28 @@ describe('网易云 eapi 加密', () => {
 })
 
 describe('网易云 VIP 响应解析', () => {
+    // 🔴 2026-11-09 第 15 轮阶段 C：返回值多了 `userId`。
+    //    为什么不是「顺手加个字段」而是**必须**有：`weapi/user/playlist` 要 `uid`，
+    //    而 `uid` 只能从这个账号接口的 `profile.userId` 拿（`MUSIC_U` 是加密串，猜不出来）。
+    //    ⇒ 这三条断言改成「三字段全等」，`userId` 缺失/非法时的空串也一并锁上。
     it('VIP 账号（vipType≠0 + code 200）', () => {
-        expect(parseVipAccountResponse(JSON.stringify({ code: 200, profile: { vipType: 11 } })))
-            .toEqual({ ok: true, vipType: 11 })
+        expect(parseVipAccountResponse(JSON.stringify({ code: 200, profile: { vipType: 11, userId: 123456 } })))
+            .toEqual({ ok: true, vipType: 11, userId: '123456' })
     })
 
     it('普通账号（登录有效但非会员，ok 仍为 true，vipType 单独标记）/ 未登录 / 异常', () => {
-        expect(parseVipAccountResponse(JSON.stringify({ code: 200, profile: { vipType: 0 } })))
-            .toEqual({ ok: true, vipType: 0 })
+        expect(parseVipAccountResponse(JSON.stringify({ code: 200, profile: { vipType: 0, userId: 42 } })))
+            .toEqual({ ok: true, vipType: 0, userId: '42' })
         expect(parseVipAccountResponse(JSON.stringify({ code: 301 })))
-            .toEqual({ ok: false, vipType: 0 })
-        expect(parseVipAccountResponse('bad')).toEqual({ ok: false, vipType: 0 })
+            .toEqual({ ok: false, vipType: 0, userId: '' })
+        expect(parseVipAccountResponse('bad')).toEqual({ ok: false, vipType: 0, userId: '' })
+    })
+
+    it('profile 缺 userId / userId 非法 ⇒ 空串（⛔ 别落成 "0" 或 "NaN"）', () => {
+        expect(parseVipAccountResponse(JSON.stringify({ code: 200, profile: { vipType: 0 } })).userId).toBe('')
+        expect(parseVipAccountResponse(JSON.stringify({ code: 200, profile: { userId: 0 } })).userId).toBe('')
+        expect(parseVipAccountResponse(JSON.stringify({ code: 200, profile: { userId: -1 } })).userId).toBe('')
+        expect(parseVipAccountResponse(JSON.stringify({ code: 200, profile: { userId: 'abc' } })).userId).toBe('')
     })
 })
 

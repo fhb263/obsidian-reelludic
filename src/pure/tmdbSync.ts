@@ -43,6 +43,14 @@ export interface TmdbAccountItem {
     overview: string;
     /** TMDB 的 10 分制均分（社区分，不是用户分） */
     voteAverage: number;
+    /**
+     * 评分人数（`vote_count`；0 / 缺失 = 尚未有人评分）。
+     *
+     * 🔴 2026-11-08 新增：以前不解析这个字段 ⇒ 账号同步建出来的条目**永远没有评价人数**
+     *    （评分数只在详情接口里，而详情失败/超时时就彻底丢了）。清单接口本来就带 `vote_count`，
+     *    解析它等于顺手多救一份兜底数据，不额外发请求。
+     */
+    voteCount?: number;
 }
 
 /** 一页结果 */
@@ -146,6 +154,10 @@ export function parseTmdbAccountPage(text: string, mediaType: 'movie' | 'tv'): T
             posterPath: typeof r.poster_path === 'string' ? r.poster_path : null,
             overview: typeof r.overview === 'string' ? r.overview : '',
             voteAverage: typeof r.vote_average === 'number' ? r.vote_average : 0,
+            // 🔴 `vote_count` 为 0 时**不写键**（= 没人评过），别让「0 人评价」占位成有效值
+            ...(typeof r.vote_count === 'number' && r.vote_count > 0
+                ? { voteCount: Math.round(r.vote_count) }
+                : {}),
         });
     }
     return {
@@ -163,10 +175,21 @@ export function parseTmdbAccountId(text: string): string {
     return String(id);
 }
 
-/** TMDB 10 分制 → 本插件 1~5 星（`/2` 四舍五入；0 = 未评分） */
-export function tmdbVoteToRating(vote: number): number {
-    if (!Number.isFinite(vote) || vote <= 0) return 0;
-    return Math.max(0, Math.min(5, Math.round(vote / 2)));
+/**
+ * TMDB 的 `vote_average`（本身就是 **10 分制**）→ 条目 `communityScore`（**同一 10 分制**）。
+ *
+ * 🔴🔴 2026-11-08 修障：以前这里叫 `tmdbVoteToRating`，做的是「10 分制 ÷2 四舍五入 → 1~5 星」。
+ *    那是**分制污染**：`communityScore` 是全仓 10 分制字段（`pure/sourceMeta.COMMUNITY_SCORE_MAX` = 10，
+ *    排序 / 系列均分 / 评分看板全按 10 分制假设）⇒ 把 8.4 分存成 4，在 10 分制里等于「4 分」，
+ *    **被系统性低估一半**。用户报障「TMDB 导入的片评分不对」就是这条。
+ *    ⛔ 别再换算回 5 星：`rating`（1~5 星）是**用户自己打的个人分**，两者是两套刻度，永不互写。
+ *
+ * @returns 0~10 的分数；`0` / 非有限数 / 超过 10 的值 ⇒ `undefined`（= 没评分，⛔ 不落 0 分）
+ */
+export function tmdbVoteToCommunityScore(vote: number): number | undefined {
+    if (!Number.isFinite(vote) || vote <= 0 || vote > 10) return undefined;
+    // 保留一位小数（TMDB 给的就是 `8.4` 这种；`Math.round(v*10)/10` 只为消掉浮点尾巴）
+    return Math.round(vote * 10) / 10;
 }
 
 /** UNIX 秒 → `YYYY-MM-DD`（标记时间；解析不出 = null） */

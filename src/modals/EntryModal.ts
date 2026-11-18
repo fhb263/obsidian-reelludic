@@ -18,6 +18,7 @@ import { orphanedDownloadedPosters } from 'pure/posterFile';
 import { NoteConflictModal } from 'modals/NoteConflictModal';
 // 🔴 #635 切条目前的脏检查确认框（`window.confirm` 在 Electron 里会阻塞主线程 + 与 Modal 关闭动画抢焦点）
 import { ConfirmModal } from 'modals/ConfirmModal';
+import { releaseCardFocusOnClose } from 'ui/components';
 import { PosterSearchModal } from 'modals/PosterSearchModal';
 import type { PosterCandidate } from 'pure/posterSearch';
 import type { PosterSource } from 'pure/posterSources';
@@ -79,8 +80,21 @@ export class EntryModal extends Modal {
         private initialType?: EntryType,
         /** 新增模式初始书籍分类：书籍页签聚焦子分类（漫画/网文）时传入（漫画态表单下拉选中「漫画」） */
         private initialBookKind?: BookKind,
+        /**
+         * 🔴 用户 2026-11-27（m04135）：「首页视图搜索框中搜索填入的文本如果这时点添加按钮
+         *    就直接填入搜索条目一步到位，省去打开添加条目窗口再搜索」。
+         *    首页把词带进来后，这里**只写进 `repeat.query`** —— 它正是 `mountForm` 注给组件的
+         *    `presetQuery`（同一个字段，#632「保存并继续」也用它）。真正的「预填 + 立即搜」
+         *    那一步在 `EntryForm.onMount` 里（见那边注释，⛔ 别在这里自己发起搜索：
+         *    搜索要等组件挂载完、输入框就位）。
+         *    ⚠️ 编辑态（`entry` 有值）忽略它 —— 编辑表单不摆搜索区。
+         */
+        private initialQuery?: string,
     ) {
         super(app);
+        if (initialQuery && initialQuery.trim()) {
+            this.repeat = { ...this.repeat, query: initialQuery.trim() };
+        }
     }
 
     /** 按结果栏数调整弹窗宽度：三源/三栏并排需宽（~1200），一/两栏与搜索输入/编辑态用常规宽度 720 */
@@ -198,6 +212,11 @@ export class EntryModal extends Modal {
                 initialType: this.entry?.type ?? this.initialType ?? 'movie',
                 initialBookKind: this.entry?.bookKind ?? this.initialBookKind,
                 canSearch: !!this.plugin.settings.tmdbApiKey,
+                // 🔴 属性块的显示 / 先后（1.5.1）：与「卡片信息栏」同款注入方式 ——
+                //    组件不认识 plugin（见 EntryForm 顶部那条口径），配置一律由这里按当前设置传入。
+                //    缺席 / 空对象 ⇒ 组件走缺省全显示，观感与改版前逐像素一致。
+                entryFormFieldsByType: this.plugin.settings.entryFormFieldsByType ?? {},
+                entryFormFieldsByKind: this.plugin.settings.entryFormFieldsByKind ?? {},
                 canSearchBook: true,
                 canSearchGame: true, // 游戏仅 Douban 源，始终可搜
                 /** 结果栏数变化 → 动态宽度（仅三栏加宽） */
@@ -210,6 +229,13 @@ export class EntryModal extends Modal {
                 onSearchGame: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchGame(q, onProgress),
                 onSearchAnime: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchAnime(q, onProgress),
                 onSearchMusic: (q: string, onProgress?: SearchProgressCb) => this.plugin.searchMusic(q, onProgress),
+                /**
+                 * 🔴🔴 m04435 ②：`onSaveMusic` 注入**已删除** —— 用户逐字要求「添加条目展开的结果列表：
+                 *    不显示"入库"和"AI 预填"按钮」。组件侧那个 prop 也同步删了（两处必须一起删，
+                 *    否则 Svelte 会因未知 prop 静默忽略、看着像「已经删了」其实还留着线）。
+                 * ⚠️ 宿主能力 `plugin.importMusicResult` **保留**：音乐同步弹窗那条线仍在用，
+                 *    删掉的只是「搜索结果卡片上那颗入库按钮」这个 UI 入口。
+                 */
                 /**
                  * 🔴 ⑬「可再搜索突破」的会话内接线（用户 2026-10-25 改口径：**不落盘**）。
                  * 合并/去重/截断的算法在 `pure/searchAccum`；池子存本实例的 `searchPool` 字段，
@@ -240,7 +266,17 @@ export class EntryModal extends Modal {
                     //    必须从落库字段里剥掉，稍后经 `service.setNoteLrc` 单独写回笔记（#396）。
                     const { lrc, ...input } = raw;
                     let targetId = '';
-                    let noteWritten = false;
+                    /**
+                     * 🔴 2026-11-09 第 16 轮新增（用户：「编辑属性的 LRC 歌词手动填入更新笔记还是无法保存」）：
+                     * 用户在冲突弹窗里选了「保留笔记文件」—— 那是「别动我的笔记」的明确授权，
+                     * 连歌词框一起尊重（⛔ 别覆盖）。这是**唯一**该跳过歌词写入的情形。
+                     *
+                     * 旧实现的条件是 `noteWritten && …`，而 `noteWritten` 只在 `writeNote` 成功时置真 ⇒
+                     * 「保留」和「writeNote 抛错」两种情况下歌词被**静默丢弃**（用户填了、保存了、
+                     * 界面提示「已更新」，歌词却没了）。`setNoteLrc` 自己会判「无笔记 / 无变化不写盘」，
+                     * 所以只要用户没要求保留笔记，就应当**无条件**尝试写歌词。
+                     */
+                    let noteKept = false;
                     let saved = false;
                     try {
                         if (this.entry) {
@@ -260,13 +296,12 @@ export class EntryModal extends Modal {
                                     //    「保留」= 认可当前笔记为新基线（旧实现这里什么也没做 ⇒ 永远问不完）。
                                     if (choice === 'overwrite') {
                                         await this.plugin.service.writeNote(updated.id);
-                                        noteWritten = true;
                                     } else {
                                         await this.plugin.service.adoptNoteAsBaseline(updated.id);
+                                        noteKept = true;
                                     }
                                 } else {
                                     await this.plugin.service.writeNote(updated.id);
-                                    noteWritten = true;
                                 }
                                 new Notice(`已更新：${updated.title}`);
                             } catch (e) {
@@ -280,16 +315,17 @@ export class EntryModal extends Modal {
                             }
                             try {
                                 await this.plugin.service.writeNote(entry.id);
-                                noteWritten = true;
                                 new Notice(`已添加：${entry.title}`);
                             } catch (e) {
                                 new Notice(`已添加，但笔记生成失败：${e instanceof Error ? e.message : String(e)}`);
                             }
                         }
-                        // LRC 歌词写回笔记（#396）：只在**本次真的写过笔记**时写 ——
+                        // LRC 歌词写回笔记（#396）：只在用户**没有**要求保留笔记现状时写 ——
                         // 冲突弹窗选「保留笔记文件」= 用户要求保留笔记现状，此时连歌词框一起尊重（⛔ 别覆盖）。
-                        // `setNoteLrc` 自带「内容无变化不写盘 / 不刷无谓指纹」，所以未改歌词时空跑一次没有代价。
-                        if (noteWritten && targetId && lrc !== undefined) {
+                        // 🔴 2026-11-09 第 16 轮改判据：旧写法是 `noteWritten && …`，把「保留」与
+                        //    「writeNote 抛错」也一并跳过 ⇒ 用户填的歌词静默丢失（界面还提示「已更新」）。
+                        //    现在只排除「保留」这一种；`setNoteLrc` 自带「无笔记 / 无变化不写盘」，空跑无代价。
+                        if (!noteKept && targetId && lrc !== undefined) {
                             await this.plugin.service.setNoteLrc(targetId, String(lrc));
                         }
                         // 保存成功：记录实际引用的封面（onClose 清理时保留它，只删本次会话的其他下载）
@@ -320,8 +356,11 @@ export class EntryModal extends Modal {
                     if (this.entry) this.plugin.openEntryLogModal(this.entry, kind);
                 },
                 onOpenSource: (url: string) => this.plugin.openExternalUrl(url),
-                /** 编辑表单「集按钮」：打开本地剧集视频（桌面 Electron 系统播放器） */
-                onPlayEpisode: (path: string) => void this.plugin.playLocalEpisode(path),
+                /** 编辑表单「集按钮」：打开本地剧集视频（桌面 Electron 系统播放器）
+                 *  🔴 m07854 ⑧：把**集下标**与**当前条目**一并交下去 —— 播放器靠它们读写
+                 *  `catalog.videoPositions`（按集记忆播放位置）。⚠️ `this.entry` 可能为空
+                 *  （新增未落库），那时宿主侧不接记忆，此处照传即可。 */
+                onPlayEpisode: (path: string, index?: number) => void this.plugin.playLocalEpisode(path, index ?? 0, this.entry ?? undefined),
                 /** 编辑表单「浏览」：系统文件选择器选本地视频，返回绝对路径（Electron remote.dialog） */
                 onPickLocalVideo: () => this.plugin.pickLocalVideoPath(),
                 /** 编辑表单「本地音频」：系统文件选择器选音频，返回 vault 相对路径（库外绝对路径） */
@@ -336,6 +375,19 @@ export class EntryModal extends Modal {
                     this.plugin.aiPrefillEntry(input, onStep),
                 /** 编辑表单游戏「启动快捷方式」：系统文件选择器选 .lnk，返回 vault 相对路径（库外绝对路径） */
                 onPickGameLaunch: () => this.plugin.pickGameLaunchPath(),
+                /** 2026-11-16 编辑表单游戏「Flash 影片」：系统文件选择器选 .swf（插件内用 Ruffle 播） */
+                onPickGameSwf: () => this.plugin.pickGameSwfPath(),
+                // 2026-11-16 用户「改成关联目录」：选一整个游戏文件夹，宿主挑出主影片
+                onPickGameSwfDir: () => this.plugin.pickGameSwfFromDir(),
+                /**
+                 * 2026-11-16 编辑表单游戏「Flash 影片」旁的「获取」：宿主弹窗问游戏详情页地址，
+                 * 抓出真实 swf 下载进库，并把库内相对路径交回表单。
+                 * ⚠️ 走 `promptFetchGameSwf`（含弹窗）而不是 `fetchGameSwf`（只认地址）——
+                 *    表单不该知道地址长什么样，也不该自己开弹窗。
+                 * 🔴 第一参必须把**当前条目 id** 透下去：落盘文件名 = 「条目标题.swf」，
+                 *    上一版这里无参 ⇒ 服务层拿不到标题、只能退回 URL 末段（`04.swf`）。
+                 */
+                onFetchGameSwf: (entryId?: string) => this.plugin.promptFetchGameSwf(entryId ?? this.entry?.id),
                 /** 编辑表单书籍「浏览」：系统文件选择器选 TXT/EPUB/PDF/CBZ/CBT，返回 vault 相对路径 */
                 onPickBookFile: () => this.plugin.pickBookFilePath(),
                 /**
@@ -399,6 +451,14 @@ export class EntryModal extends Modal {
                  */
                 onBiliSearch: (keyword: string) => this.plugin.dlBiliSearch(keyword),
                 /**
+                 * 🔴「网络集可搜索 YouTube」：把 globe 浮层的搜索源从「只有 B 站」扩成「B站 / YouTube」。
+                 * ⛔ 不新增第二枚按钮（#669 同一功能只留一个入口）—— 换的是**这个浮层里搜谁**。
+                 * 🔴 代理 / Cookie / Node 运行时全在 `main.ytSearch` 里（与取流同一条链），
+                 *    组件不判平台、不碰网络（`ytSearch` 自己给「仅桌面端支持」）。
+                 * ⚠️ 走 `--flat-playlist`：只回 id/标题/频道/时长，没有画质字段（那些要取流才知道）。
+                 */
+                onYtSearch: (keyword: string) => this.plugin.ytSearch(keyword),
+                /**
                  * #505 分P 勾选表：拿一条视频的**分P 列表**（用户 2026-10-03 选的是「入口 C」——
                  * 点候选不是直接填，而是**展开它的分P 让用户勾**）。
                  * 🔴 实测驱动：搜索接口**不返回分P 数** ⇒「这一条是单P 还是 52P」只能点开才知道；
@@ -406,6 +466,11 @@ export class EntryModal extends Modal {
                  * ⚠️ 读不到分P（失败 / 单P）时组件**回落到「直接填这一条」**，⛔ 不把能用的路堵死。
                  */
                 onBiliParts: (bvid: string) => this.plugin.dlBiliView(bvid),
+                /**
+                 * 🔴 `b23.tv` 短链 → 落地页（手机分享的短码里没有 BV 号，UI 层不发请求）。
+                 *    走宿主 `main.resolveBiliShortForPaste`，与选集页取流那次跳转**同一个出口**。
+                 */
+                onResolveBiliShort: (u: string) => this.plugin.resolveBiliShortForPaste(u),
                 /**
                  * #529 书籍「检索在线书籍阅读」：搜**微信读书**网页版，回填在线阅读链接。
                  * ⛔ 只取候选（书名/作者/封面/评分 + `web/reader/<hash>`），**不下载、不解析正文**。
@@ -615,6 +680,9 @@ export class EntryModal extends Modal {
         this.searchPool = {};
         // 释放插件侧的弹窗引用（防叠加守卫用；仅当仍是本实例时清除）
         if (this.plugin.entryModal === this) this.plugin.entryModal = null;
+        // 关窗后宿主会把焦点还给打开前的卡片信息栏 ⇒ `:focus-within` 永久命中、封面遮罩不消失。
+        // ⛔ 别去改 `:focus-within`（键盘用户靠它看见「打开 ↗」），只归还焦点。
+        releaseCardFocusOnClose();
     }
 
     /** 删除条目（编辑模式）：确认与删除统一走 plugin.deleteEntry（Modal 确认，替代 window.confirm 防焦点竞争） */

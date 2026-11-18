@@ -49,6 +49,9 @@ import { lyricCenterDelta, resolveAudioLayout, type AudioLayoutTier } from 'pure
 import { lrcIndexAt, parseLrc, wordIndexAt, type LrcLine } from 'pure/lrc';
 import type { LrcLyricsOrigin } from 'pure/lrcSource';
 import { clampVolume, formatSpeed, formatTime } from 'pure/player';
+// 🔴 用户 2026-11-08：「音乐播放器和字幕面板的滚动改要有动效而不是瞬间切换」
+//    ⇒ 滚动行为统一从 pure/motion 取（含 reduced-motion 降级），⛔ 别在视图里写死 'smooth'
+import { scrollBehavior } from 'pure/motion';
 import {
     AUDIO_VOLUME_MAX,
     AUDIO_VOLUME_STEP_PCT,
@@ -62,6 +65,15 @@ import {
     volumeTint,
 } from 'pure/audioVolume';
 import { buildSpeedOptions, menuAnchor, nextMenuState, type PlayerMenuKind } from 'pure/playerMenu';
+// 🔴 m02288：收听时长自动累计（判据/零头保留全在纯模块，本层只负责「哪一段算真的在播」）
+import { ListenAccumulator } from 'pure/listenTime';
+import {
+    LYRIC_SCALE_DEFAULT,
+    applyLyricScale,
+    loadLyricScale,
+    lyricScaleAfterWheel,
+    saveLyricScale,
+} from 'pure/lyricZoom';
 
 /** 播放模式 → 图标名（**与 LyricFlux `LyricsView.renderModeIcon` 同形**：single→repeat-1、
  *  shuffle→shuffle、其余（off / sequential）→ repeat，靠 `.is-on` 区分「关」与「顺序」）。
@@ -153,6 +165,19 @@ export interface AudioPlayerMountOptions {
      * 缺省 / 当前曲目没有 `notePath` ⇒ 按钮禁用（⛔ 不画一个点了没反应的按钮）。
      */
     onOpenNote?: (track: AudioPlayerTrack) => void;
+    /**
+     * 🔴 m02288：**这一曲又听够了 N 个整分钟**（用户：「用音乐播放器播放每首音乐要统计总时长…
+     * 而不是让用户手动记录」）。
+     *
+     * 只在该曲真的播满整分钟时回调一次（N 通常是 1；长时间不暂停时可 > 1），宿主负责落库到
+     * `listenMinutes`（⛔ 不是 `durationMin`，那是片长）。三条口径：
+     *  ⑴ 计的是**真实播放段**（`play`→`pause`/`ended`/切歌），⛔ 不用 `currentTime` 差值 ——
+     *     否则拖动进度条会被算成收听了十几分钟；
+     *  ⑵ **零头跨段保留**（`pure/listenTime.ListenAccumulator`）：每段都不到 1 分钟的碎片最终也能凑成整分钟；
+     *  ⑶ 不足 1 分钟**不回调**（整数分钟字段，播 5 秒就 +1 等于每次点开白送一分钟）。
+     * ⚠️ 内联块（笔记里的 ` ```lrc ` 卡片）也传 —— 在笔记里听歌同样是收听，没理由不计。
+     */
+    onListen?: (track: AudioPlayerTrack, minutes: number) => void;
 }
 
 export interface AudioPlayerHandle {
@@ -235,6 +260,39 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     let curWord = -1;
     let destroyed = false;
     let lyricsSeq = 0;
+
+    // ── 🔴 m02288 收听时长累计（只算「真的在播」的那几段）──────────────────────────
+    // 为什么不用 `currentTime` 差值：拖动进度条 / 反复 seek 会让它跳变，差值累计等于
+    // 「拖一下就听了十分钟」。这里改用**墙钟**：`play` 开始时记起点，`pause`/`ended`/切歌/销毁
+    // 时结算差值 —— 那段时间里音频确实在推进。
+    // ⚠️ 零头保留在 `ListenAccumulator` 里跨段累积（`pure/listenTime` 有单测），
+    //    所以「切来切去、每段都不到 1 分钟」最终一样能凑成整分钟。
+    let listenSink = new ListenAccumulator();
+    /** 当前这一段播放的起点（`null` = 现在没在播，不需要结算） */
+    let listenSince: number | null = null;
+    /** 正在计时的曲目（切歌/销毁那一刻要用它把最后一段记到**正确的歌**上） */
+    let listenTrack: AudioPlayerTrack | null = null;
+
+    /** 结算当前这一段（若有）并交给 `onListen`。幂等：结算后 `listenSince` 归 null。 */
+    const flushListen = (): void => {
+        if (listenSince === null) return;
+        const ms = Date.now() - listenSince;
+        listenSince = null;
+        const track = listenTrack;
+        if (!track?.entryId) return;
+        const minutes = listenSink.addSegment(ms);
+        if (minutes <= 0) return;
+        opts.onListen?.(track, minutes);
+    };
+
+    /** 换到某曲时把账本清空（零头属于上一首，⛔ 不能算到下一首头上） */
+    const resetListenFor = (track: AudioPlayerTrack | null): void => {
+        flushListen();
+        listenSink = new ListenAccumulator();
+        listenTrack = track;
+        // 「正在播」由 `play` 事件重新置点 —— 这里只负责换账本
+        listenSince = null;
+    };
 
     // ── 骨架 ──
     const root = el('div', 'rl-ap-root');
@@ -370,6 +428,32 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     if (opts.inline) root.classList.add('rl-ap-no-note-btn');
     host.appendChild(root);
 
+    // ── 🔴 m04435 ③：歌词区 Ctrl+滚轮缩放 ──
+    // 用户逐字：「歌词区域内 **Ctrl+鼠标滚轮**缩放歌词字号/比例：阻止页面默认缩放/滚动；
+    //   仅作用于歌词容器，不影响其他 UI；不影响歌词正常播放滚动」
+    // 三条口径：
+    //  ⑴ **只认 `ctrlKey`（和 macOS 的 ⌘）** —— 普通滚轮必须照常滚歌词（#407 那条「可滚轮滚动」不能破）；
+    //  ⑵ `passive: false` + `preventDefault()` 才能真的挡住「Ctrl+滚轮 = 浏览器整页缩放」；
+    //  ⑶ 只改 CSS 变量 `--rl-ap-lyric-scale`（`font-size` 按 `em` 自然跟随），⛔ **不用 transform/zoom** ——
+    //     那会把 `getBoundingClientRect` 一起放大，`centerCurLine` 的居中会越缩越歪。
+    let lyricScale = loadLyricScale() ?? LYRIC_SCALE_DEFAULT;
+    applyLyricScale(lyrics, lyricScale);
+    const onLyricWheel = (ev: WheelEvent): void => {
+        // ⚠️ 只拦「带修饰键」的那种；不带 Ctrl 的滚轮一律放行（用户要能滚歌词）
+        if (!ev.ctrlKey && !ev.metaKey) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const next = lyricScaleAfterWheel(lyricScale, ev.deltaY);
+        if (next === lyricScale) return;
+        lyricScale = next;
+        applyLyricScale(lyrics, lyricScale);
+        saveLyricScale(lyricScale);
+        // 缩放改了行高 ⇒ 当前行的垂直居中要重算（否则「放大后当前句掉出视野」）
+        centerCurLine();
+        // ⚠️ 不写状态位：那块位置按 #408 只留给「进行中 / 异常」，字号变化本身就是可见反馈。
+    };
+    lyrics.addEventListener('wheel', onLyricWheel, { passive: false });
+
     // ── 档位：容器宽度决定，ResizeObserver 驱动 ──
     let lastWidth = -1;
     const applyTier = (): void => {
@@ -399,7 +483,11 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
             return;
         }
         lines.forEach((line, i) => {
-            const row = el('div', 'rl-ap-lyr-line' + (plainLyrics ? ' is-plain' : ''));
+            // 🔴 m04435 ③：`[Gold]` 标记过的行挂 `is-gold` —— CSS 靠它出**暗金**（非当前行）
+            //    和**亮金**（`.is-gold.is-cur`）。⛔ 别在这里写颜色（真源在 `styles.css`）。
+            //    ⚠️ `is-gold` 只影响配色，不影响逐字高亮：`.rl-ap-lyr-w` 那套照旧生效。
+            const goldCls = line.gold ? ' is-gold' : '';
+            const row = el('div', 'rl-ap-lyr-line' + (plainLyrics ? ' is-plain' : '') + goldCls);
             // 🔴 #406 逐字高亮：整行拆成词元 span（词元拼接 == `line.text`，⛔ 不动文本内容）。
             //    只在开关开 + 该行有词元时拆；否则退回原来的整行 `textContent`（零开销、零行为变化）。
             const words = wordHighlight && !plainLyrics ? line.words : undefined;
@@ -434,12 +522,25 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
 
     const curRow = (): HTMLElement | null => lyrList.children[curLine] as HTMLElement | undefined ?? null;
 
-    /** 把当前行推到列表垂直正中（见文件头第 2 条口径） */
+    /** 把当前行推到列表垂直正中（见文件头第 2 条口径）
+     *
+     *  🔴 用户 2026-11-08：「音乐播放器和字幕面板的滚动改要有动效而不是瞬间切换」
+     *     ⇒ 平时走 `scrollTo({ behavior: 'smooth' })`；开了系统「减少动态效果」才退回
+     *       瞬时赋值（那条 `scrollTop` 赋值必须**原样保留**：它既是降级路径，
+     *       也是「位移夹到 ≥ 0」这条不变量的唯一实现 —— 负值会让浏览器把
+     *       `scrollTop` 弹回 0 附近再被下次重算拉回，表现为歌词抖动）。
+     *  ⚠️ 平滑版**同样**要夹 `Math.max(0, …)`：两处口径必须一致，
+     *     否则开了动效的用户在列表顶部会看到歌词被拉上去又弹回来。 */
     const centerCurLine = (): void => {
         const row = curRow();
         if (!row) return;
         const delta = lyricCenterDelta(row.getBoundingClientRect(), lyrList.getBoundingClientRect());
-        lyrList.scrollTop = Math.max(0, lyrList.scrollTop + delta);
+        const behavior: ScrollBehavior = scrollBehavior();
+        if (behavior === 'auto') {
+            lyrList.scrollTop = Math.max(0, lyrList.scrollTop + delta);
+            return;
+        }
+        lyrList.scrollTo({ top: Math.max(0, lyrList.scrollTop + delta), behavior });
     };
 
     const syncCurrentLine = (force = false): void => {
@@ -635,6 +736,8 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     const switchTo = async (nextIdx: number, autoplay: boolean): Promise<void> => {
         idx = nextIdx;
         const track = items[idx];
+        // 🔴 m02288：先结算**上一首**那一段，再换账本 —— 顺序反了会把上一首的零头记到下一首头上
+        resetListenFor(track);
         refreshTrackMeta(track);
         audio.src = track.url;
         audio.currentTime = 0;
@@ -686,10 +789,18 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
         // 🔴 接上 WebAudio 后若 `AudioContext` 还在 suspended，**一点声都没有** ⇒ 每次起播都补一次 resume
         if (audioCtx && audioCtx.state === 'suspended') void audioCtx.resume?.().catch(() => undefined);
         syncPlayButton();
+        // 🔴 m02288：起播 = 这一段开始计时（`play` 可能因 seek/挂起被重复触发，
+        //   所以只在「当前没有起点」时置点，⛔ 别无条件覆盖 —— 那会把前面那段的时长吞掉）
+        if (listenSince === null) listenSince = Date.now();
     };
-    const onPause = (): void => syncPlayButton();
+    const onPause = (): void => {
+        syncPlayButton();
+        // 🔴 m02288：暂停/播完 = 这一段结算（`pause` 也会在 `ended` 前触发，`flushListen` 幂等）
+        flushListen();
+    };
     const onEnded = (): void => {
         syncPlayButton();
+        flushListen();
         applyDecision('ended', 'next');
     };
     audio.addEventListener('timeupdate', onTimeUpdate);
@@ -1084,6 +1195,8 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
         destroy(): void {
             destroyed = true;
             lyricsSeq++;
+            // 🔴 m02288：关播放器前把最后那一段结算掉 —— 否则「听着歌关掉标签页」那段白听
+            flushListen();
             audio.pause();
             audio.removeAttribute('src');
             audio.load();
@@ -1093,6 +1206,7 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
             audio.removeEventListener('pause', onPause);
             audio.removeEventListener('ended', onEnded);
             volBtn.removeEventListener('wheel', onWheel);
+            lyrics.removeEventListener('wheel', onLyricWheel);
             document.removeEventListener('pointerdown', onDocPointerDown, true);
             onPointerUp();
             if (ro) ro.disconnect();

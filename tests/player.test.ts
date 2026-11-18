@@ -66,8 +66,19 @@ describe('进度与时间换算', () => {
 });
 
 describe('倍速', () => {
-    it('档位表固定', () => {
-        expect(SPEED_STEPS).toEqual([0.5, 0.75, 1, 1.25, 1.5, 2]);
+    it('档位表固定（含用户 m07854 ⑧ 要求的 3×）', () => {
+        expect(SPEED_STEPS).toEqual([0.5, 0.75, 1, 1.25, 1.5, 2, 3]);
+    });
+    it('🔴 3× 必须排在 2× 之后（用户 m07854 ⑧「2x 上面加 3x」）', () => {
+        // 档位顺序 = 面板顺序 = 循环切档次序 ⇒ 3 若跑到 2 前面，就成「3× 比 2× 慢」的错序
+        expect(SPEED_STEPS.indexOf(3)).toBeGreaterThan(SPEED_STEPS.indexOf(2));
+        expect(SPEED_STEPS[SPEED_STEPS.length - 1]).toBe(3);
+    });
+    it('档位严格递增且无重复（面板从上到下就是由慢到快）', () => {
+        for (let i = 1; i < SPEED_STEPS.length; i++) {
+            expect(SPEED_STEPS[i]).toBeGreaterThan(SPEED_STEPS[i - 1]);
+        }
+        expect(new Set(SPEED_STEPS).size).toBe(SPEED_STEPS.length);
     });
     // 「点击循环」（cycleSpeed）口径已于 2026-09-18 撤销：倍速改由浮层面板选档（见 tests/playerMenu.test.ts），
     // 该函数随之从 pure/player 删除 —— 项目惯例不留死代码。

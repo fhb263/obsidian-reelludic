@@ -4,10 +4,15 @@ import { ACTIVITY_LOG_LIMIT, createEntryId, ENTRY_TYPES } from 'data/types';
 import { isMediaStatus } from 'pure/status';
 import { storeEpisodeList } from 'pure/episodeAssoc';
 import { normalizeRating } from 'pure/rating';
+// #772 心情六档白名单（⑳）：归一在 pure/mood，本文件只做透传
+import { normalizeMood } from 'pure/mood';
+// ③ 单集评价的读侧白名单（与写侧 yaml 共用同一份判据）
+import { normalizeEpisodeReviews } from 'pure/episodeReview';
 import { BOOK_KINDS } from 'pure/bookKind';
 import { MUSIC_KINDS } from 'pure/musicKind';
 import { normalizeRelatedList } from 'pure/relatedGraph';
 import { normalizeSeriesRatings } from 'pure/seriesRating';
+import { normalizeViews, viewsForStorage } from 'pure/mediaViews';
 import {
     BACKUP_FILE,
     BACKUP_KEEP,
@@ -54,6 +59,16 @@ export interface VaultIO {
 
 function isString(v: unknown): v is string {
     return typeof v === 'string';
+}
+
+/**
+ * 游戏舞台的单边尺寸（`gameWidth` / `gameHeight`）是不是个可信的正整数。
+ *
+ * 🔴 上下界都要卡死：小游戏舞台从 320 到 1920 都见过，而解析噪声往往长成 `1`（广告位）或 `99999`（版本号）。
+ *    ⛔ 别只判 `typeof === 'number'` —— `NaN` / `0` / 负数都能过那一关。
+ */
+function isGameStageSide(v: unknown): v is number {
+    return typeof v === 'number' && Number.isInteger(v) && v >= 64 && v <= 8192;
 }
 
 function isLinkLike(v: unknown): v is WatchLink {
@@ -104,6 +119,12 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
         // ⚠️ 这里**仍透传原始值**（不回写/不取整）：取整是 `seriesIndexValue` 的读时归一，本处只保证不落 NaN。
         // 🔴 新增 schema 字段必须同步本白名单，否则读取端会静默丢弃（历史踩坑：bookKind）
         seriesIndex: typeof raw.seriesIndex === 'number' && Number.isFinite(raw.seriesIndex) ? raw.seriesIndex : undefined,
+        // 归属合集（2026-11-24 用户裁定）：合集视图**只认这个字段**，⛔ 不回落 series。
+        // ⚠️ 新增 schema 字段必须同步本白名单，否则读取端会静默丢弃（历史踩坑：bookKind / audioUrl）
+        collection: isString(raw.collection) && raw.collection.length > 0 ? raw.collection : undefined,
+        // 🔴 #772 心情（⑳）：六档白名单走 `pure/mood`，⛔ 非法值不落库（丢成 undefined，
+        //    而不是回退第一档 —— 「没填」和「填了震撼」是两回事，回退会把没填过的条目全染成震撼）。
+        mood: normalizeMood(raw.mood),
         platform: isString(raw.platform) ? raw.platform : undefined,
         developer: isString(raw.developer) ? raw.developer : undefined,
         album: isString(raw.album) && raw.album.length > 0 ? raw.album : undefined, // 音乐专辑（豆瓣详情回填，过滤空串）
@@ -112,6 +133,17 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
         audioUrl: isString(raw.audioUrl) && raw.audioUrl.length > 0 ? raw.audioUrl : undefined,
         gameLaunchPath: isString(raw.gameLaunchPath) && raw.gameLaunchPath.length > 0 ? raw.gameLaunchPath : undefined, // 游戏启动快捷方式（过滤空串）
         gameUrl: isString(raw.gameUrl) && raw.gameUrl.length > 0 ? raw.gameUrl : undefined, // #534 游戏网络路径（浮层手填/粘贴，过滤空串）
+        // 2026-11-16 游戏本地 Flash 影片（append-only）——⚠️ 新增字段必须同步本白名单，漏了会被静默丢弃（历史踩坑）
+        gameSwf: isString(raw.gameSwf) && raw.gameSwf.length > 0 ? raw.gameSwf : undefined,
+        // H5 / Unity：存的是能在 iframe 里跑的**在线播放页**（4399 的 `<id>_2.htm`），
+        // 与 gameSwf 并列 —— swf 可下载就本地跑，否则退回内嵌网页。
+        gameEmbed: isString(raw.gameEmbed) && raw.gameEmbed.length > 0 ? raw.gameEmbed : undefined,
+        // 2026-11-16 留档「原始 swf 网络地址 + 原生宽高」（append-only）——⚠️ 新增字段必须同步本白名单，漏了会被静默丢弃（历史踩坑）
+        // 三者都只做**类型/范围**校验，⛔ 不在这里判断「宽高配不配对」：那是 `pure/flashGame.clampGameStage` 的事，
+        // 白名单只负责别让脏数据写进 frontmatter。
+        gameSwfUrl: isString(raw.gameSwfUrl) && raw.gameSwfUrl.length > 0 ? raw.gameSwfUrl : undefined,
+        gameWidth: isGameStageSide(raw.gameWidth) ? raw.gameWidth : undefined,
+        gameHeight: isGameStageSide(raw.gameHeight) ? raw.gameHeight : undefined,
         bookFile: isString(raw.bookFile) && raw.bookFile.length > 0 ? raw.bookFile : undefined, // 书籍文件（阅读器入口，过滤空串）
         // #529 书籍在线阅读链接（append-only）——⚠️ 新增字段必须同步本白名单，漏了会被静默丢弃（历史踩坑）
         readUrl: isString(raw.readUrl) && raw.readUrl.length > 0 ? raw.readUrl : undefined,
@@ -144,6 +176,12 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
             }
             return Object.keys(out).length ? out : undefined;
         })(),
+        // ③ 单集评价（append-only，2026-11-17）：形状与 `videoPositions` / `subtitlePaths` 同构
+        // （键 = 集下标数字串）。⚖️ 判据**只一份**：`pure/episodeReview.normalizeEpisodeReviews`
+        // —— 写侧（`noteGenerator` 生成 yaml）与读侧（这里）必须走同一份，否则会出现
+        // 「面板上标了高光、格子上没流光」这类没法排查的分叉。
+        // ⚠️ 新增 schema 字段必须同步本白名单，否则静默丢弃（bookKind / readUrl / gameUrl 都踩过）。
+        episodeReviews: normalizeEpisodeReviews(raw.episodeReviews),
         playtimeMinutes: typeof raw.playtimeMinutes === 'number' ? raw.playtimeMinutes : undefined,
         // #537 书籍阅读时长（分钟，append-only）：有限正数才透传（取整）。
         // ⚠️ 新增 schema 字段必须同步本白名单，否则读取端会静默丢弃（历史踩坑：bookKind / readUrl / gameUrl）
@@ -211,6 +249,9 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
             typeof raw.reviewPercent === 'number' && Number.isFinite(raw.reviewPercent) && raw.reviewPercent >= 0 && raw.reviewPercent <= 100
                 ? Math.round(raw.reviewPercent)
                 : undefined,
+        // 🔴 2026-11-08 Steam 详情补全标记（收敛用，见 types.ts 的说明）：非空字符串才落库。
+        //    ⚠️ 漏进这张白名单 = 每轮同步都判定「没补过」⇒ 收敛失效、开机反复拉详情。
+        steamDetailFilledAt: isString(raw.steamDetailFilledAt) ? raw.steamDetailFilledAt : undefined,
         authorIntro: isString(raw.authorIntro) ? raw.authorIntro : undefined,
         toc: isString(raw.toc) ? raw.toc : undefined,
         links: Array.isArray(raw.links) ? raw.links.filter(isLinkLike) : [],
@@ -261,6 +302,10 @@ export function parseCatalog(text: string): Catalog {
     // 空表也保持 undefined —— ⛔ 别给每个存量文件凭空添一个 `"seriesRatings": {}`
     const seriesRatings = normalizeSeriesRatings(obj.seriesRatings);
     if (Object.keys(seriesRatings).length > 0) out.seriesRatings = seriesRatings;
+    // 分类视图（用户 2026-11-23 裁定「存进媒体库」）：归一器**恒造出默认视图**，
+    // 所以这里只把「用户真建了视图」的那张表写回；默认视图不占 JSON 一行（同 seriesRatings 口径）。
+    const views = viewsForStorage(obj.views);
+    if (views) out.views = views;
     return out;
 }
 
@@ -287,6 +332,9 @@ export function serializeCatalog(c: Catalog): string {
     // 系列（合集）评分：同样归一后再写（0 / 脏值不进盘）；空表不写键
     const seriesRatings = normalizeSeriesRatings(c.seriesRatings);
     if (Object.keys(seriesRatings).length > 0) clean.seriesRatings = seriesRatings;
+    // 分类视图：同样归一后再写；只剩默认视图时不写键（见 `pure/mediaViews.viewsForStorage`）
+    const views = viewsForStorage(c.views);
+    if (views) clean.views = views;
     return JSON.stringify(clean, null, 2);
 }
 
@@ -323,6 +371,11 @@ export class CatalogStore {
         const parsed = parseCatalog(text);
         const out: Catalog = { version: CATALOG_VERSION, entries: parsed.entries.map(normalizeEntry) };
         if (parsed.activityLog) out.activityLog = normalizeActivityLog(parsed.activityLog);
+        // 🔴 顶层字段必须在这里**逐个显式搬过来**：`out` 是重建出来的对象，漏一个就等于「保存了但读不回来」。
+        //    本仓已踩过：`seriesRatings` 曾漏搬 ⇒ 合集分能存、一读就没了。
+        //    ⚠️ 新增任何 Catalog 顶层字段（append-only）都必须同步这两行，否则静默丢失。
+        if (parsed.seriesRatings) out.seriesRatings = parsed.seriesRatings;
+        if (parsed.views) out.views = parsed.views;
         return out;
     }
 

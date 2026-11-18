@@ -35,6 +35,12 @@ export interface LrcLine {
     text: string;
     /** 双语译文（行内 `原文 | 译文` 的右半；⛔ 无双语时不存在） */
     annotation?: string;
+    /**
+     * 🔴 m04435 ③：这一行被 `[Gold]` 标记过（用户手动标的高光句）。
+     * ⚠️ `[Gold]` 本身**已从 `text` 剥离**（用户逐字：「`[Gold]` 解析后从渲染歌词正文移除」），
+     *    这里只留一个布尔位给渲染层决定暗金 / 亮金。
+     */
+    gold?: boolean;
     /** 逐字时间（`<mm:ss.xx>` 精确值，或按「到下一行」均分；无文本的行不产出） */
     words?: LrcWord[];
 }
@@ -63,6 +69,16 @@ const LRC_TIME_TAG = /^(?:(\d{1,2}):)?\d{1,2}:\d{1,2}(?:\.\d+)?$/;
 
 /** `key: value` 形态的元信息标签 */
 const LRC_KV_TAG = /^([A-Za-z]+)\s*:\s*(.*)$/;
+
+/**
+ * 🔴 m04435 ③ 高光句标记 `[Gold]`（用户逐字：「LRC歌词框支持 `[时间戳][Gold]歌词`，
+ * 如 `[01:29.58][Gold]分手应该体面`」）。
+ *
+ * ⚠️ 大小写不敏感（用户写 `Gold`，但 `[gold]` 也得认 —— 手打歌词没人盯着大小写）。
+ * ⚠️ 它**不是** `key:value` 标签（没有冒号），所以必须单独判，否则会掉进下面「未知方括号 ⇒
+ *    当成歌词正文」那条分支，`[Gold]` 会被原样渲染出来。
+ */
+const LRC_GOLD_TAG = /^gold$/i;
 
 /**
  * 逐字拆词正则（卡拉 OK / 按字高亮用）—— 本模块唯一一份。
@@ -133,11 +149,13 @@ export function parseLrcDocument(content: string): { lines: LrcLine[]; meta: Lrc
     const meta: LrcMeta = {};
     const src = String(content ?? '').replace(/\r\n?/g, '\n');
     /** 原始记录（时间**秒** + 文本），offset 在最后统一叠加 */
-    const raw: { sec: number; text: string }[] = [];
+    const raw: { sec: number; text: string; gold: boolean }[] = [];
 
     for (const line of src.split('\n')) {
         let rest = line;
         const times: number[] = [];
+        /** 🔴 m04435 ③：本行是否被 `[Gold]` 标记（一行多个时间戳 ⇒ 每个时间点都算高光） */
+        let gold = false;
         for (;;) {
             const m = rest.match(LRC_TAG);
             if (!m) break;
@@ -145,6 +163,13 @@ export function parseLrcDocument(content: string): { lines: LrcLine[]; meta: Lrc
             if (LRC_TIME_TAG.test(tag)) {
                 const sec = parseClock(tag);
                 if (Number.isFinite(sec)) times.push(sec);
+                rest = rest.slice(m[0].length);
+                continue;
+            }
+            // 🔴 m04435 ③：`[Gold]` 只做标记、**不进正文**（用户：「解析后从渲染歌词正文移除」）。
+            // ⚠️ 必须在 kv 判定**之前**：`gold` 没有冒号，走不到 kv 分支。
+            if (LRC_GOLD_TAG.test(tag)) {
+                gold = true;
                 rest = rest.slice(m[0].length);
                 continue;
             }
@@ -166,7 +191,7 @@ export function parseLrcDocument(content: string): { lines: LrcLine[]; meta: Lrc
         }
         const text = rest.trim();
         if (!times.length || !text) continue;
-        for (const sec of times) raw.push({ sec, text });
+        for (const sec of times) raw.push({ sec, text, gold });
     }
 
     const off = meta.offset ?? 0;
@@ -178,6 +203,8 @@ export function parseLrcDocument(content: string): { lines: LrcLine[]; meta: Lrc
         //   `+` 表示**整体提前**、`-` 表示整体延后 ⇒ 有效时间 = 标签时间 **减** offset。
         const timestamp = Math.round(r.sec * 1000) - off;
         const line: LrcLine = { timestamp, timestr: formatClock(timestamp / 1000), text: r.text };
+        // 🔴 m04435 ③：`[Gold]` 只留布尔位，⛔ 不往 `text` 里塞任何标记字符
+        if (r.gold) line.gold = true;
         const ann = splitAnnotation(r.text);
         line.text = ann.text;
         if (ann.annotation) line.annotation = ann.annotation;

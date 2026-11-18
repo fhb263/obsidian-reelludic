@@ -114,15 +114,24 @@ export function encryptEApi(urlPath: string, payload: string): string {
     return aesEncryptECB(data, EAPI_KEY)
 }
 
-/** 网易云账号响应解析：ok 仅表示登录有效（code===200），vipType 单独返回（0=普通账号，非 0=会员）。调用方按需用 vipType 判断是否走 VIP 下载链路 */
-export function parseVipAccountResponse(raw: string): { ok: boolean; vipType: number } {
+/**
+ * 网易云账号响应解析：ok 仅表示登录有效（code===200），vipType 单独返回（0=普通账号，非 0=会员）。
+ * 调用方按需用 vipType 判断是否走 VIP 下载链路。
+ *
+ * 🔴 2026-11-09 第 15 轮阶段 C 追加 `userId`：`weapi/user/playlist` 与 `song/like/get`
+ * 都以它为必填 `uid`。**这个字段只能从这里拿** —— ⛔ 别从 Cookie（`MUSIC_U`）里猜，
+ * 那是加密串；也别写死在设置里让用户手填，多一步配置就多一处过期源。
+ * 未登录 / 解析失败 ⇒ 空串（调用方据此判「拿不到 uid」而不是当成 uid='0'）。
+ */
+export function parseVipAccountResponse(raw: string): { ok: boolean; vipType: number; userId: string } {
     try {
         const data = JSON.parse(raw)
         const code = Number(data?.code ?? -1)
         const vipType = Number(data?.profile?.vipType ?? 0)
-        return { ok: code === 200, vipType }
+        const uid = Number(data?.profile?.userId ?? 0)
+        return { ok: code === 200, vipType, userId: uid > 0 ? String(uid) : '' }
     } catch {
-        return { ok: false, vipType: 0 }
+        return { ok: false, vipType: 0, userId: '' }
     }
 }
 
@@ -190,6 +199,64 @@ export function parsePlaylistTrackIds(raw: string): string[] {
 export function buildSongDetailBody(ids: string[]): string {
     const c = JSON.stringify(ids.map((id) => ({ id })))
     return JSON.stringify({ c, ids: JSON.stringify(ids) })
+}
+
+// ───────────────────────── 阶段 C1：我的清单（需 Cookie 登录态）─────────────────────────
+//
+// 🔴 2026-11-09 第 15 轮阶段 C。两个端点都是**网页私有接口**（无官方保证），
+//    用户已裁定接受，但要求「每家独立降级」—— 解析失败一律回空 + code，⛔ 不抛错。
+// ⚠️ uid 从 `weapi/nuser/account/get` 取（本仓 `services/dl/index.ts` 的
+//    `NETEASE_ACCOUNT_API` 已在用它做 VIP 校验），⛔ 别从 Cookie 里猜。
+
+/** 构造「用户歌单列表」请求体（weapi/user/playlist） */
+export function buildUserPlaylistBody(uid: string, limit = 1000, offset = 0): string {
+    return JSON.stringify({ uid, limit, offset, includeVideo: true })
+}
+
+/** 用户歌单一项 */
+export interface NeteaseUserPlaylist {
+    id: string
+    name: string
+    coverUrl?: string
+    /** 曲目数（平台没给 ⇒ undefined，⛔ 不写 0） */
+    trackCount?: number
+    /** 是否「我喜欢的音乐」这种收藏型清单（`specialType === 5`，或名字就是它） */
+    liked: boolean
+}
+
+/**
+ * 解析「用户歌单列表」响应：`playlist[]` 含 id / name / coverImgUrl / trackCount。
+ *
+ * ⛔ 返回 `{ code, playlists }` 而不是裸数组：调用方要能分辨「没登录（code 301）」
+ *    与「真的没有歌单（code 200 + 空数组）」，这两种情况的文案完全不同。
+ */
+export function parseUserPlaylists(raw: string): { code: number; playlists: NeteaseUserPlaylist[] } {
+    try {
+        const data = JSON.parse(raw)
+        const code = Number(data?.code ?? 0)
+        if (code !== 200) return { code, playlists: [] }
+        const list = data?.playlist
+        if (!Array.isArray(list)) return { code, playlists: [] }
+        const playlists = list
+            .map((it: any): NeteaseUserPlaylist | null => {
+                const id = String(it?.id ?? '')
+                const name = String(it?.name ?? '')
+                if (!id || !name) return null
+                const trackCount = Number(it?.trackCount)
+                return {
+                    id,
+                    name,
+                    coverUrl: it?.coverImgUrl || undefined,
+                    // ⚠️ `Number(undefined)` 是 NaN ⇒ 必须显式判有限正数，⛔ 不能 `?? 0`
+                    trackCount: Number.isFinite(trackCount) && trackCount >= 0 ? trackCount : undefined,
+                    liked: Number(it?.specialType) === 5 || name === '我喜欢的音乐',
+                }
+            })
+            .filter((x: NeteaseUserPlaylist | null): x is NeteaseUserPlaylist => x !== null)
+        return { code, playlists }
+    } catch {
+        return { code: 0, playlists: [] }
+    }
 }
 
 /** 解析批量歌曲详情响应：songs[] 含 id/name/ar[].name/al.name+picUrl/dt + h/m/l 音质档（size/br），映射为可下载歌曲 */

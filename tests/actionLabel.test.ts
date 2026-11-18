@@ -81,6 +81,13 @@ describe('actionLabel 主操作入口判定 hasActionEntry', () => {
         expect(hasActionEntry({ ...base, type: 'book', readUrl: '   ' })).toBe(false);
         expect(hasActionEntry({ ...base, type: 'game', gameUrl: '' })).toBe(false);
     });
+
+    it('游戏：只挂了本地 swf（无 .lnk、无网络路径）也算有入口（2026-11-16 新增 gameSwf）', () => {
+        expect(hasActionEntry({ ...base, type: 'game', gameSwf: 'games/黄金矿工.swf' })).toBe(true);
+        expect(hasActionEntry({ ...base, type: 'game', gameSwf: '   ' })).toBe(false);
+        // 三者全空 ⇒ 无入口（点了要给提示，⛔ 别让按钮看起来可点却静默无事）
+        expect(hasActionEntry({ ...base, type: 'game', gameSwf: '', gameLaunchPath: '', gameUrl: '' })).toBe(false);
+    });
 });
 
 describe('actionLabel 本地入口判定 hasLocalEntry（提示文案分叉用）', () => {
@@ -94,6 +101,11 @@ describe('actionLabel 本地入口判定 hasLocalEntry（提示文案分叉用�
     it('游戏：只有网络路径时本地入口仍为 false', () => {
         expect(hasLocalEntry({ ...base, type: 'game', gameLaunchPath: 'a.lnk' })).toBe(true);
         expect(hasLocalEntry({ ...base, type: 'game', gameUrl: 'https://x' })).toBe(false);
+    });
+
+    it('游戏：本地 swf 也算本地入口（它在磁盘上，只是交给内置 Ruffle 播）', () => {
+        expect(hasLocalEntry({ ...base, type: 'game', gameSwf: 'games/a.swf' })).toBe(true);
+        expect(hasLocalEntry({ ...base, type: 'game', gameSwf: '  ' })).toBe(false);
     });
 
     it('影视：本地剧集才算本地入口（网络地址不算）', () => {

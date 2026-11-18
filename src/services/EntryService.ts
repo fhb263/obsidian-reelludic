@@ -3,6 +3,7 @@
 import type { ActivityEvent, BookKind, Catalog, EntryType, MediaEntry } from 'data/types';
 import { CatalogStore, normalizeEntry, type VaultIO } from 'data/catalog';
 import { writeSeriesRating, type SeriesRatingMap } from 'pure/seriesRating';
+import { normalizeViews, type MediaView } from 'pure/mediaViews';
 import { canTransition, type MediaStatus } from 'pure/status';
 import { entryFrontmatter, entryNotePath, generateNoteMarkdown, hashNoteContent } from 'data/noteGenerator';
 import {
@@ -18,13 +19,14 @@ import {
 import { dropsReadingProgress } from 'pure/bookProgress';
 import { parseNoteMarks, type VideoMark } from 'pure/videoMarks';
 import { HIGHLIGHT_SECTION } from 'pure/highlight';
+import { WEREAD_NOTES_SECTION } from 'pure/wereadNotes';
 import { RELATED_SECTION, extractRelatedSectionBody } from 'pure/noteEditable';
 import { lrcBlockLyrics, withLrcLyrics } from 'pure/lrcSource';
 import { DIR_NOTES } from 'pure/dirs';
 // 1.3.1 ① 字段映射：写笔记时按用户配置改名（缺省恒等）
 import { EMPTY_FIELD_MAP, compileFieldMapText, type CompiledFieldMap } from 'pure/fieldMap';
 // 1.3.1 ① 第 3 件：各类型笔记属性顺序（按 `e.type` 取值后传给 entryFrontmatter）
-import { resolveAllKindOrders, resolveAllOrders } from 'pure/fieldOrder';
+import { resolveAllKindOrders, resolveAllOrders, resolveAllHidden } from 'pure/fieldOrder';
 import { normalizeBookKind } from 'pure/bookKind';
 // 短评缺省日期 = 本地今天（与「今日记录」同一口径：⛔ 别用 toISOString 的 UTC 日期）
 import { todayLocal } from 'pure/dailyLog';
@@ -70,6 +72,12 @@ export class EntryService {
      *    这里只负责**按 e 取用**。
      */
     private kindOrders: Record<BookKind, string[]>;
+    /**
+     * 🔴 #721：**各目标不写出的属性键**（设置页「笔记属性顺序」里删掉的那些）。
+     * 目标键与设置页分页同口径：`'__global'` / `EntryType` / `'k:<BookKind>'`。
+     * ⚠️ 与 `fieldOrders` / `kindOrders` 正交：那两份管先后，这份管写不写。
+     */
+    private fieldHidden: Record<string, string[]> = {};
 
     constructor(
         private io: VaultIO,
@@ -86,11 +94,15 @@ export class EntryService {
         fieldOrderCfg: unknown = {},
         /** 🔴 #640e：**书籍子分类各自的顺序**（`settings.fieldOrderByKind` 原文；缺省 = 回落 `fieldOrder.book`）。 */
         fieldOrderKindCfg: unknown = {},
+        /** 🔴 #721：**不写出的属性键**（`settings.fieldOrderHidden` 原文；缺省 = 什么都不隐藏）。 */
+        fieldOrderHiddenCfg: unknown = {},
     ) {
         this.store = new CatalogStore(io, catalogPath);
         this.fieldMap = compileFieldMapText(fieldMapText);
         this.fieldOrders = resolveAllOrders(fieldOrderCfg);
         this.kindOrders = resolveAllKindOrders(fieldOrderCfg, fieldOrderKindCfg);
+        // 🔴 #721：隐藏集与顺序**各自独立**算（收窄口径不同：隐藏不补缺省）
+        this.fieldHidden = resolveAllHidden(fieldOrderHiddenCfg);
     }
 
     /**
@@ -102,6 +114,29 @@ export class EntryService {
     private orderForEntry(e: MediaEntry): string[] {
         if (e.type === 'book') return this.kindOrders[normalizeBookKind(e.bookKind)];
         return this.fieldOrders[e.type];
+    }
+
+    /**
+     * 🔴 #721：取某条目**不写出**的属性键。
+     *
+     * 三段**取并集**（三处各管一段，用户在哪一页删的就只影响那一页的字段集）：
+     *   ⑴ `'__global'` —— 全局页删的（对所有类型生效）；
+     *   ⑵ 该条目**类型**那一档 —— `movie` / `tv` / … / 书籍是 `book`（书籍的专属字段在子类页，
+     *      但 `book` 这一档也可能被写过 —— 兼容与「类型页」口径一致）；
+     *   ⑶ 书籍再加 `'k:<bookKind>'` 那一档（文学 / 网文 / 漫画各一份）。
+     *
+     * ⚠️ 为什么全局要用并集、而不是「全局页删了就把那一行从所有类型表里删掉」：
+     *    `fieldOrder` 的全局页是靠「六个类型各自那份里全局字段的相对次序」表达的
+     *    （见 `renderFieldOrderPane.readOrder`），删字段没法这么表达 —— 所以隐藏走独立一份，
+     *    全局一档天然对全部类型生效，不需要写六遍。
+     */
+    private hiddenForEntry(e: MediaEntry): string[] {
+        const out = new Set<string>(this.fieldHidden['__global'] ?? []);
+        for (const k of this.fieldHidden[e.type] ?? []) out.add(k);
+        if (e.type === 'book') {
+            for (const k of this.fieldHidden['k:' + normalizeBookKind(e.bookKind)] ?? []) out.add(k);
+        }
+        return [...out];
     }
 
     /**
@@ -158,6 +193,33 @@ export class EntryService {
      *  缺省 / 老 catalog ⇒ 空表（视图据此显示「全部未评分」）。 */
     async seriesRatings(): Promise<SeriesRatingMap> {
         return (await this.load()).seriesRatings ?? {};
+    }
+
+    /**
+     * 分类视图表（用户 2026-11-23 裁定「视图存进媒体库」）。
+     *
+     * 🔴 **恒返回至少一条默认视图**（`pure/mediaViews.normalizeViews` 保证）——
+     *    ⛔ 调用方别自己再判空：首页切换条永远需要「默认视图」那一档。
+     * 缺省 / 老 catalog（没有 `views` 键）⇒ 只有默认视图。
+     */
+    async views(): Promise<MediaView[]> {
+        return normalizeViews((await this.load()).views);
+    }
+
+    /**
+     * 落盘整张视图表（**只有这一条出口** —— 视图不碰磁盘，与 `setSeriesRating` 同架构）。
+     *
+     * 🔴 归一 + 「只剩默认视图就不写键」全部委托给 `pure/mediaViews`，
+     *    ⛔ 别在这里再判一次（两份口径必然漂）。
+     * 🔴 默认视图不可删/改名/换种类由 `normalizeViews` 强制保证，本方法只管存。
+     * @returns 归一后的视图表（调用方拿它刷新 UI，别用自己传进去的原始值）
+     */
+    async setViews(raw: unknown): Promise<MediaView[]> {
+        const c = await this.load();
+        const next = normalizeViews(raw);
+        c.views = next;
+        await this.save(c);
+        return next;
     }
 
     /**
@@ -315,7 +377,7 @@ export class EntryService {
         // 🔴 #640e：顺序按条目取 —— **书籍走 `bookKind` 那一份**（文学/网文/漫画各存各的），
         //    其余类型走 `type`。⛔ 别退回 `this.fieldOrders[e.type]`（那会让书籍三者共用一份，
         //    用户拆出来的三个子类分组当场失效）。
-        const md = entryFrontmatter(e, libraryDir, this.fieldMap, this.orderForEntry(e)) + '\n\n' + generateNoteMarkdown(e, libraryDir, { table: this.noteTable, allEntries: await this.list() });
+        const md = entryFrontmatter(e, libraryDir, this.fieldMap, this.orderForEntry(e), this.hiddenForEntry(e)) + '\n\n' + generateNoteMarkdown(e, libraryDir, { table: this.noteTable, allEntries: await this.list() });
         let final = md;
         if (e.notePath) {
             try {
@@ -336,7 +398,40 @@ export class EntryService {
         }
         // 记录笔记路径 + 内容指纹（G 双写冲突）：下次写前比对，检测外部手动修改
         await this.writeNoteRaw(id, path, final, { notePath: path });
+        // 🔴 改名孤儿清理（必须在 writeNoteRaw **之后**、且已确认旧内容搬进 final 之后）：
+        //    `entryNotePath` 按**标题**生成路径 ⇒ 用户改过标题后，新路径 ≠ 旧 `notePath`，
+        //    旧文件从此没人引用，成为「笔记文件还在、条目却指向别处」的孤儿
+        //    （`main.ts:420` 的注释自己承认了这一点）。此前只有「附件清理」管封面/阅读存档，
+        //    **笔记孤儿完全没人管** ⇒ 只能靠这里在切换引用时顺手清掉，否则尸体会一直堆积。
+        //    ⚠️ 顺序不能挪到前面：前面的 `extractAnnotationSections(old)` 正是从旧文件搬用户标注，
+        //      先删就等于把用户手写的摘抄/时间戳/截图全丢了。
+        await this.dropStaleNote(e, path);
         return path;
+    }
+
+    /**
+     * 条目改名后遗留的旧笔记文件清理（`writeNote` 专用，其它路径别调用）。
+     *
+     * 判据三连，**缺一不可**：
+     *  ⑴ 旧 `notePath` 存在，且与新路径不同（同路径 = 没改名，无事可做）；
+     *  ⑵ 旧路径**没有**其它活条目引用 —— 历史上有两条同标题条目共用一个 `notePath` 的脏数据
+     *     （`restoreEntryFor` 的注释里写了这个坑），删了就等于删别人的笔记；
+     *  ⑶ 新文件已确实写好（本方法在 `writeNoteRaw` 之后调用）—— 否则等于在没有新笔记时删掉旧笔记。
+     *
+     * 🔴 走 `io.deleteFile`（obsidian 侧实现是 `fileManager.trashFile`）⇒ 进回收站可还原，
+     *    **不是**硬删除。删失败静默：孤儿尸体留着比误删活笔记安全得多。
+     */
+    private async dropStaleNote(prev: MediaEntry, nextPath: string): Promise<void> {
+        const oldPath = prev.notePath;
+        if (!oldPath || oldPath === nextPath) return;
+        // ⑵ 还有别的条目指着它？那就不是孤儿，绝不能删
+        const shared = (await this.list()).some((e) => e.id !== prev.id && e.notePath === oldPath);
+        if (shared) return;
+        try {
+            await this.io.deleteFile(oldPath);
+        } catch {
+            // 文件已不存在 / 被外部移除 / 回收站不可用：忽略（孤儿留下不阻断保存）
+        }
     }
 
     /** 检测笔记是否被外部修改（G 双写冲突）：读现有笔记 hash 与落库指纹比对。
@@ -538,6 +633,34 @@ export class EntryService {
         }
     }
 
+    /**
+     * ②-4 把微信读书的划线与想法**整区重写**到条目笔记的 `## 同步划线与高亮`。
+     *
+     * 🔴 为什么是「整区重写」而不是 `appendNoteSection` 追加：同步是**镜像**语义 ——
+     *    用户在微信读书里删了一条划线、再同步一次，追加式会把删掉的那条永远留在笔记里。
+     *    `replaceAnnotationSection` 每次全量替换，空 body 则整区删除（幂等）。
+     * 🔴 必须经 `writeNoteRaw`（笔记 + 指纹的唯一出口），否则下次编辑该条目会被
+     *    `noteWasExternallyModified()` 误判成「笔记被外部修改」并弹冲突框。
+     * 🔴 区名必须同时列在 `pure/excerpt.ts` 的 `ANNOTATION_SECTIONS` 里，
+     *    否则用户下一次保存条目（`writeNote` 模板重写）会把整区吞掉。
+     * 内容逐字相同 → 返回 `false` 且**不写盘**（避免「打开即写」把笔记图章的 mtime 刷掉）。
+     */
+    async syncWereadNotes(id: string, markdown: string): Promise<boolean> {
+        const e = await this.get(id);
+        if (!e) throw notFound(id);
+        let notePath = e.notePath;
+        if (!notePath) {
+            await this.writeNote(id);
+            notePath = (await this.get(id))?.notePath;
+            if (!notePath) throw new Error('note path missing');
+        }
+        const old = await this.io.readText(notePath);
+        const next = replaceAnnotationSection(old, WEREAD_NOTES_SECTION, markdown ?? '');
+        if (next === old) return false;
+        await this.writeNoteRaw(id, notePath, next);
+        return true;
+    }
+
     // ── #685 时长明细 / 重温 / 周目 / 攻略 / 短评 ──────────────────────────────────
     // 🔴 这一族方法的共同约定：**落库后立刻重写笔记**（`writeNote`）—— 用户录完在笔记里就能看到，
     //    不靠"下次打开笔记才刷新"。章节名与渲染在 noteGenerator 里（⛔ 别在两处各写一份）。
@@ -563,6 +686,42 @@ export class EntryService {
         c.entries[idx] = merged;
         await this.save(c);
         // 同步重写笔记：时长明细章节由模板生成（含摘抄区合并回填），记录后立即出现在笔记
+        await this.writeNote(merged.id);
+        return merged;
+    }
+
+    /**
+     * 🔴 m02288：**只把分钟加到总时长上，不产生明细**（音乐播放器自动累计专用）。
+     *
+     * 为什么不能复用 `addTimeSession`：那个方法会往 `playSessions` 里**追加一条明细**，
+     * 播放器每满一分钟就调一次 ⇒ 用户的时长明细会变成「听了一分钟 × 47 条」的垃圾堆，
+     * 而且每次都重写整份笔记。自动累计是**背景行为**，⛔ 不该在明细列表里留痕。
+     *
+     * 与手动的分工（写死，别再混）：
+     *  · 播放器自动累计 → 本方法（只动 `listenMinutes`）；
+     *  · 用户「记录时长」补记 → `addTimeSession`（明细 + 总数一起动）。
+     *
+     * ⚠️ 只对 `music` 生效（当前唯一有自动累计的场景）；类型不对直接返回 `null`，⛔ 不抛 ——
+     *    调用方是播放器回调，那里抛错会打断播放链路。
+     */
+    async bumpListenMinutes(id: string, minutes: number): Promise<MediaEntry | null> {
+        if (!Number.isFinite(minutes) || minutes <= 0) return null;
+        const c = await this.load();
+        const idx = c.entries.findIndex((e) => e.id === id);
+        if (idx < 0) return null;
+        const cur = c.entries[idx];
+        if (cur.type !== 'music') return null;
+        // `listenMinutes` 是整数分钟（`data/catalog` 用 Math.round 兜底），这里只加整数
+        const add = Math.max(1, Math.floor(minutes));
+        const merged = normalizeEntry({
+            ...cur,
+            listenMinutes: (cur.listenMinutes ?? 0) + add,
+            updatedAt: this.now(),
+        });
+        c.entries[idx] = merged;
+        await this.save(c);
+        // 与 `addTimeSession` 同口径：落库后立刻重写笔记（`listen_minutes` 由 noteGenerator 写进 yaml），
+        // 否则用户下次打开笔记看到的还是旧总时长
         await this.writeNote(merged.id);
         return merged;
     }

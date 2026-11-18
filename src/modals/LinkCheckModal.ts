@@ -46,14 +46,50 @@ export class LinkCheckModal extends Modal {
      */
     private readonly onClearDead?: () => Promise<{ links: number; entries: number }>;
 
+    /**
+     * 🔴 2026-11-17 用户报障（⑥-A）新增：「停止检测」的执行体。
+     * 用户原话：「按一下后误退出仍显示『检测中』、最终无结果弹窗」。
+     * 根因之一就是**根本没有中途退出的出口**：全库几百条链接串行跑，
+     * 用户只能按 ✕ 关窗（然后结果彻底丢失，因为 `finishScan` 对已 close 的弹窗是 no-op）。
+     * `undefined` = 不渲染停止按钮（只读打开场景）。
+     */
+    private readonly onStop?: () => void;
+
     /** 渐进态：宿主还在跑，`false` 时副标题显示「检测中…」、新增行后自动把列表滚到底 */
     private scanning = false;
     private listEl: HTMLElement | null = null;
     private subEl: HTMLElement | null = null;
     private footEl: HTMLElement | null = null;
     private opsEl: HTMLElement | null = null;
+    /** 进度条（仅渐进态显示）：已探完 / 总条数 */
+    private progEl: HTMLElement | null = null;
+    /** 终态横幅：完成 / 已停止 / 无地址，三态各一句话（⛔ 不再靠副标题暗示，用户看不出「跑完了」） */
+    private bannerEl: HTMLElement | null = null;
+    private finished = false;
+    private wasStopped = false;
+    private done = 0;
+    private total = 0;
 
-    constructor(app: App, summary: LinkCheckSummary, items: DeadLinkItem[], onClearDead?: () => Promise<{ links: number; entries: number }>);
+    /**
+     * 弹窗是否已被用户关掉（✕ / Esc / 点遮罩）。
+     * 🔴 宿主收尾时据此决定：还开着就更新界面，已经关了就得用 Notice 把结果说清楚 ——
+     *    否则用户关了窗就永远不知道检测跑完了没有、抓到了几条（这正是本次报障的观感）。
+     * ⚠️ 自己记状态而不是读 `isClosed`：Obsidian 的 `Modal` 没有这个公开字段，
+     *    拿 `containerEl.isConnected` 判会在「重开」和「动画中」两种时机飘。
+     */
+    private userClosed = false;
+
+    get closedByUser(): boolean {
+        return this.userClosed;
+    }
+
+    constructor(
+        app: App,
+        summary: LinkCheckSummary,
+        items: DeadLinkItem[],
+        onClearDead?: () => Promise<{ links: number; entries: number }>,
+        onStop?: () => void,
+    );
     /**
      * 第二种口径：plan 的冻结契约写的是单 opts 对象 `{ entries, dead, unknown, items }`，
      * 这里用重载同时认两种调用，调用方按哪份文档写都不会挂 —— 行为完全一致，不是两套实现。
@@ -64,22 +100,26 @@ export class LinkCheckModal extends Modal {
         summaryOrOpts: LinkCheckSummary | (LinkCheckSummary & { items: DeadLinkItem[]; onClearDead?: () => Promise<{ links: number; entries: number }> }),
         items?: DeadLinkItem[],
         onClearDead?: () => Promise<{ links: number; entries: number }>,
+        onStop?: () => void,
     ) {
         super(app);
         if (items) {
             this.summary = summaryOrOpts;
             this.items = items;
             this.onClearDead = onClearDead;
+            this.onStop = onStop;
             return;
         }
         const opts = summaryOrOpts as LinkCheckSummary & {
             items?: DeadLinkItem[];
             onClearDead?: () => Promise<{ links: number; entries: number }>;
+            onStop?: () => void;
         };
         this.summary = opts;
         // opts.items 缺失时兜底成空列表：宁可显示「未发现失效链接」，也不要让设置页因为少传字段整窗炸掉
         this.items = opts.items ?? [];
         this.onClearDead = opts.onClearDead;
+        this.onStop = opts.onStop;
     }
 
     /**
@@ -90,8 +130,9 @@ export class LinkCheckModal extends Modal {
         app: App,
         summary: LinkCheckSummary,
         onClearDead?: () => Promise<{ links: number; entries: number }>,
+        onStop?: () => void,
     ): LinkCheckModal {
-        return new LinkCheckModal(app, summary, [], onClearDead);
+        return new LinkCheckModal(app, summary, [], onClearDead, onStop);
     }
 
     onOpen(): void {
@@ -110,6 +151,10 @@ export class LinkCheckModal extends Modal {
         const head = contentEl.createDiv({ cls: 'rl-lc-head' });
         head.createDiv({ cls: 'rl-lc-title', text: '失效链接检测' });
         this.subEl = head.createDiv({ cls: 'rl-lc-sub', text: this.scanning ? '正在检测…' : this.subtitle() });
+        // 进度条：只在渐进态出现（快照态是一次给全量的，没有「进度」可言）
+        this.progEl = head.createDiv({ cls: 'rl-lc-prog' });
+        this.bannerEl = head.createDiv({ cls: 'rl-lc-banner' });
+        this.syncProgress();
 
         this.listEl = contentEl.createDiv({ cls: 'rl-lc-list' });
         this.renderList();
@@ -120,6 +165,53 @@ export class LinkCheckModal extends Modal {
         this.opsEl = this.footEl.createDiv({ cls: 'rl-lc-ops' });
         // 🔴 2026-10-25：**底部不画「关闭」** —— 与顶部 ✕ 重复（用户对五个弹窗统一的口径）。
         this.renderOps();
+    }
+
+    /**
+     * 进度条与终态横幅的唯一渲染出口（`onOpen` / `setProgress` / `finishScan` 都走这里）。
+     *
+     * 🔴 为什么要有横幅：用户报障「最终无结果弹窗」的真实观感是 ——
+     *    跑完之后弹窗**看起来和跑之前一模一样**（只有副标题一行小字变了），
+     *    于是被当成「没跑完」。这里给一个明确的正向终态：
+     *    「检测完成」/「已停止（只查了 m / n 条）」/「没有可检测的网络地址」，用颜色和图标分开。
+     */
+    private syncProgress(): void {
+        if (this.progEl) {
+            this.progEl.empty();
+            // 只有「正在扫」且总量已知时才画条：跑完就收掉，避免留一根 100% 的死条
+            if (this.scanning && this.total > 0) {
+                const pct = Math.max(0, Math.min(100, Math.round((this.done / this.total) * 100)));
+                this.progEl.createSpan({ cls: 'rl-lc-prog-txt', text: `已查 ${this.done} / ${this.total} 条` });
+                const track = this.progEl.createDiv({ cls: 'rl-lc-prog-track' });
+                const bar = track.createDiv({ cls: 'rl-lc-prog-bar' });
+                bar.style.width = `${pct}%`;
+            }
+        }
+        if (!this.bannerEl) return;
+        this.bannerEl.empty();
+        this.bannerEl.removeClass('is-done', 'is-stopped', 'is-idle');
+        // 未跑完 ⇒ 不画横幅（还在一起跑，别提前宣布结果）
+        if (this.scanning) return;
+        if (this.finished && this.wasStopped) {
+            this.bannerEl.addClass('is-stopped');
+            this.bannerEl.createSpan({
+                cls: 'rl-lc-banner-txt',
+                text: `已停止检测：只查了 ${this.done} / ${this.total} 条，下方的结果不完整`,
+            });
+            return;
+        }
+        if (this.finished) {
+            this.bannerEl.addClass('is-done');
+            this.bannerEl.createSpan({
+                cls: 'rl-lc-banner-txt',
+                text: this.summary.entries === 0
+                    ? '检测完成：库内没有可检测的网络地址'
+                    : `检测完成：共 ${this.summary.entries} 个条目、${this.total} 条地址`,
+            });
+            return;
+        }
+        // 快照态（构造时就带着结果进来）：没有「扫描过程」，只说一句这是旧快照
+        this.bannerEl.addClass('is-idle');
     }
 
     /** 列表整体重画（快照态一次画完；渐进态由 appendItem 增量追加） */
@@ -142,6 +234,16 @@ export class LinkCheckModal extends Modal {
     private renderOps(): void {
         if (!this.opsEl) return;
         this.opsEl.empty();
+        // 🔴 2026-11-17（⑥-A）：「停止检测」放在扫描期间 —— 用户的原话是「误退出」
+        //   ⇒ 说明他们想中断却只能关窗（关了就丢结果）。给它一个正规出口：停下、保留已抓到的。
+        if (this.scanning && this.onStop) {
+            const stopBtn = this.opsEl.createEl('button', { cls: 'rl-btn', text: '停止检测' });
+            stopBtn.onclick = () => {
+                stopBtn.disabled = true;
+                stopBtn.setText('正在停止…');
+                this.onStop?.();
+            };
+        }
         // 🔴 2026-10-22：有失效项且宿主给了执行体才出「一键清除」（没有 dead 时点了也是空操作，不如不出现）
         // ⚠️ 渐进态收尾前不出：跑到一半点清除只会清掉「此刻已知」的一小撮，用户以为清完了
         const canClear = !this.scanning && this.onClearDead !== undefined && this.items.length > 0;
@@ -165,13 +267,26 @@ export class LinkCheckModal extends Modal {
         this.listEl.scrollTop = this.listEl.scrollHeight;
     }
 
-    /** 渐进态收尾：切回以 complete 状态为基准的副标题 + 补出「一键清除」 */
-    finishScan(summary: LinkCheckSummary): void {
+    /**
+     * 渐进态收尾：切回以 complete 状态为基准的副标题 + 补出「一键清除」。
+     * 🔴 2026-11-17（⑥-A）：新增 `wasStopped` / `done` / `total`，让终态能区分
+     *    「跑完了」和「被用户停了」—— 两者的结果可信度完全不同，⛔ 不能共用一句文案。
+     */
+    finishScan(
+        summary: LinkCheckSummary,
+        extra: { stopped?: boolean; done?: number; total?: number } = {},
+    ): void {
         const wasScanning = this.scanning;
         this.scanning = false;
+        this.finished = true;
+        this.wasStopped = extra.stopped === true;
         this.summary = summary;
+        if (typeof extra.done === 'number') this.done = extra.done;
+        if (typeof extra.total === 'number') this.total = extra.total;
         this.items = this.items.slice(); // 数量以已推入的明细为准（summary.dead 是宿主权威计数）
         if (this.subEl) this.subEl.setText(this.subtitle());
+        // 🔴 无条件重画进度/横幅：被停止时 items 可能非空，不能只在「一条没抓到」时刷
+        this.syncProgress();
         if (wasScanning) {
             // 一条都没抓到 ⇒ 列表还是那句「正在检测…」，要换成终态文案
             if (this.items.length === 0) this.renderList();
@@ -179,10 +294,20 @@ export class LinkCheckModal extends Modal {
         }
     }
 
+    /** 进度推进（宿主每探完一条调一次）：只动进度条，不整表重画以免滚动位置跳动 */
+    setProgress(done: number, total: number): void {
+        this.done = done;
+        this.total = total;
+        this.syncProgress();
+    }
+
     /** 开始标记：调用方 `open()` 之前调（或之后立刻调）都能生效 */
     markScanning(): void {
         this.scanning = true;
+        this.finished = false;
+        this.wasStopped = false;
         if (this.subEl) this.subEl.setText('正在检测…');
+        this.syncProgress();
         this.renderOps();
     }
 
@@ -222,10 +347,17 @@ export class LinkCheckModal extends Modal {
     }
 
     onClose(): void {
+        // 🔴 2026-11-17（⑥-A）：记下「是用户关掉的」——宿主收尾时据此改用 Notice 汇报，
+        //    否则用户一关窗就永远等不到结果（本次报障的核心观感）。
+        //    ⚠️ `clearDead()` 成功后也会 `this.close()`，那条路 `finished` 已为 true，
+        //       宿主那边同样会拿到 `closedByUser`，但它已经拿到结果、文案分支不同，不会误报。
+        this.userClosed = true;
         this.listEl = null;
         this.subEl = null;
         this.footEl = null;
         this.opsEl = null;
+        this.progEl = null;
+        this.bannerEl = null;
         this.contentEl.empty();
     }
 

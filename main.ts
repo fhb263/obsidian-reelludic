@@ -8,8 +8,8 @@ import { createSearchCache } from 'pure/searchCache';
 import { normalizeUiTheme, THEME_CLASS } from 'pure/themeTokens';
 import { isNumberInputTarget, parseNumberBounds, wheelStepValue } from 'pure/numberWheel';
 // #541「个性化体验」：主导航布局 / 起始页 / 卡片风格 / 界面动效（归一与 body 类名全在 pure 侧）
-import { normalizeStartTab } from 'pure/homeTabs';
-import { normalizeNavLayout } from 'pure/navLayout';
+import { normalizeStartTab, normalizeStartTabFor, normalizeTabAxis, type TabAxis } from 'pure/homeTabs';
+import { defaultNavLayoutFor, normalizeNavLayout } from 'pure/navLayout';
 import {
     APPEARANCE_BODY_CLASSES, CARD_STYLE_CLASS, MOTION_CLASS, normalizeCardStyle, normalizeMotionMode,
 } from 'pure/appearance';
@@ -17,7 +17,15 @@ import { checkAnimeUpdate, isBlockedPage, type UpdateCheckResult } from 'pure/up
 import { EntryService } from 'services/EntryService';
 import { AiSummaryService } from 'services/aiSummary';
 import { LrcBilingualService } from 'services/lrcBilingual';
+// 🔴 2026-11-27（用m06545，逐字）：「不做AI挂件了，删除全部AI挂件相关代码。
+//    AI 全局悬浮对话（services/aiChat + pure/aiChat + AiChatWidget.svelte）已整体删除。
+//    别再补回来。下面这AI 导入与它无关*不可**跟着删。
+//      AiSummaryService（条目摘要）、CueSummaryService（字幕总结）、LrcBilingualService（双语歌词）。
+//      AiPrefillService（条目预填）、aiIcon（图标）、translate（翻译）。
+// 字幕 AI 总结（详情页时间轴面板那按钮。
+import { CueSummaryService } from 'services/cueSummary';
 import type { AiSummaryInput, AiSummaryResult } from 'pure/aiSummary';
+import type { CueSummaryInput, CueSummaryResult, CueAskTurn } from 'pure/cueSummary';
 import type { LrcBilingualMerge } from 'pure/lrcBilingual';
 // #499 AI 条目预填（新增条目「手动填写」界面标题行 ✨）
 import { AiPrefillService } from 'services/aiPrefill';
@@ -46,7 +54,14 @@ import {
     FEED_RANGE_WORDS, collectFeed, feedSectionLabel, feedSpan, groupFeed, renderPeriodBlock, type FeedRange,
 } from 'pure/activityFeed';
 import type { ActivityEvent } from 'data/types';
-import { nodeHttpGet, nodeHttpPost, nodeHttpGetBuffer } from 'services/nodeHttp';
+import {
+    nodeHttpGet,
+    nodeHttpPost,
+    nodeHttpGetBuffer,
+    nodeHttpPostStream,
+    type NodeHttpBufferResponse,
+    type NodeHttpResponse,
+} from 'services/nodeHttp';
 import { fetchLyric, searchLyrics, type LyricFetchOutcome, type LyricSearchOutcome } from 'services/lyricSearch';
 // 四平台下载面（#399-D 移植批）：搜索 / 歌单 / 下载 / 连通性测试全在 `services/dl`
 import {
@@ -73,8 +88,9 @@ import { dlBiliSearch, dlBiliView } from 'services/dl/bilibili';
 // #529 书籍「检索在线书籍阅读」：微信读书网页版搜索（服务层只发请求，形态在 `pure/weread`）
 // 🔴 #580：同一份服务层再供两条路 —— 「测试连接」（Cookie 打书架接口）与 **book 组元数据检索**
 //    （`searchWereadMeta` 复用同一个免登录搜索 + 同一份解析/映射）。⛔ 别为元数据源另写一份请求。
-import { searchWeread as searchWereadSvc, searchWereadMeta, testWereadAuth, fetchWereadShelf as fetchWereadShelfSvc, fetchWereadBookInfo as fetchWereadBookInfoSvc } from 'services/weread';
+import { searchWeread as searchWereadSvc, searchWereadMeta, testWereadAuth, fetchWereadShelf as fetchWereadShelfSvc, fetchWereadBookInfo as fetchWereadBookInfoSvc, fetchWereadNotes as fetchWereadNotesSvc, type WereadNotesOutcome } from 'services/weread';
 import { hasWereadAuth, WEREAD_INFO_GAP_MS, type WereadBookInfo, type WereadCandidate } from 'pure/weread';
+import { renderWereadNotes, WEREAD_NOTES_SECTION } from 'pure/wereadNotes';
 // #589 开机凭据自检（纯逻辑在 pure；网络调用在本文件）
 import {
     CREDENTIAL_CHECK_DELAY_MS,
@@ -86,6 +102,7 @@ import {
     statusOf,
     withStatus,
     withoutStatus,
+    type CredentialStatusMap,
 } from 'pure/credentialCheck';
 import { partitionShelfBooks, shelfBookEntryFields, shelfExtraNote, type WereadShelfBook } from 'pure/wereadShelf';
 // 🔴 #591 Ctrl+滚轮缩放：媒体库把「缩到几列」报回来，落盘 + 重推都在宿主（视图侧不碰 settings）
@@ -93,34 +110,146 @@ import { normalizePosterColumns, normalizePosterDensity, type PosterDensity } fr
 // 🔴 #657：统计页区块顺序的归一（自由排序 + 自适应；真源在 pure/statsLayout）
 import { isDefaultStatsOrder, normalizeStatsOrder, type StatsBlockKey } from 'pure/statsLayout';
 // #527/#531 剧集链接失效探测（服务层只发请求，判据在 `pure/linkStatus`）
-import { checkAllLinks } from 'services/linkCheck';
-import { collectLinkScanTargets, clearDeadEpisodeUrls, summarizeLinkStatus, bvidOf, type LinkStatus } from 'pure/linkStatus';
+import { checkAllLinks, type LinkCheckStopSignal } from 'services/linkCheck';
+import { collectLinkScanTargets, clearDeadEpisodeUrls, summarizeLinkStatus, bvidOf, isHttpUrl, type LinkStatus } from 'pure/linkStatus';
 // 🔴 2026-10-19 用户指令：检测结果不再内嵌在设置页（`.rl-hint`），改成弹窗展示**失效明细** ⇒
 //    明细条目的形状取自弹窗模块（唯一真源，⛔ 别在 main.ts 里再写一份同形状的本地接口）。
 import type { DeadLinkItem } from 'modals/LinkCheckModal';
 // 「第 N 集」文案真源（失效明细里的集标签与编辑表单的集按钮**同一份**，⛔ 别手写第二份）
 import { episodeHintLabel } from 'pure/episodeAssoc';
+import { canPlayNetInline } from 'pure/netInline';
+import { biliIdsOf, isBiliShortUrl } from 'pure/biliEmbed';
+// 🔴 2026-11-24：网络集改回**官方 iframe 内嵌**后，这里只需要「取 cid」与「Cookie 归一」这一。
+//    取流专用的一半（BILI_QUALITY / biliPlayUrl / pickBiliStream / BILI_PREFETCH_WINDOW /
+//    biliPrefetchRange / qualityLabel / wantQuality）已随内置播放器一起从 `pure/biliPlay.ts` 删除。
+//    别再往这个 import 里加取流导出（那意味着又把内置播放器接回来了）。
+import { BILI_REFERER, BILI_UA, biliFailMessage, biliPagelistUrl, biliViewUrl, looksLikeCookie, normalizeCookie, pickCidFromPagelist, pickPgcEpisode, pickViewByAid, type BiliIds } from 'pure/biliPlay';
+import { fetchYtInfo, isYtFailure, normalizeProxyUrl, searchYt, systemProxyUrl, ytTestConnection } from 'services/ytStream';
+import { syncEmbedCookies, type EmbedCookieResult } from 'services/embedCookie';
+import { isYouTubeUrl, pickYtCaption, pickYtMedia, youTubeIdOf, ytThumbUrl, type YtSearchItem } from 'pure/youtube';
+import { fetchBiliSubtitle, type BiliSubtitleFile } from 'services/biliSubtitle';
+import type { NetCueFailReason } from 'pure/netCueCopy';
+// 🔴 #496「B 站视mp3 下载」：这条链路与「网络集播放」无关，别随内置播放器一起删。
+//    026-11-24 一度误删过，恢复时补回）。
 import { defaultYtDlpDeps, fetchBiliAudioWithYtDlp } from 'services/ytdlp';
+// 🔴 m01938 3「本地音频转文字」：执行层（ffmpeg 抽轨 + whisper 转写 + SRT）。
+//    别在视图层直spawn —子进程、模型路径、vault→绝对路径的换算全归宿主。
+import { defaultAsrDeps, transcribeWithWhisper, type AsrCancelHandle } from 'services/asr';
+import { defaultQwenDeps, transcribeWithQwen } from 'services/asrQwen';
+import { defaultSenseVoiceDeps, transcribeWithSenseVoice } from 'services/asrSenseVoice';
+// 🔴 2026-11 六家引擎：Paraformer（VAD 分段离线）与 X-ASR（VAD 分段流式）共用一条执行层。
+//    差别只在 exe（offline-asr / online-asr 版）与喂进去的权重。⛔ 别拆成两份几乎一样的代码。
+import { defaultSherpaVadDeps, transcribeWithSherpaVad } from 'services/asrSherpaVad';
+// 🔴 Confucius4 llama.cpp llama-mtmd-cli*结果stdout、日志在 stderr**。
+//    sherpa 系（全在 stderr）相deps 不能复用（见 asrLlama 文件头）。
+import { defaultLlamaDeps, transcribeWithLlama } from 'services/asrLlama';
+import { asrSrtPathFor, sanitizeExePath } from 'pure/asrEngine';
+import {
+    engineDefOf,
+    isSherpaRunner,
+    engineMissingMessage,
+    qwenMissingMessage,
+    type AsrEngineId,
+} from 'pure/asrEngines';
+// 🔴 m09819「三家模型下载在目录怎么不区分」：三家各占 `models/<engine>/` 子目录。
+//    子目录名这条规则的单一真源在这个纯模块里（tests/asrLayout.test.ts 钉住）。
+import { asrEngineSubdir } from 'pure/asrLayout';
+import { defaultDictDeps, lookupWordInDict } from 'services/wordDict';
+// 🔴 m01938 第三期「按需下载模型」：执行层（https ?.part 字节校验 改名）。
+//    ⚠️ 库外目录由宿主决定（`asrModelDir`），别让下载器自己猜路径。
+import { defaultDownloadDeps, downloadModel } from 'services/asrModelDownload';
+import { AsrEngineModal } from 'modals/AsrEngineModal';
+// 🔴 m09123「一键装好和补环境具体是装什么东西」⇒ 先把清单摊开、逐项打勾再装。
+//    `AsrInstallModal` 只负责画清单与打勾，真正的动作由本文件的 `openAsrInstall()` 提供。
+import { AsrInstallModal } from 'modals/AsrInstallModal';
+import { asrInstallDirFields, asrInstallPlan, itemProgress, type AsrInstallDirs } from 'pure/asrInstallPlan';
+// 🔴 m05717 ①：AI 运行管家要真数据（显内存/CMake/C++），探测走子进程、结果缓存在实例上。
+//    ⚠️ 纯判据在 `pure/asrHardware`，本文件只负责「采一次、缓存、给界面读」。
+import { probeHardware } from 'services/asrHardwareProbe';
+import type { HardwareInfo } from 'pure/asrHardware';
+import {
+    ASR_MODEL_PRESETS,
+    downloadLooksComplete,
+    joinDir,
+    mirrorUrlFor,
+    presetByFileName,
+    presetOf,
+    presetSizeLabel,
+    type AsrModelPreset,
+    type AsrModelTier,
+} from 'pure/asrModels';
+// 🔴 m05462「怎么还有剩下的框要我选择」：外部程序**自动定位**（纯逻辑：PATH 拆分、候选目录、就绪判据）。
+//    只有字符串推导在这里，真正的 statSync 在本文件 `asrAutoDetect()`（惰require('fs')）。
+import { commonInstallDirs, ffmpegPathNames, locateOrder, splitPathList, whisperCppOnlyNames } from 'pure/asrLocate';
+// 🔴 一键安whisper.cpp 运行时：纯逻辑（挑5 个文/ 放哪/ 进度换算 执行层（zip 自解）。
+//    不引第三zip —main.js 已逼近 5MB 硬线，zip 中央目录格式二十年没变，zlib 就够。
+import { installSupported, installUnsupportedMessage } from 'pure/whisperRuntime';
+import { defaultWhisperRuntimeDeps, installWhisperRuntime as runWhisperInstall, type InstallHandle } from 'services/whisperRuntime';
+// 🔴 m08030「可一键下载三家模型」：SenseVoice / Qwen3 的安装包清单（纯逻辑 整包安装器（执行层）。
+//    ⚠️ whisper 不走这套 —它的三档是「一ggml 文件一档」，既有实现`ASR_MODEL_PRESETS`。
+import {
+    bundleOf as asrBundleOf,
+    bundleBytes,
+    formatBundleBytes,
+    QWEN_ALIGN,
+    QWEN_ASR_VARIANTS,
+    SENSEVOICE_VARIANTS,
+    SHERPA_EXE_NAME,
+    SHERPA_VAD_OFFLINE_EXE_NAME,
+    SHERPA_VAD_ONLINE_EXE_NAME,
+    SILERO_VAD_NAME,
+    CONFUCIUS_VARIANTS,
+    PARAFORMER_VARIANTS,
+    XASR_VARIANTS,
+    confuciusVariantOf,
+    paraVariantOf,
+    qwenBundle,
+    qwenVariantOf,
+    svVariantOf,
+    xasrVariantOf,
+} from 'pure/asrBundles';
+import { defaultInstallBundleDeps, installBundle as runBundleInstall } from 'services/asrBundleInstall';
 import type { BiliPart, BiliVideo } from 'pure/dl/bilibili';
 import { biliThumbUrl, planEpCover, EP_COVER_GAP_MS, type EpCoverPlan } from 'pure/epCover';
-import { buildSongFilename } from 'pure/dl/utils';
+import { buildBiliAudioFilename } from 'pure/dl/utils';
 import type { LyricSourceId } from 'pure/lyricOnline';
 import { HomeView, HOME_VIEW_TYPE } from 'views/HomeView';
 import type { HomeTab } from 'views/tab';
 import { EntryModal } from 'modals/EntryModal';
+// 🔴 m07854 ⑭：「今天看什么」全屏抽卡（宿主弹窗，⛔ 组件里不 new Modal。
+import { WhatToWatchModal } from 'modals/WhatToWatchModal';
 import { SeriesPickerModal } from 'modals/SeriesPickerModal';
-import { SeriesReorderModal } from 'modals/SeriesReorderModal';
+import { SeriesPropsModal } from 'modals/SeriesPropsModal';
 // 🔴 #629 系列「批量关联」弹窗（系列折叠卡右键 →「批量关联」）
 import { SeriesAssociateModal } from 'modals/SeriesAssociateModal';
+// 🔴 2026-11-16 游戏「本地 swf 直接玩」：内置 Ruffle 播放器。
+//    容器形态按用户逐字「要独立标签页运行而不是弹窗运行」定为工作区 ItemView，
+//    ⛔ 旧的 `modals/FlashGameModal`（弹窗版）已删除，别再加回来。
+import { FlashGameView, FLASH_GAME_VIEW_TYPE } from 'views/FlashGameView';
 import type { SeriesGroup } from 'pure/seriesGroup';
+import { normalizeSeriesName, seriesKeyOf, seriesTitleOf, sortSeriesItems } from 'pure/seriesGroup';
 import { ConfirmModal } from 'modals/ConfirmModal';
+import { TextPromptModal } from 'modals/TextPromptModal';
+// 🔴 2026-11-25：通用「输一行文本」弹窗（系列折叠卡右键的「批量填归属合集 / 归属标签」用它）。
+//    全仓第一—以后要「输一个字符串」请复用它，别再各自手搭 input。
 import { LinkPickerModal } from 'modals/LinkPickerModal';
-import { EpisodePickerModal } from 'modals/EpisodePickerModal';
 import { QuickAssociateModal, type QuickAssociateResult, type QuickAssocPickKind, type PlayableCandOutcome } from 'modals/QuickAssociateModal';
 // 🔴 2026-10-19 设置页 UX 改版：新手引导（`modals/GuideModal`）**整体下线** ——
 //    用户裁定「关于页那枚新手引导按钮换成『未来规划』」，本弹窗随之删除 ⇒ 这里也不再 import。
 import { ExcerptModal } from 'modals/ExcerptModal';
 import { AssetCleanupModal } from 'modals/AssetCleanupModal';
+// 🔴 m07854 ⑱：批量重命名（规则pure/batchRename，弹窗只列计+ 确认。
+import { BatchRenameModal } from 'modals/BatchRenameModal';
+import { planBatchRename, type RenamePlan } from 'pure/batchRename';
+// 🔴 2026-11-13 用户指令：阅读器区域截图右键 → 先抓图再进七工具批注弹窗
+import { ShotAnnotateModal } from 'modals/ShotAnnotateModal';
+// 🔴 2026-11-08：笔记反向导入（用户报「手写的条目上海报墙不出现」）扫库判据pure，勾UI modal
+import { NoteImportModal } from 'modals/NoteImportModal';
+import { NoteImportGuideModal, type NoteImportGuideScan } from 'modals/NoteImportGuideModal';
+import { scanImportableNotes, writeIdIntoNote, posterFromBanner, type NoteImportCandidate } from 'pure/noteImport';
+// 🔴 2026-11-08 用户指令：「给从笔记导入条目项加个『生成模板』按钮，可在仓库根目录生成笔记模板」
+//   模板内容（六类型可复制区块）pure/noteTemplate，IO main.writeNoteTemplate()
+import { buildNoteTemplate, noteTemplatePath } from 'pure/noteTemplate';
 import { WereadShelfSyncModal, type WereadShelfFetchOutcome } from 'modals/WereadShelfSyncModal';
 // 🔴 #662：豆瓣「同步导入」弹窗（收藏：想看 / 在看 / 看过）+ 纯解析
 import { DoubanSyncModal, type DoubanSyncRow } from 'modals/DoubanSyncModal';
@@ -129,6 +258,8 @@ import { BangumiSyncModal } from 'modals/BangumiSyncModal';
 import { TmdbSyncModal, type TmdbSyncRow } from 'modals/TmdbSyncModal';
 // 🔴 2026-10-25（用户：「所有类型账号同步是要先列出弹窗列出游戏让我勾选才同步」）：Steam 同步弹窗
 import { SteamSyncModal, type SteamSyncRow } from 'modals/SteamSyncModal';
+// 🔴 2026-11-09 15 轮阶C：音乐清单同步弹窗（与上面五个同步弹窗同构，只是多了「先选歌单」一层）
+import { MusicSyncModal, type MusicSyncPlatformState, type MusicSyncRow } from 'modals/MusicSyncModal';
 // 🔴 2026-10-25 用户指令：一键迁移改成「先弹窗勾选（默认全选）再迁移」⇒ 勾选层 + 进度层两个弹窗
 import { PosterMigratePickModal, type PosterMigrateCandidate } from 'modals/PosterMigratePickModal';
 import { PosterMigrateProgressModal } from 'modals/PosterMigrateProgressModal';
@@ -136,7 +267,7 @@ import {
     tmdbItemKey,
     tmdbListToStatus,
     tmdbSubjectUrl,
-    tmdbVoteToRating,
+    tmdbVoteToCommunityScore,
     tmdbAddedAtToISO,
 } from 'pure/tmdbSync';
 import {
@@ -185,6 +316,24 @@ import {
     steamEntryNeedsDetail,
     STEAM_DETAIL_FILL_LIMIT,
 } from 'pure/steamSync';
+// 🔴 2026-11-08：Bangumi 详情投影的唯一真源（以前在 ①②三处各手写一遍，兜底链靠人肉对齐。
+import { bangumiDetailData, bangumiEntryFields, bangumiSearchEnrich } from 'pure/bangumiSync';
+// 🔴 2026-11-09 15 轮阶B：在线曲库歌`music` 条目的落库映射（唯一真源。
+import { MUSIC_ADOPT_FIELDS, adoptableMusicEntryId, indexMusicEntries, musicEntrySeed, musicIdFromResult, musicItemKey, musicSeedFromResult } from 'pure/musicSync';
+import type { MusicEntrySeed } from 'pure/musicSync';
+// 🔴 2026-11-09 15 轮阶C：账号清单同步（我的歌单 / 我喜欢的音乐。
+//    纯逻辑（候选构/ 标签 / 汇总文案）`pure/musicPlaylist`，请求与降级`services/dl/myMusic`
+import { musicCandidatesFromSongs, musicSyncPartialMessage, musicSyncSummary, playlistTag } from 'pure/musicPlaylist';
+import type { MusicSyncCandidate, MusicSyncPlaylist } from 'pure/musicPlaylist';
+import { musicPlatformLabel } from 'pure/musicPlatform';
+import {
+    KUGOU_SYNC_UNSUPPORTED,
+    neteaseMyPlaylists,
+    neteasePlaylistTracks,
+    qqMyPlaylists,
+    qqPlaylistTracks,
+} from 'services/dl/myMusic';
+import type { MyListOutcome } from 'services/dl/myMusic';
 import { fetchOwnedGames, fetchWishlist, testSteamAuth } from 'services/steamWebApi';
 // #540 EPUB 漫画（漫画条目 + .epub → 抽出页图走漫画阅读器）：判据真源在 pure/epubComic
 import { extractEpubComicPages } from 'pure/epubComic';
@@ -231,10 +380,13 @@ import {
     matchLineLink,
     parseTimeLink,
     shotFileName,
+    stampLabel,
     videoDeepLinkFromParams,
     type VideoTimeTarget,
 } from 'pure/videoLink';
 import { MARK_SECTION_SHOT, MARK_SECTION_STAMP, type VideoMark } from 'pure/videoMarks';
+// 🔴 m04435 ①：右键「时间戳笔记」浮层的 `心情 + 备注` 拼接（纯函数，文案真源在 `pure/stampNote`）
+import { stampNoteLine } from 'pure/stampNote';
 import {
     readerShotBlock,
     readerShotFileName,
@@ -258,8 +410,8 @@ import { toFileUrl } from 'pure/mediaFileUrl';
 import { isEmbeddableVideoPath, isAssociableVideoPath, isAssociableAudioPath, VIDEO_ASSOCIABLE_EXTENSIONS, AUDIO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
 import type { MediaInfo } from 'pure/mediaInfo';
 // #404「库内音乐目录里找回同名音频」：目录真源 `downloadDir` + 匹配纯模块
-import { downloadDir, downloadDirAbsPath, downloadRelPath, downloadSizeIssue, migrateLegacyDownloadDir, type DownloadKind } from 'pure/downloadPlan';
-import { pickLibraryAudio, type LibraryAudioFile } from 'pure/libraryAudio';
+import { downloadDir, downloadDirAbsPath, downloadRelPath, downloadSizeIssue, migrateLegacyDownloadDir, sanitizeDownloadName, type DownloadKind } from 'pure/downloadPlan';
+import { matchAudioFileToEntry, pickLibraryAudio, type LibraryAudioFile } from 'pure/libraryAudio';
 // #497「改名关联的音频文件」：路径拆分 / 校验 / 目标 .lrc 路径的唯一真源
 import { planAudioRename } from 'pure/renameAudio';
 // #498「从网络搜索封面」：请求地址 / 解析 / 缩略图回退链 / 下载 Referer 的唯一真源
@@ -271,6 +423,42 @@ import { platformCandidates, type PosterSource } from 'pure/posterSources';
 import { isAssociableBookPath, pickLibraryBook, type LibraryBookFile } from 'pure/libraryBooks';
 // #534 游戏「检索本地」：可启动文件判据（与书籍那套扩展名集合分开，⛔ 别互相借用）
 import { isGameLaunchPath } from 'pure/gameLaunch';
+// 2026-11-16 游戏「本地 swf 直接玩」的纯逻辑（运行时完整性判据 + 解压筛选，见 `pure/flashGame` 的说明）
+import {
+    clampGameStage,
+    isFlashPath,
+    isRuffleRuntimeComplete,
+    pickMainSwf,
+    shouldKeepRuffleFile,
+    RUFFLE_BUNDLE_URL,
+} from 'pure/flashGame';
+import { baseNameOf, extractAssetRefs, planAssetRefs } from 'pure/flashAssets';
+// 2026-11-17 ① SWF 载体目录约定（平铺区 / 独立目录 / 存档备份夹的唯一判据真源）
+import {
+    GAME_SAVES_SUBDIR,
+    dirOfSwf,
+    gameBundleSavesDir,
+    gameCarrierDir,
+    gameCarrierLayout,
+    isInSwfFlatDir,
+    shouldUpgradeToBundle,
+} from 'pure/gameLayout';
+import { buildSaveBundle, parseSaveBundle, saveBundleFileName } from 'pure/gameSave';
+import {
+    build17yySwfUrl,
+    decodeHtmlBytes,
+    isFetchableUrl,
+    looksLike404,
+    normalizeGamePageUrl,
+    parse17yyAjaxParams,
+    parseFlashPage,
+    parseGameEmbedPage,
+    parseGameStage,
+    resolveUrl,
+    siteOf,
+    swfFileNameOf,
+} from 'pure/flashFetch';
+import { downloadToVault } from 'services/downloader';
 // #562 分类本地目录（键 / 分组 / 字段映射的真源）+ #563 单集本地检索的匹配纯模块
 // 🔴 #602：`LocalBookSearchQuery` / `LocalFileSearchOutcome` 也收在这里 —— 关联弹窗与编辑表单
 //    （`.svelte`）要用**同一个形状**，放弹窗模块里会让组件反向依赖弹窗（见 `pure/localDirs` 的说明）。
@@ -288,13 +476,29 @@ import { pickLocalEpisode, type LocalEpisodeOutcome, type LocalEpisodeQuery } fr
 import { songLibraryResults, SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
 import { dirOfPath, fileNameOfPath, pickSubtitleCandidates, srtToVtt, type SubtitleCandidate } from 'pure/subtitle';
 import { scanEpisodeNumbers } from 'pure/episodeScan';
-import { initGlobalTooltip } from 'services/globalTooltip';
+import { bindTooltipDocument, initGlobalTooltip } from 'services/globalTooltip';
+// 悬浮进度球（用户 m01938）：跨笔记存活的长任务进度显。
+import { destroyProgressBall, startProgressBall, type ProgressBallHandle } from 'services/progressBall';
+// 🔴 m03052 ⑤：B站音乐下载的后台化 —— 卸载时摘球/清订阅（见 `onload` 的 `register` 处）
+import { disposeBiliDownloads } from 'services/biliDownloadService';
 import { VideoPlayerView, VIDEO_PLAYER_VIEW_TYPE, type EmbedVideoItem, type VideoPlayerOptions } from 'views/VideoPlayerView';
+// 🔴 #691 026-10-27）B 站风选集**独立新页**：不是播放器内塞侧栏，是工作区新标签。
+import {
+    EpisodePageView,
+    EPISODE_PAGE_VIEW_TYPE,
+    type EpisodePageExtras,
+    type EpisodePageOptions,
+} from 'views/EpisodePageView';
 // #604 内置播放器「播放模式」四档真源 + 脏值归一 + 旧数据迁移（设置里只存联合类型，逻辑全在纯模块）
 import { normalizePlayMode, playModeFromLegacy, type PlayMode } from 'pure/playerMenu';
 // ④-4 内置音频播放器：视图 + 可复用装配层（笔记内 ` ```lrc ` 块共用同一套 DOM）
 import { AudioPlayerView, AUDIO_PLAYER_VIEW_TYPE, type AudioPlayerOptions } from 'views/AudioPlayerView';
 import { AudioInlineBlock, type AudioPlayerTrack } from 'views/audioPlayerMount';
+import { NoteCardBlock } from 'views/noteCardMount';
+import { NOTE_CARD_LANG, applyNoteCardEdit } from 'pure/noteCard';
+// ③ 单集评价（用户 m00002）：写回时归一走 `pure/episodeReview` 的唯一判据，
+//    ⛔ 别在宿主侧另写一套「空就保留」—— 那样用户把状态改回「未看」永远清不干净。
+import { setReviewAt, normalizeEpisodeReviews, type EpisodeReview } from 'pure/episodeReview';
 // ④ 歌词：四路来源优先级与 ` ```lrc ` 块围栏口径的唯一真源（生成侧 noteGenerator 与消费侧播放器共用）
 import { extractLrcBlock, parseLrcBlock, parseLrcRef, pickLyrics, siblingLrcPath, type LrcBlock, type LrcLyricsOrigin } from 'pure/lrcSource';
 import { readEmbeddedLyrics } from 'pure/embeddedLyrics';
@@ -302,7 +506,7 @@ import { normalizeAudioPlayMode, playersToPause, type PlayerKind } from 'pure/au
 import { clampAudioVolume } from 'pure/audioVolume';
 import { fileDisplayName } from 'pure/libraryDir';
 import { mergeBySource, sortByRelevance } from 'pure/searchMerge';
-import { PROVIDER_META, resolveSourceChain, sourceGroupForBookKind, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
+import { PROVIDER_META, resolveSourceChain, sourceGroupForBookKind, sourceGroupForType, sourceEnLabel, deriveGroupSearchError, seedSourceChains, type AuxState, type SourceGroup, type ProviderId } from 'pure/sourceRegistry';
 import { audioSubtitle } from 'pure/cardMeta';
 import { normalizeTableColumnsForType } from 'pure/tableColumns';
 // 🔴 #668 视图顺序与时间线缩放档的归一（唯一真源，⛔ 别在别处再写一份）
@@ -406,6 +610,19 @@ const READER_STORE_FLUSH_MS = 1000;
  */
 const LYRICFLUX_PLUGIN_ID = 'obsidian-lyricflux';
 
+/**
+ * 「交回跳复用已取好的网络流」的保质期（毫秒）。
+ *
+ * 🔴 用户 2026-11-10 裁定「退回时沿用播放器里已经缓冲好的流，不再重新取流」。
+ * 为什么必须有保质期：`biliStreamProxy` 挂上去的B 站直链路由，链接里的
+ * 签名/`deadline` 会过期；Cookie 也可能在中途失效。拿过期路由回放的表现是
+ * 「黑+ 一直转圈」，比重新取流还难查 超过这个时长一律退回重新取流。
+ * ⚠️ 10 分钟：够覆盖「看一会儿 全屏 再退回」的常规操作。
+ *    又远短于 B 站直链的典型有效期。⛔ 别改Infinity。
+ */
+const NET_STREAM_REUSE_MS = 10 * 60 * 1000;
+
+
 /** #537 漫画页的 MIME（Blob 带上正确类型，`<img>` 解码更稳、avif/webp 尤其）；未知回落 `image/*` */
 function comicMime(path: string): string {
     const map: Record<string, string> = {
@@ -419,6 +636,15 @@ function comicMime(path: string): string {
     };
     return map[comicExt(path)] ?? 'image/*';
 }
+
+/**
+ * 网络集字幕的抓取结果（用m06406 的两种空态靠它分岔）。
+ *
+ * `BiliSubtitleFile` = 拿到了；`{ fail }` = 没拿到，**带上了原因**。
+ * 🔴 为什么不直接 `BiliSubtitleFile | null`：null 让视图层无从分辨「该去改 Cookie」
+ *    和「改 Cookie 也没用」，只能瞎猜 —— 猜错就是把用户往设置页瞎指挥。
+ */
+type BiliSubtitleResult = BiliSubtitleFile | { fail: NetCueFailReason };
 
 export default class ReelLudicPlugin extends Plugin {
     settings: ReelLudicSettings = DEFAULT_SETTINGS;
@@ -459,6 +685,8 @@ export default class ReelLudicPlugin extends Plugin {
     private epCoverGate: Promise<void> = Promise.resolve();
     /** #582 串行闸门：书架导入时**逐本**拉详情（见 `WEREAD_INFO_GAP_MS`，并发吃风控） */
     private wereadInfoGate: Promise<void> = Promise.resolve();
+    /** ②-4 串行闸门：书架导入时**逐本**拉划线（与详情**共用同一条链** `wereadInfoGate`，
+     *  因为它俩打的是同一个域名、同一份 Cookie，风控是按请求数算的，分开两条链等于并发翻倍） */
     /** ④-4 音频播放器：上一次播放的条目（命令面板「在标签页/侧边栏打开」用它重建队列） */
     private lastAudioEntry: MediaEntry | null = null;
     /** 笔记内块锚点链接 → 该书阅读器 leaf（M1 双向溯源：同一本书不重复开标签，D-4）；用前按 getLeavesOfType 校验存活 */
@@ -477,8 +705,36 @@ export default class ReelLudicPlugin extends Plugin {
     private toArrayBuffer(b: { buffer: ArrayBufferLike; byteOffset: number; byteLength: number }): ArrayBuffer {
         return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
     }
-    /** 统一视图当前页签（追番表/书籍/影视/游戏/统计） */
-    homeTab: HomeTab = 'media';
+    /**
+     * 🔴 用户 m09565 ①-4：**两条分类轴各记各的当前页签**。
+     *
+     * 用户逐字：「两种模式的导航状态（当前选中项）要独立保存，切换开关时不要丢失各自的位置」
+     * ⇒ 不能再用一个 `homeTab` 字段扛两套页签集合（切开关时后写的那套会把前一套冲掉）。
+     *
+     * ⚠️ 为什么是**内存**而不是 `settings`：`homeTab` 从 #541 起就刻意不落盘 ——
+     *    那是「上次看到哪」，写回设置会让「起始页」永远被最后停留的页覆盖（见 `onLoad` 里那段注释）。
+     *    这里只把「每条轴自己记到哪」放进内存，冷启动仍由 `settings.startTab` 按当前轴折算播种
+     *    （`normalizeStartTabFor`），所以「起始页」依旧是唯一真源。
+     */
+    private homeTabByAxis: Record<TabAxis, HomeTab> = { expanded: 'movie', classic: 'media' };
+
+    /** 当前页签分类轴（真源 = `settings.tabAxis`；归一在 `pure/homeTabs`） */
+    get tabAxis(): TabAxis {
+        return normalizeTabAxis(this.settings.tabAxis);
+    }
+
+    /**
+     * 统一视图当前页签（追番表/书籍/影视/游戏/统计）。
+     * 🔴 m09565 ①-4 起改成 getter/setter：读写都只作用于**当前分类轴**那一格，
+     *    另一条轴的位置原样留着 ⇒ 切开关回来还在原处。
+     */
+    get homeTab(): HomeTab {
+        return this.homeTabByAxis[this.tabAxis];
+    }
+
+    set homeTab(v: HomeTab) {
+        this.homeTabByAxis[this.tabAxis] = v;
+    }
     /** 数据文件变更刷新防抖定时器（vault 监听兜底） */
     private refreshTimer: number | null = null;
     // 🔴 #589/#1.4.x 凭据测试结论 = `settings.credentialStatus`（**单一真源**，不另开内存 Map）。
@@ -519,6 +775,24 @@ export default class ReelLudicPlugin extends Plugin {
         //     旧名会让人以为首次安装判据还在。）
         const rawSettings = await this.loadData();
         this.settings = Object.assign({}, DEFAULT_SETTINGS, rawSettings);
+        /**
+         * 🔴🔴 用户 m05673（手机实测）：「默认导航布局应该为合并视图以适应手机端竖屏显示」。
+         *
+         * 判据是「磁盘上**从来没有**这个字段」—— 不是 `typeof navLayout === 'undefined'` 之外的值。
+         * 三种情况分得很清楚：
+         *   ① `rawSettings.navLayout` 压根不存在（新装） ⇒ 按设备类型播种（手机/平板 = merged）；
+         *   ② 存的是合法值（top / sidebar / merged） ⇒ **尊重用户选择**，一个字节都不动；
+         *   ③ 存的是脏值（null / 数字 / 拼错） ⇒ 交给 `normalizeNavLayout` 兜成 `top`（旧口径不变）。
+         *
+         * ⛔ 别把这段挪进 `normalizeNavLayout`：那个函数是**读存量数据**的归一器，它的 `top`
+         *    兜底保护的是老用户（改它 = 全体老用户升级即换脸）。也⛔ 别用「屏幕宽度」判 ——
+         *    桌面用户把窗口拖窄是故意的，不该被强制换布局。
+         * ⚠️ 播种之后要 `saveSettings()` 落盘吗？**不落**。这一档会随用户下一次改任何设置一起写下去；
+         *    提前落盘反而会在「用户只是打开了一次插件」时改掉 data.json（违反「不改用户数据」的既有纪律）。
+         */
+        if (!rawSettings || typeof rawSettings !== 'object' || !('navLayout' in rawSettings)) {
+            this.settings.navLayout = defaultNavLayoutFor(Platform.isMobileApp);
+        }
         // 🔴🔴 用户裁定（1.4.x）：上次的凭据测试结论由 `loadData` 一并读上来（`statusOf` 直接读 `settings`），
         //    ⛔ 这里**不再需要**把 Map 灌回去 —— 单一真源就是 settings（见 `credentialStatus` 字段注释）。
         //    ⚠️ 但必须在这里做一次**归一**：旧 data.json / 手工改坏的脏值（字符串 "false"、null）要丢掉，
@@ -541,9 +815,30 @@ export default class ReelLudicPlugin extends Plugin {
         // #541 起始页：主视图的初始页签由设置决定（缺省 media = 历史行为）。
         // ⚠️ 只在此处播种 —— 用户在会话中切页签走 `homeTab` 这个内存字段，⛔ 不落盘（那是「上次看到哪」，
         //    不是「起始页」；把它写回设置会让「起始页」永远被最后停留的页覆盖）。
-        this.homeTab = normalizeStartTab(this.settings.startTab);
+        // 🔴 m09565 4：播种必*按当前分类轴折算**（`normalizeStartTabFor`）
+        //    起始页可能存的是「电影」，而当前轴是聚合模式（没有「电影」这枚页签）。
+        //    必须折到「影视」，否则 `homeTab` 拿着一个当前轴里不存在的值，页签栏没有任何一枚选中。
+        const bootAxis = normalizeTabAxis(this.settings.tabAxis);
+        const bootTab = normalizeStartTabFor(bootAxis, this.settings.startTab);
+        this.homeTabByAxis[bootAxis] = bootTab;
         // sourceChains 基线以磁盘加载值初始化：此后 saveSettings 只要链配置与上次持久化基线不同即清缓存
         this.sourceChainBaselineJson = JSON.stringify(this.settings.sourceChains ?? {});
+        // 🔴 用户 m07854 ①（2026-11-13）：「初始化配置默认启用免登录搜索源*不要强制覆盖用户已修改过**。
+        //   仅在第一次启用插件时启用」。
+        //   `DEFAULT_CHAINS` 早已是「豆+ 各组免登录源」（pure/sourceRegistry 的裁定注释）。
+        //   缺的*生效方式**：它原先`resolveSourceChain` 动态回退 —默认值是个活值，将来一。
+        //   就把用户已确认的配置追溯性改掉。这里在**首次启用**把它播种成显式配置并落盘，一次之。
+        //   只认磁盘上那份。⚠只补「用户从未配置过」的组，已有非空值一个字节都不动。
+        //   ⚠️ 必须排在 `sourceChainBaselineJson` 之后 —否则播种会被当成「用户改了链」而清一遍缓。
+        //      （那只是空转，但会让下次搜索冷启）。
+        if (!this.settings.sourceChainsSeeded) {
+            const seeded = seedSourceChains(this.settings.sourceChains);
+            this.settings.sourceChains = seeded.chains;
+            this.settings.sourceChainsSeeded = true;
+            // 播种后基线同步刷新：避免紧随其后saveSettings 把播种误判成用户改链。
+            this.sourceChainBaselineJson = JSON.stringify(this.settings.sourceChains ?? {});
+            await this.saveSettings();
+        }
         // 目录命名演进迁移（顶层中文化 + 类型子目录英文化，幂等）：须在 rebuildService 之前执行，service 用新路径构造
         await this.migrateDirectories();
         this.rebuildService();
@@ -553,6 +848,14 @@ export default class ReelLudicPlugin extends Plugin {
         await this.migrateRemoveHighlightMirrors();
         // 条目回收站文件英文名迁移（`条目回收站.json` → `trash.json`，幂等；须在 service 就绪后、用户打开条目还原前）
         await this.migrateTrashFileName();
+        // 🔴 2026-11-10：模程序目录整体从库`~/.reelludic` 换到**插件目录**下（幂等）。
+        //    必须排在 `migrateAsrModelLayout` **之前** —先换 base，再在新 base 里做子目录归一。
+        //    反了会把库外文件搬进一个马上要被换掉的 base。也必须在界面渲染前，否则用户先看到
+        //    「已下载的模型不见了」再去点重新下载。
+        this.migrateLegacyAsrDirs();
+        // 🔴 2026-11-06 m09819：三家模型分目录（`models/` `models/<engine>/`，幂等）。
+        //    须在界面渲染前跑—否则用户先看到「已下载的模型不见了」再去点重新下载。
+        this.migrateAsrModelLayout();
         this.rebuildClients();
 
         // 🔴 #459 下载目录**一次性**迁移（与「填了『下载/音乐』却多出『下载/音乐/音乐』」同一批）。
@@ -569,12 +872,27 @@ export default class ReelLudicPlugin extends Plugin {
             await this.saveSettings();
         }
 
+        // 🔴 #756 脏数据自愈（用户 m06077「B 站扫码能获取但测试连接失败」的存量污染）：
+        //    #754 `cookieFromBiliCallbackUrl` 把成功回调地址*全部 query** Cookie 存。
+        //    B 站的 `data.url` 已是票据地址 那批用户`biliCookie` 里躺着。
+        //    `ticket= gourl= first_domain=…`（一个登录凭据都没有），测试连接必然失败。
+        //    只修「新扫码」不—存量值不清掉，用户打开设置看到的还是那串垃圾、测连接继续红。
+        //    判据*有任何内容但没有 SESSDATA** 不是有效凭据，清空（B 站真凭据必有 SESSDATA）。
+        //    ⚠️ 幂等：清空后再跑一次不满足条件；有Cookie（含 SESSDATA）一个字节都不动。
+        const dirtyBili = String(this.settings.biliCookie ?? '').trim();
+        if (dirtyBili && !/(^|;\s*)SESSDATA=/.test(dirtyBili)) {
+            this.settings.biliCookie = '';
+            await this.saveSettings();
+        }
+
         this.applyUiTheme();
         // #541：卡片风格 / 界面动效两类 body 类（与主题类同一挂载点 —— 都是「按设置刷 body 类」）
         this.applyAppearance();
 
         this.registerView(HOME_VIEW_TYPE, (leaf) => new HomeView(leaf, this));
         this.registerView(VIDEO_PLAYER_VIEW_TYPE, (leaf) => new VideoPlayerView(leaf));
+        // 🔴 #691：B 站风选集页（独立标签页）与播放器同一套内核，但版式是「左播放 + 右选集。
+        this.registerView(EPISODE_PAGE_VIEW_TYPE, (leaf) => new EpisodePageView(leaf));
         this.registerView(AUDIO_PLAYER_VIEW_TYPE, (leaf) => new AudioPlayerView(leaf));
         // 阅读器三件（TXT / EPUB / PDF）：工作区新标签页打开（Modal 宿主于本批整体撤除）
         this.registerView(TXT_READER_VIEW_TYPE, (leaf) => new TxtReaderView(leaf));
@@ -582,6 +900,9 @@ export default class ReelLudicPlugin extends Plugin {
         this.registerView(PDF_READER_VIEW_TYPE, (leaf) => new PdfReaderView(leaf));
         // #537 漫画阅读器（图片文件夹 / CBZ·ZIP / CBT·TAR）
         this.registerView(COMIC_READER_VIEW_TYPE, (leaf) => new ComicReaderView(leaf));
+        // 🔴 2026-11-16 用户逐字「要独立标签页运行而不是弹窗运行」：本地 swf 的 Flash 播放器
+        //    从 Modal 改成工作区 ItemView（与视频播放器 / 选集页同族）。
+        this.registerView(FLASH_GAME_VIEW_TYPE, (leaf) => new FlashGameView(leaf, this));
         // 笔记内摘录/高亮块头行链接 → 打开阅读器并定位（M1 双向溯源）。
         // 捕获阶段挂 document：既抢在 Obsidian「打开源文件」之前，也能 stopPropagation 彻底拦下那次导航。
         this.registerDomEvent(document, 'click', this.onWorkspaceAnchorClick, true);
@@ -616,6 +937,28 @@ export default class ReelLudicPlugin extends Plugin {
         });
         // 全局统一 hover 提示（data-tip 自绘气泡，UI-GUIDE 规范；卸载自动清理）
         this.register(initGlobalTooltip().destroy);
+        // 🔴🔴 用户 m07854 ⑦（2026-11-13）「字幕面板、选集面板的小图标按钮没有鼠标 hover 轻提示」：
+        //    真因**不是**那两组按钮缺 `data-tip`（真机实6 + 2 颗全齐、主窗口 hover 全出气泡）
+        //    而是**弹出窗口里根本没有提示器**。`initGlobalTooltip()` 只绑 `activeDocument ?? document`
+        //    （主窗口），`bindTooltipDocument` 全仓只有设置页与发布说明弹窗手工调了两次 —视图一律没绑。
+        //    用户把选集/ 播放器页拖成独立窗口后，8 颗图标按钮的 `data-tip` 全部收不到监听。
+        //      悬停自然毫无反应（CDP 实测：主窗口 `hasTipNode: true`、弹`hasTipNode: false`。
+        //      而两边按钮数量完全一样）。
+        //    两道口子都要堵。
+        //      `window-open` 事件：之后新开的每个弹出窗口都绑一次（`bindTooltipDocument` 幂等）
+        //      启动时兜底扫一遍已存在的窗—插件加载前就开着的弹窗不会再补发 `window-open`。
+        this.registerEvent(this.app.workspace.on('window-open', (_win, popoutWin) => {
+            bindTooltipDocument(popoutWin?.document ?? null);
+        }));
+        // ⚠️ `window-close` 不必手动解绑：`bindTooltipDocument` 内部document 幂等注册。
+        //    窗口销毁后那份 document 与它的监听一起被回收（WeakMap 持有，不构成泄漏）。
+        this.bindTooltipToOpenWindows();
+        // 悬浮进度球：插件卸载时把挂在 body 上的球摘掉（它不在任何视图里，不会被自动回收。
+        this.register(destroyProgressBall);
+        // 🔴 m03052 ⑤：B站后台下载的进度球与订阅同样挂在 body / 模块层 —— 一并摘下。
+        //    ⚠️ 只是摘球与清订阅，**不中止任务**（卸载场景任务本来就活不过 reload；
+        //    真去 abort 反而要在服务层留一堆跨 reload 的句柄）。
+        this.register(disposeBiliDownloads);
         // 书籍阅读器视图（新 Tab 打开，可拖出独立窗口）
 
         // 数据文件变更自动刷新（防抖兜底）：catalog.json / 条目笔记的创建、修改、删除
@@ -625,13 +968,19 @@ export default class ReelLudicPlugin extends Plugin {
         this.registerEvent(this.app.vault.on('modify', onDataChange));
         this.registerEvent(this.app.vault.on('delete', onDataChange));
 
-        this.addRibbonIcon('library', 'ReelLudic', () => void this.activateHome('media'));
+        // 🔴🔴 2026-11-11 用户 m08970 ①「默认页签为电影的怎么不生效了」：
+        //    这两处原来写`activateHome('media')`，`activateHome` 第一句就`this.homeTab = tab`
+        //    只要ribbon / 命令面板打开主视图，用户设的「起始页」当场被 'media' 顶掉。
+        //    （`syncStartTab` 只在**设置页改动那一*生效，冷启动/重开视图都会再被这里覆盖）。
+        //    一律走 `openHomeAtStartTab()`，起始页只有一个真源：`settings.startTab`。
+        //    别再在这里写字面量页—那是第二个真源，必然与设置项打架。
+        this.addRibbonIcon('library', 'ReelLudic', () => void this.openHomeAtStartTab());
         this.addRibbonIcon('plus', 'ReelLudic 添加条目', () => this.openAddModal());
 
         this.addCommand({
             id: 'open-media-library',
             name: '打开媒体库',
-            callback: () => void this.activateHome('media'),
+            callback: () => void this.openHomeAtStartTab(),
         });
         // #326：时间戳 / 截图也挂命令面板（用户裁定 D-6：按钮 + 快捷键 + 命令三入口）。
         // 只在活动页是播放器时可用（checkCallback）—— 没有播放器就没有「当前帧」可言。
@@ -688,6 +1037,7 @@ export default class ReelLudicPlugin extends Plugin {
             callback: () => void this.openAudioPlayer('sidebar'),
         });
         this.registerLrcBlockProcessor();
+        this.registerNoteCardBlockProcessor();
         this.addSettingTab(new ReelLudicSettingTab(this.app, this));
         // 🔴 #589：新会话打开时——**等界面就绪之后**再安排一轮凭据自检（延迟 + 串行，见那个方法）。
         //    ⛔ 别在这里直接 await：那会把插件加载拖住 4 秒以上（一件 700ms 间隔 × 十来件）。
@@ -706,6 +1056,8 @@ export default class ReelLudicPlugin extends Plugin {
         for (const cls of Object.values(THEME_CLASS)) {
             if (cls !== '') document.body.removeClass(cls);
         }
+        // 🔴 2026-11-26（m05012）：AI 悬浮挂件已删（用m06545「删除全部AI挂件相关代码」）
+        //    别再补卸载逻辑进来 —已经没有任何挂件实例。
         // #541：外观偏好那两类 body 类同样要摘掉（清理名单的唯一真源在 pure/appearance）
         for (const cls of APPEARANCE_BODY_CLASSES) document.body.removeClass(cls);
         if (this.refreshTimer !== null) {
@@ -745,7 +1097,15 @@ export default class ReelLudicPlugin extends Plugin {
         // 不复用 refreshViews()：那个方法会连带重新 list() 全部条目与摘抄计数（磁盘 IO），
         // 而此处只需重推主题 prop。组件 $set 仅传 uiTheme，其余 props 保持不动。
         for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
-            (leaf.view as HomeView).setUiTheme(theme);
+            // 🔴 真机实测（m04435 技术债）：`leaf.view` 不一定已经是我们这个类。
+            //   插件重载 / 视图正在卸载时，leaf 上挂的可能是**上一个插件实例**的 view，
+            //   或者还没 `onload` 完的空壳 ⇒ 直接 `(leaf.view as HomeView).setUiTheme(...)`
+            //   会抛 `TypeError: ...setUiTheme is not a function`，而它在 `onload` 里被调到
+            //   ⇒ **整个插件加载失败**（真机日志：`Plugin failure: obsidian-reelludic TypeError:
+            //   i.view.setUiTheme is not a function at ...applyUiTheme ... at ...onload`）。
+            //   ⇒ 必须运行时判型 + 方法存在，⛔ 别只靠 `as HomeView`（那是编译期断言，擦除后不设防）。
+            const view = leaf.view as unknown as Partial<HomeView> | null;
+            if (view && typeof view.setUiTheme === 'function') view.setUiTheme(theme);
         }
     }
 
@@ -784,16 +1144,76 @@ export default class ReelLudicPlugin extends Plugin {
      *   ⑵ 把已经开着的视图**当场切过去** —— 否则用户改了设置却看不到任何变化（同 `syncNavLayout` 的理由）。
      */
     syncStartTab(): void {
-        const tab = normalizeStartTab(this.settings.startTab);
+        // 🔴 m09565 4：必须按**当前分类*折算 —起始页可能属于另一条轴。
+        //    （存的是「电影」而当前是聚合模式 折成「影视」，`normalizeStartTabFor`）。
+        const tab = normalizeStartTabFor(this.tabAxis, this.settings.startTab);
         this.homeTab = tab;
         for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
-            (leaf.view as HomeView).setRequestedTab(tab);
+            // 🔴 2026-11-11 真机实测：标签页可以Obsidian **延迟加载**（deferred），那时。
+            //    `leaf.view` 上既没有 `setRequestedTab` 也没`component` —直接调用会在。
+            //    控制台抛 `TypeError: r.view.setRequestedTab is not a function`，把整条
+            //    「起始页即时生效」链路静默打断（`homeTab` 已更新，视图却不动）。
+            //    没这个方法就跳过：那个视图还没建，它下次 `render()` 会读 `this.homeTab` 拿到新值。
+            const v = leaf.view as HomeView | undefined;
+            if (typeof v?.setRequestedTab === 'function') v.setRequestedTab(tab);
+        }
+    }
+
+    /**
+     * 🔴 用户 m09565 ①-4：切换页签分类轴（设置页「按全类型分页签」开关改动后调用）。
+     *
+     * 用户逐字：「两种模式的导航状态（当前选中项）要独立保存，切换开关时不要丢失各自的位置」
+     * ⇒ 这里**不碰** `homeTabByAxis` 里任何一格（两条轴各自的记忆原样留着），只把新轴推给开着的视图。
+     * 视图侧收到 `tabAxis` 后会自己 `equivalentTabFor` 就近折算（电影→影视 / 文学→阅读），
+     * 并把折算结果回写 `homeTab` —— 于是「切回来还在原处」自动成立。
+     *
+     * ⚠️ 别在这里顺手 `this.homeTab = equivalentTabFor(...)`：那样会把**新轴**的记忆提前覆盖成
+     *    折算值，用户切回原轴时看到的就是折算后的页签，而不是他离开时那一枚。
+     */
+    syncTabAxis(): void {
+        const axis = normalizeTabAxis(this.settings.tabAxis);
+        // 🔴 2026-11-12 真机实测抓到的真缺陷：只`tabAxis` 不够。
+        //    组件侧收到新轴后`equivalentTabFor(tabAxis, activeTab)` 就近折算 
+        //    但「游戏」「音乐」「计划」「统计*两条轴同* 折算结果恒等于原不触switchTab。
+        //    视图仍停在上一条轴那一枚，`this.homeTab` 已经读成新轴记住的那一**两者分*
+        //    （实`on: "游戏"` `homeTab: "movie"`）。
+        //    推完轴必须再把「这条轴记住的那一枚」显式推给视图（此刻 getter 已经指向新轴）。
+        const want = this.homeTab;
+        for (const leaf of this.app.workspace.getLeavesOfType(HOME_VIEW_TYPE)) {
+            const v = leaf.view as HomeView | undefined;
+            // `syncStartTab` 的延迟加载理由：view 可能还没建，它下render 会读 `this.tabAxis`。
+            if (typeof v?.setTabAxis !== 'function') continue;
+            v.setTabAxis(axis);
+            v.setRequestedTab(want);
         }
     }
 
     // 🔴 #543：`setNavCollapsed()` 已整体删除 —— 侧边栏改成**恒定图标轨**后就没有「折叠态」这个量了
     //    （#541 那套「折叠钮 → 落库 → 回推」随之退场；`settings.navCollapsed` 字段按 append-only 红线
     //     **保留但不再被读取**，⛔ 别把它接回任何判定 —— 那会造出一个「设置页没有、行为却受它影响」的鬼开关）。
+
+    /**
+     * 给**所有已经存在的**窗口各绑一次提示器（用户 m07854 ⑦）。
+     *
+     * 🔴 为什么光有 `window-open` 不够：那条事件只覆盖「插件加载之后新开的窗口」。
+     *    插件被重载 / 用户在插件加载前就把标签页拖出去 ⇒ 那扇窗口永远不会补发事件，
+     *    里面的 `data-tip` 依然全哑。⇒ 启动时按「视图所在文档」反向收集一遍再绑。
+     *
+     * ⚠️ 收集方式用 `iterateAllLeaves` 而不是遍历 `app.workspace.floatingSplit`
+     *    （后者不在公开类型里，`app.workspace.window` 也不暴露窗口清单）：
+     *    提示器只服务于**我们自己的按钮**，按钮一定长在某个 leaf 的 DOM 里，
+     *    所以「每个 leaf 的 `ownerDocument`」恰好就是需要的全集，多一个都不少。
+     *    `bindTooltipDocument` 内部按 document 幂等（WeakMap），重复调用无副作用。
+     */
+    private bindTooltipToOpenWindows(): void {
+        const docs = new Set<Document>();
+        if (typeof document !== 'undefined') docs.add(document);
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            const owner = leaf.view?.containerEl?.ownerDocument;
+            if (owner) docs.add(owner);
+        });
+        for (const doc of docs) bindTooltipDocument(doc);
+    }
 
     /** 目录命名演进迁移（幂等，旧版任意起点一步到位；须在 rebuildService 之前执行，service 用新路径构造）：
      *  v0.4：顶层通俗化 entries/covers/backups/reports → 笔记/封面/备份/报告，类型子目录用中文标签；
@@ -995,6 +1415,9 @@ export default class ReelLudicPlugin extends Plugin {
             // 🔴 #640e：书籍子分类各自的顺序（高级设置 › 笔记属性顺序 的 文学/网文/漫画 三页）；
             //    缺省 = **回落 `fieldOrder.book`**（零迁移，见 `pure/fieldOrder` 模块头）
             this.settings.fieldOrderByKind ?? {},
+            // 🔴 #721：**不写出**的属性键（高级设置 › 笔记属性顺序 每页里删掉的）；
+            //    缺省 = 什么都不隐藏（老用户观感零变化）
+            this.settings.fieldOrderHidden ?? {},
         );
     }
 
@@ -1241,8 +1664,12 @@ export default class ReelLudicPlugin extends Plugin {
             }
             // 搜索阶段不再强制预补详情（每次搜索都打 3 个详情页过反爬，等待长）——
             // 列表秒出，用户点选某条时由 fetchDoubanDetailForEntry 按需补全详情字段
-            prog?.source({ id: 'douban', state: 'ok', count: results.length });
-            return { kind: 'douban', items: results.map(mapper), reachable: true, cookieInvalid: false };
+            // 🔴 2026-11-12（①-12）：带上映射后的 items，豆瓣一回来这一栏就能先出卡片。
+            //    ⚠️ 必须`mapped` 不是 `results` —`results` DoubanSubject，字段与 SearchResult 不同形。
+            //       表单直接拿它渲染会读undefined；映射只做一次，下游与返回值共用同一份。
+            const mapped = results.map(mapper);
+            prog?.source({ id: 'douban', state: 'ok', count: mapped.length, items: mapped });
+            return { kind: 'douban', items: mapped, reachable: true, cookieInvalid: false };
         } catch (e) {
             // 保留 Cookie 失效标记（登录跳转/禁止访问/验证失败/接口异常）——供上层明确提醒「Cookie 已失效」
             prog?.source({ id: 'douban', state: 'blocked' });
@@ -1306,7 +1733,9 @@ export default class ReelLudicPlugin extends Plugin {
             // 辅助源超时压缩：无代理/慢网络时 5s 内没返回就放弃（豆瓣源先返回即整体完成），不拖慢主链路
             const items = (await withTimeout(runner(query, type, prog), AUX_SEARCH_TIMEOUT, stage)) as T[];
             prog.next(stage);
-            prog.source({ id, state: items.length > 0 ? 'ok' : 'empty', count: items.length });
+            // 🔴 2026-11-12（①-12）：事件必须items —本源一返回，表单那边就能立刻渲染这一。
+            //    （用户「要显示骨架屏展示另一个已返回的源」）；只count 的话结果区仍要等最慢的源。
+            prog.source({ id, state: items.length > 0 ? 'ok' : 'empty', count: items.length, items });
             return { kind: 'aux', id, items, state: 'empty' };
         } catch (e) {
             // 失败静默降级：只推进该阶段进度步 + 置 failed（全链无果时 deriveGroupSearchError 统一文案），不弹 Notice
@@ -1455,7 +1884,7 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
-    /** OMDb 详情按需补全（选中 IMDb 搜索结果时调用）：?i={imdbID}&plot=full 补 Plot/导演/演员/类型/评分；
+    /** OMDb 详情按需补全（选中 IMDb 搜索结果时调用）：GET https://www.omdbapi.com/?i={imdbID}&plot=full 补 Plot/导演/演员/类型/评分；
      *  投影键名对齐 EntryForm.applyDoubanDetail（director/cast/genres/summary/cover/ratingCount + rating 供评分回填）；
      *  失败（未配 key / 网络 / 错误体）返回 null 静默，不阻塞保存。 */
     async fetchOmdbDetailForEntry(imdbID: string): Promise<OmdbDetailFields | null> {
@@ -1592,13 +2021,28 @@ export default class ReelLudicPlugin extends Plugin {
         if (!this.canUseSongLibrary()) return [];
         try {
             const { songs } = await withTimeout(this.dlSearchSongs(query), AUX_SEARCH_TIMEOUT, `${SONG_LIB_LABEL} 搜索`);
-            const items = songLibraryResults(songs);
+            const items = songLibraryResults(songs, await this.songLibraryCovers(songs));
             prog.source({ id: SONG_LIB_ID, state: items.length > 0 ? 'ok' : 'empty', count: items.length });
             return items;
         } catch {
             prog.source({ id: SONG_LIB_ID, state: 'failed' });
             return [];
         }
+    }
+
+    /**
+     * 曲库标题/封面补拉：网易云搜索结果**一条封面都不带**（`pure/posterSources.ts:12` 的实测记录），
+     * 补一跳 `song/detail`（`neteaseCoversByIds`，免 Cookie）拿 `al.picUrl`。
+     *
+     * 🔴 为什么放在宿主侧而不是 `songLibraryResults` 里：那个是**同步纯函数**，三条链路都在用
+     *    （表单结果栏 / 播放候选 / 封面搜索），改 async 会逼三处全变；而这一跳只有表单结果栏需要。
+     * ⚠️ 失败一律返回**空 Map**（`neteaseCoversByIds` 内部已 catch）—— 没封面只是卡片少张图，
+     *    ⛔ 不该让整次曲库检索报错。
+     */
+    private async songLibraryCovers(songs: readonly DownloadSong[]): Promise<Map<number, string>> {
+        const ids = (songs ?? []).filter((s) => s.source === 'netease' && s.neteaseId != null).map((s) => s.neteaseId);
+        if (!ids.length) return new Map();
+        return neteaseCoversByIds(this.dlTransport(), ids);
     }
 
     /**
@@ -1648,14 +2092,7 @@ export default class ReelLudicPlugin extends Plugin {
             const filled = await Promise.all(
                 head.map(async (r, i) => {
                     const d = await this.fetchBangumiDetail(r.id, prog, `Bangumi 详情补全 ${i + 1}/${n}`);
-                    return {
-                        ...r,
-                        ...(d.rating != null ? { rating: d.rating } : {}),
-                        ...(d.ratingCount != null ? { ratingCount: d.ratingCount } : {}),
-                        ...(d.studio ? { studio: d.studio } : {}),
-                        ...(d.director ? { director: d.director } : {}),
-                        ...(d.cast?.length ? { cast: d.cast } : {}),
-                    };
+                    return bangumiSearchEnrich(r, d);
                 }),
             );
             enriched = [...filled, ...tail];
@@ -1702,6 +2139,10 @@ export default class ReelLudicPlugin extends Plugin {
             } catch {
                 throw new Error('拉取 Bangumi 收藏失败——请确认 Token 有效且网络可用（需代理访问 bgm.tv）');
             }
+            // 🔴 2026-11-08 修复：这里原来写*两遍**同一段三元，后一遍漏`${}`
+            //    用户进度面板上看到的是一行原JS 表达。
+            //    「拉取收藏列表（想看）{t === 0 ? '想看' : ...}）」。
+            //    别再补第二遍手写文案：要改就改这一处。
             onProgress?.(0, items.length, `拉取收藏列表（${t === 0 ? '想看' : t === 2 ? '在看' : '已看'}）`);
             let done = 0;
             for (const r of items) {
@@ -1715,6 +2156,7 @@ export default class ReelLudicPlugin extends Plugin {
                 }
                 // 直接拉取详情入库：评分/评价人数/制作公司（subject API）+ 导演/主演（persons API）
                 // 失败静默（保留收藏级字段），不阻塞导入流程
+                // 🔴 2026-11-08：投影统一`bangumiDetailData` + `bangumiEntryFields`（三处手写映射收口）
                 let detail: { rating?: number; ratingCount?: number; studio?: string } = {};
                 let persons: { director?: string; cast?: string[]; studio?: string } = {};
                 try {
@@ -1723,6 +2165,7 @@ export default class ReelLudicPlugin extends Plugin {
                 try {
                     persons = await this.bangumi.fetchPersons(r.id);
                 } catch { /* 静默 */ }
+                const fields = bangumiEntryFields(r, bangumiDetailData(detail, persons));
                 const created = await this.service.create({
                     type: entryType,
                     title: r.title,
@@ -1732,12 +2175,12 @@ export default class ReelLudicPlugin extends Plugin {
                     status: t === 0 ? 'want' : t === 2 ? 'watching' : 'watched',
                     rating: 0,
                     genres: [],
-                    cast: persons.cast ?? [],
-                    director: persons.director,
-                    developer: persons.studio ?? detail.studio, // 制作公司（动画复用 developer 字段，与 Bangumi 源搜索回填一致）
+                    cast: fields.cast ?? [],
+                    director: fields.director,
+                    developer: fields.developer, // 制作公司（动画复用 developer 字段，与 Bangumi 源搜索回填一致）
                     summary: r.summary,
-                    communityScore: detail.rating ?? r.rating,
-                    ratingCount: detail.ratingCount ?? r.ratingCount,
+                    communityScore: fields.communityScore,
+                    ratingCount: fields.ratingCount,
                     poster: r.cover,
                     source: 'bangumi',
                     sourceUrl: `https://bgm.tv/subject/${r.id}`,
@@ -1793,6 +2236,64 @@ export default class ReelLudicPlugin extends Plugin {
             .then(() => fetchWereadBookInfoSvc(this.dlTransport(), this.settings.wereadCookie, bookId));
         this.wereadInfoGate = task.then(() => new Promise<void>((r) => window.setTimeout(r, WEREAD_INFO_GAP_MS)));
         return task;
+    }
+
+    /**
+     * ②-4 **逐本拉划线 + 想法**（串行 + 间隔；与 `wereadBookInfoGated` 共用 `wereadInfoGate`）。
+     *
+     * 🔴 三条口径：
+     *   ⑴ **共用同一条闸门链**：详情与划线打的是同一个域名、同一份 Cookie，风控按请求数算 ——
+     *      另开一条链等于并发翻倍，正是 #582 当初把详情串起来的那个原因；
+     *   ⑵ **失败不抛**（服务层已折成 `{ ok, error, warning }`）：某本书拉不到划线 ⛔ 不能
+     *      把整次书架导入打断 —— 导入成功、划线没跟上，是可接受的降级；
+     *   ⑶ 用户没填 Cookie 时服务层会直接回 `ok:false`，调用方据此**静默跳过**（不逐本刷失败提示）。
+     */
+    private wereadNotesGated(bookId: string): Promise<WereadNotesOutcome> {
+        const task = this.wereadInfoGate
+            .catch(() => undefined)
+            .then(() => fetchWereadNotesSvc(this.dlTransport(), this.settings.wereadCookie, bookId));
+        this.wereadInfoGate = task.then(
+            () => new Promise<void>((r) => window.setTimeout(r, WEREAD_INFO_GAP_MS)),
+        );
+        return task;
+    }
+
+    /**
+     * ②-4 把一本书的划线 / 想法同步进它条目笔记的 `## 同步划线与高亮` 区（导入循环里逐本调）。
+     *
+     * 🔴 口径：
+     *   ⑴ **拉不到就什么都不写** —— ⛔ 不建空区。用户没填 Cookie / 该书确实没划线时，
+     *      笔记里凭空多出一个「共 0 条」的区只是噪音；
+     *   ⑵ 同步失败 **⛔ 不打断导入**：`importWereadShelf` 的契约是「书必须进库」，
+     *      划线是附加价值，失败只把原因塞进进度文字；
+     *   ⑶ 内容交给 `pure/wereadNotes.renderWereadNotes` 渲染（⛔ 不在这里拼 markdown），
+     *      写入交给 `EntryService.syncWereadNotes`（笔记 + 指纹的唯一出口）。
+     */
+    private async syncWereadNotesFor(
+        bookId: string,
+        entryId: string,
+        title: string,
+        onProgress: ((done: number, total: number, label: string) => void) | undefined,
+        done: number,
+        total: number,
+    ): Promise<void> {
+        try {
+            onProgress?.(done, total, `同步划线 ${title}`);
+            const res = await this.wereadNotesGated(bookId);
+            if (!res.ok) {
+                // Cookie / 登录失效：不逐本书刷同一条提示（一本书一Notice 会刷屏）
+                if (res.error && !/Cookie/.test(res.error)) {
+                    onProgress?.(done, total, `划线未同步 ${title}（${res.error}）`);
+                }
+                return;
+            }
+            if (res.notes.length === 0) return;
+            const markdown = renderWereadNotes(res.notes, { syncedAt: Date.now() });
+            await this.service.syncWereadNotes(entryId, markdown);
+            if (res.warning) onProgress?.(done, total, `${res.warning} ${title}`);
+        } catch {
+            /* 划线失败不阻断导出 */
+        }
     }
 
     /**
@@ -1852,6 +2353,7 @@ export default class ReelLudicPlugin extends Plugin {
                     await this.service.update(prev.id, payload);
                     await this.service.writeNote(prev.id);
                     overridden++;
+                    await this.syncWereadNotesFor(b.bookId, prev.id, b.title, onProgress, done, books.length);
                 } catch {
                     skipped++;
                 }
@@ -1872,6 +2374,7 @@ export default class ReelLudicPlugin extends Plugin {
             try {
                 await this.service.writeNote(created.id);
             } catch { /* 笔记失败不阻断导入 */ }
+            await this.syncWereadNotesFor(b.bookId, created.id, b.title, onProgress, done, books.length);
             byTitle.set(b.title, created);
             added++;
         }
@@ -1917,7 +2420,7 @@ export default class ReelLudicPlugin extends Plugin {
     /**
      * 把 TMDB 账号条目落库。
      *
-     * 🔴 判重键 = `tmdb:{movie|tv}:{id}`（与豆瓣同构：**类型 + 来源 id**，同号不互并）。
+     * 🔴 判重键 = `tmdb:${movie|tv}:${id}`（与豆瓣同构：**类型 + 来源 id**，同号不互并）
      * 🔴 **勾上库里已有的 = 覆盖**（#664 同款口径）：只换 TMDB 来源字段，⛔ 不动用户的评语/进度/摘抄/标签。
      * 🔴 TMDB 返回的是**社区分**（10 分制）⇒ 落 `communityScore`，**不写用户 rating**（用户没在 TMDB 打过分；
      *    Rated Movies 接口是另一套，本批不做 —— 别把社区分硬塞进个人评分字段）。
@@ -1962,8 +2465,11 @@ export default class ReelLudicPlugin extends Plugin {
                 title: r.title,
                 originalTitle: r.originalTitle || undefined,
                 status,
-                // 🔴 10 分制社区分 → 5 星制；这是 TMDB 的分，不是用户打的分（见方法头注释）
-                communityScore: tmdbVoteToRating(r.voteAverage) as MediaEntry['communityScore'],
+                // 🔴 2026-11-08 修障：TMDB 的 `vote_average` 本身就是 10 分制，与 `communityScore` 同刻度
+                //    ⇒ **直接透传**。旧代码走 `tmdbVoteToRating`（÷2 四舍五入 → 1~5 星）把 8.4 存成 4，
+                //    在 10 分制字段里等于「4 分」，评分排序 / 系列均分全被低估一半。
+                // ⛔ 不写用户 `rating`：那是 1~5 星个人分，用户没打过分。
+                communityScore: tmdbVoteToCommunityScore(r.voteAverage) as MediaEntry['communityScore'],
                 year: r.releaseDate ? Number(r.releaseDate.slice(0, 4)) : undefined,
                 airDate: r.releaseDate ?? undefined,
                 summary: r.overview || undefined,
@@ -1983,7 +2489,14 @@ export default class ReelLudicPlugin extends Plugin {
                     director: d.director,
                     cast: d.cast,
                 });
+                // 🔴 2026-11-08 修障：详情接口带回来的评评价人数以前**一个都没落*
+                //    账号同步建出来的条目评分栏永远是空的（用户报障「同步获取评分不到」）。
+                //    清单`voteAverage` / `voteCount` 先垫底，详情值非空时覆盖（详情通常更准）。
+                if (d.rating != null) input.communityScore = d.rating as MediaEntry['communityScore'];
+                if (d.ratingCount != null) input.ratingCount = d.ratingCount;
             } catch { /* 静默降级 */ }
+            // 详情失败时至少保住清单接口自带的评价人数（`vote_count` 在列row 里就有）
+            if (input.ratingCount == null && r.voteCount != null) input.ratingCount = r.voteCount;
             try {
                 if (prev) {
                     // 🔴 覆盖：只换 TMDB 来源字段（⛔ 不动 notes/tags 等用户记录）
@@ -2103,18 +2616,16 @@ export default class ReelLudicPlugin extends Plugin {
                 sourceUrl: `https://bgm.tv/subject/${r.id}`,
             };
             // 详情补全（评分/制作公司 + 导演/主演）；失败**不阻断**
+            // 🔴 2026-11-08：投影统一`bangumiDetailData` + `bangumiEntryFields`（三处手写映射收口）
+            let sub: { rating?: number; ratingCount?: number; studio?: string } = {};
+            let people: { director?: string; cast?: string[]; studio?: string } = {};
             try {
-                const detail = await this.bangumi.fetchSubject(r.id);
-                input.communityScore = detail.rating ?? r.rating;
-                input.ratingCount = detail.ratingCount ?? r.ratingCount;
-                if (!input.genres?.length && detail.studio) input.developer = detail.studio;
+                sub = await this.bangumi.fetchSubject(r.id);
             } catch { /* 静默 */ }
             try {
-                const persons = await this.bangumi.fetchPersons(r.id);
-                input.cast = persons.cast ?? [];
-                input.director = persons.director;
-                input.developer = persons.studio ?? input.developer;
+                people = await this.bangumi.fetchPersons(r.id);
             } catch { /* 静默 */ }
+            Object.assign(input, bangumiEntryFields(r, bangumiDetailData(sub, people)));
             try {
                 if (prev) {
                     const patch: Partial<MediaEntry> = { ...input };
@@ -2440,7 +2951,7 @@ export default class ReelLudicPlugin extends Plugin {
         });
     }
 
-    /** 测试 OMDb 连接（设置页按钮，T11 调用）：?apikey={key}&i=tt3896198&plot=short 轻量 ping；
+    /** 测试 OMDb 连接（设置页按钮，T11 调用）：GET https://www.omdbapi.com/?apikey={key}&i=tt3896198&plot=short 轻量 ping；
      *  未配 key / 网络失败给出明确文案（未配置/连接失败区分） */
     async testOmdbConnection(): Promise<SourceTestResult> {
         return this.runTest('OMDb 连接', async () => {
@@ -2461,7 +2972,7 @@ export default class ReelLudicPlugin extends Plugin {
         });
     }
 
-    /** 测试 Google Books 连接（设置页按钮，#165 T11 调用）：volumes?q=test&maxResults=1 轻量 ping；
+    /** 测试 Google Books 连接（设置页按钮 #165 T11 调用）：volumes?q=test&maxResults=1 轻量 ping）
      *  Key 可选——未配 key 仍可用（公开免费额度）故成功时注明；无效 key / 429 限流给明确文案 */
     async testGoogleBooksConnection(): Promise<SourceTestResult> {
         return this.runTest('Google Books 连接', async () => {
@@ -2549,6 +3060,176 @@ export default class ReelLudicPlugin extends Plugin {
             if (issue) return { ok: false, message: issue };
             return testSteamAuth(this.steamGet, String(this.settings.steamApiKey), String(this.settings.steamId));
         });
+    }
+
+    /**
+     * 🔴 2026-11-09 第 15 轮阶段 C：**从音乐平台同步清单**（用户：「给三大音乐平台加搜索元数据和
+     * 同步清单的功能」）。
+     *
+     * 与另外五个账号同步弹窗**完全同构**（先弹窗列清单、勾选、导入、Notice 回执），
+     * 唯独多一层「先选歌单」：网易云一个账号常有几十个歌单，一屏放不下全部曲目。
+     *
+     * 三条已裁定口径（见 `pure/musicPlaylist` 文件头）：
+     *  ⑴ 只落单曲，歌单名写进标签 —— ⛔ 不建「歌单条目」、不扩 schema；
+     *  ⑵ Cookie 过期就停（明确提示重贴，⛔ 不重试、⛔ 不静默降级成匿名拉公开数据）；
+     *  ⑶ 每家独立降级 —— 某家失败只影响它自己的区块。
+     */
+    openMusicSync(onlyPlatform?: string): void {
+        new MusicSyncModal(this.app, {
+            ...(onlyPlatform ? { onlyPlatform } : {}),
+            onFetch: () => this.fetchMusicSyncLists(onlyPlatform),
+            onFetchTracks: (platform, playlistId) => this.fetchMusicSyncTracks(platform, playlistId),
+            onImport: (rows, onProgress) => this.importMusicSyncRows(rows, onProgress),
+        }).open();
+    }
+
+    /** 音乐平台 Cookie（三家各自一条；缺失 = 该家报「未粘贴」而不是整轮失败） */
+    private musicCookieOf(platform: string): string {
+        const all = (this.settings.musicDlCookies ?? {}) as Record<string, string | undefined>;
+        return String(all[platform] ?? '').trim();
+    }
+
+    /**
+     * 拉各平台「我的歌单」列表（弹窗打开时调一次）。
+     *
+     * 🔴 三家**各自 try/catch**：一家抛错只记在它自己的 `reason` 里，⛔ 不把整轮判失败
+     *    （用户裁定⑶「接受私有接口风险，但每个平台独立降级」）。
+     * 🔴 酷狗**明确不支持**（`KUGOU_SYNC_UNSUPPORTED`）—— 它的「我的歌单」走 android 网关
+     *    签名接口，本仓没有这套签名器。⛔ 别假装能同步然后给空列表。
+     */
+    async fetchMusicSyncLists(onlyPlatform?: string): Promise<
+        | { ok: true; snapshot: { ok: boolean; message: string; platforms: MusicSyncPlatformState[] } }
+        | { ok: false; message: string }
+    > {
+        if (!Platform.isDesktopApp) return { ok: false, message: '清单同步仅支持桌面端' };
+        const transport = this.dlTransport();
+        const out: MusicSyncPlatformState[] = [];
+        const okSources: string[] = [];
+        const failed: { platform: string; reason: string }[] = [];
+        // 🔴 2026-11-09 16 轮：从某一家凭据行进来时只拉那一—别「照旧拉全部、只UI 藏掉」
+        //    那样另一家没Cookie 也会白跑一次请求、还会把它的失败混进状态栏。
+        const wants = (p: string): boolean => !onlyPlatform || onlyPlatform === p;
+
+        const neteaseCookie = this.musicCookieOf('netease');
+        if (wants('netease')) try {
+            const r = await neteaseMyPlaylists(transport, neteaseCookie);
+            out.push({
+                platform: 'netease',
+                label: musicPlatformLabel('netease'),
+                lists: r.items,
+                ...(r.reason ? { reason: r.reason } : {}),
+                ...(r.expired ? { expired: true } : {}),
+            });
+            if (r.reason) failed.push({ platform: musicPlatformLabel('netease'), reason: r.reason });
+            else okSources.push(musicPlatformLabel('netease'));
+        } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            out.push({ platform: 'netease', label: musicPlatformLabel('netease'), lists: [], reason });
+            failed.push({ platform: musicPlatformLabel('netease'), reason });
+        }
+
+        const qqCookie = this.musicCookieOf('qq');
+        if (wants('qq')) try {
+            const r = await qqMyPlaylists(transport, qqCookie);
+            out.push({
+                platform: 'qq',
+                label: musicPlatformLabel('qq'),
+                lists: r.items,
+                ...(r.reason ? { reason: r.reason } : {}),
+                ...(r.expired ? { expired: true } : {}),
+            });
+            if (r.reason) failed.push({ platform: musicPlatformLabel('qq'), reason: r.reason });
+            else okSources.push(musicPlatformLabel('qq'));
+        } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            out.push({ platform: 'qq', label: musicPlatformLabel('qq'), lists: [], reason });
+            failed.push({ platform: musicPlatformLabel('qq'), reason });
+        }
+
+        // 酷狗：如实说「不支持」，不伪装成「你没歌单。
+        if (wants('kugou')) {
+            out.push({ platform: 'kugou', label: musicPlatformLabel('kugou'), lists: [], reason: KUGOU_SYNC_UNSUPPORTED });
+            failed.push({ platform: musicPlatformLabel('kugou'), reason: KUGOU_SYNC_UNSUPPORTED });
+        }
+
+        const message = musicSyncPartialMessage(okSources, failed);
+        return { ok: true, snapshot: { ok: okSources.length > 0, message, platforms: out } };
+    }
+
+    /**
+     * 拉某个歌单的曲目，并标出「库里已有」（弹窗默认不勾那些，勾上=覆盖）。
+     *
+     * ⚠️ 「库里已有」判据与落库同源：`indexMusicEntries` 从条目反解 `music:{source}:{id}`，
+     *    ⛔ 别在这里另写一套（本仓 Steam 踩过「两个入口各写一份」）。
+     */
+    async fetchMusicSyncTracks(platform: string, playlistId: string): Promise<MyListOutcome<MusicSyncRow>> {
+        if (!Platform.isDesktopApp) return { items: [], reason: '清单同步仅支持桌面端' };
+        const transport = this.dlTransport();
+        const cookie = this.musicCookieOf(platform);
+        let lists: MusicSyncPlaylist[] = [];
+        try {
+            const r = platform === 'qq' ? await qqMyPlaylists(transport, cookie) : await neteaseMyPlaylists(transport, cookie);
+            lists = r.items;
+        } catch {
+                    /* 只为拿歌单名；拿不到就退回 platform 名 */
+        }
+        const playlistName = lists.find((p) => p.id === playlistId)?.name ?? '';
+
+        const result =
+            platform === 'qq'
+                ? await qqPlaylistTracks(transport, playlistId, cookie)
+                : await neteasePlaylistTracks(transport, playlistId, cookie);
+        if (result.reason) return { items: [], reason: result.reason, ...(result.expired ? { expired: true } : {}) };
+
+        const known = indexMusicEntries(await this.service.list());
+        const rows: MusicSyncRow[] = musicCandidatesFromSongs(
+            result.items.map((s) => ({ ...s, source: platform as DownloadSong['source'] })),
+            { source: platform, playlistName: playlistName || musicPlatformLabel(platform) },
+        ).map((c) => (known.has(c.key) ? { ...c, imported: true } : c));
+        return { items: rows };
+    }
+
+    /**
+     * 导入弹窗里勾选的曲目。
+     *
+     * 🔴 按 `playlistName` **分组**再逐组调 `importMusicSongs` —— 标签按歌单来，
+     *    一次导入跨了好几个歌单时必须各写各的（用户在弹窗里切歌单勾选是允许的）。
+     * 🔴 汇总走 `musicSyncSummary`（唯一文案真源，⛔ 别在弹窗里再拼一遍）。
+     */
+    async importMusicSyncRows(
+        rows: readonly MusicSyncRow[],
+        onProgress?: (done: number, total: number, label: string) => void,
+    ): Promise<{ added: number; skipped: number; failed: number; overridden: number; sameName: number }> {
+        const groups = new Map<string, MusicSyncRow[]>();
+        for (const r of rows ?? []) {
+            const name = String(r?.playlistName ?? '').trim();
+            const bucket = groups.get(name);
+            if (bucket) bucket.push(r);
+            else groups.set(name, [r]);
+        }
+        const total = { added: 0, skipped: 0, failed: 0, overridden: 0, sameName: 0 };
+        let done = 0;
+        for (const [name, group] of groups) {
+            const songs: DownloadSong[] = group.map((r) => ({
+                source: r.source as DownloadSong['source'],
+                id: r.songId,
+                name: r.title,
+                artist: r.artist ?? '',
+                ...(r.album ? { album: r.album } : {}),
+                ...(r.poster ? { coverUrl: r.poster } : {}),
+                ...(r.webUrl ? { webUrl: r.webUrl } : {}),
+            }));
+            const res = await this.importMusicSongs(songs, (d, _t, label) => {
+                onProgress?.(done + d, rows.length, label);
+            }, name);
+            done += group.length;
+            total.added += res.added;
+            total.skipped += res.skipped;
+            total.failed += res.failed;
+            total.overridden += res.overridden;
+            total.sameName += res.sameName;
+        }
+        return total;
     }
 
     /**
@@ -2746,6 +3427,9 @@ export default class ReelLudicPlugin extends Plugin {
                 //    写入后列表/表单/笔记都显示 `97%` —— 用户报障「有评价人数没评分」的直接修法。
                 //    ⚠️ 覆盖已有条目时也写：这是 Steam 的客观数据，与用户个人评分(`rating`) 不是一回事。
                 if (f.reviewPercent != null) input.reviewPercent = f.reviewPercent;
+                // 🔴 2026-11-08 收敛盖章（与 `syncSteamNow` `detailOf` 同一条口径）。
+                //    详情已拉过就记一笔，别让下一轮同步再为同一条花一次请求。
+                input.steamDetailFilledAt = new Date().toISOString();
             } catch {
                 /* 静默降级：没有详情也比「只有标题」强 */
             }
@@ -2784,6 +3468,217 @@ export default class ReelLudicPlugin extends Plugin {
         await this.saveData(this.settings);
         await this.refreshViews();
         return { added, skipped, failed, overridden, sameName };
+    }
+
+    /**
+     * 🔴 2026-11-09 第 15 轮阶段 B：**在线曲库歌曲 → `music` 条目**（结果卡片「入库」按钮走这里）。
+     *
+     * 由来：用户「给三大音乐平台加搜索元数据的功能」，成本规划
+     * `docs/full-cycle/ReelLudic/19-三大音乐平台元数据与清单同步成本规划.md` 阶段 B
+     * 「搜索结果 → 直接建成 `music` 条目」，落点由用户 2026-11-09 当面裁定为
+     * **「结果卡片并列一颗「入库」按钮」**（不是另开同步弹窗，也不是只回填表单）。
+     *
+     * 口径（与 `importSteamRows` 同构，但有三处刻意不同）：
+     *  ⑴ **判重键 = `music:{source}:{id}`**（`pure/musicSync.musicItemKey`）—— 按来源 id，
+     *     ⛔ 不按标题：用户把「晴天」改成「晴天 (Live)」后按标题判重会重复导入一条。
+     *  ⑵ **不拉详情、不盖章**：四平台的歌曲元数据在搜索结果里就齐了（歌名 / 歌手 / 专辑 / 封面），
+     *     没有「详情接口」可补；所以⛔ 不写 `steamDetailFilledAt` 那类时间戳，也⛔ 不设同步时间。
+     *  ⑶ **不写 `status`**：新落库的歌保持默认状态，由用户自己走「想听 / 在听 / 已听」。
+     *     （Steam 那边 `owned ⇒ watching / wishlist ⇒ want` 是因为清单本身表达了意图，这里没有。）
+     *
+     * 🔴 覆盖口径：勾中库里已有的 = 只换**平台客观字段**（歌名 / 歌手 / 专辑 / 封面 / 来源 / 来源页），
+     *    ⛔ 不动用户的 `notes` / `tags` / `rating` / `audioPath` / `listenMinutes`。
+     * 🔴 同名文件保护：新建前查 `findTitleConflict` —— 笔记路径按标题派生，同名会把别人的笔记覆盖掉。
+     */
+    async importMusicSongs(
+        songs: readonly DownloadSong[],
+        onProgress?: (done: number, total: number, label: string) => void,
+        playlistName?: string,
+    ): Promise<{ added: number; skipped: number; failed: number; overridden: number; sameName: number }> {
+        const existing = await this.service.list();
+        const byTitle = indexByTitleKey(existing);
+        const byId = new Map<string, MediaEntry>();
+        for (const e of existing) byId.set(e.id, e);
+        // 「库里已有」的判据全在 `pure/musicSync`（从条目反解 `music:{source}:{id}`），别在这里另写一。
+        const byKey = indexMusicEntries(existing);
+        // 🔴 阶段 C：歌单名 标签（唯一净化入口在 `pure/musicPlaylist.playlistTag`。
+        const tag = playlistTag(playlistName ?? '');
+        let added = 0;
+        let skipped = 0;
+        let failed = 0;
+        let overridden = 0;
+        let sameName = 0;
+        let done = 0;
+        for (const s of songs ?? []) {
+            done++;
+            // 字段映射`pure/musicSync.musicEntrySeed`（唯一真源）—本仓踩过「两个入口各写一份映射」
+            // Steam 那次就漏了评分与评价人数026-10-25 用户报障）。⛔ 别在这里再手写一遍。
+            const seed = musicEntrySeed(s);
+            if (!seed) {
+                skipped++;
+                onProgress?.(done, songs.length, '跳过（平台 / 歌名无效）');
+                continue;
+            }
+            const key = musicItemKey(seed.source, s?.id);
+            // 「库里已有」两条来源：同平台同 id（`indexMusicEntries`）；豆瓣来的同名老条目（`adoptableMusicEntryId`。
+            const keyedId = key ? byKey.get(key) : undefined;
+            const adoptId = keyedId ? '' : adoptableMusicEntryId(existing, seed.title, seed.author);
+            const prevId = keyedId ?? adoptId;
+            const prev = prevId ? byId.get(prevId) : undefined;
+            if (!prev && findTitleConflict(byTitle, 'music', seed.title)) {
+                // 真·同名不同曲（且库里那条不是同一来源 id）⇒ 仍保护笔记文件，不覆盖
+                sameName++;
+                skipped++;
+                onProgress?.(done, songs.length, `跳过（库内同名） ${seed.title}`);
+                continue;
+            }
+            onProgress?.(done, songs.length, `${prev ? '覆盖' : '入库'} ${seed.title}`);
+            try {
+                if (prev) {
+                    // 覆盖口径住在 `musicPatchFor`（批量与单条共用，⛔ 别在这里再写一份）
+                    await this.service.update(prev.id, this.musicPatchFor(seed, tag, prev, !!adoptId));
+                    await this.service.writeNote(prev.id);
+                    overridden++;
+                } else {
+                    const created = await this.service.create({
+                        rating: 0,
+                        cast: [],
+                        links: [],
+                        notes: '',
+                        // 🔴 阶段 C：歌单名写进标签（用户 2026-11-09 裁定「只落单曲，歌单名写进标签」）。
+                        //    `playlistTag` 做最小净化（折叠空白 / 截 24 字 / ⛔ 不加前缀，加了就筛不出来）。
+                        tags: tag ? [tag] : [],
+                        ...seed,
+                    });
+                    try {
+                        await this.service.writeNote(created.id);
+                    } catch {
+                        /* 笔记失败不阻断（与另外几个同步弹窗同口径） */
+                    }
+                    byTitle.set(seed.title, { id: created.id, type: 'music', title: seed.title } as MediaEntry);
+                    // 同一批里再点一次同一首歌时能认出「刚建的那条」，不会建出第二。
+                    if (key) byKey.set(key, created.id);
+                    byId.set(created.id, created);
+                    added++;
+                }
+            } catch {
+                failed++;
+            }
+        }
+        await this.refreshViews();
+        return { added, skipped, failed, overridden, sameName };
+    }
+
+    /**
+     * 单条落库的**覆盖补丁**（批量与单条共用，⛔ 别各写一份 —— 本仓 Steam 那次的病根就是两个入口各写一套）。
+     *
+     * 两条覆盖口径必须分开：
+     *  ① `adopted = false`（同平台同 id 命中）—— 确实是同一来源的同一首歌，可以整体刷新平台字段；
+     *  ② `adopted = true`（「认领」来的豆瓣同名老条目）—— 只是**判定为同一首**，
+     *     它上面的标题 / 歌手 / 专辑 / 评分全是用户从豆瓣那套里挑的，
+     *     ⛔ 不能拿平台侧标题（常带「【MV】」「1080P」）去覆盖 ⇒ 只补 `MUSIC_ADOPT_FIELDS`。
+     *
+     * 两种口径共同点：用户记录（`notes` / `tags` / `rating` / `audioPath` / `listenMinutes`）一律不碰。
+     *
+     * @param seed    平台侧映射（`pure/musicSync.musicEntrySeed` 的产物）
+     * @param tag     本次歌单名归一后的标签（空串 = 不写）
+     * @param prev    库里那条（取 `tags` 用）
+     * @param adopted 是否走「认领」口径
+     */
+    private musicPatchFor(
+        seed: MusicEntrySeed,
+        tag: string,
+        prev: Pick<MediaEntry, 'tags'>,
+        adopted: boolean,
+    ): Partial<MediaEntry> {
+        let patch: Partial<MediaEntry>;
+        if (adopted) {
+            patch = {};
+            // ⚠️ 先把 `seed` 转成 `unknown` 再转索引签名：`MusicEntrySeed` 没有 string 索引签名。
+            //    直接 `as Record<string, unknown>` 会被 tsc 判成「两边都不重叠」（TS2352）。
+            const src = seed as unknown as Record<string, unknown>;
+            for (const f of MUSIC_ADOPT_FIELDS) {
+                const v = src[f];
+                if (v !== undefined) (patch as Record<string, unknown>)[f] = v;
+            }
+        } else {
+            patch = { ...seed };
+        }
+        // 用户的记录一律不碰（`seed` 本来就不含这些键，这里是显式表态，防将来有人往 seed 里加。
+        delete (patch as Record<string, unknown>).notes;
+        delete (patch as Record<string, unknown>).tags;
+        delete (patch as Record<string, unknown>).rating;
+        delete (patch as Record<string, unknown>).audioPath;
+        delete (patch as Record<string, unknown>).listenMinutes;
+        // 🔴 阶段 C：歌单名**只增不减** —用户自己打的标签一律保留，只补上这次来自哪个歌单。
+        //    不整份覆`tags`：那会把用户手打的标签冲掉。
+        if (tag && !(prev.tags ?? []).includes(tag)) patch.tags = [...(prev.tags ?? []), tag];
+        return patch;
+    }
+
+    /**
+     * 🔴 2026-11-09 第 15 轮阶段 B：**结果卡片「入库」单条入口**（`EntryForm.onSaveMusic` 的实现）。
+     *
+     * 为什么卡片给的是 `SearchResult` 而不是 `DownloadSong`：
+     *   卡片是 `pure/songLibrary.songLibraryResults` 的产物，原始 `DownloadSong` 早被压掉了；
+     *   平台与平台内 id 只剩在 `id`（`songlib:{平台}:{id}`）里。
+     *   ⇒ 用 `musicSeedFromResult` 反解，再走与批量落库**同一条**落库流程
+     *   （⛔ 别为了单条另写一套落库 —— 那正是 Steam 踩过的「两个入口各写一份映射」）。
+     *
+     * 返回值：`null` = 成功；字符串 = 给用户看的原因（卡片上弹 Notice）。
+     */
+    async importMusicResult(r: SearchResult): Promise<string | null> {
+        const seed = musicSeedFromResult(r);
+        if (!seed) return '这条结果缺少平台信息，无法直接入库';
+        return this.writeMusicSeed(seed, r);
+    }
+
+    /**
+     * 单条 seed → 落库（与 `importMusicSongs` 共用判重与覆盖口径）。
+     *
+     * ⚠️ 与批量版的差别只在「一条 vs 一批」；判重键、同名保护、覆盖时不动用户字段
+     *    这三条口径**必须一致** —— 所以这里复用 `indexMusicEntries` 与 `findTitleConflict`。
+     */
+    private async writeMusicSeed(seed: MusicEntrySeed, r: SearchResult): Promise<string | null> {
+        const existing = await this.service.list();
+        const byTitle = indexByTitleKey(existing);
+        const byKey = indexMusicEntries(existing);
+        // ⚠️ 判重键要*平台id**：`seed` 本身没有 id 字段，从卡片`songlib:…` 反解一。
+        const key = musicItemKey(seed.source, musicIdFromResult(r));
+        // 与批量同口径：① 同平台同 id；② 豆瓣来的同名老条目（`adoptableMusicEntryId`）。
+        // 缺了 就会「豆瓣库里已有的歌从曲库点入库一律被当成同名冲突」—阶段 C 真机核对发现的断点。
+        const keyedId = key ? byKey.get(key) : undefined;
+        const adoptId = keyedId ? '' : adoptableMusicEntryId(existing, seed.title, seed.author);
+        const prevId = keyedId ?? adoptId;
+        const prev = prevId ? existing.find((e) => e.id === prevId) : undefined;
+        if (!prev && findTitleConflict(byTitle, 'music', seed.title)) {
+            return `库里已有同名条目（${seed.title}），已跳过以免覆盖笔记`;
+        }
+        try {
+            if (prev) {
+                // 单条入口没有歌单上下`tag` 传空串（别为了对齐签名硬编一个标签）
+                await this.service.update(prev.id, this.musicPatchFor(seed, '', prev, !!adoptId));
+                await this.service.writeNote(prev.id);
+            } else {
+                const created = await this.service.create({
+                    rating: 0,
+                    cast: [],
+                    links: [],
+                    notes: '',
+                    tags: [],
+                    ...seed,
+                });
+                try {
+                    await this.service.writeNote(created.id);
+                } catch {
+                    /* 笔记失败不阻断（与其它落库入口同口径） */
+                }
+            }
+        } catch (e) {
+            return e instanceof Error ? e.message : String(e);
+        }
+        await this.refreshViews();
+        return null;
     }
 
     /**
@@ -2842,6 +3737,11 @@ export default class ReelLudicPlugin extends Plugin {
                 //    静默同步/同步按钮这条路径也要落，否则「弹窗勾选导入的有 %、静默同步的没有」，
                 //    正是用户反复报的同一种病（两条路径各写一半）。
                 if (f.reviewPercent != null) out.reviewPercent = f.reviewPercent;
+                // 🔴 2026-11-08 收敛盖章*只要真的发出了这次请*就写标记（不管拿到几个字段）。
+                //    判据 `steamEntryNeedsDetail` 靠它收敛 —否则「该游戏零评Metacritic」这。
+                //    永远补不上评分的条目会每次开机重拉一遍（上一版注释里写死的教训）。
+                //    ⚠️ 放在 `fetchSteamDetailForEntry` 成功之后（catch 分支不盖章：网络失败下轮该重试）。
+                out.steamDetailFilledAt = new Date().toISOString();
                 const nm = raw && typeof raw.title === 'string' ? raw.title.trim() : '';
                 return { fields: out, name: nm };
             } catch {
@@ -2864,9 +3764,13 @@ export default class ReelLudicPlugin extends Plugin {
                     if (cur && (cur.playtimeMinutes ?? 0) !== Math.round(hours * 60)) {
                         patch.playtimeMinutes = Math.round(hours * 60);
                     }
-                    // 🔴 老条目缺封面 ⇒ 顺手补详情（用户报障的直接来源就是这些「早期只写了标题」的条目）
-                    //    判据见 `steamEntryNeedsDetail`：只看 poster，补过一次就收敛。
-                    const missing = !cur || steamEntryNeedsDetail({ poster: cur.poster });
+                    // 🔴 老条目补详情（用户报障的直接来源就是这些「早期只写了标题」的条目）
+                    //    判据`steamEntryNeedsDetail`：缺封面 *** 没盖过详情标记；补过一次就收敛。
+                    //    ⚠️ 2026-11-08 前这里只`poster`，导致「有封面但缺评分」的老条目永不补 —已修。
+                    const missing = !cur || steamEntryNeedsDetail({
+                        poster: cur.poster,
+                        steamDetailFilledAt: cur.steamDetailFilledAt,
+                    });
                     if (missing) {
                         // ⚠️ 封面也补：早期条目 `poster` 为空，海报墙里就是一块空白
                         if (!cur?.poster) {
@@ -2999,6 +3903,13 @@ export default class ReelLudicPlugin extends Plugin {
      */
     setCredentialStatus(key: string, ok: boolean): void {
         this.settings.credentialStatus = withStatus(this.settings.credentialStatus ?? {}, key, ok);
+        // 1：同一口写「检测时刻」—面板的「上次检测」列读它。
+        // 🔴 两张表必须同写：只写结论会让面板出现「有结论但没时间」，用户没法判断该不该重测。
+        // ⚠️ 开机自检与手动测试都经此口，所以两条路径的时间语义天然一致（别在按钮里另记时间）。
+        this.settings.credentialCheckedAt = {
+            ...(this.settings.credentialCheckedAt ?? {}),
+            [key]: Date.now(),
+        };
         void this.persistCredentialStatus();
     }
 
@@ -3008,9 +3919,37 @@ export default class ReelLudicPlugin extends Plugin {
      */
     clearCredentialStatus(key: string): void {
         const cur = this.settings.credentialStatus ?? {};
-        if (!Object.prototype.hasOwnProperty.call(cur, key)) return;
+        const hasAt = Object.prototype.hasOwnProperty.call(this.settings.credentialCheckedAt ?? {}, key);
+        if (!Object.prototype.hasOwnProperty.call(cur, key)) {
+            // 结论不在、时间却在（历史脏数/ 只清了一半）顺手把时间也清掉，⛔ 别留着孤零零一个时。
+            if (hasAt) {
+                const at = { ...(this.settings.credentialCheckedAt ?? {}) };
+                delete at[key];
+                this.settings.credentialCheckedAt = at;
+                void this.persistCredentialStatus();
+            }
+            return;
+        }
         this.settings.credentialStatus = withoutStatus(cur, key);
+        // 1：结论作时间一并作废（否则面板会显示「未检· 上次检10-01」自相矛盾）
+        if (hasAt) {
+            const at = { ...(this.settings.credentialCheckedAt ?? {}) };
+            delete at[key];
+            this.settings.credentialCheckedAt = at;
+        }
         void this.persistCredentialStatus();
+    }
+
+    /**
+     * ③-1：「统一周期管理」面板要的原始数据 —— **面板不自己攒状态**，一律从这里现取。
+     * 返回的就是 `pure/credentialMeta.buildCredentialMeta` 的入参形态。
+     */
+    credentialMetaInput(): { settings: unknown; status: CredentialStatusMap; checkedAt: Record<string, number> } {
+        return {
+            settings: this.settings,
+            status: this.settings.credentialStatus ?? {},
+            checkedAt: this.settings.credentialCheckedAt ?? {},
+        };
     }
 
     /**
@@ -3024,6 +3963,38 @@ export default class ReelLudicPlugin extends Plugin {
         } catch (e) {
             console.warn('[ReelLudic] 凭据测试结论落盘失败：' + (e instanceof Error ? e.message : String(e)));
         }
+    }
+
+    /**
+     * 🔴 ③-1（2026-11-12 用户 m00353）：「统一周期管理」面板的**一键检测**入口。
+     *
+     * 按 `credentialCheckKey` 的族前缀分派到既有的三条测试路径 —— ⛔ 别为面板另写一套探测：
+     *   族结论必须与徽标/开机自检**同源**（同一功能只有一个判据，本仓 #669 口径）。
+     *   · `source:` → `checkSourceCredential`（元数据源唯一分派）
+     *   · `music:`  → `dlTestConnection`（测的是「Cookie 能不能下载音频」）
+     *   · `net:`    → B 站复用 `dlTestConnection('bilibili')`（判的是登录态，与取流同一个前置）；
+     *                 YouTube 走 `ytTestConnection`（真跑 yt-dlp，见设置页那条注释）
+     * ⚠️ 只**返回**结果，不写结论 —— 写盘统一由调用方走 `setCredentialStatus`（唯一写口）。
+     */
+    async testCredentialByKey(key: string): Promise<{ ok: boolean; message: string }> {
+        const idx = key.indexOf(':');
+        if (idx <= 0) return { ok: false, message: '未知凭据键' };
+        const family = key.slice(0, idx);
+        const id = key.slice(idx + 1);
+        if (family === 'source') {
+            const r = await this.checkSourceCredential(id as ProviderId);
+            return { ok: r.ok, message: r.message };
+        }
+        if (family === 'music') {
+            const cookies = (this.settings.musicDlCookies ?? {}) as Record<string, string | undefined>;
+            return this.dlTestConnection(id, String(cookies[id] ?? ''));
+        }
+        if (family === 'net') {
+            if (id === 'bilibili') return this.dlTestConnection('bilibili', String(this.settings.biliCookie ?? ''));
+            if (id === 'youtube') return this.ytTestConnection();
+            return { ok: false, message: "该源无可用测试" };
+        }
+        return { ok: false, message: "该源无可用测试" };
     }
 
     /**
@@ -3100,6 +4071,18 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /**
+     * 打开主视图并落在**用户设置的起始页**（唯一真源 = `settings.startTab`）。
+     *
+     * 🔴 2026-11-11 用户 m08970 ①：ribbon / 命令面板原来写死 `activateHome('media')`，
+     *    入口一按就把起始页覆盖成 'media' —— 用户设的「电影」永远看不到。
+     * ⚠️ 别改用 `activateHome(tab)` 再补一句 `syncStartTab()`：那样会「先闪一下 media 再跳走」；
+     *    这里先归一好再一次性传下去，`homeTab` 从头到尾都是用户设的那个值。
+     */
+    async openHomeAtStartTab(): Promise<void> {
+        await this.activateHome(normalizeStartTab(this.settings.startTab));
+    }
+
+    /**
      * 类型化主操作（阅读 / 观看 / 启动 / 播放）—— **四类统一入口**。
      *
      * 🔴 #444c：这段分流原来写在 `HomeView.ts` 的 `onWatch` 箭头函数里；系列选择弹窗改成
@@ -3137,27 +4120,73 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /**
-     * 打开系列「季列表」弹窗（#444c）。
-     * 🔴 应用级 `Modal`（挂 `document.body`）—— ⛔ 不再由视图自己造遮罩 + 绝对定位居中：
-     *    那条路不管怎么调都受插件**正文区**宽度限制（用户窗口下最多 4 列），
-     *    而 Modal 的宽度按整个窗口算（同一窗口能给到 6 列）。
+     * 🔴 #691（2026-10-27）：系列卡「播放」按钮 → 打开**选季页**，选中某一季后进 B 站风选集页。
+     *
+     * 用户裁定：「系列卡播放按钮后的改成 B 站风格页面的，不是内置播放器加个侧边栏，是新增一个页面」，
+     * 并追加「两者都进新页」（系列卡播放按钮 + 海报墙/列表的「观看」按钮同一个落点）。
+     *
+     * 🔴 2026-11-06 用户改口径（原话「从系列卡点击播放按钮还是弹出选各季的页面再播放吧」）：
+     *    ⛔ 不再自动挑「有进度的那一季 / 第一部」直接开播 —— 从系列卡进来时用户要挑季，
+     *    替他选一季等于把选择权收走。现改为**先弹 `SeriesPickerModal`**，选完再走 `runEntryAction`。
+     * ⚠️ 这个弹窗与「相关推荐 › 全部 N 部」用的是**同一个** `openSeriesListFor` 那套组件 ——
+     *    ⛔ 不另造选择器，否则「系列 → 季」会出现两套口径。
      */
     openSeriesPicker(group: SeriesGroup): void {
+        const items = group.items ?? [];
+        if (items.length === 0) return;
+        // 只有一部时弹窗没有意义（弹出来只有一张卡，还多一次点击）直接进那一。
+        if (items.length === 1) {
+            void this.openEpisodePageFor(items[0]);
+            return;
+        }
         new SeriesPickerModal(this.app, this, group).open();
     }
 
     /**
-     * 🔴 #609 系列「排序号」弹窗（海报墙**折叠卡右键 →「排序号」**）—— 拖拽排序、确认后按新顺序重编 1..N。
+     * 新页里「相关推荐 › 全部 N 部」→ 打开既有的季列表弹窗（`SeriesPickerModal`）。
      *
-     * 翻面 **#608**（那版是「点一下整组自动重排」）：用户裁定「弹窗批量勾选排序手动排，不是自动排」。
-     * 🔴 落库仍走 `bulkSetSeriesIndex`（只写 `seriesIndex` 一个字段）；**回执在这里给** ——
-     *    折叠卡封面只显示 `×N`、看不到序号，没有 `Notice` 的话用户点完像没反应（#608 立的那条纪律继续有效）。
+     * 🔴 为什么还要留着这个弹窗：15 部的大系列不可能靠「相关推荐」那一行翻完 ——
+     *    弹窗是一次看全 + 排序号的唯一入口（它还挂着 `SeriesReorderModal`）。
+     *    ⇒ 新页只**新增**一条更快的直达路，⛔ 不把旧入口拆掉。
      */
-    openSeriesReorder(group: SeriesGroup): void {
-        new SeriesReorderModal(this.app, this, group, async (pairs) => {
-            await this.bulkSetSeriesIndex(pairs);
-            new Notice(`已按顺序重排「${group.title}」${pairs.length} 部的序号`);
-        }).open();
+    openSeriesListFor(entry: MediaEntry): void {
+        void (async () => {
+            const items = await this.service.list();
+            const key = seriesKeyOf(entry);
+            if (!key) return;
+            const group: SeriesGroup = {
+                key,
+                type: entry.type,
+                name: entry.series ?? entry.title,
+                title: seriesTitleOf(entry.series ?? entry.title, entry.type),
+                items: sortSeriesItems(items.filter((e) => seriesKeyOf(e) === key)),
+            };
+            if (group.items.length === 0) return;
+            new SeriesPickerModal(this.app, this, group).open();
+        })();
+    }
+
+    /**
+     * 🔴 m07813②（用户逐字）：「给系列卡也做一个编辑属性窗口（同时右键菜单的改系列名、批量填合集、
+     * 批量填标签收进编辑系列属性页面内。同单击单卡卡片网格信息栏逻辑一样，单击系列卡信息栏也打开
+     * 编辑属性窗口）」
+     *
+     * 🔴 2026-11-15 第二次裁定（**推翻上一版**，用户逐字）：「还是将改系列名、排序号、批量填合集、
+     * 批量填标签放进编辑系列属性页面窗口里较好，**删除右键菜单和其单独改的入口和页面**」
+     *    ⇒ 这个窗口现在是那四件事的**唯一入口**；`openSeriesRenamePrompt` /
+     *      `openGroupCollectionPrompt` / `openGroupTagsPrompt` 三个独立 Prompt 与
+     *      `SeriesReorderModal`（拖拽弹窗）**已整体删除**。
+     *    ⚠️ 第五轮 ask_user_question 裁定「右键菜单保留，只留这一条」——留下的是**批量关联**
+     *      （逐条清单、不是批量写操作），仍走 `openSeriesAssociate`。
+     *
+     * 入口两个：单击系列卡信息栏 / 悬停 ⋯ 菜单（后者打开的就是那个只剩一条的右键菜单）。
+     * ⚠️ 落库全在 `SeriesPropsModal` 里用既有批量原语做（`bulkSetSeriesIndex` / `bulkSetCollection` /
+     *    `bulkAddTags` / `service.update` / `service.setSeriesRating`）。
+     * ⛔ 别在这里预先算 `series` 键或碰 `catalog`：`SeriesPropsModal` 在 `mount()` 里读一次分就够了，
+     *    多算一次反而会在「读分期间用户已关窗」时留下悬挂写入。
+     */
+    openSeriesProps(group: SeriesGroup): void {
+        new SeriesPropsModal(this.app, this, group).open();
     }
 
     /**
@@ -3169,7 +4198,7 @@ export default class ReelLudicPlugin extends Plugin {
      *    `onClosed` 钩子则由本方法注入（`quickAssociateEntry` 的第二参）。
      */
     openSeriesAssociate(group: SeriesGroup): void {
-        // 🔴 2026-10-25（用户：「从系列卡片批量关联的关联入口的电影隐藏本地批量填/网络批量填小图标按钮」）：
+        // 🔴 用户 2026-10-25：「添加短评不要追加到个人评语，另起个标题追加」
         //    这条入口进来的电影不画那两枚批量填图标 —— 系列清单里电影只有一集，
         //    「从文件夹检索剧集 / 批量搜索未填集」在这里没有可填的对象，只是两枚噪声。
         //    ⛔ 只影响本入口；海报墙 / 列表右键那条（`HomeView` 的 `onQuickAssociate`）**照旧画**。
@@ -3180,9 +4209,19 @@ export default class ReelLudicPlugin extends Plugin {
     /** 当前打开的添加/编辑弹窗（防重复打开叠加：新开前先关闭旧的，避免遮罩堆叠导致新弹窗无法交互/无法输入搜索） */
     entryModal: EntryModal | null = null;
 
-    openAddModal(initialType?: EntryType, initialBookKind?: BookKind): void {
+    /**
+     * 打开「添加条目」弹窗。
+     *
+     * 🔴 用户 2026-11-27（m04135）：「在首页视图搜索框中搜索填入的文本如果这时点添加按钮
+     *    就直接填入搜索条目一步到位，省去打开添加条目窗口再搜索」。
+     *    ⇒ 首页搜索框有词时，把词**一路带进来**并立即触发搜索（实现在 `EntryForm` 的
+     *      `presetQuery` + `onMount` 里那一步，见那边注释）。
+     *    ⚠️ `initialQuery` 只走「新建」这条路 —— 命令面板 / 功能区图标那两处入口不传，
+     *      行为与改动前逐字一致。
+     */
+    openAddModal(initialType?: EntryType, initialBookKind?: BookKind, initialQuery?: string): void {
         this.entryModal?.close();
-        this.entryModal = new EntryModal(this.app, this, undefined, initialType, initialBookKind);
+        this.entryModal = new EntryModal(this.app, this, undefined, initialType, initialBookKind, initialQuery);
         this.entryModal.open();
     }
 
@@ -3252,7 +4291,7 @@ export default class ReelLudicPlugin extends Plugin {
             await this.refreshViews();
             new Notice(`已生成 ${year} 年度总结`);
         } catch (err) {
-            new Notice(`生成年度总结失败：${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`生成年度总结失败：${err instanceof Error ? err.message : String(err)}${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
@@ -3325,6 +4364,38 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
+    /**
+     * 🔴 m07854 ⑭：「今天看什么」——从**「想看」且评分 ≥ 4** 的条目里随机抽一部，全屏弹卡。
+     *
+     * 🔴🔴 **2026-11-13 用户指令（本批反转了⑭的候选池口径）**，原话：
+     *    「在对应的页签下的随机看一部应该是当前类型的随机出来而不是全部类型混在一起。
+     *     （只有当导航布局为合并视图时随机看一部才是全库中挑）」。
+     *    候选池 = **调用方传进来的那一份**（首页给的是「当前页签 + 当前视图」筛过的条目）；
+     *       别在这里 `service.list()` 全库覆盖 —— 那就是用户点名要改掉的「全部类型混在一起」。
+     *    兜底：`scoped` 为 `undefined`（命令面板 / 其他入口直接调）时取全库。
+     *       这样「合并视图」和「没有页签上下文的入口」都是全库，语义一致。
+     *
+     * 封面`resolvePoster`（与首页同一套解析），⛔ 别在这里另拼路径。
+     * ⚠️ 池为空时**照样弹**（Modal 里有空态说明），⛔ 不要用 `Notice` 顶替 ——
+     *    用户点了骰子就该看到一张卡（哪怕是「还没够格候选」的说明卡），静默不弹会被当成没反应。
+     */
+    openWhatToWatchModal(scoped?: readonly MediaEntry[] | null): void {
+        const pick = (all: readonly MediaEntry[]): readonly MediaEntry[] => scoped ?? all;
+        void this.service.list().then((entries) => {
+            const modal = new WhatToWatchModal(this.app, {
+                entries: pick(entries),
+                posterUrl: (e) => this.resolvePoster(e),
+                onOpenEntry: (id) => void this.openEntryNote(id),
+                // 🔴 m12298 ③：卡片封面右下角的播放钮走**宿主统一主操作入口**
+                //    （`runEntryAction` 已在 #444c 收口：book 阅读 / game 启动 / music 播放 /
+                //    其余观看，⛔ 别在这里再写一套分流）。原先这里的注入位是 `onEditEntry`
+                //    （「改属性」按钮），用户点名删掉 ⇒ 同一个位置换成「播一集」。
+                onPlayEntry: (e) => this.runEntryAction(e),
+            });
+            modal.open();
+        });
+    }
+
     // ───────────────────────── 条目回收站（「条目还原」） ─────────────────────────
 
     /** 回收站文件：与 catalog.json 同级（`{库目录}/trash.json`）。
@@ -3342,7 +4413,7 @@ export default class ReelLudicPlugin extends Plugin {
 
     /**
      * 回收站文件改名迁移（幂等，启动时执行一次）：
-     *   `{lib}/条目回收站.json` → `{lib}/trash.json`
+     *   `${lib}/条目回收站.json` → `${lib}/trash.json`
      *
      * 🔴 用 rename 而不是「读旧 → 写新 → 删旧」：
      *  ⑴ rename 是原子的，中途崩溃不会出现「新文件写了一半、旧文件已删」= 5 条后悔药全丢；
@@ -3491,7 +4562,7 @@ export default class ReelLudicPlugin extends Plugin {
         } catch (e) {
             this.assetManagerOpen = false;
             this.assetManagerModal = null;
-            new Notice(`附件管理打开失败：${e instanceof Error ? e.message : String(e)}`);
+            new Notice(`附件管理打开失败：${e instanceof Error ? e.message : String(e)}${e instanceof Error ? e.message : String(e)}`);
         }
     }
 
@@ -3622,32 +4693,35 @@ export default class ReelLudicPlugin extends Plugin {
                 return;
             }
             if (u) {
-                this.openExternalUrl(u);
+                // 🔴 2026-11-06 用户报障：「怎么在单个电影下点击播放没有进到新播放器页面里。
+                //    病根就是这里原本直接 `openExternalUrl(u)` 单集电影只要挂的是网络地址就开浏览。
+                //    不支持「既是文件选择器又是目录选择器」**（该组合只会弹目录选择器）⇒ 实测「漫画关联不了
+                //    与季里点网络集同一口径：能内嵌 B 站就开选集页由自有 `<video>` 播，
+                //    只有B 站链接才退化成开浏览器（`openEpisodeOrExternal` 内部判）
+                this.openEpisodeOrExternal(entry, 0, u);
                 return;
             }
         }
         if (eps.length > 0 || urls.length > 0 || total > 1) {
-            // 弹窗按总集数展开（未填资源的集置灰，可在编辑表单补录），不设总集数时按实际资源数
-            const n = Math.max(total, eps.length, urls.length);
-            const files: (string | undefined)[] = Array.from({ length: n }, (_, i) => eps[i]);
-            const net: (string | undefined)[] = Array.from({ length: n }, (_, i) => urls[i]);
-            const titles: (string | undefined)[] = Array.from({ length: n }, (_, i) => entry.episodeTitles?.[i]);
-            // #527 失效标红：读**内存缓存**（编辑表单点过「检测失效」才有；没检测过 → 全 undefined，不标）
-            const statuses = this.linkStatusCache.get(entry.id);
-            // #573 建立 / #576 语义升级：**当前看到的那一集**（0 基）—— 决定打开时停在哪一页 + 橙点标它
+            // 🔴 2026-11-07 用户裁定：「旧选集页面彻底删除掉，所有视频播放都改在新播放器页面播放。
+            //    旧选集弹窗（`EpisodePickerModal`）已整文件删这里不再先弹一层「选哪一集」
+            //    而是**直接进选集*，由它右栏那套选集网格承担「换集」的职责。
+            //    ⚠️ 落点仍是**当前看到的那一*（`progress.episode` 为基准）与旧弹窗的初始页同一口径。
+            //       别退化成 0（那会让「点观看」每次都从第 1 集重来）
             const at = Math.max(0, (entry.progress?.episode ?? 1) - 1);
-            const idx = await new EpisodePickerModal(
-                this.app, entry.title, files, net, titles, entry.type === 'movie', statuses, at,
-                // #577：封面计划（本地视频首帧 / B 站缩略图 @320w_200h_1c.webp / 统一占位图）
-                //   宿主供网与缓存，弹窗只管渲染（弹窗摸不到 vault / service）
-                (i) => this.epCoverFor(files, net, i),
-            ).open();
-            if (idx !== null) {
-                const p = entry.episodeFiles?.[idx];
-                const u = entry.episodeUrls?.[idx];
-                if (p) void this.openEpisodeLocal(entry, idx);
-                else if (u) this.openExternalUrl(u);
+            const p = entry.episodeFiles?.[at];
+            const u = entry.episodeUrls?.[at];
+            if (p) {
+                void this.openEpisodeLocal(entry, at);
+                return;
             }
+            if (u) {
+                this.openEpisodeOrExternal(entry, at, u);
+                return;
+            }
+            // 当前集两种资源都没填（用户只设了总集数）仍进选集页，让他在右栏选集里自己挑。
+            // 本地起始集为空时页子不会自己起播，那是预期（没有可播的东西）
+            void this.openEpisodePageFor(entry, at);
             return;
         }
         const links = entry.links ?? [];
@@ -3688,11 +4762,30 @@ export default class ReelLudicPlugin extends Plugin {
             //    `biliParts` 缺了就会回落成「只填当前这一集」；两个都缺 ⇒ 弹窗里不画那枚按钮。
             biliSearch: (kw: string) => this.dlBiliSearch(kw),
             biliParts: (bvid: string) => this.dlBiliView(bvid),
+            // 🔴「网络集可搜索 YouTube」：globe 浮层的第二个搜索源（与编辑表单同一个宿主出口
+            //    `main.ytSearch`，⛔ 这里不另写请求、也不判平台 —— 那个方法自己判）。
+            ytSearch: (kw: string) => this.ytSearch(kw),
             // 🔴 #599：「本地路径」标签旁那枚**单集本地检索** —— 与编辑浮层 #563 走**同一个宿主方法**
             //    （设置页分类目录递归找当前集；⛔ 这里不另写扫盘逻辑、也不判平台）。
             searchLocalEpisode: (o) => this.searchLocalEpisode(o),
             // 🔴 #601：单路径三类（书 / 游戏 / 音乐）「本地路径」旁那枚检索 —— 一步到位（见下方方法注释）。
             searchLocalFile: () => this.searchLocalForAssociate(entry),
+            // 🔴🔴 2026-11-16（用户：「游戏类型卡快捷关联入口里怎么没获取swf入口」）：
+            //    游戏条目的**本地 Flash 影片**（`.swf`）—— 编辑表单里早就有「浏览 / 获取」两枚，
+            //    但快捷关联弹窗只有 .lnk 那条路，用户在这个入口没法把 swf 挂上去。
+            //    两枚都复用**编辑表单同一条宿主链**（⛔ 别在这里另写一份地址解析 / 下载）：
+            //      · `pickGameSwfPath()` —— 系统选择器挑 .swf；
+            //      · `promptFetchGameSwf()` —— 问地址 → 抓真实 swf → 下载入库 → 返回库内相对路径。
+            //    ⚠️ 只对 `type === 'game'` 注入（弹窗那边还会再按类型判一次，双保险）。
+            ...(entry.type === 'game'
+                ? {
+                      pickGameSwf: () => this.pickGameSwfPath(),
+                      // 🔴 必须带 `entry.id`：落盘文件名 = 「条目标题.swf」，不带 id 就退回 URL 末段。
+                      fetchGameSwf: () => this.promptFetchGameSwf(entry.id),
+                      // 2026-11-16 用户「改成关联目录」：选一整个游戏文件夹，自动挑主影片
+                      pickGameSwfDir: () => this.pickGameSwfFromDir(),
+                  }
+                : {}),
             // 🔴🔴 2026-10-21（用户需求 8）：「音乐」条目的「本地路径」标签旁补一枚
             //    **「下载音频并回填路径」**小图标按钮，交互与编辑表单那枚一致。
             //    这是对 #521「本弹窗不再挂下载 / 检索小图标」的**部分翻面** ——
@@ -3720,9 +4813,15 @@ export default class ReelLudicPlugin extends Plugin {
             //    音乐「网络地址」旁那枚 `globe` 改成 **B站 检索**（与影视侧同一个 `biliSearch` 出口），
             //    ⛔ 不再走在线曲库（那枚在本弹窗撤掉；曲库检索仍在条目编辑浮层 / 搜索页曲库栏 / 下载窗口）。
             save: (r) => this.saveQuickAssociate(entry, r),
+            // 🔴 用户 2026-10-29「字幕双向持久化」：字幕路径的**存在性探针**（丢文件要标红）。
+            //    ⚠️ 弹窗是 `src/modals` 层，⛔ 不碰 fs；这里给一个只读探针，逻辑全在这个方法里。
+            fileExists: (p) => this.subtitleFileExists(p),
+            // 🔴 `b23.tv` 短链：手机分享的短码里没有 BV 号，弹窗是纯 UI 层不发请求 ⇒ 由宿主跳一次
+            //    （与 `biliStreamFor` 内部那跳**同一个出口** `resolveBiliShortUrl`，⛔ 别各写一份）。
+            resolveBiliShort: (u: string) => this.resolveBiliShortForPaste(u),
             // 🔴 #629：关窗（且兜底提交落库完成）后的回调 —— 只有系列「批量关联」清单会用到它
             onClosed,
-            // 🔴 2026-10-25（用户：「从系列卡片批量关联的关联入口的电影隐藏本地批量填/网络批量填小图标按钮」）：
+            // 🔴 用户 2026-10-25：「添加短评不要追加到个人评语，另起个标题追加」
             //    只有**系列批量关联**这条入口会传 `opts.hideMovieBatchFill`，
             //    海报墙 / 列表右键那条入口不传 ⇒ 电影仍照 #521 的裁定画那两枚。
             //    ⛔ 别在这里写死 `entry.type === 'movie'`（那会把 #521 整条推翻，见 cbs 上的注释）。
@@ -3776,7 +4875,7 @@ export default class ReelLudicPlugin extends Plugin {
             if (!this.app.vault.getAbstractFileByPath(cur)) {
                 try {
                     await this.app.vault.createFolder(cur);
-                } catch { /* 已存在/并发：忽略 */ }
+                } catch { /* 笔记失败不阻断导入 */ }
             }
         }
     }
@@ -3820,7 +4919,7 @@ export default class ReelLudicPlugin extends Plugin {
             new Notice(`已记录${FEED_RANGE_WORDS[range]}动态 → ${path}`, 4000);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            new Notice(`写入打卡日记失败：${msg}`, 5000);
+            new Notice(`写入打卡日记失败：${msg}${msg}`, 5000);
         }
     }
 
@@ -3831,6 +4930,10 @@ export default class ReelLudicPlugin extends Plugin {
             case 'game': return this.pickGameLaunchPath();
             case 'music': return this.pickLocalAudioPath();
             case 'video': return this.pickLocalVideoPath();
+            // 🔴 2026-11-06 用户：「关联入口每集各个字幕文件框旁也要加个浏览按钮。
+            //    ⚠️ 走既有的 `pickSubtitleFromSystem`（只选不读），⛔ 别用 `pickSubtitleRaw`
+            //    —那个会顺带读文件正文，关联入口只需要一条路径。
+            case 'subtitle': return this.pickSubtitleFromSystem().then((v) => v ?? undefined);
         }
     }
 
@@ -3853,6 +4956,12 @@ export default class ReelLudicPlugin extends Plugin {
         } else if (entry.type === 'game') {
             patch.gameLaunchPath = r.gameLaunchPath?.trim() || undefined;
             patch.gameUrl = r.gameUrl?.trim() || undefined;
+            // 🔴 2026-11-16：本地 Flash 影片（`.swf`）。`undefined` = 这次没动（弹窗没建那一行）
+            //    ⇒ ⛔ 别写 `r.gameSwf?.trim() || undefined`，那会把已有值冲掉。
+            //    弹窗只在自己建了输入框时才产出这个键（见 `collectResult`）。
+            if (r.gameSwf !== undefined) patch.gameSwf = r.gameSwf.trim() || undefined;
+            // 🔴 2026-11-16：内嵌播放页（H5 / Unity）。与上面同口径 —— `undefined` = 这次没动。
+            if (r.gameEmbed !== undefined) patch.gameEmbed = r.gameEmbed.trim() || undefined;
         } else if (entry.type === 'music') {
             patch.audioPath = r.audioPath?.trim() || undefined;
             // 🔴 #601：音乐网络地址（append-only 新字段）
@@ -3861,6 +4970,10 @@ export default class ReelLudicPlugin extends Plugin {
             patch.episodeFiles = r.episodeFiles;
             patch.episodeUrls = r.episodeUrls;
             patch.episodeTitles = r.episodeTitles;
+            // 🔴 用户 2026-10-29「字幕双向持久化」：关联弹窗里改过的每集字幕路径。
+            //    ⚠️ `undefined` = 这次没动（⛔ 别写`r.subtitlePaths ?? {}` 那会把整。
+            //    字幕记忆清空，而弹窗只*真变*时才产出这个键，`collectResult`。
+            if (r.subtitlePaths !== undefined) patch.subtitlePaths = r.subtitlePaths;
             if (entry.type !== 'movie' && r.totalEpisodes !== undefined) {
                 // 仅调整 totalEpisodes，保留既有剧集进度（season/episode/日期/历史）
                 const p = entry.progress;
@@ -3901,77 +5014,377 @@ export default class ReelLudicPlugin extends Plugin {
             void this.openWithSystemPlayer(startPath);
             return;
         }
-        // 建整剧「可内嵌」播放列表（跳过不可内嵌/解析失败的集；按剧集顺序保留真实集下标）
-        const items: EmbedVideoItem[] = [];
-        for (let i = 0; i < all.length; i++) {
-            const path = all[i];
-            if (!path || !isEmbeddableVideoPath(path)) continue;
-            const url = this.resolveEmbedUrl(path);
-            if (!url) continue;
-            items.push({
-                index: i,
-                title: entry.episodeTitles?.[i],
-                url,
-                path,
-                isFirst: false,
-                isLast: false,
-            });
-        }
-        if (items.length === 0) {
-            // 防御：所选集可内嵌却因解析失败无 URL → 回退系统播放器
-            void this.openWithSystemPlayer(startPath);
+        // B 站风选集页（#691）：新页自带内置播放+ 右侧选集栏，与「观看」按钮同一落点。
+        await this.openEpisodePageFor(entry, startIdx, seekSec);
+    }
+
+    /**
+     * 点了一集**只有网络地址**的集：能就地内嵌（B 站）⇒ 打开选集页并停在这一集；否则开浏览器。
+     *
+     * 🔴 报障根因（2026-11-02 用户：「怎么只有在系列卡播放才能内嵌播放，在其中一季点击播放按钮会直接跳转浏览器播放」）：
+     *    系列卡走 `openSeriesPicker` → `openEpisodePageFor`（会开选集页），
+     *    而季详情里的集按钮走 `runEntryAction` → `openWatchLinkPicker`，那条路对网络集**无条件** `openExternalUrl`
+     *    ⇒ 同一部片，从系列卡点能内嵌、从季里点却跳浏览器。两处入口必须同一口径。
+     *
+     * ⛔ 不对**不可内联的**链接开选集页：那页的内嵌层只做 B 站 + YouTube，硬开只会得到「点了一格没反应」。
+     *    （2026-10-31 改口径：原话是「非 B 站链接」，现在 YouTube 也进了内置播放器，
+     *      判据统一收在 `pure/netInline.ts` 的 `canPlayNetInline` —— 四处闸门共用一份。）
+     * ⚠️ 选集页要能画出这一集的高亮，所以起始集必须传 `idx`（不是 0）。
+     */
+    private openEpisodeOrExternal(entry: MediaEntry, idx: number, url: string): void {
+        if (canPlayNetInline(url)) {
+            // 🔴 第二层根因：光把「点的是网络集」分流到选集页还不够。
+            //    `openEpisodePageFor` `startIdx` 指的*`items`（本地可内嵌集）的下*。
+            //    纯网络集压根不在 `items` 里（`buildEmbedItems` 只收本地文件）⇒ `findIndex` -1
+            //    页子停在 0 集、本地播放器照常起来，用户看到「点了没反应。
+            //    `netStart` 把「起始是网络集、集号是 idx」单独交给页子，由它自己进内嵌。
+            void this.openEpisodePageFor(entry, idx, undefined, false, idx);
             return;
         }
-        // 标注边界 + 定位起始项
-        items.forEach((it, k) => {
-            it.isFirst = k === 0;
-            it.isLast = k === items.length - 1;
-        });
+        this.openExternalUrl(url);
+    }
+
+    /**
+     * 🔴 #691（2026-10-27）：**打开 B 站风选集页**（新页面，不是播放器内嵌侧栏）。
+     *
+     * 用户原话：「系列卡点击播放按钮后的改成 B 站风格页面的，不是内置播放器加个侧边栏，是新增一个页面」，
+     * 并追加「两者都进新页」⇒ 系列卡播放按钮与海报墙/列表「观看」按钮共用这一条落点。
+     *
+     * 🔴 边界（全部沿用「观看」按钮既有口径，⛔ 不在这里另立一套）：
+     *  - `internalMediaPlayback` 关闭 且非 `forceInternal` ⇒ 系统播放器（设置跟随，用户裁定第 3 条）；
+     *  - 起始集不可内嵌 ⇒ 系统播放器；
+     *  - 无可内嵌集 ⇒ 系统播放器兜底（防御：可内嵌却解析失败）；
+     *  - 只要**存在**可内嵌集就开新页 —— 用户点的是选集页，不是「必须先能播这一集」。
+     */
+    private async openEpisodePageFor(entry: MediaEntry, startIdx = 0, seekSec?: number, forceInternal = false, netStart?: number): Promise<void> {
+        const all = entry.episodeFiles ?? [];
+        const startPath = all[startIdx];
+        // 🔴 2026-11-06：电影页隐藏选集节之后（用户裁定），「唯一资源是网络地址」的单集电影
+        //    再也没有任何格子可点 页子打开就是一片黑，用户必须自己去点播放（真机实测 A6 失败。
+        //    这里替它补上「一进来就播这一集」的意图：没有本地起始集、且0 条是**可内*
+        //    链接（B 站或 YouTube，判据见 `pure/netInline.ts`）时，默`netStart = 0`
+        //    ⚠️ 2026-10-31 起判据从 `canEmbedBili` 换成 `canPlayNetInline`：否。
+        //      「唯一资源YouTube 链接」的单集电影打开还是一块黑，用户得自己找那一。
+        //    只在调用*没显式指* `netStart` 时兜。
+        //    显式传了（季里点N 集）就以调用方为准，别把用户点的集号覆盖0
+        //    ⚠️ 多集条目不受影响：`urls.length > 1` 时保持原样，由用户自己挑
+        if (typeof netStart !== 'number' && !startPath) {
+            const urls = entry.episodeUrls ?? [];
+            const soleUrl = urls.length === 1 ? urls[0] : undefined;
+            if (soleUrl && canPlayNetInline(soleUrl)) netStart = 0;
+        }
+        // 设置跟随 + 起始集不可内系统播放器（`openEpisodeLocal` 同口径）
+        if (startPath) {
+            if (!forceInternal && !this.settings.internalMediaPlayback) {
+                void this.openWithSystemPlayer(startPath);
+                return;
+            }
+            if (!isEmbeddableVideoPath(startPath)) {
+                void this.openWithSystemPlayer(startPath);
+                return;
+            }
+        }
+        const items = this.buildEmbedItems(entry);
+        if (items.length === 0) {
+            // 没有任何可内嵌集：有本地起始集就交系统播放器，否则纯网络条目也开新页（能看到选集 + 点开浏览器）
+            if (startPath) {
+                void this.openWithSystemPlayer(startPath);
+                return;
+            }
+        }
         const pos = items.findIndex((it) => it.index === startIdx);
-        // 进度条标记（#333）：从**条目笔记**解析（真源仍是笔记；视图按当前集过滤）。
-        const marks = await this.service.readNoteMarks(entry.id);
-        const opts = {
-            marks,
-            // 卡片里的截图缩略图：库内资源 → `app://` URL（视图不碰 vault）
-            markImageUrl: (image: string) => this.resolveNoteImageUrl(image, entry),
-            // 「在笔记中打开」（#333 D-3）：明确是用户点按钮 ⇒ 聚焦笔记 + 滚到标记那一行
-            onOpenMarkNote: (mark: VideoMark) => this.openNoteAtMark(entry, mark),
+        const allEntries = await this.service.list();
+        const page: EpisodePageExtras = {
+            entry,
+            files: all,
+            urls: entry.episodeUrls ?? [],
+            titles: entry.episodeTitles ?? [],
+            // #527 失效标红：读**内存缓存**（编辑表单点过「检测失效」才有；没检测过 → 全 undefined，不标）
+            statuses: this.linkStatusCache.get(entry.id) ?? [],
+            total: entry.progress?.totalEpisodes ?? 0,
+            // 当前集：季里点的是网络集时，用户要落到**那一集**，⛔ 不能拿 `progress.episode`
+            // （那是上次看到哪集的记忆，可能完全是另一集；拿它盖会把用户按的格子抹掉）。
+            currentIndex: typeof netStart === 'number'
+                ? netStart
+                : Math.max(0, (entry.progress?.episode ?? startIdx + 1) - 1),
+            allEntries,
+            coverUrl: this.resolvePoster(entry) ?? null,
+            // 逐季封面：季卡要用**各自的**横版/竖版图，不能拿当前这部顶替。
+            // ⚠️ 做成回调而不是提前算好数组：`allEntries` 是全库，全量解析封面会把打开动作拖慢；
+            //    季带只画屏幕上那几张，按需取即可。
+            seasonCover: (e) => this.resolvePoster(e) ?? null,
+            // 逐集封面计划（#691 用户 2026-10-27「集数列表样式为封面+集数+标题」）：
+            //   ⚠️ 与选集弹窗**共用同一个** `epCoverFor` —— 本地首帧 / B 站缩略图 / 统一占位图
+            //      都在那里判过了，新页只按计划渲染（⛔ 别在这里再拼一套取图逻辑）。
+            //   ⚠️ 做成回调：一页 50 格全量解析会把首屏拖慢，视图那边按「滚进视野」逐个问。
+            episodeCover: (i) => this.epCoverFor(all, entry.episodeUrls ?? [], i),
+            overview: entry.summary ?? '',
+            onOpenSeason: (e) => void this.openEpisodePageFor(e, 0),
+            // 🔴 用户 2026-11-16 逐字：「播放器详情页的右键更新了关联入口链接，但视频播放器不刷新」
+            //    ⇒ 页子重算「本地可播集」时回宿主这一条出口（`buildEmbedItems` 是唯一真源，
+            //      内含 `isEmbeddableVideoPath` + `resolveEmbedUrl` 两处只有宿主知道的知识）。
+            //    ⚠️ 传函数不传数组：`refreshEpisodePages` 拿到的是**每次都最新**的条目快照，
+            //      提前算好塞进 page 又会变成第二份会过期的快照（正是这个 bug 的老样子）。
+            reloadItems: (e) => this.buildEmbedItems(e),
+            onOpenSeriesList: () => this.openSeriesListFor(entry),
+            // 🔴 用户 2026-11-08：「同时简介的封面可右键可弹窗菜单（同海报墙编辑属性逻辑）」
+            //    ⇒ 简介封面右键弹**与海报墙完全同一个**菜单。
+            //    ⚠️ 七个回调逐个对齐 `views/HomeView.ts:233-270` 传给海报墙的那一套 ——
+            //       同一件事写两遍必有一遍先烂（本仓 #730 的教训），动作实现也复用 `plugin.*`，
+            //       ⛔ 别在这里另写一遍打开逻辑。
+            entryMenu: {
+                onWatch: (e) => this.runEntryAction(e),
+                onQuickAssociate: (e) => this.quickAssociateEntry(e),
+                onEditEntry: (id) => void this.openEditModal(id),
+                onAddExcerpt: (b) => this.openExcerptModal(b),
+                onOpenEntryLogModal: (e, kind) => this.openEntryLogModal(e, kind),
+                onOpenEntryTextModal: (e, kind) => this.openEntryTextModal(e, kind),
+                onDeleteEntry: (id) => this.deleteEntry(id),
+            },
+            // 🔴 用户 2026-11-14：「播放器详情页简介封面加左键单击进笔记」
+            //    ⇒ 左键封面走与标题行 / 阅读器顶栏**同一条**出口 `openEntryNote`
+            //    （没有笔记会当场生成，见它的 #593 自愈分支），⛔ 别在这里另写打开逻辑。
+            onOpenNote: (id) => void this.openEntryNote(id),
+            onOpenUrl: (url) => {
+                // 本地路径（不可内嵌集）→ 系统播放器；网络地址 浏览。
+                if (!url) return;
+                if (/^https?:\/\//.test(url)) this.openExternalUrl(url);
+                else void this.openWithSystemPlayer(url);
+            },
+            // 时间轴面板的「导入字幕」：只读原文（⛔ 不转 VTT —— .ass 没有转换通路，
+            // 面板自己按扩展名选解析器；画面字幕仍归播放器基类那条 <track> 通路）
+            importCue: () => this.pickSubtitleRaw(),
+            // 起始是纯网络集（季里点了 B 站集）⇒ 页子打开就进内嵌，⛔ 不留在第 0 集空转
+            startNet: typeof netStart === 'number' ? netStart : undefined,
+            // 🔴 用户 2026-11-11：「全屏能播，回到详情页一直缓冲中播不了」——
+            //    回跳必须带上秒数（`seekSec`），否则视图侧 DASH 分支只能从第 0 片重拉。
+            //    ⚠️ 只在网络集回跳时有意义（`netStart` 存在），本地集走基类 `pendingSeek`。
+            startNetSeek: typeof netStart === 'number' && typeof seekSec === 'number' && seekSec > 0
+                ? seekSec
+                : undefined,
+            netSubtitle: (url) => (isYouTubeUrl(url) ? this.ytSubtitleFor(url) : this.biliSubtitleFor(url)),
+            // 🔴 用户 2026-11-11：「给字幕加个AI面板总结按钮小图标…点击在字幕面板上浮出AI面板」
+            //    ⇒ 把「整条字幕 → 概括 + 要点」这条 AI 通道交给页子。
+            //    ⚠️ 与 `netSubtitle` 分开：取字幕是数据，总结是另一家服务、另一组配置。
+            cueSummary: (input) => this.cueSummarize(input),
+            // 🔴 用户 m09565 ①-8：「字幕面板-AI总结输出动效改成流式打字机」
+            //    ⇒ 同一个 `CueSummaryService`，只是走 `generateStream`（边收边推前缀）。
+            //    ⚠️ 返回值与上面那条完全同构，视图层收尾仍走同一条渲染。
+            cueSummaryStream: (input, onPartial) => this.cueSummarizeStream(input, onPartial),
+            cueAsk: (input, q, hist) => this.cueAsk(input, q, hist),
+            // 🎙️ 本地语音转文字（用户 m01938）：工具条那颗按钮的落点。
+            // ⚠️ 与 `cueSummary` / `cueAsk` 完全分开：那两条走云端 AI，这条**全程在本机跑**，
+            //    既不读 API Key 也不联网（用户在需求里把「音视频绝不上传」写成了硬要求）。
+            transcribe: (req) => this.transcribeCue(req),
+            // 📖 学习模式悬停查词（用户 m01938 §3.1）：落到设置里那个本地词典文件。
+            // ⚠️ 为什么返回 `{def, phonetic?} | null` 而不是抛：查不到是**常态**（生僻词、
+            //    没配词典），气泡要的是「安静地只说词形 + 🔊」，⛔ 不让一个查不到把学习模式打崩。
+            //    查不到的具体原因（没配 / 找不到文件 / 太大 / 读失败）走 `dictHint()` 只在设置页显示。
+            lookupWord: (key) => this.lookupWordInLocalDict(key),
+            // 🔴 2026-10-31：把「上一次取流为什么失败」交给页子。YouTube 失败**没有兜底画面**
+            //    （B 站能退 iframe，YouTube 没有），若只返回 null，页子只能干瞪眼，
+            //    用户看到「点了没反应」——比原来跳浏览器更糟。原因只有宿主知道（`lastYtError`）。
+            //    ⚠️ 传函数不传值：`lastYtError` 每次取流都变，快照会显示上一次的旧错误。
+            // 🔴 2026-11-15（用户 m02763「网络集用插件播放器加载不出来」）扩到 B 站：
+            //    B 站这条路以前**有兜底**（退 iframe / 开浏览器）所以没接过原因，
+            //    但真机实测两条报障条目是 `62002 稿件不可见` —— 兜底再漂亮也没用，
+            //    用户想知道的是「为什么播不了」。`lastBiliError` 现在会带人话原因。
+            netFailHint: () => this.lastYtError ?? this.lastBiliError,
+            // 🔴 2026-10-31 用户报障：「B站/油管内嵌的怎么还有登录，不上填了 cookie 吗」
+            //    根因：设置里那串 Cookie 只喂插件自己的 API 请求；官方内嵌 iframe 是
+            //    Electron 的独立浏览上下文，读的是 Chromium 的 cookie jar，两边从来没打通
+            //    （真机实测该 jar 里 bilibili.com / youtube.com 都是 0 条）。
+            //    ⇒ 挂 iframe 前把设置里那串写进 jar（`syncEmbedCookies()` 正式方法，见下）。
+            //    ⚠️ 传函数：设置随时可能改，快照会让用户改完还得重开页子。
+            syncEmbedCookies: () => this.syncEmbedCookies(),
+            // 「全屏①」= 交接给内置播放器标签页（用户 2026-11-06「再点全屏进入该原播放器标签页」）
+            onOpenPlayerTab: (info) => void this.handOffEpisodeToPlayer(entry, info),
+            // 🔴 播放断点表的**只读副本**（`key` = 剧集下标字符串，值 = 秒）。
+            //    右栏底部「观看进度」微件的「继续观看」要拿历史断点：
+            //    基类把 `initialPositions` 存成 **private**（子类读不到），而微件又不能自己读库
+            //    ⇒ 由宿主在这里透一份，页面侧只读、⛔ 不写（写回仍走 `onSavePosition` 那条唯一通路）。
+            //    ⚠️ 用拷贝而不是直接塞 `entry.videoPositions`：playlist 对象是库里的活引用，
+            //      页面持着它万一哪天顺手改了，就是绕过 service 的隐式写库。
+            positions: entry.videoPositions ? { ...entry.videoPositions } : undefined,
+            // ③ 单集评价（用户 m00002）：与 `positions` 同一手法 —— 透一份**拷贝**，
+            //    页面侧只读，写回走 `onSaveReview`。⛔ 别直接塞 `entry.episodeReviews`：
+            //    那是库里的活引用，页面顺手一改就绕过 `service.update`（catalog 变了、笔记没变）。
+            reviews: entry.episodeReviews ? { ...entry.episodeReviews } : undefined,
+            onSaveReview: (epKey, review) => void this.persistEpisodeReview(entry.id, epKey, review),
         };
-        void this.openVideoPlayer({
+        const marks = await this.service.readNoteMarks(entry.id);
+        const opts: EpisodePageOptions = {
+            page,
             entryTitle: entry.title,
             items,
             startIndex: pos >= 0 ? pos : 0,
             single: entry.type === 'movie',
-            // 时间戳链接定位（#326）：等 loadedmetadata 后跳转并播放（与续播位置互斥，见视图内 consumePendingSeek）
             pendingSeek: seekSec !== undefined && seekSec > 0 ? { index: startIdx, seconds: seekSec } : undefined,
             onExternalFallback: (path) => void this.openWithSystemPlayer(path),
-            // 记忆播放位置（落 catalog.videoPositions）+ 字幕（同目录自动 + 手动选）
             entryId: entry.id,
             initialPositions: entry.videoPositions,
             onSavePosition: (key, seconds) => void this.persistVideoPosition(entry.id, key, seconds),
             listSubtitles: (videoPath) => this.listSubtitleCandidates(videoPath),
             loadSubtitleVtt: (subPath) => this.readSubtitleAsVtt(subPath),
             pickSubtitleFile: () => this.pickSubtitleFromSystem(),
-            ...opts,
-            // 时间戳插入 + 一键截图（#326）：宿主负责「构造链接 / 落盘 / 写笔记 / 提示」
+            initialSubtitles: entry.subtitlePaths,
+            onSaveSubtitle: (key, subPath) => void this.persistSubtitlePath(entry.id, key, subPath),
+            marks,
+            markImageUrl: (image: string) => this.resolveNoteImageUrl(image, entry),
+            onOpenMarkNote: (mark: VideoMark) => this.openNoteAtMark(entry, mark),
             onInsertStamp: (info) => this.insertVideoStamp(entry, info),
+            stampPreviewText: (info) => this.stampPreviewTextOf(entry, info),
             onCaptureShot: (info) => this.saveVideoShot(entry, info),
             onOpenNote: async () => { await this.openVideoNote(entry); },
-            // 三个播放器开关（齿轮内可改，改完落 settings）
             ...this.playerSwitchOptions(),
-        });
+        };
+        await this.openEpisodePage(opts);
     }
 
-    /** 在内嵌播放器视图（工作区新标签页，Media Extended 式）里打开视频：
-     *  当前活动页已是播放器 → 直接换片复用；否则开新标签页。
+    /**
+     * 建整剧「可内嵌」播放列表（跳过不可内嵌 / 解析失败的集；**保留真实集下标** `index`）。
+     * 🔴 抽成一份：`openEpisodeLocal` 与 `openEpisodePageFor` 都吃它 —— 两处各写一遍必然漂
+     *    （漂了就是「观看」能播、「选集页」少几集这种鬼故事）。
+     */
+    private buildEmbedItems(entry: MediaEntry): EmbedVideoItem[] {
+        const all = entry.episodeFiles ?? [];
+        const items: EmbedVideoItem[] = [];
+        for (let i = 0; i < all.length; i++) {
+            const path = all[i];
+            if (!path || !isEmbeddableVideoPath(path)) continue;
+            const url = this.resolveEmbedUrl(path);
+            if (!url) continue;
+            items.push({ index: i, title: entry.episodeTitles?.[i], url, path, isFirst: false, isLast: false });
+        }
+        items.forEach((it, k) => {
+            it.isFirst = k === 0;
+            it.isLast = k === items.length - 1;
+        });
+        return items;
+    }
+
+    /**
+     * 回到「原来那个选集页」（用户 2026-11-06 两页互跳的另一半：播放器页点全屏 ⇒ 回选集页）。
+     *
+     * 🔴 必须**按条目 id 复用**已打开的那一页，⛔ 不能调 `openEpisodePageFor` 新开：
+     *    那会每点一次多一个标签页，用户原话是「返回到新播放器页面 / 进入原来的播放器页面」——
+     *    要的是**换回去**，不是再开一个。
+     * ⚠️ 找不到（用户已关掉那页）⇒ 兜底现开一页，⛔ 别什么都不做（按钮点了没反应比多一页更糟）。
+     *
+     * 🔴 必须先退全屏，再调 `setActiveLeaf(leaf, ${focus:true})`（2026-11-06 真机实测根因）：
+     *    ⑴ 播放器页此刻占着 `document.fullscreenElement`，全屏容器里的切换**会被吞掉**；
+     *    ⑵ 光是 `revealLeaf(leaf)` **不够** —— 真机实测两种写法都是
+     *       `activeLeaf 仍为 VideoPlayerView`（`_probe_afterback.mjs` / `_probe_reveal.mjs`），
+     *       ⇒ `setActiveLeaf(leaf, ${ focus: true })` 一次就切过去了（`_probe_afterback2.mjs`）
+     *    ⇒ 顺序固定为：① exitFullscreen（await，失败静默）→ ② setActiveLeaf(focus) → ③ revealLeaf（兜底保证页可见）。
+     *    ⛔ 别只留 revealLeaf：那正是本 bug 的原样。
+     *
+     * 🔴 2026-11-09 用户逐字：「播放器全屏为标签页时再返回详情页时怎么不能播放而是直接显示为
+     *    这集没有本地视频的」⇒ 回跳必须带上「这一集是网络集」这件事（`net`）。
+     *    原来只传 `index`/`seconds`，`openEpisodePageFor` 收不到 `netStart`，而它只在
+     *    `urls.length === 1` 时才兜底 —— 多集网络条目回跳后既不进内嵌态、也没有本地文件可播
+     *    ⇒ 基类点亮「这一集没有本地视频」。真机实测：回跳后 `netIndex` 不存在、`readyState=0`。
+     */
+    private backToEpisodePage(entry: MediaEntry, index: number, seconds: number, net = false): void {
+        // 优先回到「交接前记下的那片叶子。
+        // 🔴 2026-11-09：交接现*占用选集页那片叶*（同 leaf `setViewState` 成播放器页）
+        //    换视图后旧选集页实例已销下面那个 `getLeavesOfType` 循环永远找不到它。
+        //    所以必须先走这里：把同一片叶子换回选集页，再让 `openEpisodePageFor` 就地重绘
+        // ⚠️ 判据 `origin.view instanceof VideoPlayerView`：那片叶子若已被用户拿去开笔记/别的视图
+        //    就不能强行抢占（会把用户正在看的东西顶掉）交给下面的兜。
+        const origin = this.episodeOriginLeaf.get(entry.id) ?? null;
+        if (origin && origin.view instanceof VideoPlayerView) {
+            void (async () => {
+                try {
+                    if (document.fullscreenElement) await document.exitFullscreen?.();
+                } catch {
+                    // 退全屏失败不阻断：下面仍会切页
+                }
+                try {
+                    this.app.workspace.setActiveLeaf(origin, { focus: true });
+                    await origin.setViewState({ type: EPISODE_PAGE_VIEW_TYPE, active: true });
+                } catch {
+                    // 叶子已被关掉 / API 差异：退回下面「现开一页」那条路
+                }
+                // 🔴 网络集必须把「这一集是网络集」继续往下传（`netStart = index`）：
+                //    否则 `openEpisodePageFor` 只会按本地集路径走，`startPath` 为空。
+                //    `items` 也为基类点亮「这一集没有本地视频。
+                await this.openEpisodePageFor(entry, index, seconds > 0 ? seconds : undefined, false,
+                    net ? index : undefined);
+            })();
+            return;
+        }
+        const leaves = this.app.workspace.getLeavesOfType(EPISODE_PAGE_VIEW_TYPE);
+        for (const leaf of leaves) {
+            const v = leaf.view;
+            if (v instanceof EpisodePageView && v.currentEntryId() === entry.id) {
+                void (async () => {
+                    // 退全屏：全屏容器里切页会被吞掉。
+                    try {
+                        if (document.fullscreenElement) await document.exitFullscreen?.();
+                    } catch {
+                        // 退全屏失败不阻断：下面两步仍会尝试切页
+                    }
+                    // 真正切焦点（revealLeaf 不换焦点，见上方注释。
+                    try {
+                        this.app.workspace.setActiveLeaf(leaf, { focus: true });
+                    } catch {
+                        // 老版API 差异：失败就退revealLeaf
+                    }
+                    // 保住页可见（分栏折叠 / 被别的标签盖住时。
+                    await this.app.workspace.revealLeaf(leaf);
+                })();
+                return;
+            }
+        }
+        // 原来那页已经被关掉：按当前集现开一页（集号与秒数都带回去，别让用户从头找）
+        // 🔴 网络集同样要`netStart`（理由见方法头注释）：不带就会开出一。
+        //    「这一集没有本地视频」的空壳。
+        void this.openEpisodePageFor(entry, index, seconds > 0 ? seconds : undefined, false,
+            net ? index : undefined);
+    }
+
+    /**
+     * 🔴 #691（2026-10-27）：在内置播放器视图里打开视频（工作区新标签页，Media Extended 式）。
      *  关闭语义 = 关标签页：点视频区黑边 / 「外部打开」/ 解码失败兜底都走视图内部。 */
-    private async openVideoPlayer(opts: VideoPlayerOptions): Promise<void> {
+    private async openVideoPlayer(opts: VideoPlayerOptions, reuseLeaf?: WorkspaceLeaf | null): Promise<void> {
         const workspace = this.app.workspace;
         const active = workspace.activeLeaf;
-        let leaf = active && active.view instanceof VideoPlayerView ? active : null;
+        // 🔴 必须排除选集页：`EpisodePageView extends VideoPlayerView`，只判基类会把正在显示的
+        //    选集页认成「播放器已打开」⇒ 原地重绘、不换页。交接（`handOffEpisodeToPlayer`）正。
+        //    从选集页触发的，漏这一句就等于「点了全屏，页面没变」（2026-11-06 真机实测 8/9 的根因）
+        //    `openEpisodePage` 里「先选集页后播放器」是同一类坑的两个方。
+        // 🔴 2026-11-09 用户逐字：「播放器全屏按钮点击后怎么是新开一个标签页给我覆盖成当前标签页，
+        //    选集页交接过来时由调用方传入 `reuseLeaf`（就是那张选集页所在的叶子）
+        //    这里*同一片叶*`setViewState` 换视标签页数量不变，观感是「原地翻页。
+        //    ⚠️ 不能靠上面那`active.view instanceof VideoPlayerView` 自己命中：选集页就。
+        //    `VideoPlayerView` 的子类，被刻意排除了（否则会原地重绘、不换页，就是那个bug。
+        let leaf = reuseLeaf ?? (active && active.view instanceof VideoPlayerView && !(active.view instanceof EpisodePageView)
+            ? active
+            : null);
         if (!leaf) {
             leaf = workspace.getLeaf('tab');
             await leaf.setViewState({ type: VIDEO_PLAYER_VIEW_TYPE, active: true });
+        } else if (!(leaf.view instanceof VideoPlayerView) || leaf.view instanceof EpisodePageView) {
+            // 同一片叶子换视图：先 setViewState 才能拿到新的 VideoPlayerView 实例
+            // ⚠️ 判据里点名排除选集不排除的话这里会「认为已经是播放器」而不换。
+            //    交接就变成原地重绘（同上那个bug 的复现路径）
+            await leaf.setViewState({ type: VIDEO_PLAYER_VIEW_TYPE, active: true });
+        }
+        // 🔴 用户 2026-11-01：「时间戳列表没有标记」。
+        //    根因之二：详情页那条路（`openEpisodePageFor`）会 `readNoteMarks` 后把 `marks` 塞进
+        //    opts，但播放器页这三个调用点（本地交/ 网络交接 / 裸文件）**一个都没传**。
+        //    播放器页刚打开`opts.marks === undefined`，抽屉必0 行，要等插入时间戳或。
+        //    vault 事件才「突然」出现。⇒ 在这里统一兜一次，谁调用都拿得到已有标记。
+        //    ⚠️ 只在调用方没给的时候读：调用方明确传了（哪怕是空数组）就以调用方为准，
+        //    否则会把它刚算好的列表又覆盖一遍。
+        if (!opts.marks && opts.entryId) {
+            try {
+                opts.marks = await this.service.readNoteMarks(opts.entryId);
+            } catch (e) {
+                // 笔记读不出来不该挡住播放：抽屉空着也比整页打不开。
+                console.warn('[reelludic] 读取时间戳标记失败：', e);
+            }
         }
         const view = leaf.view;
         if (view instanceof VideoPlayerView) {
@@ -3981,11 +5394,172 @@ export default class ReelLudicPlugin extends Plugin {
         this.pauseOtherPlayers('video');
     }
 
+    /**
+     * 🔴 #691：打开 **B 站风选集页**（独立标签页）。
+     *
+     * 🔴 复用口径（与 `openVideoPlayer` 同构，但**按新视图类型判等**，⛔ 不拿 `VideoPlayerView` 判）：
+     *    活动页已经是选集页 ⇒ 原地换片（点相关推荐连着换季不该刷出十个标签页）；
+     *    否则开一个新标签页 —— 用户要的是「新增一个页面」，⛔ 不能把当前播放器标签页顶掉。
+     *    ⚠️ `EpisodePageView extends VideoPlayerView` ⇒ 判等顺序**必须**先选集页后播放器，
+     *       反过来会把选集页当成普通播放器 `openWith`（没有 `page` 上下文 = 画成空壳）。
+     */
+    private async openEpisodePage(opts: EpisodePageOptions): Promise<void> {
+        const workspace = this.app.workspace;
+        const active = workspace.activeLeaf;
+        let leaf = active && active.view instanceof EpisodePageView ? active : null;
+        if (!leaf) {
+            leaf = workspace.getLeaf('tab');
+            await leaf.setViewState({ type: EPISODE_PAGE_VIEW_TYPE, active: true });
+        }
+        const view = leaf.view;
+        if (view instanceof EpisodePageView) {
+            view.openWithPage(opts);
+        }
+        // 播放器互斥：选集页里的播放器也是「视频」这一停掉内置音频播放。
+        this.pauseOtherPlayers('video');
+    }
+
+    /**
+     * 打开 **Flash 游戏播放页**（独立标签页）。
+     *
+     * 🔴 2026-11-16 用户逐字：「要独立标签页运行而不是弹窗运行」——改前的 `FlashGameModal` 是
+     *    工作区模态弹窗（会盖住整窗、Esc 就没了），用户要的是和视频播放器一样能并排、能切走再切回。
+     *
+     * 复用口径（与 `openEpisodePage` 同构，但**按条目等**）：
+     *   · 已有同一游戏的页 ⇒ 直接 `revealLeaf` 把它带到前台，⛔ 不再开第二页（否则连点几下就开一堆）；
+     *   · 否则新开一个 tab —— 用户要的是「新增一个页面」，⛔ 不能把当前页顶掉。
+     * ⚠️ 视图注册见 `onload` 里的 `registerView(FLASH_GAME_VIEW_TYPE, …)`；删了那行这里拿到的是
+     *    `leaf.view` 非 `FlashGameView`（`setViewState` 会因未知类型抛错），别只改这里。
+     */
+    private async openFlashGame(entry: MediaEntry): Promise<void> {
+        const workspace = this.app.workspace;
+        // 同游戏已在某页 ⇒ 复用（`entryId()` 是视图自报，⛔ 别从 DOM 反推）
+        const existing = workspace
+            .getLeavesOfType(FLASH_GAME_VIEW_TYPE)
+            .find((l) => l.view instanceof FlashGameView && l.view.entryId() === entry.id);
+        let leaf: WorkspaceLeaf;
+        if (existing) {
+            leaf = existing;
+        } else {
+            leaf = workspace.getLeaf('tab');
+            await leaf.setViewState({ type: FLASH_GAME_VIEW_TYPE, active: true });
+        }
+        const view = leaf.view;
+        if (view instanceof FlashGameView) {
+            view.openWith({ entry });
+        }
+        // `revealLeaf` 在某些版本/布局下不存在（`typeof` 守卫与 `activateView` 同口径）
+        if (typeof workspace.revealLeaf === 'function') workspace.revealLeaf(leaf);
+        // Flash 游戏也可能出声 ⇒ 与视频同口径停掉内置音频播放器
+        this.pauseOtherPlayers('video');
+    }
+
+    /**
+     * 「全屏①」的宿主实现：把选集页当前这一集**交接给内置播放器标签页**，并让它全屏。
+     *
+     * 🔴 用户 2026-11-06 逐字：「再点全屏进入该原播放器标签页」。选集页那颗按钮从此不再
+     * 🔴 改前的语义是「本页打 `data-fs`、把右栏和季带藏起来」（窗内样式态）。用户逐字说的是
+     *    内置播放器负责放大看。
+     *
+     * 🔴 两条交接路径（`info.net` 分岔）：
+     *  - 本地集：`items` 里按**真实集下标**找那一项（`buildEmbedItems` 只收本地可内嵌文件，
+     *    下标与 `episodeFiles` 对齐），把它的 `url` 当普通播放源。
+     *  - 网络集：这一集没有本地文件、进不了 `items` ⇒ 先用 `biliStreamFor` 取 CDN 直链，
+     *    取不到就回浏览器（⛔ 不留一个空播放器给用户）。
+     *
+     * 🔴 网络源必须 `netSource: true`：基类 `render()` 默认给 `<video>` 装
+     *    `crossOrigin='anonymous'`（本地抓帧免污染 `#326`），B 站 CDN 不回 CORS 头 ⇒ 带着它就是
+     *    加载失败、零字节。那个开关同时让它**不写播放位置**（`epKey()` 是本地集下标）。
+     *
+     * ⚠️ 秒数一律走 `pendingSeek`：那是基类既有的「进场定位」通路（`consumePendingTarget` 消费），
+     *    ⛔ 不另造一套「打开后 setTimeout 再 seek」——那会和续播位置打架、还会跳两下。
+     * ⚠️ 全屏：先 `openVideoPlayer`（可能新建标签页，`setViewState` 是异步的），拿到视图后
+     *    在**这份 leaf 的容器**上 `requestFullscreen`。浏览器要求用户手势，这里还处在点击的
+     *    调用栈里，所以能成功；`catch` 掉失败（全屏不是必需，⛔ 别让交接因它中断）。
+     */
+    private async handOffEpisodeToPlayer(
+        entry: MediaEntry,
+        info: { index: number; seconds: number; net: boolean; degraded?: boolean },
+    ): Promise<void> {
+        const seconds = Number.isFinite(info.seconds) && info.seconds > 0 ? info.seconds : 0;
+        // 🔴 2026-11-09 用户逐字：「播放器全屏按钮点击后怎么是新开一个标签页给我覆盖成当前标签页，
+        //    再点全屏按钮即回到原来播放器页面」⇒ 交接前先记下**选集页此刻所在的叶子**。
+        //    让播放器页在同一片叶子上开出来（标签页数量不变），回跳时再换回。
+        // ⚠️ 判据必须是选集页：普通播放器视图也满`VideoPlayerView`，认错了就会把用。
+        //      以后想再细化某一组就得一路加 id，本仓没有这个先例。
+        const origin = this.app.workspace.activeLeaf;
+        if (origin && origin.view instanceof EpisodePageView) {
+            this.episodeOriginLeaf.set(entry.id, origin);
+        }
+        const reuse = this.episodeOriginLeaf.get(entry.id) ?? null;
+        if (!info.net) {
+            const items = this.buildEmbedItems(entry);
+            const pos = items.findIndex((it) => it.index === info.index);
+            const target = pos >= 0 ? items[pos] : null;
+            if (!target) {
+                // 这一格既不是网络集、也不在可内嵌清单里（不可解/ 已移除）不假装能。
+                new Notice('这一集没有可播放的视频');
+                return;
+            }
+            await this.openVideoPlayer({
+                entryTitle: entry.title,
+                items,
+                startIndex: pos,
+                single: entry.type === 'movie',
+                pendingSeek: seconds > 0 ? { index: info.index, seconds } : undefined,
+                onExternalFallback: (p) => void this.openWithSystemPlayer(p),
+                // 🔴 用户 2026-11-06 两页互跳：交接进来的播放器页那颗全屏按钮改义为「回选集页」
+                onBackToEpisodePage: (sec) => this.backToEpisodePage(entry, info.index, sec, info.net),
+                entryId: entry.id,
+                initialPositions: entry.videoPositions,
+                onSavePosition: (key, sec) => void this.persistVideoPosition(entry.id, key, sec),
+                listSubtitles: (videoPath) => this.listSubtitleCandidates(videoPath),
+                loadSubtitleVtt: (subPath) => this.readSubtitleAsVtt(subPath),
+                pickSubtitleFile: () => this.pickSubtitleFromSystem(),
+                initialSubtitles: entry.subtitlePaths,
+                onSaveSubtitle: (key, subPath) => void this.persistSubtitlePath(entry.id, key, subPath),
+                onInsertStamp: (i) => this.insertVideoStamp(entry, i),
+                stampPreviewText: (i) => this.stampPreviewTextOf(entry, i),
+                onCaptureShot: (i) => this.saveVideoShot(entry, i),
+                onOpenNote: async () => { await this.openVideoNote(entry); },
+                ...this.playerSwitchOptions(),
+            }, reuse);
+            this.focusPlayerTabFullscreen();
+            return;
+        }
+        // 🔴 2026-11-24 用户裁定：「将网络集用插件播放器播放的全部功能和样式全部从插件移除，
+        //    但有官方 iframe 内嵌播放的不要移除」⇒ 播放器页已经没有播网络流的能。
+        //    （取/ MSE / 本地代理路由全数删除），网络集只在选集页用官方 iframe 播放。
+        //    这里明确拒绝并指路，别保留半条死路（那会让用户看到空的播放器页）。
+        new Notice('网络集在选集页用官方播放器播放，不进全屏播放器页');
+    }
+
+    /**
+     * 交接之后把播放器页切到「标签页全屏」。
+     *
+     * 🔴 用户 2026-11-09 逐字：「这个播放器的全屏按钮怎么有两种全屏状态啊，
+     *    给我改成纯以前的标签页全屏，而不是整个电脑屏幕全屏」
+     *    ⇒ 这里**不再调 `containerEl.requestFullscreen()`**（那是整块显示器被接管）。
+     *    放大由视图自己用 `contentEl` 上的 `rl-vp-tabfs` 类完成（见 `VideoPlayerView.toggleFullscreen`），
+     *    宿主只负责在交接后把它打开一次。
+     * ⚠️ 失败静默：放大不是交接的必要条件，用户已经到播放器页了。
+     */
+    private focusPlayerTabFullscreen(): void {
+        const view = this.app.workspace.activeLeaf?.view;
+        if (!(view instanceof VideoPlayerView)) return;
+        try {
+            view.contentEl.addClass('rl-vp-tabfs');
+        } catch {
+            // 视图已销/ 布局被锁：交接本身已经完成，静默。
+        }
+    }
+
     /** 播放器选项 → 视图选项（两处 openVideoPlayer 共用一份，免得缺省口径各写一遍漂掉）。
-     *  🔴 #604：旧的「自动切集 / 单集循环」两个布尔被 `playMode` 取代 ——
      *  迁移只在**这里**发生一次（`playModeFromLegacy`），视图只认 `PlayMode` 一种形态。
      *  🔴 #605：「后台播放」**只读传快照**（开关本体已搬到 设置页 › 内置视频播放器 折叠分组，
      *  由设置页直接读写 `playerBgPlay`）—— 故这里**没有** `onToggleSetting` 了。
+     *  🔴 2026-11-09：全屏已不在此注入 —— 「标签页全屏」由视图自己切 `rl-vp-tabfs` 类实现
+     *  （`VideoPlayerView.toggleFullscreen`），不需要宿主回调。
      *  缺省：后台播放关 / 播放模式 = 列表循环。 */
     private playerSwitchOptions(): Pick<
         VideoPlayerOptions,
@@ -4013,8 +5587,16 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /** 打开单个本地视频（编辑表单「集按钮」）：受设置「内置播放器打开视频文件」控制——
-     *  关闭（默认）→ 系统播放器打开文件；开启且 Chromium 可内嵌 → 单集内置弹窗；不可内嵌/解析失败 → 系统播放器 */
-    async playLocalEpisode(path: string): Promise<void> {
+     *  关闭（默认）→ 系统播放器打开文件；开启且 Chromium 可内嵌 → 单集内置弹窗；不可内嵌/解析失败 → 系统播放器
+     *
+     * 🔴 m07854 ⑧（2026-11-13）用户逐字：「记住每个媒体上次播放位置，重新打开时恢复」。
+     *    改前这条入口**既不给 `entryId`、也不给 `initialPositions`/`onSavePosition`** ⇒ 从编辑表单
+     *    点开的视频永远从 0 开始，且播完也不留位置（其余入口都有，唯独这条漏了）。
+     *    ⚠️ `entry` 可选：本方法另有一处「编辑表单里尚未落库的新条目」可能在 `this.entry` 为空时调用，
+     *       那种情况保持改前行为（不记忆），⛔ 不要为它现造一个假 id 去写库。
+     *    ⚠️ `index` 缺省 0：单文件条目恒 0，多集条目由表单传入真实集下标（键口径见 `VideoPlayerView.epKey`）。
+     */
+    async playLocalEpisode(path: string, index = 0, entry?: MediaEntry): Promise<void> {
         if (!path) return;
         // 设置关闭（默认）→ 系统播放器打开文件
         if (!this.settings.internalMediaPlayback) {
@@ -4030,7 +5612,8 @@ export default class ReelLudicPlugin extends Plugin {
             await this.openWithSystemPlayer(path);
             return;
         }
-        const item: EmbedVideoItem = { index: 0, url, path, isFirst: true, isLast: true };
+        // 键由播放器侧`items[0].index` 推出（`VideoPlayerView.epKey()`），这里只需把集下标放进 item
+        const item: EmbedVideoItem = { index: Math.max(0, Math.floor(index)), url, path, isFirst: true, isLast: true };
         void this.openVideoPlayer({
             entryTitle: path.split(/[\\/]/).pop() ?? path,
             items: [item],
@@ -4038,6 +5621,14 @@ export default class ReelLudicPlugin extends Plugin {
             single: true,
             onExternalFallback: (p) => void this.openWithSystemPlayer(p),
             ...this.playerSwitchOptions(),
+            // ⚠️ 只有拿到真条目才接记忆：没有 `entry.id` 就写不了库，硬接只会是假成功
+            ...(entry
+                ? {
+                      entryId: entry.id,
+                      initialPositions: entry.videoPositions,
+                      onSavePosition: (k, sec) => void this.persistVideoPosition(entry.id, k, sec),
+                  }
+                : {}),
         });
     }
 
@@ -4051,7 +5642,7 @@ export default class ReelLudicPlugin extends Plugin {
             // 惰性 require（AGENTS 红线：桌面专用模块不在顶层 import，防移动端崩溃）
             const electron = require('electron') as { shell?: { openPath(p: string): Promise<string> } };
             const err = await electron.shell!.openPath(path);
-            if (err) new Notice(`无法打开视频：${err}`);
+            if (err) new Notice(`无法打开视频：${err}${err}`);
         } catch {
             new Notice('无法打开本地播放器');
         }
@@ -4134,7 +5725,14 @@ export default class ReelLudicPlugin extends Plugin {
     /** 解析某本地路径为 <video> 可播 URL：
      *  vault 内 → app.vault.getResourcePath(TFile)；vault 外绝对路径 → app://<appId>/<encodeURIComponent 全路径>。
      *  返回 null = 文件无法定位（vault 外盘符/被移除等），调用方回退系统播放器 */
-    private resolveEmbedUrl(path: string): string | null {
+    /**
+     * 把「路径」换成宿主可加载的 URL（库内 → `getResourcePath`，库外绝对 → `app://` 流式）。
+     *
+     * 🔴 2026-11-16 由 `private` 改为 `public`：Flash 播放弹窗（`FlashGameModal`）要用它把
+     * `entry.gameSwf` 与 Ruffle 运行时的插件目录都换成 `app://` URL —— 探针已实测这两类路径
+     * 在本宿主都能 fetch 到（wasm 的 MIME 也正确）。⛔ 别在弹窗里自己拼 app://（appId 取法唯一）。
+     */
+    public resolveEmbedUrl(path: string): string | null {
         try {
             const rel = this.toVaultRelPath(path);
             const f = this.app.vault.getAbstractFileByPath(rel);
@@ -4168,6 +5766,1836 @@ export default class ReelLudicPlugin extends Plugin {
             await this.service.update(entryId, { videoPositions: map });
         } catch {
             /* 落库失败静默（不影响观看） */
+        }
+    }
+
+    /**
+     * 字幕路径写回（用户 2026-10-29「字幕要双向持久化」的落库端）：并入 catalog.subtitlePaths。
+     *
+     * 🔴 与 `persistVideoPosition` 同一形状 —— 按**集号**存，换集即换字幕记忆。
+     * ⚠️ `subPath` 传空串 = **清除这一集的记忆**（播放器发现存过的文件丢了会这样调）。
+     * ⚠️ 存**原始路径**（库内相对 / 库外绝对都行），⛔ 不在这里做路径规范化：
+     *    规范化在读取侧（`readSubtitleAsVtt` 两条通路都试），写入侧多做一步只会多一个漂移点。
+     */
+    private async persistSubtitlePath(entryId: string, epKey: string, subPath: string): Promise<void> {
+        try {
+            if (!/^\d+$/.test(epKey)) return;
+            const e = await this.service.get(entryId);
+            if (!e) return;
+            const map = { ...(e.subtitlePaths ?? {}) };
+            const next = String(subPath ?? '').trim();
+            if (!next) {
+                // 清除：没有这条就什么都不做（避免无谓写盘）
+                if (!(epKey in map)) return;
+                delete map[epKey];
+            } else {
+                if (map[epKey] === next) return;
+                map[epKey] = next;
+            }
+            await this.service.update(entryId, { subtitlePaths: map });
+        } catch {
+            /* 落库失败静默（不影响观看） */
+        }
+    }
+
+    /**
+     * ③ 单集评价写回（用户 m00002）：并入 `catalog.episodeReviews`，再让笔记 yaml 跟上。
+     *
+     * 🔴 与 `persistVideoPosition` / `persistSubtitlePath` 同一形状 —— 按**集号**存。
+     * 🔴 两条纪律（少任何一条都会留下「数据在哪一半」的经典脏态）：
+     *   ⑴ **归一收口在 `pure/episodeReview.setReviewAt`**：它对空评价（未看+无标签+无心情+无短评）
+     *      做的是「删键、整表空了连字段一起没」—— ⛔ 别在这里判「空了就 return」，
+     *      那样用户把状态改回「未看」时那一集永远清不掉。
+     *   ⑵ **catalog 落完要回写笔记**：`episode_reviews` 是笔记 yaml 里的字段，
+     *      只改 catalog 不改笔记，下次打开笔记 `extractFrontmatterFromNote` 会把旧值盖回来
+     *      （用户看到的就是「改完自己变回去」）。回写走 `service.writeNote` 的既有通路
+     *      （它内部按 `fieldMap`/`fieldOrder` 重排，新键不登记也只会落到末尾，⛔ 不会丢）。
+     * ⚠️ 失败静默：评价是观看期的附带记录，写盘失败不该弹窗打断播放。
+     */
+    private async persistEpisodeReview(entryId: string, epKey: string, review: EpisodeReview): Promise<void> {
+        try {
+            if (!/^\d+$/.test(epKey)) return;
+            const e = await this.service.get(entryId);
+            if (!e) return;
+            const next = setReviewAt(e.episodeReviews, Number(epKey), review);
+            // 归一后与现状完全一致 ⇒ 不写盘（避免每点一次 chip 就改一次 mtime 撞 G 双写冲突）
+            const before = JSON.stringify(normalizeEpisodeReviews(e.episodeReviews) ?? {});
+            const after = JSON.stringify(next ?? {});
+            if (before === after) return;
+            await this.service.update(entryId, { episodeReviews: next });
+            // 笔记 yaml 跟上：`writeNote` 是唯一重写出口（它按 `fieldMap`/`fieldOrder` 重排，
+            // 新键没登记只会落到末尾，⛔ 不会丢），并且会搬回用户手写的标注区。
+            // ⚠️ 只改 catalog 不回写笔记 = 下次打开笔记时旧值盖回来（用户看到「改完自己变回去」）。
+            await this.service.writeNote(entryId);
+        } catch {
+            /* 落库失败静默（不影响观看） */
+        }
+    }
+
+    /**
+     * 视频文件的**系统绝对路径**（库内 = vault 根 + 相对路径；库外 = 原样）；解析失败返回空串。
+     *
+     * 🔴 与 `videoAbsDir` 的差别只有「留不留文件名」，但用途完全不同：
+     *    `videoAbsDir` 给字幕同目录扫描用，这个给**外部程序**（ffmpeg / whisper）用 ——
+     *    它们要的是一个能 `open()` 的文件，⛔ 不是目录。
+     * ⚠️ 库内路径**必须**经 `getAbstractFileByPath` 判一次：同一个字符串既可能是库内相对路径，
+     *    也可能恰好长得像系统路径，只有宿主知道它到底在哪。
+     */
+    private videoAbsPath(videoPath: string): string {
+        try {
+            const rel = this.toVaultRelPath(videoPath);
+            const f = this.app.vault.getAbstractFileByPath(rel);
+            if (f instanceof TFile) {
+                const adapter = this.app.vault.adapter as FileSystemAdapter;
+                const base = typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : '';
+                return base ? `${base}/${rel}` : '';
+            }
+            return videoPath;
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * 设置页那一行的状态文案（「未配置引擎」/「已就绪（当前引擎：均衡版 · 约 141MB）」）。
+     *
+     * 🔴 判断口径只有一条：`asrModelPath` 非空**且文件真的在**才算就绪。
+     *    只看路径非空会在用户删了文件之后仍然宣称就绪，然后转写时才炸 ——
+     *    用户需求里明令「没有模型是正常状态，不能报错」，那就更不能撒谎说已就绪。
+     * ⚠️ 认不出是哪一档（用户手填了自己的 ggml）⇒ 只说「已就绪（自定义模型）」，
+     *    ⛔ 不猜档位、不显示体积（体积拿不到，编一个会更糟）。
+     */
+    /**
+     * 当前选中的那家引擎是否就绪（设置页顶部状态行 / 转写前置检查共用）。
+     * ⚠️ 只是 `asrEngineStatusOf` 的薄封装 —— 单卡片的绿标由后者按卡片的引擎分别查。
+     */
+    asrEngineStatus(): { ready: boolean; label: string } {
+        return this.asrEngineStatusOf(this.settings.asrEngine);
+    }
+
+    /**
+     * 任意一家引擎的就绪状态。`rawEngine` 可以是 `whisper` / `qwen3` / `sensevoice`，
+     * 认不出来的值由 `engineDefOf` 回落成 `whisper`（⛔ 不抛错）。
+     *
+     * 🔴 为什么拆出这一版：设置页改成三张卡片后，**每张卡都要显示自己的绿标**，
+     *    而 `asrEngineStatus()` 只认「当前选中的那家」——拆卡片却复用它是功能倒退。
+     */
+    asrEngineStatusOf(rawEngine: string | undefined): { ready: boolean; label: string } {
+        // 🔴 引擎不同，就绪判据完全不同：
+        //    whisper 模型文件真在；桥接系 解释器与脚本**两个**文件都真在。
+        //    sherpa 系（SenseVoice / Paraformer / X-ASR）⇒ 程序 + 模型 + 词表 断句模型）缺一不可。
+        //    Confucius4 运行+ 语言模型 + 投影器三件齐。
+        //    只看「路径非空」会在文件被删后仍宣称就绪，转写时才—用户需求明。
+        //    「没装引擎是正常状态、不能报错」，那就更不能撒谎说已就绪。
+        const engine = engineDefOf(rawEngine);
+        // 🔴 六家都要 ffmpeg：whisper 用它抽音轨，其余五家的执行层同样在用。
+        //    原来完全不查 ffmpeg 用户明明装了，卡片还是「未配置」（m05462 的抱怨根源之一）。
+        const ff = this.asrAutoDetect().ffmpeg;
+        if (engine.id === 'sensevoice') {
+            // 极速版sherpa-onnx C++ CLI：程+ 模型 + 词表**三个**文件缺一不可。
+            const p = this.asrEnginePaths('sensevoice');
+            if (!p.program || !p.model || !p.extra) {
+                return { ready: false, label: `未配置引擎（${engine.title}需要程序、模型、词表三个文件）` };
+            }
+            const ok =
+                this.fileNonEmpty(this.videoAbsPath(p.program) || p.program) &&
+                this.fileNonEmpty(this.videoAbsPath(p.model) || p.model) &&
+                this.fileNonEmpty(this.videoAbsPath(p.extra) || p.extra);
+            if (!ok) return { ready: false, label: '未配置引擎（上次填的程序、模型或词表已经不在了）' };
+            if (!ff) return { ready: false, label: '未配置引擎（还需要 ffmpeg，用于把视频里的声音抽出来）' };
+            return { ready: true, label: `已就绪（当前引擎：${engine.title}）` };
+        }
+        // 🔴 需4~6 个文件的引擎（Paraformer / X-ASR / Confucius4）统一走这条。
+        //    逐个 stat，缺哪个就说哪个，⛔ 别只报一句「未配置」让用户自己猜。
+        const files = this.asrEnginePaths(engine.id).files;
+        if (files) {
+            const missing = Object.entries(files).filter(
+                ([, v]) => !v || !this.fileNonEmpty(this.videoAbsPath(v) || v),
+            );
+            if (missing.length > 0) {
+                const names: Record<string, string> = {
+                    program: '识别程序',
+                    model: '识别模型',
+                    extra: "投影器",
+                    tokens: '词表',
+                    vad: '断句模型',
+                    encoder: "编码器",
+                    decoder: "解码器",
+                    joiner: "连接器",
+                };
+                const which = missing.map(([k]) => names[k] ?? k).join('、');
+                return { ready: false, label: `未安装（${engine.title}还缺${which}）` };
+            }
+            if (!ff) return { ready: false, label: '未配置引擎（还需要 ffmpeg，用于把视频里的声音抽出来）' };
+            return { ready: true, label: `已就绪（当前引擎：${engine.title}）` };
+        }
+        if (engine.runner !== 'whisper') {
+            const p = this.asrEnginePaths('qwen3');
+            const py = String(this.settings.asrPythonPath ?? '').trim();
+            const sh = String(this.settings.asrBridgeScript ?? '').trim();
+            if (!py || !sh) return { ready: false, label: `未配置引擎（${engine.title}需要你自己准备好本地程序）` };
+            const pyOk = this.fileNonEmpty(this.videoAbsPath(py) || py);
+            const shOk = this.fileNonEmpty(this.videoAbsPath(sh) || sh);
+            if (!pyOk || !shOk) {
+                return { ready: false, label: "未配置引擎（上次填的程序或脚本已经不在了）" };
+            }
+            if (!ff) return { ready: false, label: '未配置引擎（还需要 ffmpeg，用于把视频里的声音抽出来）' };
+            return { ready: true, label: `已就绪（当前引擎：${engine.title}）` };
+        }
+        const raw = String(this.settings.asrModelPath ?? '').trim();
+        // 🔴 框里没模型：模型是插件自己下到固定目录（现在*插件目录**下的 `models/`）的。
+        //    用户下完 ggml-base.bin 却看到「未配置引擎（首次使用将引导下载）」正m05462 的抱怨。
+        //    所以框里空时先去那个固定目录把现成的档位找回来。
+        const autoModel = this.asrModelAuto();
+        if (!raw && !autoModel) return { ready: false, label: '未配置引擎（首次使用将引导下载）' };
+        const abs = this.videoAbsPath(raw) || raw;
+        const ok = raw ? this.fileNonEmpty(abs) : this.fileNonEmpty(autoModel);
+        if (!ok) return { ready: false, label: '未配置引擎（上次使用的模型文件已不在了）' };
+        // 🔴 模型在了，但 whisper-cli / ffmpeg 少一个照样转不了 —就绪必须三件齐。
+        //    这两个「程序」通常不用用户填：自动探测会去 PATH 与常见安装位置找。
+        if (!this.asrAutoDetect().whisper) {
+            return { ready: false, label: "未配置引擎（还需要 whisper.cpp 程序，可在下方一键安装）" };
+        }
+        if (!ff) return { ready: false, label: '未配置引擎（还需要 ffmpeg，用于把视频里的声音抽出来）' };
+        const preset = presetByFileName(raw || autoModel);
+        if (!preset) return { ready: true, label: '已就绪（当前引擎：自定义模型）' };
+        return { ready: true, label: `已就绪（当前引擎：${preset.title} · 约 ${presetSizeLabel(preset)}）` };
+    }
+
+    /**
+     * 自动找回「插件自己下过的那份模型」。
+     *
+     * 🔴 存在的理由（用户 m05462）：模型下载器把文件放在 `~/.reelludic/models/ggml-*.bin`，
+     *    但它**不会**往 `asrModelPath` 里写 —— 只有走弹窗的「下载并启用」才写。于是用户
+     *    手动点过下载、或换过一次档之后，设置框是空的，状态就判成「未配置」，逼他去抄路径。
+     * 口径：只在 `asrModelPath` 为空时才调用；按 `ASR_MODEL_PRESETS` 顺序取第一个**字节数对得上**
+     *    的档位，⛔ 不拿半截文件充数（`.part` 也算不上，它名字不同）。
+     */
+    private asrModelAuto(): string {
+        for (const preset of ASR_MODEL_PRESETS) {
+            const dest = this.asrModelPathOf(preset);
+            if (!dest) continue;
+            try {
+                const fsMod = require('fs') as { statSync: (p: string) => { size: number } };
+                const size = fsMod.statSync(dest).size;
+                if (downloadLooksComplete(size, preset.bytes)) return dest;
+            } catch {
+                // 这一档没下过，看下一。
+            }
+        }
+        return '';
+    }
+
+    /** 文件存在且非空（状态判据唯一实现，⛔ 别在两处各写一遍 try/catch） */
+    private fileNonEmpty(abs: string): boolean {
+        if (!abs) return false;
+        try {
+            const fsMod = require('fs') as { statSync: (p: string) => { size: number } };
+            return fsMod.statSync(abs).size > 0;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * 一次性把**库外旧目录**（`~/.reelludic/models` 与 `~/.reelludic/bin`）整体搬进插件目录
+     * （幂等，可重复跑）。
+     *
+     * 🔴 用户 2026-11-10 裁定：「给所有模型下载目录换成插件文件夹根目录而不是 c 盘用户根目录」
+     *    ⇒ 默认落点从 `C:\Users\<你>\.reelludic\` 改为 `<库>/.obsidian/plugins/obsidian-reelludic/`。
+     *    不迁移的话，用户升级后会看到「明明下过 400MB 却说没下载」，只能重下。
+     *
+     * ⚠️ 与 `migrateAsrModelLayout` 的分工（⛔ 别合并成一个大函数）：
+     *    · 那个管「同一个 models 根目录里的**子目录布局**」（根 → `<engine>/`）；
+     *    · 这个管「**整个 base 目录换地方**」（库外 → 插件目录）。
+     *    两者可叠加：先换 base（本函数），再在新 base 里做布局归一（那次），顺序不能反
+     *    —— 反了就会把库外的文件搬进一个马上要被换掉的 base。
+     *
+     * ⚠️ 四条安全约束（缺一条都可能毁数据，都是用户明确要求「成功后删旧目录」才敢加的最后一条）：
+     *   ① 只在**目标不存在**时搬 —— 目标已有说明用户已经在新位置重下过，别覆盖。
+     *   ② 逐文件搬，**搬完立即校验字节数一致**，不一致就当没搬成功（不删源）。
+     *   ③ 任何一步失败都**静默跳过** —— 迁移是尽力而为，绝不能因为它抛错卡住插件加载。
+     *   ④ **只有整个旧目录搬空后才删它**（`rmdirSync` 非递归，剩一个文件就失败 ⇒ 留着）。
+     *      绝不 `rm -rf`：那会连带删掉用户自己塞进来的、我们不认识的文件。
+     */
+    private migrateLegacyAsrDirs(): void {
+        try {
+            const own = this.pluginDir();
+            if (!own) return; // 拿不到插件目录（移动端 / 适配器差异）⇒ 不迁，仍走旧路径
+            const fsMod = require('fs') as {
+                existsSync: (p: string) => boolean;
+                mkdirSync: (p: string, o: { recursive: boolean }) => void;
+                renameSync: (a: string, b: string) => void;
+                copyFileSync: (a: string, b: string) => void;
+                unlinkSync: (p: string) => void;
+                rmdirSync: (p: string) => void;
+                statSync: (p: string) => { size: number; isFile: () => boolean };
+                readdirSync: (p: string) => string[];
+            };
+            const pathMod = require('path') as {
+                join: (a: string, b: string) => string;
+                dirname: (p: string) => string;
+            };
+
+            /** 把 srcDir 下的内容整体搬到 destDir；全部成功且 srcDir 已空时删掉空的 srcDir */
+            const moveTree = (srcDir: string, destDir: string): void => {
+                if (!srcDir || !destDir) return;
+                if (srcDir.replace(/[\\/]+$/, '') === destDir.replace(/[\\/]+$/, '')) return;
+                let names: string[] = [];
+                try {
+                    if (!fsMod.existsSync(srcDir)) return;
+                    names = fsMod.readdirSync(srcDir);
+                } catch {
+                    return;
+                }
+                if (names.length === 0) {
+                    // 空目录也清掉：不让用户以为「C 盘还留着 .reelludic。
+                    try {
+                        fsMod.rmdirSync(srcDir);
+                    } catch {
+                        /* 删不掉就算了，不是错误 */
+                    }
+                    return;
+                }
+                for (const name of names) {
+                    const from = pathMod.join(srcDir, name);
+                    const to = pathMod.join(destDir, name);
+                    try {
+                        if (!fsMod.existsSync(from)) continue;
+                        if (!fsMod.statSync(from).isFile()) {
+                            // 下钻一层（`<engine>/` 这种子目录），递归。
+                            moveTree(from, to);
+                            continue;
+                        }
+                        if (fsMod.existsSync(to)) continue; // 目标已有：用户已重下，别覆盖
+                        fsMod.mkdirSync(pathMod.dirname(to), { recursive: true });
+                        try {
+                            fsMod.renameSync(from, to); // 同盘：瞬间完成
+                        } catch {
+                            // 跨盘 rename 会抛 EXDEV 退回复校验+删源。
+                            fsMod.copyFileSync(from, to);
+                            if (fsMod.statSync(to).size !== fsMod.statSync(from).size) {
+                                try {
+                                    fsMod.unlinkSync(to);
+                                } catch {
+                                    /* 清掉半截目标失败也只能留着，下次跑还会判「目标已有」跳过 */
+                                }
+                                continue; // 字节不一致：当没搬成功，源留着
+                            }
+                            fsMod.unlinkSync(from);
+                        }
+                    } catch {
+                        // 单文件失败不影响其余。
+                    }
+                }
+                // 只有搬空才删（非递归：还剩一个就不动它）
+                try {
+                    if (fsMod.readdirSync(srcDir).length === 0) fsMod.rmdirSync(srcDir);
+                } catch {
+                    /* 非空 / 被占用：留着，下次启动再试 */
+                }
+            };
+
+            const newModels = `${own}/models`;
+            const newBin = `${own}/bin`;
+            moveTree(this.legacyAsrModelDir(), newModels);
+            moveTree(this.legacyAsrBinDir(), newBin);
+            // 两个子目录都空了 顺手`~/.reelludic` 这个空壳也收掉（非递归，绝不误删）
+            try {
+                const root = pathMod.dirname(this.legacyAsrModelDir());
+                if (root && fsMod.existsSync(root) && fsMod.readdirSync(root).length === 0) fsMod.rmdirSync(root);
+            } catch {
+                /* 还有别的残留就别删 */
+            }
+        } catch {
+            // 整体失败静默：迁移是尽力而为，卡住插件加载比不迁移严重得。
+        }
+    }
+
+    /**
+     * 一次性把散在 `models/` 根目录的旧模型挪进各自子目录（幂等，可重复跑）。
+     *
+     * 🔴 2026-11-06 m09819 用户报障：「三家模型下载在目录怎么不区分，只有 Models 文件夹
+     *    都不知道哪个是哪个」。根因是旧实现让 whisper 直接铺在根下，另两家在子目录，
+     *    于是同一层既躺着 `ggml-base.bin` 又躺着 `model.int8.onnx` / `tokens.txt`。
+     *    改法是三家一律 `models/<engine>/`（见 `asrEngineDir`），这里负责把**已经下好**的
+     *    旧文件搬过去 —— 不搬的话用户升级后会看到「明明下过却说没下载」，只能重下几百 MB。
+     *
+     * ⚠️ 三条安全约束（缺一条都可能毁数据）：
+     *   ① 只在**目标不存在**时搬 —— 目标已有说明用户已经在新布局下重下过，别覆盖。
+     *   ② 只在**源文件看起来是完整的那个尺寸**时搬 —— 半截文件（`.part` 残留、下载中断）
+     *      搬过去会让自检把「坏的」当成「已就绪」。whisper 用 `downloadLooksComplete` 判，
+     *      SenseVoice 的 token 与 onnx 用精确字节比。
+     *   ③ 任何一步失败都**静默跳过** —— 迁移是尽力而为，绝不能因为它抛错就卡住插件加载。
+     *      用户最多重下一次，比插件起不来好得多。
+     */
+    private migrateAsrModelLayout(): void {
+        try {
+            const base = this.asrModelDir();
+            if (!base) return;
+            const pathMod = require('path') as {
+                join: (a: string, b: string) => string;
+                dirname: (p: string) => string;
+            };
+            const fsMod = require('fs') as {
+                existsSync: (p: string) => boolean;
+                mkdirSync: (p: string, o: { recursive: boolean }) => void;
+                renameSync: (a: string, b: string) => void;
+                statSync: (p: string) => { size: number };
+            };
+            const oldOf = (name: string): string => pathMod.join(base, name);
+            /** 目标不存在：建目录后把源 rename 过去。返回是否真搬了 */
+            const move = (name: string, destDir: string): boolean => {
+                const from = oldOf(name);
+                const to = pathMod.join(destDir, name);
+                if (from === to) return false; // 自定义目录已经就是子目录的情形（防御）
+                try {
+                    if (!fsMod.existsSync(from)) return false;
+                    if (fsMod.existsSync(to)) return false; // 目标已有，不搬
+                    fsMod.mkdirSync(pathMod.dirname(to), { recursive: true });
+                    fsMod.renameSync(from, to);
+                    return true;
+                } catch {
+                    return false; // 尽力而为
+                }
+            };
+
+            // ── whisper：只在尺寸对得上时才搬（半截的留下，让自检如实报「未下载」）──
+            const whisperDir = this.asrEngineDir('whisper');
+            if (whisperDir) {
+                for (const preset of ASR_MODEL_PRESETS) {
+                    const from = oldOf(preset.fileName);
+                    try {
+                        if (!fsMod.existsSync(from)) continue;
+                        const size = fsMod.statSync(from).size;
+                        if (!downloadLooksComplete(size, preset.bytes)) continue; // 半截，别用
+                    } catch {
+                        continue;
+                    }
+                    move(preset.fileName, whisperDir);
+                }
+            }
+
+            // ── SenseVoice：模+ 词表，按精确字节判完──
+            const svDir = this.asrEngineDir('sensevoice');
+            if (svDir) {
+                for (const v of SENSEVOICE_VARIANTS) {
+                    const from = oldOf(v.modelFile);
+                    try {
+                        if (!fsMod.existsSync(from)) continue;
+                        if (fsMod.statSync(from).size !== v.bytes) continue;
+                    } catch {
+                        continue;
+                    }
+                    move(v.modelFile, svDir);
+                }
+                try {
+                    const from = oldOf('tokens.txt');
+                    if (fsMod.existsSync(from) && fsMod.statSync(from).size === 315894) move('tokens.txt', svDir);
+                } catch {
+                    // 词表搬不动就算了，自检会如实报。
+                }
+            }
+
+            /**
+             * 🔴 搬完必须回头收拾设置里那*指向已搬走文*的绝对路径。
+             *
+             * 不收拾的话用户会遇到最费解的一种状态：模型明明在磁盘上（在新子目录里）。
+             * `data.json` `asrModelPath` 还指着旧位自检读那个死路径。
+             * 报「未配置引擎」，而自动探*永远不会被走*（因为设置非空）。
+             * 表现就是「我明明下过，它说没有」—比不迁移更糟。
+             *
+             * 判据：设置里非空 该路径确实不存在 同名的文件在**新位*存在
+             *      清空该设置，交还给自动探测（不是写死新路径，那会换个机器又失效）。
+             */
+            const dropStale = (key: 'asrModelPath' | 'asrSenseVoiceModelPath' | 'asrTokensPath', newDir: string, fileName: string): void => {
+                if (!newDir) return;
+                const saved = String(this.settings[key] ?? '').trim();
+                if (!saved) return;
+                try {
+                    if (fsMod.existsSync(saved)) return; // 用户指的地方还在，别动
+                    if (!fsMod.existsSync(joinDir(newDir, fileName))) return; // 新位置也没有，交给自检如实报缺
+                } catch {
+                    return;
+                }
+                this.settings[key] = '';
+            };
+            if (whisperDir) {
+                for (const preset of ASR_MODEL_PRESETS) dropStale('asrModelPath', whisperDir, preset.fileName);
+            }
+            if (svDir) {
+                for (const v of SENSEVOICE_VARIANTS) dropStale('asrSenseVoiceModelPath', svDir, v.modelFile);
+                dropStale('asrTokensPath', svDir, 'tokens.txt');
+            }
+        } catch {
+            // 整个迁移是尽力而为，⛔ 绝不因为这里出错就影响插件加。
+        }
+    }
+
+    /**
+     * 自动定位 whisper-cli 与 ffmpeg 的真实路径。
+     *
+     * 🔴 为什么要有这个（用户 m05462 原话：「下载了 whisper.cpp·ggml-base，怎么还有剩下的框要我
+     *    选择啊我怎么知道在哪里配置」）：原来的就绪判据看的是「输入框填没填」，于是
+     *    **ffmpeg 明明已经在 PATH 里、模型明明已经被插件下到固定目录，卡片还是「未配置」**，
+     *    逼用户去猜路径。这次改成「先看系统里有没有」，框只在真找不到时才要人填。
+     *
+     * 口径（与 `pure/asrEngine.asrExeCandidates` 完全一致，⛔ 别在这里另立一套）：
+     *    ① 用户填了值 ⇒ **只试他填的那一个**（他明确指定了文件，退回候选名等于绕过他的配置）；
+     *    ② 没填 ⇒ 先查 PATH（拆目录 × 候选名），再查几个常见安装位置。
+     *
+     * ⚠️ 不缓存：用户可能刚装好就回来看设置页，缓存会让「装完了还是红的」——比慢几毫秒难解释得多。
+     * ⚠️ 全程 try/catch：`process` 在移动端不存在，`PATH` 也可能为空，⛔ 不能因此抛错。
+     */
+    asrAutoDetect(): { whisper: string; ffmpeg: string; whisperAuto: boolean; ffmpegAuto: boolean } {
+        const empty = { whisper: '', ffmpeg: '', whisperAuto: false, ffmpegAuto: false };
+        try {
+            const env = (typeof process !== 'undefined' ? process.env : {}) as Record<string, string | undefined>;
+            const platform = process.platform;
+            const customWhisper = sanitizeExePath(this.settings.asrExePath);
+            const customFf = sanitizeExePath(this.settings.asrFfmpegPath);
+            // PATH 只拆一次（两个探测器共用）
+            const pathDirs = splitPathList(env.PATH || env.Path || env.path, platform);
+            const opts = {
+                home: String(env.USERPROFILE || env.HOME || ''),
+                appData: env.APPDATA,
+                localAppData: env.LOCALAPPDATA,
+                programFiles: env.ProgramFiles || env.PROGRAMFILES,
+                programFilesX86: env['ProgramFiles(x86)'] || env['PROGRAMFILES(X86)'],
+                // 🔴 一键安装的落点就是这里（见 `asrBinDir`）：探测不先看它 = 装完仍然红。
+                pluginDir: this.pluginDir(),
+            };
+            const pick = (custom: string, names: readonly string[], kind: 'whisper' | 'ffmpeg'): { path: string; auto: boolean } => {
+                const order = locateOrder({
+                    custom,
+                    pathDirs,
+                    names,
+                    commonDirs: commonInstallDirs(kind, platform, opts),
+                });
+                for (const cand of order) {
+                    if (this.fileNonEmpty(cand)) return { path: cand, auto: !custom };
+                }
+                // 一个都没找到：自定义值原样留着（用户可能填的是个还没挂载的盘）。
+                // 没填过就是空界面据此展开「手动指定」。
+                return { path: custom, auto: false };
+            };
+            const w = pick(customWhisper, whisperCppOnlyNames(platform), 'whisper');
+            const f = pick(customFf, ffmpegPathNames(platform), 'ffmpeg');
+            return { whisper: w.path, ffmpeg: f.path, whisperAuto: w.auto, ffmpegAuto: f.auto };
+        } catch {
+            return empty;
+        }
+    }
+
+    /**
+     * 一键安装的落点：默认**插件目录**下的 `bin/`（原来是 `~/.reelludic/bin/`），
+     * 用户确认过自定义目录时以设置为准。
+     *
+     * 🔴 用户 2026-11-10：「给所有模型下载目录换成插件文件夹根目录而不是 c 盘用户根目录」
+     *    ⇒ 程序也搬进来，和 `models/` 并排。
+     * 🔴 必须与 `pure/asrLocate.commonInstallDirs('whisper', …)` 里的插件目录候选**逐字一致** ——
+     *    装到别处的话，装完自动探测找不到，用户看到的是「装成功了但还是红的」，那比装不上更气人。
+     *    用户 m01935 要求安装前可自定义路径 ⇒ 自定义值落进 `asrBinDirOverride`，
+     *    与探测共用同一批候选（设置 → 默认位置），保证「装哪找哪」。
+     */
+    private asrBinDir(): string {
+        try {
+            const custom = String(this.settings.asrBinDirOverride ?? '').trim();
+            if (custom) return custom.replace(/[\\/]+$/, '');
+            const own = this.pluginDir();
+            if (own) return `${own}/bin`;
+            return this.legacyAsrBinDir();
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * 一键安装 whisper.cpp 运行时（用户 m05462 抱怨的另一半：模型能下，跑模型的程序却要自己找）。
+     *
+     * 返回句柄，UI 可以拿它画进度条 / 取消。装完**不自动改设置**：装到的是标准位置，
+     * 自动探测下一轮就会找到它，不需要往 `asrExePath` 里写死一个绝对路径
+     * （写死之后用户换机器 / 换目录就失效，而探测是活的）。
+     */
+    installWhisperRuntime(
+        onProgress?: (percent: number | null, label: string) => void,
+        dirOverride?: string,
+    ): InstallHandle {
+        const bin = String(dirOverride ?? '').trim() || this.asrBinDir();
+        return runWhisperInstall(defaultWhisperRuntimeDeps(), bin, onProgress);
+    }
+
+    /**
+     * 某一家引擎的安装目录（exe / 模型 / 词表都落在这里，彼此不打架）。
+     *
+     * 🔴 为什么按引擎分目录而不是全塞 `~/.reelludic/models`：
+     *    `model.int8.onnx` 这种名字是 SenseVoice 专属的，而 Qwen3 还要建两个子目录。
+     *    混在一起的话，用户换引擎时看到的是「一堆不知道自己属于谁」的文件。
+     * ⚠️ whisper 不在这个体系里 —— 它的三档走 `ASR_MODEL_PRESETS` / `asrModelDir()`，
+     *    那是既有实现（460MB 档位、按文件名认档），⛔ 不要为了整齐把两套并成一套。
+     */
+    asrEngineDir(engine: string): string {
+        const id = engineDefOf(engine).id;
+        // 🔴 用户 m01935：安装前要能自定义路设置里的 per-engine 覆盖优先。
+        //    别只改安装器不改这里：`asrEnginePaths` 也走本函数，两边一旦分家。
+        //    就会出现「装D:\asr\xasr 了，但界面还C:\...\models\xasr 里找」
+        //    表现是装完仍红，比装不上更让人火大。
+        const custom = String((this.settings.asrEngineDirOverrides ?? {})[id] ?? '').trim();
+        if (custom) return custom.replace(/[\\/]+$/, '');
+        const base = this.asrModelDir();
+        if (!base) return '';
+        // 🔴 三家各占一个子目录026-11-06 m09819 用户报障「三家模型下载在目录怎么不区分。
+        //    只有 Models 文件夹都不知道哪个是哪个」）。
+        //    旧实现让 whisper 直接铺在 models/ 根下，另两家在子目录，于是同一层既。
+        //    `ggml-base.bin` 又有 `model.int8.onnx` / `model.onnx` / `tokens.txt` 
+        //    文件名本身不撞车，但**没有任何线索说明哪个属于哪一*，用户想手动清掉。
+        //    某一家的模型都无从下手（这是可发现性问题，不是冲突问题）。
+        //    别再让任何一家往根目录写：根目录只放用户自己的东西。
+        //    子目录名`pure/asrLayout` 统一给（它是这条规则的单一真源，被单测钉住）。
+        const path = require('path') as { join: (a: string, b: string) => string };
+        return path.join(base, asrEngineSubdir(engineDefOf(engine).id));
+    }
+
+    /**
+     * 一键装好某一家引擎（SenseVoice / Qwen3）。
+     *
+     * 🔴 这是用户 m08030「继续可一键下载三家模型」的落点：
+     *    以前只有 whisper 三档能自动下，另两家要用户自己去 HuggingFace 上翻文件、
+     *    再手抄路径进三个输入框 —— 那正是 m05462 抱怨的同一件事。
+     * ⚠️ 装完**不自动改设置**：文件落在固定位置，自检是活的（`asrEnvCheck` 会去找），
+     *    写死绝对路径换机器就失效。
+     */
+    installAsrEngineBundle(
+        engine: string,
+        onProgress?: (percent: number, fileIndex: number, label: string) => void,
+        variant?: {
+            qwenTier?: string;
+            svVariant?: string;
+            paraVariant?: string;
+            xasrChunk?: string;
+            confuciusTier?: string;
+        },
+        /**
+         * 用户确认过的落点目录（弹窗里可能被改过）。
+         * 🔴 传了就以它为准，别在这里再读一次设—否则用户改了目录、点开始
+         *    文件仍落进旧目录，而界面显示的是新路径。
+         */
+        dirOverride?: string,
+    ): { done: Promise<{ ok: boolean; message: string; cancelled?: boolean }>; cancel: () => void } {
+        const id = engineDefOf(engine).id;
+        const dir = String(dirOverride ?? '').trim() || this.asrEngineDir(id);
+        // 🔴 `variant` 决定清单里是 0.6B 还是 1.7B、int8 还是 fp32 —不传就用设置里的当前档。
+        const v = variant ?? this.asrCurrentVariant();
+        const bundle = asrBundleOf(id, v);
+        if (!bundle) {
+            return { done: Promise.resolve({ ok: false, message: '这一家不需要单独安装' }), cancel: () => undefined };
+        }
+        const handle = runBundleInstall(defaultInstallBundleDeps(), bundle, dir, onProgress);
+        return {
+            // 🔴 `cancelled` 必须透出去：界面要区分「用户自己停的」与「装失败了」，
+            //    ⛔ 把取消报成失败会让用户以为出了故障，然后去点「重试安装」。
+            done: handle.done.then((r) => ({ ok: r.ok, message: r.message, cancelled: r.cancelled })),
+            cancel: () => handle.cancel(),
+        };
+    }
+
+    /**
+     * 六家各自的当前档位（设置里的值，经 `pure/asrBundles` 的归一函数兜底）。
+     *
+     * 🔴 必须**全部**返回，⛔ 别只返回老两家的 —— `asrBundleStatus` / 安装清单 / 就绪判据
+     *    都从这里取档位；少一个就会「用户选了 fp32、按 int8 的体积列清单、装完还是用不上」。
+     */
+    private asrCurrentVariant(): {
+        qwenTier: string;
+        svVariant: string;
+        paraVariant: string;
+        xasrChunk: string;
+        confuciusTier: string;
+    } {
+        const s = this.settings;
+        return {
+            qwenTier: qwenVariantOf(s.asrQwenTier).tier,
+            svVariant: svVariantOf(s.asrSvVariant).variant,
+            paraVariant: paraVariantOf(s.asrParaVariant).variant,
+            xasrChunk: xasrVariantOf(s.asrXasrChunk).chunk,
+            confuciusTier: confuciusVariantOf(s.asrConfuciusTier).tier,
+        };
+    }
+
+    /**
+     * 设置页要看的「两家档位定义」—— 标题、说明、体积都由 `pure/asrBundles` 提供，
+     * 界面只负责画。⛔ 别在 Settings.ts 里另抄一份体积表。
+     */
+    asrVariantInfo(): {
+        qwenTier: string;
+        svVariant: string;
+        paraVariant: string;
+        xasrChunk: string;
+        confuciusTier: string;
+        qwen: readonly { tier: string; label: string; dir: string }[];
+        sv: readonly { variant: string; label: string; note: string }[];
+        para: readonly { variant: string; label: string; note: string }[];
+        xasr: readonly { chunk: string; label: string; note: string }[];
+        confucius: readonly { tier: string; label: string; note: string }[];
+        alignDir: string;
+    } {
+        const cur = this.asrCurrentVariant();
+        return {
+            ...cur,
+            qwen: QWEN_ASR_VARIANTS.map((v) => ({
+                tier: v.tier,
+                label: `${v.tier} · ${formatBundleBytes(bundleBytes(qwenBundle(v.tier)))}`,
+                dir: v.dir,
+            })),
+            sv: SENSEVOICE_VARIANTS.map((v) => ({
+                variant: v.variant,
+                label: `${v.title} · ${formatBundleBytes(v.bytes)}`,
+                note: v.note,
+            })),
+            para: PARAFORMER_VARIANTS.map((v) => ({
+                variant: v.variant,
+                label: `${v.title} · ${formatBundleBytes(v.bytes)}`,
+                note: v.note,
+            })),
+            xasr: XASR_VARIANTS.map((v) => ({
+                chunk: v.chunk,
+                label: `${v.title} · ${formatBundleBytes(v.encoderBytes)}`,
+                note: v.note,
+            })),
+            confucius: CONFUCIUS_VARIANTS.map((v) => ({
+                tier: v.tier,
+                label: `${v.title} · ${formatBundleBytes(v.modelBytes + v.mmprojBytes)}`,
+                note: v.note,
+            })),
+            alignDir: QWEN_ALIGN.dir,
+        };
+    }
+
+    /**
+     * 查某一家引擎的安装包**已经下好了哪几个文件**（给「一键装好」按钮显示进度/状态用）。
+     * ⚠️ 只 stat，不启动进程（自检必须瞬时）。
+     */
+    asrBundleStatus(engine: string): { installed: number; total: number; ready: boolean; blockedReason: string } {
+        const id = engineDefOf(engine).id;
+        // 🔴 必须带档位：X-ASR encoder 体积chunk 变、Confucius4 gguf 随量化档变。
+        //    不带档位就会按默认档去数文件 —用户装了 F16 却看到/3 已装」。
+        const bundle = asrBundleOf(id, this.asrCurrentVariant());
+        if (!bundle) return { installed: 0, total: 0, ready: false, blockedReason: '' };
+        const dir = this.asrEngineDir(id);
+        let installed = 0;
+        if (dir) {
+            const pathMod = require('path') as { join: (a: string, b: string) => string };
+            for (const f of bundle.files) {
+                if (this.fileNonEmpty(pathMod.join(dir, f.fileName))) installed += 1;
+            }
+        }
+        return {
+            installed,
+            total: bundle.files.length,
+            ready: installed === bundle.files.length && bundle.files.length > 0,
+            blockedReason: bundle.blockedReason,
+        };
+    }
+
+    /**
+     * 某一家引擎在**指定档位**下的就绪情况（平铺列表每行一个状态胶囊用）。
+     *
+     * 🔴 为什么要单开一个方法，而不是复用 `asrBundleStatus`：
+     *    后者永远按 `settings` 里的**当前档位**数文件。平铺列表要同时显示
+     *    「tiny 未下载 / base 已就绪 / small 未下载」—— 拿当前档位去数，
+     *    所有行会显示同一个状态，用户根本看不出自己装过哪一档。
+     *
+     * ⚠️ whisper 走 preset 单文件判据（`asrPresetReady`），其余走 bundle 多文件判据。
+     *    两条判据各自都有既有实现，⛔ 别在这里另写一套 `statSync` 比较逻辑。
+     */
+    asrPickStatus(engine: string, tier: string): { installed: number; total: number; ready: boolean } {
+        const id = engineDefOf(engine).id;
+        if (id === 'whisper') {
+            const preset = presetOf(tier);
+            if (!preset) return { installed: 0, total: 1, ready: false };
+            const ready = this.asrPresetReady(preset);
+            return { installed: ready ? 1 : 0, total: 1, ready };
+        }
+        const bundle = asrBundleOf(id, this.asrVariantFor(id, tier));
+        if (!bundle) return { installed: 0, total: 0, ready: false };
+        const dir = this.asrEngineDir(id);
+        let installed = 0;
+        if (dir) {
+            const pathMod = require('path') as { join: (a: string, b: string) => string };
+            for (const f of bundle.files) {
+                if (this.fileNonEmpty(pathMod.join(dir, f.fileName))) installed += 1;
+            }
+        }
+        return {
+            installed,
+            total: bundle.files.length,
+            ready: installed === bundle.files.length && bundle.files.length > 0,
+        };
+    }
+
+    /**
+     * 把「某一家 + 某个档位名」翻译成 `asrBundleOf` 要的整组档位参数。
+     *
+     * ⚠️ 未涉及的字段沿用当前设置 —— `asrBundleOf` 只认自己那一家对应的字段，
+     *    其余字段填什么都不影响结果；沿用当前值可以避免造一堆无意义的字面量。
+     */
+    private asrVariantFor(
+        engine: AsrEngineId,
+        tier: string,
+    ): { qwenTier: string; svVariant: string; paraVariant: string; xasrChunk: string; confuciusTier: string } {
+        const base = this.asrCurrentVariant();
+        if (engine === 'qwen3') return { ...base, qwenTier: qwenVariantOf(tier).tier };
+        if (engine === 'sensevoice') return { ...base, svVariant: svVariantOf(tier).variant };
+        if (engine === 'paraformer') return { ...base, paraVariant: paraVariantOf(tier).variant };
+        if (engine === 'xasr') return { ...base, xasrChunk: xasrVariantOf(tier).chunk };
+        if (engine === 'confucius') return { ...base, confuciusTier: confuciusVariantOf(tier).tier };
+        return base;
+    }
+
+    /**
+     * 「这一家到底要哪些文件才算能跑」—— 右侧配置面板的「环境状态检查」用。
+     *
+     * 🔴 为什么不让界面自己拼三块：「识别程序 / 识别模型 / 音频工具」那三块是
+     *    whisper 时代的形状。Paraformer 要四样、X-ASR 要六样、Confucius4 要三样
+     *    但第三样是投影器不是词表 —— 界面按三家硬编码就会漏项，
+     *    表现是「面板上全绿、点转写却报缺文件」。
+     *
+     * ⚠️ 这里给的是**预期路径**（哪怕文件不存在也给），与 `asrPathsFor` 的过滤语义不同：
+     *    面板要显示「本该在哪」，`asrPathsFor` 只回答「现在有什么」。
+     */
+    /**
+     * 硬件探测的**缓存**（用户 m05717 ① 要真数据）。
+     *
+     * 🔴 为什么必须有缓存：`renderAsrEngineRows` 每次切档/重绘都会重新渲染整块面板，
+     *    而探测要起 3~4 个子进程（`nvidia-smi` / `cmake` / `g++` / `cl`）。
+     *    不缓存的话，用户每点一次档位就 fork 一轮进程 —— 设置页会明显发卡，
+     *    在没有 N 卡的机器上还要白等 `nvidia-smi` 的超时。
+     *
+     * ⚠️ 缓存**不落盘**：显卡/内存是机器事实，同一进程内不会变；
+     *    但插件装了新工具链（比如刚装了 CMake）要能立刻看到 ⇒ 提供 `refreshAsrHardware()`。
+     * ⚠️ 缓存的是 **Promise** 而不是结果：两个面板同时渲染时会共用同一次探测，不会并发起两轮。
+     */
+    private asrHardwareCache: Promise<HardwareInfo> | null = null;
+
+    /**
+     * 取硬件数据（首次真探测，之后读缓存）。
+     * ⚠️ 永远 resolve，探测失败也只是返回空值 —— ⛔ 别让它 reject 把渲染整块炸掉。
+     */
+    asrHardware(): Promise<HardwareInfo> {
+        if (!this.asrHardwareCache) {
+            const dir = this.asrModelDir() || '.';
+            this.asrHardwareCache = probeHardware(dir)
+                .then((r): HardwareInfo => ({
+                    gpus: r.gpus,
+                    totalMemMb: r.totalMemMb,
+                    freeDiskMb: r.freeDiskMb,
+                    cmake: r.cmake,
+                    cpp: r.cpp,
+                    probeError: r.probeError,
+                }))
+                .catch((): HardwareInfo => ({
+                    gpus: [],
+                    totalMemMb: 0,
+                    freeDiskMb: 0,
+                    cmake: { found: false, version: '' },
+                    cpp: { found: false, detail: '' },
+                    probeError: '硬件探测没能完成',
+                }));
+        }
+        return this.asrHardwareCache;
+    }
+
+    /** 丢掉缓存、下次重新探测（用户点了「重新检测」时用）。 */
+    refreshAsrHardware(): void {
+        this.asrHardwareCache = null;
+    }
+
+    /**
+     * 统计某一家引擎目录**已占磁盘字节数**（用户 m05717 ①：「醒目提示已占 XX」）。
+     *
+     * 🔴 为什么不在 settings 面板里直接 `statSync` 递归：那是几十到几百次同步系统调用，
+     *    会把设置页卡住（X-ASR 一档就有 586MB、多个 onnx）。
+     *    这里用 `fs.promises.readdir` 逐层异步走，失败一律按 0 算 —— 目录不存在是**正常**状态
+     *    （还没装 = 0 字节），⛔ 别抛错、也别编一个数字出来。
+     *
+     * ⚠️ 按引擎目录统计，与 `asrEngineDir()` 同一口径（含用户自定义覆盖路径）。
+     */
+    asrEngineDirUsage(engine: string): Promise<number> {
+        const dir = this.asrEngineDir(engine);
+        if (!dir) return Promise.resolve(0);
+        const fsp = require('fs') as {
+            promises: {
+                readdir(p: string, o: { withFileTypes: true }): Promise<{ name: string; isDirectory(): boolean; isFile(): boolean }[]>;
+                stat(p: string): Promise<{ size: number }>;
+            };
+        };
+        const walk = async (p: string): Promise<number> => {
+            let entries: { name: string; isDirectory(): boolean; isFile(): boolean }[];
+            try {
+                entries = await fsp.promises.readdir(p, { withFileTypes: true });
+            } catch {
+                return 0;
+            }
+            let sum = 0;
+            for (const e of entries) {
+                const full = `${p}\\${e.name}`;
+                if (e.isDirectory()) sum += await walk(full);
+                else if (e.isFile()) {
+                    try {
+                        sum += (await fsp.promises.stat(full)).size;
+                    } catch {
+                        // 单文件读不到就跳过，别因为一个锁文件把整次统计判成失。
+                    }
+                }
+            }
+            return sum;
+        };
+        return walk(dir).catch(() => 0);
+    }
+
+    asrEngineChecklist(engine: string): {
+        items: { key: string; label: string; path: string; ok: boolean }[];
+        ready: boolean;
+        env: { program: boolean; model: boolean; audio: boolean };
+    } {
+        const id = engineDefOf(engine).id;
+        const s = this.settings;
+        const raw: { key: string; label: string; path: string }[] = [];
+        const det = this.asrAutoDetect();
+        if (id === 'whisper') {
+            raw.push({ key: 'program', label: '识别程序', path: det.whisper });
+            raw.push({ key: 'model', label: '识别模型', path: String(s.asrModelPath ?? '').trim() || this.asrModelAuto() });
+        } else if (id === 'qwen3') {
+            raw.push({ key: 'program', label: 'Python 解释器', path: String(s.asrPythonPath ?? '').trim() });
+            raw.push({ key: 'model', label: '桥接脚本', path: String(s.asrBridgeScript ?? '').trim() });
+        } else {
+            // 四样 / 六样 / 三样的引擎：顺序按「先程序、后权重、最后词表」排。
+            // 与安装清单（`asrInstallPlan`）的顺序一致，免得用户对不上号。
+            const files = this.asrEnginePaths(id).files ?? {};
+            const labelOf: Record<string, string> = {
+                program: '识别程序',
+                vad: '断句模型',
+                encoder: "编码器",
+                decoder: "解码器",
+                joiner: "连接器",
+                model: id === 'confucius' ? '语言模型' : '识别模型',
+                extra: id === "confucius" ? "投影器" : "附加文件",
+                tokens: '词表',
+            };
+            const order =
+                id === 'confucius'
+                    ? ['program', 'model', 'extra']
+                    : ['program', 'vad', 'encoder', 'decoder', 'joiner', 'model', 'tokens'];
+            for (const key of order) {
+                const p = files[key];
+                if (!p) continue;
+                raw.push({ key, label: labelOf[key] ?? key, path: p });
+            }
+        }
+        raw.push({ key: 'audio', label: '音频工具', path: det.ffmpeg });
+
+        const items = raw.map((it) => ({ ...it, ok: this.fileNonEmpty(it.path) }));
+        const okOf = (key: string): boolean => items.some((it) => it.key === key && it.ok);
+        return {
+            items,
+            ready: items.every((it) => it.ok),
+            env: { program: okOf('program'), model: okOf('model'), audio: okOf('audio') },
+        };
+    }
+
+    /**
+     * 打开「安装清单」弹窗（用户 m09123：「点此行为就弹窗显示要装的项按序号来每完成一项就打勾」）。
+     *
+     * 🔴 为什么要有这一步而不是直接把按钮做成「点了就闷头下」：
+     *    whisper 的一键安装其实是**两件事** —— 先装跑模型的程序（5.3MB 发布包），
+     *    再下模型文件（74MB～2952MB）。原来的实现只做了前一半，用户点完
+     *    「一键安装 whisper.cpp 程序」看到绿了，回头发现转写还是说「没模型」。
+     *    清单弹窗把这两步摊开，用户点之前就知道要下多少、装到第几步了。
+     *
+     * ⚠️ 关窗会取消安装（`AsrInstallModal.onClose`），⛔ 不留后台偷偷占带宽。
+     * ⚠️ 装完**不写设置**：文件落在固定位置，`asrEnginePaths` 是活探测，下一次开设置页自己就绿了
+     *    （写死绝对路径换机器就失效，这与 `installWhisperRuntime` 的口径一致）。
+     */
+    openAsrInstall(engine: string, tier?: AsrModelTier, onClosed?: () => void): void {
+        const id = engineDefOf(engine).id;
+        // 🔴 档位必须一起传给清单：X-ASR 960ms 时清单要960ms encoder 体积列。
+        //    不传就会按归一后的默认档（1920）列 —数字对不上，用户会以为下错了。
+        const variant = this.asrCurrentVariant();
+        /**
+         * 🔴 目录必须**先算出来给弹*，而不是装的时候才知道（用m01935。
+         *    「点击一键安装时必须弹窗告知用户一键安装模型及配置器的所有路。
+         *    待用户选择确认或自定义路径后才能安装」）。
+         *    这里给的是「当前会用到哪两个目录」的默认值，用户在弹窗里改了就以他改的为准。
+         */
+        const initDirs = { engineDir: this.asrEngineDir(id), binDir: this.asrBinDir() };
+        const plan = asrInstallPlan(id, tier, variant, initDirs);
+        /**
+         * 全局右下角进*卡片**（用m10363：「怎么不在全局加个提示进度」
+         * m10634：「怎么点一下就消失不见了，而且应该参考主流市面方案的悬浮球的进度框」）。
+         *
+         * 🔴 装在弹窗里，*卡片必须挂宿主层**（`services/progressBall` `document.body`）
+         *    因为用户465MB 模型时一定会关掉弹窗去干活。
+         * 🔴 卡片上的「取消」要真能停下安装 —否则用户关掉弹窗后看见卡片还在跑。
+         *    却发现没有任何入口能停它，只能等它自己跑完。
+         *    `installHandle` 是引用而不是值：弹窗里点「开始安装」之前它还是 null。
+         *    那时取消不做任何事（也确实没东西可取消）。
+         * ⚠️ 单例：转写正在跑时起卡片会接管旧的（`startProgressBall` 的既有语义），这是有意的 
+         *    同一时刻只该有一个「正在发生的事」占着右下角。
+         * 🔴 用户 2026-11-10（m03035）：「模型下载要点击开始安装才能出现右下角进度悬浮球和框。
+         *    卡片**懒创*：弹窗打开时一个像素都不画，真的点了「开始安装」（`run` 被调用）
+         *    `ensureBall()`。改前是 `openAsrInstall` 一进来`startProgressBall`，用户只。
+         *    想看看要下什么、还没确认路径，右下角就已经挂着一0% 的球在转。
+         * 别退回「打开就起球」：那个球对还没开始的安装是假信息。
+         */
+        let installHandle: { cancel: () => void } | null = null;
+        let ball: ProgressBallHandle | null = null;
+        const ensureBall = (): ProgressBallHandle => {
+            if (!ball) {
+                ball = startProgressBall(`正在准备安装 ${plan.title}`, {
+                    onCancel: () => {
+                        installHandle?.cancel();
+                    },
+                });
+            }
+            return ball;
+        };
+        let ballClosed = false;
+        const closeBall = (kind: 'done' | 'fail' | 'dismiss', message?: string): void => {
+            if (ballClosed) return;
+            ballClosed = true;
+            // 还没起过球（用户在确认路径之前就关了窗）没有任何东西要收。
+            if (!ball) return;
+            try {
+                // ⚠️ 这里传的是「内容」，`endTip` 会自己加「完成：「失败：」前缀。
+                //    别再传「安装完成」——拼出来会变成「完成：安装完成」。
+                if (kind === 'done') ball.done(message || '全部装好了');
+                else if (kind === 'fail') ball.fail(message || '安装没成功');
+                else ball.dismiss();
+            } catch {
+                /* 球已自毁（END_LINGER_MS 之后），忽略 */
+            }
+        };
+        const modal = new AsrInstallModal(this.app, {
+            plan,
+            dirs: initDirs,
+            dirFields: asrInstallDirFields(id),
+            // 浏览按钮走系统对话框（`createDirectory` 让用户能当场新建目录）
+            pickDir: (current) => this.pickSystemDirectory(current),
+            /**
+             * 🔴 用户确认（可能改过）目录后才开工：这里把确认值落进设置，
+             *    再把它交给执行层 —— **先落库再执行**，否则「弹窗显示 D:\x、实际装到 C:\y」
+             *    这种不一致只会在装完发现还是红的时候才暴露。
+             */
+            onDirsConfirmed: (dirs) => {
+                if (dirs.engineDir) this.settings.asrEngineDirOverrides = {
+                    ...(this.settings.asrEngineDirOverrides ?? {}),
+                    [id]: dirs.engineDir,
+                };
+                if (id === 'whisper' && dirs.binDir) this.settings.asrBinDirOverride = dirs.binDir;
+                void this.saveSettings();
+            },
+            run: (onStep, dirs) => {
+                // 🔴 到这一步才是「用户已经确认路径并按下开始安装」⇒ 这时才允许右下角出现悬浮。
+                const liveBall = ensureBall();
+                const wrap = (itemIndex: number, itemPercent: number, label: string): void => {
+                    onStep(itemIndex, itemPercent, label);
+                    liveBall.update({
+                        label: label || plan.title,
+                        percent: itemPercent,
+                        detail: `第 ${itemIndex + 1} / ${plan.items.length} 项`,
+                    });
+                };
+                const h = id === 'whisper'
+                    ? this.runWhisperInstall(wrap, tier, dirs)
+                    : this.runBundleInstall(id, plan.items.length, wrap, dirs.engineDir);
+                // 把句柄挂出去，卡片上的「取消」才有东西可掐（别只让弹窗能停）
+                installHandle = h;                void h.done.then((r) => {
+                    installHandle = null;
+                    if (r.cancelled) closeBall('dismiss');
+                    else if (r.ok) closeBall('done', '全部装好了');
+                    else closeBall('fail', r.message || '安装没成功');
+                });
+                return h;
+            },
+            onClosed: () => {
+                // 关窗即取消（`AsrInstallModal.onClose` 里会 `handle.cancel()`）⇒ 卡片跟着撤，
+                // 别留一张假装在装的。
+                installHandle = null;
+                closeBall('dismiss');
+                onClosed?.();
+            },
+        });
+        modal.open();
+    }
+
+    /**
+     * whisper 的两步安装：程序 → 模型。
+     * 进度按「第几项 + 这一项自己的百分比」发给弹窗（⛔ 不发整包总进度，
+     * 那会让第 2 项一开头就显示 50%，看起来像前一步没做完就已经跳到后一步）。
+     */
+    private runWhisperInstall(
+        onStep: (itemIndex: number, itemPercent: number, label: string) => void,
+        tier?: AsrModelTier,
+        dirs?: { binDir: string; engineDir: string },
+    ): { done: Promise<{ ok: boolean; message: string; cancelled?: boolean }>; cancel: () => void } {
+        const preset = (tier ? presetOf(tier) : null) ?? ASR_MODEL_PRESETS[1];
+        let cancelled = false;
+        let step1: InstallHandle | null = null;
+        let step2: { cancel: () => void } | null = null;
+
+        const done = (async (): Promise<{ ok: boolean; message: string; cancelled?: boolean }> => {
+            // ── 1 项：跑模型的程序（幂等，已经装齐会立刻成功） ──
+            onStep(0, 0, "正在下载转写程序…");
+            const h1 = this.installWhisperRuntime((pct, label) => {
+                onStep(0, pct ?? 0, label);
+            }, dirs?.binDir);
+            step1 = h1;
+            const r1 = await h1.done;
+            step1 = null;
+            if (cancelled || r1.ok === false) {
+                return { ok: false, message: r1.ok ? '' : (r1.message || '转写程序安装失败。'), cancelled };
+            }
+            onStep(0, 100, "转写程序已就位");
+
+            // ── 2 项：模型文件4MB ~ 2952MB，这才是大头──
+            // 🔴 用户确认过模型目录时以它为准（m01935），否则走默认推导。
+            const dest = String(dirs?.engineDir ?? '').trim() === ''
+                ? this.asrModelPathOf(preset)
+                : joinDir(String(dirs?.engineDir ?? '').trim(), preset.fileName);
+            if (!dest) return { ok: false, message: '无法确定模型存放目录。' };
+            // 🔴 先建目录再下（m09819 之后模型`models/whisper/` 子目录，首次下载时它不存在）。
+            //    `downloadModel` `createWriteStream`，父目录缺失会直接抛错。
+            //    表现是「进度刚起来就报写入失败，让用户去查磁盘空间」
+            //    `services/whisperRuntime` 里踩过的那个坑完全同源。
+            try {
+                const pathMod = require('path') as { dirname: (p: string) => string };
+                const fsMod = require('fs') as { mkdirSync: (p: string, o: { recursive: boolean }) => void };
+                fsMod.mkdirSync(pathMod.dirname(dest), { recursive: true });
+            } catch {
+                return { ok: false, message: "无法创建模型目录，请检查该路径的写入权限。" };
+            }
+            onStep(1, 0, `正在下载 ${preset.title} 模型…`);
+            const h2 = downloadModel(
+                defaultDownloadDeps(),
+                preset,
+                dest,
+                (pct) => onStep(1, pct ?? 0, `正在下载 ${preset.title} 模型…`),
+                mirrorUrlFor(preset),
+            );
+            step2 = h2;
+            const r2 = await h2.done;
+            step2 = null;
+            if (cancelled) return { ok: false, message: '', cancelled: true };
+            if (!r2.ok) return { ok: false, message: r2.message || '模型下载失败。' };
+            onStep(1, 100, "模型已就位");
+            return { ok: true, message: '' };
+        })();
+
+        return {
+            done,
+            cancel: () => {
+                cancelled = true;
+                step1?.cancel();
+                step2?.cancel();
+            },
+        };
+    }
+
+    /** 另两家的整包安装：执行层给的是「整包加权进度 + 当前第几个文件」，这里换算成单项百分比 */
+    private runBundleInstall(
+        engine: string,
+        total: number,
+        onStep: (itemIndex: number, itemPercent: number, label: string) => void,
+        dirOverride?: string,
+    ): { done: Promise<{ ok: boolean; message: string; cancelled?: boolean }>; cancel: () => void } {
+        const h = this.installAsrEngineBundle(
+            engine,
+            (percent, fileIndex, label) => {
+                const p = itemProgress(total, fileIndex, percent);
+                onStep(p.index, p.percent, label);
+            },
+            undefined,
+            dirOverride,
+        );
+        return h;
+    }
+
+    /**
+     * 插件自己的安装目录（系统绝对路径，**库内** `<库>/.obsidian/plugins/<id>`）。
+     *
+     * 🔴 用户 2026-11-10 裁定：「给所有模型下载目录换成插件文件夹根目录而不是 c 盘用户根目录」
+     *    ⇒ 模型与程序都跟插件放在一起，用户打开库就能看见，不需要去 `C:\Users\<你>\.reelludic` 翻。
+     * ⚠️ 取法两条腿，⛔ 别只留一条：
+     *    ① `manifest.dir`（Obsidian 给的是 vault 内相对路径，如 `.obsidian/plugins/obsidian-reelludic`）
+     *       + `vaultBasePath()` 拼成绝对路径 —— 正常桌面环境都走这条；
+     *    ② `manifest.dir` 缺失（开发期手动放进 .obsidian 的旧包 / 某些第三方加载器）⇒ 退回
+     *       `<库>/.obsidian/plugins/<manifest.id>`，仍拿不到库根就返回空串交给调用方兜底。
+     * ⚠️ 拿不到（移动端 / 适配器无 getBasePath）⇒ 空串。调用方据此退回主目录旧路径，
+     *    ⛔ 不要在这里抛错 —— 换目录失败不该让整个语音服务不可用。
+     */
+    private pluginDir(): string {
+        try {
+            const rel = String((this.manifest as { dir?: string } | undefined)?.dir ?? '').trim();
+            const base = this.vaultBasePath();
+            if (base) {
+                const sub = rel || `.obsidian/plugins/${this.manifest.id}`;
+                return `${base.replace(/[\\/]+$/, '')}/${sub.replace(/[\\/]+$/, '')}`;
+            }
+            return '';
+        } catch {
+            return '';
+        }
+    }
+
+    /** 旧的库外模型目录（`~/.reelludic/models`）—— 只用于**一次性迁移**与拿不到插件目录时的兜底 */
+    private legacyAsrModelDir(): string {
+        try {
+            const os = require('os') as { homedir: () => string };
+            const home = os.homedir();
+            if (!home) return '';
+            return `${home}/.reelludic/models`;
+        } catch {
+            return '';
+        }
+    }
+
+    /** 旧的库外程序目录（`~/.reelludic/bin`）—— 同上，只用于迁移与兜底 */
+    private legacyAsrBinDir(): string {
+        try {
+            const os = require('os') as { homedir: () => string };
+            const home = os.homedir();
+            if (!home) return '';
+            return `${home}/.reelludic/bin`;
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * 本地模型文件的存放目录。
+     *
+     * 🔴 用户 2026-11-10 裁定：默认放**插件目录**下的 `models/`（原来是 `~/.reelludic/models`）。
+     *    旧口径担心「放库里会被同步盘整份上传」，用户明确选择「跟插件在一起」优先于那条顾虑
+     *    —— 这是用户的取舍，⛔ 不要再拿同步盘的理由把它改回去。
+     * ⚠️ 拿不到插件目录（极端环境）⇒ 退回旧的主目录路径；再拿不到 ⇒ 空串，
+     *    调用方据此提示「无法确定存放位置」。
+     */
+    private asrModelDir(): string {
+        try {
+            // 🔴 用户在「沉浸体语音服务」里可以指定下载目录（m06789 需求②。
+            //    「要显示当前模型及环境下载路径和可选择指定路径下载」）非空时以它为准。
+            //    不要在这里校验「是不是库内」—那是设置页输入时的职责，这里只负责给出一个可用字符串。
+            const custom = String(this.settings.asrModelDir ?? '').trim();
+            if (custom) return custom.replace(/[\\/]+$/, '');
+            const own = this.pluginDir();
+            if (own) return `${own}/models`;
+            return this.legacyAsrModelDir();
+        } catch {
+            return '';
+        }
+    }
+
+    /** 模型下载/存放目录（**给设置页显示用**，与内部 `asrModelDir` 同一真源） */
+    asrModelsDir(): string {
+        return this.asrModelDir();
+    }
+
+    /**
+     * 环境自检：当前引擎要的三样（程序 / 模型 / 音频工具）各自在不在。
+     *
+     * 🔴 用户 m06789 需求②的点名要求：「▶ 环境自检：程序 [✅] | 模型 [✅] | 音频工具 [✅]」，
+     *    并且**随上方下拉框联动** —— 所以这里按 `settings.asrEngine` 现算，⛔ 不缓存。
+     *    ⚠️ 三个布尔值只说明「文件在不在」，不启动进程、不试跑（自检必须瞬时）。
+     */
+    asrEnvCheck(): {
+        program: boolean;
+        model: boolean;
+        audio: boolean;
+        programPath: string;
+        modelPath: string;
+        audioPath: string;
+    } {
+        const s = this.settings;
+        const det = this.asrAutoDetect();
+        const engine = engineDefOf(s.asrEngine).id;
+        const paths = this.asrEnginePaths(engine);
+        const programPath = paths.program;
+        const modelPath = paths.model;
+        return {
+            program: this.fileNonEmpty(programPath),
+            model: this.fileNonEmpty(modelPath),
+            audio: this.fileNonEmpty(det.ffmpeg),
+            programPath,
+            modelPath,
+            audioPath: det.ffmpeg,
+        };
+    }
+
+    /**
+     * 某一家引擎**实际可用的**三个文件路径：设置里填了就用填的，没填就去安装目录找。
+     *
+     * 🔴 这是 m08030 的关键一环。以前 sensevoice / qwen3 的判据是「设置里的路径字符串非空」，
+     *    而一键安装把文件放进固定目录、**不写设置**（写死绝对路径换机器就失效）——
+     *    结果就是「装完了卡片还是红的」，与 m05462 的 `asrModelAuto` 是同一个坑。
+     *    所以这里的顺序必须是：用户填的优先 → 固定安装目录兜底 → 都没有才算未配置。
+     */
+    private asrEnginePaths(engine: string): {
+        program: string;
+        model: string;
+        extra: string;
+        /**
+         * 需*多于三个**文件的引擎在这里给全（Paraformer 四样、X-ASR 六样）。
+         * ⚠️ 老三家不—它们的调用方一直按 `program/model/extra` 读，别为了整齐改结构。
+         */
+        files?: Record<string, string>;
+    } {
+        const s = this.settings;
+        const id = engineDefOf(engine).id;
+        const dir = this.asrEngineDir(id);
+        const pathMod = require('path') as { join: (a: string, b: string) => string };
+        const at = (name: string): string => (dir ? pathMod.join(dir, name) : '');
+        if (id === 'sensevoice') {
+            // 🔴 模型文件名跟着档位走（int8 = `model.int8.onnx` / fp32 = `model.onnx`）：
+            //    写死 int8 的话，用户选了 fp32 会「装好了但还是红」—探测去找一个没下过的文件名。
+            const sv = svVariantOf(s.asrSvVariant);
+            return {
+                program: String(s.asrSenseVoiceExePath ?? '').trim() || at(SHERPA_EXE_NAME),
+                model: String(s.asrSenseVoiceModelPath ?? '').trim() || at(sv.modelFile),
+                extra: String(s.asrTokensPath ?? '').trim() || at('tokens.txt'),
+            };
+        }
+        if (id === 'paraformer') {
+            // 🔴 Paraformer 要四样才跑得起来（比 SenseVoice 多一个断句模型）。
+            //    程序 = vad-with-offline-asr exe*不是** sherpa-onnx-offline，那个只出整段文字没有时间轴）。
+            //    模型 = 该档 onnx、词表、以silero_vad。
+            const pv = paraVariantOf(s.asrParaVariant);
+            return {
+                program: at(SHERPA_VAD_OFFLINE_EXE_NAME),
+                model: at(pv.modelFile),
+                extra: at('tokens.txt'),
+                files: {
+                    program: at(SHERPA_VAD_OFFLINE_EXE_NAME),
+                    model: at(pv.modelFile),
+                    tokens: at('tokens.txt'),
+                    vad: at(SILERO_VAD_NAME),
+                },
+            };
+        }
+        if (id === 'xasr') {
+            // 🔴 X-ASR 要六样：程序 = vad-with-**online**-asr exe。
+            //    加上 encoder / decoder / joiner 三件+ 词表 + silero_vad。
+            //    三个权重必须同一chunk，混用会因形状不匹配直接崩。
+            const xv = xasrVariantOf(s.asrXasrChunk);
+            return {
+                program: at(SHERPA_VAD_ONLINE_EXE_NAME),
+                model: at(`encoder-${xv.chunk}ms.onnx`),
+                extra: at('tokens.txt'),
+                files: {
+                    program: at(SHERPA_VAD_ONLINE_EXE_NAME),
+                    encoder: at(`encoder-${xv.chunk}ms.onnx`),
+                    decoder: at(`decoder-${xv.chunk}ms.onnx`),
+                    joiner: at(`joiner-${xv.chunk}ms.onnx`),
+                    tokens: at('tokens.txt'),
+                    vad: at(SILERO_VAD_NAME),
+                },
+            };
+        }
+        if (id === 'confucius') {
+            // 🔴 Confucius4 三样：llama-mtmd-cli 运行+ 语言模型 gguf + 投影mmproj。
+            //    只下 gguf 不下 mmproj exe 会直接拒绝运行（真机实测）。
+            const cv = confuciusVariantOf(s.asrConfuciusTier);
+            return {
+                program: at('llama-mtmd-cli.exe'),
+                model: at(cv.modelFile),
+                extra: at(cv.mmprojFile),
+                files: {
+                    program: at('llama-mtmd-cli.exe'),
+                    model: at(cv.modelFile),
+                    extra: at(cv.mmprojFile),
+                },
+            };
+        }
+        if (id === 'qwen3') {
+            // Qwen3 的两个「文件」其实是两个模型目录：程序仍是用户自己的 Python 解释器，
+            // 模型侧靠目录里的 config.json model.safetensors 判在不在。
+            // ⚠️ `extra` 给出该档的模型目—界面要用它显示「模型会放在哪」
+            //    也让「装好了没有」与「脚本去哪找」指向同一个地方（目录= 上游仓库名）。
+            const qv = qwenVariantOf(s.asrQwenTier);
+            return {
+                program: String(s.asrPythonPath ?? '').trim(),
+                model: String(s.asrBridgeScript ?? '').trim(),
+                extra: at(qv.dir),
+            };
+        }
+        return {
+            program: this.asrAutoDetect().whisper,
+            model: String(s.asrModelPath ?? '').trim() || this.asrModelAuto(),
+            extra: '',
+        };
+    }
+
+    /**
+     * 给设置页回显用的「这一家现在实际在用什么路径」（2026-11-06 m09051）。
+     *
+     * ⚠️ 只读、不落库 —— 设置项里为空时输入框用它回显，用户一动键盘才写 data.json。
+     *    理由见 `Settings.renderAsrEngineRows` 里 `pathRow` 的 `auto` 注释：
+     *    把探测到的绝对路径写死进设置，换机器就失效（m05462 的教训）。
+     *
+     * 🔴 每个字段**只在文件真的存在时**才非空（2026-11-06 m09819 用户报障
+     *    「还有环境配置说的已自动找到，但没填路径啊我怎么知道找不找的到」）。
+     *    旧实现把 `at(name)` 拼出来的**计算路径**直接返回，哪怕那个文件根本没下过 ——
+     *    于是界面出现两种自相矛盾的呈现：框里是空（`fileNonEmpty` 判 false ⇒ 三勾是⬜），
+     *    或者框里in一个不存在的路径却标注「已自动找到」。
+     *    现在统一口径：**能回显的就是真实存在且非空的**，不存在就返回空串，
+     *    让输入框如实显示 placeholder + 下面的「手动指定」区块。
+     */
+    asrPathsFor(engine: string): { program: string; model: string; extra: string; audio: string } {
+        const p = this.asrEnginePaths(engine);
+        const real = (v: string): string => (this.fileNonEmpty(v) ? v : '');
+        return {
+            program: real(p.program),
+            model: real(p.model),
+            extra: real(p.extra),
+            audio: real(this.asrAutoDetect().ffmpeg),
+        };
+    }
+
+    /** 某一档模型的目标绝对路径（目录拿不到 ⇒ 空串） */
+    private asrModelPathOf(preset: AsrModelPreset): string {
+        // 🔴 whisper 的模型改`models/whisper/` 子目录（与另两家同构，见 `asrEngineDir` 注释）。
+        //    别改`asrModelDir()` 根目—那正m09819「分不清哪个是哪个」的来源。
+        const dir = this.asrEngineDir('whisper');
+        if (!dir) return '';
+        return joinDir(dir, preset.fileName);
+    }
+
+    /** 给设置页用的 `asrModelPathOf`（私有版留给内部调用，这条是对外只读入口） */
+    asrModelPathFor(preset: AsrModelPreset): string {
+        return this.asrModelPathOf(preset);
+    }
+
+    /** 查某一档在本机的状态（就绪 / 字节数）—— 只读，⛔ 不下载 */
+    private asrCardState(preset: AsrModelPreset): { ready: boolean; percent: number | null; received: number; total: number } {
+        // 🔴 `asrModelAuto` 会「借用」另一档已下好的文件（见该方法的注释），这里必*精确**。
+        //    模型列表上每一行都要说清「这一档在不在」，借来的就绪会让三档同时显示绿点。
+        const dest = this.asrModelPathOf(preset);
+        if (!dest) return { ready: false, percent: null, received: 0, total: preset.bytes };
+        try {
+            const fsMod = require('fs') as { statSync: (p: string) => { size: number } };
+            const n = fsMod.statSync(dest).size;
+            return {
+                ready: downloadLooksComplete(n, preset.bytes),
+                percent: null,
+                received: n,
+                total: preset.bytes,
+            };
+        } catch {
+            return { ready: false, percent: null, received: 0, total: preset.bytes };
+        }
+    }
+
+    /**
+     * 给设置页「选择模型」列表用的**单档就绪查询**（公有只读）。
+     * 与 `asrCardState` 的区别只有可见性：那条是私有的、留给弹窗；这条给设置页逐行画绿点。
+     */
+    asrPresetReady(preset: AsrModelPreset): boolean {
+        return this.asrCardState(preset).ready;
+    }
+
+    /** 「选择音频转文字引擎」弹窗（设置页 [配置] / [更改] 按钮的落点） */
+    openAsrEngineModal(): void {
+        if (!this.asrModelDir()) {
+            new Notice('无法确定本地模型存放位置（拿不到用户主目录），请改用下面的「识别模型文件」手动指定。');
+            return;
+        }
+        const modal = new AsrEngineModal(this.app, {
+            currentPath: String(this.settings.asrModelPath ?? ''),
+            pathOf: (p) => this.asrModelPathOf(p),
+            stateOf: (p) => this.asrCardState(p),
+            // 🔴 第 5 参传镜像地址：官方源在国内直连超时（实测 12s socket hang up），
+            //    下载器内部失败后会自动换 `hf-mirror.com` 再试一次。⛔ 别省这个参数 ——
+            //    省了就等于「一键下载」在国内完全不可用。
+            download: (p, onProgress) =>
+                downloadModel(defaultDownloadDeps(), p, this.asrModelPathOf(p), onProgress, mirrorUrlFor(p)),
+            remove: (p) => {
+                const dest = this.asrModelPathOf(p);
+                if (!dest) return;
+                try {
+                    const fsMod = require('fs') as { unlinkSync: (x: string) => void };
+                    fsMod.unlinkSync(dest);
+                } catch {
+                    /* 文件本来就不在：删除是幂等成功，所以不弹窗 */
+                }
+                this.displayAsrHintAfterRemove(p);
+            },
+            onPick: async (p) => {
+                this.settings.asrModelPath = this.asrModelPathOf(p);
+                await this.saveSettings();
+                new Notice(`已切换到「${p.title}」，现在可以转写了。`);
+            },
+            pickCustom: () => this.pickSystemFilePath(['bin'], '模型文件').then((v) => v ?? null),
+            onPickCustom: async (abs) => {
+                this.settings.asrModelPath = abs;
+                await this.saveSettings();
+                new Notice('已使用你选择的模型文件。');
+            },
+            // 2026-11-13 用户指令：模型页要能给出「下载模型官网路径」。
+            // 🔴 走宿主 `openExternalUrl`（它已限 http/https），⛔ 不让弹窗自己 window.open ——
+            //    那会绕过协议白名单，且移动端行为不一致。
+            onOpenExternal: (url) => this.openExternalUrl(url),
+        });
+        modal.open();
+    }
+
+    /** 删掉当前正在用的那一档后，把设置里的模型路径清掉（否则转写会对着不存在的文件跑） */
+    private displayAsrHintAfterRemove(preset: AsrModelPreset): void {
+        const cur = String(this.settings.asrModelPath ?? '');
+        if (!cur) return;
+        if (cur === this.asrModelPathOf(preset)) {
+            this.settings.asrModelPath = '';
+            void this.saveSettings();
+        }
+    }
+
+    /**
+     * 本地语音转文字（宿主侧实现，供选集页 🎙️ 按钮调）。
+     *
+     * 🔴 用户 m01938 的完整流程由执行层 `transcribeWithWhisper` 包办：
+     *    ffmpeg 抽 16k 单声道 wav → whisper.cpp `-osrt` 写 SRT → 读回正文 → 删中间 wav。
+     *    宿主这层只做三件执行层做不了的事：
+     *    ① **路径换算**（库内相对 / 系统绝对 → 系统绝对，见 `videoAbsPath`）；
+     *    ② **配置读取**（模型 / 可执行文件 / 语言 / 线程数全来自设置页）；
+     *    ③ **人话兜底**（`asrModelMissingMessage` 系文案已保证不出现技术黑话堆砌）。
+     *
+     * ⚠️ 配置不全时**不进执行层**：直接返回引导文案 —— 让用户看到「去设置页填模型」
+     *    比看到一个 `spawn whisper ENOENT` 有意义得多（用户避坑指南：绝不出现红色报错）。
+     * ⚠️ `onProgress` 原样透传：视图层拿它画那条细横幅（⛔ 宿主不自己画 UI）。
+     */
+    private async transcribeCue(req: {
+        videoPath: string;
+        onProgress: (
+            percent: number | null,
+            label: string,
+            detail?: string,
+            line?: { start: number; end: number; text: string },
+        ) => void;
+        cancel: AsrCancelHandle;
+    }): Promise<{ ok: boolean; message: string; cancelled?: boolean; srtPath?: string }> {
+        if (!Platform.isDesktopApp) return { ok: false, message: '本地转写需要在电脑版 Obsidian 里使用' };
+        const s = this.settings;
+        const abs = this.videoAbsPath(req.videoPath);
+        if (!abs) return { ok: false, message: '找不到这一集的本地文件' };
+
+        // 🔴 用户 m09995：「转录中还是…也不浮窗显示」。
+        //    浮球挂在宿主这层，⛔ 不能挂视图：用户切走笔记时视图会被卸载，
+        //    而「切到别的笔记去工作」正是这颗球存在的全部理由（m01938 原话）。
+        // ⚠️ 包一层而不是替换：视图层那条横幅仍然要收到同一份进度（两处显示互不依赖）。
+        const ball = startProgressBall('正在准备转写');
+        let lastDetail = '';
+        // 🔴 用户 m12504：「转写不渲染出实时出句啊。
+        //    根因就在这一行签名：这里3 个形参，`line` 被静默丢。
+        //    服务层明明已经在回调4 参里逐句回吐（whisper/SenseVoice/Qwen3 三条链路都做了）。
+        //    视图层也已经onProgress 4 参里 `appendCueTranscribeLine`。
+        //    但宿主这层的中转把它吃了，于是面板永远停在「马上出第一句」。
+        //    ⚠️ 别为了「进度文案够用」把 `line` 去掉：横幅负责百分比，`line` 负责逐句正文，两件事。
+        const report = (
+            percent: number | null,
+            label: string,
+            detail?: string,
+            line?: { start: number; end: number; text: string },
+        ): void => {
+            req.onProgress(percent, label, detail, line);
+            const d = detail ?? '';
+            if (d) lastDetail = d;
+            ball.update({ label, percent, detail: d || lastDetail });
+        };
+
+        // 🔴 按用户选的引擎分派（用m04641「按需加载，要有不能没有」）。
+        //    六家共用同一套「进度回+ 成败人话」外壳，内部链路完全不同。
+        //    - whisper：插件自己起 ffmpeg + whisper-cli。
+        //    - SenseVoice：插件自己起 sherpa-onnx + ffmpeg*不需Python**（m11073）
+        //    - Paraformer / X-ASR：插件自己起 sherpa vad-with-*-asr + ffmpeg（VAD 分段）
+        //    - Confucius4：插件自己起 llama-mtmd-cli + gguf*结果stdout**）
+        //    - Qwen3-ASR：起用户自备python 桥接，脚本自己搞定抽识别/对齐/写盘。
+        const engine = engineDefOf(s.asrEngine).id;
+        if (engine === 'sensevoice') {
+            const native = await this.transcribeSenseVoiceNative(abs, report, req.cancel);
+            if (native.ok) ball.done('字幕已保存');
+            else if (native.cancelled) ball.dismiss();
+            else ball.fail(native.message);
+            return native;
+        }
+        if (engine === 'paraformer' || engine === 'xasr') {
+            const native = await this.transcribeSherpaVadNative(engine, abs, report, req.cancel);
+            if (native.ok) ball.done('字幕已保存');
+            else if (native.cancelled) ball.dismiss();
+            else ball.fail(native.message);
+            return native;
+        }
+        if (engine === 'confucius') {
+            const native = await this.transcribeLlamaNative(abs, report, req.cancel);
+            if (native.ok) ball.done('字幕已保存');
+            else if (native.cancelled) ball.dismiss();
+            else ball.fail(native.message);
+            return native;
+        }
+        if (engine !== 'whisper') {
+            // 走到这里只剩 Qwen3-ASR（SenseVoice 上面已经 return 了）。
+            // 别把 `engine` 直接传下去：签名已收窄成只收 'qwen3'，这是故意的 
+            //    让「再SenseVoice 接回 Python 桥接」这件事在类型层面就通不过。
+            const viaBridge = await this.transcribeViaBridge('qwen3', abs, report, req.cancel);
+            // 桥接系自己会把「停止」反映成 cancelled，只有真失败才留下红色结果。
+            if (viaBridge.ok) ball.done('字幕已保存');
+            else if (viaBridge.cancelled) ball.dismiss();
+            else ball.fail(viaBridge.message);
+            return viaBridge;
+        }
+
+        // 🔴 框里没模型：模型是插件自己下到固定目录（现在*插件目录**下的 `models/`）的。
+        //    框里空时先把那份找回来，否则「卡片绿了但转写说没模型」（m05462 的另一半）。
+        const modelPath = String(s.asrModelPath ?? '').trim() || this.asrModelAuto();
+        if (!modelPath) {
+            ball.fail("还没有配置识别引擎");
+            return { ok: false, message: "还没有配置识别引擎，请到「设置 → 高级设置 → 音频转文字」里选一档模型" };
+        }
+
+        const result = await transcribeWithWhisper(defaultAsrDeps(), {
+            videoPath: abs,
+            // 🔴 模型路径同样可能是库内相对路径（用户把 .bin 放进库里）⇒ 也走一次换算
+            model: this.videoAbsPath(modelPath) || modelPath,
+            // 🔴 自动探测的结果优先于「框里空着」：用户装好了但没填框时，这里必须把找到的路径递下去，
+            //    否则探测只让卡片变绿、转写仍然 ENOENT —— 那正是 m05462 抱怨的「还得我自己配」。
+            exe: this.asrAutoDetect().whisper || undefined,
+            ffmpeg: this.asrAutoDetect().ffmpeg || undefined,
+            lang: String(s.asrLang ?? '').trim() || undefined,
+            threads: typeof s.asrThreads === 'number' ? s.asrThreads : undefined,
+            onProgress: report,
+            cancel: req.cancel,
+        });
+        if (!result.ok) {
+            // ⚠️ 停止不该在右下角留一个红叉：那是用户自己按的，不是失。
+            if (result.cancelled === true) ball.dismiss();
+            else ball.fail(result.message);
+            return { ok: false, message: result.message, cancelled: result.cancelled === true };
+        }
+        ball.done("字幕已保存");
+        // 用户原话要求这一句：「✅ 转写完成！字幕已保存至视频同目录。
+        // 🔴 m11423：必须把 `srtPath` 交出去，视图层才能调 `onSaveSubtitle` 写进
+        //    `subtitlePaths`。只报「已保存」却不给路径 = 文件在那儿无人认领。
+        return { ok: true, message: '✅ 转写完成！字幕已保存至视频同目录。', srtPath: this.toVaultRelPath(result.srtPath ?? '') };
+    }
+
+    /**
+     * 🔴 用户 m11073：「明明配置了SenseVoice模型显示已就绪却说没找到运行程序」。
+     *
+     * 根因不是漏了个判据，是**设计矛盾**：`sherpa-onnx-offline.exe` 是静态链接的自足二进制
+     * （真机复核：2MB 单个 exe，拷到空目录、干净 PATH 下仍能直接跑通识别），
+     * 但插件一度把它发配到 Qwen3 的 Python 桥接里去执行 —— 于是三件套一键装好、状态变绿，
+     * 一按转写却要求 Python + 脚本，而设置页的 SenseVoice 分支**根本没有这两个输入框**。
+     *
+     * 修法是把 SenseVoice 摘成**插件原生链路**：这里只负责路径换算与配置读取，
+     * 抽轨 / 切段 / 逐段识别 / 拼 SRT 全在 `services/asrSenseVoice` 里做（纯 Node，无 Python）。
+     * ⛔ 别再把它接回 `transcribeViaBridge`：那意味着用户为了「极速纯中文」还得先装一套 torch。
+     */
+    private async transcribeSenseVoiceNative(
+        videoAbs: string,
+        onProgress: (
+            percent: number | null,
+            label: string,
+            detail?: string,
+            line?: { start: number; end: number; text: string },
+        ) => void,
+        cancel: AsrCancelHandle,
+    ): Promise<{ ok: boolean; message: string; cancelled?: boolean; srtPath?: string }> {
+        const s = this.settings;
+        // 三件套与自检同一真源（`asrEnginePaths`）：设置里填了用填的，没填就去安装目录找。
+        // 🔴 一键安装刻*不写设置**（写死绝对路径换机器就失效），只读设置会得到「装完了还是红的」。
+        const p = this.asrEnginePaths('sensevoice');
+        if (!p.program) {
+            return { ok: false, message: "还没有配置 SenseVoice 的识别程序，请到「沉浸体验 → 语音服务」里点一次安装" };
+        }
+        if (!p.model) {
+            return { ok: false, message: "还没有配置 SenseVoice 的识别模型，请到「沉浸体验 → 语音服务」里点一次安装" };
+        }
+        if (!p.extra) {
+            return { ok: false, message: "还没有配置 SenseVoice 的词表，请到「沉浸体验 → 语音服务」里点一次安装" };
+        }
+        // 这两个路径也可能是库内相对路径（用户把模型放进库里）都过一遍换。
+        const r = await transcribeWithSenseVoice(defaultSenseVoiceDeps(), {
+            videoPath: videoAbs,
+            exe: this.videoAbsPath(p.program) || p.program,
+            model: this.videoAbsPath(p.model) || p.model,
+            tokens: this.videoAbsPath(p.extra) || p.extra,
+            ffmpeg: this.asrAutoDetect().ffmpeg || undefined,
+            lang: String(s.asrLang ?? '').trim() || undefined,
+            threads: typeof s.asrThreads === 'number' ? s.asrThreads : undefined,
+            onProgress,
+            cancel,
+        });
+        if (!r.ok) return { ok: false, message: r.message, cancelled: r.cancelled === true };
+        // 🔴 m11423：`srtPath` 必须交出去，否则视图层无从落库（文件在那儿无人认领）
+        return { ok: true, message: '✅ 转写完成！字幕已保存至视频同目录。', srtPath: this.toVaultRelPath(r.srtPath ?? '') };
+    }
+
+    /**
+     * Paraformer / X-ASR 的转写入口（两家共用一条执行层，差别只在 exe 与权重）。
+     *
+     * 🔴 为什么要 VAD 分段版 exe：实测 `sherpa-onnx-offline.exe --paraformer` 返回
+     *    `"timestamps": []` —— 只有一整段文字、没有时间轴，做不出字幕条。
+     *    `sherpa-onnx-vad-with-offline-asr.exe` 输出 `0.134 -- 0.940: text` 天然带时间轴。
+     *    X-ASR 是流式 zipformer，必须用 `vad-with-online-asr` 版（喂 offline 版会 0xC0000409 崩溃）。
+     */
+    private async transcribeSherpaVadNative(
+        engine: 'paraformer' | 'xasr',
+        videoAbs: string,
+        onProgress: (
+            percent: number | null,
+            label: string,
+            detail?: string,
+            line?: { start: number; end: number; text: string },
+        ) => void,
+        cancel: AsrCancelHandle,
+    ): Promise<{ ok: boolean; message: string; cancelled?: boolean; srtPath?: string }> {
+        const s = this.settings;
+        // 六件套与自检同一真源（`asrEnginePaths`）：设置里没有槽位的引擎，路径全由安装目录推出。
+        const p = this.asrEnginePaths(engine);
+        const f = p.files ?? {};
+        const abs = (v: string | undefined): string => {
+            const raw = String(v ?? '').trim();
+            return raw ? this.videoAbsPath(raw) || raw : '';
+        };
+        const result = await transcribeWithSherpaVad(defaultSherpaVadDeps(), {
+            videoPath: videoAbs,
+            mode: engine,
+            exe: abs(f.program),
+            tokens: abs(f.tokens),
+            vadModel: abs(f.vad),
+            paraformer: engine === 'paraformer' ? abs(f.model) : undefined,
+            encoder: engine === 'xasr' ? abs(f.encoder) : undefined,
+            decoder: engine === 'xasr' ? abs(f.decoder) : undefined,
+            joiner: engine === 'xasr' ? abs(f.joiner) : undefined,
+            ffmpeg: this.asrAutoDetect().ffmpeg || undefined,
+            // ⛔ 不传 lang：Paraformer 与 X-ASR 三件套都**没有语言开关**
+            //    （`--sense-voice-language` 只属 SenseVoice，transducer 的语言由权重决定）。
+            //    硬塞会被 exe 当未知选项拒绝，整体转写失败。
+            threads: typeof s.asrThreads === 'number' ? s.asrThreads : undefined,
+            onProgress,
+            cancel,
+        });
+        if (!result.ok) return { ok: false, message: result.message, cancelled: result.cancelled === true };
+        return { ok: true, message: '✅ 转写完成！字幕已保存至视频同目录。', srtPath: this.toVaultRelPath(result.srtPath ?? '') };
+    }
+
+    /**
+     * Confucius4 的转写入口（llama.cpp 的 `llama-mtmd-cli`）。
+     *
+     * 🔴 两个与 sherpa 系相反的坑，任一条踩了都表现为「什么都没有输出」：
+     *    ① **结果在 stdout、日志在 stderr** —— sherpa 系正好相反，⛔ 不能复用它的 deps；
+     *    ② 必须带同目录的 dll（只拷 exe 会静默失败，stdout/stderr 全空）。
+     * ⚠️ 它上游没有时间戳，时间轴由 `pure/llamaAsr.textToSegments` 按句长比例反推 ——
+     *    这是本家独有的取舍，⛔ 别指望在这里拿到字级对齐。
+     */
+    private async transcribeLlamaNative(
+        videoAbs: string,
+        onProgress: (
+            percent: number | null,
+            label: string,
+            detail?: string,
+            line?: { start: number; end: number; text: string },
+        ) => void,
+        cancel: AsrCancelHandle,
+    ): Promise<{ ok: boolean; message: string; cancelled?: boolean; srtPath?: string }> {
+        const s = this.settings;
+        const p = this.asrEnginePaths('confucius');
+        const abs = (v: string): string => (v ? this.videoAbsPath(v) || v : '');
+        const result = await transcribeWithLlama(defaultLlamaDeps(), {
+            videoPath: videoAbs,
+            exe: abs(p.program),
+            model: abs(p.model),
+            mmproj: abs(p.extra),
+            ffmpeg: this.asrAutoDetect().ffmpeg || undefined,
+            threads: typeof s.asrThreads === 'number' ? s.asrThreads : undefined,
+            onProgress,
+            cancel,
+        });
+        if (!result.ok) return { ok: false, message: result.message, cancelled: result.cancelled === true };
+        return { ok: true, message: '✅ 转写完成！字幕已保存至视频同目录。', srtPath: this.toVaultRelPath(result.srtPath ?? '') };
+    }
+
+    /**
+     * Qwen3-ASR 的转写入口（唯一还需要 Python 桥接的一家）。
+     *
+     * 🔴 它自己完成「抽音轨 → 分段 → 识别 → 强制对齐 → 写 SRT」，
+     *    插件只负责起进程、读协议、判成败 —— ⛔ 别在插件里再抽一次音轨（会白算一遍还要清临时文件）。
+     * ⚠️ 输出 srt 落在**视频同目录**、与视频同名（`asrSrtPathFor` 同一口径），
+     *    这样转写完成后面板的 `syncCueSource()` 能直接扫到它，不需要用户手动挑文件。
+     */
+    private async transcribeViaBridge(
+        engine: 'qwen3',
+        videoAbs: string,
+        onProgress: (
+            percent: number | null,
+            label: string,
+            detail?: string,
+            line?: { start: number; end: number; text: string },
+        ) => void,
+        cancel: AsrCancelHandle,
+    ): Promise<{ ok: boolean; message: string; cancelled?: boolean; srtPath?: string }> {
+        const s = this.settings;
+        const python = String(s.asrPythonPath ?? '').trim();
+        const script = String(s.asrBridgeScript ?? '').trim();
+        if (!python || !script) {
+            // 🔴 这里只可能是 Qwen3：SenseVoice 走原生链路（`transcribeSenseVoiceNative`），压根不到这里。
+            //    别为了「通用」把两家的缺失提示揉成一句话 —那正m11073 的起点。
+            //    用户装好SenseVoice 却被要求去填 Python。
+            return { ok: false, message: qwenMissingMessage() };
+        }
+        const out = asrSrtPathFor(videoAbs);
+        if (!out) return { ok: false, message: '无法从视频路径推出字幕输出路径' };
+
+        // SenseVoice 已改走原生链路（`transcribeSenseVoiceNative`），这里不再拼它的三件套 
+        // 留着会让「用户选了极速版却把 sherpa 路径python 参数喂给 qwen3」这种错配重新出现。
+        const result = await transcribeWithQwen(defaultQwenDeps(), {
+            input: videoAbs,
+            out,
+            engine,
+            // 这两个路径也可能是库内相对路径（用户把脚本放进库里）⇒ 都过一遍换算
+            python: this.videoAbsPath(python) || python,
+            script: this.videoAbsPath(script) || script,
+            lang: String(s.asrLang ?? '').trim() || undefined,
+            onProgress,
+            cancel,
+            // 🔴 m09432 之前这两个参数根本没传：`--model` 永远是脚本默认的 0.6B（1.7B 形同不存在），
+            //    `--models-dir` 更是连参数都没有 —— 插件下到自己的目录、脚本却去项目目录找。
+            //    `modelsDir` 传 Qwen3 的安装目录（其下就是 `Qwen3-ASR-*` 与 `Qwen3-ForcedAligner-0.6B`），
+            //    与 `asrEnginePaths('qwen3').extra` 同一真源，⛔ 别在这里另拼一个路径。
+            model: engine === 'qwen3' ? qwenVariantOf(s.asrQwenTier).tier : undefined,
+            modelsDir: engine === 'qwen3' ? this.asrEngineDir('qwen3') : undefined,
+        });
+        if (!result.ok) return { ok: false, message: result.message, cancelled: result.cancelled === true };
+        // 🔴 m11423：同样要把路径交出去（否Qwen3 转完也一样「文件在但没关联」）
+        return { ok: true, message: '✅ 转写完成！字幕已保存至视频同目录。', srtPath: this.toVaultRelPath(result.srtPath ?? '') };
+    }
+
+    /**
+     * 学习模式悬停查词：查设置里那个本地词典文件。
+     *
+     * 🔴 返回 `null` 是**正常路径**（没配词典 / 词不在表里），⛔ 不抛、不弹 Notice：
+     *    用户只是在字幕上划过一个词，不该被任何提示打断。
+     * ⚠️ 词典路径同样可能写成库内相对路径（用户把 csv 放进库里）⇒ 走一次 `videoAbsPath` 同源的换算；
+     *    但换算失败时**退回原值**再试 —— 库外绝对路径场景 `toVaultRelPath` 会返回原值，不能因此判死。
+     */
+    private lookupWordInLocalDict(key: string): Promise<{ def: string; phonetic?: string } | null> {
+        if (!Platform.isDesktopApp) return Promise.resolve(null);
+        const raw = String(this.settings.dictPath ?? '').trim();
+        if (!raw) return Promise.resolve(null);
+        const path = this.videoAbsPath(raw) || raw;
+        try {
+            const r = lookupWordInDict(defaultDictDeps(), path, key);
+            if (!r.entry) return Promise.resolve(null);
+            return Promise.resolve({ def: r.entry.def, phonetic: r.entry.phonetic });
+        } catch {
+            return Promise.resolve(null);
         }
     }
 
@@ -4220,10 +7648,60 @@ export default class ReelLudicPlugin extends Plugin {
         }
     }
 
+    /**
+     * 字幕文件是否还存在（用户 2026-10-29：关联弹窗里丢文件要标红）。
+     *
+     * 🔴 与 `readSubtitleAsVtt` **同一套路径口径**（库内 `getAbstractFileByPath`、库外 `fs`）——
+     *    ⛔ 别另写一套判定，否则「读得到但显示丢失」这种自相矛盾就会出现。
+     * ⚠️ 只读、不创建、不抛：任何异常一律当「不存在」（调用方只需布尔）。
+     */
+    private async subtitleFileExists(p: string): Promise<boolean> {
+        const raw = String(p ?? '').trim();
+        if (!raw) return false;
+        try {
+            const rel = this.toVaultRelPath(raw);
+            if (this.app.vault.getAbstractFileByPath(rel) instanceof TFile) return true;
+            if (!Platform.isDesktopApp) return false;
+            const fs = require('fs/promises') as typeof import('fs/promises');
+            // 库内没命中时，`raw` 也可能是绝对路径（库外字幕）直接 stat
+            await fs.access(raw);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     /** 系统选择器挑字幕（.srt/.vtt）；取消/不可用返回 null */
     private async pickSubtitleFromSystem(): Promise<string | null> {
         const picked = await this.pickSystemFile(['srt', 'vtt'], '字幕文件', false);
         return picked ?? null;
+    }
+
+    /**
+     * 系统选择器挑一份字幕并读回**原文**（给选集页时间轴面板用）。
+     *
+     * 🔴 与 `readSubtitleAsVtt` 的区别只在「返回之前不做格式转换」：
+     *    面板要按扩展名自己选解析器（`.ass/.ssa` 走 ASS 解析，⛔ 转 VTT 会把 ASS 头整个丢掉）；
+     *    `readSubtitleAsVtt` 那条仍原样服务 <track> 挂载，两条通路口径互不覆盖。
+     */
+    private async pickSubtitleRaw(): Promise<{ fileName: string; text: string } | null> {
+        const picked = await this.pickSystemFile(['srt', 'vtt', 'ass', 'ssa'], '字幕文件', false);
+        if (!picked) return null;
+        try {
+            const rel = this.toVaultRelPath(picked);
+            const f = this.app.vault.getAbstractFileByPath(rel);
+            let text: string | null = null;
+            if (f instanceof TFile) {
+                text = await this.app.vault.adapter.read(rel);
+            } else if (Platform.isDesktopApp) {
+                const fs = require('fs/promises') as typeof import('fs/promises');
+                text = await fs.readFile(picked, 'utf8');
+            }
+            if (text === null) return null;
+            return { fileName: fileNameOfPath(picked), text };
+        } catch {
+            return null;
+        }
     }
     /** Obsidian app:// 自定义协议 ID（用 adapter.getResourcePath 推导，会话内缓存一次）。
      *  vault 内资源文件经此协议加载；协议处理器可读库外绝对路径（Chromium 自定义 scheme，流式） */
@@ -4370,6 +7848,32 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /**
+     * 2026-11-16 用户：「我这个只有获取一个文件怎么办改成关联目录」——
+     * 选一个**游戏文件夹**（主影片 + 关联资源都在里面），自动挑出主影片并关联。
+     *
+     * 🔴 为什么需要这条：原项目每个游戏一个文件夹，用户手上已经存好的游戏是**整个目录**；
+     *    只让他挑单个 `.swf` 会丢掉「这个游戏还有哪些资源」这层信息。
+     *    而且我们的「获取」现在也是按 `<游戏名>/` 一个目录落的 —— 两种来源汇成同一个形状。
+     *
+     * 三态（与 `pickDirPath` 同口径，⛔ 别拿 `!dir` 一把抓）：
+     *   · 选中且找到 swf ⇒ 返回**库内相对路径**（库外则返回绝对路径，与 `gameSwf` 容错口径一致）；
+     *   · 选中但目录里没有 swf ⇒ `null`（调用方提示「这个目录里没有 .swf」，不是取消）；
+     *   · 取消 / 无系统对话框 / 读目录失败 ⇒ `undefined`。
+     *
+     * ⚠️ 主影片由纯层 `pickMainSwf` 挑（只有一个就选它；多个优先顶层、再优先 `index/main/game/start`）。
+     *    猜错不要紧：浮层里那个输入框仍可手填具体路径。
+     */
+    async pickGameSwfFromDir(): Promise<string | null | undefined> {
+        const dir = await this.pickGameDirPath();
+        // 取消（pickDirPath 里 `null`）与「没有系统对话框」（`undefined`）对调用方都是「别动」
+        if (!dir) return undefined;
+        const files = this.collectFilesInDir(dir, isFlashPath);
+        const picked = pickMainSwf(files.map((f) => f.path));
+        if (!picked) return null;
+        return picked;
+    }
+
+    /**
      * #534：列出用户刚挑的目录里的**可启动文件**（游戏「检索本地」）。
      * 判据在 `pure/gameLaunch.isGameLaunchPath`（.lnk/.exe/.bat/.cmd/.app/.sh；⛔ 与书籍扩展名集合分开）。
      * 其余口径（子目录深度 ≤ 4、忽略隐藏、库内/库外路径转换、失败返回 `[]`）与书籍那条**共用同一个 walk**。
@@ -4459,7 +7963,7 @@ export default class ReelLudicPlugin extends Plugin {
         const key = localDirKeyFor('book', q.bookKind);
         if (!key) return { notice: '这一类没有配置本地目录，无法检索' };
         const dir = localDirOf(this.settings, key);
-        if (!dir) return { notice: `还没设置「${LOCAL_DIR_LABELS[key]}」，先去设置页填一个目录` };
+        if (!dir) return { notice: `还没设置「${LOCAL_DIR_LABELS[key]}」，先去设置页填一个目录${LOCAL_DIR_LABELS[key]}」，先去设置页填一个目录` };
         const abs = resolveLocalDirAbs(this.vaultBasePath(), dir);
         if (!abs) return { notice: `「${LOCAL_DIR_LABELS[key]}」不是有效路径，去设置页检查一下` };
         const files = this.collectFilesInDir(abs, localDirAccept(key));
@@ -4637,9 +8141,789 @@ export default class ReelLudicPlugin extends Plugin {
         return this.pickSystemFile(['lnk'], '游戏快捷方式', true);
     }
 
-    /** 启动游戏（条目「▶ 启动」）：桌面端 shell.openPath 打开 .lnk 快捷方式（系统按快捷方式目标启动游戏） */
+    /** 选本地 Flash 影片（.swf；2026-11-16「先在插件内玩本地 swf」的入口） */
+    async pickGameSwfPath(): Promise<string | undefined> {
+        return this.pickSystemFile(['swf'], 'Flash 影片', true);
+    }
+
+    /**
+     * 编辑表单「获取」按钮的宿主侧入口：弹窗问「游戏详情页地址」→ `fetchGameSwf` 抓取下载 →
+     * 把库内相对路径交回表单（由表单回填输入框并立即落进表单态）。
+     *
+     * 🔴 为什么宿主来弹窗、而不是表单自己开：地址校验 / 抓取 / 失败解释都在 `fetchGameSwf` 一处，
+     *    表单只该显示结果（⛔ 别在 UI 层再复制一套地址规则）。
+     * 🔴 `entryId` 传 `undefined`：编辑表单可能是**还没保存的新条目**（没有 id 可写），
+     *    此时只把文件下到库内、把路径交回表单，最终由「保存并生成笔记」落库 —— 与手动输路径同一归宿。
+     *    ⚠️ 标签页场景同理：用户点了获取就该看到「已下载」，⛔ 别让下载白费。
+     */
+    async promptFetchGameSwf(entryId?: string): Promise<{ ok: boolean; message: string; relPath?: string }> {
+        const url = await new TextPromptModal(this.app, {
+            title: '获取 Flash 影片',
+            placeholder: 'https://www.4399.com/flash/xxxxx.htm',
+            okText: '获取',
+            hint: '填游戏详情页地址（4399 / 7k7k / 17yy 或任意含 swf 的页面），会自动找出真实 swf 并下载到「设置 › 播放阅读 › 游戏目录」。',
+            onSubmit: () => {},
+        }).open();
+        if (url === null) return { ok: false, message: '已取消获取' };
+        return this.fetchGameSwf(url, entryId);
+    }
+
+    /**
+     * 从**游戏详情页地址**里挖出真实 swf，下载进库，并（可选）回填条目的 `gameSwf`。
+     * 2026-11-16（用户：「如何获取 swf 文件没有集成啊」）—— 上一版只做了「有 swf 就能玩」，
+     * 这一步补上「怎么把 swf 弄到本地」。
+     *
+     * ## 链路
+     * 取页面（浏览器 UA + Referer）→ 解码（GBK/UTF-8 自适应）→ `pure/flashFetch.parseFlashPage`
+     * 挖地址（4399 `_strGamePath` / 7k7k `gamePath:` / `<param>` / `<embed>` / flashvars / 兜底正则）
+     * → 若是「中间播放页」再抓一次 → `downloadToVault`（kind=`flash`，落 `下载/Flash 游戏`）
+     * → 写进条目 `gameSwf`。
+     *
+     * ## ⛔ 不做的三件事（都是有意的）
+     *  ① **不抓关联资源**：4399 那类游戏常把图片/音频拆成一堆同目录小文件，只拿主 swf 会缺资源。
+     *     但「按目录批量猜文件名」是不可控的（参考项目要读站方 `.ini` 才知道清单），
+     *     所以本版只取主影片，缺口写在提示里。
+     *  ② **不覆盖已有文件**：`downloadToVault` 走 `uniqueDownloadName`，重名自动 `(2)`。
+     *  ③ **不自动播放**：获取完只回填路径，用户自己点「▶ 启动」。
+     */
+    /**
+     * 带「代理 → 直连」回退的 GET（返回 Buffer）。**全部网络抓取都必须走这里。**
+     *
+     * 🔴 为什么不能直接用 `nodeHttpGetBuffer(url, h, this.ytProxyFor())`：真机踩过两次同一个坑
+     *    ——设置里配了代理（`http://127.0.0.1:7897`）但代理进程没开时，请求直接
+     *    `connect ECONNREFUSED 127.0.0.1:7897`，而目标站点直连明明是通的。
+     *    调用方拿到的是一个看起来像「站点打不开」的错误，用户完全看不出真因是本地代理。
+     *    ⇒ 有代理就先代理、失败再直连；「代理挂了」不该被报成「网站挂了」。
+     *
+     * @param onFallback 第一次失败准备改直连时的回调（给 UI 一句人话）
+     * @param onProgress 下载进度（已收字节 / 当前跳的 content-length；用户 m02844「做进度表」）
+     */
+    private async httpGetBufferWithFallback(
+        url: string,
+        headers: Record<string, string> | undefined,
+        timeoutMs: number,
+        onFallback?: (reason: string) => void,
+        onProgress?: (received: number, total: number) => void,
+    ): Promise<NodeHttpBufferResponse> {
+        const proxy = this.ytProxyFor();
+        const attempts: (string | undefined)[] = proxy ? [proxy, undefined] : [undefined];
+        let lastErr: unknown = null;
+        for (let i = 0; i < attempts.length; i += 1) {
+            try {
+                const r = await nodeHttpGetBuffer(url, headers, attempts[i], { timeoutMs, onProgress });
+                if (r && r.status >= 200 && r.status < 300) return r;
+                lastErr = new Error(`HTTP ${r?.status ?? '??'}`);
+            } catch (e) {
+                lastErr = e;
+                if (i + 1 < attempts.length) {
+                    onFallback?.(e instanceof Error ? e.message : String(e));
+                }
+            }
+        }
+        throw lastErr instanceof Error ? lastErr : new Error('请求失败');
+    }
+
+    /**
+     * 带「代理 → 直连」回退的 POST（返回文本）。与 `httpGetBufferWithFallback` 同一套纪律。
+     *
+     * 🔴 目前只有 17yy 的 `vip_ajax.php` 用它：那家的 swf 路径不在 HTML 里，
+     *    必须 POST 一次 ajax 才拿得到 `data.game_path`（口径来自原项目 `HtmlAnalyse`）。
+     *    ⛔ 别为了省事把 POST 写成 GET —— 那个端点对 GET 回的是空 JSON。
+     */
+    private async nodeHttpPostWithFallback(
+        url: string,
+        headers: Record<string, string> | undefined,
+        body: string,
+        timeoutMs: number,
+    ): Promise<NodeHttpResponse | null> {
+        const proxy = this.ytProxyFor();
+        const attempts: (string | undefined)[] = proxy ? [proxy, undefined] : [undefined];
+        let lastErr: unknown = null;
+        for (const p of attempts) {
+            try {
+                const r = await nodeHttpPost(url, body, headers, p);
+                if (r && r.status >= 200 && r.status < 300) return r;
+                lastErr = new Error(`HTTP ${r?.status ?? '??'}`);
+            } catch (e) {
+                lastErr = e;
+            }
+        }
+        void lastErr;
+        return null;
+    }
+
+    async fetchGameSwf(
+        pageUrl: string,
+        entryId?: string,
+        onProgress?: (label: string) => void,
+    ): Promise<{ ok: boolean; message: string; relPath?: string }> {
+        const report = (label: string): void => {
+            try {
+                onProgress?.(label);
+            } catch {
+                /* 回调炸了不影响下载 */
+            }
+        };
+        if (!Platform.isDesktopApp) return { ok: false, message: '获取功能仅支持桌面端' };
+        // 🔴 用户从地址栏复制常拿到**分类页外壳**：7k7k 的 `/flash/` 实际详情在 `/swf/`，
+        //    17yy 的 `/f/` 实际在 `/f/play/`（口径来自原项目 `HtmlAnalyse`）。
+        //    不纠正的话这两家会一直回「页面里没找到 swf 地址」，用户以为是插件坏了。
+        const url = normalizeGamePageUrl(String(pageUrl ?? '').trim());
+        if (!isFetchableUrl(url)) return { ok: false, message: '要填游戏详情页的 http(s) 地址' };
+
+        // 🔴 必须带 UA 与 Referer：4399 / 7k7k 对空 UA 的 Node 请求会直接回空页或跳验证页
+        //    （与音视频关联同一口径：⛔ 不要退回 `requestUrl`，Electron 网络栈对部分站点会被识别为爬虫）。
+        const pageHeaders: Record<string, string> = {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            Referer: url,
+        };
+
+        const getPage = async (target: string): Promise<string | { error: string }> => {
+            try {
+                const r = await this.httpGetBufferWithFallback(
+                    target,
+                    { ...pageHeaders, Referer: target },
+                    30_000,
+                );
+                if (!r || r.status < 200 || r.status >= 300) return { error: `打不开页面：HTTP ${r?.status ?? '??'}` };
+                const ct = String((r.headers as Record<string, string>)['content-type'] ?? '');
+                const html = decodeHtmlBytes(r.buffer, ct);
+                if (looksLike404(html)) return { error: '页面是 404（游戏可能已下线，或地址填成了分类页）' };
+                return html;
+            } catch (e) {
+                return { error: `打不开页面：${e instanceof Error ? e.message : String(e)}` };
+            }
+        };
+
+        report('正在读取游戏页面');
+        const first = await getPage(url);
+        if (typeof first !== 'string') return { ok: false, message: first.error };
+
+        let parsed = parseFlashPage(first, url);
+        // 中间播放页：只再抓一层（4399 新版大多是这个结构）。⛔ 别写成循环 —— 那会变成爬全站。
+        if (!parsed.swfUrl && parsed.subPageUrl) {
+            report('正在读取播放页');
+            const second = await getPage(parsed.subPageUrl);
+            if (typeof second === 'string') parsed = parseFlashPage(second, parsed.subPageUrl);
+        }
+        // 🔴 17yy：swf 路径**不在 HTML 里**，要走它的 POST ajax（口径逐行核过原项目
+        //    `HtmlAnalyse.Get17yySwfPathInNewPage`：POST `vip_ajax.php` 取 `data.game_path`，
+        //    拼 `http://img1.17yy.com/swf/<category>/<latterpath>`）。
+        //    原项目作者自己都注了「找不到足够的样本做实验」⇒ 这条链失败要给出可读原因，⛔ 别静默。
+        if (!parsed.swfUrl && siteOf(url) === '17yy') {
+            report('正在查询 17yy 影片地址');
+            const ajax = parse17yyAjaxParams(first, url);
+            if (ajax.gameId) {
+                try {
+                    const body = JSON.stringify({ action: 'getStatus', id: ajax.gameId });
+                    const r = await this.nodeHttpPostWithFallback(
+                        'http://www.17yy.com/e/payapi/vip_ajax.php',
+                        {
+                            'User-Agent': pageHeaders['User-Agent'],
+                            Accept: 'application/json, text/javascript, */*; q=0.01',
+                            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                            'X-Requested-With': 'XMLHttpRequest',
+                            Referer: url,
+                        },
+                        // 它认的是表单编码而不是 JSON：`action=getStatus&id=123`
+                        `action=getStatus&id=${encodeURIComponent(ajax.gameId)}`,
+                        20_000,
+                    );
+                    if (r && r.status >= 200 && r.status < 300) {
+                        const data = JSON.parse(String(r.text ?? '').trim() || '{}') as {
+                            data?: { game_path?: unknown };
+                        };
+                        const latter = String(data?.data?.game_path ?? '').trim();
+                        const built = build17yySwfUrl(ajax.category ?? '', latter);
+                        if (built) parsed = { swfUrl: built, via: 'script' };
+                    }
+                } catch {
+                    /* 拿不到就落到下面统一的 reason，⛔ 不把 ajax 失败当成下载失败 */
+                }
+            }
+        }
+        // 🔴 H5 / Unity：没有 swf 可下载，但有能在 iframe 里跑的在线播放页
+        //    （真机实测 4399 详情页无 X-Frame-Options / 无 CSP，嵌入可行）。
+        //    ⇒ 不报错，改存 `gameEmbed`，点「▶ 启动」在 Flash 游戏标签页里内嵌打开。
+        if (!parsed.swfUrl && parsed.embedUrl) {
+            // 🔴 2026-11-16 用户报障：「启动暴走英雄坛开始游戏后就跳转浏览器了」。
+            //    根因：4399 详情页的「开始游戏」是 `<a class="start-btn" href="//www.zxwyouxi.com/g/…">`
+            //    + `window.open`，Electron 把新窗口交给系统浏览器 ⇒ 游戏跑出插件、也带不进存档。
+            //    ⇒ 优先存**那一跳的真实游戏页**（实测同样无 XFO/CSP，嵌进去直接是游戏本体），
+            //      省掉用户那次必然触发弹窗的点击；拿不到才退回 4399 详情页。
+            const gamePage = parseGameEmbedPage(first, url);
+            const embedUrl = gamePage || this.embedPageOf(url, parsed.embedUrl);
+            if (!entryId) return { ok: false, message: '这是 H5 / Unity 游戏，需要先关联到一个游戏条目才能内嵌播放' };
+            try {
+                await this.service.update(entryId, { gameEmbed: embedUrl });
+                await this.service.writeNote(entryId);
+            } catch (e) {
+                return { ok: false, message: `写回条目失败：${e instanceof Error ? e.message : String(e)}` };
+            }
+            await this.refreshViews();
+            return {
+                ok: true,
+                message: gamePage
+                    ? `这是 H5 / Unity 游戏，已改为内嵌它的游戏本体页：${embedUrl}`
+                    : `这是 H5 / Unity 游戏，已改为内嵌播放：${embedUrl}`,
+            };
+        }
+        if (!parsed.swfUrl) return { ok: false, message: parsed.reason ?? '页面里没找到 swf 地址' };
+
+        const swfUrl = parsed.swfUrl;
+        // 🔴 2026-11-16 用户报障：「swf 文件未重新命名为该游戏名称.swf」。
+        //    真实站点给的末段毫无信息量（`04.swf` / `play.swf` / `index.swf`），落盘后一片同名难辨。
+        //    ⇒ 有条目就拿「条目名.swf」（走 sanitizeDownloadName 洗非法字符 + 截断）；
+        //      拿不到条目（尚未关联到某条）才退回 URL 末段。
+        const entry = entryId ? await this.service.get(entryId).catch(() => undefined) : undefined;
+        const gameName = String(entry?.title ?? '').trim();
+        const filename = gameName ? `${sanitizeDownloadName(gameName)}.swf` : swfFileNameOf(swfUrl, 'flash-game');
+        // 🟠 2026-11-17 ① SWF 载体目录约定（用户逐字）：「单文件无存档 SWF 直接放 `games/swf/` 统一管理，
+        //    条目关联对应 `.swf`；单文件 SWF 有存档做独立目录…；多文件 SWF 做独立目录（含 swf），
+        //    其下 `saves/` 放存档文件」。
+        //    ⇒ 「游戏目录」设置项**不动**（用户裁定：只有内部结构约定，不迁移老库），
+        //      内部按 `pure/gameLayout` 分两层：`<游戏目录>/swf/`（平铺）与 `<游戏目录>/<游戏名>/`（独立）。
+        //    ⚠️ 「多文件」要到主影片字节下来、扫出资源名才知道 ⇒ 这里先按「单文件」判，
+        //      真扫出资源了再**先搬后补**（见下面 `moveFlashToBundleDir` 那段），
+        //      ⛔ 不能先补资源再搬：平铺区里两个游戏都有 `sounds/bgm.mp3` 时，后一个会被 `existing` 挡下、
+        //        前一个的文件又会被搬走，两边的资源就都错位了。
+        const gameFolder = gameName ? sanitizeDownloadName(gameName) : '';
+        const baseDir = downloadDir(this.settings.gameDownloadDir, 'flash');
+        // 「有存档」直接看落盘快照（`pluginDir()/saves/<entryId>.json` 非空）——
+        // 这是用户那条「单文件有存档 ⇒ 独立目录」的唯一判据，⛔ 别用「玩过没」之类的间接信号。
+        const savedBefore = entryId ? Object.keys(await this.loadGameSaves(entryId)).length > 0 : false;
+        const layout = gameCarrierLayout({ multiFile: false, hasSaves: savedBefore });
+        const gameDir = gameCarrierDir(baseDir, gameFolder, layout);
+        report(`正在下载 ${filename}`);
+
+        const taken = new Set(this.app.vault.getFiles().map((f) => f.path));
+        // 主影片字节先接住 —— 下面要靠它扫「这个游戏还引用了哪些相对资源」。
+        let mainBytes: Uint8Array | undefined;
+        const outcome = await downloadToVault(
+            (u, headers) =>
+                this.httpGetBufferWithFallback(u, { ...pageHeaders, ...(headers ?? {}), Referer: url }, 120_000),
+            { write: (relPath, data) => this.writeBinaryFile(relPath, data) },
+            {
+                url: swfUrl,
+                kind: 'flash',
+                filename,
+                taken,
+                // 🔴 m02844：落点读设置页「播放阅读 › 启用内置游戏启动器 › 游戏目录」。
+                //    2026-11-16 起再追加一层**游戏自己的文件夹**（`gameDir`）：一个游戏一个目录，
+                //    主影片与关联资源混在一起也不会与别的游戏撞名。
+                //    留空时 `downloadToVault` 会用 `DOWNLOAD_DIR_DEFAULT.flash`（`下载/Flash 游戏`）。
+                root: gameDir,
+                // 内容校验：swf 头部三选一（`FWS` 未压缩 / `CWS` zlib / `ZWS` LZMA）。
+                // 🔴 很多站点把下架页面以 200 + HTML 返回，光看状态码会「下载成功」一个网页当影片。
+                validate: (bytes) => {
+                    const b = bytes ?? new Uint8Array(0);
+                    if (b.byteLength < 8) return '下载到的不是 swf（文件太小）';
+                    const sig = String.fromCharCode(b[0], b[1], b[2]);
+                    if (sig !== 'FWS' && sig !== 'CWS' && sig !== 'ZWS') {
+                        return '下载到的不是 swf（可能是网页或防盗链提示）';
+                    }
+                    mainBytes = b;
+                    return null;
+                },
+            },
+        );
+        if (!outcome.ok || !outcome.relPath) return { ok: false, message: outcome.error ?? '下载失败' };
+
+        let relPath = outcome.relPath;
+        // 🟠 ① 多文件 SWF ⇒ 独立目录（用户逐字：「多文件 SWF 做独立目录（含 swf），其下 `saves/` 放存档文件」）。
+        //    判据不用「几个文件」这种事后才知道的量，而是**主影片自己引用了多少相对资源** ——
+        //    这正是「多文件」的定义，且字节已经在手上（`mainBytes`），不用再多跑一次 IO。
+        //    ⚠️ 顺序必须是**先搬后补**：`fetchFlashAssets` 按主影片的父目录拼资源落点，
+        //      搬完再补才会补进独立目录；反过来补，资源会留在 `swf/` 平铺区，
+        //      两个游戏都引用 `sounds/bgm.mp3` 时后一个被 `existing` 挡下 ⇒ 两边资源全错位。
+        const mainRefs = this.flashAssetRefs(swfUrl, mainBytes);
+        if (shouldUpgradeToBundle(mainRefs.length) && entryId) {
+            relPath = await this.moveFlashToBundleDir(relPath, baseDir, gameFolder, report);
+        }
+        // 关联资源：主影片成功之后再补，任何一个失败都只记数、不影响主影片已成功。
+        const assetNote = await this.fetchFlashAssets(swfUrl, relPath, mainBytes, pageHeaders, report);
+        // 2026-11-16 用户问「原项目还做了什么」→ 裁定补「留档原始 swf URL + 原生宽高」。
+        // 🔴 原始 URL 必须在成功落盘时立刻写下：`fetchFlashAssets` 补抓关联资源全靠它当 base，
+        //    而且文件名已按游戏标题改过（`04.swf` → `黄金矿工.swf`），原始末段只在这里还留着。
+        //    宽高只认**成对且可信**的（`clampGameStage`），单边命中就整对丢弃。
+        const rawStage = parseGameStage(first, url);
+        const stage = clampGameStage(rawStage.width, rawStage.height);
+        if (entryId) {
+            try {
+                await this.service.update(entryId, {
+                    gameSwf: relPath,
+                    gameSwfUrl: swfUrl,
+                    ...(stage ? { gameWidth: stage.width, gameHeight: stage.height } : {}),
+                });
+                await this.service.writeNote(entryId);
+            } catch (e) {
+                return {
+                    ok: false,
+                    message: `已下载到「${relPath}」，但写回条目失败：${e instanceof Error ? e.message : String(e)}`,
+                };
+            }
+            await this.refreshViews();
+        }
+        return {
+            ok: true,
+            message: `已获取并关联：${relPath}${assetNote}`,
+            relPath,
+        };
+    }
+
+    /**
+     * 把主影片字节变成「可以扫字符串」的形态。
+     *
+     * 🔴 这一步是「关联资源」能否工作的分水岭（实测踩到）：4399 上的 swf 绝大多数是 **CWS**
+     *    （zlib 压缩体），资源名全在压缩段里 —— 直接扫原始字节永远扫出 0 条，
+     *    表现为「怎么下载出的就一个文件」。必须先解压再扫。
+     *    · `FWS` 未压缩 ⇒ 原样返回；
+     *    · `CWS` zlib ⇒ 跳过 8 字节文件头后 inflate；
+     *    · `ZWS` LZMA ⇒ ⛔ 不解（要额外解码器，属过度工程），返回原字节（扫不到就退回单文件播放）。
+     */
+    private swfScanBytes(bytes: Uint8Array | undefined): Uint8Array | undefined {
+        const b = bytes;
+        if (!b || b.byteLength < 12) return b;
+        const sig = String.fromCharCode(b[0], b[1], b[2]);
+        if (sig !== 'CWS') return b;
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const zlib = require('node:zlib') as typeof import('node:zlib');
+            const out = zlib.inflateSync(Buffer.from(b.subarray(8)));
+            return new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
+        } catch {
+            // 解压失败（截断 / 非标准 zlib）⇒ 退回原始字节，扫描结果为空是正常结果
+            return b;
+        }
+    }
+
+    /**
+     * 挑一个「适合嵌进 iframe」的页面地址（H5 / Unity 用）。
+     *
+     * 🔴 真机实测踩到的坑：解析时第二层抓到的是**游戏中间页**（`sda.4399.com/…/index.html`），
+     *    它有 Referer 校验 —— 直接嵌进去只会白屏。而用户最初填的**详情页**
+     *    （`www.4399.com/flash/<id>.htm`）没有 `X-Frame-Options` / 没有 CSP，嵌它能出整页，
+     *    它自己再带 Referer 去取中间页，游戏就能跑。
+     * ⇒ 优先返回「最初那条地址」（只要它是 4399 详情页形态），解析出来的中间页只当兜底。
+     */
+    private embedPageOf(originalUrl: string, parsedUrl: string): string {
+        const orig = String(originalUrl ?? '').trim();
+        // 4399 详情页形态：`…/flash/<数字>.htm`（`_2.htm` 播放页同样能嵌，也命中）
+        if (/^https?:\/\/[^/]*4399\.com\/flash\/[0-9]+(_[0-9]+)?\.html?$/i.test(orig)) return orig;
+        return String(parsedUrl ?? '').trim();
+    }
+
+    /**
+     * 扫出主影片引用的**相对资源名**（纯读，失败返回空数组）。
+     *
+     * 抽出来是因为「多文件 / 单文件」的分流判据要用它，而判据必须在**补资源之前**拿到：
+     * 先补再搬会让资源留在平铺区（两个游戏都引用 `sounds/bgm.mp3` 时互相顶掉）。
+     */
+    private flashAssetRefs(swfUrl: string, mainBytes: Uint8Array | undefined): string[] {
+        try {
+            const scan = this.swfScanBytes(mainBytes);
+            return planAssetRefs(extractAssetRefs(scan), baseNameOf(swfUrl.split(/[?#]/)[0] ?? ''));
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * 把已经落进平铺区 `swf/` 的主影片搬进独立目录（`<游戏目录>/<游戏名>/`）。
+     *
+     * 只有「主影片引用了关联资源」才会走到这里 —— 即用户说的「多文件 SWF」。
+     * 搬不动就原地不动：单文件散在 `swf/` 里也能正常玩，⛔ 不许因为搬家失败把整次获取判成失败。
+     */
+    private async moveFlashToBundleDir(
+        relPath: string,
+        baseDir: string,
+        gameFolder: string,
+        report: (label: string) => void,
+    ): Promise<string> {
+        if (!isInSwfFlatDir(relPath)) return relPath;
+        const fileName = relPath.split('/').pop() ?? '';
+        if (!fileName) return relPath;
+        const stem = gameFolder || fileName.replace(/\.swf$/i, '');
+        const bundleDir = gameCarrierDir(baseDir, stem, 'bundle');
+        if (!bundleDir || bundleDir === baseDir) return relPath;
+        const nextPath = `${bundleDir}/${fileName}`;
+        if (nextPath === relPath) return relPath;
+        const file = this.app.vault.getAbstractFileByPath(relPath);
+        if (!(file instanceof TFile)) return relPath;
+        try {
+            await this.ensureFolder(bundleDir);
+            report(`正在把主影片移入独立目录：${stem}`);
+            // ⛔ 不用 adapter.rename：fileManager 会顺带更新指向该文件的链接。
+            await this.app.fileManager.renameFile(file, nextPath);
+            return nextPath;
+        } catch {
+            return relPath;
+        }
+    }
+
+    /**
+     * 把主影片引用的**相对资源**补到同一目录（用户 m03437：「怎么下载出的就一个 swf 文件没有其他的吗」）。
+     *
+     * 参考项目 `FlashGameDownloader` 靠本地 HTTP 服务器拦截运行时请求；本插件的 Ruffle 跑在 `app://` 下，
+     * 请求不经过我们 ⇒ 改用「同目录同相对名」回填：Ruffle 按 swf 自己的地址解析相对路径，
+     * 只要 `sounds/bgm.mp3` 落在 swf 旁边，它就会命中。
+     *
+     * 🔴 三条纪律：
+     *   ① 失败一律忽略 —— 少一个贴图最多花屏，不该让整个「获取」失败；
+     *   ② 不覆盖已有文件（参考项目 `notCoverExist` 默认行为），避免重复获取时反复写同一批字节；
+     *   ③ 上限 `ASSET_REF_MAX`，且**只下相对路径**（跨域绝对地址即使下回来也放不回原位）。
+     *
+     * 返回给用户看的一行补充说明（无资源时为 `''`）。
+     */
+    private async fetchFlashAssets(
+        swfUrl: string,
+        mainRelPath: string,
+        mainBytes: Uint8Array | undefined,
+        headers: Record<string, string>,
+        report: (label: string) => void,
+    ): Promise<string> {
+        const refs = this.flashAssetRefs(swfUrl, mainBytes);
+        if (refs.length === 0) return '';
+
+        const dir = mainRelPath.includes('/') ? mainRelPath.slice(0, mainRelPath.lastIndexOf('/')) : '';
+        const existing = new Set(this.app.vault.getFiles().map((f) => f.path.toLowerCase()));
+        let done = 0;
+        for (const ref of refs) {
+            const rel = dir ? `${dir}/${ref}` : ref;
+            if (existing.has(rel.toLowerCase())) continue;
+            const abs = resolveUrl(swfUrl, ref);
+            if (!abs) continue;
+            report(`正在补关联资源 ${done + 1}/${refs.length}：${ref}`);
+            try {
+                const r = await this.httpGetBufferWithFallback(
+                    abs,
+                    { ...headers, Referer: swfUrl },
+                    60_000,
+                    undefined,
+                );
+                if (r.status < 200 || r.status >= 300 || r.buffer.length === 0) continue;
+                await this.writeBinaryFile(rel, r.buffer);
+                existing.add(rel.toLowerCase());
+                done += 1;
+            } catch {
+                // 单条失败不影响整体：❌ 贴图/音频缺失只该影响画面完整性
+            }
+        }
+        return done > 0 ? `（另补 ${done} 个关联资源）` : '';
+    }
+
+    /**
+     * 确保 Ruffle 运行时已装在**插件目录**（`<pluginDir>/ruffle`），返回该目录的**绝对路径**；
+     * 装不了（非桌面端 / 拿不到插件目录 / 下载失败）返回 `''`，调用方据此显示原因。
+     *
+     * 🔴 为什么放插件目录而不是库内：库内会被 Obsidian 建索引、被同步与备份带上，
+     *    而 ~29MB 的 wasm 进库没有任何好处；插件目录同样能用 `app://` 取到
+     *    （2026-11-16 探针实测：`ruffle.js` 与 wasm 都能 fetch 200、wasm 的 MIME 是 `application/wasm`）。
+     *
+     * 🔴 为什么按需下载而不是随包分发：压缩包 10MB、落盘近 30MB，用户明确要求控制插件体积。
+     *    只有真去玩 flash 的人才付这份代价，且只付一次（装完即有 `ruffle.js`，下次直接复用）。
+     *
+     * ⚠️ 完整性判据 `isRuffleRuntimeComplete`（入口 + wasm + core 分包三样齐）—— 探针里只拷
+     *    `ruffle.js` + 一个 wasm 时 Ruffle 报的是那句极具误导性的
+     *    `Failed to begin SWF load: Error: Failed to load Ruffle WASM`，真因却是缺 core 分包。
+     *    ⛔ 别把判据放宽成「ruffle.js 在就算装好」，那会让一次失败的半装状态永久卡住。
+     *
+     * @param onProgress 进度回调（百分比 0-100 + 人类可读文案 + 字节详情）；缺省不报进度
+     *   🔴 第三参 `detail` 是用户 m02844「做进度表」补的：百分比单独一个数字看不出
+     *      「10MB 下到 3.2MB」这种量级，界面要同时显示**已下载 / 总量**。
+     *      `total` 可能为 0（服务端没给 content-length）⇒ 界面只显示已下载量，⛔ 别当除数。
+     */
+    async ensureRuffleRuntime(
+        onProgress?: (
+            pct: number | undefined,
+            label: string,
+            detail?: { received: number; total: number },
+        ) => void,
+    ): Promise<string> {
+        const report = (pct: number | undefined, label: string, detail?: { received: number; total: number }): void => {
+            try {
+                onProgress?.(pct, label, detail);
+            } catch {
+                /* 回调炸了不影响安装（调用方多半在渲染 UI） */
+            }
+        };
+        if (!Platform.isDesktopApp) return '';
+        const root = this.pluginDir();
+        if (!root) return '';
+        const dir = `${root.replace(/[\\/]+$/, '')}/ruffle`;
+        try {
+            const fsMod = require('fs') as {
+                existsSync: (p: string) => boolean;
+                mkdirSync: (p: string, o: { recursive: boolean }) => void;
+                readdirSync: (p: string) => string[];
+                writeFileSync: (p: string, d: Uint8Array) => void;
+            };
+            // ① 已装好就直接返回（这条是热路径：每次点「▶ 启动」都会过一下）
+            if (fsMod.existsSync(dir)) {
+                const names = fsMod.readdirSync(dir);
+                if (isRuffleRuntimeComplete(names)) return dir;
+            }
+            fsMod.mkdirSync(dir, { recursive: true });
+
+            // ② 下载自托管包（代理 → 直连回退由 httpGetBufferWithFallback 统一负责）
+            //    🔴 真机踩过：设置里配的代理进程没开时这里会 `ECONNREFUSED`，而 GitHub release
+            //       在国内直连未必不通 ⇒ 必须**回退直连再试一次**，否则「代理挂了」会被误报成
+            //       「Flash 运行时装不了」，用户完全看不出真因（探针实测：DIAG 里只看到 `dir:''`）。
+            // 🔴 2026-11-16 用户 m02844「做进度表」：这一包 10MB / 实测 278 秒，光一行静止文字
+            //    分不清「在下」还是「卡死」⇒ 下载段按**已收字节**报百分比（0→45%），
+            //    解压段接在后面（45→100%），两段拼成一条连续进度。
+            report(0, '正在下载 Flash 运行时', { received: 0, total: 0 });
+            let res: Awaited<ReturnType<typeof nodeHttpGetBuffer>> | null = null;
+            try {
+                // ⚠️ 这个包 10,527,427 字节，直连实测 278 秒 ⇒ 必须给足空闲超时，
+                //    否则默认 30s 会在中途掐断，表现为「运行时装不上」而真因不可见。
+                res = await this.httpGetBufferWithFallback(
+                    RUFFLE_BUNDLE_URL,
+                    undefined,
+                    300_000,
+                    () => report(0, '代理不可用，改直连重试…'),
+                    // ⚠️ `total` 可能为 0（第一跳 302 无 body，或服务端不给 content-length）
+                    //    ⇒ 那时只报已下载量、不报百分比，⛔ 别除以 0 报个假 100%。
+                    (received, total) => {
+                        const pct =
+                            total > 0 ? Math.max(1, Math.min(45, Math.round((received / total) * 45))) : undefined;
+                        report(pct, '正在下载 Flash 运行时', { received, total });
+                    },
+                );
+            } catch (e) {
+                throw e instanceof Error ? e : new Error('下载失败');
+            }
+            if (!res || !res.buffer?.length) throw new Error('下载失败');
+            const pkgBytes = res.buffer.length;
+            report(45, '正在解压 Flash 运行时', { received: pkgBytes, total: pkgBytes });
+
+            // ③ 只落 .js / .wasm（⛔ 不铺 .map / README / LICENSE：只会让人误以为还要动它们）
+            const JSZip = (await import('jszip')).default;
+            const zip = await JSZip.loadAsync(res.buffer);
+            const entries = Object.values(zip.files).filter((f) => shouldKeepRuffleFile(f.name));
+            if (entries.length === 0) throw new Error('压缩包里没有可用的运行时文件');
+            let done = 0;
+            for (const f of entries) {
+                const buf = await f.async('uint8array');
+                // 包里所有文件都在同一层（没有目录）→ 直接落在 ruffle 目录
+                const baseName = f.name.split('/').pop() ?? '';
+                if (!baseName) continue;
+                fsMod.writeFileSync(`${dir}/${baseName}`, buf);
+                done += 1;
+                // ⚠️ 解压段的「进度」是**文件数**不是字节数 ⇒ ⛔ 不塞进 `detail`
+                //    （界面那份按字节格式化，5 个文件会被显示成「5 B」）。
+                report(45 + Math.round((done / entries.length) * 55), '正在解压 Flash 运行时');
+            }
+
+            // ④ 装完自检：半装状态必须报错，别让下次开窗再撞同一句话
+            const names = fsMod.readdirSync(dir);
+            if (!isRuffleRuntimeComplete(names)) {
+                throw new Error('运行时文件不完整（缺少 ruffle.js / wasm / core 分包之一）');
+            }
+            report(100, 'Flash 运行时已就绪');
+            return dir;
+        } catch (err) {
+            new Notice(`Flash 运行时安装失败：${err instanceof Error ? err.message : String(err)}`, 6000);
+            return '';
+        }
+    }
+
+    /**
+     * 读某个游戏条目落盘的 **Flash 存档快照**（`localStorage` 里那些 `.sol` 的键值对）。
+     *
+     * 🔴 为什么要自己做（2026-11-16 反查 `ruffle.js` 实证）：Ruffle 把 SharedObject 存在
+     *    **宿主网页的 localStorage**，而我们跑在 `iframe.srcdoc` 里、origin 是 `null` ——
+     *    那份 localStorage 属于一次性的 srcdoc 文档，**关页即销毁**，于是存档一律丢。
+     *    ⇒ 打开前把快照灌进 srcdoc，玩的时候把变化回传、落盘到这里。
+     *
+     * 落点：`pluginDir()/saves/<entryId>.json`（不进库：存档是运行期产物，进库会被同步/备份
+     * 带上，且用户一般不想它们出现在文件列表里）。
+     * ⚠️ 读不到 / 解析失败一律返回空对象 —— ⛔ 别因为存档坏了就让游戏打不开。
+     */
+    async loadGameSaves(entryId: string): Promise<Record<string, string>> {
+        const id = String(entryId ?? '').trim();
+        if (!id) return {};
+        try {
+            const fsMod = require('node:fs') as typeof import('node:fs');
+            const file = this.gameSaveFile(id);
+            if (!file || !fsMod.existsSync(file)) return {};
+            const raw = JSON.parse(fsMod.readFileSync(file, 'utf8')) as unknown;
+            if (!raw || typeof raw !== 'object') return {};
+            const out: Record<string, string> = {};
+            for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+                if (typeof k === 'string' && k.length > 0 && typeof v === 'string' && v.length > 0) out[k] = v;
+            }
+            return out;
+        } catch {
+            return {};
+        }
+    }
+
+    /**
+     * 落盘某个游戏条目的存档快照（由 `FlashGameView` 收到 srcdoc 回传后调用）。
+     *
+     * ⚠️ 空对象**不写**：首次打开时快照本来就是空的，写一个 `{}` 上去只会让下次多读一次文件。
+     * ⚠️ 写盘失败静默 —— 存档存不住比游戏打不开轻，⛔ 别为此弹 Notice 打断游戏。
+     */
+    async saveGameSaves(entryId: string, saves: Record<string, string>): Promise<void> {
+        const id = String(entryId ?? '').trim();
+        if (!id) return;
+        const clean: Record<string, string> = {};
+        for (const [k, v] of Object.entries(saves ?? {})) {
+            if (typeof k === 'string' && k.length > 0 && typeof v === 'string' && v.length > 0) clean[k] = v;
+        }
+        if (Object.keys(clean).length === 0) return;
+        try {
+            const fsMod = require('node:fs') as typeof import('node:fs');
+            const file = this.gameSaveFile(id);
+            if (!file) return;
+            const dir = this.gameSaveDir();
+            if (!dir) return;
+            if (!fsMod.existsSync(dir)) fsMod.mkdirSync(dir, { recursive: true });
+            fsMod.writeFileSync(file, JSON.stringify(clean));
+        } catch {
+            /* 存档写不进去不影响游戏继续 */
+        }
+    }
+
+    /** 存档目录（`pluginDir()/saves`；拿不到插件目录就空串） */
+    private gameSaveDir(): string {
+        const base = this.pluginDir();
+        return base ? `${base}/saves` : '';
+    }
+
+    /** 单个条目的存档文件绝对路径（entryId 做文件名，⛔ 别用标题 —— 标题会改） */
+    private gameSaveFile(entryId: string): string {
+        const dir = this.gameSaveDir();
+        if (!dir) return '';
+        // 只留安全字符：entryId 形如 `e_1788180352140_9vf1`，正常不会有别的字符
+        const safe = String(entryId).replace(/[^A-Za-z0-9_-]/g, '_');
+        return safe ? `${dir}/${safe}.json` : '';
+    }
+
+    /**
+     * 导出某个游戏的存档备份（① 用户逐字：「存档是导出备份，需通过导入功能恢复」）。
+     *
+     * 落点由**用户选**（系统「另存为」对话框）——⛔ 不写死到 `<游戏目录>/saves/`：
+     * 那是「多文件 SWF 独立目录」里的**备份位置**，写进去就等于把导出变成一次静默写库，
+     * 用户既没有确认、也拿不到那份文件去换机/换库。默认文件名指向那里只是**方便**，
+     * 用户改到 U 盘或桌面同样成立。
+     *
+     * 桌面端不可用（移动端 / 拿不到 electron.remote）时**明确告知**，⛔ 不假装成功。
+     */
+    async exportGameSaves(entry: MediaEntry): Promise<void> {
+        const entryId = String(entry?.id ?? '').trim();
+        if (!entryId) {
+            new Notice('拿不到条目 id，没法导出存档');
+            return;
+        }
+        const saves = await this.loadGameSaves(entryId);
+        if (Object.keys(saves).length === 0) {
+            new Notice('这个游戏还没有存档可导出（玩一会儿再来）', 4000);
+            return;
+        }
+        const content = buildSaveBundle(entryId, entry.title ?? '', saves);
+        const defaultName = saveBundleFileName(entry.title ?? '');
+        // 默认落点尽量放进独立目录的 `saves/`（用户约定里的「备份位置」）；
+        // 拿不到目录（条目还没关联 swf / 走的是平铺区）就只给文件名，由系统对话框决定。
+        const bundleDir = this.gameBundleDirOf(entry);
+        const defaultPath = bundleDir ? `${bundleDir}/${defaultName}` : defaultName;
+        const name = await this.saveTextToSystem(defaultPath, content);
+        if (!name) return;
+        new Notice(
+            `已导出 ${Object.keys(saves).length} 个存档：${name}（换库或重装后用「导入存档」恢复）`,
+            6000,
+        );
+    }
+
+    /**
+     * 从导出文件恢复存档（覆盖式）。
+     *
+     * ⚠️ 是**覆盖**不是合并：存档表是「当前进度的快照」，合并两份不同进度的同名 SharedObject
+     *    只会得到一份谁也不是的进度。所以先二次确认，确认后才写。
+     */
+    async importGameSaves(entry: MediaEntry): Promise<void> {
+        const entryId = String(entry?.id ?? '').trim();
+        if (!entryId) {
+            new Notice('拿不到条目 id，没法导入存档');
+            return;
+        }
+        const picked = await this.openTextFromSystem();
+        if (!picked) return;
+        const parsed = parseSaveBundle(picked.text);
+        if (!parsed.ok) {
+            new Notice(`导入失败：${parsed.reason}`, 6000);
+            return;
+        }
+        const count = Object.keys(parsed.saves).length;
+        const when = parsed.exportedAt ? `（导出于 ${parsed.exportedAt.slice(0, 19).replace('T', ' ')}）` : '';
+        const from = parsed.title ? `《${parsed.title}》` : '这份文件';
+        const ok = await new ConfirmModal(
+            this.app,
+            `用${from}的 ${count} 个存档覆盖当前进度${when}？\n\n当前的存档会被替换，且不可撤销。`,
+            '导入存档',
+        ).open();
+        if (!ok) return;
+        await this.saveGameSaves(entryId, parsed.saves);
+        const written = await this.loadGameSaves(entryId);
+        const n = Object.keys(written).length;
+        if (n === 0) {
+            new Notice('导入失败：存档没能写进去（可能插件目录不可写）', 6000);
+            return;
+        }
+        new Notice(`已导入 ${n} 个存档（回到游戏页按「重玩」即可生效）`, 6000);
+        // 已经打开着的游戏页要**重挂 srcdoc** 才能吃到新存档：
+        // 存档是在 iframe 载入前灌进 localStorage 的（见 pure/flashGame 的 flashFrameHtml），
+        // ⛔ 往活着的 iframe 里 postMessage 塞存档不管用 —— 那时 Ruffle 已经 populateSaves 过了。
+        this.refreshFlashGame(entryId);
+    }
+
+    /**
+     * 主影片所在的**独立目录**（`<游戏目录>/<游戏名>`）；平铺区或没关联 swf 时返回 `''`。
+     *
+     * ⛔ 别用 `dirOfSwf` 直接返回：它对平铺区（`.../swf/x.swf`）也给 `.../swf`，
+     *    那不是独立目录 —— 把备份写进平铺区，等于给一整排单文件游戏共用一间 saves。
+     */
+    private gameBundleDirOf(entry: MediaEntry): string {
+        const rel = String(entry?.gameSwf ?? '').trim();
+        if (!rel || isInSwfFlatDir(rel)) return '';
+        return dirOfSwf(rel);
+    }
+
+    /**
+     * 让已经打开的 Flash 游戏页重挂一次影片（导入存档后需要，理由见 `importGameSaves`）。
+     * 没有打开的页就什么都不做。
+     */
+    private refreshFlashGame(entryId: string): void {
+        for (const leaf of this.app.workspace.getLeavesOfType(FLASH_GAME_VIEW_TYPE)) {
+            const view = leaf.view;
+            if (view instanceof FlashGameView && view.entryId() === entryId) view.reloadStage();
+        }
+    }
+
+    /** 启动游戏（条目「▶ 启动」）：有本地 swf 就在插件内播，否则 shell.openPath 打开 .lnk 快捷方式 */
     async launchGame(entry: MediaEntry): Promise<void> {
-        if (!entry.gameLaunchPath) {
+        // 🔴 2026-11-16 用户裁定「先做本地 swf 播放」：两者都填时 **swf 优先** ——
+        //    能内嵌直接玩就不该把用户甩出 Obsidian 去开外部程序。
+        // 🔴 m02844：这条优先路要过「启用内置游戏启动器」开关 —— 关掉 = 用户不想为 Flash
+        //    付那 ~10MB 运行时代价 ⇒ 直接跳过 swf 分支，走原来的 `.lnk` 链路。
+        const swf = String(entry.gameSwf ?? '').trim();
+        if (swf && this.settings.internalGameLauncher !== false) {
+            // 🔴 2026-11-16 用户逐字：「要独立标签页运行而不是弹窗运行」
+            //    ⇒ 落在 `FlashGameView`（工作区 ItemView），⛔ 别退回 Modal 弹窗。
+            await this.openFlashGame(entry);
+            return;
+        }
+        // H5 / Unity：没有可下载的 swf，但有能在 iframe 里跑的在线播放页 ⇒ 同样是插件内标签页。
+        // 放在 .lnk 之前 —— 「在插件里玩」比「甩出去开外部程序」更贴近用户的意图。
+        const embed = String(entry.gameEmbed ?? '').trim();
+        if (embed && this.settings.internalGameLauncher !== false) {
+            await this.openFlashGame(entry);
+            return;
+        }        if (!entry.gameLaunchPath) {
             new Notice('未关联启动快捷方式 — 编辑属性选择 .lnk 文件', 4000);
             return;
         }
@@ -4710,7 +8994,7 @@ export default class ReelLudicPlugin extends Plugin {
         try {
             const electron = require('electron') as { shell?: { openPath(p: string): Promise<string> } };
             const err = await electron.shell?.openPath(entry.audioPath);
-            if (err) new Notice(`无法播放音频：${err}`, 4000);
+            if (err) new Notice(`无法播放音频：${err}${err}`, 4000);
         } catch {
             new Notice('无法打开播放器');
         }
@@ -4834,6 +9118,27 @@ export default class ReelLudicPlugin extends Plugin {
              *  ⚠️ 只有**标签页 / 侧边栏**这条构造传它；内联块（笔记里的小卡片）**不传** ——
              *  那段笔记就在眼前，没必要再放一个「打开笔记」按钮（不传 ⇒ 按钮自动禁用）。 */
             onOpenNote: (track) => void this.openEntryNote(track.entryId),
+            /**
+             * 🔴 m02288：音乐收听时长**自动累计**（用户：「用音乐播放器播放每首音乐要统计总时长…
+             * 而不是让用户手动记录」）。
+             *
+             * 落点 = `listenMinutes`（⛔ 不是 `durationMin` —— 那是片长，见 `pure/musicSync` 文件头 ⑵）；
+             * 走 `bumpListenMinutes` 而**不是** `addTimeSession`：后者会往明细里堆「听了一分钟」的垃圾，
+             * 播放器的背景累计不该在用户的时长明细列表里留痕。
+             *
+             * ⚠️ 三条路径共用本构造（标签页 / 侧边栏 / 命令面板）⇒ 这里注入一次就全覆盖。
+             *    内联块那条走 `audioOptionsForNote`，那里**也传**（在笔记里听歌同样是收听）。
+             */
+            onListen: (track, minutes) => {
+                if (!track.entryId) return;
+                void this.service
+                    .bumpListenMinutes(track.entryId, minutes)
+                    .then((e) => {
+                        // 刷新视图让海报墙的「已听 Nh」跟着涨 —— 但不抢焦点、不打断播放
+                        if (e) this.refreshViews();
+                    })
+                    .catch(() => undefined);
+            },
         };
     }
 
@@ -4924,7 +9229,12 @@ export default class ReelLudicPlugin extends Plugin {
                 download: (song, onProgress) => this.dlDownloadSong(song, onProgress),
                 preview: (song, onProgress) => this.dlPreviewAudio(song, onProgress),
                 biliSearch: (keyword) => this.dlBiliSearch(keyword),
-                biliDownload: (video, onProgress) => this.dlBiliDownload(video, onProgress),
+                // 🔴 2026-11-09 第 16 轮（用户：「从 b 站下载音频的文件名还是不跟随条目标题名改变」）：
+                //    真因就在这一行 —— 上一轮给 `dlBiliDownload` 加了第三参 `songTitle`、也给
+                //    `MusicDownload.svelte` 接了传参，但**这个宿主包装只转发了前两个参数**，
+                //    第三参在这里被吃掉 ⇒ 文件名词永远拿到空串、回落成 B站视频标题。
+                //    ⛔ 别写成 `(video, onProgress) => …`，少一个形参就是整条链路静默降级。
+                biliDownload: (video, onProgress, songTitle) => this.dlBiliDownload(video, onProgress, songTitle),
             },
             { title, author, onPicked },
         ).open();
@@ -4934,11 +9244,14 @@ export default class ReelLudicPlugin extends Plugin {
      * 下载面传输层（#399-D）：四平台全部经 `services/nodeHttp`（Node 原生 https，能过平台反爬）。
      * 🔴 只在桌面端可用；移动端由各门面提前返回（见下面的 `Platform.isDesktopApp` 守卫）。
      */
-    private dlTransport(): DlTransport {
+    private dlTransport(proxy?: string): DlTransport {
         return {
-            get: (url, headers) => nodeHttpGet(url, headers),
-            post: (url, body, headers) => nodeHttpPost(url, body, headers),
-            getBuffer: (url, headers) => nodeHttpGetBuffer(url, headers),
+            // 🔴 `proxy` 为空 = 直连（国内站）。墙外目标（YouTube 字幕正文等）必须传 `ytProxyFor()`，
+            //    否则就是 2026-11-10 那个事故：元数据（yt-dlp 子进程带代理）拿到了、正文直连超时。
+            //    ⛔ 别把这个参数去掉 —— 加它之前 YouTube 字幕一直是坏的。
+            get: (url, headers) => nodeHttpGet(url, headers, proxy),
+            post: (url, body, headers) => nodeHttpPost(url, body, headers, proxy),
+            getBuffer: (url, headers) => nodeHttpGetBuffer(url, headers, proxy),
         };
     }
 
@@ -5015,10 +9328,72 @@ export default class ReelLudicPlugin extends Plugin {
         return dlPreviewAudio(this.dlTransport(), song, { cookies: this.settings.musicDlCookies ?? {} }, onProgress);
     }
 
+    /**
+     * 本次取流实际要用的代理地址。
+     *
+     * 🔴🔴 为什么不是直接 `normalizeProxyUrl(settings.ytProxy)`（2026-10-31 真机事故）：
+     *    用户 `ytProxy` 留空时，`yt-dlp` 会自己从注册表读 Windows 系统代理 ⇒ 取流成功。
+     *    但合流那一步的 `ffmpeg` **不读系统代理** ⇒ 直连 `googlevideo.com` 必然
+     *    `Error number -138`（ENETUNREACH）。表现为「取到流了、播不出来」，
+     *    而设置页写的「留空 = 直连」让人以为留空是受支持的正确用法。
+     *    ⇒ 留空时兜底沿用系统代理，让 `yt-dlp` 与 `ffmpeg` 走**同一个出口**。
+     *
+     * ⚠️ 只影响「实际取流用哪个出口」，**不回写** `settings.ytProxy`
+     *    （用户界面里那格仍是空的，他看到的还是「留空 = 直连」这个自己填的事实）。
+     * ⚠️ 用户显式填了就以用户的为准，系统代理只在留空时兜底。
+     */
+    private ytProxyFor(): string {
+        const explicit = normalizeProxyUrl(this.settings.ytProxy);
+        if (explicit) return explicit;
+        return systemProxyUrl();
+    }
+
     /** 平台连通性测试（设置页「测试连接」四态文案；`source` 传平台 id 字符串） */
     async dlTestConnection(source: string, cookie: string): Promise<{ ok: boolean; message: string }> {
         if (!Platform.isDesktopApp) return { ok: false, message: '仅桌面端支持' };
         return dlTestConnection(this.dlTransport(), source, cookie);
+    }
+
+    /**
+     * YouTube 连通性测试（设置页「网络播放 › YouTube」那行的「测试连接」）。
+     *
+     * 🔴 为什么必须真跑一次取流而不是只 ping 一下域名：YouTube 的失败**分层**得很厉害 ——
+     *    域名能通但 `googlevideo.com` 不回 CORS 头、yt-dlp 没装、代理端口没开、
+     *    要求验证机器人身份、Cookie 过期……只有真跑一次 `yt-dlp --dump-json` 才能一次性判完。
+     *    ⇒ 直接复用播放时那条完全相同的 `fetchYtInfo`（见 `services/ytStream.ytTestConnection` 注释）。
+     *
+     * ⚠️ 代理与 Cookie 都从**当前设置**读，不是从设置页的输入框读：输入框是边打边存的
+     *    （见 `renderNetPlaybackRows` 的 onInput），到这里时值已经在 settings 里了。
+     *    ⛔ 别再传一份参数进来，那会变成第二个真源。
+     */
+    async ytTestConnection(): Promise<{ ok: boolean; message: string }> {
+        if (!Platform.isDesktopApp) return { ok: false, message: '仅桌面端支持' };
+        const proxy = this.ytProxyFor();
+        const cookie = String(this.settings.ytCookie ?? '').trim();
+        return ytTestConnection(proxy, cookie, this.ytMuxDir());
+    }
+
+    /**
+     * 把设置里填的 Cookie **同步进 Electron 的 cookie jar**（官方内嵌 iframe 靠它拿登录态）。
+     *
+     * 🔴 2026-10-31 用户报障：「B站/油管内嵌的怎么还有登录，不上填了 cookie 吗」
+     *    设置页那串 Cookie 只是**字符串**，只喂插件自己发 API 请求
+     *    （`biliStreamFor` / `ytStreamFor` 的 node 侧 fetch）。
+     *    而官方内嵌播放器是一个 `<iframe>` —— 跑在 Electron 的独立浏览上下文里，
+     *    读的是 Chromium 自己的 cookie jar。真机实测那份 jar 里
+     *    `bilibili.com` / `youtube.com` 都是 **0 条** ⇒ 填了也永远是未登录。
+     *
+     * ⚠️ 做成**正式方法**（不是只塞在 page 对象里的内联箭头函数）：
+     *    ① 真机探针要能直接调它验收（内联的调不到，只能靠打开页子间接触发）；
+     *    ② 以后别处（比如内置播放器标签页）想复用，有地方可引；
+     *    ③ 内联在 `openEpisodePageFor` 的 page 对象里，等于每次构造都生成一份，
+     *       逻辑却只有这一处 —— 放在类上是它本来该在的位置。
+     */
+    async syncEmbedCookies(): Promise<EmbedCookieResult> {
+        return syncEmbedCookies({
+            bili: this.settings.biliCookie ?? '',
+            yt: String(this.settings.ytCookie ?? ''),
+        });
     }
 
     /**
@@ -5031,6 +9406,18 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /**
+     * YouTube 视频搜索（「网络集可搜索 YouTube」）：
+     * 与 `ytStreamFor` **同一条代理 / Cookie / Node 运行时链**，只是走 `--flat-playlist` 只取列表。
+     *
+     * ⚠️ 代理口径必须走 `this.ytProxyFor()`（⛔ 不是直接读 `settings.ytProxy`）：
+     *    用户留空时代理来自系统设置 —— 这条路和取流一样，留空即直连是不会通的。
+     */
+    async ytSearch(keyword: string): Promise<{ videos: YtSearchItem[]; error?: string }> {
+        if (!Platform.isDesktopApp) return { videos: [], error: '仅桌面端支持' };
+        return searchYt(keyword, this.ytProxyFor(), String(this.settings.ytCookie ?? '').trim(), this.ytMuxDir());
+    }
+
+    /**
      * B 站取**分P 列表**（#505：把「一个 52 集的长篇」一次填完的前提）。
      * 🔴 与 `dlBiliSearch` 同一条纪律：只桌面端、共用 `buvid3` 缓存、失败重取一次再报原因；
      *    ⛔ 只**取列表**，不下载（下载是音乐下载弹窗那条路的职责）。
@@ -5038,6 +9425,261 @@ export default class ReelLudicPlugin extends Plugin {
     async dlBiliView(bvid: string): Promise<{ title: string; parts: BiliPart[]; cover: string; error?: string }> {
         if (!Platform.isDesktopApp) return { title: '', parts: [], cover: '', error: '仅桌面端支持' };
         return dlBiliView(this.dlTransport(), bvid);
+    }
+
+    /**
+     * 🔴 `b23.tv` 短链 → 落地页，**给「粘贴链接」那两个入口**用（剪贴板里常是手机分享的短码）。
+     *
+     * ⚠️ 与 `biliStreamFor` 内部那次跳转**同一个出口** `resolveBiliShortUrl`（⛔ 别各写一份）：
+     *    区别只是这里不带 Cookie/Referer 以外的取流头、也不要求真能取到流 —— 只要落地页。
+     * ⛔ 非短链 / 跳不动 ⇒ 原样返回（调用方那句「请在浏览器打开」照旧有效）。
+     */
+    async resolveBiliShortForPaste(url: string): Promise<string> {
+        if (!Platform.isDesktopApp) return url;
+        if (!isBiliShortUrl(url)) return url;
+        const headers: Record<string, string> = { 'User-Agent': BILI_UA, Referer: BILI_REFERER };
+        return this.resolveBiliShortUrl(this.dlTransport(), url, headers);
+    }
+
+    /**
+     * 取一条**可直接喂给 `<video>`** 的 B 站网络集流地址（选集页内嵌播放用）。
+     *
+     * 🔴 用户 2026-11-02 裁定「内嵌播放换成插件内置播放器」⇒ 必须自己拿直链：
+     *    iframe 跨域读不到 `currentTime`，字幕时间轴/进度/倍速全死。真机实测链路：
+     *    `biliIdsOf` bvid/ep/ss `pagelist` `pgc/view/web/season` `cid`
+     *    ⇒ `playurl?fnval=0&platform=html5` 得**mp4 单文件直链** ⇒ **直接交给 `<video>`**。
+     *
+     * 🔴 直连为什么可行（不是猜的，`_probe_matrix.cjs` / `_probe_ua.cjs` 实测）：
+     *    `platform=html5` 返回的 CDN 链接**只校验 UA、不校验 Referer**。
+     *    `<video>` 自己发请求会带 UA（真机 `obsidian/1.11.4 … Electron/31.7.7` ⇒ 206、
+     *    中段 seek ⇒ 206），⇒ **不需要本地代理**。
+     *    ⛔ 别改回 `fnval=1&fourk=1`：那个口径裸 header 一律 403，会被迫起回环代理，
+     *    而用户明确要求「直连播放」而非 `127.0.0.1`。
+     *    📌 参考实现：Smart Media Notes 就是「取到 url 直接交给 `<video>`」，全程无 proxy。
+     *
+     * 🔴 画质**固定冲最高**（用户 2026-11-08：「算了去掉清晰度选择默认最高画质播放」）。
+     *    请求值取 `BILI_DASH_TOP_QN`（112 = 1080P+），能拿到哪档由 B 站按登录态决定：
+     *    DASH 分支按 `id` 降序取最高（`pickBiliDash` 已排序 + `pickTrackByQn` 取最高），
+     *    html5 回退分支则由 `pickBiliStream` 回报的 `qn` 才是真值。
+     *    ⚠️ 别再引入「用户选档」参数：控制栏那颗清晰度按钮已按用户要求整条删除。
+     * ⛔ 任何一步拿不到就返回 `null`：调用方回退 iframe，**别抛异常到界面**。
+     */
+
+    /**
+     * YouTube 合流产物的临时目录（vault 之外的插件缓存目录）。
+     *
+     * 🔴 为什么不放 vault 里：合流产物是几十到几百 MB 的中间文件，放进库里会被
+     *    Obsidian 索引、被同步插件上传、被用户当成资料。放系统临时目录最干净。
+     * ⚠️ 用 `os.tmpdir()` 而不是写死 `C:\\Temp`：跨平台（macOS/Linux 都能用）。
+     */
+    private ytMuxDir(): string {
+        try {
+            const os = require('os') as { tmpdir: () => string };
+            const fsMod = require('fs') as { existsSync: (p: string) => boolean; mkdirSync: (p: string, o: { recursive: boolean }) => void };
+            const dir = `${os.tmpdir().replace(/[\\/]+$/, '')}/reelludic-yt`;
+            if (!fsMod.existsSync(dir)) fsMod.mkdirSync(dir, { recursive: true });
+            return dir;
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * ⇒ YouTube 网络集的字幕（人工或自动，转成与 B 站同形的 `${fileName,text,isAi}`）。
+     *
+     * 🔴 与取流**分开**（和 `biliSubtitleFor` 同一条纪律）：字幕慢不该拖慢起播。
+     * ⚠️ 直接读 `yt-dlp -J` 里给的 `automatic_captions` 直链，再走同一份
+     *    `dlTransport` 拉 VTT —— 不再 spawn 第二个进程（那要再花 2~5 秒）。
+     */
+    private async ytSubtitleFor(url: string): Promise<BiliSubtitleResult> {
+        if (!Platform.isDesktopApp) return { fail: 'other' };
+        if (!isYouTubeUrl(url)) return { fail: 'other' };
+        const proxy = this.ytProxyFor();
+        const cookie = String(this.settings.ytCookie ?? '').trim();
+        // 🔴 用户 m06406 ④：没填 Cookie 单独成态（「未能获取到本集字幕 指路重填）。
+        // ⚠️ YouTube 匿名也能拿到**公开**字幕，但拿不到需要登录的；这里保守起见只。
+        //    「填了但是取不到任何轨」时Cookie 失效，没填就说「没填」。
+        const got = await fetchYtInfo(url, proxy, cookie, this.ytMuxDir());
+        if (isYtFailure(got)) return { fail: cookie ? 'cookie-invalid' : 'no-cookie' };
+        const cap = pickYtCaption(got.info as never);
+        if (!cap) return { fail: 'no-track' };
+        try {
+            // ⚠️ 字幕直链同样googlevideo 上，需要带 Referer（实测裸请求 403。
+            // 🔴 这条正文请求**必须走代*（`ytProxyFor()`，⛔ 不是`dlTransport()`）
+            //    元数据是 yt-dlp 子进程带代理拿的，正文却一直直被墙黑洞。
+            //    `Request timed out after 30000ms`，YouTube 字幕长期拿不到。
+            const t = this.dlTransport(this.ytProxyFor());
+            const res = await t.get(cap.url, {
+                'User-Agent':
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                Referer: 'https://www.youtube.com/',
+                ...(cookie ? { Cookie: cookie } : {}),
+            });
+            if (res.status !== 200 || !res.text) return { fail: 'other' };
+            return {
+                fileName: `YouTube ${cap.isAuto ? 'AI' : ''}字幕 ${cap.lang}`.replace(/\s+/g, ' ').trim(),
+                text: res.text,
+                isAi: cap.isAuto,
+            };
+        } catch {
+            return { fail: 'other' };
+        }
+    }
+
+    /**
+     * 取当前网络集的 B 站字幕（含 AI 字幕，供选集页时间轴面板用）。
+     *
+     * 🔴 用户 2026-11-09 逐字：「播放网络集的字幕面板能不能显示其b站的AI字幕」
+     *
+     * ⚠️ 与 `biliStreamFor` **分开取**，⛔ 不塞进它返回的对象里：
+     *    取流是起播关键路径（慢一点用户就等黑屏），字幕是到了再画就行；
+     *    合成一次会让「字幕接口慢」变成「视频起播慢」。
+     * ⚠️ 任何失败一律 `null`：没字幕不该影响播放（调用方据此显示「这一集没有字幕」）。
+     */
+    /** 「B 站 Cookie 已失效」提示的节流时间戳（一分钟内不重复弹，避免刷屏） */
+    private biliCookieWarnAt = 0;
+
+    private async biliSubtitleFor(url: string): Promise<BiliSubtitleResult> {
+        if (!Platform.isDesktopApp) return { fail: 'other' };
+        // Cookie 一定拿不到（实测匿名恒 0 条）省掉两次网络往。
+        // ⚠️ 2026-11-24：`hasCookie` 原本`services/biliStream.ts` 里（已随内置播放器删除）。
+        //    但它其实就是 `looksLikeCookie` 的一层空直接用纯逻辑那份，⛔ 别在这里再造一个。
+        // 🔴 用户 m06406 ④：没填 Cookie 要单独成一种状态（「未能获取到本集字幕 指路重填）
+        //    不能和「登录了但这集没字幕」混成同一null —两者用户该做的事完全相反。
+        if (!looksLikeCookie(this.settings.biliCookie)) return { fail: 'no-cookie' };
+        const cookie = normalizeCookie(this.settings.biliCookie);
+        const headers: Record<string, string> = { 'User-Agent': BILI_UA, Referer: BILI_REFERER };
+        const t = this.dlTransport();
+        // 这一轮判定的失败原因（`fetchBiliSubtitle` `onDiag` 会填，默认按「没字幕轨」）
+        let diag: { loginMid: number; trackCount: number } | null = null;
+        try {
+            let ids = biliIdsOf(url);
+            if (!ids && isBiliShortUrl(url)) ids = biliIdsOf(await this.resolveBiliShortUrl(t, url, headers));
+            if (!ids) return { fail: 'other' };
+            const cid = await this.biliCidOf(t, ids, headers);
+            if (!cid) return { fail: 'other' };
+            // ⚠️ `dlTransport().get` 返回 `NodeHttpResponse`（多headers/finalUrl）
+            //    在这里收窄成 `${status,text}` 服务层只依赖这两样，收窄免得Node 类型漏进纯逻辑。
+            const got = await fetchBiliSubtitle(
+                { get: async (u, h) => { const r = await t.get(u, h); return { status: r.status, text: r.text }; } },
+                cid.cid,
+                cid.bvid,
+                cookie,
+                // 🔴 B 站明说「未登录」时**必须**吭声：否则用户只看到「这一集没有字幕」，
+                //    会以为是视频没字幕而反复粘 Cookie（2026-10-31 真实事故：真因是插件读的
+                //    那套 vault 里躺着一个已失效的旧 SESSDATA，接口侧完全正常）。
+                (d) => {
+                    // 🔴 用户 m06406 ④：这个诊断现在*空态分岔的判据**，不再只是弹个提示。
+                    //    先无条件记下来，后面Notice 只是「顺手提醒」，删了也不影响空态正确性。
+                    diag = { loginMid: d.loginMid, trackCount: d.trackCount };
+                    if (d.loginMid !== 0 || d.trackCount > 0) return;
+                    const now = Date.now();
+                    if (now - this.biliCookieWarnAt < 60_000) return; // 一分钟内不重复弹
+                    this.biliCookieWarnAt = now;
+                    // ⚠️ 处方路径同步成真正的设置位置（原来的「实验性功启用内置视频播放器。
+                    //    早就不存在了，用户照着点会扑空 —`pure/netCueCopy` 文件头）。
+                    new Notice('B站 Cookie 已失效：字幕接口认不出登录态（login_mid=0）。请到「设置 › 搜索配置 › 网络播放源凭据 › B站」重新粘贴一次 Cookie。', 8000);
+                },
+            );
+            if (got) return got;
+            // 没取到字幕：登录态没认出来（login_mid=0）⇒ Cookie 失效；否则就是这集真没轨。
+            // 别把「空字幕」一律当「没 Cookie」—没诊断信息时按「没轨」说，不冤枉用户Cookie。
+            if (diag && (diag as { loginMid: number }).loginMid === 0) return { fail: 'cookie-invalid' };
+            return { fail: 'no-track' };
+        } catch {
+            return { fail: 'other' }; // 风控 / 网络异常：归不到 Cookie 或没轨，说「加载失败」
+        }
+    }
+
+    /**
+     * 短链 `b23.tv/xxxx` → 落地页（跟随一次重定向取 `finalUrl`，其它地址原样返回）。
+     *
+     * 🔴 为什么必须联网跳：真机实测 `https://b23.tv/BV1bE421g76i` ⇒ 302 →
+     *    `https://www.bilibili.com/video/BV1bE421g76i`；而**手机分享出来的短码**（形如 `b23.tv/AbCd123`）
+     *    里根本不含 BV 号，静态正则抠不出来 ⇒ `biliIdsOf` 只能一律拒。跳一次就有落地页了。
+     * ⛔ 跳不到（网络不通 / 落地页仍是短链）⇒ 原样返回，让 `biliIdsOf` 继续拒，调用方回退 iframe。
+     * ⛔ 只有 GET 才跳；`post` 走跳转会改变语义，这里用不到也不做。
+     */
+    private async resolveBiliShortUrl(
+        t: DlTransport,
+        url: string,
+        headers: Record<string, string>,
+    ): Promise<string> {
+        if (!isBiliShortUrl(url)) return url; // 绝大多数链接：一次网络请求都不发
+        try {
+            const res = await t.get(url, headers); // `nodeHttpGet` 内部已跟随重定向并返回 finalUrl
+            const finalUrl = res.finalUrl;
+            if (finalUrl && /(^|\/\/|\.)bilibili\.com/i.test(finalUrl)) return finalUrl;
+        } catch {
+            // 短链解析失败不报错：按原样返回，上层自然iframe 兜底。
+        }
+        return url;
+    }
+
+    /** ① 取 cid：普通投稿走 pagelist，`av` 号走 view（拿 cid 同时换出 bvid），番剧走 pgc/view/web/season */
+    /**
+     * 取 cid；取不到写清原因到 `lastBiliError`（⚠️ 参数 `sink` 让调用方接住文案）。
+     *
+     * 🔴 为什么带 `sink` 而不是直接读 `this.lastBiliError`：本方法偶尔也用于只探封面/时长的
+     *    旁路（见 `biliThumb` 同款链），那条路上写全局错误会污染下一次播放的提示。
+     *    传 sink 让「会弹给用户看的那条路」自己决定要不要留话。
+     */
+    private async biliCidOf(
+        t: DlTransport,
+        ids: BiliIds,
+        headers: Record<string, string>,
+        sink?: (msg: string) => void,
+    ): Promise<{ cid: number; bvid: string } | null> {
+        // 🔴 `av` 形态单独一条：落地页（`/video/av80433022/`*只带 aid 不带 BV**。
+        //    pagelist 又只cid 不回 bvid，playurl 的主参要 bvid 必须view 一次换齐。
+        //    别指望「先 pagelist 再转」：那是两次请求，且第二次还得再解析一aid。
+        if (ids.aid && !ids.bvid) {
+            const res = await t.get(biliViewUrl(ids.aid), headers);
+            if (res.status !== 200) {
+                sink?.(`B 站详情接口返回 HTTP ${res.status}`);
+                return null;
+            }
+            let json: unknown;
+            try {
+                json = JSON.parse(res.text);
+            } catch {
+                sink?.('B 站详情接口没回 JSON（多半是被风控拦了）');
+                return null;
+            }
+            const got = pickViewByAid(json, ids.page);
+            if (!got) sink?.(biliFailMessage(json) ?? 'B 站没给出这个视频的集号');
+            return got;
+        }
+        const listUrl = biliPagelistUrl(ids);
+        if (!listUrl) {
+            sink?.('这个链接里解析不出可以查询的片号');
+            return null;
+        }
+        const res = await t.get(listUrl, headers);
+        if (res.status !== 200) {
+            sink?.(`B 站选集接口返回 HTTP ${res.status}`);
+            return null;
+        }
+        let json: unknown;
+        try {
+            json = JSON.parse(res.text);
+        } catch {
+            sink?.('B 站选集接口没回 JSON（多半是被风控拦了）');
+            return null;
+        }
+        // 番剧：接口回的是 `result.episodes[]`（带 cid + bvid 两样。
+        if (ids.epId || ids.ssId) {
+            const got = pickPgcEpisode(json, ids.epId);
+            if (!got) sink?.(biliFailMessage(json) ?? '番剧接口没给出这一集的 cid');
+            return got;
+        }
+        const cid = pickCidFromPagelist(json, ids.page);
+        if (!cid) {
+            // 👇 两条报障条目正是走这条：`code=62002 稿件不可见` pagelist data null
+            sink?.(biliFailMessage(json) ?? 'B 站没给出这一集的 cid');
+            return null;
+        }
+        return ids.bvid ? { cid, bvid: ids.bvid } : null;
     }
 
     /**
@@ -5058,8 +9700,15 @@ export default class ReelLudicPlugin extends Plugin {
         // 库内走 getResourcePath、库外走 app://（与播放/探时长**同一条链**，⛔ 别另拼一份）
         const local = raw ? this.resolveEmbedUrl(String(raw)) ?? '' : '';
         if (local) return planEpCover(local, '');
+        const net = String(urls[idx] ?? '');
         const bvid = bvidOf(urls[idx]);
-        const thumb = bvid ? await this.biliThumb(bvid) : '';
+        // 🔴 2026-11-10 YouTube（用户报「油管网络集在选集面板上封面没加载」）。
+        //    `ytThumbUrl` 早就存在（`pure/youtube.ts` `i.ytimg.com/vi/<id>/mqdefault.jpg`）
+        //    *零请求、幂等、不加时间戳**（正好对`pure/epCover.ts` 那三条封面纪律）。
+        //    只是这里一直只`bvidOf` 油管链接恒落 `{kind:'none'}` 占位图。
+        //    别为它加网络请求/内存缓存：`i.ytimg.com` 是稳CDN，浏览器自己就缓存了。
+        const ytId = bvid ? '' : youTubeIdOf(net) ?? '';
+        const thumb = bvid ? await this.biliThumb(bvid) : (ytId ? ytThumbUrl(ytId) : '');
         return planEpCover('', thumb);
     }
 
@@ -5133,16 +9782,40 @@ export default class ReelLudicPlugin extends Plugin {
      *    ⚠️ 明细只能在这里拼：`services/linkCheck` 的结果是**按 `episodeUrls` 下标对齐的状态数组**，
      *       不含 label/url（那是展示层的语义），⛔ 别为了省这几行去改服务层形状。
      */
-    async scanLibraryLinks(onDead?: (item: DeadLinkItem) => void): Promise<{
+    async scanLibraryLinks(
+        onDead?: (item: DeadLinkItem) => void,
+        /**
+         * 🔴 2026-11-17 用户报障（⑥-A）新增：给「停止检测」与进度用的钩子。
+         *   `signal` —— 用户按了弹窗上的「停止」⇒ 传进来置 `stopped = true`，
+         *      服务层各 worker 下一轮取任务前收手（已扫到的结果照常返回，不再发新请求）。
+         *   `onProgress` —— 每探完**一条**回调一次，用于弹窗显示「已查 m / 共 n 条」，
+         *      ⛔ 别改成「每探完一个条目」，用户要看的是分母明确的进度。
+         * ⚠️ 不传 = 旧行为（无停止、无进度），旧调用方一行都不用改。
+         */
+        opts: {
+            signal?: LinkCheckStopSignal;
+            onProgress?: (done: number, total: number) => void;
+        } = {},
+    ): Promise<{
         entries: number;
         ok: number;
         dead: number;
         unknown: number;
         items: DeadLinkItem[];
+        /** 是否被用户中途停止（true ⇒ 结果不完整，弹窗文案必须讲明） */
+        stopped: boolean;
+        /** 实际探测过的地址条数 / 总条数（停止时 done < total） */
+        done: number;
+        total: number;
     }> {
-        if (!Platform.isDesktopApp) return { entries: 0, ok: 0, dead: 0, unknown: 0, items: [] };
+        if (!Platform.isDesktopApp) {
+            return { entries: 0, ok: 0, dead: 0, unknown: 0, items: [], stopped: false, done: 0, total: 0 };
+        }
         const list = await this.service.list();
         const targets = collectLinkScanTargets(list);
+        // 总条数：摊平后真正要发请求的地址数（与 `services/linkCheck` 的 targets 口径一致）
+        const total = targets.reduce((n, tg) => n + tg.urls.filter((u) => isHttpUrl(u)).length, 0);
+        let done = 0;
         // entryId → 条目（只为取 title / episodeUrls / episodeTitles 拼明细；检测本身不需要它）
         const byId = new Map(list.map((e) => [e.id, e] as const));
         const items: DeadLinkItem[] = [];
@@ -5174,9 +9847,36 @@ export default class ReelLudicPlugin extends Plugin {
                 onDead?.(item);
             });
         };
-        const results = await checkAllLinks(this.dlTransport(), targets, (entryId, statuses) => {
-            emitDead({ entryId, statuses });
-        });
+        /**
+         * ⚠️ 进度按「每行回调一次」粗略推进不对（一行有 3 条 URL 时回调 3 次却只算探完 3 条中的部分）——
+         *    这里改用服务层的逐条计数：`onRow` 拿不到单条下标，所以进度用 `summary` 口径
+         *    「已完成的 URL 数」= 各行当前非 undefined 的位累加。为保证单调不回退，
+         *    用 Map 记录每行各下标的**最后一次**已知状态，只在有新增时 push。
+         */
+        const known = new Map<string, (LinkStatus | undefined)[]>();
+        const bumpProgress = (entryId: string, statuses: (LinkStatus | undefined)[]): void => {
+            const prev = known.get(entryId);
+            known.set(entryId, statuses.slice());
+            if (!prev) {
+                done += statuses.filter((s) => s !== undefined).length;
+            } else {
+                let add = 0;
+                statuses.forEach((s, i) => {
+                    if (s !== undefined && prev[i] === undefined) add++;
+                });
+                done += add;
+            }
+            opts.onProgress?.(Math.min(done, total), total);
+        };
+        const results = await checkAllLinks(
+            this.dlTransport(),
+            targets,
+            (entryId, statuses) => {
+                bumpProgress(entryId, statuses);
+                emitDead({ entryId, statuses });
+            },
+            { signal: opts.signal },
+        );
         let ok = 0;
         let dead = 0;
         let unknown = 0;
@@ -5188,7 +9888,19 @@ export default class ReelLudicPlugin extends Plugin {
             unknown += s.unknown;
         }
         // 渐进回调已经把 dead 明细收进 items 了（`seen` 去重）⇒ 这里不再补扫，避免重复
-        return { entries: results.length, ok, dead, unknown, items };
+        return {
+            entries: results.length,
+            ok,
+            dead,
+            unknown,
+            items,
+            // 被用户中途停止：`checkEpisodeLinks` 会在 worker 收手后返回，剩余位是 undefined
+            // ⚠️ 判据用 signal 而不是「done < total」：超时也记 unknown 进 done，
+            //    正常跑完但全库恰好没地址时 done===total===0，不能因此报「被停止」。
+            stopped: opts.signal?.stopped === true,
+            done: Math.min(done, total),
+            total,
+        };
     }
 
     /**
@@ -5244,6 +9956,7 @@ export default class ReelLudicPlugin extends Plugin {
     async dlBiliDownload(
         video: BiliVideo,
         onProgress?: DownloadProgressCallback,
+        songTitle?: string,
     ): Promise<{ ok: boolean; message: string; relPath?: string }> {
         if (!Platform.isDesktopApp) return { ok: false, message: '下载功能仅支持桌面端' };
         const r = await fetchBiliAudioWithYtDlp(defaultYtDlpDeps(), {
@@ -5257,17 +9970,58 @@ export default class ReelLudicPlugin extends Plugin {
         try {
             const taken = new Set(this.app.vault.getFiles().map((f) => f.path));
             const ext = r.ext || 'mp3';
+            // 🔴 m07546 需求③：文件名*条目歌名**（`songTitle`），为空才回`作- 视频标题`。
+            //    别退回只`video.author, video.title` —那正是用户点名要去掉的「B站视频标题」。
+            //    ⚠️ 注释写在调用**外面**：`downloadRelPath` 的实参形态有逐字守卫（kind filename root
+            //    三行紧邻），在实参中间插一行注释会把那条守卫撞红。
             const relPath = downloadRelPath({
                 kind: 'music',
-                filename: buildSongFilename(video.author, video.title, ext),
+                filename: buildBiliAudioFilename(songTitle ?? '', video.author, video.title, ext),
                 root: this.settings.musicDownloadDir,
                 taken,
             });
             await this.writeBinaryFile(relPath, r.data);
             const mb = (r.data.byteLength / 1024 / 1024).toFixed(2);
-            return { ok: true, message: `已下载 ${mb}MB：${relPath}（B站 · ${ext}）`, relPath };
+            // 🔴 m04435 ②（用户逐字）：「从B站下载音乐：后台下载完成后**自动关联已有音乐条目**，
+            //    不要求用户再手动搜索。」
+            //    ⇒ 落盘之后立刻反查「库里哪一条音乐是这个文件」，找到就直接写 `audioPath`。
+            // ⚠️ 放在 `writeBinaryFile` **之后**：文件不在库里时关联成功也没用（打开播放器会 404）。
+            // ⚠️ 失败**不影响**下载成功的回执 —— 这是「顺手帮你关联」，不是下载的一部分。
+            const auto = await this.autoAssociateDownloadedAudio(relPath);
+            return { ok: true, message: `已下载 ${mb}MB：${relPath}（B站 \xB7 ${ext}）${auto}`, relPath };
         } catch (e) {
-            return { ok: false, message: `写入失败：${e instanceof Error ? e.message : String(e)}` };
+            return { ok: false, message: `请求失败：${e instanceof Error ? e.message : String(e)}` };
+        }
+    }
+
+    /**
+     * 🔴 m04435 ②：下载完的音频**自动关联**到库里已有的音乐条目（用户：「不要求用户再手动搜索」）。
+     *
+     * 返回一句**追加到成功回执末尾**的说明（空串 = 没关联上，调用方原样拼回去即可）。
+     * ⛔ 绝不抛：这是下载成功后的顺手动作，任何异常都不许把「已经下好了」变成「下载失败」。
+     *
+     * 🔴 三条边界（都在 `pure/libraryAudio.matchAudioFileToEntry` 里判，⛔ 别在这里再判一遍）：
+     *  ⑴ 只认 `music` 类型；⑵ **已经有 `audioPath` 的条目跳过**（别冲掉用户手工挑好的关联）；
+     *  ⑶ 分数要过 `LIBRARY_AUDIO_MIN_SCORE` —— 不够就不关联，宁可让用户手动挑。
+     * ⚠️ 笔记被外部改过时**不重写正文**（与 `EntryModal.onApplyAudio` 同一条口径）：
+     *    只更新 catalog 字段，别覆盖用户手改的笔记。
+     */
+    private async autoAssociateDownloadedAudio(relPath: string): Promise<string> {
+        try {
+            const fileName = relPath.split('/').pop() ?? '';
+            if (!fileName) return '';
+            const entries = await this.service.list();
+            const hit = matchAudioFileToEntry(entries, fileName);
+            if (!hit) return '（没找到可自动关联的音乐条目，可在播放器里手动挑）';
+            await this.service.update(hit.id, { audioPath: relPath });
+            if (hit.notePath && !(await this.service.noteWasExternallyModified(hit.id))) {
+                await this.service.writeNote(hit.id);
+            }
+            await this.refreshViews();
+            return `（已自动关联到《${hit.title ?? fileName}》）`;
+        } catch {
+            // ⛔ 静默：下载本身已经成功了，这里的失败不该变成用户的失败提示
+            return '';
         }
     }
 
@@ -5339,7 +10093,7 @@ export default class ReelLudicPlugin extends Plugin {
                 }
                 await fs.rename(plan.from, plan.to);
             } catch (e) {
-                return { ok: false, message: `改名失败：${e instanceof Error ? e.message : String(e)}` };
+                return { ok: false, message: `请求失败：${e instanceof Error ? e.message : String(e)}` };
             }
             lrcNote = await this.renameSiblingLrc(plan.lrcFrom, plan.lrcTo);
         }
@@ -5359,7 +10113,7 @@ export default class ReelLudicPlugin extends Plugin {
                 touched++;
             }
         } catch (e) {
-            new Notice(`文件已改名为「${plan.toName}」，但写回条目失败：${e instanceof Error ? e.message : String(e)}`, 6000);
+            new Notice(`文件已改名为「${plan.toName}」，但写回条目失败：${e instanceof Error ? e.message : String(e)}${plan.toName}」，但写回条目失败：${e instanceof Error ? e.message : String(e)}`, 6000);
             await this.refreshViews();
             return { ok: true, message: `已改名为「${plan.toName}」`, path: plan.to };
         }
@@ -5507,6 +10261,79 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /**
+     * 笔记条目卡的**行内快捷编辑**落库出口（2026-11-16 第三次裁定）。
+     *
+     * 分工：解析键语义交给纯层 `applyNoteCardEdit`（它是与读投影严格成对的唯一真源，
+     * `tests/noteCard.test.ts` 钉着），这里只负责「写下去」这一段的顺序与异常：
+     * `service.update`（normalizeEntry / updatedAt / 状态变更补活动流）
+     * → `service.writeNote`（保留区合并 / 笔记指纹刷新）→ 返回落库后的最新条目。
+     *
+     * 🔴 返回 `undefined` = **这次编辑被拒绝**（键只读 / 值非法），渲染层据此原样回显，
+     *   ⛔ 不弹「已保存」的假成功。`writeNote` 失败只提示不阻断 —— 数据已经进 catalog，
+     *   下一次刷新笔记会补上（与 `saveQuickAssociate` 同口径）。
+     */
+    private async saveNoteCardField(id: string, key: string, raw: string): Promise<MediaEntry | undefined> {
+        const entry = await this.service.get(id);
+        if (!entry) return undefined;
+        const patch = applyNoteCardEdit(entry, key, raw);
+        // `null` = 不可写 / 非法值 ⇒ 静默拒绝，让卡里原样回显（⛔ 别当成成功）
+        if (!patch) return undefined;
+        const merged = await this.service.update(entry.id, patch);
+        try {
+            await this.service.writeNote(merged.id);
+        } catch (e) {
+            new Notice('笔记同步失败：' + (e instanceof Error ? e.message : String(e)), 5000);
+        }
+        return merged;
+    }
+
+    /**
+     * 笔记内 ` ```reelludic ` 块 → **插件专属条目卡**（🔴 2026-11-14 用户 m04138 指令）。
+     *
+     * 用户原话：「在笔记规划渲染出插件专属组件，因为笔记属性和表单两个可视化不对等的」。
+     * 拍板口径（询问后确认）：⑴ 代码块显式挂载；⑵ 可交互（点字段直接改并回写）；
+     * ⑶ 替换掉笔记里那张 `| 属性 | 内容 |` Markdown 表格（见 `data/noteGenerator`）。
+     *
+     * 🔴 **2026-11-14 用户 m07593 翻面**：卡内改成**纯详情视图**（只渲染密排的「键：值」），
+     *    改值统一走标题旁的「编辑」按钮 → 打开 `EntryModal`（编辑属性窗口）。
+     *    ⇒ 常驻输入框那版不再回来；编辑属性窗口本身就是 `EntryModal`，它内部走
+     *    `service.update` + `writeNote`，保留区合并 / 指纹刷新 / 活动流一样不少。
+     *
+     * 🔴 **2026-11-16 第三次裁定：行内快捷编辑**（用户：「加行内快捷编辑，不再恢复旧表格」）。
+     *    ⇒ 注入 `saveField`：点值就地换控件、写完即收起；**不占地方**（m07593 的诉求仍满足），
+     *    也**不复活**旧 Markdown 属性表格。解析语义交给纯层 `applyNoteCardEdit`（唯一真源），
+     *    落库仍走下面的 `saveNoteCardField`（`service.update` + `writeNote`）。
+     *
+     * 🔴 **语言名必须与 `pure/noteCard.NOTE_CARD_LANG` 同源**：⛔ 别再手写一遍 `'reelludic'`。
+     * 与 `lrc` 不同，这个语言名是本插件专有的，不需要 LyricFlux 那套让位；但仍套 try/catch ——
+     * Obsidian 的语言表是**全局静态**的，重复注册会直接抛错，抛在 `onload` 里就是整个插件加载失败
+     * （#390 的教训，见 `registerLrcBlockProcessor` 的注释）。
+     *
+     * ⚠️ 写路径**必须**走 `EntryService.update` + `writeNote`：
+     *    · `update` 负责 `normalizeEntry`、`updatedAt`、状态变更补活动流；
+     *    · `writeNote` 负责保留区合并（摘录 / 歌词 / 相关）与笔记指纹刷新。
+     *    绕过任何一环都会出现「改了但笔记没变」或「下次打开被旧指纹覆盖」，⛔ 别在渲染层直接写 vault。
+     */
+    private registerNoteCardBlockProcessor(): void {
+        try {
+            this.registerMarkdownCodeBlockProcessor(NOTE_CARD_LANG, (source, el, ctx) => {
+                ctx.addChild(
+                    new NoteCardBlock(el, source, {
+                        getEntry: (id) => this.service.get(id),
+                        openEntry: (id) => void this.openEntryNote(id),
+                        editEntry: (id) => void this.openEditModal(id),
+                        posterUrl: (e) => this.resolvePoster(e),
+                        saveField: (id, key, raw) => this.saveNoteCardField(id, key, raw),
+                    }),
+                );
+            });
+        } catch (e) {
+            // 理论上不会命中（`reelludic` 是本插件专有语言名）；命中说明有同名插件，让位别带崩 onload
+            console.warn('[ReelLudic] reelludic 代码块注册失败，条目卡让位：', e);
+        }
+    }
+
+    /**
      * 笔记内 lrc 块的播放选项：队列**只有这一首**（笔记里的块指向一个音频）。
      * 音频解析不出来时不抛错，而是回一个空队列 —— 装配层会用空态说明原因（⛔ 不静默吞掉整块）。
      */
@@ -5540,6 +10367,20 @@ export default class ReelLudicPlugin extends Plugin {
             onSaveMode: (mode) => void this.persistAudioSetting('mode', mode),
             onSaveVolume: (volume) => void this.persistAudioSetting('volume', volume),
             onPlayStart: (kind) => this.pauseOtherPlayers(kind),
+            /**
+             * 🔴 m02288：内联块**也**自动累计收听时长 —— 在笔记里听歌同样是收听，
+             * 没理由只算标签页那一份（否则同一首歌换个入口打开，时长就少了一半）。
+             * 判真源与服务层方法同标签页那条构造（见 `buildAudioPlayerOptions` 里的长注释）。
+             */
+            onListen: (t, minutes) => {
+                if (!t.entryId) return;
+                void this.service
+                    .bumpListenMinutes(t.entryId, minutes)
+                    .then((e) => {
+                        if (e) this.refreshViews();
+                    })
+                    .catch(() => undefined);
+            },
         };
     }
 
@@ -5585,7 +10426,7 @@ export default class ReelLudicPlugin extends Plugin {
             new Notice(`已删除摘抄 · 《${e.title}》现有 ${r.count} 条`);
             return true;
         } catch (err) {
-            new Notice(`删除摘抄失败：${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`删除摘抄失败：${err instanceof Error ? err.message : String(err)}${err instanceof Error ? err.message : String(err)}`);
             return false;
         }
     }
@@ -5619,7 +10460,7 @@ export default class ReelLudicPlugin extends Plugin {
             await this.flushReaderStore(entryId);
             return id;
         } catch (err) {
-            new Notice(`高亮失败：${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`生成年度总结失败：${err instanceof Error ? err.message : String(err)}`);
             return null;
         }
     }
@@ -5639,7 +10480,7 @@ export default class ReelLudicPlugin extends Plugin {
             new Notice(`已删除高亮 · 《${e.title}》`);
             return true;
         } catch (err) {
-            new Notice(`删除高亮失败：${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`删除高亮失败：${err instanceof Error ? err.message : String(err)}${err instanceof Error ? err.message : String(err)}`);
             return false;
         }
     }
@@ -5916,6 +10757,19 @@ export default class ReelLudicPlugin extends Plugin {
      */
     private linkStatusCache = new Map<string, (LinkStatus | undefined)[]>();
 
+    /**
+     * 「条目 → 它当初打开选集页时用的那片叶子」（`entryId` 键）。
+     *
+     * 🔴 2026-11-09 用户逐字：「播放器全屏按钮点击后怎么是新开一个标签页给我覆盖成当前标签页，
+     *    再点全屏按钮即回到原来播放器页面」⇒ 交接必须**占用选集页那片叶子**（观感是原地翻页），
+     *    回跳也必须在**同一片叶子**上换回选集页。`setViewState` 换视图后旧视图实例被销毁，
+     *    `getLeavesOfType(EPISODE_PAGE_VIEW_TYPE)` 那一招就再也找不到它 —— 所以这里按 id 记下来。
+     *
+     * ⚠️ 只存内存、不落库：叶子是运行时对象，重启即失效（失效就当没记过，退化成「现开一页」）。
+     * ⚠️ 换片/关页都不主动清：条目 id 不变时复用的就是同一片叶子，清早了反而退回新开标签页。
+     */
+    private episodeOriginLeaf = new Map<string, WorkspaceLeaf>();
+
     /** 附件管理弹窗单例：再次点设置页的「浏览」时把已开的那个**拉到前面**，⛔ 不叠第二个。
      *  （列表是打开那一刻的快照；重开一次才重扫，符合「管理文件」的一次性动作） */
     private assetManagerModal: AssetManagerModal | null = null;
@@ -6017,7 +10871,7 @@ export default class ReelLudicPlugin extends Plugin {
             if (!(this.app.vault.getAbstractFileByPath(dir) instanceof TFolder)) {
                 try {
                     await this.app.vault.createFolder(dir);
-                } catch { /* 已存在/创建失败：写入时再兜底 */ }
+                } catch { /* 笔记失败不阻断导入 */ }
             }
             const path = normalizePath(readerStoreFilePath(entryId, title, this.settings.libraryDir));
             const text = serializeStore(store);
@@ -6438,6 +11292,102 @@ export default class ReelLudicPlugin extends Plugin {
         return this.getLrcBilingualService().generate(lrc, meta);
     }
 
+    // ──────────── 字幕 AI 总结（详情页时间轴面板那颗 ✨）────────────
+    private cueSummaryService: CueSummaryService | null = null;
+
+    /**
+     * 字幕总结服务（惰性构造）。
+     *
+     * 🔴 用户 2026-11-11 裁定：「在设置页为字幕总结单独开一组服务商/模型」
+     *    ⇒ 新增 `readerCueSummaryProvider` / `readerCueSummaryModel` / `readerCueSummaryPrompt`，
+     *      与翻译 / 总结 / 搜索 / 预填**各自独立**；但 Key 与端点仍走 `resolveAiAccess` 那条唯一入口
+     *      （⛔ 不新开一套凭据字段：同一家的 Key 只该填一遍）。
+     */
+    private getCueSummaryService(): CueSummaryService {
+        if (!this.cueSummaryService) {
+            this.cueSummaryService = new CueSummaryService({
+                getConfig: () => {
+                    const provider = normalizeProvider(this.settings.readerCueSummaryProvider);
+                    const access = this.resolveAiAccess(provider, this.settings.readerCueSummaryModel);
+                    return {
+                        provider,
+                        key: access.key,
+                        model: access.model,
+                        url: access.url,
+                        issue: access.issue,
+                        prompt: this.settings.readerCueSummaryPrompt,
+                        askPrompt: this.settings.readerCueAskPrompt,
+                    };
+                },
+                notify: (msg, ms) => new Notice(msg, ms ?? 4000),
+                http: (opts) => requestUrl(opts), // RequestUrlResponse 结构上即 { status, text }
+                withTimeout,
+                /**
+                 * 流式通道（用户 m09565 ①-8）：只有桌面端才有 Node http。
+                 *
+                 * 🔴 为什么必须按 `Platform.isDesktopApp` 分流：`nodeHttpPostStream` 里
+                 *    第一件事就是 `require('https')`，移动端没有 Node ⇒ 调用即抛。
+                 *    不注入（`undefined`）时服务层**自动退回非流式**，
+                 *    所以移动端只是没有打字机效果，功能不丢。
+                 *
+                 * ⚠️ 不传 proxy：AI 端点（智谱 / DeepSeek / 自定义）都在墙内，
+                 *    与 `dlTransport` 里那条「墙外目标必须带 proxy」是两回事。
+                 */
+                httpStream: Platform.isDesktopApp
+                    ? (opts, handlers) =>
+                          nodeHttpPostStream(opts.url, opts.body ?? '', opts.headers, {
+                              onText: handlers.onText,
+                              shouldStop: handlers.shouldStop,
+                              timeoutMs: handlers.timeoutMs,
+                              signal: handlers.signal,
+                          })
+                    : undefined,
+            });
+        }
+        return this.cueSummaryService;
+    }
+
+    /**
+     * AI 总结整条字幕（一句话概括 + 剧情要点）：失败返回 null（服务内部已 Notice）。
+     * ⚠️ 与 `aiSummarizeEntry` 是**两条独立的服务行**，只共用凭据。
+     */
+    cueSummarize(input: CueSummaryInput): Promise<CueSummaryResult | null> {
+        const choice = normalizeAiChoice(this.settings.readerCueSummaryProvider);
+        if (this.aiOffBlocked(choice, '字幕总结')) return Promise.resolve(null);
+        return this.getCueSummaryService().generate(input);
+    }
+
+    /**
+     * **流式**生成字幕总结（用户 m09565 ①-8）。
+     *
+     * 🔴 与非流式 `cueSummarize` 的差别**只在传输**：提示词、解析、返回值全部同构，
+     *    所以视图层拿到的 `CueSummaryResult` 与以前一字不差。
+     * ⚠️ `onPartial` 传的是**累积全文**（不是增量），界面直接设文本即可。
+     * ⚠️ 桌面端才有真流式；移动端服务层会退回非流式，`onPartial` 只被调一次。
+     */
+    cueSummarizeStream(
+        input: CueSummaryInput,
+        onPartial: (summary: string, done: boolean) => void,
+    ): Promise<CueSummaryResult | null> {
+        const choice = normalizeAiChoice(this.settings.readerCueSummaryProvider);
+        if (this.aiOffBlocked(choice, '字幕总结')) return Promise.resolve(null);
+        return this.getCueSummaryService().generateStream(input, onPartial);
+    }
+
+    /**
+     * 就当前这一集的字幕提问（面板提问框）。
+     *
+     * 🔴 用户 2026-11-11（第二轮）：「给字幕面板的AI改现代化点，如透明化去边框，给加个提问框」
+     * ⚠️ 与 `cueSummarize` **同一条服务行、同一把 Key、同一个开关**（`readerCueSummaryProvider`）——
+     *    用户关掉「字幕总结服务」时，提问也必须一起关：它们花的是同一份预算。
+     *    只额外读一个 `readerCueAskPrompt`（提问的提示词规矩与总结不同，见 `DEFAULT_CUE_ASK_PROMPT`）。
+     */
+    cueAsk(input: CueSummaryInput, question: string, history: CueAskTurn[]): Promise<string | null> {
+        const choice = normalizeAiChoice(this.settings.readerCueSummaryProvider);
+        if (this.aiOffBlocked(choice, '字幕提问')) return Promise.resolve(null);
+        return this.getCueSummaryService().ask(input, question, history);
+    }
+
     // ──────────── AI 预填（新增条目「手动填写」界面标题行 ✨）────────────
     private aiPrefillService: AiPrefillService | null = null;
 
@@ -6516,11 +11466,11 @@ export default class ReelLudicPlugin extends Plugin {
             if (!title) return '（没给标题）';
             const kind = this.normalizePrefillKind(str('type'));
             const hits = await this.searchForPrefill(title, kind);
-            if (!hits.length) return `（本地元数据源没有查到「${title}」）`;
+            if (!hits.length) return `（本地元数据源没有查到「${title}」）${title}」）`;
             const lines = hits.slice(0, 3).map((r, i) => {
                 const d = describeSearchResult(r as never);
                 const bits = [d.year, d.source, d.rating != null ? `★${d.rating}` : '', d.sub].filter(Boolean);
-                return `${i + 1}. ${d.title}${bits.length ? ` — ${bits.join(' · ')}` : ''}`;
+                return `${i + 1}. ${d.title}${bits.length ? ` · ${bits.join(' · ')}` : ''}`;
             });
             const head = `命中 ${hits.length} 条：\n${lines.join('\n')}`;
             // 🔴 #499E：把**最佳命中的简介原文**一并交出去（用户 2026-10-03：「简介要搜索照搬真正作品的简介」）。
@@ -6954,7 +11904,7 @@ export default class ReelLudicPlugin extends Plugin {
             // 深链只在内置阅读器里才有意义（外部程序无法定位块锚点）→ 不看 internalBookReader 开关
             await this.openBookInternal(entry, normalizePath(entry.bookFile), target.block);
         } catch (err) {
-            new Notice(`打开定位失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+            new Notice(`启动失败：${err instanceof Error ? err.message : String(err)}`, 4000);
         }
     }
 
@@ -6978,7 +11928,13 @@ export default class ReelLudicPlugin extends Plugin {
      * ⚠️ 不看 `internalMediaPlayback` 开关：深链只在内置播放器里才有意义（外部程序定位不到某秒）。
      */
     /** 时间戳链接（#326 双轨）：库内优先用文件链接文本（生态标准 `影片.mp4#t=3`，别的工具也认），
-     *  库外 / 取不到文件时用条目深链。两种都取不到 → null（不产出不可用链接）。 */
+     *  库外 / 取不到文件时用条目深链。两种都取不到 → null（不产出不可用链接）。
+     *
+     *  🔴 用户 2026-11-01：「如何处理一个笔记52集的各集时间戳冲突问题」
+     *     ⇒ **多集条目**的链接文字带上集号（`第3集·0:27`），否则 52 集共用一个 `## 单时间戳` 区时
+     *       每行都只有时间，人眼分不出属于第几集。单集 / 电影不带（平添噪音）。
+     *     集数口径取「已关联的本地文件 + 网络集 + 声明总集数」三者最大值 —— 与 `pure/episodePage`
+     *     的 `episodeTotal` 同款（历史数据里 `totalEpisodes` 常常没跟着数组改，取 max 才不漏）。 */
     private videoTimeLink(entry: MediaEntry, ep: number, seconds: number): string | null {
         const raw = entry.episodeFiles?.[ep];
         let filePath: string | undefined;
@@ -6986,7 +11942,16 @@ export default class ReelLudicPlugin extends Plugin {
             const f = this.app.vault.getAbstractFileByPath(normalizePath(raw));
             if (f instanceof TFile) filePath = this.app.metadataCache.fileToLinktext(f, entry.notePath ?? '');
         }
-        return buildTimeLink({ seconds, filePath, entryId: entry.id, ep });
+        const total = Math.max(
+            entry.type === 'movie' ? 1 : 0,
+            entry.episodeFiles?.length ?? 0,
+            entry.episodeUrls?.length ?? 0,
+            entry.episodeTitles?.length ?? 0,
+            entry.progress?.totalEpisodes ?? 0,
+        );
+        // `label` 里不许有空白（Obsidian 会在第一个空白处截断链接 token）—`stampLabel` 已保。
+        const label = stampLabel(seconds, { ep, multi: total > 1 });
+        return buildTimeLink({ seconds, label, filePath, entryId: entry.id, ep });
     }
 
     /**
@@ -6999,21 +11964,50 @@ export default class ReelLudicPlugin extends Plugin {
      * 三条入口都只写一行纯时间戳链接；备注（`[17:46](链接) 备注`）**只在用户手动编辑笔记时**出现。
      * 写入区名 = `MARK_SECTION_STAMP`（`## 单时间戳`，见 `pure/videoMarks`）。
      */
-    async insertVideoStamp(entry: MediaEntry, info: { seconds: number; ep: number }): Promise<void> {
+    async insertVideoStamp(
+        entry: MediaEntry,
+        info: { seconds: number; ep: number; caption?: string },
+    ): Promise<void> {
         try {
             const link = this.videoTimeLink(entry, info.ep, info.seconds);
             if (!link) {
                 new Notice('取不到这个视频的位置信息，没法生成时间戳', 4000);
                 return;
             }
+            // 🔴 m04435 ①：右键浮层给的补充文字（`🤩 震撼 备注`）接在链接**后面**；
+            //    左键/快捷键那条路 `caption` 为空 ⇒ `stampNoteLine` 原样返回链接，
+            //    落盘形态与 #587 定稿**一字不差**（⛔ 别给纯链接补尾随空格，那会让 Obsidian 把 token 当坏 URL）。
+            const line = stampNoteLine(link, info.caption ?? '');
             const notePath = await this.openVideoNote(entry, false);
-            const { line } = await this.service.appendNoteSection(entry.id, link, MARK_SECTION_STAMP);
-            if (notePath) this.scrollNoteToLine(notePath, line);
+            const written = await this.service.appendNoteSection(entry.id, line, MARK_SECTION_STAMP);
+            if (notePath) this.scrollNoteToLine(notePath, written.line);
             await this.refreshPlayerMarks(entry.id);
             new Notice(`已插入时间戳 · 《${entry.title}》笔记`, 3000);
         } catch (err) {
             new Notice(`插入时间戳失败：${err instanceof Error ? err.message : String(err)}`, 4000);
         }
+    }
+
+    /**
+     * 🔴 m04435 ①：右键浮层预览里的时间文字（`0:20` / 多集 `第3集·0:20`）。
+     *
+     * 与 {@link videoTimeLink} 用**同一套集数口径**（文件数 / 网络集 / 声明总集数取 max）：
+     * 预览若自己按 `items.length` 判，纯网络条目会被算成单集、预览不带集号，而落盘带 —— 预览与结果不一致。
+     *
+     * ⚠️ 命名刻意避开「Preview + Label」那种拼法：产物断言 `#452` 有一条**全局反向守卫**，
+     * 要求「评语标签」那个旧函数名（`pure/labels` 里早已退场）在产物中出现 **0 次**。
+     * 我这颗钩子若拼成那个词就会以子串形式命中它 ⇒ 门禁假红。
+     * ⛔ 别去改那条守卫来迁就命名；也⛔ 别在任何条目里写出那个字面量 —— **块注释同样会进产物**。
+     */
+    private stampPreviewTextOf(entry: MediaEntry, info: { seconds: number; ep: number }): string {
+        const total = Math.max(
+            entry.type === 'movie' ? 1 : 0,
+            entry.episodeFiles?.length ?? 0,
+            entry.episodeUrls?.length ?? 0,
+            entry.episodeTitles?.length ?? 0,
+            entry.progress?.totalEpisodes ?? 0,
+        );
+        return stampLabel(info.seconds, { ep: info.ep, multi: total > 1 });
     }
 
     /**
@@ -7028,15 +12022,20 @@ export default class ReelLudicPlugin extends Plugin {
      *    （传 200×150 得 200×150 的 PNG）⇒ 一条通道覆盖三端。
      * 🔴 矩形单位是 **DIP = CSS px**，与 `getBoundingClientRect()` 同尺，⛔ 不要乘 `devicePixelRatio`。
      */
-    async saveReaderShot(entry: MediaEntry, info: { rect: ShotRect; loc?: ShotLoc; at?: Date }): Promise<void> {
+    async saveReaderShot(
+        entry: MediaEntry,
+        info: { rect: ShotRect; loc?: ShotLoc; at?: Date; png?: ArrayBuffer },
+    ): Promise<void> {
         try {
             // 🔴 必须先等一帧再抓：框选层刚被 `ShotOverlay.destroy()` 摘掉，浏览器还没重绘，
             //    立刻 `capturePage` 会抓到**上一帧的遮罩**（真机实测：截出来是一整块灰）。
             //    两道 rAF 等合成帧，再加 60ms 兜底（某些机器合成与 rAF 不同步）。
+            // 🔴 2026-11-13：批注链路在弹窗**打开*就已经抓好图了（`info.png`），那一步必须复用它的像。
+            //    否则会抓到「批注弹窗自己」，且用户调过的框与最终落盘不一致。
             await new Promise<void>((resolve) => {
                 requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 60)));
             });
-            const png = await this.captureViewRect(info.rect);
+            const png = info.png ?? (await this.captureViewRect(info.rect));
             if (!png) {
                 new Notice('截图失败：当前环境不支持抓取窗口画面', 4000);
                 return;
@@ -7058,35 +12057,96 @@ export default class ReelLudicPlugin extends Plugin {
             if (notePath) this.scrollNoteToLine(notePath, line);
             new Notice(`已截图并写入《${entry.title}》笔记`, 3000);
         } catch (err) {
-            new Notice(`截图失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+            new Notice(`启动失败：${err instanceof Error ? err.message : String(err)}`, 4000);
         }
     }
 
     /**
+     * 阅读器「区域截图批注」（2026-11-13 用户指令：截图按钮**右键**进批注模式）。
+     *
+     * 与 `saveReaderShot` 的差别只有一步：**先抓图、再开批注弹窗、用户点保存后落盘**。
+     * 🔴 抓图必须在弹窗打开前完成 —— 弹窗一开就会盖住正文区域，之后再 `capturePage`
+     *    抓到的就是弹窗自己（这是整条链路最容易踩的一处）。
+     * 🔴 落盘仍走 `saveReaderShot({ png })`：文件名规则、笔记区块、滚动定位全部复用，
+     *    不要在这里另写一遍写笔记逻辑。
+     */
+    async annotateReaderShot(entry: MediaEntry, info: { rect: ShotRect; loc?: ShotLoc; at?: Date }): Promise<void> {
+        // 框选层已自毁，等一帧让它真的离开画面（同 `saveReaderShot` 的理由）
+        await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 60)));
+        });
+        const png = await this.captureViewRect(info.rect);
+        if (!png) {
+            new Notice('截图失败：当前环境不支持抓取窗口画面', 4000);
+            return;
+        }
+        new ShotAnnotateModal(this.app, {
+            png,
+            onSave: (annotated: ArrayBuffer) => this.saveReaderShot(entry, { rect: info.rect, loc: info.loc, at: info.at, png: annotated }),
+        }).open();
+    }
+
+    /**
      * 抓取视口矩形内的真实像素（PNG bytes）。
-     * 走 `electron.remote.getCurrentWebContents().capturePage(rect)` —— 本仓既有 `require('electron')` 模式
-     * （见 `:3611` 等多处）。取不到（非桌面端 / API 缺失）返回 null，让调用方明确报错而不是静默失败。
+     * 走 `webContents.capturePage(rect)`。
+     *
+     * 🔴🔴 2026-11-14 用户 m03072 ⑤（bug 修复）：用户报「阅读器的截图批注模式下……也无法点击截图」。
+     *    抓像素是本仓唯一需要 Electron 主进程能力的动作，而 `remote` 的**取得方式因版本而异**：
+     *    Obsidian 1.x 有时只在 `require('electron').remote` 上，有时 `@electron/remote` 包，
+     *    有时挂在 `window.require` 上。旧实现只试第一条 ⇒ 取不到就 `return null` ⇒ 批注弹窗
+     *    永远打不开（左键截图也一起失败），表现正是「点不了」。
+     *    现改为**按序试三条通道**，任一拿到 `webContents` 即可；全拿不到才返回 null。
+     *    ⛔ 不要在失败时静默吞掉 —— 调用方要能区分「功能不支持」与「做法错了」。
+     *
+     * ⚠️ 实现细节（踩过）：模块名必须放进**变量**再传给 `require`。
+     *    `require('@electron/remote')` 这种字面量写法会被 esbuild 在**打包期**静态解析，
+     *    而该包不在 `package.json` 里（Obsidian 运行时才可能提供）⇒ 构建直接
+     *    `Could not resolve "@electron/remote"` 失败。走 `window.require` / 间接引用即可绕开。
      */
     private async captureViewRect(rect: ShotRect): Promise<ArrayBuffer | null> {
         try {
             if (!Platform.isDesktopApp) return null;
-            const electron = require('electron') as {
-                remote?: {
-                    getCurrentWebContents?: () => {
-                        capturePage?: (r: ShotRect) => Promise<{ toPNG: () => Buffer } | null>;
-                    } | null;
-                };
+            type CapWc = {
+                capturePage?: (r: ShotRect) => Promise<{ toPNG: () => Buffer } | null>;
             };
-            const wc = electron.remote?.getCurrentWebContents?.();
-            if (!wc) return null;
-            const cap = wc.capturePage;
-            if (typeof cap !== 'function') return null;
-            const image = await cap.call(wc, rect);
-            if (!image) return null;
-            const buf = image.toPNG();
-            if (!buf || buf.byteLength === 0) return null;
-            // Buffer 底层 ArrayBuffer 可能带池偏移 ⇒ slice 出独立视图（与 `readPdf` 同款处理）
-            return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+            type ElectronLike = { remote?: { getCurrentWebContents?: () => CapWc | null } | null };
+
+            // 间接引用：⛔ 不要写成 `require('electron')` 字面量（esbuild 会试图打包它）
+            const nodeRequire: ((id: string) => unknown) | undefined =
+                typeof require === 'function' ? (require as unknown as (id: string) => unknown) : undefined;
+            const winRequire = (window as unknown as { require?: (id: string) => unknown }).require;
+
+            const loadModule = (id: string): ElectronLike | undefined => {
+                for (const req of [winRequire, nodeRequire]) {
+                    if (typeof req !== 'function') continue;
+                    try {
+                        return req(id) as ElectronLike;
+                    } catch {
+                        // 模块不存在 / 上下文隔离 ⇒ 换下一条通道
+                    }
+                }
+                return undefined;
+            };
+
+            const candidateIds = ['electron', '@electron/remote'];
+
+            for (const id of candidateIds) {
+                let wc: CapWc | null | undefined;
+                try {
+                    wc = loadModule(id)?.remote?.getCurrentWebContents?.();
+                } catch {
+                    continue;
+                }
+                const cap = wc?.capturePage;
+                if (!wc || typeof cap !== 'function') continue;
+                const image = await cap.call(wc, rect);
+                if (!image) continue;
+                const buf = image.toPNG();
+                if (!buf || buf.byteLength === 0) continue;
+                // Buffer 底层 ArrayBuffer 可能带池偏移 ⇒ slice 出独立视图（与 `readPdf` 同款处理）
+                return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+            }
+            return null;
         } catch {
             return null;
         }
@@ -7123,9 +12183,9 @@ export default class ReelLudicPlugin extends Plugin {
             const { line } = await this.service.appendNoteSection(entry.id, block, MARK_SECTION_SHOT);
             if (notePath) this.scrollNoteToLine(notePath, line);
             await this.refreshPlayerMarks(entry.id);
-            new Notice(`已截取当前帧 · 《${entry.title}》笔记`, 3000);
+            new Notice(`已插入时间戳 · 《${entry.title}》笔记`, 3000);
         } catch (err) {
-            new Notice(`截图失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+            new Notice(`启动失败：${err instanceof Error ? err.message : String(err)}`, 4000);
         }
     }
 
@@ -7138,7 +12198,16 @@ export default class ReelLudicPlugin extends Plugin {
      */
     private async openVideoNote(entry: MediaEntry, focus = true): Promise<string | null> {
         let notePath = (await this.service.get(entry.id))?.notePath;
-        if (!notePath) {
+        // 🔴 判据必须是「文件真的在」，不能只看 `notePath` 有没有值：
+        // 🔴 notePath 必须写：这是「这条条目对应哪篇笔记」的唯一真源，
+        // 🔴 notePath 必须写：这是「这条条目对应哪篇笔记」的唯一真源，
+        //    用户看到的就是「条目在、笔记没了」且**怎么点都修不回来**。
+        //    改成文件校验后，打开即可自愈（writeNote 会按当前标题重新生成。
+        const fileMissing = () => {
+            if (!notePath) return true;
+            return !(this.app.vault.getAbstractFileByPath(notePath) instanceof TFile);
+        };
+        if (fileMissing()) {
             await this.service.writeNote(entry.id);
             notePath = (await this.service.get(entry.id))?.notePath;
         }
@@ -7168,7 +12237,13 @@ export default class ReelLudicPlugin extends Plugin {
      */
     private async openNoteBeside(id: string): Promise<string | null> {
         let notePath = (await this.service.get(id))?.notePath;
-        if (!notePath) {
+        // `openVideoNote`：判「文件在不在」，不判「notePath 有没有值」。
+        // 否则 notePath 指向已被删的文件时，这次调用既不重建也不报错，静默返null。
+        const missing = () => {
+            if (!notePath) return true;
+            return !(this.app.vault.getAbstractFileByPath(notePath) instanceof TFile);
+        };
+        if (missing()) {
             await this.service.writeNote(id);
             notePath = (await this.service.get(id))?.notePath;
         }
@@ -7208,6 +12283,16 @@ export default class ReelLudicPlugin extends Plugin {
             for (const leaf of this.app.workspace.getLeavesOfType(VIDEO_PLAYER_VIEW_TYPE)) {
                 const view = leaf.view;
                 if (view instanceof VideoPlayerView && view.playingEntryId === entryId) view.setMarks(marks);
+            }
+            // 🔴 用户 2026-11-14：「网络集的时间戳…在时间戳列表不能显示」。
+            //    详情页也`VideoPlayerView` 的子类，但它的叶子类型是。
+            //    `EPISODE_PAGE_VIEW_TYPE` —上面那个 `getLeavesOfType(VIDEO_PLAYER_VIEW_TYPE)`
+            //    **永远找不到它** 在详情页插入的时间戳，本页抽屉里看不到（得重开页才有）。
+            //    ⚠️ 判据`currentEntryId()` 而不`playingEntryId`：详情页`opts.entryId`
+            //    也是同一条目没错，但它还有「是不是这一页」的语义要认，`currentEntryId` 更明确。
+            for (const leaf of this.app.workspace.getLeavesOfType(EPISODE_PAGE_VIEW_TYPE)) {
+                const view = leaf.view;
+                if (view instanceof EpisodePageView && view.currentEntryId() === entryId) view.setMarks(marks);
             }
         } catch {
             /* 标记刷新失败不该影响插入本身 */
@@ -7265,6 +12350,30 @@ export default class ReelLudicPlugin extends Plugin {
                     return;
                 }
             }
+            // 🔴 用户 2026-11-14：「网络集的时间戳…不能跳转」。
+            //    根因就在下面这一行：`openEpisodeLocal` 开`const startPath = all[startIdx];
+            //    if (!startPath) return;` —网络集没有本地文**静默 return**。
+            //    用户点了笔记里的时间戳，界面一动不动（连报错都没有）。
+            // 这一集没有本地文件、但有网络地址时改走选集页的网络态（`netStart` + `seekSec`）
+            //    由它取流后定位到目标秒。⛔ 别指`openEpisodeLocal` 自己—它按定义只认本地文件。
+            const hasLocal = !!entry.episodeFiles?.[index];
+            const netUrl = entry.episodeUrls?.[index];
+            if (!hasLocal && netUrl) {
+                // ⚠️ 先找**已经开着**的同条目详情页，原地换源。
+                //    `openEpisodePageFor` 只在「当前激活叶子恰好是选集页」时复用，
+                //    否则`getLeaf('tab')` 新开一页（真机实测 1 2 个页面。
+                //    2026-11-09「别新开标签页」的裁定冲突）。
+                for (const leaf of this.app.workspace.getLeavesOfType(EPISODE_PAGE_VIEW_TYPE)) {
+                    const v = leaf.view;
+                    if (v instanceof EpisodePageView && v.currentEntryId() === entry.id) {
+                        this.app.workspace.setActiveLeaf(leaf, { focus: true });
+                        v.jumpToNetEpisode(index, target.seconds);
+                        return;
+                    }
+                }
+                await this.openEpisodePageFor(entry, index, target.seconds, true, index);
+                return;
+            }
             void this.openEpisodeLocal(entry, index, target.seconds, true);
         } catch (err) {
             new Notice(`跳到时间戳失败：${err instanceof Error ? err.message : String(err)}`, 4000);
@@ -7282,10 +12391,10 @@ export default class ReelLudicPlugin extends Plugin {
             }
             // 锚点链接只能靠内置阅读器定位（外部程序无法定位到块锚点），故此处不看 internalBookReader 开关
             void this.openBookInternal(entry, normalizePath(entry.bookFile), blockId).catch((err) => {
-                new Notice(`打开定位失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+                new Notice(`启动失败：${err instanceof Error ? err.message : String(err)}`, 4000);
             });
         } catch (err) {
-            new Notice(`打开定位失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+            new Notice(`启动失败：${err instanceof Error ? err.message : String(err)}`, 4000);
         }
     }
 
@@ -7303,9 +12412,9 @@ export default class ReelLudicPlugin extends Plugin {
             const electron = require('electron') as { shell?: { openPath(p: string): Promise<string> } };
             const fullPath = this.resolveSystemPath(path);
             const err = await electron.shell?.openPath(fullPath);
-            if (err) new Notice(`外部打开失败：${err}`, 4000);
+            if (err) new Notice(`启动失败：${err}`, 4000);
         } catch (err) {
-            new Notice(`外部打开失败：${err instanceof Error ? err.message : String(err)}`, 4000);
+            new Notice(`启动失败：${err instanceof Error ? err.message : String(err)}`, 4000);
         }
     }
 
@@ -7434,7 +12543,7 @@ export default class ReelLudicPlugin extends Plugin {
                 view?.refreshExcerpts(await this.loadEntryExcerpts(entry.id));
                 return true;
             } catch (err) {
-                new Notice(`写入摘抄失败：${err instanceof Error ? err.message : String(err)}`);
+                new Notice(`写入摘抄失败：${err instanceof Error ? err.message : String(err)}${err instanceof Error ? err.message : String(err)}`);
                 return false;
             }
         };
@@ -7447,6 +12556,10 @@ export default class ReelLudicPlugin extends Plugin {
          *  🔴 注入口在三个 `openWith` 里都叫 `onShotSave`；PDF 传 `{page}`，TXT/EPUB 传 `{chapter,pct}`。 */
         const onShotSave = (rect: ShotRect, loc?: ShotLoc): void => {
             void this.saveReaderShot(entry, { rect, loc });
+        };
+        /** 区域截图**右键批注**（2026-11-13 用户指令）：先抓图 → 七工具批注弹窗 → 保存后走同一条落盘通道 */
+        const onShotAnnotate = (rect: ShotRect, loc?: ShotLoc): void => {
+            void this.annotateReaderShot(entry, { rect, loc });
         };
         // 摘抄书签数据源（读笔记摘抄区；打开时读一次）
         const excerpts = await this.loadEntryExcerpts(entry.id);
@@ -7578,7 +12691,7 @@ export default class ReelLudicPlugin extends Plugin {
             } else {
                 const arc = await this.openComicArchive(path);
                 if (!arc) {
-                    new Notice(`书籍文件不存在或无法解包：${entry.bookFile}`, 5000);
+                    new Notice(`书籍文件不存在或无法解包：${entry.bookFile}${entry.bookFile}`, 5000);
                     return undefined;
                 }
                 names = arc.names;
@@ -7628,6 +12741,7 @@ export default class ReelLudicPlugin extends Plugin {
                 bookmarks,
                 onBookmarksChange,
                 onShotSave,
+                onShotAnnotate,
             });
             return withReadTime(reader.leaf, waitReaderClosed(reader));
         }
@@ -7664,6 +12778,7 @@ export default class ReelLudicPlugin extends Plugin {
                 onProgressPersist,
                 onExcerptSave,
                 onShotSave,
+                onShotAnnotate,
                 onPurgeAnnotations,
                 onSettingsChange,
                 onDeleteExcerpt,
@@ -7742,7 +12857,8 @@ export default class ReelLudicPlugin extends Plugin {
                         bookmarks,
                         onBookmarksChange,
                         onShotSave,
-                    });
+                        onShotAnnotate,
+                        });
                     return withReadTime(reader.leaf, waitReaderClosed(reader));
                 }
                 // 图册型判定失败（纯文字 EPUB / 图片走 CSS background 等）→ 交回文字阅读器，但说清缘由
@@ -7779,6 +12895,7 @@ export default class ReelLudicPlugin extends Plugin {
                 onProgressPersist,
                 onExcerptSave,
                 onShotSave,
+                onShotAnnotate,
                 onPurgeAnnotations,
                 onSettingsChange,
                 onDeleteExcerpt,
@@ -7841,6 +12958,7 @@ export default class ReelLudicPlugin extends Plugin {
                 // 2026-10-23：PDF 区域截图（动作条上方「区域截图」按钮 → 拖框 → 宿主 capturePage）。
                 // 与 TXT/EPUB 共用同一个 `onShotSave` 闭包；PDF 额外传 `{page}` 定位（截图块标「第 N 页」）。
                 onShotSave,
+                onShotAnnotate,
                 // 2026-10-23 用户指令：PDF 顶栏同步 TXT/EPUB 的快捷功能（书签/高亮/摘抄/截图/翻译/网络搜索/设置）。
                 // 翻译与网络搜索复用 TXT/EPUB 那两个闭包 —— 同一套 AI/外部链接通道，⛔ 别另起实现。
                 onTranslate: (text) => this.translateText(text),
@@ -7914,6 +13032,64 @@ export default class ReelLudicPlugin extends Plugin {
         //    用户报的 bug 正是「播放中识别不到新条目与更新后的歌词」—— 挂在 `refreshViews` 上
         //    就与「保存 / 删除 / 关联」这些入口天然同步，⛔ 不必每个调用点各写一遍（会漏）。
         await this.refreshAudioPlayers();
+        // 🔴 2026-11-08：选集页同—它的 `pageCtx.entry` 是打开那一刻的快照。
+        //    简介封面加了右键菜单之后，「编辑属性」改完保存就落在这条通路上，
+        //    不刷的话用户得关掉整页重开才看得见新封/ 新标题。
+        //    ⚠️ 只在**真有选集页开着**时才catalog（`getLeavesOfType` 空数组开销为零）。
+        await this.refreshEpisodePages();
+        // 🔴 2026-11-08（用m04478「修改了但当前播放页没有实时生效」）。
+        //    独立播放器页签此*没有任何刷新入口** —它的片名是打开那一刻的快照。
+        //    改完标题回到那一页，顶栏与标签页都还是旧名。这里按 entryId 认页后只推新片名。
+        //    不重建视图（重建会打断正在播的片子，也与「认人不打断」的口径相反）。
+        this.refreshPlayerTitles();
+    }
+
+    /**
+     * 把最新片名推给已打开的独立播放器页签（只改名，不重建、不打断播放）。
+     *
+     * ⚠️ 与选集页那条分开：选集页自己会在 `refreshEntrySnapshot` 里推片名
+     *    （它还有标题块与简介卡要重画），这里只管**纯播放器**页签。
+     */
+    private refreshPlayerTitles(): void {
+        const leaves = this.app.workspace.getLeavesOfType(VIDEO_PLAYER_VIEW_TYPE);
+        if (!leaves.length) return;
+        for (const leaf of leaves) {
+            const v = leaf.view;
+            if (!(v instanceof VideoPlayerView)) continue;
+            const id = v.playingEntryId;
+            // 单文件预/ 无条目上下文（`playingEntryId` 为空）没有「条目改名」这回事。
+            if (!id) continue;
+            void this.service.get(id).then((latest) => {
+                if (!latest) return;
+                v.applyEntryTitle(latest.title);
+            });
+        }
+    }
+
+    /**
+     * 把最新条目推给已打开的选集页（只重画标题块 + 简介卡，不重建播放器、不打断播放）。
+     *
+     * ⚠️ 与 `refreshViews()` 分开：`refreshEntrySnapshot` 需要每页各自的最新条目与封面地址，
+     *    而 `resolvePoster` 会碰 vault 文件系统 —— 没开选集页时**一次都不该调用**。
+     */
+    private async refreshEpisodePages(): Promise<void> {
+        const leaves = this.app.workspace.getLeavesOfType(EPISODE_PAGE_VIEW_TYPE);
+        if (!leaves.length) return;
+        const views = leaves
+            .map((leaf) => leaf.view)
+            .filter((v): v is EpisodePageView => v instanceof EpisodePageView);
+        if (!views.length) return;
+        const ids = [...new Set(views.map((v) => v.currentEntryId()).filter((id): id is string => !!id))];
+        if (!ids.length) return;
+        for (const id of ids) {
+            // 条目可能刚被删掉 `get` 返回 null，此时不刷（页面会被删除通路自己关掉。
+            const latest = await this.service.get(id);
+            if (!latest) continue;
+            const cover = this.resolvePoster(latest) ?? null;
+            for (const v of views) {
+                if (v.currentEntryId() === id) v.refreshEntrySnapshot(latest, cover);
+            }
+        }
     }
 
     /**
@@ -8059,7 +13235,283 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /**
-     * 🔴 2026-10-25 用户指令：「点击"一键迁移"先弹窗列出当前可以迁移的封面条目出来然后用户勾选再迁移，默认全选」
+     * 关联媒体重命名入口：扫全库算计划 弹窗列「旧 新」→ 用户勾选后执行。
+     *
+     * 🔴 2026-11-13 用户指令（现行定稿）：设置页标题从「批量重命名」改成「关联媒体重命名」，
+     *    规则模板换成**按类型分列的七套**（电影 / 剧集 / 动画 / 音乐 / 漫画 / 文学 / 网文，
+     *    真源 `pure/batchRename.RENAME_TEMPLATE_GROUPS`），弹窗**只列关联的文件**、⛔ 不报跳过数量。
+     *
+     * 职责划分：规则全在 `pure/batchRename`（可单测到逐字符），本方法只做「取全库 → 交给弹窗」。
+     * ⛔ 别在这里判定哪个文件能改 —— 那是 `runBatchRename` 拿 `TFile` 时才知道的事。
+     */
+    async openBatchRename(): Promise<void> {
+        const entries = await this.service.list();
+        const plans = planBatchRename(entries, {});
+        new BatchRenameModal(this.app, plans, (picked) => this.runBatchRename(picked)).open();
+    }
+
+    /**
+     * 执行改名（唯一碰文件系统的地方）。
+     *
+     * 🔴 三条不可省的顺序：
+     *   ⑴ 先用 `vault.getAbstractFileByPath()` 拿到 `TFile` —— 拿不到说明是**库外绝对路径**
+     *      （`scanEpisodeDir` 回填的那种），插件无权也不该改，计入失败。
+     *   ⑵ `fileManager.renameFile()` —— ⛔ 不用 `adapter.rename`（前者会同步更新所有指向该文件的链接，
+     *      后者只挪文件、链接全断）。
+     *   **改名成功后立刻回写条目字段**（`episodeFiles` / `audioPath` / `bookFile`）—— 这一步漏了
+     *      条目关联就指向不存在的旧路径，下次打开播放器直接「文件不见了」。
+     *      ⚠️ `bookFile` 2026-11-13 补上的：七类规则里「文学 / 网文 / 漫画」都靠 `bookFile` 定位。
+     *      漏回写会让电子书改名后立刻打不开（此前只有 `episodeFiles` / `audioPath` 两条回写分支）。
+     */
+    async runBatchRename(plans: readonly RenamePlan[]): Promise<{ renamed: number; failed: number }> {
+        let renamed = 0;
+        let failed = 0;
+        for (const plan of plans) {
+            const entry = (await this.service.list()).find((e) => e.id === plan.entryId);
+            if (!entry) {
+                failed += plan.renames.length;
+                continue;
+            }
+            let touched = false;
+            const episodes = Array.isArray(entry.episodeFiles) ? [...entry.episodeFiles] : undefined;
+            let audio = entry.audioPath;
+            let book = entry.bookFile;
+
+            for (const item of plan.renames) {
+                const abs = normalizePath(item.path);
+                const file = this.app.vault.getAbstractFileByPath(abs);
+                if (!(file instanceof TFile)) {
+                    // 库外绝对路径 / 文件已被移走 跳过并计。
+                    failed += 1;
+                    console.warn(`[ReelLudic] 批量重命名跳过（不在库内）：${item.path}`);
+                    continue;
+                }
+                const parent = abs.slice(0, abs.lastIndexOf('/'));
+                const nextPath = normalizePath(parent ? `${parent}/${item.next}` : item.next);
+                try {
+                    await this.app.fileManager.renameFile(file, nextPath);
+                    renamed += 1;
+                    touched = true;
+                    if (episodes) {
+                        const at = episodes.indexOf(item.path);
+                        if (at >= 0) episodes[at] = nextPath;
+                    }
+                    if (audio && audio === item.path) audio = nextPath;
+                    // 文学 / 网文 / 漫画bookFile 026-11-13 补；漏了电子书改名后必然打不开。
+                    if (book && book === item.path) book = nextPath;
+                } catch (err) {
+                    failed += 1;
+                    console.warn(`[ReelLudic] 批量重命名失败：${item.path} → ${nextPath}`, err);
+                }
+            }
+
+            if (!touched) continue;
+            // 🔴 回写一定走 `service.update`（唯一收口），别直接改 catalog.json
+            // ⚠️ 只把**真的有变*的字段放patch：`audioPath` / `bookFile` `!==` 比原值。
+            //    否则「改的是2 集」也会把 `audioPath` 重写一遍（多一次无谓落+ 变动时间戳）。
+            const patch: Partial<MediaEntry> = {};
+            if (episodes) patch.episodeFiles = episodes;
+            if (audio !== entry.audioPath) patch.audioPath = audio;
+            if (book !== entry.bookFile) patch.bookFile = book;
+            try {
+                await this.service.update(entry.id, patch);
+            } catch (err) {
+                console.warn(`[ReelLudic] 重命名后回写条目失败：${entry.id}`, err);
+            }
+        }
+        return { renamed, failed };
+    }
+
+    /**
+     * 生成「条目笔记模板」（用户 2026-11-08：「给从笔记导入条目项加个『生成模板』按钮，
+     * 可在仓库根目录生成笔记模板」）。
+     *
+     * 🔴 落盘位置是 `{libraryDir}/条目模板.md`，**不是** `{libraryDir}/笔记/` ——
+     *    `openNoteImport` 只扫 `笔记/` 子树 ⇒ 模板文件在物理上就不可能被当成条目导进来。
+     *    这是第二道保险，第一道是模板里的 `title: "{{标题}}"` 占位符（会被第二道闸拦下）。
+     *
+     * 🔴 已存在就**跳过**并提示路径（用户 2026-11-08 选型：「已存在就跳过，并提示路径」）：
+     *    用户可能已经在模板里记了自己的填法，覆盖是纯粹的损失。
+     *
+     * 职责划分：文本生成全在 `pure/noteTemplate.buildNoteTemplate`（无 obsidian 依赖，可单测），
+     * 本方法只负责「拼上下文 → 补父目录 → 写盘 → Notice」。
+     */
+    async writeNoteTemplate(): Promise<void> {
+        const lib = this.settings.libraryDir || 'ReelLudic';
+        const path = normalizePath(noteTemplatePath(lib));
+        if (this.app.vault.getAbstractFileByPath(path) instanceof TFile) {
+            new Notice(`模板已存在，未覆盖：${path}\n（删掉它再生成，即为当前版本的字段口径）`, 9000);
+            return;
+        }
+        try {
+            const io = createVaultIO(this.app);
+            const parent = path.slice(0, path.lastIndexOf('/'));
+            if (parent && !(this.app.vault.getAbstractFileByPath(parent) instanceof TFolder)) {
+                await this.app.vault.createFolder(parent);
+            }
+            const md = buildNoteTemplate({ libraryDir: lib, pluginVersion: this.manifest.version });
+            await io.writeText(path, md);
+            new Notice(`已生成条目笔记模板：${path}\n照着复制对应类型的区块到 ${lib}/笔记/ 下即可。`, 9000);
+        } catch (err) {
+            new Notice(`生成模板失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+
+    /**
+     * 🔴 2026-11-08 用户指令：「是手写的条目在海报墙上展示无法出现，但笔记文件存在是怎么回事，
+     *    有没有再加个检索库内笔记文件生成条目的项在基本设置下」
+     *
+     * 为什么需要它：海报墙的数据源**只有** `catalog.json`（`service.list()`），插件**没有任何**
+     * 反向扫描能力 —— 手工写的笔记文件不写进 catalog 就永远不会出现在海报墙上。
+     * 本方法是那条缺失通路的唯一入口：扫 `${libraryDir}/笔记/` → 弹窗勾选 → 落 catalog → 回写 id。
+     *
+     * 职责划分（与 `openPosterMigrate` 同架构）：本方法只负责**扫库 + 落库 + 写回**，
+     * 判据全在 `pure/noteImport.scanImportableNotes` 里，选哪几条归弹窗。
+     * ⛔ 弹窗不自己扫库、这里不自己判断勾选 —— 两边各写一份候选口径必然分叉。
+     *
+     * ⚠️ 扫描范围**只收 `{libraryDir}/笔记/` 之下**（用户裁定），⛔ 别扩到全库：
+     *    用户库里还有豆瓣模板、项目文档、140 篇 `musicCN` —— 全库扫描会把模板当条目导进来。
+     */
+    async openNoteImport(): Promise<void> {
+        if (this.isImportingNotes) {
+            new Notice('笔记导入正在进行中…');
+            return;
+        }
+        this.showNoteImportGuide();
+    }
+
+    /**
+     * 引导弹窗（用户 2026-11-17 ⑥：「导入按钮要弹引导弹窗说明笔记需满足什么条件，
+     * 不能只提示『没有可导入的笔记』」）。
+     *
+     * 🔴 为什么先讲条件再扫：导入是单向动作（落 catalog + 把 id 写回笔记），
+     *    点下去才发现「一篇都不合格」的体验等价于功能坏了。条件清单的唯一真源在
+     *    `modals/NoteImportGuideModal.noteImportRequirements`（从 `ENTRY_TYPES` 派生，⛔ 不在这里抄一份）。
+     *
+     * @param lastScan 上一轮零结果的摘要 ⇒ 同一个弹窗就地解释「为什么全被拒」，
+     *                 而不是关掉弹窗再丢一条 Notice（旧行为，正是本次报障的观感来源）
+     */
+    private showNoteImportGuide(lastScan?: NoteImportGuideScan): void {
+        const lib = this.settings.libraryDir || 'ReelLudic';
+        const folder = baseNotesFolder(lib);
+        new NoteImportGuideModal(this.app, {
+            notesDir: folder,
+            templatePath: noteTemplatePath(lib),
+            lastScan,
+            onProceed: () => { void this.runNoteImport(); },
+            onTemplate: () => { void this.writeNoteTemplate(); },
+        }).open();
+    }
+
+    /**
+     * 真正的扫描与导入（`openNoteImport` 与引导弹窗的「扫描笔记」都走这里）。
+     * 🔴 零结果**不再**只丢一句 Notice —— 回填 `lastScan` 重开引导弹窗，把篇数与跳过原因摆出来。
+     */
+    private async runNoteImport(): Promise<void> {
+        if (this.isImportingNotes) {
+            new Notice('笔记导入正在进行中…');
+            return;
+        }
+        const lib = this.settings.libraryDir || 'ReelLudic';
+        const folder = baseNotesFolder(lib);
+        const mdFiles = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(`${folder}/`));
+        if (mdFiles.length === 0) {
+            // 目录里一个 .md 都没有：同样回引导弹窗（那里会说明目录 + 给「生成模板」出口）
+            this.showNoteImportGuide({ scanned: 0, skipped: [] });
+            return;
+        }
+
+        const entries = await this.service.list();
+        // 🔴 逐个读出正文：`scanImportableNotes` 是纯函数（文件内容由调用方提供）。
+        //    别为了「少读几个文件」把 frontmatter 解析搬进宿主 那样判据又变成两。
+        const files: { path: string; text: string }[] = [];
+        for (const f of mdFiles) {
+            try {
+                files.push({ path: f.path, text: await this.app.vault.cachedRead(f) });
+            } catch {
+                // 单个文件读失败（权限 / 正在被同步占用）不该让整个扫描停。
+            }
+        }
+
+        const { candidates, skipped } = scanImportableNotes({ files, entries, notesDir: folder });
+        if (candidates.length === 0) {
+            // 🔴 零候选：回引导弹窗并带上「读了几篇 / 谁被跳过、为什么」。
+            //    旧实现这里只有 `Notice('没有可导入的笔记')` —— 用户既不知道扫了几篇、
+            //    也不知道自己那篇为什么不算，观感等同于功能坏了（用户 2026-11-17 报障）。
+            this.showNoteImportGuide({ scanned: files.length, skipped });
+            return;
+        }
+        new NoteImportModal(this.app, candidates, skipped, (paths) => {
+            void this.importNotesToEntries(paths, candidates, lib);
+        }).open();
+    }
+
+    /**
+     * 把勾选的笔记落成条目（`openNoteImport` 的回调出口）。
+     *
+     * 🔴 顺序不能反：**先落 catalog 再回写笔记 id**。
+     *    反过来的话，回写完 id 却落库失败（比如 catalog 写盘被占用），笔记里就留下了一个
+     *    catalog 里不存在的 id —— 下次扫描会被 `byId` 当成「已存在」静默跳过，条目永久丢失。
+     *    现在这个顺序下最坏情况只是「笔记没有 id 行」，下次扫描会再列出来，可重试。
+     */
+    async importNotesToEntries(
+        paths: readonly string[],
+        candidates: readonly NoteImportCandidate[],
+        libraryDir: string,
+    ): Promise<void> {
+        const byPath = new Map(candidates.map((c) => [c.path, c]));
+        this.isImportingNotes = true;
+        let ok = 0;
+        const failed: string[] = [];
+        try {
+            for (const p of paths) {
+                const cand = byPath.get(p);
+                if (!cand) continue; // 弹窗给的 path 不在候选里 —— 跳过而不是猜
+                try {
+                    // 🔴 2026-11-08 修复：`posterFromBanner` 此前**从未被调*（函数写对了没人用）。
+                    //    banner 存的是「库内完整路径」如 `媒体封面/x.jpg`，`resolvePosterUrl`
+                    //    会再拼一`libraryDir` 变成 `媒体媒体封面/x.jpg` 文件不存封面空白。
+                    //    落库前必须剥掉库目录前缀（http(s) 原样返回，前缀对不上也原样返回，不猜）。
+                    const banner = cand.draft.poster;
+                    const poster = banner ? posterFromBanner(banner, libraryDir) : undefined;
+                    // catalog：id 有就用笔记里的，没有交给 normalizeEntry 生成。
+                    const created = await this.service.create({
+                        ...cand.draft,
+                        poster,
+                        id: cand.id || undefined,
+                        type: cand.type,
+                        title: cand.title,
+                        // 🔴 notePath 必须写：这是「这条条目对应哪篇笔记」的唯一真源，
+                        //    也是下次扫描的 `usedPaths` 去重判据（⛔ 漏写会导致每次扫描都重复列出）
+                        notePath: p,
+                        createdAt: new Date().toISOString(),
+                    });
+                    // 回写 id 到笔frontmatter（用户裁定「写回」）
+                    const file = this.app.vault.getAbstractFileByPath(p);
+                    if (file instanceof TFile) {
+                        const text = await this.app.vault.read(file);
+                        const next = writeIdIntoNote(text, created.id, created.type, created.title);
+                        if (next !== text) await this.app.vault.modify(file, next);
+                    }
+                    ok++;
+                } catch (e) {
+                    failed.push(`${cand.title}：${e instanceof Error ? e.message : String(e)}`);
+                }
+            }
+        } finally {
+            this.isImportingNotes = false;
+        }
+        if (failed.length === 0) {
+            new Notice(`已导入 ${ok} 个条目`);
+        } else {
+            new Notice(`已导入 ${ok} 个，失败 ${failed.length} 个：${failed.slice(0, 3).join('、')}`);
+        }
+        // 海报/ 各视图都缓存了条目列不重画就「导了但看不见」，用户会以为没生效。
+        await this.refreshViews();
+    }
+
+    /**
+     * 🔴 2026-10-25 用户指令：「点击一键迁移先弹窗列出当前可以迁移的封面条目出来然后用户勾选再迁移，默认全选」
      *
      * 职责划分：本方法只负责**扫候选 + 串流程**（扫库口径唯一），选哪几条归弹窗（纯表现层）。
      * ⛔ 弹窗不自己扫库、这里不自己判断勾选 —— 两边各写一份候选口径必然分叉。
@@ -8082,11 +13534,43 @@ export default class ReelLudicPlugin extends Plugin {
         new PosterMigratePickModal(this.app, candidates, (ids) => {
             // 进度与结果都归 `PosterMigrateProgressModal`（`finish()` 自己展示结果，
             // ⛔ 别再弹 `PosterMigrateModal`，否则一次迁移会连开两个弹窗）。
-            const modal = new PosterMigrateProgressModal(this.app);
+            //
+            // 🔴 用户 m01938「切到别的笔记去工作」：弹窗被关掉时任务**照常继续**。
+            //    进度接管到悬浮球—否则用户关掉弹窗就等于「不知道还在不在跑」
+            //    只能干等或者以为失败了。（球挂 body，跨笔记存活。）
+            let ball: ReturnType<typeof startProgressBall> | null = null;
+            let lastPct: number | null = null;
+            let lastLabel = '正在下载封面';
+            const modal = new PosterMigrateProgressModal(this.app, () => {
+                if (modal.closedByUser && !ball) {
+                    ball = startProgressBall(lastLabel);
+                    ball.update({ percent: lastPct, detail: `封面迁移中` });
+                }
+            });
             modal.open();
-            void this.localizeAllPosters((done, total, step) => modal.setProgress(done, total, step), ids)
-                .then((result) => modal.finish(result))
-                .catch((e) => modal.fail(e instanceof Error ? e.message : String(e)));
+            void this.localizeAllPosters((done, total, step) => {
+                modal.setProgress(done, total, step);
+                // 同步给球（球可能还没起；这些值就是它接管时的起点。
+                lastPct = total > 0 ? Math.round((done / total) * 100) : null;
+                lastLabel = step ? `正在处理《${step.title}》` : "正在下载封面";
+                ball?.update({ label: lastLabel, percent: lastPct });
+            }, ids)
+                .then((result) => {
+                    modal.finish(result);
+                    if (ball) {
+                        // 已经关窗在看球负责报结果，弹窗那finish 只更新了它自己的（已关闭的）DOM
+                        ball.done(`成功 ${result.success} 个`);
+                        ball = null;
+                    }
+                })
+                .catch((e) => {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    modal.fail(msg);
+                    if (ball) {
+                        ball.fail(msg);
+                        ball = null;
+                    }
+                });
         }).open();
     }
 
@@ -8213,7 +13697,7 @@ export default class ReelLudicPlugin extends Plugin {
             }
             return { candidates: platformCandidates(source, mine) };
         } catch (e) {
-            return { candidates: [], error: `平台搜索失败：${e instanceof Error ? e.message : String(e)}` };
+            return { candidates: [], error: `平台搜索失败：${e instanceof Error ? e.message : String(e)}${e instanceof Error ? e.message : String(e)}` };
         }
     }
 
@@ -8221,7 +13705,7 @@ export default class ReelLudicPlugin extends Plugin {
      * #498 把搜到的封面下载并本地化到 `封面/`（与既有封面本地化**同一条**命名 / 重名去重口径）。
      * 🔴 带**来源站自己**的 `Referer`（`pure/posterSearch.posterReferer` 从来源页取 origin）——
      *    这类图站多数按 Referer 防盗链，不带就常见 403（`fetchImageBuffer` 里有回落说明）。
-     * ⚠️ 失败只回 `{ok:false, message}`：**由候选弹窗就地显示**，⛔ 不在这里弹 Notice
+     * ⚠️ 失败只回 `${ok:false, message}`，**由候选弹窗就地显示**，⛔ 不在这里弹 Notice
      *    （用户正在挑图，弹窗被打断反而更烦；而且这条链路失败是常态：图挂了 / 站挂了）。
      */
     async downloadSearchedPoster(
@@ -8234,7 +13718,7 @@ export default class ReelLudicPlugin extends Plugin {
             const path = await this.downloadPosterToLocal(url, title, posterReferer(candidate.page));
             return { ok: true, message: '封面已下载并设为封面', path };
         } catch (e) {
-            return { ok: false, message: `这张下载失败：${e instanceof Error ? e.message : String(e)}（换一张试试）` };
+            return { ok: false, message: `这张下载失败：${e instanceof Error ? e.message : String(e)}（换一张试试）${e instanceof Error ? e.message : String(e)}（换一张试试）` };
         }
     }
 
@@ -8252,6 +13736,34 @@ export default class ReelLudicPlugin extends Plugin {
 
     /** 存量封面全量迁移进行中标志（防重复点击并发迁移；按钮保持可点击，重复点击给提示） */
     isMigratingPosters = false;
+
+    /**
+     * 最近一次 YouTube 取流失败的中文原因（`null` = 上次成功或还没试过）。
+     *
+     * 🔴 为什么留这个字段而不是直接弹 Notice：取流是**静默失败**的
+     * （`ytStreamFor` 返回 null，视图层只显示「这集没有可播放的视频」）。
+     * 用户看到那句等于没给任何线索 —— 到底是没装 yt-dlp、要登录、还是代理不通？
+     * 留一手给宿主在提示里拼上真实原因，也方便排障时读。
+     */
+    lastYtError: string | null = null;
+
+    /**
+     * 最近一次 **B 站** 取流失败的中文原因（`null` = 上次成功或还没试过）。
+     *
+     * 🔴 与 `lastYtError` 同一条理由，但 B 站这边更糟：`biliStreamFor` 原来有六处
+     * `return null`（非桌面端 / 解析不出片号 / 拿不到 cid / HTTP 非 200 / JSON 坏 /
+     * `pickBiliStream` 空 / 裸 catch），**一处都不留话**。调用方看到 null 只能
+     * `openExternalUrl(url)` 把用户踢去浏览器 —— 用户视角就是「点了播放，然后浏览器开了，
+     * 插件里什么都没有」，完全不知道是稿子没了还是插件坏了（用户 m02763 报障原话：
+     * 「网络集用插件播放器加载不出来」）。
+     * 真机实测两条报障条目（2026-11-15）直查 `x/web-interface/view` 均回
+     * `code=62002 msg="稿件不可见"` —— 稿子被删/私享/地区限制，取流失败是**正确行为**，
+     * 错的是失败后不解释。⇒ 每次取流先清空、失败时写原因，让宿主能如实说清。
+     */
+    lastBiliError: string | null = null;
+
+    /** 笔记导入进行中标志（同上：防并发；重复点击给提示而不是并排跑两份） */
+    isImportingNotes = false;
 
     /**
      * 存量封面全量迁移：遍历 URL 封面逐个下载（限速 300ms/张、失败跳过），onProgress 实时回调进度，
@@ -8309,7 +13821,7 @@ export default class ReelLudicPlugin extends Plugin {
     /** 存量豆瓣本地封面高清化（2026-09-09 用户反馈：游戏封面糊——搜索级 spic/s_ratio_poster 缩略档落库 70~100px）：
      *  遍历豆瓣源且 poster 已本地化的条目，读本地文件测宽 < 200px 判为模糊 → 回源豆瓣详情（fetchDetail，
      *  详情封面 URL 经 upscaleDoubanCover 高清化 + og:image 兜底）取高清封面 → 下载覆盖同名文件。
-     *  失败（反爬/详情无封面/条目源 URL 缺失）跳过并记录原因；限速 300ms/张；onProgress 实时回调。
+     * 存量封面全量迁移：遍历 URL 封面逐个下载（限速 300ms/张、失败跳过），onProgress 实时回调进度，
      *  返回 { scanned, upgraded, fail, failures }（skipped=true 表示已有迁移在跑）。 */
     async upgradeBlurredPosters(onProgress?: (done: number, total: number) => void): Promise<{ scanned: number; upgraded: number; fail: number; failures: { title: string; reason: string }[]; skipped: boolean }> {
         if (this.isUpgradingPosters) return { scanned: 0, upgraded: 0, fail: 0, failures: [], skipped: true };
@@ -8442,7 +13954,7 @@ export default class ReelLudicPlugin extends Plugin {
             }
             new Notice(`已生成 Bases 视图模板：${path}\n打开它即可用 Obsidian 原生 Bases 浏览收藏库。${snippetNote}${legacyNote}`, 12000);
         } catch (err) {
-            new Notice(`生成 Bases 模板失败：${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`生成 Bases 模板失败：${err instanceof Error ? err.message : String(err)}${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
@@ -8488,7 +14000,7 @@ export default class ReelLudicPlugin extends Plugin {
             const text = await createVaultIO(this.app).readText(path);
             await this.restoreFromBackupText(text);
         } catch (err) {
-            new Notice(`恢复失败：${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`生成年度总结失败：${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
@@ -8522,7 +14034,7 @@ export default class ReelLudicPlugin extends Plugin {
             new Notice(`备份恢复完成：新增 ${added}，跳过 ${skipped}（重复/无效）`);
             await this.refreshViews();
         } catch (err) {
-            new Notice(`恢复失败：${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`生成年度总结失败：${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
@@ -8564,7 +14076,7 @@ export default class ReelLudicPlugin extends Plugin {
             fs.writeFileSync(res.filePath, content, 'utf8');
             return res.filePath.split(/[\\/]/).pop() ?? res.filePath;
         } catch (err) {
-            new Notice(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`导出失败：${err instanceof Error ? err.message : String(err)}${err instanceof Error ? err.message : String(err)}`);
             return undefined;
         }
     }
@@ -8588,7 +14100,79 @@ export default class ReelLudicPlugin extends Plugin {
             const text = fs.readFileSync(res.filePaths[0], 'utf8');
             return { name: res.filePaths[0].split(/[\\/]/).pop() ?? res.filePaths[0], text };
         } catch (err) {
-            new Notice(`读取失败：${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`生成年度总结失败：${err instanceof Error ? err.message : String(err)}`);
+            return undefined;
+        }
+    }
+
+    /**
+     * 🔴 本轮用户裁定（需求①）：「给这些本地检索目录框右侧加『浏览』按钮，**直接唤起系统文件选择器**」。
+     *
+     * 返回用户选中的**系统绝对路径**（目录）；取消 / 环境不支持 / 出错都回 `undefined`（⛔ 不抛）。
+     *
+     * 为什么不是 `VaultFolderSuggest`：那个只能选**库内**文件夹，而这几项设置（本地检索目录 /
+     * 音乐下载目录 / 阅读器目录）本来就允许填**系统绝对路径**（占位符逐字是「库内路径，或系统绝对路径」），
+     * 旧实现在「有 vault 补全实例」时**根本不显示浏览按钮**（`if (!inst)`），等于桌面用户反而没有浏览器。
+     * ⇒ 桌面端首选本方法；`hasSystemDialog()` 为假（移动端 / 受限环境）时调用方再回退 vault 选择器。
+     *
+     * ⚠️ 用 `properties: ['openDirectory']`（不是 `openFile`）；`defaultPath` 只在**确实存在**时才传，
+     *    否则 Electron 在部分平台会把对话框定位到一个不存在的目录（表现为「点了没反应」）。
+     */
+    async pickSystemDirectory(defaultPath?: string): Promise<string | undefined> {
+        if (!this.hasSystemDialog()) return undefined;
+        const g = globalThis as unknown as { require?: (id: string) => unknown };
+        const electron = g.require?.('electron') as
+            | { remote?: { dialog?: { showOpenDialog?: (opts: unknown) => Promise<{ canceled: boolean; filePaths: string[] }> } } }
+            | undefined;
+        const dialog = electron?.remote?.dialog;
+        if (!dialog?.showOpenDialog) return undefined;
+        try {
+            const opts: Record<string, unknown> = {
+                title: '选择目录',
+                properties: ['openDirectory', 'createDirectory'],
+            };
+            const seed = (defaultPath ?? '').trim();
+            if (seed && /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(seed)) opts.defaultPath = seed;
+            const res = await dialog.showOpenDialog(opts);
+            if (res.canceled || res.filePaths.length === 0) return undefined;
+            return res.filePaths[0];
+        } catch (err) {
+            new Notice(`打开目录选择器失败：${err instanceof Error ? err.message : String(err)}`);
+            return undefined;
+        }
+    }
+
+    /**
+     * 弹系统**文件**选择器（ASR 引擎配置用），返回绝对路径。取消 / 环境不支持都回 `undefined`。
+     *
+     * 🔴 这里**刻意不复用上面那个 `pickSystemFile(exts, name, toRel, fallbackDir)`**：
+     *    那个把 `lastSystemDir` 会话记忆、`toVaultRelPath` 转换、`fallbackDir` 冷启动落点
+     *    三件事揉在一起，返回的是**可能是库内相对路径**的值 —— 而 ASR 要的是喂给子进程的
+     *    **系统绝对路径**（相对路径它根本打不开）。更麻烦的是它会改写 `lastSystemDir`：
+     *    用户在设置页选了一部片子当模型目录，下一次「浏览本地音频」就会从那个奇怪的目录弹起。
+     *    ⇒ 单独的 `pickSystemFilePath` 只做一件事：绝对路径 + 扩展名过滤，且不碰任何会话状态。
+     *
+     * @param exts 扩展名过滤（不带点，如 `['exe']`）；空数组 = 不过滤
+     * @param name 过滤器的显示名（「可执行文件」/「模型文件」）
+     */
+    async pickSystemFilePath(exts: string[], name: string): Promise<string | undefined> {
+        if (!Platform.isDesktopApp) return undefined;
+        const g = globalThis as unknown as { require?: (id: string) => unknown };
+        const electron = g.require?.('electron') as
+            | { remote?: { dialog?: { showOpenDialog?: (opts: unknown) => Promise<{ canceled: boolean; filePaths: string[] }> } } }
+            | undefined;
+        const dialog = electron?.remote?.dialog;
+        if (!dialog?.showOpenDialog) return undefined;
+        try {
+            const filters = exts.filter((e) => e.length > 0);
+            const res = await dialog.showOpenDialog({
+                properties: ['openFile'],
+                ...(filters.length > 0 ? { filters: [{ name, extensions: filters }] } : {}),
+            });
+            if (res.canceled || res.filePaths.length === 0) return undefined;
+            return res.filePaths[0];
+        } catch (err) {
+            new Notice(`打开文件选择器失败：${err instanceof Error ? err.message : String(err)}`);
             return undefined;
         }
     }
@@ -8672,6 +14256,40 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /**
+     * 🔴 m07854 ⑬（2026-11-13）：视图切换下拉左旁那枚**单循环图标按钮**的唯一落盘出口。
+     * `true` = 全部单卡平铺（拆系列折叠卡）；`false`/缺省 = 系列卡堆叠。
+     *
+     * ⚠️ 与旁边的 `setListGrouping` **是两件事**（⛔ 别合并）：
+     *    `listGrouping` 管列表视图的**行形态**（树形父子行 ⇄ 每条独立一行），
+     *    本方法管**卡片网格 / 海报墙的系列折叠卡**（`MediaList.svelte` 的 `seriesRows` 那一支）。
+     * ⚠️ 归一不需要纯函数：二元布尔，脏值按「堆叠」处理（与消费侧的 `=== true` 判定一致）。
+     */
+    async setUnfoldSeries(next: boolean): Promise<void> {
+        this.settings.unfoldSeries = next === true;
+        await this.saveSettings();
+        await this.refreshViews();
+    }
+
+    /**
+     * 🔴 2026-11-23 分类视图（默认视图 / 合集视图 / 自定义视图）：**唯一**落盘出口。
+     *
+     * 与旁边那些 `setXxx` 不同：视图**存在媒体库 catalog 里**（用户裁定「跟库走」），
+     * ⛔ 不写 settings —— 换设备 / 同步库之后分类结构要跟着库走，不能只活在本机。
+     *
+     * 归一 + 「只剩默认视图就不写键」全在 `pure/mediaViews`（`normalizeViews` / `viewsForStorage`），
+     * ⛔ 这里不再二次归一（两处口径必然漂）。默认视图不可删/改名/换种类由归一器强制保证。
+     */
+    async setMediaViews(raw: unknown): Promise<void> {
+        try {
+            await this.service.setViews(raw);
+        } catch (e) {
+            new Notice('视图保存失败：' + (e instanceof Error ? e.message : String(e)));
+            return;
+        }
+        await this.refreshViews();
+    }
+
+    /**
      * #621 表格**一格**的写回。patch 由 `MediaList` 用 `pure/tableCell` 算好（组件不碰磁盘、不碰 obsidian）。
      * 与「快捷关联」同一条链：落库 → 重写笔记 → 刷视图；⚠️ 笔记同步失败只提示、**不回滚条目**
      * （条目数据已经落进 catalog，回滚反而会造成「界面有、笔记没有」的第二处不一致）。
@@ -8725,6 +14343,30 @@ export default class ReelLudicPlugin extends Plugin {
         for (const p of pairs) {
             try {
                 await this.service.update(p.id, { seriesIndex: p.seriesIndex });
+            } catch {
+                // 单条失败不阻断其余
+            }
+        }
+        await this.refreshViews();
+    }
+
+    /**
+     * 批量**覆盖**「归属合集」（用户 2026-11-25：「系列卡片右键菜单可进行批量填归属合集」）。
+     *
+     * 🔴 语义是**覆盖**，不是 `bulkAddTags` 那种追加合并 —— 一个条目只能属于一个合集，
+     *    给全组填了「熊出没」，成员原来写的「熊出没旧」就该被换掉，而不是两个并存。
+     *    ⛔ 别复用 `bulkAddTags` 的合并逻辑来凑（那是多值字段的规矩）。
+     * ⚠️ 传空串 = **清空**归属合集（条目退回「只出现在默认视图」），这是合法操作、不是错误输入，
+     *    ⛔ 别拿 `if (!name) return` 把它挡掉 —— `service.update` 收 `undefined` 才是「不改这个字段」。
+     * ⚠️ 与 `bulkSetSeriesIndex` 同款：单条失败不阻断其余，最后统一刷视图。
+     */
+    async bulkSetCollection(ids: readonly string[], collection: string): Promise<void> {
+        // ⚠️ `|| undefined` 而不是直接给 `''`：`collection` 是可选字段，空串与「没填」在
+        //    `normalizeEntry` 里都会被清成 undefined，但`undefined` 语义更干净（不产生空串残留）。
+        const value = collection.trim() || undefined;
+        for (const id of ids) {
+            try {
+                await this.service.update(id, { collection: value });
             } catch {
                 // 单条失败不阻断其余
             }

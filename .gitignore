@@ -2,6 +2,12 @@
 node_modules/
 build/
 main.js
+# 断言用的未压缩副本：由 `esbuild.config.mjs` 的 production 顺手产出，**只给 assert-symbols.cjs 读**。
+# ⛔ 它永不参与发布（`_deploy.cjs` 的 FILES 只有 main.js / manifest.json / styles.css）。
+# 不忽略会出现两件坏事：5 MB 产物进了版本库；且它一旦变旧，断言就会拿过期副本判绿/判红。
+# ⚠️ 用 `main.assert.*` 而不是写死 `main.assert.js`：历史上手工留过 `main.assert.bak.js` /
+#   `main.assert.cur.bak` 两个更旧的副本（共 ~11 MB），写死会漏掉它们、让 `git add` 把过期副本收进库。
+main.assert.*
 *.log
 .DS_Store
 .workbuddy/
@@ -22,6 +28,16 @@ _*
 
 # 旧依赖备份目录（node_modules 换版本时留下的快照）
 node_modules.bak-*/
+
+# tools/ 下脚本的运行时产物目录（.out 存仿真页/截图/中间转储，曾累积 100 个文件 6.3 MB）
+# —— `tools/` 本身要入库，只有这个 .out 是纯本地输出。自检：`git ls-files tools/.out` 恒为 0
+tools/.out/
+
+# `tools/` 里以 `.` 或 `_` 打头的一次性脚本（同根目录 `_*` 的口径：跑完即弃，不入库）
+# ⚠️ 根目录那条 `_*` 只对根目录生效，`tools/` 下的要单独写；且历史遗留的是**点**开头
+#   （`tools/.rewrite-ai-purpose.cjs`，一次性改写 Settings.ts 的脚本），所以点与下划线两种前缀都得盖住。
+tools/_*.cjs
+tools/.*.cjs
 
 # 真机测试（tools/rd.cjs）的隔离库与独立 user-data-dir
 # —— 库副本含封面/笔记（数十 MB），userdata 是 Obsidian 缓存，都是纯本地产物。

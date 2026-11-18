@@ -14,6 +14,21 @@ export interface SourceDoneEvent {
     state: SourceDoneState;
     /** ok/empty 时的条数（失败/超时 undefined） */
     count?: number;
+    /**
+     * 🔴 2026-11-12（m00353 ①-12）：该源本次拿到的**条目**。
+     *
+     * 为什么事件要带条目而不只带条数：用户的原话是「多源搜索其中一源超时不返回时，
+     *   要显示骨架屏展示另一个已返回的源（否则等待太长）」——
+     *   只要「已返回的源」不能立刻出卡片，界面就仍是「一起出」，
+     *   一源卡住 5s 用户就干等 5s。所以「已返回」这件事必须带着内容走。
+     *
+     * 为什么留在纯函数层而不另开回调：另开回调就意味着 UI 要同时订阅两条事件流，
+     *   还得自己维护「哪条先到、是否同一轮」的顺序问题；同一条事件带 `items` 则天然有序。
+     *
+     * 类型是 `readonly unknown[]` 而不是 `SearchResult[]`：本模块是纯逻辑层，
+     *   ⛔ 不 import 任何视图/业务类型（否则 pure → views 反向依赖）。消费端自行断言。
+     */
+    items?: readonly unknown[];
 }
 
 export interface SearchProgress {

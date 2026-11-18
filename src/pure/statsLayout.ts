@@ -21,11 +21,18 @@
  * 未知键丢弃、缺失键按缺省**补到末尾** —— 与 `pure/fieldOrder` 同一条口径。
  */
 
-/** 统计页的五个区块（键 = 持久化用的稳定 id，⛔ 别改这些字符串） */
-export type StatsBlockKey = 'hero' | 'feed' | 'trend' | 'overview' | 'board';
+/** 统计页的六个区块（键 = 持久化用的稳定 id，⛔ 别改这些字符串） */
+export type StatsBlockKey = 'hero' | 'feed' | 'trend' | 'overview' | 'board' | 'cloud';
 
-/** 缺省顺序 = 原来的视觉顺序（三层倒金字塔自上而下） */
-export const STATS_BLOCK_DEFAULTS: readonly StatsBlockKey[] = ['hero', 'feed', 'trend', 'overview', 'board'];
+/**
+ * 缺省顺序 = 原来的视觉顺序（三层倒金字塔自上而下）。
+ *
+ * 🔴 2026-11-12（用户 m00353 ②-3「增强统计页（如词云）」）：新增 `cloud`（标签词云），
+ *    追加在**末尾**而不是插在中间 —— 老用户 `settings.statsOrder` 里没有这个键，
+ *    `normalizeStatsOrder` 会把缺失键补到末尾；缺省也放末尾，两者才一致（否则老用户
+ *    升级后看到的顺序和默认顺序不同，属于"悄悄改了别人的版式"）。
+ */
+export const STATS_BLOCK_DEFAULTS: readonly StatsBlockKey[] = ['hero', 'feed', 'trend', 'overview', 'board', 'cloud'];
 
 /** 展示名（拖动把手 / 无障碍标签用） */
 export const STATS_BLOCK_LABELS: Readonly<Record<StatsBlockKey, string>> = {
@@ -34,6 +41,7 @@ export const STATS_BLOCK_LABELS: Readonly<Record<StatsBlockKey, string>> = {
     trend: '月度趋势',
     overview: '分类概览',
     board: '评分看板',
+    cloud: '标签词云',
 };
 
 const ALL = new Set<string>(STATS_BLOCK_DEFAULTS);
@@ -205,6 +213,11 @@ export const STATS_BLOCK_MIN_HALF: Readonly<Record<StatsBlockKey, number>> = {
     trend: 380,
     overview: 360,
     board: 620, // 评分看板每行是「评分列 + 封面流」，半栏会把封面流挤成一列
+    // 🔴 ②-3 词云：标签是长短不一的散词。取值必须满足「半栏放得下 ⇒ 整宽已越过窄屏阈值」这条不变量
+    //    （`minHalf * 2 + STATS_GRID_GAP >= STATS_NARROW_MAX`，单测钉着）：300*2+12 = 612 < 719，
+    //    会出现「半栏计算说放得下、但窄屏分支先返回整行」的自相矛盾 ⇒ 取 360（360*2+12 = 732 > 719），
+    //    与概览同档，也符合实测：340px 左右刚好能并排 3~4 个中长词。
+    cloud: 360,
 };
 
 /** 两列网格的列间距（与 CSS 的 `gap` 同值；断言钉着） */

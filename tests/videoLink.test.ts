@@ -5,7 +5,7 @@
 //   ② 解析过窄 → 自己写出来的链接自己认不出（往返一致性）
 //   ③ 脏值（负数 / 非数字 / 超大秒数 / 非法转义）被当成合法目标
 import { describe, expect, it } from 'vitest';
-import { appendRemark, buildShotBlock, buildTimeLink, matchLineLink, parseMediaFragmentTime, parseSecondsText, parseTimeLink, sanitizeFileStem, shotFileName, videoDeepLinkFromParams } from 'pure/videoLink';
+import { appendRemark, buildShotBlock, buildTimeLink, matchLineLink, parseMediaFragmentTime, parseSecondsText, parseTimeLink, sanitizeFileStem, shotFileName, stampLabel, videoDeepLinkFromParams } from 'pure/videoLink';
 import { parseReaderDeepLink } from 'pure/readerLink';
 
 describe('pure/videoLink parseSecondsText', () => {
@@ -106,6 +106,40 @@ describe('pure/videoLink buildTimeLink（双轨）', () => {
         const link = buildTimeLink({ seconds: 356, entryId: 'e_1', ep: 2 }) ?? '';
         const url = /\]\((.+)\)$/.exec(link)?.[1] ?? '';
         expect(parseTimeLink(url)).toEqual({ kind: 'entry', entryId: 'e_1', ep: 2, seconds: 356 });
+    });
+});
+
+describe('pure/videoLink stampLabel（52 集时间戳的「冲突」修法）', () => {
+    // 🔴 用户 2026-11-01 报障逐字：「如何处理一个笔记52集的各集时间戳冲突问题」
+    //    52 集共用一个 `## 单时间戳` 区，每行只写 `0:27` ⇒ 数据对、但人眼分不出第几集。
+    it('多集条目：文字带集号（`ep` 是 0 基，显示 +1）', () => {
+        expect(stampLabel(27, { ep: 0, multi: true })).toBe('第1集·0:27');
+        expect(stampLabel(27, { ep: 2, multi: true })).toBe('第3集·0:27');
+        expect(stampLabel(3661, { ep: 51, multi: true })).toBe('第52集·1:01:01');
+    });
+
+    it('单集 / 电影不带集号（不给出「第1集」这种废话噪音）', () => {
+        expect(stampLabel(27, { ep: 0, multi: false })).toBe('0:27');
+        expect(stampLabel(27)).toBe('0:27');
+    });
+
+    it('`ep` 非法 → 退回纯时间（不产出 `第NaN集`）', () => {
+        for (const ep of [-1, NaN, Infinity, undefined]) {
+            expect(stampLabel(27, { ep: ep as number, multi: true })).toBe('0:27');
+        }
+    });
+
+    it('🔴 带集号后文字**仍然没有空白**（否则 Obsidian 悬停报 Invalid URL）', () => {
+        for (const ep of [0, 2, 51]) {
+            expect(stampLabel(356, { ep, multi: true })).not.toMatch(/\s/);
+        }
+    });
+
+    it('接进 buildTimeLink：多集深链的链接文字带集号，目标仍是同一个 `ep`', () => {
+        const link = buildTimeLink({ seconds: 27, label: stampLabel(27, { ep: 2, multi: true }), entryId: 'e_1', ep: 2 }) ?? '';
+        expect(link).toBe('[第3集·0:27](obsidian://reelludic?action=video&entry=e_1&ep=2&t=27)');
+        const url = /\]\((.+)\)$/.exec(link)?.[1] ?? '';
+        expect(parseTimeLink(url)).toEqual({ kind: 'entry', entryId: 'e_1', ep: 2, seconds: 27 });
     });
 });
 

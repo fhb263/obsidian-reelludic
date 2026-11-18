@@ -1,6 +1,6 @@
 import { Notice, requestUrl, type Scope } from 'obsidian';
 import { ReaderPanelBase } from 'modals/ReaderPanelBase';
-import { parseTxtBook, chapterParagraphs, txtChapterUnits, type TxtBook } from 'pure/txtParse';
+import { parseTxtBook, chapterParagraphs, txtChapterUnits, txtVolumeGroups, type TxtBook, type TxtVolumeGroup } from 'pure/txtParse';
 import { attachScrollFades, resyncScrollFade, attachTocResizer, formatCharCount } from 'pure/readerToc';
 import { attachHeadDensity } from 'pure/readerHead';
 import {
@@ -151,6 +151,8 @@ export interface TxtReaderOptions {
      * （笔记文件唯一拥有者是 `EntryService`，⛔ 面板里不许 `vault.modify`）。
      */
     onShotSave?: (rect: ShotRect, loc?: ShotLoc) => void;
+    /** 2026-11-13 用户指令：截图按钮**右键** → 框选后进批注（pixpin 式工具条）。宿主没接则回落普通截图。 */
+    onShotAnnotate?: (rect: ShotRect, loc?: ShotLoc) => void;
     /** 摘抄书签数据源（笔记「## 摘抄」区解析；打开阅读器时读取） */
     excerpts?: ParsedExcerpt[];
     /** 删除摘抄回调（书签右键 → main 层确认删除；返回是否成功，成功则面板刷新书签列表） */
@@ -429,10 +431,20 @@ export class TxtReaderPanel extends ReaderPanelBase<TxtReaderOptions> {
         // 区域截图（2026-10-23 用户指令）：一次性动作，⛔ 不走 toggleAnnotate（那不是「模式」，
         //   点一次框一次；做成模式会留下一个「激活态」按钮而没有任何持续语义）。
         if (this.options.onShotSave) {
-            const shotBtn = quickWrap.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '区域截图：框选区域截图回填笔记内' } });
+            // 🔴 2026-11-13 用户指令：左键 = 框选直接回填；右键 = 框选后批注
+            const shotBtn = quickWrap.createEl('button', {
+                cls: 'rl-btn rl-reader-btn',
+                attr: { 'data-tip': '区域截图：左键框选回填笔记 · 右键框选后批注' },
+            });
             safeSetIcon(shotBtn, 'image');
             shotBtn.addEventListener('mousedown', (ev) => ev.stopPropagation());
             shotBtn.addEventListener('click', () => this.startShot());
+            // ⚠️ 不挂 mousedown 判 button —— 会吞左键 click
+            shotBtn.addEventListener('contextmenu', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.startShot(true);
+            });
         }
 
         // 目录/书签/摘抄 切换改由侧栏 tab 行承担（顶部仅渲染一次）
@@ -926,6 +938,52 @@ export class TxtReaderPanel extends ReaderPanelBase<TxtReaderOptions> {
         this.switchChapter(this.chapterIndex + 1);
     }
 
+    /** 🔴 m03052 ②：卷头折叠按钮（目录树一级分组）。
+     *
+     * 为什么做成 `<button>` + `data-vol-open`：卷头是**目录树的分组头**，点它只折叠/展开，
+     * 不切章 —— 而卷标题本身在正文里是「第一卷 …」那一章内容，用户要切到卷首章时点卷下的章按钮即可。
+     * ⛔ 别把卷头也做成 `.rl-reader-toc-item[data-ch]`：那会让「当前章高亮」和「卷头」共用一个类，
+     *    高亮判据（`Number(el.dataset.ch) === chapterIndex`）虽然不会误判，但样式会互相污染。 */
+    private buildTocVolumeHead(vol: TxtVolumeGroup): HTMLElement {
+        const head = createEl('button', {
+            cls: 'rl-reader-toc-volhead',
+            attr: { 'data-tip': `折叠/展开 ${vol.title}`, 'aria-expanded': 'true' },
+        });
+        head.dataset.vol = String(vol.from);
+        head.dataset.volOpen = '1';
+        const caret = head.createSpan({ cls: 'rl-reader-toc-volcaret' });
+        safeSetIcon(caret, 'chevron-down');
+        head.createSpan({ cls: 'rl-reader-toc-voltitle', text: vol.title });
+        head.createSpan({ cls: 'rl-reader-toc-volcnt', text: `${vol.to - vol.from} 章` });
+        // 🔴 折叠类名用 `is-folded`，**不是** `is-collapsed` ——
+        //    `assert-symbols` 里有一条历史反向守卫（#351b 用户口径「显示和排版删除收起展示功能」），
+        //    要求 `is-collapsed` 在 CSS 与 JS 两侧**都不得出现**。那是针对阅读器**设置菜单**的，
+        //    与这里的目录卷折叠是两件事 ⇒ 换名共存，⛔ 不要为此改那条守卫（它会误伤真正的回退）。
+        head.addEventListener('click', () => {
+            const body = this.tocListEl.querySelector<HTMLElement>(`.rl-reader-toc-volbody[data-vol="${vol.from}"]`);
+            const open = head.dataset.volOpen !== '0';
+            const next = !open;
+            head.dataset.volOpen = next ? '1' : '0';
+            head.setAttribute('aria-expanded', next ? 'true' : 'false');
+            if (body) body.toggleClass('is-folded', !next);
+            safeSetIcon(caret, next ? 'chevron-down' : 'chevron-right');
+        });
+        return head;
+    }
+
+    /** 展开某颗章按钮所属的卷（当前章被切到折叠卷里时用，否则用户看不到高亮的那一条） */
+    private expandTocVolumeOf(item: HTMLElement): void {
+        const body = item.closest<HTMLElement>('.rl-reader-toc-volbody');
+        if (!body) return;
+        body.removeClass('is-folded');
+        const head = this.tocListEl.querySelector<HTMLElement>(`.rl-reader-toc-volhead[data-vol="${body.dataset.vol}"]`);
+        if (!head) return;
+        head.dataset.volOpen = '1';
+        head.setAttribute('aria-expanded', 'true');
+        const caret = head.querySelector<HTMLElement>('.rl-reader-toc-volcaret');
+        if (caret) safeSetIcon(caret, 'chevron-down');
+    }
+
     private buildBody(): void {
         const body = this.container.createDiv({ cls: 'rl-reader-body' });
         // 选中动作条定位上下文：body 作为相对定位父级（动作条 absolute 悬浮正文区，不随 scrollEl 滚动位移）
@@ -943,11 +1001,28 @@ export class TxtReaderPanel extends ReaderPanelBase<TxtReaderOptions> {
         this.tocListEl = tocPane.createDiv({ cls: 'rl-reader-toc-list' });
         // 每章字数（#338 目录显示 / #345 口径：中文按字、英文按词）：章界是段落下标，book.paragraphs 已在内存，直接累计
         const tocChars = txtChapterUnits(this.book.paragraphs, this.book.chapters);
-        this.book.chapters.forEach((ch, i) => {
-            const item = this.tocListEl.createEl('button', { cls: 'rl-reader-toc-item', attr: { 'data-tip': ch.title } });
-            item.createSpan({ cls: 'rl-reader-toc-label', text: ch.title });
-            item.createSpan({ cls: 'rl-reader-toc-chars', text: formatCharCount(tocChars[i] ?? 0) });
-            item.addEventListener('click', () => this.switchChapter(i));
+        // 🔴 m03052 ②：目录树按「卷 → 章」两层渲染（用户原话：「阅读器关联txt目录显示的没有区分卷做文件夹啊」）。
+        //   铁律：`chapters` 的**扁平下标**仍是全阅读器唯一章标识（进度 / 书签 / 高亮 / 摘抄 / switchChapter 都按它），
+        //   这里只是**视图层多一层折叠**，⛔ 别把 chapters 改成嵌套结构。
+        //   章按钮带 `data-ch={i}`：高亮当前章靠它定位，⛔ 不能再靠 `querySelectorAll('.rl-reader-toc-item')` 的下标对齐
+        //   —— 卷头也是按钮、也在同一个列表里，下标会整体错位（本轮改动前正是这么写的）。
+        const volumes = txtVolumeGroups(this.book.chapters);
+        volumes.forEach((vol) => {
+            // 无卷标记的散章：不画卷头，直接平铺（观感等同改造前）
+            if (vol.title) this.tocListEl.appendChild(this.buildTocVolumeHead(vol));
+            const body = this.tocListEl.createDiv({ cls: 'rl-reader-toc-volbody' });
+            body.dataset.vol = String(vol.from);
+            for (let i = vol.from; i < vol.to; i++) {
+                const ch = this.book.chapters[i];
+                if (!ch) continue;
+                const item = body.createEl('button', {
+                    cls: 'rl-reader-toc-item',
+                    attr: { 'data-tip': ch.title, 'data-ch': String(i) },
+                });
+                item.createSpan({ cls: 'rl-reader-toc-label', text: ch.title });
+                item.createSpan({ cls: 'rl-reader-toc-chars', text: formatCharCount(tocChars[i] ?? 0) });
+                item.addEventListener('click', () => this.switchChapter(i));
+            }
         });
         // 目录侧栏可拖宽（#338：为显示字数；记忆宽度在 localStorage，拖动期间关掉宽度过渡）
         attachTocResizer(this.tocEl, 'txt');
@@ -1410,11 +1485,16 @@ export class TxtReaderPanel extends ReaderPanelBase<TxtReaderOptions> {
         this.applyHighlights();
 
         // 目录高亮当前章
-        const items = this.tocListEl.querySelectorAll('.rl-reader-toc-item');
-        items.forEach((el, i) => el.toggleClass('active', i === this.chapterIndex));
-        // 当前章滚到目录可见位置
-        const cur = items[this.chapterIndex];
-        if (cur) cur.scrollIntoView({ block: 'nearest' });
+        // 🔴 m03052 ②：改用 `data-ch` 精确定位，⛔ 不能再写 `querySelectorAll('.rl-reader-toc-item')` 然后按查询下标
+        //   对齐 chapterIndex —— 加了卷分组后列表里除章按钮外还有卷头，查询下标 ≠ 章下标，高亮会整体错位。
+        const items = this.tocListEl.querySelectorAll<HTMLElement>('.rl-reader-toc-item[data-ch]');
+        items.forEach((el) => el.toggleClass('active', Number(el.dataset.ch) === this.chapterIndex));
+        // 当前章滚到目录可见位置（顺带展开它所在的卷，否则折叠着的卷里那颗章按钮不可见、scrollIntoView 无处可去）
+        const cur = this.tocListEl.querySelector<HTMLElement>(`.rl-reader-toc-item[data-ch="${this.chapterIndex}"]`);
+        if (cur) {
+            this.expandTocVolumeOf(cur);
+            cur.scrollIntoView({ block: 'nearest' });
+        }
 
         // 定位：连续模式置顶 / 翻页模式重置列式并到首页（setupPagedLayout 测总列需内容在 DOM）
         if (this.isPaged()) {
@@ -1478,10 +1558,12 @@ export class TxtReaderPanel extends ReaderPanelBase<TxtReaderOptions> {
      *   ② 矩形是**视口坐标**（`ShotOverlay` 用 fixed 遮罩），直接交给宿主 `capturePage`。
      *   ③ 定位与摘抄同一口径（`currentLoc()`），截图块落进笔记「## 阅读截图」区。
      */
-    private startShot(): void {
+    private startShot(annotate = false): void {
         const save = this.options.onShotSave;
         if (!save) return;
         if (this.shotOverlay) return;
+        // 2026-11-13：右键 = 批注；宿主没接 `onShotAnnotate` 就回落普通截图
+        const pick = annotate ? (this.options.onShotAnnotate ?? save) : save;
         this.hideSelbar();
         this.hideMenu();
         this.hideMore();
@@ -1489,14 +1571,16 @@ export class TxtReaderPanel extends ReaderPanelBase<TxtReaderOptions> {
             this.scrollEl,
             (rect) => {
                 this.shotOverlay = null;
-                save(rect, this.currentLoc());
+                pick(rect, this.currentLoc());
             },
             () => {
                 this.shotOverlay = null;
             },
         );
         this.shotOverlay = overlay;
-        overlay.start('拖拽框选要截图的区域 · Esc 取消');
+        overlay.start(annotate ? '拖出要批注的区域 · 拖手柄调大小 · 点「批注」确认 · Esc 取消' : '拖拽框选要截图的区域 · Esc 取消', {
+            adjust: annotate,
+        });
     }
 
     /** 切换到指定章（越界忽略），滚动重置到顶部 */

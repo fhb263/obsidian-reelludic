@@ -49,6 +49,53 @@ export function seriesNameOf(e: { series?: string } | null | undefined): string 
     return String(e?.series ?? '').trim();
 }
 
+/**
+ * 🔴 2026-11-11 用户裁定（m07257 ③）：**只有 1 部的系列**不单独折成组，但仍要让人看出
+ * 「它属于某个系列」⇒ 平铺的条目上挂一个「系」角标。
+ *
+ * 判据：该条目填了系列名，**且**同一个系列键（`seriesKeyOf` = `type|归一化名`）在传入的池子里
+ * 只出现它自己这一条。
+ *
+ * ⚠️ 池子是调用方给的（当前视图里已筛选的那批）—— 这一点必须跟 `foldSeries` 同源：
+ *    折叠时也只看「筛完的条目」，否则会出现「角标说它是单部系列，但它明明被折进了一张卡」。
+ * ⛔ 别在这里自己再筛一遍：口径只能有一个来源。
+ */
+export function isLoneSeriesEntry(e: MediaEntry | null | undefined, pool: readonly MediaEntry[]): boolean {
+    const key = seriesKeyOf(e);
+    if (!key) return false;
+    let hits = 0;
+    for (const p of pool) {
+        if (seriesKeyOf(p) !== key) continue;
+        hits += 1;
+        if (hits >= 2) return false; // 凑够 2 条就不是「单部系列」，早退
+    }
+    return hits === 1;
+}
+
+/**
+ * 上面那条判据的**批量版**：一次扫完池子，返回「属于单部系列」那些条目的 id 集合。
+ *
+ * 为什么要批量版：视图里每张卡片渲染时都要问一次，`isLoneSeriesEntry` 是 O(n)，
+ * 一屏几十张卡 × 上百条 = O(n²)。这里先数一遍系列键（O(n)），再挑计数为 1 的。
+ *
+ * ⚠️ 与 `isLoneSeriesEntry` **必须同口径**：都只看 `seriesKeyOf`、都只看调用方给的池子。
+ *    单测里两边互相交叉验证（见 tests/seriesGroup 的 lone 那组）。
+ */
+export function loneSeriesEntryIds(pool: readonly MediaEntry[]): Set<string> {
+    const counts = new Map<string, number>();
+    for (const p of pool) {
+        const key = seriesKeyOf(p);
+        if (!key) continue;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const out = new Set<string>();
+    for (const p of pool) {
+        const key = seriesKeyOf(p);
+        if (key && counts.get(key) === 1) out.add(p.id);
+    }
+    return out;
+}
+
 /** 条目的**分组键**；没填系列名 ⇒ `null`（⛔ 返回空串不行：空串会被当成一个合法的「空系列」把所有无系列条目聚成一组） */
 export function seriesKeyOf(e: { type: EntryType; series?: string } | null | undefined): string | null {
     if (!e) return null;

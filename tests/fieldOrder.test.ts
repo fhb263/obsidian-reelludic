@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     BOOK_KIND_EXCLUDED_FIELDS,
+    FIELD_ORDER_LOCKED_KEYS,
     FIELD_ORDER_TYPES,
     GLOBAL_FIELD_KEYS,
     applyFieldOrder,
@@ -15,10 +16,13 @@ import {
     isDefaultKindOrder,
     isDefaultOrder,
     isGlobalFieldKey,
+    isHidableFieldKey,
     normalizeFieldOrder,
     normalizeFieldOrderForKind,
+    normalizeHidden,
     orderForBookKind,
     orderForType,
+    resolveAllHidden,
     resolveAllKindOrders,
     resolveAllOrders,
 } from 'pure/fieldOrder';
@@ -518,9 +522,9 @@ describe('书籍三子类字段集分叉（2026-10-19 画师/ISBN → 2026-10-21
 // ══════════════════════════════════════════════════════════════════════════════
 describe('2026-10-21 字段字典按用户表重置（字段集 + 横向顺序）', () => {
     const TABLE: Record<string, string[]> = {
-        // 全局（六类通用）
+        // 全局（六类通用）—— ⑳ 起多了 `mood`（心情，跟在个人评分后面，六类都适用）
         global: ['id', 'type', 'title', 'banner', 'year', 'genres', 'series', 'series_index',
-            'status', 'rating', 'tags', 'aliases', 'planned_date', 'watched_date', 'created', 'updated'],
+            'status', 'rating', 'mood', 'tags', 'aliases', 'planned_date', 'watched_date', 'created', 'updated'],
         // 电影：导演、编剧、主演、制片国家、语言、上映日期(缺)、片长、出品方
         movie: ['director', 'screenwriter', 'cast', 'country', 'language', 'duration_min', 'producer'],
         // 剧集：导演、编剧、主演、制片国家、语言、首播年份(缺)、季、总集数、已看集数、单集片长、出品方、进度百分比
@@ -576,6 +580,25 @@ describe('2026-10-21 字段字典按用户表重置（字段集 + 横向顺序�
         expect(labelOf('__nope__')).toBe('__nope__');
     });
 
+    // 🔴 2026-11-16 用户 m01057：「还有一个类型怎么有观看阅读日期的」
+    //    一个键（数据口径不变）+ 按类型换显示名。⛔ 不许在任何类型的卡上出现斜杠三拼；
+    //    ⛔ 也不许为此新开 read_date / play_date 键 —— 那会让同一条数据两处各存一半。
+    it('🔴 日期按类型显示单一名字（观看/阅读/游玩/收听，⛔ 不出斜杠三拼）', () => {
+        expect(labelOf('watched_date', 'movie')).toBe('观看日期');
+        expect(labelOf('watched_date', 'tv')).toBe('观看日期');
+        expect(labelOf('watched_date', 'anime')).toBe('观看日期');
+        expect(labelOf('watched_date', 'book')).toBe('阅读日期');
+        expect(labelOf('watched_date', 'game')).toBe('游玩日期');
+        expect(labelOf('watched_date', 'music')).toBe('收听日期');
+        // 六类全覆盖：每一类都必须拿到单一名字，不许有一条回落成缺省的三拼
+        for (const t of ['movie', 'tv', 'anime', 'book', 'game', 'music'] as EntryType[]) {
+            const name = labelOf('watched_date', t);
+            expect(name, `${t} 的日期名不许含斜杠`).not.toContain('/');
+        }
+        // 不给类型时才回落缺省名（打印/无上下文场景）
+        expect(labelOf('watched_date')).toBe('观看/阅读/游玩日期');
+    });
+
     it('🔴 缺的那 12 个字段位**一个都不许**先占坑（表里有、代码没有 ⇒ 就是没有）', () => {
         // 一旦有人为了「表好看」把空键登记进来，用户就会看到永远填不上的行 ⇒ 这条守着它。
         for (const k of ['pub_year', 'serial_platform', 'serial_status', 'word_count', 'words_read',
@@ -596,3 +619,96 @@ describe('2026-10-21 字段字典按用户表重置（字段集 + 横向顺序�
         expect(new Set(META_FIELD_KEYS).size).toBe(META_FIELDS.length);
     });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🔴🔴 #721（2026-11-07 用户「笔记属性配置也可增删，删除后不拉取改属性字段」）
+//   ⚠️ 这一组的**要害**是「隐藏 = 真删行」而不是「排到最后」—— 顺序数组表达不了删除
+//      （`normalizeFieldOrder` 会把缺的键补到末尾），所以隐藏必须是独立的一份显式集。
+// ══════════════════════════════════════════════════════════════════════════════
+describe('#721 笔记属性可隐藏（删除后不再写出）', () => {
+    // ⚠️ 复用文件顶部的 `entry()` 工厂与 `fmKeys()` —— ⛔ 别在这里手写一份假 MediaEntry：
+    //    本组第一版就是手搓的（`director` 写成数组、时间戳写成 createdAt），
+    //    结果 `q()` 拿到对象直接 `s.replace is not a function`，白跑两轮。
+
+    it('隐藏 rating ⇒ frontmatter 里**这一行整个没了**（不是排到最后）', () => {
+        const e = entry();
+        const order = defaultOrderFor('movie');
+        const before = fmKeys(entryFrontmatter(e, 'ReelLudic', undefined, order));
+        expect(before).toContain('rating');
+
+        const after = fmKeys(entryFrontmatter(e, 'ReelLudic', undefined, order, ['rating']));
+        expect(after).not.toContain('rating');
+        // 其它键一个都不许少（隐藏只影响点名的那些）
+        expect(after).toEqual(before.filter((k) => k !== 'rating'));
+    });
+
+    it('隐藏与顺序**同时**生效：被隐藏的项既不出现、也不占位置', () => {
+        const e = entry();
+        const order = ['rating', ...defaultOrderFor('movie').filter((k) => k !== 'rating')];
+        const fm = entryFrontmatter(e, 'ReelLudic', undefined, order, ['rating']);
+        expect(fmKeys(fm)[0]).toBe('id'); // rating 原本被提到最前，隐藏后由 id 顶上
+    });
+
+    it('不传 / 传空隐藏集 ⇒ 与历史逐字节一致（存量用户零变化）', () => {
+        const e = entry();
+        const order = defaultOrderFor('movie');
+        expect(entryFrontmatter(e, 'ReelLudic', undefined, order, [])).toBe(
+            entryFrontmatter(e, 'ReelLudic', undefined, order),
+        );
+    });
+
+    it('applyFieldOrder 不传 hidden ⇒ 与 #721 之前逐字节一致', () => {
+        const fm = '---\nid: "x"\ntitle: "y"\nrating: 4\n---\n正文';
+        expect(applyFieldOrder(fm, ['id', 'title', 'rating'])).toBe(fm);
+    });
+
+    it('🔴 结构性键**不可隐藏**：id / type / title / created / updated 全在锁定清单里', () => {
+        for (const k of ['id', 'type', 'title', 'created', 'updated']) {
+            expect(FIELD_ORDER_LOCKED_KEYS, `${k} 必须在锁定清单里`).toContain(k);
+            expect(isHidableFieldKey(k), `${k} 不该可隐藏`).toBe(false);
+        }
+        // 内容类字段都该能隐藏（否则用户「删不掉导演」又要来报障）
+        for (const k of ['rating', 'year', 'director', 'genre']) {
+            expect(isHidableFieldKey(k), `${k} 应该可隐藏`).toBe(true);
+        }
+    });
+
+    it('normalizeHidden 收窄：丢掉结构性键 / 不属于该档的键 / 重复项，保留合法顺序', () => {
+        const allowed = defaultOrderFor('movie');
+        // ⚠️ `album` 只属于音乐 ⇒ 在电影这档里必须被丢掉（跨档的键是手改 data.json 的典型脏输入）
+        const got = normalizeHidden(['rating', 'id', 'year', 'rating', 'album', 42 as unknown as string], allowed);
+        // id 被锁定、album 不属于 movie、42 不是字符串、重复的 rating 只留一份
+        expect(got).toEqual(['rating', 'year']);
+    });
+
+    it('normalizeHidden 对脏值一律返回空（⛔ 不抛、⛔ 不猜）', () => {
+        expect(normalizeHidden(undefined, ['rating'])).toEqual([]);
+        expect(normalizeHidden(null, ['rating'])).toEqual([]);
+        expect(normalizeHidden('rating', ['rating'])).toEqual([]);
+        expect(normalizeHidden({ a: 1 }, ['rating'])).toEqual([]);
+    });
+
+    it('resolveAllHidden 按目标收窄：不认识的目标键整档丢掉，空档不入表', () => {
+        const hidden = resolveAllHidden({
+            __global: ['rating', 'id'],
+            movie: ['year'],
+            book: ['isbn'],
+            // 网文这一档的允许集 = `defaultOrderForBookKind('novel')`，其中 **page_count 是排除键**
+            // （网文按字数计量，不写页数）⇒ 这里刻意用两个一留一去，把「按子类收窄」也钉住。
+            'k:novel': ['read_minutes', 'page_count'],
+            bogus: ['whatever'],
+        });
+        expect(hidden.__global).toEqual(['rating']); // id 被锁定
+        expect(hidden.movie).toEqual(['year']);
+        expect(hidden['k:novel']).toEqual(['read_minutes']);
+        expect(hidden.bogus, '不认识的目标键必须整档丢掉').toBeUndefined();
+        expect(hidden.tv, '没配的目标不该出现在表里').toBeUndefined();
+    });
+
+    it('resolveAllHidden 对空配置 / 脏配置 ⇒ 空表（老用户零变化）', () => {
+        expect(resolveAllHidden(undefined)).toEqual({});
+        expect(resolveAllHidden({})).toEqual({});
+        expect(resolveAllHidden(null)).toEqual({});
+    });
+});
+

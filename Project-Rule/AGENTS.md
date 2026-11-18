@@ -1,7 +1,7 @@
 # AGENTS.md — ReelLudic 工作手册
 
 > 本文档面向 AI Agent 和人类开发者。每次新会话开始时，**必须先读本文档**。
-> 版本：**v1.4.1 期**（最近发布版 v1.3.0 / 2026-10-11，见 `CHANGELOG.md` 的 `## [1.3.0]` 节；**当前开发版 1.4.1 / 2026-10-25**，见 `CHANGELOG.md` 的 `## [1.4.1]` 节；更早：原 1.2.1 期**从未发布** ⇒ 整体改定 1.3.0、1.1.1 期内容并入 1.2.0、1.0.4 期并入 1.1.0）| **最后更新：2026-10-27**（P1 技术债收口：svelte-check 入链 + `npm run check` 基线 0 errors / 89 warnings）
+> 版本：**v1.5.0 期**（上一发布版 1.4.0 / 2026-10-25，见根 `CHANGELOG.md` 的 `## [1.4.0]` 节；**当前开发版与待发布版均为 1.5.0 / 2026-11-07**；更早：原 1.2.1 期**从未发布** ⇒ 整体改定 1.3.0、1.1.1 期内容并入 1.2.0、1.0.4 期并入 1.1.0；**1.4.1 期从未单独发布，与之后的改动一并并入 1.5.0**）| **最后更新：2026-11-07**（1.5.0 收口：选集详情页 / 官方内嵌 / 字幕时间轴 / 学习模式 / 本地 ASR / 分类视图 / 设置页六页签定型 + 三处过时处方文案修正；门禁实测 tsc 0 / build 87 warnings / check 0 errors·89 warnings / vitest 263 文件 5712 用例）
 > 1.1.0 期累计（截至 2026-09-23）：阅读器三件（顶栏章标题 / 六档阅读主题 / 标注）+ 海报墙密度 + 视图级题材筛选 + 封面评分角标 + 统计页三层重构 + 设置页顶栏 Tab + 阅读器顶栏标题居中 + 设置页「媒体库目录」搜索式选择 + 若干修复。
 > 1.1.1 期累计（截至 2026-09-27）：主视图显示名取叶子段 + 新增条目手动填写「大众评分 / 平台链接」（仅新增态）+「笔记表格」关闭时顶部块去 callout 残留（#384）。**④ 并入 LyricFlux 音频播放器已按 `docs/superpowers/plans/2026-09-27-1.1.1-design.md` §5.5 推进到 ④-4**：④-1 `pure/lrc.ts`（LRC 解析 / 时间轴 / 二分定位）、④-2 `pure/lrcSource.ts`（` ```lrc ` 块契约 / 四路歌词源优先级 / 引用形态）、④-3 `pure/audioQueue.ts`（播放模式 / 队列推进 / 乱序 / 互斥真源）、**④-4 视图层落装 `AudioPlayerView` + 三档自适应（判容器宽度，非媒体查询）+ 笔记 ` ```lrc ` 块内联播放器（#389）** —— 三个纯模块至此**首次接线**、符号进产物；**#390 修 P0**（`lrc` 语言重复注册 ⇒ 整个插件加载失败：Obsidian 全局静态语言表 + throw 点在 `onload`）；**#391 接上第 4 路歌词源**（音频内嵌标签 `pure/embeddedLyrics.ts`，用户库 118 首里 52 首有内嵌 LRC）；**#392 补「倍速」+「音量浮层」**（照视频播放器既有口径，⛔ 不搬 LyricFlux 的 `playbackUtils`）；**#393 细节定稿**：标签页标题改「关联笔记名」（切歌跟着变）、两浮层改**横向滑条**、音量标度 **0–200% 每 10% 一档**（>100% 走 `GainNode`）；**#394 修正**：倍速按钮定稿为**纯文字**（= 当前倍速）、拖动时已填充段随手柄同步（单一同步口）、音量滑条**颜色随当前值渐变**（0% 无填充 → 0–100% 淡→实 → >100% 偏橙；**倍速滑条不换色**）、浮层随容器尺寸重定位。**仍待推进**：④-5 收口（右侧边栏入口属 UI 增改 ⇒ 待用户过目象形稿；双层 CHANGELOG / 进度表 / UI-GUIDE 已随 ④-4 一并收口）、⑤ 书籍与音乐下载 —— 其中 **⑤-c-1（音乐 · 网易云免费通道）的公共基建 + 纯逻辑 + 服务层已落（#397）**：`pure/downloadPlan`（目标路径决策 / 文件名净化 / 重名去重 / 扩展名白名单 / 大小上限）、`pure/songDownload`（免密外链 `song/media/outer/url` + `isNeteaseDownloadable(fee)` + 魔数嗅探 + 64 KB 门槛）、`services/downloader`（注入式下载落盘）、`services/musicDownload`（搜索复用 #396 端点 + 免费通道下载），**+69 例 / 单元级突变 24/24 `[RED ok]`**；**UI 入口（设置项 / 条目表单下载入口 / 下载弹窗）归 ⑤-c-2**，按 UI 约定须先出象形待裁定。另：**#395 音量滑条配色改判**（按「值」渐变，推翻 #394 的「固定位置摆异色」；倍速滑条不换色）、**#396 音乐条目 LRC 歌词框 + 在线获取歌词**（三源免配置；歌词正文落笔记 ` ```lrc ` 块并纳入重写保留区 ⇒ 保存条目不再静默吞歌词）。**#397 ⑤-c-1**（公共基建 + 网易云免费通道纯逻辑与服务层，+69 例 / 单元级突变 24/24）与 **#398 ⑤-c-2 接线**（下载歌曲弹窗【三段视图：推荐歌单 / 搜索 / 歌单曲目】+ 设置页 **「音乐集成」** 分组【位置固定在「数据源凭据」之下】+ 表单「下载」入口 + **LRC 框上移到「总结摘要」之上**；产物断言 1861 / 产物级突变 15/15）均已落地。🔴 **⑤ 的能力边界（D-13(a)）**：只做网易云**免费通道**（`fee=0` 或缺失）—— 实测热歌榜 200 首只有 **1 首**可下 ⇒ 弹窗**逐首标可下载性**、⛔ 不做「下载全部」、⛔ **不静默过滤**（过滤会让用户以为「搜不到」）；其余平台胶囊**保留但禁用**。⛔ **不碰 `neteaseCrypto`**（源自 AGPL 的 `go-music-dl`）—— 歌单走**公开 `/api/` 端点**即可，无需加密。**⑤-a 网文（Legado 子集）/ ⑤-b Z-Library（用户给定 URL → 落盘）仍未开工。** **#399 音乐面三点收口（2026-09-27）**（用户：「音乐编辑条目界面在本地音频旁加个同款小按钮用于下载歌曲并自动关联，把设置页-音乐集成分组和其下项都删除掉，笔记内 lrc 代码块显示播放器占位的地方改成『启用内置音乐播放器』【其上的也统一文案改成启用内置阅读器/视频播放器】，开启后始终有 LRC 显示播放器、下载歌曲功能，关闭后不显示下载按钮」）：设置页**「音乐集成」分组整体删除**（含 `启用歌曲下载`/`下载目录` ⇒ `数据源配置` 页恰 2 组；下载目录回落 `pure/downloadPlan.DOWNLOAD_ROOT_DEFAULT`；字段按红线保留，`musicDownloadEnabled` **不再被任何地方读取**）｜实验性功能三条**统一命名** `启用内置阅读器` / `启用内置视频播放器` / `启用内置音乐播放器`｜🔴 **`audioInlinePlayer` 成为音乐面唯一开关**：开 ⇒ 笔记内 lrc 块出 LRC 播放器 **且** 音乐编辑表单给「下载」按钮，关 ⇒ 两者都没有｜「下载」按钮与「▶ 播放」**同款**（`.rl-ep-btn-book, .rl-ep-btn-dl` 共用 auto 宽规则；原先裸 `.rl-ep-btn` 是集号方块 36px 固定宽，图标+文字会挤出去）。产物断言 1869 / 产物级突变 15/15。****用户裁定：下载面全是实验功能，版本号锁定 1.1.1，不因新面推进而升版。** 逐条见 `current-progress.md` 进度表与双层 CHANGELOG。
 
@@ -96,15 +96,31 @@ node tools/rd.cjs stop
 **不进镜像**（判据 = 产物 / 私有 / 临时 / 开发工具，**按判据判，⛔ 不按文件名枚举**）：`main.js`（构建产物）、`build/`、`build.bat`、`Project-Rule/`、`docs/`、`_*.cjs`（一次性探针 / 突变器 / 审计脚本）、`_tools_old/`（**已消费的一次性探针归档**，#381 起）、`_mirror_out.txt`（工具产物）、`_shot/`（复现页与截图）、`.workbuddy/`、`node_modules*`、`Bangumi-Bridge-Obsidian/`、`RELEASE-NOTES-*.md`、`.obsidian/`、`.superpowers/`、`.git-backup-corrupt/`。
 ⚠️ **2026-09-23 更正**：旧名单里列的 `_p9.json` / `_probe.py` / `go-music-dl-analysis/` / `.code-review-task2.md` **均已不存在**（枚举式清单必烂）⇒ 改成上面的「判据 + 排除类」写法。
 
-**同步步骤（幂等）—— 首选正统工具 `_mirror.cjs`**
+**同步步骤（幂等）—— 🔴 2026-11-14 起：`_mirror.cjs` 仍不在库，但**改用下面的 robocopy 一条命令兜底，且已实测通过**（不再登记「镜像未执行」）：
 
-```bash
-node _mirror.cjs          # DRY-RUN：报告写进 _mirror_out.txt（不打印到 stdout，别看漏）
-node _mirror.cjs apply    # 执行拷贝
+```powershell
+$src='C:\Users\kest\Desktop\obsidian-reelludic'
+$dst='E:\备份0621\Obsidian集合\Obsidian插件开发\obsidian-reelludic'
+$exclDirs = @('.git','.testvault','.testvault-userdata','node_modules','node_modules.bak-vite8','build','.workbuddy','.superpowers','.git-backup-corrupt','_shot','docs','Project-Rule','tools','Bangumi-Bridge-Obsidian')
+$exclFiles = @('_*','main.assert.js','main.ts.recovered','.deploy*','build.bat','RELEASE-NOTES-*.md')
+$robo = @($src,$dst,'/MIR','/R:2','/W:2','/NFL','/NDL','/NJH','/NJS','/NP','/XD') + ($exclDirs+$dst+'.git') + @('/XF') + $exclFiles
+& robocopy @robo /LOG:"$env:TEMP\rl_mirror.log"; "ROBO_EXIT=$LASTEXITCODE"   # 0/1/2/3 都算成功；>=8 才是失败
 ```
 
-该工具用**白名单**（`FILES` + `DIRS`）遍历 —— 所以新增的根文件/目录**必须同时写进它的 `FILES`/`DIRS`**，否则不会被同步；反过来它**绝不会**把 `_*.cjs` / `_tools_old/` 之类带进公开快照 ✓。它顺带做 LICENSE 只读核对（红线 10）。
+⚠️ **`robocopy` 的退出码 ≠ PowerShell 的成败语义**：`1`（有文件复制）、`2`（有多余文件被删）、`3`（两者都有）**全是成功**，只有 `>=8` 才是真失败。⛔ 别看到 `[exit code: 1]` 就当成失败重跑。
+
+🔴 **`/MIR` 会删镜像里的多余文件，这是要的**（镜像 = 快照，不是增量备份）。但正因为会删，**排除项必须写全**：`main.assert.js`（产物）、`main.ts.recovered`（抢救中间物）、`build.bat` 与 `RELEASE-NOTES-*.md`（AGENTS 明令不进镜像）都必须挂在 `/XF` 上，否则下一轮 `/MIR` 会把它们带进去、再下一轮又删掉，来回抖动。
+
+**校验步骤（每次同步后必跑，⛔ 不许只看 robocopy 退出码就说「已同步」）**：
+
+1. 根文件逐个 MD5：至少 `main.ts`、`main.js`、`styles.css`、`manifest.json`、`package.json`、`tsconfig.json`、`esbuild.config.mjs`、`vitest.config.ts`、`CHANGELOG.md`、`README.md`、`version-bump.mjs`、`versions.json`、`package-lock.json`、`LICENSE`、`.gitignore` —— 必须全 `OK`。
+2. 目录逐文件对数：`src`、`tests`、`.github` 三棵树，报 `onlySrc / onlyDst / sizeDiff` 三项**必须全 0**（2026-11-14 实测：`src` 392、`tests` 320、`.github` 4，全 0 差异）。
+3. LICENSE 例外：**只允许只读比对**（MD5 + 逐字节），⛔ 禁止 `cp` / 写入 / 换行符归一 —— 见红线 10。
+
+历史用法（`_mirror.cjs` 恢复后才可用）：`node _mirror.cjs`（DRY-RUN 写 `_mirror_out.txt`）、`node _mirror.cjs apply`。该工具用**白名单**（`FILES` + `DIRS`）遍历，新增根文件/目录必须同时写进它的白名单。
 🔴 **判绿口径**：报告里「待拷贝 0 项」「镜像无多余文件」「LICENSE 一致」，且独立全量比对必须**真实差异 = 0**（逐字节；仅 CRLF 差异也算差异 —— 2026-09-23 用它重拷修掉了 `.github/*` 的 4 处 CRLF 不一致）。
+
+⚠️ **`main.js` 是例外成员**：本文件表格把它列为「不进镜像（构建产物）」，但镜像是**公开仓库源码快照**、其 `.gitignore` 里 `main.js` 已被忽略 ⇒ 同步 `main.js` 无害且方便用户直接装插件。**以用户 2026-11-14 的指令为准：镜像要完整可用，`main.js` 同步**；`main.assert.js` 则是纯内部产物，⛔ 不同步。
 
 手工兜底（工具不可用时）：`cmp -s` 单文件、`diff -rq` 目录（`Only in 源` = 新增待拷，`Only in 镜像` = 待删）；拷贝目录注意 `cp -rf "src/." "$DST/src/"` 的 **`/.` 形态**（写成 `cp -rf src "$DST/"` 会嵌套）。
 
@@ -252,7 +268,7 @@ node _mirror.cjs apply    # 执行拷贝
 
 ## 🔒 当前版本策略（2026-09-16 立；2026-09-22 / 2026-10-04 / 2026-10-11 / 2026-10-16 用户补充裁定）
 
-- **当前在 1.4.1 期**：版本三文件（`package.json` / `manifest.json` / `versions.json`）均为 **1.4.1**（手改，见红线 7）。⚠️ `package-lock.json` 的**根版本也要同步**（顶层 `version` + `packages[""].version`，共 2 处；⚠️ 锁文件里另有 `expect-type` 等依赖自身的 `"version": "1.4.0"` 行，那是**依赖版本**，⛔ 别跟着改）。⚠️ 发版时 `versions.json` 要**加键**（不是改既有键），并同步 `package-lock.json` 根版本（顶层 + `packages[""]`）**与 `src/services/mangadex.ts` 的 `MANGADEX_UA` 版本段** —— #473 断言会逐条核对「UA 版本段 == `package.json` version」与「三处一致」。**2026-10-25 实测：四处齐为 1.4.1、`MANGADEX_UA = 'ReelLudic/1.4.1 …'`、`versions.json["1.4.1"] = "1.7.2"`（该键值是 minAppVersion，⛔ 不是插件版本）。**
+- **当前在 1.5.0 期**：版本三文件（`package.json` / `manifest.json` / `versions.json`）均为 **1.5.0**（手改，见红线 7）。⚠️ `package-lock.json` 的**根版本也要同步**（顶层 `version` + `packages[""].version`，共 2 处；⚠️ 锁文件里另有 `expect-type` 等依赖自身的 `"version": "1.4.0"` 行，那是**依赖版本**，⛔ 别跟着改）。⚠️ 发版时 `versions.json` 要**加键**（不是改既有键），并同步 `package-lock.json` 根版本（顶层 + `packages[""]`）**与 `src/services/mangadex.ts` 的 `MANGADEX_UA` 版本段** —— #473 断言会逐条核对「UA 版本段 == `package.json` version」与「三处一致」。**2026-10-25 实测：四处齐为 1.4.1、`MANGADEX_UA = 'ReelLudic/1.4.1 …'`、`versions.json["1.4.1"] = "1.7.2"`（该键值是 minAppVersion，⛔ 不是插件版本）。**
 - **沿革**：正式发布的更新日志止于 1.0.3 → 原 1.0.4 期并入 **1.1.0** → 1.1.1 期**改定 1.2.0**（2026-10-04）→ 原 1.2.1 期（**从未发布**）**整体改定 1.3.0**（2026-10-11；装的是实打实的新功能面：微信读书同步 / 搜索、内置阅读器本地漫画、播放器时间戳·截图侧边栏、导航布局与时间线视图、失效链接检测等，按语义化版本属 **minor**）→ **1.4.0**（2026-10-16）。
 - **1.4.0 期**（用户 2026-10-16 点名「插件版本号定级为 1.4.0」）：EPUB 阅读器正文插图恢复显示（`srcdoc` 无基准地址 ⇒ 包内相对路径全 404 的老问题）、EPUB 首屏/开章提速（目录字数惰性化，实测省 ~95% 同步时间）、Steam 凭据行两处 UI 修正（副标题取消并入说明、按钮间距 16px → 8px）。⚠️ 定级说明：本批**主要是体验优化与修复**，按 2026-09-22 那条「体验优化不算新增功能」的口径本可留在 1.3.x；**是用户显式点名定为 1.4.0**，故照办（⛔ 别据本条反推「以后优化都能升 minor」—— 判不准时**先问用户**）。
 - 🔴 **2026-09-22 用户裁定（仍然有效）：体验优化（如「视图级题材筛选」这类现有功能的完善）不算「新增功能」**，可继续留在同版本；只有**全新的能力面**才需另开版本。判断不清时**先问用户**，⛔ 别自行归类后闷头做。
@@ -349,7 +365,7 @@ node _mirror.cjs apply    # 执行拷贝
 
 ```
 main.ts（入口 + 命令注册 + 视图注册 + 事件中枢 + homeTab 页签状态 + 库目录迁移）
-  ├── Settings.ts（服务集成：12 源注册表凭据 + 6 组源链勾选（书籍/漫画/游戏/音乐/影视/动画）+ AI 翻译与总结双 Key + 库目录 + 播放/阅读开关 + 外观）
+  ├── Settings.ts（服务集成：13 源注册表凭据 + 6 组源链勾选（书籍/漫画/游戏/音乐/影视/动画）+ AI 翻译与总结双 Key + 库目录 + 播放/阅读开关 + 外观）
   ├── views/HomeView.ts（统一视图 reelludic-home，页签容器）
   │     └── components/HomeView.svelte（页签栏：计划/阅读/影视/游戏/音乐/统计 + 回到顶部按钮）
   │           ├── components/MediaList.svelte（书架：海报墙/列表/瀑布流/按歌手分组 + 筛选排序 + 观看按钮/右键菜单 + 书籍子分类 chips）
@@ -358,7 +374,7 @@ main.ts（入口 + 命令注册 + 视图注册 + 事件中枢 + homeTab 页签�
   │           └── components/StatsBoard.svelte（统计页**三层倒金字塔**：核心指标 1 主 4 辅 → 动态 → 趋势 → 概览 Tab；纯逻辑全在 pure/statOverview.ts，主 CTA 在主指标卡内）
   ├── modals/EntryModal.ts（添加/编辑弹窗：双套 UI + 笔记回填 + 孤儿封面清理 + 双写冲突）
   │     └── components/EntryForm.svelte（Douban 版 / TMDB·Bangumi 版，formMode 按 source 切换；搜索框类型下拉 = 书籍分类唯一入口）
-  ├── modals/*（ConfirmModal 通用确认 / LinkPickerModal 多链接选源 / EpisodePickerModal 集数选择 /
+  ├── modals/*（ConfirmModal 通用确认 / LinkPickerModal 多链接选源 /
   │     NoteConflictModal 双写冲突 / ExcerptModal 摘抄 / EntryLogModal 游玩记录（#685 起通用化，替代旧 GameSessionModal） / CalendarDayModal 排期日 / 
   │     PosterMigrateModal 封面迁移 / PosterCleanupModal 孤儿清理 /
   │     VaultFileSuggest 文件建议 / VaultFolderSuggest 文件夹建议（后者兼作旧版 Obsidian 的降级入口））
@@ -372,10 +388,10 @@ main.ts（入口 + 命令注册 + 视图注册 + 事件中枢 + homeTab 页签�
   │     ├── services/nodeHttp.ts（Node 原生传输层，桌面端专用，惰性 require）
   │     └── services/aiSummary.ts（AI 总结摘要：复用阅读器翻译凭据，依赖全注入）
   │   另有按需注册的补充源：openLibrary / googleBooks / steam / musicbrainz / itunes /
-  │     omdb / anilist / igdb / mangadex（12 源注册表见 src/pure/sourceRegistry.ts，各组默认链见 DEFAULT_CHAINS）
+  │     omdb / anilist / igdb / mangadex / weread（13 源注册表见 src/pure/sourceRegistry.ts，各组默认链见 DEFAULT_CHAINS）
   ├── data/catalog.ts（catalog.json 读写；normalizeEntry 为落库唯一关口）
   ├── data/noteGenerator.ts（.md 笔记生成，按类型渲染 + 指纹；路径走 pure/dirs.noteSubDir）
-  ├── pure/*（**179** 个无 obsidian 依赖纯模块 —— 2026-10-25 实测 `src/pure/*.ts` 计数 179、其中 import 'obsidian' 者为 0；旧文写「134 个」是 #369 期的旧数，勿再沿用；**#369 之后新增批次**：posterGrid / genreFilter / statOverview /
+  ├── pure/*（**212** 个无 obsidian 依赖纯模块 —— 2026-11-07 实测 `src/pure/*.ts` 计数 212、其中 import 'obsidian' 者为 0；旧文写「134 个」「179 个」是历史旧数，勿再沿用；1.5.0 新增批次（选集页/分类视图/笔记导入/属性面板/ASR 四件/学习模式/字幕时间轴/AI 总结/内嵌）各见对应 tests/。**#369 之后**：posterGrid / genreFilter / statOverview /
   │     settingNav / searchIcons / focusType / libraryDir 等。其余：status/labels/rating/dirs/cardMeta/stats/report/
   │     搜索链 search*+resultMerge+searchCache/子分类 bookKind+musicKind+searchTypeSel/
   │     进度 bookProgress+readingProgress+pdfProgress+epubParse+txtParse+bookmark+highlight/
@@ -412,7 +428,7 @@ EntryModal 输入标题 → 按类型分流（并行 + 进度上报）
 
 ### 🔴 数据源口径（唯一真源 = `src/pure/sourceRegistry.ts` 的 `PROVIDERS`）
 
-**12 个源全部在册**：`douban` / `tmdb` / `bangumi` / `openLibrary` / `googleBooks` / `steam` / `musicbrainz` / `itunes` / `omdb` / `anilist` / `igdb` / `mangadex`。
+**13 个源全部在册**：`douban` / `weread`（微信读书） / `tmdb` / `bangumi` / `openLibrary` / `googleBooks` / `steam` / `musicbrainz` / `itunes` / `omdb` / `anilist` / `igdb` / `mangadex`。
 
 - ⛔ **「已移除 Open Library / Google Books / RAWG」是错的**：`openLibrary`、`googleBooks` **都在注册表里**，只是**默认链里关着**（用户可在设置页加入）；**`RAWG` 从未注册过**（历史上提过、没落地 —— `services/resultTypes.ts` 里那句「RAWG 时代遗留形状」说的是**类型形状**的来历，不是说该服务还在或曾注册）。
 - **默认链**（`DEFAULT_CHAINS`）：book = `douban + openLibrary`｜comic = `douban + bangumi + mangadex`｜game = `douban + steam`｜music = `douban + musicbrainz + itunes`｜movieTv = `douban + tmdb`｜anime = `douban + bangumi`。

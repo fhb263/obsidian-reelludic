@@ -75,6 +75,18 @@ export function musicCheckKey(id: string): string {
 export function aiCheckKey(id: string): string {
     return `ai:${id}`;
 }
+/**
+ * 「网络播放」组（B 站 / YouTube）的「测试连接」结论键。
+ *
+ * ⚠️ 为什么给 B 站单开一族、⛔ 不沿用 `music:bilibili`：两处的**判据完全不同** ——
+ *    音乐那族测的是「Cookie 能不能下载音频」（走 `dlTestConnection`），本族测的是
+ *    「能不能在播放器里取到流」（B 站查 nav 登录态 / YouTube 真跑 yt-dlp）。
+ *    共用键会让一边的结论覆盖另一边（本仓 #669 的「同一功能只留一个入口」精神：
+ *    同一**结论**也不该有两个来源）。
+ */
+export function netCheckKey(id: string): string {
+    return `net:${id}`;
+}
 
 /** settings 的结构类型视图（⛔ 不 import `Settings` —— 避免把一条依赖链拖进纯模块） */
 type Bag = Record<string, unknown>;

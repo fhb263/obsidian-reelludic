@@ -7,7 +7,7 @@ import {
 
 /** 全字段有值的 fixture：`#621` 的往返测试靠它「每列都真能被读出来再写回去」 */
 const entry = (over: Partial<MediaEntry> = {}): MediaEntry => ({
-    id: 'e1', type: 'movie', title: '示例条目', status: 'watching', rating: 4.5,
+    id: 'e1', type: 'movie', title: '示例条目', status: 'watching', rating: 4.5, mood: 'wow',
     year: 2024, genres: ['科幻', '灾难'], director: '导演', cast: ['甲', '乙'], screenwriter: ['编剧'],
     country: '中国大陆', language: '汉语普通话', durationMin: 125, aliases: ['别名 A', '别名 B'],
     author: '作者', translator: '译者', publisher: '出版社', producer: '出品方',

@@ -17,6 +17,7 @@
 import type { EntryType, MediaEntry, Progress } from 'data/types';
 import { statusLabel } from 'pure/labels';
 import { findMetaField } from 'pure/metaFields';
+import { moodFromText, moodText, normalizeMood } from 'pure/mood';
 import { normalizeRating, ratingToTenths, type Rating } from 'pure/rating';
 import { MEDIA_STATUSES, isMediaStatus, type MediaStatus } from 'pure/status';
 
@@ -72,6 +73,9 @@ const TABLE_CELL_BINDINGS: Record<string, CellBinding> = {
     // 通用
     status: flat('status'),
     rating: flat('rating'),
+    // 🔴 心情（⑳）：落盘存英文 id，格子里显示 `🤩 震撼` —— 所以显示/解析两侧都走 `pure/mood`，
+    //    ⛔ 别让 `flat()` 的裸 `String(v)` 把 `wow` 直接摆到用户面前。
+    mood: flat('mood'),
     year: flat('year'),
     genres: flat('genres'),
     series: flat('series'),
@@ -123,6 +127,8 @@ export function tableCellText(e: MediaEntry, key: string): string {
     if (!b) return '';
     const v = b.get(e);
     if (v === undefined || v === null || v === '') return '';
+    // 🔴 心情存的是英文 id，格子里要显示成人话（`🤩 震撼`）—— 与笔记属性表那一行同源（`pure/mood.moodText`）
+    if (key === 'mood') return moodText(normalizeMood(v));
     if (Array.isArray(v)) return v.join(', ');
     return String(v);
 }
@@ -227,6 +233,13 @@ export function parseTableCellInput(e: MediaEntry, key: string, text: string): T
         return { ok: true, patch: b.set(Number(t), e) };
     }
     if (kind === 'enum') {
+        // 🔴 enum 现在有两族：状态（四值 + 中文标签）与心情（六档 + emoji/中文名）。
+        //    ⛔ 别让心情落到「状态只认 想看/在看/已看/搁置」那条路上 —— 报错文案会指向一个它根本没有的约束。
+        if (key === 'mood') {
+            const mv = moodFromText(t);
+            if (!mv) return { ok: false, reason: '心情填 震撼 / 治愈 / 烧脑 / 致郁 / 无聊 / 受罪，或 🤩 这类表情' };
+            return { ok: true, patch: b.set(mv, e) };
+        }
         // ⚠️ 值的形态与**中文标签**都收（用户看到的是「在看」，没道理逼他记住 `watching`）
         const sv = statusFromText(e.type, t);
         if (!sv) return { ok: false, reason: '状态只认 想看 / 在看 / 已看 / 搁置（或 want / watching / watched / archived）' };

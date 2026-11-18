@@ -4,6 +4,8 @@ import {
     PROVIDER_META,
     PROVIDERS,
     SOURCE_GROUPS,
+    SOURCE_GROUP_ICONS,
+    SOURCE_GROUP_COLOR_KEY,
     GROUP_LABELS,
     sourceGroupForType,
     sourceGroupForBookKind,
@@ -15,10 +17,15 @@ import {
     providerFromUrl,
     platformLabelFromUrl,
     DEFAULT_CHAINS,
+    seedSourceChains,
     type ProviderId,
     type SourceGroup,
 } from 'pure/sourceRegistry';
+import { homeTabIcon } from 'pure/homeTabs';
+import { ENTRY_TYPES } from 'data/types';
 import { SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 describe('sourceGroupForType 类型→组映射', () => {
     it('movie/tv 合并到 movieTv，其余类型即组', () => {
@@ -110,10 +117,12 @@ describe('候选源矩阵（T1：各组适用源全部 implemented → 候选 = 
 });
 
 describe('默认链', () => {
-    it('🔴 2026-10-25 用户裁定：六组默认一律只有豆瓣（其他源默认不勾选）', () => {
-        //   用户原话：「默认配置下 设置-启用元数据凭据源 默认全部为仅豆瓣勾选启用，其他不勾选」
-        //   ⚠️ 旧口径（book=douban+openLibrary / movieTv=douban+tmdb / comic=douban+bangumi+mangadex …）
-        //      已被本批推翻，⛔ 别按测试里的历史注释把它们写回来。
+    it('🔴 2026-11-14 用户裁定（m00002 ②）：免登录源不再默认勾选，新用户默认**仅豆瓣一个**', () => {
+        //   用户原话：「元数据搜索源启用的免登录源不再默认勾选，新用户默认全勾选仅为豆瓣一个，
+        //   其他需用户自己勾选」。
+        //   这推翻了 2026-11-12 的「豆瓣 + 各组免登录源兜底」——那条的理由是「开箱即用」，
+        //   但代价是把用户没点过的源一起开出去；用户现在要求默认面收窄到只有豆瓣。
+        //   ⛔ 别再按 2026-11-12 那条改回多源默认链。
         expect(DEFAULT_CHAINS.book).toEqual(['douban']);
         expect(DEFAULT_CHAINS.game).toEqual(['douban']);
         expect(DEFAULT_CHAINS.music).toEqual(['douban']);
@@ -122,11 +131,27 @@ describe('默认链', () => {
         expect(DEFAULT_CHAINS.comic).toEqual(['douban']);
     });
 
-    it('守不变量：豆瓣必须在全部六组的 groups 里 —— 否则「仅豆瓣」会被归一滤空、回退默认链成死循环', () => {
+    it('🔴 守不变量：默认链里「除豆瓣外」每个源都必须真免登录（keyField === null）', () => {
+        //   这是本条需求的核心承诺 —— 默认链里的备用源必须是「不填任何凭据也会发请求、也会出结果」的源，
+        //   否则「开箱即用」只是把 403 从一个源换成另一个源的「未配置」。
+        //   ⛔ 别把 tmdb / omdb / bangumi / igdb / googleBooks 塞进默认链（它们未配 Key 直接 die）。
+        //   ⚠️ steam 是特例：搜索本身免 Key，但 keyField 是 steamApiKey ⇒ providerConfigured 判 false ⇒
+        //      在 runAuxSource 里直接返回 unconfigured、根本不发请求，所以同样不许进默认链。
+        for (const g of SOURCE_GROUPS) {
+            for (const id of DEFAULT_CHAINS[g]) {
+                if (id === 'douban') continue;
+                expect(PROVIDER_META[id].keyField, `${g} 组默认链里的 ${id} 必须免登录`).toBeNull();
+            }
+        }
+    });
+
+    it('守不变量：豆瓣必须在全部六组的 groups 里 —— 否则链首会被归一滤空、回退默认链成死循环', () => {
         for (const g of ['book', 'game', 'music', 'movieTv', 'anime', 'comic'] as const) {
             expect(PROVIDER_META.douban.groups).toContain(g);
+            // 豆瓣永远排在链首（用户选定的口径），⛔ 别把某个免登录源提到豆瓣前面
+            expect(DEFAULT_CHAINS[g][0]).toBe('douban');
             // 默认链本身必须经得起归一（不依赖「回退默认链」这条兜底才拿得到）
-            expect(normalizeSourceChain(g, [...DEFAULT_CHAINS[g]])).toEqual(['douban']);
+            expect(normalizeSourceChain(g, [...DEFAULT_CHAINS[g]])).toEqual([...DEFAULT_CHAINS[g]]);
         }
     });
 });
@@ -176,7 +201,7 @@ describe('normalizeSourceChain 归一', () => {
 });
 
 describe('resolveSourceChain 解析', () => {
-    it('未配置（undefined）→ 默认链（2026-10-25 起六组均只有豆瓣）', () => {
+    it('未配置（undefined）→ 默认链（2026-11-14 起仅豆瓣）', () => {
         expect(resolveSourceChain(undefined, 'movieTv')).toEqual(['douban']);
         expect(resolveSourceChain(undefined, 'anime')).toEqual(['douban']);
     });
@@ -187,11 +212,103 @@ describe('resolveSourceChain 解析', () => {
 
     it('已配置空数组/全被滤空 → 回退默认链（脏数据防御）', () => {
         expect(resolveSourceChain({ book: [] }, 'book')).toEqual(['douban']);
-        expect(resolveSourceChain({ book: ['tmdb'] }, 'book')).toEqual(['douban']); // tmdb 不适用 book 滤空 → 回退默认链
+        // tmdb 不适用 book 滤空 → 回退默认链
+        expect(resolveSourceChain({ book: ['tmdb'] }, 'book')).toEqual(['douban']);
     });
 
     it('不同组互不影响', () => {
         expect(resolveSourceChain({ movieTv: ['tmdb'] }, 'anime')).toEqual(['douban']);
+    });
+});
+
+// 🔴 用户 m07854 ①（2026-11-13）：「初始化配置默认启用免登录搜索源，**不要强制覆盖用户已修改过**，
+//    仅在第一次启用插件时启用」。播种 = 把默认链写成**显式配置**，让默认值不再靠动态回退生效。
+describe('#759 seedSourceChains 一次性播种（用户 m07854 ①）', () => {
+    it('从未配置过（undefined）⇒ 六组全部播种成默认链', () => {
+        const { chains, changed } = seedSourceChains(undefined);
+        expect(changed).toBe(true);
+        for (const g of SOURCE_GROUPS) {
+            expect(chains[g]).toEqual([...DEFAULT_CHAINS[g]]);
+        }
+    });
+
+    it('🔴 用户已配置的组**一个字节都不动**（不强制覆盖已修改过）', () => {
+        // 用户把影视改成 tmdb 优先、把书籍改成只要 googleBooks —— 与默认链完全不同
+        const mine: Partial<Record<SourceGroup, ProviderId[]>> = {
+            movieTv: ['tmdb', 'douban'],
+            book: ['googleBooks'],
+        };
+        const { chains } = seedSourceChains(mine);
+        expect(chains.movieTv).toEqual(['tmdb', 'douban']);
+        expect(chains.book).toEqual(['googleBooks']);
+        // 未配置的四组仍被播种
+        expect(chains.game).toEqual(['douban']);
+        expect(chains.music).toEqual(['douban']);
+    });
+
+    it('用户已配的组即使**等于默认链**也保留（不再依赖 undefined 回退）', () => {
+        // 这正是旧 `commit` 删键行为留下的坑：勾成与默认一致 ⇒ 键被删 ⇒ 默认值一改就被追溯篡改。
+        // 2026-11-14 起默认链只剩豆瓣 ⇒ 这里就用「与默认链完全相同」的 ['douban'] 做主语。
+        const { chains } = seedSourceChains({ book: ['douban'] });
+        expect(chains.book).toEqual(['douban']);
+        expect(Object.prototype.hasOwnProperty.call(chains, 'book')).toBe(true);
+    });
+
+    it('空数组 / 整链非法 ⇒ 视为「未配置」，补默认链', () => {
+        const { chains, changed } = seedSourceChains({ book: [], movieTv: ['tmdb'] });
+        expect(changed).toBe(true);
+        expect(chains.book).toEqual(['douban']);
+        // tmdb 不适用 movieTv？—— 适用，但旧值原样保留，⛔ 不因「非法」而清空用户值
+        expect(chains.movieTv).toEqual(['tmdb']);
+    });
+
+    it('幂等：对播种结果再播种 ⇒ changed=false，且值不变', () => {
+        const first = seedSourceChains(undefined);
+        const second = seedSourceChains(first.chains);
+        expect(second.changed).toBe(false);
+        expect(second.chains).toEqual(first.chains);
+    });
+
+    it('不改动入参（纯函数）', () => {
+        const mine: Partial<Record<SourceGroup, ProviderId[]>> = { book: ['googleBooks'] };
+        seedSourceChains(mine);
+        expect(mine).toEqual({ book: ['googleBooks'] });
+        expect(Object.keys(mine)).toHaveLength(1);
+    });
+});
+
+// 🔴 用户 m07854 ① 的**写入侧**守卫（源码级）：旧实现「等于默认链就删键」必须彻底消失，
+//    否则默认值一改仍会追溯篡改用户已确认的配置。⛔ 铁律：先 strip 注释再匹配，
+//    不然本文件自己的说明文字就能把反向断言打成假红。
+describe('#759 源链写入侧不再「等于默认链就删键」（用户 m07854 ①）', () => {
+    const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const settingsSrc = stripComments(readFileSync(resolve(__dirname, '..', 'src/Settings.ts'), 'utf8'));
+    const mainSrc = stripComments(readFileSync(resolve(__dirname, '..', 'main.ts'), 'utf8'));
+
+    it('🔴 `commit` 里不许再出现 `delete next[group]`', () => {
+        expect(settingsSrc).not.toMatch(/delete next\[group\]/);
+    });
+
+    it('`commit` 必须把归一后的链显式写进 `next[group]`', () => {
+        expect(settingsSrc).toMatch(/next\[group\] = norm;/);
+        // 且不再因为「与默认链逐位相等」而走删键分支
+        expect(settingsSrc).not.toMatch(/norm\.length === def\.length && norm\.every/);
+    });
+
+    it('`onload` 里有一次性播种（`sourceChainsSeeded` 守卫 + `seedSourceChains`）', () => {
+        expect(mainSrc).toMatch(/if \(!this\.settings\.sourceChainsSeeded\)/);
+        expect(mainSrc).toMatch(/seedSourceChains\(this\.settings\.sourceChains\)/);
+        expect(mainSrc).toMatch(/this\.settings\.sourceChainsSeeded = true;/);
+    });
+
+    it('🔴 播种必须在基线赋值**之后**并**再次**刷新基线（否则播种会被当成用户改链清缓存）', () => {
+        const firstBaseline = mainSrc.indexOf('this.sourceChainBaselineJson = JSON.stringify');
+        const seedCall = mainSrc.indexOf('seedSourceChains(this.settings.sourceChains)');
+        expect(firstBaseline).toBeGreaterThan(-1);
+        expect(seedCall).toBeGreaterThan(firstBaseline);
+        // 播种块里要有第二处基线刷新
+        const afterSeed = mainSrc.slice(seedCall);
+        expect(afterSeed.slice(0, 600)).toMatch(/this\.sourceChainBaselineJson = JSON\.stringify/);
     });
 });
 
@@ -210,7 +327,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             group: 'book', chain: ['douban'],
             douban: { reachable: false, cookieInvalid: false }, aux: {},
         });
-        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 元数据源配置 › 元数据搜索源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
+        expect(err).toBe('Douban 兜底不可用 — 到 设置 → 搜索配置 › 元数据搜索源凭据 · Douban 填登录态 Cookie（含 dbcl2）过反爬；若 Cookie 正常，多为搜索过密触发风控，稍等几分钟再试或改用其他数据源');
         expect(err).toContain('Douban 兜底不可用');
     });
 
@@ -220,7 +337,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: false, cookieInvalid: true },
             aux: { tmdb: 'unconfigured' },
         });
-        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 元数据源配置 › 元数据搜索源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
+        expect(err).toBe('豆瓣 Cookie 已失效或过期 — 请到 设置 → 搜索配置 › 元数据搜索源凭据 · Douban 重新登录获取 Cookie（含 dbcl2 登录态）后重试');
         expect(err).toContain('豆瓣 Cookie 已失效或过期');
     });
 
@@ -308,7 +425,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             aux: { tmdb: 'unconfigured' },
         });
         expect(err).toContain('未配置凭据');
-        expect(err).toContain('设置 → 元数据源配置 › 元数据搜索源凭据');
+        expect(err).toContain('设置 → 搜索配置 › 元数据搜索源凭据');
         expect(err).toContain('测试连接');
     });
 
@@ -349,7 +466,7 @@ describe('deriveGroupSearchError 全链失败错误推导（默认链回归）',
             douban: { reachable: true, cookieInvalid: false },
             aux: { bangumi: 'unconfigured' },
         });
-        expect(err).toContain('设置 → 元数据源配置 › 元数据搜索源凭据');
+        expect(err).toContain('设置 → 搜索配置 › 元数据搜索源凭据');
         expect(err).toContain('Bangumi Token');
     });
 });
@@ -475,5 +592,47 @@ describe('providerFromUrl 平台链接 → 数据源识别（#385 手填平台�
             const url = `https://${p.hosts[0]}/x`;
             expect(providerFromUrl(url), `${p.id} ← ${url}`).toBe(p.id);
         }
+    });
+});
+
+// 🔴 2026-11-12（用户 m00353 ①-14）：设置-搜索配置页「元数据搜索源启用」六个组名前补类型图标。
+//    守的是这条改造最容易静默出错的两处：
+//      ① 组增减时图标表漏改 → 渲染端 `SOURCE_GROUP_ICONS[group]` 取到 undefined →
+//         `safeSetIcon(host, undefined)` 什么也不画，界面上只剩一个空 span，**零报错**；
+//      ② 图标名写错 → `setIcon` 遇未知名**静默 no-op**（见 `services/safeIcon` 文件头），
+//         同样零报错但整行组名前一片空白。
+//    ⇒ 这里做**双向穷尽**：表里每个 SourceGroup 都要有，且不许出现多余的键。
+describe('源链组类型图标（①-14，设置页「元数据搜索源启用」组头）', () => {
+    it('六个组一个不多一个不少（组新增必须同步补图标，否则组名前是空白）', () => {
+        expect(Object.keys(SOURCE_GROUP_ICONS).sort()).toEqual([...SOURCE_GROUPS].sort());
+    });
+
+    it('图标名与本仓页签图标**同一批**（对齐 `homeTabIcon`，⛔ 别另抄一份名字）', () => {
+        // 🔴 为什么拿 `homeTabIcon` 当基准：那套名字是本仓唯一「已实测存在于 obsidian.asar
+        //    内建表」的图标真源（见 `pure/homeTabs.ts` 里 TAB_ICONS 上方注释）。
+        //    `setIcon` 遇未知名**静默失败** ⇒ 写错不报错、界面只剩空白 span，
+        //    所以这里用「与页签图标同值」把两边钉在一起：任一边改名，这条就红。
+        expect(SOURCE_GROUP_ICONS.book).toBe(homeTabIcon('book'));
+        expect(SOURCE_GROUP_ICONS.comic).toBe(homeTabIcon('kind:comic'));
+        expect(SOURCE_GROUP_ICONS.movieTv).toBe(homeTabIcon('movie'));
+        expect(SOURCE_GROUP_ICONS.anime).toBe(homeTabIcon('anime'));
+        expect(SOURCE_GROUP_ICONS.music).toBe(homeTabIcon('music'));
+        expect(SOURCE_GROUP_ICONS.game).toBe(homeTabIcon('game'));
+    });
+
+    it('漫画与书籍**不许**用同一枚图标（两行在 UI 里紧跟成行，同图标分不出谁是谁）', () => {
+        expect(SOURCE_GROUP_ICONS.comic).not.toBe(SOURCE_GROUP_ICONS.book);
+    });
+
+    it('取色键全部是合法 EntryType（`movieTv` 合并组取 movie、`comic` 取 book），且六组各自有键', () => {
+        expect(Object.keys(SOURCE_GROUP_COLOR_KEY).sort()).toEqual([...SOURCE_GROUPS].sort());
+        for (const g of SOURCE_GROUPS) {
+            expect(ENTRY_TYPES).toContain(SOURCE_GROUP_COLOR_KEY[g]);
+        }
+        // 🔴 这两条是「枚举不同构」的实质约定，⛔ 别改成 `SOURCE_GROUP_COLOR_KEY[g] === g`：
+        //    `movieTv` / `comic` 都不是 EntryType，直接同构会 undefined → 渲染端取到 `TYPE_COLORS[undefined]`。
+        expect(SOURCE_GROUP_COLOR_KEY.movieTv).toBe('movie');
+        expect(SOURCE_GROUP_COLOR_KEY.comic).toBe('book');
+        expect(SOURCE_GROUP_COLOR_KEY.anime).toBe('anime');
     });
 });

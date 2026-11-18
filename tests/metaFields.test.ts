@@ -23,6 +23,9 @@ function fullEntry(type: EntryType): MediaEntry {
         title: '标题',
         status: 'watching',
         rating: 4,
+        // 🔴 ⑳ 心情：写侧是「有值才写一行」，样本必须带值，否则这条一致性守卫会把
+        //    合法的条件写出误判成「清单登记了但写侧不输出」。
+        mood: 'wow',
         year: 2020,
         genres: ['题材'],
         cast: ['演员'],
@@ -70,7 +73,7 @@ function fmKeys(fm: string): string[] {
         .filter((k) => !!k);
 }
 
-/** 按声明的形态造一个最小合法样本值（enum 只用于 status） */
+/** 按声明的形态造一个最小合法样本值（enum 有两族：状态 / 心情） */
 function sampleFor(f: MetaField): string {
     switch (f.kind) {
         case 'number':
@@ -80,7 +83,9 @@ function sampleFor(f: MetaField): string {
         case 'date':
             return '2026-01-01';
         case 'enum':
-            return 'watching';
+            // 🔴 ⑳ 心情与状态同为 enum 但白名单不同：喂 `watching` 给 mood 会被读侧正确丢弃，
+            //    于是这条「逐键单独喂」的守卫会误报成「清单说可读、读侧却不认」。
+            return f.key === 'mood' ? 'wow' : 'watching';
         case 'string':
         default:
             return 'v';

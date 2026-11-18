@@ -1,16 +1,16 @@
 // 详情笔记生成（纯逻辑，可单测）
 import type { MediaEntry } from 'data/types';
-import { ENTRY_TYPE_LABELS } from 'data/types';
 import { noteSubDir } from 'pure/dirs';
-import { normalizeBookKind } from 'pure/bookKind';
-import { starString } from 'pure/rating';
 import { formatPlaytime } from 'pure/playtime';
 import { localDateOf } from 'pure/dailyLog';
 import { formatLrcSourceDirective } from 'pure/lrcSource';
 import { seriesIndexValue } from 'pure/seriesGroup';
 import { episodeHintLabel } from 'pure/episodeAssoc';
-import { entrySourceLabel } from 'pure/sourceMeta';
+// ③ 单集评价的 YAML 序列化（写侧唯一真源，与 `noteEditable` 的读侧同源）
+import { serializeEpisodeReviews, EPISODE_REVIEWS_FM_KEY } from 'pure/episodeReview';
 import { NOTES_PLACEHOLDER } from 'pure/noteEditable';
+// 🔴 2026-11-14 用户 m04138：属性表格 → 条目卡代码块（围栏拼装走纯层唯一真源）
+import { noteCardFenceOf } from 'pure/noteCard';
 // 🔴 用户 m00002：「记录时长 / 重温 / 周目 都加上时间前缀，预览效果」——
 //   落盘行格式与弹窗预览共用 `pure/logLine` **唯一真源**（⛔ 别在这里再手拼一遍模板）
 import { commentRecordBlock, datedRecordLine } from 'pure/logLine';
@@ -49,6 +49,10 @@ export function entryFrontmatter(
     /** 1.3.1 ① 第 3 件：该类型的**属性写出顺序**（原始键名数组；缺省 / 空 = 现有顺序）。
      *  ⚠️ 由 `EntryService` 按 `e.type` 从 `pure/fieldOrder.resolveAllOrders` 取好后传进来。 */
     fieldOrder: readonly string[] = [],
+    /** 🔴 #721：该类型**不写出**的属性键（用户「笔记属性配置也可增删，删除后不拉取改属性字段」）。
+     *  ⚠️ 与 `fieldOrder` 是两个语义：`fieldOrder` 决定**先后**，本参数决定**写不写**。
+     *  ⚠️ 收窄（结构性键不可隐藏）在 `pure/fieldOrder.normalizeHidden` 已经做过，这里直接丢行。 */
+    fieldHidden: readonly string[] = [],
 ): string {
     const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
     const lines: string[] = [
@@ -103,6 +107,25 @@ export function entryFrontmatter(
     }
     if (e.watchedDate) lines.push(`watched_date: ${q(e.watchedDate)}`);
     if (e.plannedDate) lines.push(`planned_date: ${q(e.plannedDate)}`);
+    // 🔴 #772 心情（⑳）：只在有值时写（缺省**不写空行** —— 心情是可选字段，
+    //    给没填过的条目塞 `mood: ` 会在用户笔记里制造一堆空属性）。
+    if (e.mood) lines.push(`mood: ${e.mood}`);
+    // ③ 单集评价（append-only，2026-11-17）：写进**整部/单季 md** 的 frontmatter。
+    //    ⚠️ 序列化走 `pure/episodeReview.serializeEpisodeReviews`（⛔ 别在这里手拼 JSON）——
+    //    它内部先做 `normalizeEpisodeReviews` 归一，保证「写下去的行」和「读回来再写」逐字相同
+    //    （否则每次 `service.update` 都会让笔记文件 mtime 变化，撞上 G 双写冲突检测）。
+    //    ⚠️ 只在有值时写（与 `mood` 同口径）：没评价的条目一个空属性都不该多。
+    const episodeReviewsLine = serializeEpisodeReviews(e.episodeReviews);
+    if (episodeReviewsLine) lines.push(`${EPISODE_REVIEWS_FM_KEY}: ${episodeReviewsLine}`);
+    // 🔴🔴 2026-11-14 用户 m04138：属性表格换成 ` ```reelludic ` 条目卡之后，
+    //    「来源」那一行**不再存在** —— 而它原是 `sourceUrl` / `source` 唯一的回写通道
+    //    （`pure/noteEditable.extractEditableFromNote` 的 `/^\|\s*来源\s*\|/` 正则）。
+    //    ⇒ 把这两个键搬进 YAML，并在 `noteEditable.extractFrontmatterFromNote` 补上对应 handler。
+    //    ⛔ 别只删表格不补这里：那样用户在笔记里手改来源就再也回不到 catalog
+    //    （等同 `table: false` 的既有降级，但本批不该主动制造降级）。
+    // ⚠️ 只在有值时写（与 `mood` 同口径），避免给没来源的条目塞空属性。
+    if (e.source) lines.push(`source: ${q(e.source)}`);
+    if (e.sourceUrl) lines.push(`source_url: ${q(e.sourceUrl)}`);
     if (e.type === 'book' && e.readingProgress) {
         if (e.readingProgress.page) lines.push(`reading_page: ${e.readingProgress.page}`);
         if (e.readingProgress.totalPage) lines.push(`reading_total_page: ${e.readingProgress.totalPage}`);
@@ -118,7 +141,9 @@ export function entryFrontmatter(
     lines.push('---');
     // 🔴 两道文本层，**顺序不能换**：先按原始键名**排序**（`applyFieldOrder`），再**改名**（`applyFieldMap`）。
     //    反过来做的话，`fieldOrder` 里那一串原始键名就得跟着映射表再换一套，白搭一层耦合。
-    return applyFieldMap(applyFieldOrder(lines.join('\n'), fieldOrder), fieldMap);
+    // 🔴 #721：`fieldHidden` 是**要丢掉的键**（用户「删除后不拉取改属性字段」）——
+    //    它在排序那一层就过滤掉，所以隐藏的键连「排到最后」都不会发生。
+    return applyFieldMap(applyFieldOrder(lines.join('\n'), fieldOrder, fieldHidden), fieldMap);
 }
 
 /**
@@ -159,47 +184,24 @@ function progressPercentOf(e: MediaEntry): number | undefined {
     return undefined;
 }
 
-/** 封面嵌入文本：URL 用 markdown 图片；本地路径用 vault wikilink（从库目录根解析）。
- *  豆瓣图床（img*.doubanio.com）防盗链无 Referer 返回 418，改用内联 HTML img 强制携带 Referer。 */
-export function posterEmbed(e: MediaEntry, libraryDir: string = 'ReelLudic'): string {
-    if (!e.poster) return '';
-    if (/^https?:\/\//.test(e.poster)) {
-        if (/doubanio\.com/.test(e.poster)) return `<img src="${e.poster}" alt="封面" referrerpolicy="unsafe-url">`;
-        return `![封面](${e.poster})`;
-    }
-    const rel = `${libraryDir}/${e.poster}`.replace(/\/+/g, '/');
-    return `![[${rel}]]`;
-}
-
-/** 字符串显示宽度（全角按 2、半角按 1），用于音乐表格列内 padding 对齐 */
-function displayWidth(s: string): number {
-    let w = 0;
-    for (const ch of s) w += /[^\x00-\xff]/.test(ch) ? 2 : 1;
-    return w;
-}
-
-/** 属性表格的「创作者」行值：书籍→作者、影视/动画→导演、游戏→开发商（无则留空） */
-function creatorOf(e: MediaEntry): string | undefined {
-    if (e.type === 'book') return e.author;
-    if (e.type === 'game') return e.developer;
-    return e.director;
-}
+/**
+ * 🔴🔴 2026-11-14 用户 m07593：顶部 **bookinfo callout 整体删除**（原话「这个属性表格有残留，把改成封面
+ *    嵌入组件显示而不是用表格[!bookinfo]来显示」）⇒ 封面**不再往正文 markdown 里嵌**。
+ *    封面现在由**条目卡组件内嵌显示**（`views/noteCardMount` → 宿主 `resolvePoster` 取 URL，
+ *    豆瓣图床走 `referrerpolicy="unsafe-url"` 防盗链）。
+ *    ⛔ 因此本文件原先的 `posterEmbed()`（markdown 图片 / wikilink / 内联 HTML img）**已整体删除**：
+ *    它的唯一消费者就是那个 callout，留着就是「死码不留」铁律要清的那类残留。
+ *    ⛔ 也别把它搬回正文 —— 正面残留正是用户要去掉的东西。
+ */
 
 /**
- * 来源行链接：优先数据源官方页（搜索回填自动记录），回退手动添加的第一个观看链接。
- *
- * 🔴 #449：这里的 `SOURCE_LABELS` 手抄表**已删**，改走 `pure/sourceMeta.entrySourceLabel`（唯一真源）。
- *    旧表的键是**老的**（`google` / `openlibrary`，真源是 `googleBooks` / `openLibrary`）且**漏了 `mangadex`**
- *    ⇒ 那几种源在笔记里会原样吐出数据源键（`googleBooks` / `mangadex`）。#430 立的规矩就是三处消费共用一份。
+ * 🔴🔴 2026-11-14 用户 m04138：属性表格被「条目卡代码块」取代后，这里的三个辅助函数
+ * （`displayWidth` / `creatorOf` / `sourceLinkText`）**已整体删除** —— 它们的唯一消费者就是那张表。
+ * ⛔ 别为了「以后可能要用」留着：仓库的 Unused 门禁与「死码不留」铁律都盯着这类残留。
+ *    · 表格行的信息现在由 `pure/noteCard.buildNoteCardGroups` 按七组投影（能力真源仍是 `pure/metaFields`）
+ *    · 「来源」链接的**回写通道**已迁到 frontmatter（`noteGenerator.entryFrontmatter` 写 `source` /
+ *      `source_url`，`pure/noteEditable` 的 handlers 反解）—— 见下方 `entryFrontmatter` 的注释。
  */
-function sourceLinkText(e: MediaEntry): string {
-    if (e.sourceUrl) {
-        const label = entrySourceLabel(e) || '来源';
-        return `[${label}](${e.sourceUrl})`;
-    }
-    if (e.links.length > 0) return `[${e.links[0].label}](${e.links[0].url})`;
-    return '';
-}
 
 
 /**
@@ -236,8 +238,10 @@ export function relatedNoteLines(e: MediaEntry, allEntries?: readonly MediaEntry
     return out;
 }
 
-/** 生成详情笔记 Markdown 全文（顶部块 + 属性表格 + 评语 + 链接）
- *  - `opts.table === false`（设置页「笔记表格」关）→ **属性表格 + 顶部块（标题 / 封面嵌入）都不写**，
+/** 生成详情笔记 Markdown 全文（条目卡代码块 + 评语 + 链接）
+ *  - 🔴 2026-11-14 用户 m07593：顶部 **bookinfo callout（标题 + 封面嵌入）已整体删除** ⇒
+ *    封面改由**条目卡组件内嵌显示**（`views/noteCardMount`），正文里不再有任何 `> [!bookinfo]+` 残留。
+ *  - `opts.table === false`（设置页「笔记表格」关）→ **条目卡代码块也不写**，
  *    正文直接从第一个内容小节开始；标题与封面只在 **YAML 属性**（含 `banner`）里保留。
  *    影响面：`pure/noteEditable` 的「来源」行解析拿不到值 → 编辑回填回退 catalog 既有值（不丢数据，
  *    但笔记里看不到来源链接）。
@@ -250,123 +254,28 @@ export function generateNoteMarkdown(
 ): string {
     const s: string[] = [];
     const withTable = opts.table !== false;
-    // 顶部标题行（音乐书名号内带空格是历史形态，勿改）
-    const headTitle = e.type === 'music' ? `**《 ${e.title} 》**` : `**《${e.title}》**`;
-    // 封面嵌入走 posterEmbed：豆瓣 URL → HTML img（防盗链），其余 → markdown 图片；本地路径 → wikilink
-    const embed = posterEmbed(e, libraryDir);
-    // 顶部块随「笔记表格」开关二态：
-    //   表格开 → bookinfo callout（标题 + 封面，默认展开）；
-    //   🔴 表格关 → **正文一个字都不写**（标题与封面嵌入都不写）。
-    //    2026-09-28 #404 用户原话：「默认关闭笔记表格项笔记内开头不写入《标题>图片嵌入，只在Yaml属性写入」
-    //    ⇒ 推翻 2026-09-27 ③ 的「降级为普通标题 + 普通图片嵌入（都保留、只去外壳）」——那两样正是用户
-    //      现在要去掉的。标题在 frontmatter 的 `title`、封面在 `banner`（见 `entryFrontmatter`），信息不丢。
-    if (withTable) {
-        s.push(`> [!bookinfo]+ ${headTitle}`);
-        if (embed) {
-            s.push('>');
-            s.push(`> ${embed}`);
-        }
-        s.push('>');
-    }
+    // 🔴 2026-11-14 用户 m07593：顶部 **bookinfo callout 整体删除** —— 封面改由条目卡组件内嵌显示，
+    //    正文不再有任何 `> [!bookinfo]+` 残留（那正是用户说的「属性表格有残留」）。
+    //    ⛔ 原先的 `headTitle`（`**《…》**` 那行）**已整体删除**：它的唯一消费者就是那个 callout，
+    //    留着就是「死码不留」铁律要清的那类残留。标题现在由条目卡组件自己渲染（`entry.title`）。
+    // 🔴 `libraryDir` 参数**保留**：调用形态 `generateNoteMarkdown(e, libraryDir, {...})` 被断言钉死，
+    //    且 `entryFrontmatter` 里还要用它拼 `banner:`（本地封面 → `${libraryDir}/${poster}`）。
+    //    它在本函数内已无消费者（封面不再往正文嵌），这里显式「用掉」避免留下静默的未读参数。
+    void libraryDir;
 
-    // 属性表格：固定行 类型/作者/年份/来源/评分 + 有值附加行（保留豆瓣适配的完整字段）
-    // 音乐四行（作者/发行年/来源/评分），不参与影视/书籍附加行
-    // 网文（1.0.3）：年份行按「上架年」呈现；出版侧字段（译者/出版社/出品方/ISBN/装帧/定价/丛书）与「## 目录」不渲染——见下方 book 分支
-    const novel = e.type === 'book' && normalizeBookKind(e.bookKind) === 'novel';
-    const rows: [string, string][] = e.type === 'music'
-        ? [
-            ['作者', e.author ?? ''],
-            ['发行年', e.year ? String(e.year) : ''],
-            ['来源', sourceLinkText(e)],
-            ['评分', e.communityScore != null
-                ? (e.ratingCount != null ? `${e.communityScore} · ${e.ratingCount.toLocaleString()} 人评价` : String(e.communityScore))
-                : ''],
-        ]
-        : [
-            ['类型', `${ENTRY_TYPE_LABELS[e.type]}${e.genres.length ? ` · ${e.genres.join(' / ')}` : ''}`],
-            ['作者', creatorOf(e) ?? ''],
-            [novel ? '上架年' : '年份', e.year ? String(e.year) : ''],
-            ['来源', sourceLinkText(e)],
-            ['大众评分',
-                // 🔴 2026-10-25：Steam 条目有 `reviewPercent` ⇒ 写「97%（好评率 · 1,348,121 人评价）」。
-                //    与列表角标 / 表单标题行同一条优先规则（真源 `pure/scoreDisplay.scoreTextOf`）：
-                //    百分比优先，⛔ 不再退回去写 Metacritic 换算出来的 10 分制数。
-                // ⚠️ 没有百分比时保持**逐字旧行为**（`String(communityScore)`，不带任何后缀）——
-                //    这是历史快照断言锁着的口径，改了会让全仓笔记 diff 翻天。
-                e.reviewPercent != null
-                    ? `${e.reviewPercent}%（好评率${e.ratingCount != null ? ` · ${e.ratingCount.toLocaleString()} 人评价` : ''}）`
-                    : e.communityScore != null ? String(e.communityScore) : ''],
-            ['个人评分', `${starString(e.rating)}（${e.rating}/5）`],
-        ];
-    if (e.type === 'book') {
-        // 🔴 #444g 漫画：**画师单列一行**（与「作者」行分开 —— 作者 = 原作 / 编剧，画师 = 作画）
-        if (e.artist) rows.push(['画师', e.artist]);
-        if (!novel) {
-            if (e.translator) rows.push(['译者', e.translator]);
-            if (e.publisher) rows.push(['出版社', e.publisher]);
-            if (e.producer) rows.push(['出品方', e.producer]);
-            if (e.isbn) rows.push(['ISBN', e.isbn]);
-        }
-        // 页数 = 元数据（豆瓣实体书）优先，旧数据回退进度基准 totalPage；同一字段按子分类换名呈现：
-        //   文学 → 页数 ｜ 网文 → 章数 ｜ 漫画 → 话数（🔴 #445 加回「总话数」框后，漫画这条才有落库值）
-        const bookKind = normalizeBookKind(e.bookKind);
-        const pagesLabel = bookKind === 'comic' ? '话数' : (novel ? '章数' : '页数');
-        const bookPages = e.pageCount ?? e.readingProgress?.totalPage;
-        if (bookPages) rows.push([pagesLabel, String(bookPages)]);
-        // #537 阅读时长（分钟 → 小时文本，`formatPlaytime` 与游戏时长同一个格式化真源，⛔ 别另写一套）
-        if (e.readMinutes) rows.push(['阅读时长', formatPlaytime(e.readMinutes)]);
-        if (!novel) {
-            if (e.binding) rows.push(['装帧', e.binding]);
-            if (e.price) rows.push(['定价', e.price]);
-        }
-    } else if (e.type === 'game') {
-        if (e.platform) rows.push(['平台', e.platform]);
-        if (e.playtimeMinutes) rows.push(['时长', `${Math.round(e.playtimeMinutes / 60)}h`]);
-    } else if (e.type === 'music') {
-        // #685 收听时长（与「阅读时长」同一个格式化真源 `formatPlaytime`，⛔ 别另写一套）
-        if (e.listenMinutes) rows.push(['收听时长', formatPlaytime(e.listenMinutes)]);
-    } else {
-        if (e.type === 'anime' && e.developer) rows.push(['制作公司', e.developer]);
-        if (e.screenwriter?.length) rows.push(['编剧', e.screenwriter.join(' / ')]);
-        if (e.cast.length) rows.push([e.type === 'anime' ? '声优' : '主演', e.cast.join(' / ')]);
-        if (e.country) rows.push(['制片国家/地区', e.country]);
-        if (e.language) rows.push(['语言', e.language]);
-        if (e.durationMin) rows.push(['片长', `${e.durationMin} 分钟`]);
-        if (e.aliases?.length) rows.push(['又名', e.aliases.join(' / ')]);
-        if ((e.type === 'tv' || e.type === 'anime') && e.progress) {
-            const p = e.progress;
-            rows.push(['进度', p.totalEpisodes ? `S${p.season}E${p.episode}/${p.totalEpisodes}` : `S${p.season}E${p.episode}`]);
-        }
-    }
-    // ── 系列 / 系列序号（#434 建立 · #435 二轮修正）────────────────────────────
-    // 🔴 **所有类型都必须能在属性表里看到它，而且序号要并进同一行**。
-    //   用户原话：「条目里填写了系列名称和系列序号也**根本更新不了笔记条目**」——
-    //   全链（表单 → catalog → 生成 → 写盘）本来是通的，**断在属性表这两处覆盖缺口上**：
-    //   ① 🔴 **网文一行都没有** —— 原实现把系列整条按 2026-09-13 裁定归为「出版侧字段」（对网文不渲染），
-    //      而 `series` 自 #434 起**已不是「丛书」那个出版侧概念**：它是**通用系列**（海报墙靠它成组，
-    //      「斗罗大陆」「龙族」这类网文恰恰最需要）⇒ 网文补一行**「系列」**（⛔ 不改「丛书」那条裁定本身）。
-    //   ② 🔴 **书籍的序号丢了** —— 原书籍侧裸写 `e.series`，用户填的「系列序号」在笔记里根本看不见。
-    // ⚠️ 标签保留既有的不对称：**文学走「丛书」、其余（含网文）走「系列」**（#434 已记这是已知不对称）；
-    //   本批只补**覆盖 + 序号**，⛔ 不动已定稿的「丛书」文案。
-    // ⚠️ 序号 `undefined` ⇒ 只有名字（⛔ 不写「· 第 undefined 部」）；小数照原样（`第 1.5 部`）。
-    if (e.series) {
-        const idx = seriesIndexValue(e);
-        const seriesText = idx === undefined ? e.series : `${e.series} · 第 ${idx} 部`;
-        // ⛔ 只在这里出这一行，别在 book 分支里再补一次（两处各写一套必然漂移）
-        rows.push([e.type === 'book' && !novel ? '丛书' : '系列', seriesText]);
-    }
-    // 属性表格（设置页「笔记表格」开关可整块关掉；关掉时 rows 仍照算——上面的字段收集与下面表格
-    // 输出同源，避免开关另开一条分支）
+    // 🔴🔴 2026-11-14 用户 m04138：属性表格 → **插件专属条目卡代码块**（` ```reelludic `）。
+    //    用户原话：「在笔记规划渲染出插件专属组件，因为笔记属性和表单两个可视化不对等的」。
+    //    拍板口径：⑴ 代码块显式挂载；⑵ 可交互就地改；⑶ **替换掉**原来那张 `| 属性 | 内容 |` 表格。
+    //
+    //    ⚠️ 开关语义原样保留（#404 用户裁定，⛔ 别动）：`opts.table === false` ⇒ 顶部块与这一整块都不写。
+    //    🔴 原先这里的 90 行 `rows: [string, string][]` 拼装（类型/作者/年份/来源/评分 + 各类型附加行
+    //       + 心情行 + 系列行）**已整块删除**：它的唯一消费者就是那张表格。
+    //       同样的信息现在由 `pure/noteCard.buildNoteCardGroups` 按七组投影（字段能力仍以
+    //       `pure/metaFields` 为唯一真源），⛔ 别把 `rows` 复活 —— 两份投影并存就是「东拼西凑」的起点。
+    //    🔴 块里只放**条目 id 一行**（`noteCardFenceOf`）：⛔ 别把 frontmatter 抄进来，
+    //       那会形成两份真源，改一处另一处不动就是脏数据。
     if (withTable) {
-        s.push('| 属性 | 内容 |');
-        s.push('|:-----|:-----|');
-        if (e.type === 'music') {
-            // 音乐四行按 key 显示宽度补空格对齐（发行年 3 全角最宽）
-            const target = Math.max(...rows.map(([k]) => displayWidth(k))) + 1;
-            for (const [k, v] of rows) s.push(`| ${k}${' '.repeat(Math.max(0, target - displayWidth(k)))}| ${v} |`);
-        } else {
-            for (const [k, v] of rows) s.push(`| ${k} | ${v} |`);
-        }
+        s.push(noteCardFenceOf(e.id));
         s.push('');
     }
 

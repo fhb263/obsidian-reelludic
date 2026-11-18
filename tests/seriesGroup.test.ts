@@ -3,6 +3,8 @@ import {
     normalizeSeriesName,
     seriesNameOf,
     seriesKeyOf,
+    isLoneSeriesEntry,
+    loneSeriesEntryIds,
     seriesTitleOf,
     seriesIndexValue,
     sortSeriesItems,
@@ -890,6 +892,68 @@ describe('pure/seriesGroup 列表视图「不并组展示」（需求 9：展示
         const display = listDisplayRows(listFlatRows(entries), [key as string]);
         expect(display.every((r) => r.kind === 'entry')).toBe(true);
         expect(display.map((r) => (r.kind === 'entry' ? `${r.child ? 'c' : 'e'}:${r.entry.id}` : 'G'))).toEqual(['e:s1', 'e:s2']);
+    });
+});
+
+describe('单部系列的「系」角标（用户 2026-11-11 m07257 ③）', () => {
+    const mk = (id: string, type: EntryType, series?: string): MediaEntry => e(id, type, series);
+
+    it('🔴 只有 1 部的系列 ⇒ 该条目算「单部系列」', () => {
+        const pool = [mk('a', 'movie', '熊出没'), mk('b', 'movie', ''), mk('c', 'movie', '')];
+        expect(isLoneSeriesEntry(pool[0], pool)).toBe(true);
+        expect(loneSeriesEntryIds(pool).has('a')).toBe(true);
+    });
+
+    it('⛔ ≥2 部就不算单部系列（会被 foldSeries 折成卡，不该再挂角标）', () => {
+        const pool = [mk('a', 'movie', '熊出没'), mk('b', 'movie', '熊出没')];
+        expect(isLoneSeriesEntry(pool[0], pool)).toBe(false);
+        expect(loneSeriesEntryIds(pool).size).toBe(0);
+    });
+
+    it('⛔ 没填系列名的条目永远不算（别把散条目全打上角标）', () => {
+        const pool = [mk('a', 'movie', ''), mk('b', 'movie', '   ')];
+        expect(isLoneSeriesEntry(pool[0], pool)).toBe(false);
+        expect(loneSeriesEntryIds(pool).size).toBe(0);
+    });
+
+    it('🔴 同名跨类型各算各的（与 seriesKeyOf = type|名 同口径）：电影 1 部 + 动画 1 部 ⇒ 两个都算单部', () => {
+        const pool = [mk('m1', 'movie', '熊出没'), mk('a1', 'anime', '熊出没')];
+        expect(isLoneSeriesEntry(pool[0], pool)).toBe(true);
+        expect(isLoneSeriesEntry(pool[1], pool)).toBe(true);
+        expect([...loneSeriesEntryIds(pool)].sort()).toEqual(['a1', 'm1']);
+    });
+
+    it('🔴 上面那条反过来：电影 2 部 + 动画 1 部 ⇒ 只有动画那部算单部', () => {
+        const pool = [mk('m1', 'movie', '熊出没'), mk('m2', 'movie', '熊出没'), mk('a1', 'anime', '熊出没')];
+        expect(loneSeriesEntryIds(pool).has('a1')).toBe(true);
+        expect(loneSeriesEntryIds(pool).has('m1')).toBe(false);
+        expect(loneSeriesEntryIds(pool).has('m2')).toBe(false);
+    });
+
+    it('🔴 大小写 / 首尾空白按归一化后算同一系列（「Bear 」与「bear」是同一个）', () => {
+        const pool = [mk('a', 'movie', 'Bear '), mk('b', 'movie', 'bear')];
+        expect(loneSeriesEntryIds(pool).size).toBe(0);
+    });
+
+    it('🔴 Set 版与单条版必须同口径（交叉验证：同一池子逐条比对）', () => {
+        const pool = [
+            mk('x1', 'movie', 'A'), mk('x2', 'movie', 'A'),
+            mk('x3', 'movie', 'B'),
+            mk('x4', 'game', 'B'),
+            mk('x5', 'book', ''),
+            mk('x6', 'book', 'C'), mk('x7', 'book', 'C'), mk('x8', 'book', 'C'),
+        ];
+        const ids = loneSeriesEntryIds(pool);
+        for (const p of pool) {
+            expect(ids.has(p.id)).toBe(isLoneSeriesEntry(p, pool));
+        }
+        expect([...ids].sort()).toEqual(['x3', 'x4']);
+    });
+
+    it('空池 / null 条目都不抛错', () => {
+        expect(isLoneSeriesEntry(null, [])).toBe(false);
+        expect(isLoneSeriesEntry(mk('a', 'movie', 'X'), [])).toBe(false);
+        expect(loneSeriesEntryIds([]).size).toBe(0);
     });
 });
 

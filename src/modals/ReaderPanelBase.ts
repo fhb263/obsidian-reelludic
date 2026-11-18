@@ -59,6 +59,12 @@ export interface ReaderPanelOptionsBase {
     getCloudKey?: () => string;
     onExcerptSave?: (quote: string, note: string | undefined, loc: { chapter: number; pct: number }) => Promise<boolean>;
     onShotSave?: (rect: ShotRect, loc?: ShotLoc) => void;
+    /**
+     * 2026-11-13 用户指令：截图按钮**右键** → 框选后进批注（pixpin 式工具条）。
+     * 与 `onShotSave` 同签名、同语义 —— 面板仍然只交「矩形 + 定位」，抓像素/开批注弹窗/落盘全在宿主。
+     * 宿主没接（老入口）时右键回落成普通截图。
+     */
+    onShotAnnotate?: (rect: ShotRect, loc?: ShotLoc) => void;
     excerpts?: ParsedExcerpt[];
     onDeleteExcerpt?: (blockId: string) => Promise<boolean>;
     onTrashSelection?: (t: { highlightIds: string[]; excerptIds: string[]; highlightQuotes?: string[] }, opts?: { quiet?: boolean }) => Promise<number>;

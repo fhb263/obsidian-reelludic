@@ -206,6 +206,124 @@ const commands = {
         return true;
     },
 
+    /**
+     * mobile [--size 390x844] [--shot] [--tab x] —— 切到「手机端」跑一遍。
+     *
+     * 2026-11-14 建立（用户 m06113 拍板「方案 A」）。做的事：
+     *   ① 视口 mobile:true + DPR 3 + 触摸模拟 + iPhone UA；
+     *   ② 删 `process`、把 `Platform.isMobileApp` 改成 true；
+     *   ③ 重载插件（旧实例可能已缓存了桌面端判断）；
+     *   ④ 逐页点开设置页签，收集每页的错误与首屏高度 —— 这就是「白屏」的机器判据。
+     *
+     * 🔴 这是**模拟**不是真机：能证「移动端运行时路径不崩」，不能证「像素与真机一致」。
+     * ⛔ 别把本命令的结果当成真机验收。
+     */
+    async mobile() {
+        const size = String(opt('size', '390x844')).split('x').map(Number);
+        const c = await getSession();
+        const errors = await cdp.collectErrors(c);
+        const m = await cdp.enterMobileMode(c, { width: size[0], height: size[1] });
+        console.log(`视口 ${m.width}×${m.height}  mobile=true  DPR=${cdp.MOBILE_DEVICE.deviceScaleFactor}`);
+        console.log(`process 已删: ${m.patch.processDeleted ? C.ok + '是' + C.x : C.bad + '否' + C.x}`);
+        console.log(`已切的判定: [${m.patch.platformPatched.join(', ')}]  app.isMobile=${m.patch.appIsMobile}`);
+        if (m.patch.platformFailed.length) {
+            for (const f of m.patch.platformFailed) console.log(`  ${C.bad}${f}${C.x}`);
+        }
+        console.log(
+            C.dim +
+                '⚠️ 不删 process：删了宿主自己的 app.setting.open() 会崩（它读 process.platform）。' +
+                '「无 process 不崩」由 tests/mobileRuntime.test.ts 单测覆盖。' +
+                C.x,
+        );
+        console.log(
+            C.dim +
+                '⚠️ Platform.isMobileApp 从页面外部改不动（obsidian 模块只在插件包作用域内注入），' +
+                '因此「仅桌面端」徽标在模拟里不会出现。' +
+                C.x,
+        );
+
+        // 重载插件：旧实例在 onload 时已按桌面端算过一批分支，必须让它重跑一遍
+        await c.eval(RELOAD_SCRIPT.replace('__PLUGIN__', JSON.stringify(cdp.DEFAULTS.pluginId)));
+        const again = await c.eval(`(() => {
+            try { if (window.app && 'isMobile' in window.app) window.app.isMobile = true; } catch (e) {}
+            return {
+                processGone: typeof globalThis.process === 'undefined',
+                appIsMobile: !!(window.app && window.app.isMobile),
+            };
+        })()`);
+        console.log(`重载后: process 缺失=${again.processGone}  app.isMobile=${again.appIsMobile}`);
+
+        // 逐页扫设置页：白屏的机器判据 = 该页 .rl-set-page-body 的高度为 0 或含 .rl-set-pagefail
+        const scan = await c.eval(`(async () => {
+            const app = window.app;
+            const pid = ${JSON.stringify(cdp.DEFAULTS.pluginId)};
+            const plugin = app.plugins.plugins[pid];
+            // 🔴 实例字段是 \`settingTab\` 不是 \`setting\`（实测：pluginKeys 里只有 settingTab）
+            const tabInst = plugin && (plugin.settingTab || plugin.setting);
+            if (!tabInst) return { ok: false, reason: '设置页实例不存在（plugin.settingTab 为空）' };
+            app.setting && app.setting.open && app.setting.open();
+            await new Promise(r => setTimeout(r, 500));
+            if (app.setting && app.setting.openTabById) app.setting.openTabById(pid);
+            await new Promise(r => setTimeout(r, 1200));
+            const root = tabInst.containerEl;
+            if (!root) return { ok: false, reason: '设置页 containerEl 为空' };
+            const tabs = Array.from(root.querySelectorAll('.rl-set-tab'));
+            const rows = [];
+            for (const tab of tabs) {
+                tab.click();
+                await new Promise(r => setTimeout(r, 320));
+                const page = root.querySelector('.rl-set-page.is-active');
+                const body = page && page.querySelector('.rl-set-page-body');
+                const fail = page && page.querySelector('.rl-set-pagefail');
+                rows.push({
+                    tab: (tab.textContent || '').trim(),
+                    active: !!page,
+                    h: body ? Math.round(body.getBoundingClientRect().height) : -1,
+                    items: page ? page.querySelectorAll('.setting-item').length : 0,
+                    fail: fail ? (fail.textContent || '').slice(0, 120) : '',
+                });
+            }
+            return {
+                ok: true,
+                tabCount: tabs.length,
+                appIsMobile: !!(app && app.isMobile),
+                processGone: typeof globalThis.process === 'undefined',
+                viewW: window.innerWidth,
+                rows,
+            };
+        })()`);
+
+        if (!scan.ok) {
+            console.log(C.bad + '扫描失败: ' + scan.reason + C.x);
+            c.close();
+            return false;
+        }
+        console.log(
+            `环境确认: app.isMobile=${scan.appIsMobile}  process 缺失=${scan.processGone}  vw=${scan.viewW}  页签数=${scan.tabCount}`,
+        );
+        let bad = 0;
+        for (const r of scan.rows) {
+            const blank = r.active && r.h <= 0;
+            const failed = !!r.fail;
+            if (blank || failed || !r.active) bad++;
+            const tag = !r.active ? C.bad + '未激活' + C.x : failed ? C.bad + '报错页' + C.x : blank ? C.bad + '空白' + C.x : C.ok + 'OK' + C.x;
+            console.log(`  ${tag}  ${r.tab}  h=${r.h}  items=${r.items}${r.fail ? '  ← ' + r.fail : ''}`);
+        }
+        if (errors.length) {
+            console.log(C.bad + '期间控制台报错:' + C.x);
+            for (const e of errors.slice(0, 12)) console.log('  ' + brief(e));
+        }
+        const shot = !!opt('shot', false);
+        if (shot) {
+            const out = opt('out', `_shot/rd/mobile-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.png`);
+            const info = await cdp.screenshot(c, out, {});
+            console.log(`截图: ${path.relative(cdp.ROOT, info.path)}  ${(info.bytes / 1024).toFixed(0)}KB`);
+        }
+        c.close();
+        console.log(`\n${bad === 0 ? C.ok : C.bad}设置页 ${scan.rows.length - bad}/${scan.rows.length} 页正常${C.x}`);
+        return bad === 0 && errors.length === 0;
+    },
+
     /** theme [--set dark|light] */
     async theme() {
         const set = opt('set', null);

@@ -1,4 +1,4 @@
-﻿// 进度条打点 / 标记的纯逻辑（无 obsidian 依赖，可单测）。
+// 进度条打点 / 标记的纯逻辑（无 obsidian 依赖，可单测）。
 //
 // 需求（用户 2026-09-19）：「在进度条上显示小圆点 —— 当用户在视频任意时间点写下笔记时，进度条对应位置
 // 自动生成一个标记；点击标记可以快速定位到该时间点对应的笔记内容」。
@@ -73,6 +73,14 @@ export interface VideoMark {
     ep?: number;
     /** 库内链接的**文件名**（basename：库内链接只有路径、没有集号） */
     file?: string;
+    /**
+     * 库内链接的**完整相对路径**（去片段、URL 解码后）。
+     *
+     * 🔴 用户 2026-11-01 裁定「顺手修本地集串集风险」：只比 basename 时，
+     *    第 3 集 `第3集/01.mp4` 与第 1 集 `第1集/01.mp4` **基名相同** ⇒ 两集的标记会互相串。
+     *    有完整路径就按路径比（精确），路径对不上再退回 basename（兼容手写的 `影片.mp4#t=3`）。
+     */
+    path?: string;
     /** 截图文件名（`![[图]]`）—— 抽屉列表用它取缩略图 */
     image?: string;
 }
@@ -87,6 +95,18 @@ function baseName(p: string): string {
     const s = (p ?? '').replace(/\\/g, '/');
     const i = s.lastIndexOf('/');
     return (i >= 0 ? s.slice(i + 1) : s).trim();
+}
+
+/**
+ * 规范化库内路径用于**精确比对**：反斜杠转正斜杠、去掉开头的 `./` 与 `/`、折叠重复斜杠。
+ * ⛔ 不转小写：Obsidian 库里文件名大小写敏感（两台机器同步过来也可能是 `A.mp4` / `a.mp4` 两个文件）。
+ */
+function normPath(p: string): string {
+    return (p ?? '')
+        .replace(/\\/g, '/')
+        .replace(/\/{2,}/g, '/')
+        .replace(/^\.?\//, '')
+        .trim();
 }
 
 /**
@@ -132,7 +152,10 @@ export function parseNoteMarks(markdown: string): VideoMark[] {
             if (!t) continue;
             const mark: VideoMark = { seconds: t.seconds, kind, line, text, dest: l.dest };
             if (t.kind === 'entry') mark.ep = t.ep;
-            else mark.file = baseName(t.filePath);
+            else {
+                mark.file = baseName(t.filePath);
+                mark.path = normPath(t.filePath);
+            }
             if (image) mark.image = image;
             out.push(mark);
         }
@@ -149,12 +172,44 @@ export function parseNoteMarks(markdown: string): VideoMark[] {
  */
 export function marksForEpisode(marks: VideoMark[], cur: { ep: number; fileName?: string }): VideoMark[] {
     const file = baseName(cur?.fileName ?? '');
+    const path = normPath(cur?.fileName ?? '');
     const ep = Number.isFinite(cur?.ep) ? Math.floor(cur.ep) : 0;
     return (marks ?? []).filter((m) => {
         if (typeof m?.ep === 'number') return m.ep === ep;
-        if (typeof m?.file === 'string' && m.file) return !!file && m.file === file;
+        if (typeof m?.file === 'string' && m.file) {
+            // ① 路径级命中优先（见 `VideoMark.path` 的注释）：链接里的路径相对笔记目录、
+            //    当前集给的是库内路径，两者只会「尾部相同」⇒ 按**路径边界**做后缀比对。
+            if (path && typeof m.path === 'string' && m.path) {
+                if (samePathTail(path, m.path)) return true;
+                // 两边都有路径但尾部对不上 ⇒ 明确不是同一集（同名不同目录的文件走到这里）
+                if (m.path.replace(/^\.?\//, '').includes('/')) return false;
+            }
+            // ② 只有文件名（手写链接 / 老数据）⇒ 退回 basename 比对
+            return !!file && m.file === file;
+        }
         return false;
     });
+}
+
+/**
+ * 两条库内路径是否指向同一个文件：任一方是另一方的**路径边界后缀**即算命中。
+ *
+ * 为什么要后缀而不是全等：笔记里的链接来自 `metadataCache.fileToLinktext(f, notePath)`，
+ * 得到的是**相对笔记所在目录**的路径（可能是 `../视频/01.mp4`）；而播放器拿到的当前集是
+ * **库内完整相对路径**（`媒体库/视频/01.mp4`）。两者永远不全等，但尾部一定一致。
+ * ⛔ 只认「整段路径」后缀（补 `/` 再比），否则 `01.mp4` 会命中 `201.mp4`。
+ */
+function samePathTail(a: string, b: string): boolean {
+    const x = stripDot(a);
+    const y = stripDot(b);
+    if (!x || !y) return false;
+    if (x === y) return true;
+    return x.endsWith(`/${y}`) || y.endsWith(`/${x}`);
+}
+
+/** 去掉开头的 `./` 与 `../`（相对链接的层级对「尾部比对」没有意义） */
+function stripDot(p: string): string {
+    return (p ?? '').replace(/^(?:\.{1,2}\/)+/, '').replace(/^\/+/, '');
 }
 
 /** 秒数 → 进度条百分比（0~1）；总时长未知 / 非法 → 0（不画在错误位置） */

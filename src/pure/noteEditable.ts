@@ -6,6 +6,10 @@ import type { MediaEntry, Progress, WatchLink } from 'data/types';
 import type { MediaStatus } from 'pure/status';
 import { isMediaStatus } from 'pure/status';
 import type { Rating } from 'pure/rating';
+// #772 心情（⑳）：读侧白名单
+import { normalizeMood } from 'pure/mood';
+// ③ 单集评价（2026-11-17）：读侧与写侧共用 `pure/episodeReview` 的同一份归一
+import { parseEpisodeReviews, EPISODE_REVIEWS_FM_KEY } from 'pure/episodeReview';
 // 1.3.1 ① 字段映射（读侧）：笔记里的键名可能被用户改过，解析前先反查回原始键名
 import { EMPTY_FIELD_MAP, mapReverse, type CompiledFieldMap } from 'pure/fieldMap';
 
@@ -202,6 +206,24 @@ export function extractFrontmatterFromNote(
             const r = n(v);
             if (r !== undefined && r >= 0 && r <= 5) out.rating = r as Rating;
         },
+        // 🔴 #772 心情（⑳）：笔记里手改 `mood: wow` 要能读回 catalog。
+        //    白名单在 `normalizeMood`（⛔ 非法 id 一律丢弃，不回退第一档 —— 否则手滑写错
+        //    一个字就会把心情静默记成「震撼」）。值不是数字，所以走 `str`。
+        mood: (v, { str: s }) => {
+            const m = normalizeMood(s(v));
+            if (m !== undefined) out.mood = m;
+        },
+        // ③ 单集评价（append-only，2026-11-17）：用户在笔记里手改 `episode_reviews: {...}`
+        //    要能读回 catalog（与 `mood` 同一条理由：属性表格换条目卡后 YAML 是唯一回写通道）。
+        //    ⚠️ 值是**一行 JSON 流式映射**（写侧见 `noteGenerator` + `pure/episodeReview`）——
+        //    这里 ⛔ 不自己 `JSON.parse`，走 `parseEpisodeReviews` 让坏值安静丢弃：
+        //    手改成非 JSON 时若抛，会把整条笔记的导入一起带崩。
+        // ⚠️ 没有这一行 ⇒ 用户在笔记里删掉整行就等于「清空全部单集评价」，
+        //    handler 只在**有该键**时触发，所以「删光」和「从没写过」在这里是同一种结果（可接受）。
+        [EPISODE_REVIEWS_FM_KEY]: (v, { str: s }) => {
+            const parsed = parseEpisodeReviews(s(v));
+            if (parsed) out.episodeReviews = parsed;
+        },
         year: (v, { num: n }) => { out.year = n(v); },
         album: (v, { str: s }) => { out.album = s(v); },
         genres: (v, { strList: sl }) => { out.genres = sl(v) ?? []; },
@@ -226,6 +248,11 @@ export function extractFrontmatterFromNote(
         platform: (v, { str: s }) => { out.platform = s(v); },
         developer: (v, { str: s }) => { out.developer = s(v); },
         banner: (v, { str: s }) => { out.poster = s(v); },
+        // 🔴🔴 2026-11-14 用户 m04138：属性表格换成条目卡后，「来源」行消失 ⇒ 这两键改用 YAML 承载。
+        //    ⛔ 别只删表格不补这里 —— 那样笔记里手改的来源回不到 catalog（静默丢数据）。
+        //    ⚠️ 读侧键名是 `source_url`（YAML 习惯下划线），写侧见 `data/noteGenerator.entryFrontmatter`。
+        source: (v, { str: s }) => { out.source = s(v); },
+        source_url: (v, { str: s }) => { out.sourceUrl = s(v); },
         watched_date: (v, { str: s }) => { out.watchedDate = s(v); },
         planned_date: (v, { str: s }) => { out.plannedDate = s(v); },
         playtime_minutes: (v, { num: n }) => { out.playtimeMinutes = n(v); },

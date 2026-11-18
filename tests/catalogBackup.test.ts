@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
     BACKUP_FILE,
+    BACKUP_HINT,
     BACKUP_KEEP,
     BACKUP_SCHEMA,
+    applyDelta,
     backupStamp,
+    computeDelta,
     countEntries,
     emptyBackupFile,
     legacyBackupStamp,
@@ -20,7 +23,8 @@ describe('catalogBackup · 单文件形态', () => {
     it('备份文件名与保留版数：单文件、仍保 5 版（语义不变，只是文件数 5 → 1）', () => {
         expect(BACKUP_FILE).toBe('catalog-backups.json');
         expect(BACKUP_KEEP).toBe(5);
-        expect(BACKUP_SCHEMA).toBe(1);
+        // schema 2 = 链式增量（②-1）：5 版全文的 1.65 MB 靠「只存差异」压到 ~244 KB
+        expect(BACKUP_SCHEMA).toBe(2);
     });
 });
 
@@ -108,6 +112,101 @@ describe('catalogBackup · countEntries', () => {
     it('解析不出 / 无 entries → -1（不假装 0 条）', () => {
         expect(countEntries('not json')).toBe(-1);
         expect(countEntries('{"version":1}')).toBe(-1);
+    });
+});
+
+describe('catalogBackup · 链式增量（②-1 体积：5 版全文 → 链首全文 + 其余存差异）', () => {
+    /** 造一版「长文本 + 中间一小段不同」的 catalog 原文，模拟真实相邻版本 */
+    const bigText = (mid: string) => `{"version":1,"entries":[${'{"id":"x"},'.repeat(2000)}${mid}]}`;
+
+    it('computeDelta / applyDelta 恒等式成立（含首尾相接、完全相同、完全不同）', () => {
+        const cases: Array<[string, string]> = [
+            ['abcdef', 'abcdef'],
+            ['abcdef', 'abcXYZf'],
+            ['abcdef', ''],
+            ['', 'abcdef'],
+            ['abcdef', 'abcdefg'],
+            ['T1', 'T2'],
+            [bigText('A'), bigText('B')],
+        ];
+        for (const [base, target] of cases) {
+            const d = computeDelta(base, target);
+            expect(applyDelta(base, d)).toBe(target);
+        }
+    });
+
+    it('序列化后 5 版存成「链首全文 + 4 个 delta」，解析回来内容与原来逐字一致', () => {
+        const versions = ['A', 'B', 'C', 'D', 'E'].map((m, i) => snap(`t${i}`, bigText(m), 2001));
+        const bf = { schema: BACKUP_SCHEMA, hint: 'h', snapshots: versions };
+        const raw = serializeBackupFile(bf);
+        const stored = JSON.parse(raw).snapshots as Array<{ text?: string; delta?: unknown }>;
+        expect(stored[0]).toHaveProperty('text');
+        expect(stored.slice(1).every((s) => s.delta !== undefined && s.text === undefined)).toBe(true);
+        // 内存形态恒为全文 ⇒ 下游（去重 / 还原提示 / 条目数）无需感知存储方式
+        const back = parseBackupFile(raw);
+        expect(back.snapshots.map((s) => s.text)).toEqual(versions.map((s) => s.text));
+    });
+
+    it('体积真的变小：5 版近 25 万字的重合文本，增量存法远小于全文存法', () => {
+        const versions = ['A', 'B', 'C', 'D', 'E'].map((m, i) => snap(`t${i}`, bigText(m), 2001));
+        const bf = { schema: BACKUP_SCHEMA, hint: 'h', snapshots: versions };
+        const deltaSize = serializeBackupFile(bf).length;
+        // 全文存法 = 旧行为（每版都带 text），用来对照
+        const naive = JSON.stringify({ schema: 1, hint: 'h', snapshots: versions }, null, 2).length;
+        expect(deltaSize).toBeLessThan(naive / 4);
+    });
+
+    it('兼容旧 v1 文件：每版都带全文，照旧读出来', () => {
+        const v1 = JSON.stringify({
+            schema: 1,
+            snapshots: [snap('t1', bigText('A')), snap('t0', bigText('B'))],
+        });
+        const back = parseBackupFile(v1);
+        expect(back.snapshots.map((s) => s.text)).toEqual([bigText('A'), bigText('B')]);
+    });
+
+    it('混合形态：中途某版退回存全文时，其后的 delta 以它为 base 继续还原', () => {
+        const a = bigText('A');
+        const b = bigText('B');
+        const c = bigText('C');
+        const raw = JSON.stringify({
+            schema: BACKUP_SCHEMA,
+            snapshots: [
+                { at: 't2', entries: 1, text: a },
+                { at: 't1', entries: 1, text: b },
+                { at: 't0', entries: 1, delta: computeDelta(b, c) },
+            ],
+        });
+        expect(parseBackupFile(raw).snapshots.map((s) => s.text)).toEqual([a, b, c]);
+    });
+
+    it('链首只有 delta（没有 base 可还原）→ 丢掉这一版，保留其余可还原的', () => {
+        const raw = JSON.stringify({
+            schema: BACKUP_SCHEMA,
+            snapshots: [
+                { at: 't1', entries: 1, delta: { p: 0, s: 0, mid: 'ORPHAN' } },
+                { at: 't0', entries: 1, text: 'OK' },
+            ],
+        });
+        const back = parseBackupFile(raw);
+        expect(back.snapshots.map((s) => s.text)).toEqual(['OK']);
+    });
+
+    it('两版内容几乎不重合 → 退回存全文（增量反而更大时不做增量）', () => {
+        const raw = serializeBackupFile({
+            schema: BACKUP_SCHEMA,
+            hint: 'h',
+            snapshots: [snap('t1', 'AAAAAAAAAA'), snap('t0', 'ZZZZZZZZZZ')],
+        });
+        const stored = JSON.parse(raw).snapshots as Array<{ text?: string; delta?: unknown }>;
+        expect(stored[1].text).toBe('ZZZZZZZZZZ');
+        expect(stored[1].delta).toBeUndefined();
+        expect(parseBackupFile(raw).snapshots.map((s) => s.text)).toEqual(['AAAAAAAAAA', 'ZZZZZZZZZZ']);
+    });
+
+    it('还原提示要写清「只有最新一版是全文」（否则用户按旧提示找不到 text 字段）', () => {
+        expect(BACKUP_HINT).toContain('最新一版');
+        expect(BACKUP_HINT).toContain('delta');
     });
 });
 

@@ -165,6 +165,8 @@ export interface EpubReaderOptions {
      *    面板这边只需要把框选区定成 iframe 的外层 wrapper（`.rl-reader-frame`）。
      */
     onShotSave?: (rect: ShotRect, loc?: ShotLoc) => void;
+    /** 2026-11-13 用户指令：截图按钮**右键** → 框选后进批注（pixpin 式工具条）。宿主没接则回落普通截图。 */
+    onShotAnnotate?: (rect: ShotRect, loc?: ShotLoc) => void;
     /** 摘抄书签数据源（笔记「## 摘抄」区解析；打开阅读器时读取） */
     excerpts?: ParsedExcerpt[];
     /** 删除摘抄回调（书签右键 → main 层确认删除；返回是否成功，成功则面板刷新书签列表） */
@@ -493,10 +495,20 @@ export class EpubReaderPanel extends ReaderPanelBase<EpubReaderOptions> {
         // 区域截图（2026-10-23 用户指令）：一次性动作，⛔ 不走 toggleAnnotate（点一次框一次）；
         //   EPUB 正文在 iframe 里，框选区取 iframe 外层 wrapper —— 宿主 capturePage 抓窗口合成像素，天然覆盖。
         if (this.options.onShotSave) {
-            const shotBtn = quickWrap.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '区域截图：框选区域截图回填笔记内' } });
+            // 🔴 2026-11-13 用户指令：左键 = 框选直接回填；右键 = 框选后批注
+            const shotBtn = quickWrap.createEl('button', {
+                cls: 'rl-btn rl-reader-btn',
+                attr: { 'data-tip': '区域截图：左键框选回填笔记 · 右键框选后批注' },
+            });
             safeSetIcon(shotBtn, 'image');
             shotBtn.addEventListener('mousedown', (ev) => ev.stopPropagation());
             shotBtn.addEventListener('click', () => this.startShot());
+            // ⚠️ 不挂 mousedown 判 button —— 会吞左键 click
+            shotBtn.addEventListener('contextmenu', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.startShot(true);
+            });
         }
 
         // 目录/书签/摘抄 切换改由侧栏 tab 行承担（顶部仅渲染一次）；ops 仅保留 ≡ 设置
@@ -2513,10 +2525,12 @@ ${highlightMarkCss()}`;
      *      ⇒ EPUB 的 iframe 内容天然被覆盖，不需要跨文档取像素。
      *   ③ 定位与摘抄同一口径（`currentLoc()`），截图块落进笔记「## 阅读截图」区。
      */
-    private startShot(): void {
+    private startShot(annotate = false): void {
         const save = this.options.onShotSave;
         if (!save) return;
         if (this.shotOverlay) return;
+        // 2026-11-13：右键 = 批注；宿主没接 `onShotAnnotate` 就回落普通截图
+        const pick = annotate ? (this.options.onShotAnnotate ?? save) : save;
         this.hideSelbar();
         this.hideMenu();
         const host = (this.frameEl?.closest('.rl-reader-frame') as HTMLElement | null) ?? this.frameEl;
@@ -2525,14 +2539,16 @@ ${highlightMarkCss()}`;
             host,
             (rect) => {
                 this.shotOverlay = null;
-                save(rect, this.currentLoc());
+                pick(rect, this.currentLoc());
             },
             () => {
                 this.shotOverlay = null;
             },
         );
         this.shotOverlay = overlay;
-        overlay.start('拖拽框选要截图的区域 · Esc 取消');
+        overlay.start(annotate ? '拖出要批注的区域 · 拖手柄调大小 · 点「批注」确认 · Esc 取消' : '拖拽框选要截图的区域 · Esc 取消', {
+            adjust: annotate,
+        });
     }
 
     /** 切换行宽（严格/全宽）：写回设置 + 重建当前章（连续模式 applyLayout 按新行宽设限宽；翻页模式需按新列宽重排分页） */

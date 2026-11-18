@@ -36,10 +36,12 @@ export interface MusicDownloadDeps {
     preview: (song: DownloadSong, onProgress?: DownloadProgressCallback) => Promise<DlPreviewResult>;
     /** B站搜索（#496）：`error` 与「空列表」是两回事（后者 = 真没搜到） */
     biliSearch: (keyword: string) => Promise<{ videos: BiliVideo[]; error?: string }>;
-    /** B站下载（#496）：yt-dlp 抓音频转 mp3；成功后回传库内相对路径（与四平台同一套落盘口径） */
+    /** B站下载（#496）：yt-dlp 抓音频转 mp3；成功后回传库内相对路径（与四平台同一套落盘口径）。
+     *  🔴 `songTitle`（m07546 需求③）：条目歌名，落盘文件名优先用它；为空才回落到视频标题。 */
     biliDownload: (
         video: BiliVideo,
         onProgress?: DownloadProgressCallback,
+        songTitle?: string,
     ) => Promise<{ ok: boolean; message: string; relPath?: string }>;
 }
 

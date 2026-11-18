@@ -1,4 +1,26 @@
 # UI-GUIDE.md — ReelLudic 界面设计规范（AI 对齐）
+> v400（2026-11-15）：**#797 三处 —— 导航三档改名 + 横向页签改 iOS 分段控制器 + 纵向页签改幽灵风**（用户原话见 CHANGELOG #797）。**① 三档改名但 id 不动**：`NAV_LAYOUT_LABELS` → 横向页签 / 纵向页签 / 聚合下拉，`NAV_LAYOUTS` 的 `top`/`sidebar`/`merged` 是存量数据值，append-only。**② 🔴🔴 「删了 border 还有框」的真凶是 `box-shadow`**：核心 `button` 的 `--input-shadow` 第一段 `0 0 0 1px inset` 冒充描边，只删 border 永远消不掉 ⇒ 必须 `border: none; box-shadow: none;` 两条并存。**③ 🔴 竖条用 `border-left` 换色、⛔ 不用 `padding-left`**：常态透明 3px 占位、`.on` 换色，才不会切换时文字跳。新增 §6.2a / §6.2c。
+> v399（2026-11-14）：**#784 六项 —— 笔记条目卡纯详情化 + 列表单卡平铺生效 + 瀑布流隐藏切换钮 + 卡片 hover 遮罩修复**（用户原话见 CHANGELOG #784）。**① 条目卡只渲染紧凑「键：值」纯详情**（密排可扫读），标题旁放「编辑」按钮 → 打开编辑属性窗口；**卡内不再有输入框**（与 #780 的「可交互就地改」相反，以 #784 为准）—— 纯层 `applyNoteCardEdit` **必须保留**（`tests/noteCard.test.ts` 成对性 describe 依赖），渲染层不再调。**② 删笔记顶部 `> [!bookinfo]+` callout 残留**（`posterEmbed` 随之成死函数、一并删）—— 封面改由条目卡内嵌 `.rl-notecard-poster`（`object-fit:cover; object-position:top center`，豆瓣防盗链 418 的处理留在组件层）。**③ 编辑按钮**走 `ui/components` 的 `iconButton('rl-notecard-edit','pencil','编辑属性')`，🔴 **只能 `data-tip` 不能 `aria-label`**（双挂会被 `tests/tooltipSingleSource.test.ts` 判红），宿主 `editEntry:(id)=>void this.openEditModal(id)`。**④ 列表视图「单卡平铺」生效**：`rowSource` 列表分支读 `unfoldSeries`；⛔ `unfoldSeries` 与 `listGrouping` 是**两个独立字段**（合并会「列表里摊平 → 网格里系列也没了」）；⛔ `listGrouping && !searching` + 换行 + `? listTreeRows(` 的逐字形态被 `searchPenetration.test.ts:66` 钉死，不许改坏。**⑤ 瀑布流隐藏「切换循环」按钮**：状态挂**按钮自身** `class:rl-vb-masonry`（⛔ 别挪到外层 `.rl-vb-view` —— 断言 `assert-symbols.cjs` #547 逐字钉着 `.rl-vb-view` 开标签，多一个 class 就失配）+ CSS `.rl-vb-view .rl-vb-unfold.rl-vb-masonry { display:none }`（⛔ 不改 `{#if onToggleUnfoldSeries}` 结构，`unfoldSeries.test.ts` 钉最近的 `{#if `）。**⑥ 卡片 hover 遮罩不消失根因** = `.rl-card:focus-within .rl-cov-hover { opacity:1 }` 命中（点信息栏进编辑弹窗时卡片拿到焦点、返回后焦点仍滞留）⇒ 照抄 `CollectionBoard.releaseFocus`（`setTimeout(() => el.blur(), 0)`），blur 目标 = **卡片根元素 `.rl-card`**，⛔ 别改 `:focus-within`（`MediaList`/`CollectionBoard` 两处共用）。**🔴 断言两条修复**：#547（`.rl-vb-view` 开标签撞过窄字面守卫 ⇒ masonry 类挪回按钮自身）；#560（`.rl-rename-skips`/`.rl-rename-templates` 是 #777/#778 有意删的死类 ⇒ `scrollbar-gutter` 计数 10→9、删 `.rl-rename-skips` 点名，安全属性「只挂插件自有容器、不全局」不放宽）。**门禁**：tsc **0** · 全量 vitest **324 files / 7133 tests passed** · check **0 errors / 89 warnings** · build **87 warnings** · 产物断言**零新增 FAIL** · `_deploy.cjs` **ALL_MATCH=1**。
+> v398（2026-11-14）：**#783 一处 —— 移动端测试方案「C + A」：单测兜底 + 真机 harness 移动模拟档**（用户原话见 CHANGELOG #783）。**① 🔴🔴 手机版不是 Electron，是 Capacitor WebView**：那里没有 `process` 全局、`Platform.isMobileApp === true`；桌面 Obsidian 把窗口拖到 400px 宽**只验 CSS**，永远不会触发移动端分支 ⇒ 桌面端**永远测不出** #782 那条 `ReferenceError`。**② 「无 process」这一件事必须拆两处验**：C 方案用 `tests/mobileRuntime.test.ts` 的 `withMobileRuntime(fn)`（`delete globalThis.process` + `Object.defineProperty` 原样还原，实测 `process` 是 `{configurable:true, hasGetter:true}` 可删可还原）覆盖逻辑；A 方案的 UI 级模拟**不许删 `process`** —— 删了宿主自己的 `app.setting.open()` 就抛 `TypeError: Cannot read properties of undefined (reading 'platform')`（桌面宿主依赖 process）。**③ 🔴🔴 `obsidian` 模块从页面外部拿不到**：`window.require('obsidian')` 抛 `Cannot find module 'obsidian'`，`window.require.cache` 里只有 12 项且**没有 `obsidian`**（它只在插件 bundle 作用域内被注入）⇒ **从页面外部改不到 `Platform.isMobileApp`**，⛔ 别写「已经切了 Platform」这种假话；可用的替代通道是 `window.app.isMobile`（own-property、`{writable:true,configurable:true}`）。**④ 设置页实例字段是 `plugin.settingTab` 不是 `plugin.setting`**（`Object.getOwnPropertyNames(plugin)` 实测）。**⑤ 模板字符串里的注释不许带反引号** —— 会截断模板字面量，`node --check` 直接语法错。**门禁**：tsc **0** · 全量 vitest **323 files / 7128 tests passed** · check **0 errors / 89 warnings** · build **0 错误 / 87 warnings** · 产物顶层 node require **0 处** · 产物断言 **PASS 3751 / FAIL 314**（新增 **0**）· `_deploy.cjs` **ALL_MATCH=1**（main.js `47427c28f285` 2577430 B / styles.css `e8da6d10232b` 781126 B）。**A 方案实证**：`node tools/rd.cjs mobile` → 视口 390×844 / DPR 3 / `app.isMobile=true`，**设置页 6/6 页正常**，无空白、无 `.rl-set-pagefail`、控制台零错误。⚠️ 这是**模拟不是真机** —— 能证移动端运行时路径不崩，⛔ 不能证像素与真机一致；`Platform.isMobileApp` 分支（「仅桌面端」徽标）与触摸手势在模拟里验不到。
+> v397（2026-11-14）：**#782 四处 —— 手机端设置页空白 / 窄屏行 / 仅桌面端提示 / 默认合并视图**（用户原话见 CHANGELOG #782）。**① 🔴🔴 设置页任何一页渲染失败都不许把整页带走**：`Settings.ts` 的 `display()` 是「先建完 6 个页签、再逐页 `renderPage`」，`renderPage` 一旦抛异常就整体中断且 `.rl-set-page.is-active` 一个都挂不上（`.rl-set-page { display:none }`）⇒ 用户看到"页签在、内容全空"。每页必须包 try/catch + 渲染 `.rl-set-pagefail`，且 **`pageEls.set(page.id, el)` 必须在 try/catch 之外**（否则失败页切不过去，点了还是空）。**② 🔴🔴 移动端 ⛔ 不许裸用 `process`**：`src/pure/osIcons.ts` 曾是 `systemVoiceIcon(platform: string = process.platform)` —— **默认参数每次调用求值**，WebView 没有 `process` ⇒ `ReferenceError`，是这轮"整页空白"的触发点。一律走 `currentPlatform()`（`typeof process === 'undefined'` 返空串），并在下游把空串当成"移动端"处理（例：`whisperRuntime.installUnsupportedMessage` 首行 `if (!platform) return '…手机 / 平板暂不支持…'`，⛔ 别落到"用你的包管理器安装"）。**③ 桌面专属组要显式说"仅桌面端"，不许留白**：名单只准住 `src/pure/platformGates.ts` 一份（`DESKTOP_ONLY_GROUPS` + `shouldMarkDesktopOnly(title, isDesktopApp)` + `DESKTOP_ONLY_LABEL`），`createGroupSection` 只在组标题行右侧挂 `.rl-svc-group-badge-desktop`。⛔ 别在 `Settings.ts` 里硬编码组名 —— 守卫会查"名单里每组都真的被 `createGroupSection` 建出来"。**④ 缺省值改动只能走"新装播种"，⛔ 不许改归一函数的兜底**：`normalizeNavLayout` 的 `'top'` 兜底是保护老用户的（升级即换脸），手机默认合并视图必须用 `defaultNavLayoutFor(Platform.isMobileApp)` + **`!('navLayout' in rawSettings)`** 判据（⛔ `if (!navLayout)` 会把用户主动选的 `top` 也改掉）。**⑤ 窄屏设置行统一成"名称在上、控件在下"**（719px 档，`.setting-item:not(.setting-item-heading)`），⛔ 别忘了排除 `.setting-item-heading`。**门禁**：tsc **0** · 全量 vitest **322 files / 7123 tests passed** · check **0 errors / 89 warnings** · build **0 错误 / 87 warnings** · 产物顶层 node require **0 处** · 产物断言 **PASS 3751 / FAIL 314**（新增 **0**）· `_deploy.cjs` **ALL_MATCH=1**（main.js `b2b86a74240d` 2577430 B / styles.css `e8da6d10232b` 781126 B）。⚠️ ①–④ 全部是"源码守卫 + 渲染链推断"，**真机截图未目视验收**；平板中间宽度（720–900）仍无实测。
+> v396（2026-11-14）：**#781 一处 —— 手机 / 平板窄屏适配（设置页 + 首页 + 统计看板 + 月历）**（用户原话见 CHANGELOG #781）。**① 🔴🔴 断点只准复用既有档位**：白名单 `900 / 760 / 719 / 700 / 560 / 420`，⛔ 不许再开第 7 个阈值 —— 每多一档就多一处不同步的漂移点，`tests/narrowScreenAdapt.test.ts` 会红。**② 🔴🔴 不许再写顶层 `import` 引 Node 内置模块**：`src/services/asrHardwareProbe.ts` 曾在顶部 `import { spawn } from 'child_process'`，esbuild 编成产物顶层 `require("child_process")`，移动端 WebView 没有 Node 运行时 ⇒ **插件加载期直接崩**（不是"体验差"）。一律走 `getNodeModule<T>(id)` 惰性取模块，范式照抄 `src/pure/dl/neteaseCrypto.ts` 的 `getNodeCrypto()`。**③ 桌面重型功能只做"入口不出现"，不做移植**：ASR / 下载 / B 站解析要 `fs`/`child_process`/`https`，移动端架构上不可能；既有 81 处 `Platform.isDesktopApp` 全是入口提前 return，保持这个形状。**④ 长标识符列要 `word-break: break-all`**：`overflow-wrap: break-word` 对 `progress_total_episodes` 这类连字符/下划线长的标识符几乎不断，窄屏必溢出。**⑤ `<colgroup>` 的行内 `style="width:…"` 用 CSS 类盖不掉**：字段映射表的 `COL_WIDTHS` 只能在 JS 里改，窄屏不要试图用 `@media` 覆盖列宽（会失败得很安静）。
+> v395（2026-11-14）：**#780 一处 —— 笔记里那张 `| 属性 | 内容 |` 表换成 ` ```reelludic ` 可交互条目卡**（用户原话见 CHANGELOG #780）。**① 🔴🔴 笔记正文不再写属性表**：`src/data/noteGenerator.ts` 的 `if (withTable)` 里只有 `noteCardFenceOf(e.id)`，`opts.table === false` 的 #404 语义照旧（关掉就什么都不写）。⛔ 别把 `rows: [string,string][]` 复活 —— 同信息由 `pure/noteCard.buildNoteCardGroups()` 现算。**② 「来源」回写通道已迁到 frontmatter**：原先是 `src/pure/noteEditable.ts:137` 从表格的 `| 来源 | [名](url) |` 行反解 `source`/`sourceUrl`（唯一调用点 `src/modals/EntryModal.ts:137`），表格一删就永远读不回来 ⇒ 现在写 `source:` / `source_url:` 两行，`handlers` 同名解析。**③ 卡片类名前缀是 `rl-notecard-`，不是 `rl-nc-`**：`styles.css:5558` 已有 `.rl-nc-title`（截图/确认弹窗的居中标题），复用会整块跑偏。**④ 行控件一律官方 `Setting`**（`addDropdown` / `addText`；`readonly` 走 `controlEl.createDiv` —— `Setting` 没有 `addEl`）。**⑤ 🔴 顶层函数名要带限定词**：跨文件 bundle 里裸 `commit` 会和 `src/Settings.ts` 的局部 `commit` 撞名被改名成 `commit2`，产物断言直接判红（2026-11-14 实测）。
+> v394（2026-11-14）：**#779 三处 —— 音乐重命名读对字段 + 布局编辑区无缝网格 + 建表收进组件库 `splitTable()`**（用户原话见 CHANGELOG #779）。**① 🔴🔴 音乐歌手在 `author`，`artist` 是漫画画师**：`src/data/types.ts:189-196` 明文「`artist` 只有漫画会写，其余 bookKind 保存时显式清空」；`src/pure/metaFields.ts:176` 的 `author` 对 music 的标签是「艺术家」；`src/pure/musicGroup.ts:32`、`src/views/components/EntryForm.svelte:2147`、`src/pure/cardMeta.ts:37-51` 全部读 `author`。⛔ 任何按歌手的读侧都必须走 **`src/pure/musicArtist.ts` 的 `musicArtistOf(entry)`**（`author` → 带 `bookKind` 则空 → 回落 `artist` 兼容老数据），直接读 `entry.artist` 会让重命名恒退化成只有歌名（用户 m03626 报的「骑在银龙的背上.mp3」）。写侧同理：`MusicEntrySeed` 用 `author`，⛔ 双写即脏数据。**② 布局编辑区是「一整个无缝的网格」**：`.rl-ef-blk` 必须 `background: transparent` / `border: none` / `border-radius: 0`，hover 只换 `var(--background-modifier-hover)`；拖拽落点提示用 **`inset box-shadow` 而不是 `border`**（后者占布局宽度、造成 1px 位移）。`.rl-ef-canvas` 的占位框用 `1px solid`，⛔ 不用 `dashed`（虚线是「占位示意」语义，成品排版不该虚）。用户要的「去紫色胶囊 + 右上角 `layout-template` 图标 + 原生 `Menu` 选 1/1、1/2、1/3」自 2026-11-12 起已实现，⛔ 别再加回胶囊。**③ 建表只走组件库，⛔ 不许手写 `<colgroup>`**：`src/ui/components.ts` 的 `splitTable(parent, opts)` 是「表头 `<table>` 在滚动容器外 + 表体 `<table>` 在内 + 两张表共用同一份 `<colgroup>`」这套结构的唯一入口，返回 `{ headWrap, headTable, headRow, wrap, bodyTable }`，列宽真源只有 `opts.widths`。⛔ **不要把它和 `statusTable()` 合并** —— 后者是 `grid` + `role=table` 的只读表（为窄屏折叠设计），字段映射每行都有可编辑 `<input>`，必须 `table-layout: fixed` 才不抖。守卫 `tests/uiSplitTable.test.ts`（8 条）锁死「组内不再出现 `<colgroup>` / `createEl('table'`」。**门禁**：tsc **0** · 全量 vitest **319 files / 7054 tests passed** · check **0 errors / 89 warnings** · build **0 错误 / 87 warnings** · 产物断言 **PASS 3747 / FAIL 315**（与上一版基线逐字相同，**新增 0**）· `_deploy.cjs` **ALL_MATCH=1**（main.js `3eb8005e047a` 2566574 B / styles.css `40d94bb94a4d` 767961 B）。⚠️ ① 只在纯逻辑层验证（带真实 `episodeFiles` 的端到端改名未在真库跑）；②③ 的真机观感未目视验收。
+> v393（2026-11-14）：**#778 六处 —— 重命名弹窗瘦身 + 方括号保留 + 已合规音频不改名 + 批注两条真 bug + ASR 两种下载方式**（用户原话见 CHANGELOG #778）。**① 重命名弹窗只做「勾选 → 执行」**：`renderTemplates()` 已删除（连构造函数第 4 参 `groups` 一起删），规则模板说明只留在设置页；底部 `.rl-rename-ops` 必须 `flex: none; position: sticky; bottom: 0`（含 `background: var(--background-primary)` + 上边框）—— 按钮被裁的机制是 `desc + list + templates + ops` 总高溢出视口而 `ops` 不在滚动区，⛔ 只加 `padding-bottom` 治不了。**② `cleanStem` 禁用字符类不含方括号**：`/[\\/:*?"<>|#^]/g`（原含 `[` `]`，把 `[哥伦比亚] 加西亚·马尔克斯` 塌成「哥伦比亚 加西亚·马尔克斯」）；`()` 与 `[]` 都属用户模板要写的合法字符。**③ 已符合规则的音频不重算**：`stemAlreadyCompliant()` 仅对 `music` 生效，靠 `^(.+?)\s+-\s+(.+)$` 认 `歌手 - 歌名` 形状，命中进 `unchanged`；⛔ 判断必须早于 `buildRenameStem`（`artist` 为空时它会退化成只有歌名）。**④ 🔴 批注两条真 bug 的根因写进 §8**（`dragFrom` / `.rl-shot-ops`）；工具条**纯图标横排**，语义只由 `data-tip` 承担 —— ⛔ ⛔ 不能改挂 `aria-label`，会撞「悬停提示单一真源」铁律。**⑤ ASR 弹窗必须显式两段**：`方式一：一键下载并启用` → 卡片；`方式二：自己下载后指定本地文件` → 官网/镜像 + 「选择本地模型文件…」；配置入口 ⛔ 不许再只藏在 `<details>` 里。**⑥ 🔴 `require('@electron/remote')` 字面量会炸构建**（esbuild 打包期静态解析，该包不在 `package.json`）⇒ 模块名必须走变量间接引用。**门禁**：tsc **0** · 全量 vitest **318 files / 7042 tests passed** · check **0 errors / 89 warnings** · build **87 warnings** · 产物断言 **PASS 3747 / FAIL 315**（对照上一版产物 330 FAIL，归一化后**新增 0**）· `_deploy.cjs` **ALL_MATCH=1**（main.js `9b35723c203f` 2566155 B / manifest `2a4cab8f821f` / styles.css `fedf39fac21c` 766816 B）· `verify-artifact.cjs` **VERIFY=0**。⚠️ ①②③④ 的**真机目视全部未做**。
+> v392（2026-11-13）：**#777 五项 —— 随机看一部按页签抽 / 关联媒体重命名（七类模板）/ 管理与维护七行 / 区域截图左键回填 + 右键批注（pixpin 式七工具 + 六向调整）/ ASR 模型页手动下载官网路径**（用户原话见 CHANGELOG #777）。**① 随机看一部的候选池判据只准一处**：`HomeView.svelte` 的 `$: watchDiceOpen = onOpenWhatToWatch ? () => onOpenWhatToWatch?.(mergedOn ? null : listEntries) : null;` —— 合并视图传 `null`（宿主回退全库），其余传当前页签筛过的 `listEntries`；宿主签名 `openWhatToWatchModal(scoped?: readonly MediaEntry[] | null)` + `const pick = (all) => scoped ?? all;`。⛔ 别让子组件收池（`MediaList` / `CollectionBoard` 不知道页签，也不该知道），⛔ 别让宿主自己再判一次页签（两处判据必然漂移）。**② 重命名七类模板只有一份真源** `pure/batchRename.RENAME_TEMPLATE_GROUPS`（电影/剧集/动画/音乐/漫画/文学/网文，逐字见 CHANGELOG），弹窗只渲染、⛔ 不抄字面量；「不再显示被跳过」不是只删文案 —— `planBatchRename` 必须 `if (plan.renames.length > 0) out.push(plan)`，否则弹窗里会剩「只有标题、没有可改行」的空壳条目。**③ 管理与维护七行顺序即契约**：导入 → 下载 → 重命名 → 检测 → 清理 → 查看 → 还原；两条 desc 超 15 字（16 / 17 字）走**具名白名单** `DESC_OVER15_ALLOWED`，⛔ 不放宽整体上限。**④ 🔴 区域截图改为「左键 = 直接回填、右键 = 框选后批注」**，推翻此前「按钮只有一次性动作」的单一口径 —— 详见 §8 新增段。**⑤ ASR 模型页新增 `.rl-asr-manual` 手动下载区**：给**仓库页**不给 `/resolve/` 直链、网址原样显示可复制、打开走宿主 `openExternalUrl` 白名单 —— 详见 §11.10 新增段。**门禁**：tsc **0** · 全量 vitest **318 files / 7029 tests passed** · check **0 errors / 89 warnings** · build **87 warnings** · 产物断言 **PASS 3747 / FAIL 315**（相对 11-11 旧产物基线 329 条，**本批新增 = 0**）· `_deploy.cjs` **ALL_MATCH=1**（main.js `b8639368ea6e` 2566457 B / manifest `2a4cab8f821f` / styles.css `dfaacc2972de` 765682 B）。⚠️ ④ 的**真机交互未验收**。✅ `main.ts` 的 **490 行 U+FFFD 注释已收口**（逐字还原被证不可能 ⇒ 按上下文清洗：479 行删洞 964 处 + 11 行 `/** */` 手工定稿，`fffd=0`、块注释提前闭合 0 处、行数不变 13166）；✅ 公开镜像已同步（15 个根文件 MD5 全 OK、三棵树 `onlySrc=onlyDst=sizeDiff=0`，未代 commit / push）。
+> v391（2026-11-08）：**#727 顶部页签按「视图勾选的类型」过滤**（用户：「是在设置新自定义视图勾选类型，然后其他不勾选的不展示出来，勾选的在导航布局为顶部胶囊时显示为胶囊」；映射规则选定「只显示『影视』+ 计划 + 统计（类型页签按勾选过滤，非类型页签常驻）」）。**新增 §6.2「页签可见性由视图类型池决定」**。**① 唯一真源 `src/pure/homeTabs.ts` 的 `visibleTabs(pool)` / `resolveVisibleTab(tabs, current)`**：计划 / 统计恒常驻，`book`/`game`/`music` 各按池判定，`media`（影视）在池含 动画/剧集/电影**任意一种**时显示；`pool == null`（视图没配类型）⇒ **六枚原样全显示**，⛔ 别把「不限制」当「空池」。**② 🔴 三个消费点必须共用同一份**：`HomeView.svelte` 顶部胶囊渲染、同文件 `onTabKeydown`、`NavMenu.svelte`（新增 `export let tabs`）—— 只改渲染不改键盘 = ←/→ 按旧顺序数下标、焦点落到不存在的按钮。**③ 判别用 `activeViewPool`（视图那维），⛔ 不能用 `listTypePoolMerged`**：后者已把页签那维乘进去，切到「阅读」后影视/游戏/音乐当场消失、切不回去。**④ 兜底**：当前页签被过滤掉时自动落到第一枚可见项（`switchTab(resolveVisibleTab(...))`），否则顶部无任何按钮选中、内容区还在渲染被过滤页签的空列表。**⑤ `MEDIA_TYPES` 真源迁入 `pure/homeTabs.ts`**（否则反向 import 成环），`views/tab.ts` 改再导出、既有 import 路径不变。**验证**：tsc **0 行** · build **87 warnings** · `vitest run tests/homeTabs.test.ts` **19 passed** · `_deploy.cjs` `ALL_MATCH=1`（main.js `e7678b6fa11d` / styles.css `0f2e82062230` / manifest.json `2a4cab8f821f`）；真机 CDP 默认视图六枚、`types:["movie","tv"]` 视图只剩 计划/影视/统计、停在「游戏」再切自动落 `rl-tab-tracking`（截图 `_shot/rd/tabs-filtered.png`）。
+> v390（2026-11-08）：**#726 `styles.css` 注释清空「用户对话 + 日期 + 归属词」**（用户：「`css.styls` 这些用户原话…和等日期全部删除就好好说明样式文件的注释不要这么多的用户和对话」）。**新增第 17 节「样式文件注释书写规范」**，把这次的判定口径固化成强制条款。**① 口径是删「对话史料」不是删「用户」二字**：`用户 2026-10-02：「太丑了…」`、`用户 m01938 需求 ⑤`、`报障原文即「…」`、`逐字：「…」` 这类会话记录必须删；但 `否则用户一收栏就再也选不了集` 是**讲界面行为**的第三人称说明，要改写成无主语句（`不放回来，一收栏就再也选不了集`），⛔ 不能删词成病句。**② 技术术语里的「逐字」不能动**：`逐字高亮`（歌词功能名）、`逐字换行`、`逐字一致`、`逐字段一行` 共 11 处保留。**③ `content:"✓"` / `content:'🔁'` 是注释外真实渲染图标**，与 #725 同一条铁律。**④ 读数**：`styles.css` 480011 → 474546 字符、11502 → 11491 行、注释块 **1079 个不变**；含「用户」**334 → 0**、含日期 **222 → 0**、含 `m\d{5}` **38 → 0**、「报障」17→0、「裁定」45→0、「点名」19→0、「逐字」31→11（余为技术术语）；**注释外逐字节一致 = true**、大括号 2150/2150、行内病句 0。**⑤ 门禁**：tsc **0 行/exit 0** · build **87 warnings**（= 基线）· `_deploy.cjs` `ALL_MATCH=1`（main.js `3f77ec38689f` / styles.css `0f2e82062230` / manifest.json `2a4cab8f821f`）；真机 `check view` **3/3 PASS**。⚠️ **数 warning 别用 PowerShell 管道**（会读成 88：多出一条 stderr 包装截断行 `...String) [], RemoteException`）——正确数法见 §17.5。⚠️ 产物断言未取得读数（`assert-symbols.cjs:20891` 读已删除的 `EpisodePickerModal.ts` 抛 ENOENT，历史欠账）；镜像未执行（`_mirror.cjs` 不在库）。
+> v389（2026-11-08）：**#725 删 ASR 段顶部信任背书文案 + `styles.css` 注释去主观化与去 emoji**（用户：「删掉『本地音频转文字用…只有真找不到时才需要你指定』」「`styles.css` 文件里面的用户主观注释还有你指定的一些emoji图标删了」）。**① 删文案要连死样式一起删**：`src/Settings.ts:1135-1146` 的 `ASR_DESC` + JSDoc、原 `:6943-6944` 的 `createDiv({cls:'rl-hint-note rl-asr-note'})`、`styles.css` 原 `:2586-2589` 的 `.rl-asr-note{padding-bottom:8px}`（该规则只有这一个消费者）。⛔ 别为了「以后可能用」保留死样式。**② 🔴🔴 注释清理的两条铁律**：`content:"✓"` / `content:'🔁'` 是**注释外的真实渲染图标**，删了单句循环锁定行的标记就没了；`⇒`(450 处) 与 `→`(146 处) **是语法连接词不是装饰**，必须替换成「所以 / 改为 / 到」，一删了之会让大量注释变病句；`✓`/`✗` 是对比度读数标记（`（3.43 ✓ · 4.86 ✓）`），也只能替换不能删。**③ 读数**：`styles.css` 483791 → 480011 字符、11505 → 11502 行、注释块 **1079 个不变**、含 emoji 块 **556 → 0**、**注释外逐字节一致**、大括号 2097/2097。**④ 门禁**：tsc **0** · build **87 warnings**（= 基线）· `_deploy.cjs` `ALL_MATCH=1`（main.js `9760661285cf` / styles.css `30c09b199012` / manifest.json `2a4cab8f821f`）；真机 `check view` **3/3 PASS** + 设置页三块卡 `rows=3`。⚠️ 产物断言未取得读数（`assert-symbols.cjs` 读已删除的 `EpisodePickerModal.ts` 抛 ENOENT，历史欠账）；镜像未执行（`_mirror.cjs` 不在库）。⚠️ **仍有 334 块 / 446 行注释含「用户」字样**，超出用户确认的 34 块口径，未擅自扩大范围。
+> v388（2026-11-08）：**#724 引擎环境配置三块卡改固定一列三行**（用户：「识别程序、识别模型、音频工具改成各自一行显示，不并排了」）。🔴🔴 **旧写法的畸形是「特定宽度下」才出现的**：`.rl-asr-tiles { flex-wrap: wrap }` + `.rl-asr-tile { flex: 1 1 180px }`，面板 285px 时**恰好塞得下两张** ⇒ 前两块并排、第三块落行；在 404px 的展开态下三块本来就各占一行 ⇒ **只在宽面板量会判成假绿，必须窄面板复测**。现写法 `flex-direction: column` + `gap: 6px`，tile 由 `1 1 180px` 改 `0 0 auto` —— ⚠️ **`flex-basis` 在 column 方向指高度**，不改会被撑到 180px 高。规范补入 §11.10（该段此前只记了面板单栏与箭头收放，**从未记过 tile 排列方式**，正是旧 wrap 规则得以长期潜伏的原因）。**实证**（真机 CDP，`__asr-env[0]` 展开态）：`flexDirection="column"` / `gap="6px"` / `envWidth=404`；三块 `top` = 141/192/243、`left` 全 331、`width` 全 378、`height` 全 45 ⇒ `rows=3`；窄宽复核（临时 `maxWidth=285px`）三块仍 top 685/736/787、`width=285`、`rows=3`；截图 `_shot/rd/asr-env-rows.png` 人眼确认三行全宽。**门禁**：tsc **0**（0 行输出）· build **87 warnings**（= 基线）· `_deploy.cjs` 两目标 × 三产物 `ALL_MATCH=1`（main.js 2313237 / styles.css 668984 / manifest.json 438）。⚠️ **产物断言未取得读数**：`assert-symbols.cjs` 在第 20891 行读 `src/modals/EpisodePickerModal.ts` 抛 ENOENT —— 该文件已按用户要求整文件删除，脚本另有 6 处引用同样不存在的路径（属脚本落后于源码的历史欠账，**非本次改动引起**；脚本不在仓库内、无副本可修）。⚠️ 镜像**未执行**（`_mirror.cjs` 不在库）。
+> v387（2026-11-07）：**#723 AI集成「用途」组收口** —— 删「全局默认模型」档（+「应用到全部服务」）；分组名去掉「AI 快捷」、场景顺序改「阅读 → 播放 → 编辑」；六条服务名统一 `AI + 动作`；删掉学习模式那段悬停查词长提示。宿主样式三条坑同 #722（按钮/h4 必须两条类前缀）。
+> v386（2026-11-07）：**#722 AI集成「用途」右栏收尾** —— 删掉「没改过，用内置默认…」这句（脚注只在已自定义时出现）；「恢复默认」并入服务标题行、与高级设置三组**共用同一份样式**。三个宿主样式坑：`button:not(.clickable-icon)` 与 `.vertical-tab-content h4` 都是 (0,1,1) ⇒ 必须两条类前缀；flex 里的 h4 带 `min-width:0` 会逐字换行。
+> v385（2026-11-07）：**#721 页签改名「搜索配置」/ 引擎行点行只勾选 + 箭头透明无边框且位置固定 / 笔记属性可增删（删了不再写出）**（用户原话见 CHANGELOG #721）。**① 🔴 箭头「透明无边框」必须用 `.rl-asr-model .rl-asr-chev` 两条类** —— Obsidian 核心的 `button:not(.clickable-icon)`（0,1,1）压过单类（0,1,0），真机实测底色 rgb(230,230,230) + inset 阴影；**② 删掉「当前选中默认展开」**，否则点行选中后重渲染又替你展开，与「只勾选不展开」冲突；**③ 页签改名跳过 6 处历史引述行**（`原话/改名/原「/原为/当时由/改为` 的行是既往记录，改了就是伪造）；**④ 隐藏池必须常驻节点**，在 `render()` 里现建会每次多一个、恢复后旧的还写着「已隐藏 N 项」。
+> v384（2026-11-07）：**#720b 条目属性栅格按自身宽度降列数** —— 三个坑：`ResizeObserver` 跨 document 被忽略、`container-type` 写在自身上无效、挪到外层会把预览区掐成 324px；另记「窗口宽度与画布宽度不成正比」（窗口 1440 → 画布 324，窗口 900 → 画布 599）⇒ 只认画布自己的 `clientWidth`
+> v383（2026-11-07）：**#720 条目属性面板改「6 列栅格 · 真弹窗镜像」（用户选定方案 D）+ 引擎环境配置不再被挤成右半**（用户原话见 CHANGELOG #720）。
+> v382（2026-11-07）：**#719 播放阅读左内距归零 / 引擎环境配置改箭头收放 / 组名改「管理与维护」/ 条目属性面板去卡化重做**（用户原话见 CHANGELOG #719）。**① 🐞 「媒体载体」组前面空一块的真根因**：`.rl-svc-group-body` 基础规则带 `padding: 2px 0 6px calc(var(--size-4-4) * 2)`（=32px，给基本设置那种「长列表 + 子分组」层级用），基本设置页有 `[data-page="basic"]` 覆盖归零、**播放阅读页没有** ⇒ body 多 32 + 行内核心 20 = 52px。修法 `[data-page="immersive"] .rl-svc-group-body.setting-items { padding: 0 }`，只收 nativeGroup 那一支（语音服务组含 `.rl-voice-card` 仍需缩进）；⛔ 不改基础规则。**② 引擎行收放入口从「整行点击」改成一枚行尾箭头 `.rl-asr-chev`**（真 `<button>`、图标 `chevron-right`、展开旋转 90°、`aria-expanded` + `aria-label` 双向同步）—— 整行不再绑 click / role / tabindex，`.rl-asr-model.is-foldable { cursor: pointer }` 已删。**③ 组名「数据与维护」→「管理与维护」**（`Settings.ts` + `settingNav.ts` 图标键 + `tests/settingNav.test.ts` 三处同步，旧名留 `toBeNull()` 反向断言）。**④ 🔴🔴 条目属性面板去卡化**（用户「太丑了也不好调整，参考更多主流」）：11 张独立卡片 → **整列一张卡 + 行间发丝线**；每行横排 `[把手] 属性名 ⋯ [72×22 控件小样] [整行|1⁄2|1⁄3 分段器] [✕]`；控件示意从「吃满整行的大空框」改为固定小样右对齐成一列；分段器三枚按钮收成一枚 3 段、`data-tip` 从 33 条并为整组 1 条；拖拽把手在本面板**默认 `opacity:.5`**（裸行没有边框，全透明时「能拖」零提示）。**⑤ ⚠️ 改这条时撞的坑（必须记）**：`styles.css` 里更早的「高级设置五组外壳与行统一」（m12814）规则**显式列了 `.rl-ef-row`**，会以更高特异度把 border/radius/bg/padding 加回来 —— 新规则被静默压住，`tsc`/`svelte-check`/单测全看不见，只有真机量 `getComputedStyle` 才暴露。已把 `.rl-ef-row`（含其 `:hover` 覆盖与 `.rl-ef-list` 的 `gap:6px`）从那条规则里**移除**，余下四组仍照旧。**教训：改一条样式的观感前，先 grep 该类名在整份 CSS 里被哪些选择器提到过。** **实证**：媒体载体 `padding-left 32→0px`、行 x 264→232 与组齐平；三行 `chevCount:3` + 开合 `hidden/aria-expanded` 双向；组标题实测含「管理与维护」且无「数据与维护」；条目属性 `rowCount:11`、`list{border:1px,radius:6px,overflow:hidden,h:412}`、`row{border:0,radius:0,bg:transparent,shadow:inset 0 1px 0}`、`ctl{72×22}`、`segTips:0`、整块 788→706px。**门禁**：tsc 0 · build 87 warnings · check 0 errors/89 warnings · vitest 263 files/5712 tests · `ALL_MATCH=1`。⚠️ 镜像**未执行**（`_mirror.cjs` 不在库）。
+> v381（2026-11-07）：**#718 设置页八条整改 —— 两个真 bug（hover 不出提示 / aria-expanded 缺失）+ 一处布局塌陷**（用户八条原话见 CHANGELOG #718）。**① 🔴🔴 hover 提示的根因不是文案没挂，是「设置页开在独立窗口」**：`services/globalTooltip` 原来 `const doc = document` 只对主窗口做事件委托 ⇒ 独立窗口里的 `data-tip` 永远不弹。改为**多 document 模型**（`bindTooltipDocument(doc)` + `WeakMap<Document, BoundDoc>`，每部 doc 各持一套 tip/定时器；`place()` 用 `doc.defaultView` 的尺寸，气泡挂 `doc.body`），`Settings.display()` 用 `containerEl.ownerDocument` 登记。⚠️ `activeDocument` / `activeWindow` 是 `obsidian.d.ts` 里 `declare global` 的**全局变量、不是具名 export** ⇒ `import { activeDocument } from 'obsidian'` 会报错。**② 🔴 元数据源配置页组序改为「启用 → 搜索源凭据 → 网络播放 → 音乐下载」** —— 本条**推翻 #488 的「凭据一律在启用之前」**（也与上一轮「网络播放排第二」冲突），⛔ 别再据旧条回潮；与 §11.7「先连上」方向相反是**用户明确要求**，属有意为之。**③ 🔴 媒体载体组补 `nativeGroup=true`**（与基本设置页同款原生卡）；⚠️ 语音服务那组**不传**（`.rl-voice-card` 会卡中卡）。**④ 🔴 ASR 环境配置折进「选择模型」每行**：点行收放、「选中引擎」改挂圆点/胶囊 + `stopPropagation`；段容器由三段并为两段（选择模型 / 偏好与词典）—— 详细规范见新增 §11.10。**⑤ 🐞 `aria-expanded` 真 bug**：原塞在 `if (!opts.pick)` 里 ⇒ 带档位下拉的 Whisper.cpp 行读出 `null`，读屏完全看不见收放状态；`aria-expanded` 描述「可收放 + 开合」，与 `role` 无关 ⇒ 必须**无条件**挂。**⑥ 🐞 面板内路径行必须改单栏**：343px 面板里用核心两栏，`.setting-item-info` 被压到 **73px** ⇒ 说明文字竖排、输入框顶出边界（**截图才发现，单测与代码审查看不见**）；只在本面板内覆盖，⛔ 别提到全局。**⑦ 两个语音小标题去掉 emoji**。**⑧ AI 用途两栏等高**：`.rl-ai-master-wrap` 由 `flex-start` 改 `stretch`（⛔ 别用 `space-between`，行距会忽大忽小）。**⑨ 条目属性预览改真控件外观**（用户拍板方案 A：重画预览、保留拖拽）—— 详见新增 §11.11。**实证**（真机 CDP）：hover `appeared:true` + `sameDoc:true`；组序四组文字实测；媒体载体 `native:true` ×3 行；ASR `foldableRows:3` + 开合 `ariaExpanded false/true` 双向正确；面板 `infoW/ctrlW 285`、输入框 229、`scrollOverflow:0`、高 1065→616；AI 两栏 `313/313`、`heightDiff:0`；条目属性 11 行 `text5/area3/num1/btn1/meta1`、`labelAbove:11`、`hasOldBox:0`。**门禁**：tsc 0 · build 87 warnings（= 基线）· check 0 errors/89 warnings（= 基线）· vitest **263 files / 5712 tests passed** · `_deploy.cjs` 两目标 × 三产物 `ALL_MATCH=1`。⚠️ 镜像**未执行**（`_mirror.cjs` 已不在库）。
+
+> v380（2026-11-07）：**#717 AI集成「用途」组改主从布局（左索引 + 右详情）**（用户：「继续AI集成页的结构重构」；从十版方案里选定 **I 稿**）。**① 🔴🔴 主从解决的是「平铺无限拉长」**：七条用途各带一份提示词，平铺后「改这一条」得先在一列里找到它；主从把**索引**（左，七条 + 状态点）与**编辑**（右，只画当前那条）拆开。**② 🔴 七条目必须收敛到一个真源** `aiServiceDefs(): AiServiceDef[]`（`global` / `translate` / `search` / `summary` / `prefill` / `cue-summary` / `cue-ask`）—— ⚠️ `cue-ask` 的**服务商与模型与 `cue-summary` 完全共用**（同一组 `readerCueSummary*` 字段），只有提示词独立；`global` 的 `prompt` 是 `null`。⛔ 别再让「七条」散在三处 if 里。**③ 🔴🔴 真机才抓得到的真 bug（本批最重要的一条教训）**：「不启用」条目的状态点是灰的，右栏拣选按钮却**亮着模型名** —— 根因是 `normalizeProvider('off')` 归一回 `zhipu`、`shownModel()` 随即回 `GLM-4-Flash`，于是 `text: model || aiPickText(...)` 的 `||` 把「不启用」短路掉了。⚠️ `aiPickText` 纯函数本身是对的、且**已被单测钉死**，但**组装处让它根本没被调用到** ⇒ **凡「纯函数有保护 + 视图层另有短路」的组合，单测必假绿，只有真机探针能抓**。修法 = 不启用时让模型段**根本不参与计算**（`const off = isAiOff(choice); const model = off ? '' : this.shownModel(...)`），⛔ 不在视图层再补判空。**④ 🔴 提示词：折叠块 → 常驻 textarea**：`.rl-ai-prompt-btn` 整套退场；`renderPromptField` 签名收窄为 `{ value?; defaultText; onSave }` —— **它内部不再画标签**（调用方与函数内部各画一份 = 真机上两行「提示词」叠着，本批修掉的第二个真 bug）。失焦自动保存、**⛔ 无保存按钮**（用户明确选定，设计稿上那枚不实现）。**⑤ 🔴 脚注必须回读输入框当前值**：「已自定义 · 共 N 字」与「恢复默认」的 `disabled` 由 `refreshFoot()` 现算并挂 `change`（注册在写盘监听之后，顺序即真源）—— ⛔ 别用渲染时的 `value` 快照（那样保存后提示不刷新，本批第三个真 bug）。「恢复默认」复用同一条通路（`el.value=''` + `dispatchEvent(new Event('change',{bubbles:true}))`），⛔ 不整页重渲染（会丢滚动位置）；⚠️ `bubbles: true` 必须有。**⑥ 🔴 拣选控件在右栏吃满整格宽 = 两级前缀覆盖**（`.rl-ai-detail .rl-ai-pick .rl-ai-pick-btn`），⛔ **不动** `.rl-ai-svc` 那条共享规则 —— `--rl-ai-ctl-w: 200px` 仍管「整行里控件贴右」的形态（语音服务行）。⚠️ `.rl-ai-svc` 现在**只剩 `renderTtsVoiceRow` 一处**在用，⛔ 别当死样式删（删了语音行立刻退回宿主默认布局）。**⑦ 🔴 `this.aiPick` 是界面焦点不是配置** ⇒ ⛔ 不落盘（与 `entryFormSlot` / `cardFieldsType` 同族）。**⑧ `global`「应用到全部服务」= 逐项显式写入**五个服务字段（⛔ 别只在读取时回退 —— 用户改过某一项之后就对不上了），`isAiOff` 时整颗禁用。**实证**（真机 CDP，Obsidian 1.14.4）：主从 656px（左 210 / 右 432）/ 三处 `scrollWidth > clientWidth` 全 null / 左上角色分组 4 段 7 条目 / `.rl-ai-mitem` 带 `role=button`+`tabindex=0` / `promptLabels: 0` / 七条目逐条点选全部正确跟随 / 控制台 0 错误 / 深色页正常；修 bug 后复跑：三条 off 条目 `不启用▾` + `tip:null`、四条 on 条目模型名与 `data-tip` 正常。**门禁**：tsc 0 · 87 warnings（= 基线）· check **0 errors / 89 warnings**（= 基线）· 全量单测 **263 files / 5712 tests** · 部署两目标三产物 `ALL_MATCH=1`。⚠️ **断言 8 条预期翻面**（脚本是 11-01 版，锚在旧的场景卡与折叠提示词上）；另 7 组 FAIL 属工作区历史漂移，与本批无关。⚠️ `_mirror.cjs` 全仓已不存在 ⇒ 镜像同步记为「工具已不在库」。
 > v379（2026-10-18）：**#667 改"建行顺序"后的两条必做**。
 > 🔴🔴 **主字段只在分支里建**：多分支排输入框顺序时，⛔ 别把"默认那次"留在分支外面无条件执行——
 >     分支里再建一次就是**重复框**（#666 那版让 TMDB 的 Key 框出现两次）。
@@ -942,6 +964,7 @@
 > ③ ⚠️ **量「是不是同一行」⛔ 不能用 `display`**：`.rl-edit-lblrow` 是 flex，子元素的 display 会被**块化**
 > （`inline` → `block`）—— 那样判会把**正确写法**判成错的。真判据 = 「是那一行的子元素」+「与标签纵向重叠」+「行高不变」。
 
+
 > v305（2026-10-09）：**#581 微信读书书架同步弹窗（列表勾选 + 导入）**。**① 🔴 一行的勾选热区是**整行**，不是那个小方块**：行用 `<label>` 包住「勾选框 + 封面 + 书名/副行 + 徽标」—— 只在 `<input>` 上可点是最常见的「点不动」投诉源。**② 🔴🔴 「不能导入」的行要**禁用 + 说原因**，⛔ 不做「能勾但没反应」的假可勾**：库里已有同名的书 ⇒ 勾选框 `disabled` + 行**降饱和**（`.is-dup` 的 `opacity`）+ 尾随一枚「库里已有」标；统计与「导入 N 本」只数**未被禁用**的勾选（否则按钮数字与实际落库条数对不上）。**③ 🔴 文案由**纯模块**拥有，弹窗只负责显示**：计数句与「另有 N 个有声专辑 / 文章收藏」那类**解释性**句子一律来自 `pure/`（本仓「同一概念只准一份文案」）—— 弹窗层⛔ 不许自己拼第二份（两边早晚分叉）。**④ 模态壳不自己造型**：标题走 `titleEl`、主体走 `contentEl`，行/列表样式用自带的 `rl-wshelf-*` 类；按钮复用 `rl-btn`（+ `mod-cta` 作主按钮），⛔ 别新造一套按钮。**⑤ 长列表给**自己**的滚动区**：`.rl-wshelf-list` 有 `max-height: 46vh` + `overflow-y: auto`，页脚操作区**不进滚动区**（否则书目一多，「导入」按钮要滚到底才找得到）。**⑥ 封面盒尺寸显式钉**（`width/height` + `flex: none` + `object-fit: cover`）：`flex: none` 只是 `basis: auto`，主尺寸仍退回 `width`（本仓「宽度别只靠 width」老账）；缺图走同尺寸占位块（⛔ 不显示破图）。**⑦ ⚠️ 仿真页的「形态」证词要配**反向对照**：本批量「已导入行降饱和」时，页内另放一帧把 `is-dup` 摘掉 —— `opacity` 必须回到 1，否则说明那个观感是内联写死的，⛔ 那种「看着像」的证词不算数。
 
 > v304（2026-10-09）：**#579 时间戳侧边栏（播放器抽屉：截图笔记 / 名场面 两栏 ＋ 双向联动 ＋ 大图预览）**。**① 🔴🔴 收起态用 `display:none`，⛔ 不用「`transform` 推出去」那种写法**：推出去的盒子**仍算可滚动溢出**（播放器凭空多出横向滚动），而且 `transform` 会**创建层叠上下文**（#553 老账）⇒ 层级钉死 `auto`、被 DOM 靠后的内容盖住。滑入要做成**一次性入场动画**（收起态根本没有 transform），并显式给 `z-index`。**② 🔴🔴 浮层的上下边距要「量」，⛔ 不能写死**：顶栏与底栏都是 `position:absolute` 的渐变浮条，抽屉若从 0 铺到 100% 就会**盖住顶栏那几枚按钮** —— 含**它自己的开关** ⇒ 展开后关不掉，是个死局。正解 = 展开时按 `.rl-vp-bar.offsetHeight` / `.rl-vp-controls.offsetHeight` 写内联，并在 `onResize` 里重算（字号 / 全屏 / 分屏都会变）。⚠️ 验收这条要用**命中测试**（`elementFromPoint` 顶栏按钮中心仍要落在工具组里），并配一条**反向对照**（把 top 写死 0 时应被盖住）——否则判据自己是死是活看不出来。**③ 层级链**：舞台 0 ＜ **抽屉 35** ＜ 浮层（菜单 / 连播）40 ＜ **大图预览 45** ＜ 模态族（`.rl-ctx` 50）。浮层要压在抽屉**之上**：它是「点一下立刻选一个」的临时件，被盖住就点不着了。**④ 🔴 交互内容不许嵌套（第三次同源）**：列表**行**是 `<button>` ⇒ 行内的次要动作（这里是「点缩略图看大图」）必须是它的**兄弟节点**，两枚真按钮并排（同 #564 折叠摘要、#576「去关联」）。**⑤ 🔴 双向联动的三条口径**：⑴ 只对**可见**的列表做（收起直接返回）；⑵ **目标下标没变就一个 DOM 都不碰**（媒体元素每秒回调数次，白刷会反复重排）；⑶ 滚动用 `scrollIntoView({ block: 'nearest' })` —— 条目已在视野内就完全不动，⛔ 别用 `center`/`smooth` 跟用户的手动滚动抢。列表要**按时间升序**（否则高亮在列表里乱跳），笔记里的原序不动。**⑥ 懒加载的档位按真实数据规模选**：`display:none` 的抽屉里**一行都不建**、只建当前那栏；缩略图 `loading="lazy"` + `decoding="async"`。⛔ **不做虚拟列表** —— 单集标记是**几十**条的量级，那是过度设计。**⑦ Esc 层级长到四级**：**大图预览 → 浮层 → 抽屉 → 全屏让位**（仍**不退出播放器**，2026-09-17 裁定不变）。⚠️ 判据别死抠整段正则（层数还会长）—— 取处理器体**比顺序**（`indexOf` 排先后）；且全仓有多个 `register([], "Escape"`（阅读器那件在最前）⇒ 必须挑出含 `menuMode` 类上下文的那一个。**⑧ ⚠️ 空状态的文案要分栏说清「怎么产生内容」**（两栏各一句，真源 `pure/videoDrawer.markEmptyHint`），并且**当前栏空、另一栏有内容时自动落过去** —— 否则用户点开看到「空」，会以为整条视频没有标记。
@@ -1543,6 +1566,45 @@
   断言钉法（5 条）：纯函数门形态 / 反向守卫「不得出现 `indStyle = indicatorTransform(`」/ `syncIndicator` 判空 + `requestAnimationFrame(syncIndicator)` / `new ResizeObserver(() => syncIndicator())` + `.observe(tabsEl)` / `disconnect()` 在清理里。
   ⚠️ **同类风险清单**：凡是「读 DOM 几何（`offsetLeft/offsetWidth/getBoundingClientRect`）再写回样式」的组件，都要问两句 —— ①**首次测量时元素可见吗**（不可见 ⇒ 全 0）？②**错了之后谁会把它改回来**（只有 resize/交互时 ⇒ 大概率不会）？本仓同类点：`.rl-to-top`（按 `scrollTop` 显示，安全）、阅读器进度条、筛选胶囊的浮层定位。
 
+#### 6.2a iOS 分段控制器形态（2026-11-15 m07364 建立，强制）
+
+> 用户原话：「采用"iOS 分段控制器 (Segmented)"风格 去边框：把内部所有小按钮的边框（border）全删掉。做底槽：给最外层的大容器加一个极浅的灰色背景（例如 #F1F3F5），圆角调大（如 8px 或 10px），去掉大外框的边框线。选中态重构…背景色变成纯白色。文字和图标保持蓝色，加粗。未选中态：背景透明，文字变深灰色（不要用纯黑，用 #4B5563 之类的灰）…间距：减少按钮之间的间距（仅留 2-4px）。」
+
+- 🔴🔴 **「删了 border 还有框」的真凶是 `box-shadow`，不是 border**（2026-11-15 真机实测，最容易误判的一条）：真机 `getComputedStyle(btn).border` 明明已是 `none 0px`，但屏幕**每格一个方框**。真凶是核心给 `button` 的 `box-shadow: var(--input-shadow)`，计算值 `rgba(0,0,0,.12) 0 0 0 1px inset, rgba(0,0,0,.067) 0 1px 2px 0, …` —— **第一段 1px 内阴影就是那圈描边**。⇒ `.rl-tabs.rl-tabs-modern button` 必须**两条并存**：`border: none; box-shadow: none;`。守卫也必须两条都钉（只钉 border 会漏掉「删掉阴影修复也照样绿」的假绿）。
+  ⚠️ `border: none` 仍要留：核心 `button:not(.clickable-icon)` 特异性是 (0,1,1)，单靠 `border-bottom: none` 压不住上/左/右三边。
+- **本期取值**（`HomeView.svelte` 的 `.rl-tabs.rl-tabs-modern`）：容器 `gap: 3px` / `padding: 4px` / `border: none` / `border-radius: var(--rl-t-radius-lg, 8px)` / 底色仍 `var(--background-secondary)`（浅色实测 `rgb(245,245,245)`，即用户举例的 #F1F3F5 量级）；滑块 `.tab-ind` `background: #ffffff` + `border: none` + `top/left: 4px` + `height: calc(100% - 8px)` + 阴影 `var(--rl-t-shadow-ind)`；按钮 `padding: 7px 14px` + `color: var(--text-muted)`；`.on` 保持 `color: var(--interactive-accent)` + `font-weight: 600`。
+- 🔴 **改容器 padding 必须三处同步**：CSS `padding` ↔ `HomeView.svelte` 的 `const TAB_PAD`（现 4）↔ `.tab-ind` 的 `top/left/height`（现 `4px` / `calc(100% - 8px)`）。任一处脱节 = 滑块错位（守卫第 ⑤ 条专门钉这个）。
+- ⛔ **底槽不许写死 `#F1F3F5`**：`assert-symbols.cjs` 钉「基础分支原样保留 `background: var(--background-secondary)`」，字面值当场红；且深色分支的 `color-mix(... 6%)` 比例也被正则钉死，⛔ 别调比例。
+- ⛔ **容器用 `lg`(8px)、滑块与按钮用 `md`(6px)**，别再按旧注释「三处必须同值」改回 md；也 ⛔ 别在 `.rl-theme-modern` 里覆盖 `--rl-t-radius-md`（产物断言反向禁 `md: 10px` / `lg: 16px`）。
+- 未选中态文字色用 `var(--text-muted)`（浅色 ≈ `rgb(117,117,117)`），⛔ 别写死 `#4B5563` / 纯黑 —— 深色主题会自动翻成浅灰；图标继承 `currentColor`（`Icon.svelte`），改按钮 color 即同时改图标。
+
+#### 6.2c 纵向页签 = 幽灵风 Ghost（2026-11-15 m07364 建立，强制）
+
+> 用户原话：「完全抛弃那个灰色大圆角容器和每个列表项的黑边框。列表项设计：每个项（计划、文学、网文...）改为透明背景，无边框。增加上下内边距（padding: 10px 16px）…选中态：选中项左边出现一条 3px 宽的蓝色竖条，背景变浅灰。」+ 裁定「两者合并：左 3px 蓝竖条 + 浅灰底 + 文字图标主题色」。
+
+- **面板 `.rl-nav`**：`border: none`（抛弃实体边框）、`background: color-mix(in srgb, var(--background-primary) 93%, var(--text-normal) 7%)`（极淡面，不写死色值）、`padding: 8px`、`gap: 2px`；**`box-shadow: var(--rl-t-shadow-menu, …)` 保留** —— 去边框后靠阴影把浮层与内容分开，删了就没有层次。
+- 🔴 **竖条必须用 `border-left` 换色，⛔ 别用 `padding-left` 制造**：按钮常态 `border-left: 3px solid transparent` 占位（盒模型恒定），`.on` 只换 `border-left-color: var(--interactive-accent)`。用 padding 制造会让选中项文字左移、切换时跳一下（守卫反向禁 `.on` 里出现 `padding-left`）。
+- **列表项按钮**：去掉固定 `height: 36px`，改 `padding: 10px 16px 10px 13px`（左侧少 3px 抵掉竖条宽度，使文字左缘与未选中项对齐）、`background: transparent`；`.on` = 主题色文字 + `background: var(--background-modifier-hover)` + 竖条色 + `font-weight: 600`。
+- ⛔ **悬停仍只变色、不铺底**（全仓口径 2026-09-14 立，见 `NavMenu.svelte:142-144/207-208`）：hover 只写 `color: var(--text-normal)`。⚠️ 选择器必须带 `.rl-nav-wrap` 前缀 —— 核心 `button:not(.clickable-icon)` 是 (0,1,1)，单类 (0,1,0) 压不过。
+
+
+#### 6.2b 页签可见性由「视图勾选的类型」决定（2026-11-08 #727 建立，强制）
+
+> 用户需求：「在设置新自定义视图勾选类型，然后其他不勾选的不展示出来，勾选的在导航布局为顶部胶囊时显示为胶囊」。映射规则（用户选定）：**只显示「影视」+ 计划 + 统计** —— 类型页签按勾选过滤，非类型页签常驻。
+
+- 🔴 **唯一真源在纯函数里，⛔ 不许在模板里写条件**：`src/pure/homeTabs.ts` 的 `visibleTabs(pool)` 出可见列表、`resolveVisibleTab(tabs, current)` 出兜底落点。判定表：`tracking` / `stats` → **恒常驻**（对应用户要的「计划 / 统计」）；`media`（影视）→ 池含 `anime`/`tv`/`movie` **任意一种**即显示（它是聚合页签，不是单一类型）；`book` / `game` / `music` → 各自按池判定。
+- 🔴 **`pool == null` 必须返回全部六枚**（`if (!pool) return [...HOME_TAB_ORDER]`）。`null` 的语义是「视图没配类型 = 不限制」，⛔ 别当成「空池」—— 那样默认视图顶部会整排消失。默认视图零回归正是靠这条。
+- 🔴 **三个消费点必须共用同一份列表**（漏一个就出 bug）：
+  | 位置 | 容易漏掉的形态 |
+  | --- | --- |
+  | `HomeView.svelte` 顶部胶囊渲染 | `{#each HOME_TAB_ORDER as t}` |
+  | `HomeView.svelte` 的 `onTabKeydown` | `HOME_TAB_ORDER.indexOf / .length / [r.index]` —— **只改渲染不改这里 ⇒ ←/→ 按旧顺序数下标**，会切到已被过滤掉的页签、焦点落到不存在的按钮 |
+  | `NavMenu.svelte`（文字菜单 + 工具栏内联两处） | 新增 `export let tabs = HOME_TAB_ORDER`，渲染与键盘都改用它 |
+- 🔴 **判据必须是 `activeViewPool`（视图那一维），⛔ 不能用 `listTypePoolMerged`**：后者已经把页签那一维乘进去了 —— 切到「阅读」后池只剩 `book`，影视/游戏/音乐当场消失，且**切不回去**（自指死锁）。
+- 🔴 **当前页签被过滤掉必须兜底**：`$: { const fixed = resolveVisibleTab(navTabs, activeTab); if (fixed !== activeTab) switchTab(fixed); }`。不兜底的症状是「顶部无任何按钮处于 `.on`、内容区仍在渲染已被过滤页签的空列表」—— 看起来像卡死。⚠️ 走 `switchTab` 保持宿主出口一致；它只写**内存**字段，⛔ 不碰 `settings.startTab`（起始页是用户设置，不该被自动切页改写）。
+- **`MEDIA_TYPES` 真源迁入 `pure/homeTabs.ts`**：`visibleTabs` 需要知道影视聚合了哪几种，从 `views/tab.ts` 反向 import 会成环 ⇒ `views/tab.ts` 改为 `export { MEDIA_TYPES } from 'pure/homeTabs';`，全仓既有 import 路径不变。新增同类「聚合页签 ↔ 成员类型」映射时照此处理。
+- **验证口径（真机）**：测试库默认 `settings.navLayout='merged'` 下**不渲染页签、读到 `tabs:[]` 是正常**，不是缺陷 —— 先 `p.settings.navLayout='top'; p.syncNavLayout()` 再量。基线读数：默认视图 `["tracking","book","media","game","music","stats"]`；`types:["movie","tv"]` 视图 `["tracking","media","stats"]` = 计划/影视/统计。⚠️ 视图存在**媒体库 catalog**（`service.setViews` → `catalog.views`），⛔ 不在 `settings.mediaViews`；视图下拉 `.rl-sel-btn` 的文案是**当前视图名**（「只看影视 ▾」），不是「视图」二字。
+
 ---
 
 ## 7. 阅读器阅读主题与自绘勾选（2026-09-16 建立，强制）
@@ -1869,6 +1931,19 @@
   - **按钮是一次性动作**，⛔ 不走 `toggleAnnotate`（那不是模式，点一次框一次），且必须有 `if (this.options.onShotSave)` 守卫（未注入不画按钮）。
   - 🔴 **`.rl-shot-hint` 的 `border-radius` 只能写 `var(--radius-l)`**：写成 `999px` 会撞上全仓「胶囊形态（999px + 容器底）一律退场」的反向守卫，断言当场红（2026-10-23 真机踩过一次）。
   - 界面层真源：`src/modals/ShotOverlay.ts`（遮罩/拖框/Esc）；逻辑层真源 `src/pure/readerShot.ts`；宿主 `main.ts` 的 `saveReaderShot()` / `captureViewRect()`。
+- 🔴🔴 **区域截图 = 左键直接回填，右键框选后批注（2026-11-13 #777 建立，推翻 #777 之前的「按钮只有一次性动作」单一口径，强制）**
+  - **默认模式（左键）**：点按钮 → `ShotOverlay.start(hint)`（默认 `adjust: false`）→ 拖框松手即 `normalizeShotRect` → `onShotSave` → 落盘进笔记。**这就是用户说的「默认为区域截图批注模式，点击即进行框选写入笔记区域」** —— 他口中的「批注模式」= 截完直接写进笔记，不是加图形。
+  - **右键进批注**：`contextmenu` → `startShot(true)` → `ShotOverlay.start(hint, { adjust: true })`（松手不提交、露八个手柄可继续调）→ `Enter`/`dblclick` 提交 → `onShotAnnotate` → 抓图 → `ShotAnnotateModal` → `onSave(annotated)` → 回传 `saveReaderShot({...png: annotated})`。
+  - 🔴 **⛔ 不用 `mousedown` 判 `button === 2` 分流** —— 那会吞掉左键 `click`（`VideoPlayerView` 里早有注释记着这条）；用 `click` + `contextmenu` 两个独立监听。
+  - 🔴 **抓图时机**：批注链路必须在**框选层摘掉之后、批注弹窗盖上去之前**抓图，否则抓到的是弹窗自己。所以 `saveReaderShot` 收可选 `png?: ArrayBuffer`，内部 `const png = info.png ?? (await this.captureViewRect(info.rect));` —— ⛔ 别让批注链路自己再写一条落盘通路，附件命名 / 笔记块 / 定位必须共用。
+  - 🔴 **六向调整是纯函数**：`pure/readerShot.ts` 的 `rectFromDrag` / `hitShotHandle` / `resizeShotRect` + 八个手柄 `SHOT_HANDLES = ['nw','n','ne','e','se','s','sw','w']`。⚠️ 拖 `n` 只改 `top`、`bottom` 钉住，拖 `w` 右边钉住 —— 写成「拖边即整框平移」在真机上就是「拖上边整框往上跑」。
+  - 🔴 **手柄定位必须 `position: absolute`**：手柄是 `.rl-shot-box` 的子元素，写成 `fixed` 且不写 `left/top` 会让八个手柄全堆左上角（本批真踩过）。八方向各自 `left/top` + 各自 cursor（`nwse-resize` / `ns-resize` / `nesw-resize` / `ew-resize`）。
+  - 🔴 **批注工具条是 pixpin 式七种**（`ANNOTATE_TOOLS` 顺序即按钮顺序）：矩形 / 画圈 / 铅笔 / 箭头 / 文本 / 马赛克 / 序号。分**拖动类**（rect、ellipse、pen、arrow、mosaic）与**点放类**（text 就地输入、number 编号自增）。
+    - `makeShape` 只接拖动类，`pen`/`text`/`number` 必须返回 `null`（混在一个签名里会让联合类型收窄失效，实测 TS2322）⇒ 三兄弟各有构造器 `makePenShape` / `makeTextShape` / `makeNumberShape`。
+    - 工具按钮 = 图标 + 文字（`.rl-anno-tool-icon` + `.rl-anno-tool-label`），`data-tool` / `data-tip` / `.is-on` 三者齐。
+    - 文本就地输入用 `.rl-anno-textinput`（`position: absolute` 挂在 stage 内，Enter 提交 / Esc 与失焦取消）。
+  - 验收判据（纯函数级）：`tests/readerShot.test.ts` 覆盖八方向命中、**角点优先于边**、拖 e 只改宽 / 拖 w 右边钉住 / 拖 n 下边钉住、缩到 `SHOT_MIN_SIZE` 下限；`tests/shotAnnotate.test.ts` 覆盖 `makeShape` 只接拖动类 + 三个点放构造器。
+  - ⚠️ **未真机验收**：左键直接回填、右键后拖手柄改宽高、七种工具的落笔效果、文本就地输入 —— 本批只有源码级与纯函数级守卫，**没在 Obsidian 里点过**。
 - **搜索两个入口各走各的通道，都保持选中高亮（2026-09-18）**：网络搜索 = 引擎浮层 → 系统浏览器（不抓结果列表）；AI 搜索 = 就地 AI 卡。两条分派分支**都必须不清浏览器选区**（`removeAllRanges` 缺席，断言反向钉死）；浮层 / 卡片内所有按钮 `mousedown` 要**同时** `stopPropagation`（防 document 收浮层）与 `preventDefault`（防焦点转移让选区消失）。
 - **引擎表以分组为唯一真源（2026-09-18）**：`SEARCH_ENGINE_GROUPS`（通用 3 / 垂直 9 / 特色 4 / 购物 3 / 学术 5 = 24 个）定义顺序即浮层顺序；扁平 `SEARCH_ENGINES` 由 `flatMap` 派生，**禁止另抄一份**。24 个模板已逐个 curl 实测；抖音是**路径段**形态（`douyin.com/search/{q}`），`replace('{q}', encodeURIComponent(q))` 同一套兼容。改模板前先实测，别凭印象改。
 - **引擎 chip = 纯文字 + 主题色加粗，不带图标（2026-09-18 用户第二次裁定）**：内置图标集没有各家品牌 logo，24 个引擎靠图标分辨不出来 → **图标整个撤掉**（`SearchEngine.icon` 字段随之删除，不留死数据），chip 文字改 `color: var(--interactive-accent)` + `font-weight: 600` 做识别；常态已是主题色，故 hover 改做**边框点亮**（沿用「并排按钮悬停不铺底」的既有口径）。浮层形态 = 标题 + 「用选中文字：…」预览行 + 分组标题 + 文字 chip（`.rl-search-net-*`），超高时列表内部滚动（`max-height: min(52vh, 420px)`）。
@@ -2240,14 +2315,14 @@
 - 📌 **通用教训**：**用拦截器验证「某个动作会不会发生」之前，先确认拦截点落在被测行为的哪一侧。**
   拦在**结果侧**（协议事件 / 网络响应）只能证明「调用发出去了」，**不能**证明「真实效果发生了」。
 
-### 11.7 AI集成页（2026-10-02 #479 建立 / #480 整节重写 / #481 三处翻面 / #483 整页以卡片组织 / **#484 模型选择器弹窗重做** / **#493 用途行骨架** / **#494 修凸出 + 音色吃满 + 音源出控件区** / **#495 右对齐 + 收窄 200px + 开关前置**，强制）
+### 11.7 AI集成页（2026-10-02 #479 建立 / #480 整节重写 / #481 三处翻面 / #483 整页以卡片组织 / **#484 模型选择器弹窗重做** / **#493 用途行骨架** / **#494 修凸出 + 音色吃满 + 音源出控件区** / **#495 右对齐 + 收窄 200px + 开关前置** / **#717「用途」组改主从布局** / **#718 两栏等高**，强制）
 
-**结构（#483 定稿：以**卡片**组织，两组**改名 + 换序**）**
+**结构（#717 定稿：`用途` 组 = 主从布局，**左索引 + 右详情**；`模型服务` 组仍是 #485 定稿的四张服务商卡）**
 
 | 位置 | 内容 |
 |---|---|
-| `模型服务` 组（**在上**） | 智谱清言 → DeepSeek → **硅基流动** → 自定义端点（#479 用户指令：硅基流动在自定义端点**之前**）—— 四张**服务商卡片**：`Logo + 名称 + 状态徽标 + 行头「测试」 + ▸ 展开配 Key / base` |
-| `用途` 组（在下） | 翻译 / 总结 / 搜索三行（**名称行尾「提示词 ›」+ 合并拣选控件 + 可开合提示词块**）+ 朗读音源一行（**音源 + 音色 + 试听**）—— 🔴 **#487 起四行各自成卡**（`.rl-ai-svc-card`，容器 `.rl-prov-list` 给 8px 间距），⛔ 不再是 #483 的「一张 `rl-ai-card` + 行间发丝线」 |
+| `模型服务` 组（**在上**） | 智谱清言 → DeepSeek → **硅基流动** → 自定义端点（#479 用户指令：硅基流动在自定义端点**之前**）—— 四张**服务商卡片**：`Logo + 名称 + 状态徽标 + ▸ 展开配 Key / base + 折叠体内「测试连接」` |
+| `用途` 组（在下，**#717 主从**） | `.rl-ai-master-wrap` = 左栏 `.rl-ai-master`（**七条目索引**，四个分组小标题：全局 / 阅读器 AI 快捷 / 编辑属性 AI 快捷 / 播放器 AI 快捷；每条 = 状态点 + 名称）+ 右栏 `.rl-ai-detail`（**只画当前选中那一条**：标题 + 副标题 + 「服务商 · 模型」拣选控件 + 常驻提示词块 + 脚注 + 恢复默认） |
 
 - 🔴 **为什么「服务商在上」**：接入多 AI 的心智顺序是「先连上 → 再选它用在哪」。这也是市面上的通行顺序（已对过）：**Cherry Studio** 把「模型服务」放在设置里单独一页（提供商卡片列表 + 详情页配 Key / 拉模型 / 测试）；**New API · one-api** 以「**渠道**（类型 + Key + Base URL + 模型 + 状态灯 + 一键测试）」为单位。⇒ 共同手法只有一条：**服务商是一等公民（卡片 / 渠道），不是某个下拉里的一个选项**。
 - 🔴 **两组改名 ⇒ 三件事必须一起改**（缺一个就是「指向不存在的入口」，本项目铁律）：
@@ -2257,8 +2332,8 @@
 - 🔴 **卡片纪律（#483 实测两条）**：
   ⑴ 卡片外框那条规则**必须写成两级** `.rl-key-row.rl-prov-card` —— 基础 `.rl-key-row { border: 1px solid transparent; margin: 2px 0 }` 在本文件里**排在后面**，同特异性(0,1,0)会由它胜出 ⇒ 外框被抹掉、卡片间距从 8 变 12（仿真实测抓到）。
   ⑵ ⛔ **卡片上不许 `overflow: hidden`** —— 用途卡里有朗读音源的下拉面板（`position: absolute`），会被裁掉（#354 内容区 `overflow-y:auto` / #480 同族坑；仿真实测面板 350×82 可见）。
-- ⚠️ **用途卡的行间发丝线用 `:not(:first-child)`**，⛔ 不用 `+`：行与行之间夹着（收起的）提示词块，`+` 会被那个块打断 ⇒ 分隔线整段消失。
-- ⚠️ **提示词块在**它那一行**之后**（`row.settingEl.insertAdjacentElement('afterend', block)`）—— 放在行之前时，点开后输入框开在**上一行**下面，读起来像上一条的附属。
+- ⚠️ **~~用途卡的行间发丝线用 `:not(:first-child)`~~**（#717 作废）：主从布局右栏只有**一条**详情，没有行间线可画。
+- ⚠️ **~~提示词块在它那一行之后~~**（#717 作废）：提示词块现在**常驻在右栏详情里**，不再折叠、也不再往行后挪（`insertAdjacentElement('afterend')` 那条已随 `.rl-ai-prompt-block` 一起退场）。
 - ⚠️ **🔴🔴 #485 用户裁定：测试按钮在「折叠体内」**（用户：「把测试按钮放在折叠项下**像其他 cookie 测试那样**」）—— ⛔ **不是行头**（#483 那版已撤回）。长相与「书籍源 / 音乐源 Cookie」那处**逐字同款**：`rl-key-actions` 一行 = **结果文字 + `mod-cta`「测试连接」**。四处 Key 行仍**共用一个** `attachProviderTest(bodyEl, run)`（⛔ 别各写一份）。
   - ⇒ 连带的：⛔ 不再需要 `stopPropagation`、也⛔ 不必「点测试先替用户展开卡片」（能点到它就说明已展开）；行头尾元素重新只剩箭头 ⇒ 宿主 `.rl-key-caret { margin-left: auto }` 直接可用（#483 那个「把箭头 auto 摘掉」的补丁**必须一起删**）；⛔ `.rl-prov-test` 那套样式不许回潮。
   - 🔴🔴 **#486：「测试连接」的三条硬口径**（用户报「能列模型却测不过」后实测得出，`/models` 只验凭据、测试要真跑一次 ⇒ 两者失败与否**本来就不同步**）：
@@ -2267,11 +2342,22 @@
     ⑶ **内置三家保持默认模型**，⛔ 不要改成「真实列表第一个」（实测智谱列表里的 `glm-4.5` / `glm-5` 是 429 余额不足，改了反而变红）。
     ⑷ 失败文案**要带上模型名**（否则用户不知道刚才测的是谁）。
 - 🔴 **本次只动 AI 集成这一页**：`rl-prov-card` / `rl-ai-svc-card` 都是新加的类，`.rl-key-row` 那套基础样式**一字未改** ⇒ 数据源页（书籍源 / 音乐源凭据）观感保持原样。⛔ 别顺手把数据源页也改成卡片。
-- 🔴🔴 **#487：「用途」四行各自成卡**（用户：「各个服务之间**空开间距**」，推翻 #483 的「四行一张卡」）：
-  - 容器复用 `.rl-prov-list`（`display:flex; flex-direction:column; gap:8px`）⇒ 与「模型服务」四张卡的**间距与观感完全一致**；每行包一层 `.rl-ai-svc-card`（圆角 6px + 边框）。
-  - 🔴 **提示词块必须建在**它自己那张卡**里**（`renderPromptField(card, …)`，创建顺序 = 卡 → 行 → 块）：⛔ 不许再用 #483 的 `insertAdjacentElement('afterend')` 手动挪 —— 拆卡之后那样会把块挪到**卡外**，展开的输入框悬在两张卡之间。
-  - ⚠️ 必须写 `.rl-ai-svc-card > .setting-item { border-top: none }`：宿主给相邻设置行带上边框，不压掉就与卡框叠成**双线**。
+- 🔴🔴 **~~#487：「用途」四行各自成卡~~（#717 作废 —— 整组改主从，不再有「用途卡」这个概念）**：保留这段只为说明**为什么曾经这么做过**（用户当时要「各个服务之间空开间距」），⛔ **不要据它回潮**。现在右栏是**一张** `.rl-ai-detail` 卡片，左栏是**一张** `.rl-ai-master` 卡片，两者并排（`gap: 14px`）。
+  - 随之退场的：`.rl-ai-svc-card`、`.rl-prov-list`（用途组不再用它）、`.rl-ai-svc-card > .setting-item { border-top: none }`。
   - 🔴 **只删文案、别删能力**：硅基流动的 note 与自定义端点的 `.rl-hint-note` 已按用户指令删除，但「填 base 或整条 `/chat/completions` 都能识别」这个**能力**仍由 `pure/translate.normalizeAiBaseUrl` 保证 ⛔ 不许跟着一起删。
+
+- 🔴🔴 **#717：「用途」组 = 主从布局（master-detail）**（用户：「继续AI集成页的结构重构」，十版方案里选的 I 稿）
+  - **为什么改**：七条用途各带一份提示词，平铺会纵向无限拉长，且「改这一条」得先在一列里找到它。主从把**索引**和**编辑**分开，一眼看全七条状态（状态点），点谁就只看谁。
+  - **左栏** `.rl-ai-master`（`flex: 0 0 210px`）：`.rl-ai-mgrp` 分组小标题（全局 / 阅读器 AI 快捷 / 编辑属性 AI 快捷 / 播放器 AI 快捷）+ `.rl-ai-mitem` 条目（`role="button"` + `tabindex="0"`，⛔ 别做成纯 div —— 键盘用户进不来）。选中态 = `.is-on`（`border-left: 2px` 走 `--interactive-accent` + `--background-modifier-hover` + 文字主题色）。
+  - **状态点** `.rl-ai-mdot`（7px 圆 + `--color-green`）就是「这一条启用没有」；`.is-off` 走 `--text-faint`。🔴 **状态点与右栏控件文字必须一致**（见下条）——真机上抓到过「灰点 + 亮着模型名」两套信息打架。
+  - **右栏** `.rl-ai-detail`：`.rl-ai-dtitle`（15px/600）+ `.rl-ai-dsub`（`desc · sceneTitle`）+ `.rl-ai-dfield`（`.rl-ai-dlabel` + 控件）若干 + `.rl-ai-dops`（仅有 `global` 有：「应用到全部服务」+ 说明）。
+  - 🔴 **拣选控件在右栏吃满整格宽**：靠**两级前缀**覆盖（`.rl-ai-detail .rl-ai-pick .rl-ai-pick-btn { width: 100%; max-width: none }`）—— `--rl-ai-ctl-w: 200px` 是给 `.rl-ai-svc` 行用的，⛔ 别去改那条共享规则（数据源页与音色下拉共用）。
+  - 🔴 **选中项不落盘**：`this.aiPick` 是**界面焦点**不是用户配置（与 `entryFormSlot` / `cardFieldsType` 同族）⇒ ⛔ 别写进 `data.json`。
+  - 🔴 **七条目唯一真源 = `aiServiceDefs()`**：`global` / `translate` / `search` / `summary` / `prefill` / `cue-summary` / `cue-ask`。⚠️ `cue-ask` 的**服务商与模型与 `cue-summary` 完全共用**（同一组 `readerCueSummary*` 字段），只有提示词（`readerCueAskPrompt`）独立；`global` 的 `prompt` 是 `null`（它没有提示词可改）。
+  - 🔴 **`global`「应用到全部服务」** = 把当前全局的服务商/模型**逐项显式写入**五个服务字段（⛔ 不要只在读取时回退 —— 那样用户改过某一项之后就对不上了）。`isAiOff` 时整颗按钮禁用。
+  - 🔴🔴 **#718：左右两栏必须等高** —— 用户原话「AI集成用途两个框要高度对齐」。原 `.rl-ai-master-wrap { align-items: flex-start }` 让两栏**各按自身内容撑高**，右栏换一条就变高、左栏纹丝不动。
+    - 修法：`align-items: stretch` + `.rl-ai-master { justify-content: flex-start }`（条目贴顶、多余空白留底部）。**⛔ 别用 `space-between`** —— 条目少时行距会忽大忽小，看起来像布局坏了。
+    - 真机实测：master 313 / detail 313 / `heightDiff: 0` / `topAligned: true`。
 
 - 🔴 **服务商 + 模型 = 一个控件**（`.rl-ai-pick`，点开是**弹窗** `AiPickerModal`）。⛔ 别再拆成两个平行控件（用户 2026-10-02：「两个平行的框，视觉重量一样，看起来有点散」）。
   - 🔴 **弹窗结构 = 顶部服务商 chip 行 + 全宽列表**（#484 重做；用户：「太丑了，而且不能实时点击反馈是怎么回事」）。
@@ -2292,13 +2378,19 @@
   - 🔴 **没填 Key 就不自动拉**：`pure/translate.aiKeyField`（凭据字段**唯一真源**，⛔ main 里不许再有私有副本）判「这家有没有 Key」—— 没有就静默不请求（必然 401，白等一次还弹个没意义的红字）。
   - 模型候选 = **已拉到的真实列表在前、本仓预置补后**（`mergeModelCandidates`；顺序是功能，预置会过期）；来自 API 的条目带「API」小签。
 - 🔴 **「不启用」不显示模型**：口诀在 `pure/translate.aiPickText` —— `off` ⇒ **只返回服务商名**（⛔ 不在视图层再判一次）。弹窗里选「不启用」⇒ 右栏换一句说明、搜索与列表收起。
+  - 🔴🔴 **#717 补的真 bug（组装处的坑）**：`renderAiPickControl` 里曾写 `const model = this.shownModel(normalizeProvider(choice), opts.getModel())` —— `off` 经 `normalizeProvider()` **归一回 `zhipu`**，`shownModel()` 随即回一个 `GLM-4-Flash`，于是 `text: model || aiPickText(...)` 的 `||` 把「不启用」短路掉 ⇒ 真机上「灰点 + 亮着模型名」并排打架。
+    ⇒ 修法是**不启用时模型段根本不参与计算**（`const off = isAiOff(choice); const model = off ? '' : this.shownModel(...)`）。
+    ⚠️ 这个坑**单测钉不住**：`tests/translate.test.ts` 已钉死 `aiPickText('off','GLM-4-Flash') === '不启用'`，但组装处让 `aiPickText` 根本没被调用到。凡「纯函数有保护 + 视图层却另有短路」的组合，必须以**真机探针**复证。
 - 🔴 **图标绘制只有一个入口** `services/aiIcon.renderAiIcon`（设置页与拣选弹窗共用）：品牌标（LobeHub Icons，**MIT**）是**填充式**、内置标（Lucide）是**描边式** ⇒ ⛔ **绝不写无差别的 `.rl-ai-icon path { fill: … }`**（会把内置标填成墨块；「网络搜索浮层」栽过同形）。
 - 🔴 **配色只有两条通道**（用户裁定「色调改成主题色加这已配置那个绿色」）：图标 / 选中 / 强调 = `--interactive-accent`；「已配置」徽标 = `--color-green`。⛔ 不上品牌原色（源 SVG 本就是 `currentColor`）。
-- 🔴 **提示词入口 = 名称行尾的「提示词 ›」文字按钮**（`.rl-ai-name-row .rl-ai-prompt-btn`）。
-  - ⚠️ **这是 #481 撤回 #480 的结果**：#480 曾把它改成笔形图标挪进**控件区**；用户 2026-10-02「这条命令代码撤回改回原『提示词 ›』」。理由是硬的：图标按钮挤在控件区里，与「选择模型」那颗主控件并列 ⇒ **一眼分不清谁是主控件**。
-  - ⚠️ 它挂在 `.setting-item-name` 里 ⇒ 仍受宿主「裸 button」规则支配 ⇒ **必须自己写 `height: auto`**（不写就是 30px 高的方块，仿真实测正确形态是 56×16）。
-  - 悬停**只变文字色**（用户在并排切换类按钮上定过的口径：铺底色会连成色带、还与选中色打架）。提示词块**默认收起**，开合只挂 `.rl-open`（⛔ 不用内联 `display:none`）。
-- 🔴 **「用途」组四行 = 一套行骨架**（#493 建立 / **#495 定稿**：**左标签定宽 + 控件区右对齐、控件定宽**）：
+- 🔴 **~~提示词入口 = 名称行尾的「提示词 ›」文字按钮~~（#717 退场）**：`.rl-ai-name-row .rl-ai-prompt-btn` 整套已删（提示词改**常驻右栏**）。保留这段只作历史：#480 曾用笔形图标挪进控件区、#481 撤回成「提示词 ›」文字按钮、#717 最终随主从布局一起退场。
+  - 🔴 **提示词现在是常驻 textarea**（`.rl-prompt-input`，`rows=4`），**失焦自动保存**（`change` 事件），⛔ **没有「保存」按钮**（用户 2026-11-07 明确选定；设计稿 ai-I 上那个保存按钮**不实现**）。
+  - 🔴 **标签只由调用方画一次**：`renderPromptField` 的签名已收窄为 `{ value?; defaultText; onSave }` —— **它内部不再画标签**。⛔ 若在调用方与函数内部各画一份，真机就是两行「提示词」叠着（#717 修掉的真 bug）。
+  - 🔴 **脚注必须回读输入框当前值**：「已自定义 · 共 N 字」与「恢复默认」的 `disabled` 都由 `refreshFoot()` 现算，并挂在 `change` 上（**注册在写盘监听之后**，顺序即真源）。⛔ 别用渲染时的 `def.prompt.value` 快照 —— 那样失焦保存后提示不刷新（#717 修掉的第二个真 bug）。
+  - 🔴 **「恢复默认」复用同一条通路**：`el.value = ''` + `el.dispatchEvent(new Event('change', { bubbles: true }))` ⇒ 归一化 → 写盘 → 刷新，一次走完。⛔ 不要 `display()` 整页重渲染（会丢滚动位置）。⚠️ `bubbles: true` 必须有，否则事件冒不出 textarea。
+- 🔴 **~~「用途」组四行 = 一套行骨架~~（#717：AI 用途组已不用 `.rl-ai-svc`；该骨架**只剩语音服务行**在用）**
+  - 🔴🔴 **`.rl-ai-svc` 现在只有一处调用**：`renderTtsVoiceRow`（`src/Settings.ts:2038` `row.settingEl.addClass('rl-ai-svc')`，「高级设置 › 语音服务 › 文字转语音」那一行）。原来的另一处（`renderAiServiceRow`）随 #717 主从重构整套退场。
+  - ⚠️ **⛔ 别因为「AI 页看着没用到」就把它当死样式删掉** —— 删了语音行立刻退回宿主默认布局（标签不再定宽、控件不再贴右）。下面这些量测值仍然成立，只是服务对象从「四行」变成「一行」。
   - 两条声明只有这一处（`styles.css` 的 `.rl-ai-svc`）：
     ① `.rl-ai-svc > .setting-item-info { flex: 0 0 var(--rl-ai-label-w) }`（**定宽且不收缩**，
        `--rl-ai-label-w: **132px**` —— #494 从 120 改上来的，理由见下）；
@@ -2307,6 +2399,7 @@
   - 🔴 **控件宽度 = `--rl-ai-ctl-w: 200px`**（#495）：值是**量出来的** —— 仿真实测「内容自适应」下拣选控件的
     自然宽度 = 短名 **127.7px** / 常见长名 `BAAI/bge-large-en-v1.5` **191.3px** / 超长名 **283.6px**
     ⇒ 自适应会让四行宽窄不一（= #481 用户自己嫌过的「松散」）⇒ 固定 **200px**，超长名截断 + `data-tip`。
+  - 🔴🔴 **#717 主从右栏不吃这 200px**：右栏靠两级前缀把拣选控件放开到整格宽（`.rl-ai-detail .rl-ai-pick .rl-ai-pick-btn { width: 100%; max-width: none }`）。⇒ 读到这里请记住：**`--rl-ai-ctl-w` 只约束「设置在整行里、控件贴右」的形态**（语音行），主从右栏是另一套。
   - ⚠️ **口径在 #493 → #495 之间翻了两次**（同一批内）：#493 要「左对齐 + 封顶 300」，#495 改「右对齐 + 200px」。
     两次都是用户看图后改的主意，**不是上一版错了** —— 判据跟着用户口径走，翻面写进标签与本节。
   - 🔴 **宿主那两条规则是病根**（真实 app.css 逐条核过）：`.setting-item-info` 与 `.setting-item-control`
@@ -2359,11 +2452,18 @@
 
 ### 11.8 数据源页「凭据」区（2026-10-02 #488 建立，强制）
 
-- 🔴 **凭据一律在「启用」之前**：`元数据源配置` 页组序 = **元数据源凭据 → 音乐源凭据 →（书籍源凭据）→ 元数据源启用**。
-  依据与 §11.7 同一条心智：**先连上 → 再选它用在哪**（AI 页 #483 把「模型服务」提到「用途」之前）。⛔ 不许回潮成「启用在前」。
-  ⚠️ 本页 `createGroupSection` **仍是 4 处**（#400/#419 的「不再加第 5 组」继续有效）。
+- 🔴🔴 **组序（#718 覆盖 #488，最新口径）**：`元数据源配置` 页 = **元数据搜索源启用 → 元数据搜索源凭据 → 网络播放源凭据 → 音乐下载源凭据**。
+  - **用户 2026-11-07 原话**：「把组内顺序调整为『元数据搜索源启用、元数据搜索源凭据、网络播放源凭据、音乐下载源凭据』」。
+  - ⚠️ **本条推翻了 #488 的「凭据一律在启用之前」**（以及上一轮「网络播放提到第二顺位」那版）—— 现在**启用在最前**。⛔ 别再据 #488 回潮。
+  - 代价已知：与 §11.7「先连上 → 再选它用在哪」的心智方向相反。用户要的是「先看到有哪些源、勾哪些」，所以本页与他页**不同口径是有意为之**，不是疏漏。
+  - ⚠️ 本页 `createGroupSection` **仍是 4 处**（#400/#419 的「不再加第 5 组」继续有效）。
+- 🔴 **悬停提示必须真的出得来（#718 真 bug）**：本页每行都挂了 `data-tip`（文案来自 `pure/sourcePitch`），但**设置页开在独立窗口**，而 `services/globalTooltip` 原来只用主窗口的 `document` 做事件委托 ⇒ 提示永远不出现。
+  - 现约定：`bindTooltipDocument(doc)` 支持多 document，`Settings.display()` 里用 `containerEl.ownerDocument` 登记。
+  - ⛔ 别改回 `const doc = document` 单例；⛔ 别在 `main.ts` 里只初始化一次就以为覆盖了设置窗口。
+  - 真机验证方式：在设置窗口对行派发 `mouseover`，检查 `.rl-tip` 是否 `isConnected` 且 `ownerDocument` 与设置窗口同一份。
 - 🔴 **卡片语汇全仓共用**：`.rl-prov-list`（flex 列 + `gap: 8px`）作容器、`.rl-key-row.rl-prov-card` 作卡片 ——
-  AI 页（「模型服务」四张 / 「用途」四张）与数据源页（「元数据源凭据」六张 / 「音乐源凭据」三张）**同一套类、同一个数字**。
+  数据源页（「元数据搜索源凭据」六张 /「音乐下载源凭据」三张）与 AI 页「模型服务」（四张服务商卡）**同一套类、同一个数字**。
+  ⚠️ **AI 页的「用途」组已不是卡片**（#717 改主从布局，见 §11.7）—— 别再写「用途四张」。
   ⛔ 别把它当「AI 页专属」而在样式里加页级前缀；⛔ 卡片外框仍必须写**两级**（单级会被排在文件后面的基础 `.rl-key-row` 压掉）。
 - ⚠️ **容器只建一次 / 组**（元数据源那组建在组里、音乐源那组建在方法内）；⛔ 别「一行一个列表」（每张卡各带 8px 外边距，间距会散）。
 - ⚠️ **「元数据源启用」那组不卡片化** —— 它是勾选行（`.rl-srcchk-group`，一行一个分类，本来就带边框）；套卡框会把「一行一个分类」读成「一张卡片」。
@@ -2438,6 +2538,139 @@
   `.modal.rl-notes-modal { width: min(720px, 92vw) }` —— #492 起正文只有 6 行（实测**不需要滚动**：
   clientHeight == scrollHeight），但**版本行会越攒越多**，这条上限留着。
   ⚠️ 量 `vw` **必须改视口宽度** —— 套一个 480px 的 div 是量不出 `92vw` 的（#491 首跑就这么假绿）。
+
+
+### 11.10 「播放阅读」页：语音服务与媒体载体（2026-11-07 #718 建立，强制）
+
+- 🔴🔴 **媒体载体组 = 与「基本设置」页同款原生卡**：`createGroupSection(parent, '媒体载体', …, **true**)` —— 第 4 参 `nativeGroup` 交给核心 `.setting-group` + `.setting-items`（组 = 一张卡 / 行平铺 / 细分隔线）。
+  - ⛔ **语音服务那组仍不传 `true`**：组内是 `.rl-voice-card`，再套一层就是**卡中卡**。
+- 🔴 **两个语音小标题不加图标**（用户 2026-11-07：「语音转文字、文字转语音图标去掉」）：标题就是 `'语音转文字'` / `'文字转语音'`，⛔ 别再补 `🎙️` / `🔊` 之类 emoji。
+- 🔴🔴 **环境配置折进「选择模型」的每一行（点行收放）**
+  - 结构：段容器只剩两个 —— `① 选择模型` / `② 偏好与词典`（原「② 环境配置」整段已删）。
+  - 每行 `.rl-asr-model.is-foldable`：**点整行 = 收放该引擎的环境配置**；「选中这个引擎」改挂到圆点 `.rl-asr-radio` / 胶囊 `.rl-asr-pill`（`rl-asr-select` 类 + `data-tip="切到这个引擎"` + `stopPropagation`）。
+  - 可访问性：`is-foldable` 行挂 `role="button"` + `tabindex="0"`（**带档位下拉的行不给 `role`**，只给 `aria-expanded`），开合要同步 `aria-expanded`。
+    - 🐞 **真 bug（#718 探针抓到）**：原写法把 `aria-expanded` 塞在 `if (!opts.pick)` 里 ⇒ **带下拉的 Whisper.cpp 行读出 `null`**，读屏用户完全看不见收放状态。`aria-expanded` 描述的是「可收放 + 开合」，与 `role` 无关 ⇒ 必须**无条件**挂。
+  - 面板 `.rl-asr-env`：`hidden` 属性控制显隐（⛔ 别再补 `display:none` 类，两套开关会打架）；行内点击用 `if (panel.contains(ev.target)) return;` 防「在面板里点输入框把面板关掉」；当前选中行默认展开。
+  - 🔴 **路径行在面板里必须改单栏**：`.rl-asr-env .setting-item { flex-direction: column; align-items: stretch }` + info/control 各 `width:100%` + 输入框 `flex: 1 1 auto`。
+    - 🐞 **真 bug（#718 截图才发现）**：面板宽 343px 时若仍用核心两栏布局，`.setting-item-info` 被压到 **73px** ⇒ 说明文字变**一字一行竖排**、输入框顶出右边界。修后 info/control 各 285px、输入框 229px、`scrollOverflow: 0`，面板高 1065 → 616px。
+    - ⛔ **别提到全局去改 `.setting-item`** —— 数据源页等全靠原生两栏。
+- 🔴 **ffmpeg 只有一个入口**：删掉 ASR 段里的「三家共用 · 音频工具」段，`asrFfmpegPath` 的输入框并入「元数据源配置 › 通用音频视频取流」那行的折叠体（与 `ytdlpPath` 上下相邻）。
+  - ⚠️ 字段名带 `asr` 前缀是历史包袱，⛔ **别改名**（会失效用户已有 `data.json`，要改名必须写迁移）。
+  - ⚠️ 明文框（路径不是密钥），⛔ 别用 `createSecretField`。
+
+- **🔴 #719：收放入口是行尾箭头 `.rl-asr-chev`，不是整行点击**（用户 m02783「选择模型环境配置改成下拉箭头收起展开吧」）。箭头是真 `<button>`（22×22 透明、`chevron-right` 展开旋转 90°），`aria-expanded` + `aria-label`（展开/收起环境配置）双向同步。⛔ 整行不再绑 `click` / `role` / `tabindex`，`.rl-asr-model.is-foldable { cursor: pointer }` 已删 —— 恢复「点整行」会让「选中引擎」与「收放环境」两种手势打架。
+
+
+**#721 补：箭头要真的透明，行点击要真的只勾选（强制）**
+
+- 🔴 选择器写 `.rl-asr-model .rl-asr-chev`（**两条类**），⛔ 别退回单类 `.rl-asr-chev`：Obsidian 核心的 `button:not(.clickable-icon) { background-color: var(--interactive-normal); box-shadow: var(--input-shadow) }` 特异性 0,1,1，压过单类 0,1,0 ⇒ 「透明化无边框化」会静默失效（真机实测 `chevBg: rgb(230,230,230)`、`boxShadow` 是 inset 阴影）。验收判据：`getComputedStyle(chev).backgroundColor === "rgba(0, 0, 0, 0)"` 且 `boxShadow === "none"`。
+- 🔴 三行引擎**一律默认收起**，包括 `opts.current` 那行。⛔ 别再给「当前选中默认展开」：点整行选中 → 设置页重渲染 → 那行成了 `current`，旧规则会替用户把面板展开，与「只勾选不展开」直接冲突（真机复现过）。「用户不知道有配置」由箭头常驻可见承担（opacity 从不降到 0）。
+- 行点击 = 只选中（`is-clickable` + `click → opts.onUse()`），但必须排除面板内部：`if (envPanel && envPanel.contains(ev.target)) return;`。箭头自己 `stopPropagation`，两件事不交叉。
+
+**#724 补：环境三块卡固定一列三行（强制）**
+
+- 🔴 面板里「识别程序 / 识别模型 / 音频工具」三块 `.rl-asr-tile` **固定一列三行**，⛔ 不许再 `flex-wrap: wrap` 并排（用户 2026-11-08：「改成各自一行显示，不并排了」）。
+  - 🐞 **旧写法的病根**：`.rl-asr-tiles { flex-wrap: wrap }` + `.rl-asr-tile { flex: 1 1 180px }`，面板 **285px** 宽时**恰好塞得下两张** ⇒ 前两块并排、第三块落行。⚠️ 这不是「随机换行」，是**特定宽度下的固定畸形**；在 404px 的展开态下三块本来就各占一行 ⇒ **只在宽面板量会判成假绿**，必须在窄面板复测。
+  - 现写法：`.rl-asr-tiles { display: flex; flex-direction: column; gap: 6px }` + `.rl-asr-tile { flex: 0 0 auto }`。
+  - 🔴 **`flex-basis` 在 column 方向指的是高度**：tile 若留着 `flex: 1 1 180px`，每块会被撑到 180px 高（看着像三张巨卡）。
+  - 验收判据（真机 CDP）：`.rl-asr-tiles` 的 `flexDirection === "column"`；三块 `top` 互不相等、`width` 全等、`rows(new Set(top)).size === 3`；再把 `.rl-asr-tiles` 临时 `maxWidth='285px'` **复核一次**仍需 `rows === 3`。
+  - ⚠️ 三块横着比没有意义（一个「程序在不在」、一个「模型在不在」、一个「ffmpeg 在不在」），⛔ 别为了「省高度」再退回并排。
+
+**#725 补：ASR 段不再有顶部信任背书文案（强制）**
+
+- 🔴 「选择模型」段顶部那句「本地音频转文字用。所有识别都在这台电脑上完成，音视频不会上传到任何服务器…」**已整条删除**（用户 2026-11-08 点名）。⛔ 别再补回：这类「解释我们很安全」的长段落属于**说服性文案**，用户明确不要。
+- 随文案一起删掉的还有 `.rl-hint-note .rl-asr-note` 这条样式（它只有这一个消费者，留着就是死样式）。⛔ 别为了「以后可能用」保留。
+- 判据：`grep -c "rl-asr-note" styles.css src/Settings.ts` 必须为 **0**；`ASR_DESC` 常量必须不存在。
+
+**#777 补：模型页要给出「自己手动下载」的官网路径（强制）**
+
+- 🔴 「选择模型」段的卡片列表**上方**新增 `.rl-asr-manual` 一块：头 `也可以自己手动下载模型` → 说明一行 → **官网 / 国内镜像两行** → 逐档 `标题 —— 文件名（约 体积）` → 尾部提示。
+- 🔴 **给的是仓库页，不是下载直链**：`ASR_MODEL_SITE = 'https://huggingface.co/ggerganov/whisper.cpp/tree/main'`、`ASR_MODEL_SITE_MIRROR = 'https://hf-mirror.com/ggerganov/whisper.cpp/tree/main'`。`preset.url` 那种 `/resolve/` 直链点开即下载、看不出是哪个仓库，⛔ 别拿它顶替「官网路径」。
+- 🔴 **网址要原样显示且可选中复制**（`.rl-asr-manual-url`：`font-family: var(--font-monospace)` + `user-select: text` + `overflow-wrap: anywhere`），旁边那枚「打开」按钮才算第二条路；⛔ 别只给一个按钮、把网址藏在常量里。
+- 🔴 **打开链接走宿主白名单**：`AsrEngineModalOptions.onOpenExternal` 由宿主注入 `(url) => this.openExternalUrl(url)`（它已限 http/https）。弹窗自己 `window.open` 会绕过协议白名单，且移动端行为不一致 ⇒ 只在**没注入时**留 `else window.open` 兜底。
+- 文案统一由 `pure/asrModels.manualDownloadTip(preset?)` 产出，必须同时含「官网地址 + 镜像地址 + 选择本地模型文件」三件事；⛔ 别在弹窗里另写一份。
+- 验收判据（源码级）：`src/pure/asrModels.ts` 的 SITE 不含 `/resolve/`、不以 `.bin` 结尾；`AsrEngineModal.ts` 含 `renderManualDownload` / `rl-asr-manual-url` / `text: r.url`；`main.ts` 的 `new AsrEngineModal(` 后 1800 字符内含 `onOpenExternal: (url) => this.openExternalUrl(url)`；`styles.css` 的 `.rl-asr-manual*` 段**不含 hex 色**（只允许 `var(--…)`）。
+
+### 11.11 「高级设置 › 条目属性」预览面板（2026-11-07 #718 建立，强制）
+
+- 🔴🔴 **预览必须长成真弹窗的样子**（用户：「就想根据现有编辑属性UI页面拖动排序编辑增删」；拍板方案 A = **重画预览、保留现有拖拽**，不嵌真 `EntryForm`、不造草稿条目）。
+  - 每行结构：**把手 `.rl-cf-grip`** + **`.rl-ef-fld`**（上 `.rl-ef-lbl` 标签 / 下 `.rl-ef-ctl.is-<kind>` 控件外壳）+ **宽度档位**（整行 / 1⁄2 / 1⁄3）+ **隐藏 ✕**。
+  - 🔴 **标签在控件上方**，⛔ 别回到「名字与伪输入框左右并排」那种一行式（那是 #718 前的旧形态，`.rl-ef-box` 已整条删除，⛔ 别加回来）。
+- 🔴 **控件类型由真弹窗决定，不是猜的**：`entryFormControlKind(key)` 的判据是 `src/views/components/EntryForm.svelte` 里每个 `data-fld` 块**实际渲染的控件**。
+  - `text`（单行 `<input class="rl-input">`）→ `.rl-ef-ctl.is-text`，42% 宽浅条；
+  - `num`（数字输入）→ `.is-num`，34% 浅条 + 右侧上下箭头（CSS 三角）；
+  - `area`（`<textarea>`）→ `.is-area`，高 46px + 右下角斜纹 resize 把手；
+  - `btn`（带按钮的行，如 LRC / AI 总结）→ `.is-btn` + `.rl-ef-ctl-btn` 小按钮块；
+  - `meta`（`.rl-meta-row` 四格）→ `.is-meta` + `.rl-ef-ctl-cell` 四格。
+  - ⚠️ 别把新属性一律当 `text` —— 类型判错，预览就会骗人（写着「多行框」的地方其实弹窗里是单行）。
+- 🔴 **拖拽与键盘等价物都要留**：dragstart / dragover / drop 走 `moveItem(cur.slice(), from, to)` → `commitEntryFormFields(next)`；↑/↓ 键等价；隐藏池 chip 点回**末尾**。
+- ⚠️ **锁定块不进面板**：`ENTRY_FORM_LOCKED_KEYS`（标题 / 封面 / 状态 / 评分 / 评语 / 启动路径）。
+- 🔴 **固定块也不进面板（m07047，推翻 m06462 的灰块）**：`ENTRY_FORM_FIXED_KEYS` = `year` / `novel-year` / `comic-year` / `book-year` / `music-year` / `meta`，即真弹窗**第一行整组**（标题 / 年份 / 来源评分）。用户原话「都是固定的不能改换顺序」⇒ **一个都不画，连灰块也没有**（m06462 曾把它们画成 `opacity:.55` 的灰块占位，用户认为「画出来只会让人以为能拖」，已整体删除，⛔ 别加回来）。
+  - 固定块与锁定块的区别：**固定块在 `ENTRY_FORM_FIELDS` 注册表里**（有位次与宽度，真弹窗靠 `buildEntryFormPlan` 排它们），只是设置面板不渲染；**锁定块根本不在注册表**。
+  - ⛔ 别为了「不显示」就把固定键从注册表删掉 —— 删了真弹窗会丢字段。落库时由 `withFixedEntryFormFields` 按模板位次补回。
+  - 旧配置里若存过固定键（该测试库的隐藏池里就还留着「年份」），`cur` 的 `filter` 会静默丢弃，画布上不出现。
+
+- **🔴🔴 #719：形态从「一行一张卡」改为「整列一张卡 + 行间发丝线」**（用户 m02783「这个条目属性什么鬼太丑了也不好调整，参考更多主流」）。外层 `.rl-ef-list` 是那张卡（1px 边框 + 6px 圆角 + `overflow:hidden`）；`.rl-ef-row` **裸着**（无 border / 无 radius / 透明底），行间只有 `.rl-ef-list > .rl-ef-row + .rl-ef-row { box-shadow: inset 0 1px 0 }` 一根发丝线。每行横排：`[把手] 属性名 ⋯ [72×22 控件小样] [整行|1⁄2|1⁄3 分段器] [✕]`。
+- **🔴 #719：`.rl-ef-row` 必须排除在「高级设置五组外壳与行统一」那条规则之外**（m12814 的 `.rl-set-page[data-page="advanced"] .rl-view-row, .rl-cf-sel, .rl-ef-row, .rl-fo-item { border…; border-radius…; background…; padding-inline: 8px }`）。那条规则特异度更高，会把边框与底色**静默加回每一行**，让「单卡 + 发丝线」变成 11 张独立卡 —— 而 `tsc` / `svelte-check` / 单测全查不出来，只有真机 `getComputedStyle` 才暴露。本组是**有意为之的唯一「组内单卡」形态**，⛔ 别为了一致性加回去；其余四组仍适用那条统一规则。
+- **#719：拖拽把手在本面板默认 `opacity: .5`**（全局 `.rl-cf-grip` 是 `0`，hover 才出）。裸行没有边框，把手全透明时整列看起来像纯文字表，「能拖」零提示 —— 这是用户「也不好调整」的一部分。⛔ 别照抄回 `.rl-cf-sel`（那组行有边框，隐藏把手没问题）。
+- **#719：宽度分段器是「一枚 3 段」不是「三枚独立按钮」**，`data-tip` 挂在整个 `.rl-ef-seg` 上（33 行 = 33 条气泡 → 1 条）；`aria-pressed` 仍逐枚保留。
+
+- **🔴🔴 #720：整块改成「6 列栅格 · 真弹窗镜像」（方案 D，用户 m03168 要求 5 版方案、m03239 选定 D）** —— 上两条 #719 的形态（`.rl-ef-list` / `.rl-ef-row` / 只读色带 `.rl-ef-mirror`）**已整体退场**，⛔ 别再据它们回潮。
+  - **只有一块**：`.rl-ef-canvas` = `display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: var(--size-4-2); padding: var(--size-4-2)` + 虚线外框。原来「左列表 + 左下只读色带」两段式的**真正毛病不是丑，是矛盾**：色带和列表长得像、只有列表能拖，且「3 个 1⁄3 是否凑满一行」得心算。现在**占位即结果**。
+  - **每块 `.rl-ef-blk`**：`grid-column: span N` 由**行内式**给（`row.style.gridColumn = \`span ${item.span}\``，N ∈ 6/3/2/1 = 整行/两并排/三并排/六并排，**1 档是 m06404 为年份块加的**），块是白底（`background-secondary`）+ 1px 边框 + 4px 圆角的小卡 —— 注意这与 #719「去掉 11 张卡」**不矛盾**：#719 去的是「纵向排一列的 11 张卡」，现在是一个网格里的 11 个格子，卡是必要的视觉边界。
+  - **块内是弹窗的真实排版**：`.rl-ef-fld` 改 `flex-direction: column`（**标签在上、控件在下**），`.rl-ef-ctl` 从 #719 的固定 72px 改成 `width: 100%` 吃满块宽 —— 块宽就是真实占位，小样跟着变宽才叫所见即所得。
+  - **块底 `.rl-ef-tools`**：跨度分段器 `.rl-ef-seg` + 隐藏 `.rl-ef-x`。⛔ 别再挪回「一行右侧」：块宽随 span 变，1⁄3 宽的块只剩约 120px，右栏塞不下三枚按钮 + ✕；块底独立一行后窄块也能放下（`flex-wrap: wrap` 兜底）。
+  - **风格器作用域也跟着改了**：`.rl-ef-segbtn` / `.rl-ef-x` 的选择器前缀从 `.rl-ef-row` 改成 `.rl-ef-blk`（旧前缀改完就是死样式）。
+  - ⚠️ **`.rl-ef-blk` 不在「高级设置五组外壳与行统一」那条规则里**（m12814），理由同 #719：它是栅格子不是列表行。那条规则的注释已按 #720 改写。
+  - ⚠️ **拖拽语义不变**：仍是「插到目标块的**位置**上」（`moveItem(from, to)`），不改成「拖到目标左半 / 右半分别插前 / 插后」—— 后者要画插入指示线、跨行换位有两个落点区域，对最多 11 块是过度设计。
+  - 真机实测（1100×820 设置窗口，`.rl-set-page` 524px）：`cols = 6 × 81px`、`gap 4→8px`、`blkCount 11`、span 6 的块 506px / span 3 的 251px、`overflowX false`、`overflowAny []`、`staleNodes {list:0,row:0,mirror:0}`。
+
+### 11.11b 栅格列数：只认画布自身宽度（#720b）
+
+- **列数真源 = `src/Settings.ts` 的 `applyEntryFormCols()`**：`w < 240 ? 1 : w < 480 ? 2 : 6`，写回 `canvas[data-cols]` 与 `--rl-ef-cols`。⛔ 别在 CSS 里再插一条 `@media` / `@container`（会与它打架，实测已证反）。
+- **`ResizeObserver` 必须取自 `canvas.ownerDocument.defaultView`**：设置页在独立窗口，用主窗口的 `ResizeObserver` 观察设置页节点，回调**一次都不会触发**（`data-cols` 恒停在初始值）。这与 §11.8 的 `globalTooltip` 是同一类坑。
+- **`container-type` 不许写在 `.rl-ef-canvas` 自身上**：`@container` 只作用于容器后代，写在自己身上是无效组合。
+- **也不许挪到 `.rl-ef-preview`**：`inline-size` 会套上尺寸包含，预览区固有宽度塌成内容最小值（实测 canvas 524px → 324px），宽窗反而变 1 列。
+- **窗口宽度与画布宽度不成正比**：同一份设置页实测窗口 1440 → 画布 324px、窗口 900 → 画布 599px（预览被右侧「已隐藏的属性」池挤窄）。按窗口写断点会把宽窄判反。
+- 观察器字段 `private efColsObs`，每次 `display()` 重建前 `disconnect()` 旧的；首次调用 `clientWidth === 0` 需补一次 `requestAnimationFrame` 重量。
+
+
+### 11.12 「高级设置 › 笔记属性顺序」：可增删（2026-11-07 #721 建立，强制）
+
+**它解决什么**：用户「笔记属性配置也可增删，删除后不拉取改属性字段」—— 此前这一页只能拖动排序，被删掉的属性在下次写笔记时又会被补回来（`applyFieldOrder` 只重排、不删除，未登记的键 `r = Number.MAX_SAFE_INTEGER` 照样写出）。
+
+- 🔴 **隐藏集是独立配置，⛔ 不能「从顺序数组里删」**：`normalizeFieldOrder` 有一条「允许集里有、配置里没有 ⇒ 补到末尾」的保命规则，「不在 order 里」表达的含义是**排最后**，不是删除。所以顺序（`fieldOrder` / `fieldOrderByKind`）与隐藏（`fieldOrderHidden`）是**两份正交配置**，改一个不许动另一个。
+- 存储形状 `fieldOrderHidden: Record<string, string[]>`，目标键三种：`__global`（全局段）/ `EntryType`（类型页）/ `k:<BookKind>`（书籍三子类页，如 `k:novel`）。每档按**该档自己的允许集**收窄 —— 全局用 `GLOBAL_FIELD_KEYS`、类型用 `defaultOrderFor(type)`、子类用 `defaultOrderForBookKind(kind)`。不认识的目标键整档丢掉、空档不入表（不落冗余数据）。
+- 🔴 **结构性键永远不许隐藏**：`FIELD_ORDER_LOCKED_KEYS = [id, type, title, created, updated]`（`isHidableFieldKey()` 判定）。隐藏了这些，笔记会连身份都认不出来。
+- 删除按钮 `.rl-fo-del`（20×20，`opacity:0`，`:hover` / `:focus-within` 才显形，hover 底色 `--background-modifier-error`）；列表下方**常驻**「已隐藏 N 项（点一下恢复）」池（`.rl-fo-pool` / `.rl-fo-chip`，药丸形 + `plus` 图标）。
+- 🔴 **池子必须是渲染前建好的常驻节点，⛔ 不能在 `render()` 里 `pane.createDiv()`**：那样每渲染一次就多一个池子、旧的从不移除，症状是「恢复后列表已经满项、池子还写着已隐藏 1 项」（真机抓到的）。正确写法：渲染前建一次 → 每次 `pool.empty()` 重画 → 按 `hiddenInPage.length` 设 `pool.hidden`。
+- 拖拽/键盘用 `moveInVisibleOrder(order, from, to)`（模块级函数，紧跟 `previewRowClass` 之后）：隐藏项不参与列表，⛔ 别拿列表下标直接索引 `order`，否则拖一项会连带挪动被隐藏的那些。
+- 写出链路口径：`entryFrontmatter(e, libraryDir, fieldMap, fieldOrder, fieldHidden)` → `applyFieldOrder(fm, order, hidden)` 先 `.filter()` 掉隐藏键再排序。`hiddenForEntry(e)` 取三段并集：`__global` ∪ `fieldHidden[e.type]` ∪ （书籍再加 `k:<normalizeBookKind(e.bookKind)>`）。
+- 验收判据（单测已钉 9 条 + 两轮突变验证）：隐藏项在 frontmatter 里**整行消失**（不是排到最后）；不传 hidden 时输出与历史逐字节一致；结构性键与跨档键被收窄掉。
+### 11.13 AI集成「用途」右栏的标题行（2026-11-07 #722 建立，强制）
+
+右栏 `.rl-ai-detail` 的头部是**两行**：`.rl-ai-dtitlerow`（`<h4 class="rl-ai-dtitle">` + `<button class="rl-group-reset">`）+ `.rl-ai-dsub`（`desc · sceneTitle`）。
+
+- **「恢复默认」就长在标题行里**，⛔ 不放回右栏底部 —— 用户 2026-11-07 明确「统一放在服务标题旁边」，与「高级设置」三组那三枚同一位置语言。
+  - 它是**同一个类** `.rl-group-reset`，外观规则由 `.rl-svc-group-title .rl-group-reset, .rl-ai-dtitlerow .rl-group-reset` **共用一条**；⛔ 别再给 AI 页另写一套（`.rl-btn.rl-ai-dreset` 已于 #722 删除）。
+  - 位置差异允许：高级设置 `margin-inline-start: var(--size-4-4)`（那边标题行是 `width: fit-content`，`auto` 不生效）；AI 页 `0`，靠 `gap` 拉开。
+- **提示词脚注只表达「已自定义」**：`.rl-ai-dfoot` 内只有一行 `.rl-ai-dhint`（`已自定义 · 共 N 字`），没自定义时整条 `hidden`。
+  - ⛔ 「没改过，用内置默认（灰字就是默认提示词）」这句已于 #722 按用户要求删除，别加回来；留空行也不行（会让两块字段间距忽大忽小）。
+  - 点「恢复默认」= 清空 textarea + 派发 `change`（复用同一条归一化→写盘→刷新通路）；已经默认时再点浮出「已经是默认值」轻提示。
+- 🔴 **改宿主元素必须两条类前缀**：`button:not(.clickable-icon)`（底色/阴影）与 `.vertical-tab-content h1,h2,h3,h4`（`padding: 0 16px`）都是 (0,1,1)，单类 (0,1,0) 压不住 —— 真机实测过：按钮底色 `rgb(230,230,230)`、标题被截成「翻译…」。
+- 🔴 **flex 行里的中文标题必须禁折行**：h4 带 `min-width: 0` 时被按钮挤成「翻译服 / 务」。写法：标题 `white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto`，按钮 `flex: 0 0 auto`。
+
+### 11.14 AI集成「用途」组的条目与分组（2026-11-07 #723 建立，强制）
+
+#### 🔴🔴 #723：「用途」组只有六档，且按「阅读 → 播放 → 编辑」排
+- **六档，没有「全局」**：`aiServiceDefs()` 返回 6 条，`id` 是 `translate` / `search` / `cue-summary` / `cue-ask` / `summary` / `prefill`。⛔ **`id` 是 `this.aiPick` 的持久化键，改名会让升级后回落第一项**；要改名字只改 `name`。
+- **分组标题不带「AI」**：`sceneTitle` 是「阅读」「播放」「编辑」——组标题已经在「AI集成」页里，再写「AI 快捷」是重复。
+- **顺序 = 场景出现先后**：阅读（AI翻译 / AI搜索）→ 播放（AI字幕总结 / AI字幕提问）→ 编辑（AI总结 / AI预填）。⛔ 不要按加功能的批次重排。
+- **服务名 = `AI` + 动作**：`AI翻译` / `AI搜索` / `AI字幕总结` / `AI字幕提问` / `AI总结` / `AI预填`。左栏与右栏标题读同一个 `name`，改一处两处都变。
+- **没有「应用到全部服务」**：那条按钮随「全局档」一起退场（`AiServiceDef.applyAll` 字段已删）。⛔ 加回来之前先想清楚：六档各有自己的提示词，一键覆盖会让用户找不回原文。
+- **`prompt` 已收成必填**：六档全部有提示词 ⇒ `renderAiServiceDetail` 里不再有 `if (def.prompt)` 分支。新增档位必须给 `prompt`，`null` 会编译不过。
+- 🔴 **存储字段 `aiGlobalProvider` / `aiGlobalModel` 仍保留**：老 `data.json` 里可能已有值，删键等于静默丢配置。它们现在只参与 `normalizeAiChoice` 的兜底，界面上不出现。⛔ 别顺手把字段删了。
+- **学习模式那段长提示已删**：`DICT_DESC`（「学习模式里把鼠标停在一个单词上时…」三句）连同渲染点一起删除，只留 `DICT_PATH_DESC`（格式说明 + 「留空 = 不查词」）。⛔ 别加回来——「留空会怎样」那句 `DICT_PATH_DESC` 末尾已经说了。
 
 ## 12. 海报墙密度 · 视图级题材筛选（2026-09-22 #369 建立，强制）
 
@@ -5314,3 +5547,56 @@ v2 = 22% 混色（能用）、v1 = 9%（一半）、v0 = 透明 + 虚线边（�
 🔴 **`singleType()` 把漫画归成 `'comic'` 而不是 `'book'`** ⇒ 书籍侧挂图标的判据要写 `(t === 'book' || t === 'comic')`，只写 `book` 会让漫画那行一枚图标都没有（真机普查实测踩过）。
 ⚠️ 若将来要用元数据源取链接：源页 URL ⛔ 不要读结果对象上的 `sourceUrl`（豆瓣 / Steam / MangaDex 那几路不带），统一走 `describeSearchResult(r).sourceUrl`（`pure/searchDisplay.ts`，与编辑表单选中结果同一出口）。
 填入一律走 `markDirty()` / `flashHint()` 既有自动保存通道；提示必须带**命中标题 + 链接类型**（「已填入《X》的阅读/试听链接」）—— 用户要能立刻判断填错了没；空态要直说原因（「没搜到可读的电子书，换个检索词试试」），⛔ 别静默什么都不做。
+
+## 17. 样式文件注释书写规范（2026-11-08 #726 建立，强制）
+
+> 起因：#725 清 emoji、#726 清对话史料，两轮都在 `styles.css` 上动手。用户原话：「注释不要这么多的用户和对话」。核心判据 —— **注释是写给后来改代码的人看的技术说明，不是会话记录**。
+
+### 17.1 必须删：对话式史料
+
+| 形态 | 反面例子 | 为什么删 |
+| --- | --- | --- |
+| 原话 + 日期 | `用户 2026-10-02：「太丑了，改改」` | 日期与会话对读代码的人零信息增益，真正的信息是「改成什么样」 |
+| 会话编号 | `用户 m01938 需求 ⑤` | `mXXXXX` 是会话内引用，仓库外不可达 |
+| 归属词 | `报障原文即「…」`、`第七次裁定「…」`、`点名删除`、`逐字：「…」` | 归属动词把结论埋了；应直接写结论与原因 |
+| 口语引语 | `「怎么点一下就消失不见了」` | 转写成陈述句：`原问题：点一下卡片就消失` |
+
+改写方向一律是 **去掉「谁在什么时候说的」，保留「要什么、为什么」**：
+- `用户点名删掉「没改过，用内置默认」那句` → **保留引号内正文**，只剥归属词 ⇒ `没改过，用内置默认（灰字就是默认提示词）那句`
+- `报障原文即「点开大组其他组互斥折叠、内容挤成一条线」` → `现象：点开一个大组时其它组互斥折叠、内容挤成一条线`
+
+### 17.2 🔴 不能一删了之：第三人称技术说明
+
+`否则用户一收栏就再也选不了集` —— 这是**讲界面行为**，删掉「用户」句子就没主语了。改写为无主语或换主体（`不放回来，一收栏就再也选不了集` / `界面上看不见`），⛔ 不许留成 `否则一收栏就再也选不了集` 这种缺主语残句，更不许直接删半句。
+
+判定一句话：**「用户」作主语讲故事的删，作宾语讲界面后果的改**。
+
+### 17.3 🔴 技术术语里的字不能当装饰删
+
+`逐字高亮`（歌词功能名）、`逐字换行`、`逐字一致`、`逐字段一行` —— 共 11 处，「逐字」是技术词不是归属词。同类还有 `原话` 出现在产品文案引用里时要看上下文。⛔ 批量替换前必须先用探针把每一处命中都打出来看上下文。
+
+### 17.4 🔴 注释外的东西一个都不许动
+
+- `content: "✓"`（对比度标记）、`content: '🔁'`（单句循环锁定行左侧标记）是**真实渲染图标**，不是注释装饰。
+- 批量改写只许作用在 `/\*[\s\S]*?\*\//` 区间内，改完必须验证 **「注释外内容与备份逐字节一致 = true」**。
+- 同理 `⇒` / `→` 是语法连接词不是装饰，必须译成「所以 / 改为 / 到」；`✓`/`✗` 是对比度读数（`（3.43 ✓ · 4.86 ✓）`）只能替换成「达标/不达标」，不能删。
+
+### 17.5 门禁读数口径（踩过的坑）
+
+- **数 warning 别用 PowerShell 管道**：`node esbuild.config.mjs production | Select-String` 会读成 **88**，多出的那条是 PowerShell 把 stderr 包装成错误记录时的截断行（`...String) [], RemoteException`），**不是 esbuild 告警**。正确数法：
+
+```powershell
+cmd /c "node esbuild.config.mjs production > _shot\es.out 2>&1"
+(Select-String -Path _shot\es.out -Pattern '^▲ \[WARNING\]').Count   # 基线 87
+```
+
+- `Get-Content` 计数同样会被包装行污染，一律先落盘再数。
+- **批量改写脚本必须自带复核探针**，至少查：注释块数不变、大括号平衡、`/*` 数量不变、注释外逐字节一致、行内双空格/空括号/行首孤立标点/连续逗号 = 0、引号失衡块数与原文对比。
+
+### 17.6 逐轮自查纪律
+
+批量改写会自伤，实测六类（详见 `Project-Rule/CHANGELOG.md` #726 ④）：正则整段替换吞掉引号内正文、注释收尾 ` */` 被贴成 `*/`、双空格误报、孤立「（」、上一轮替换的残句、引语跨行导致闭合 `」` 落单。
+
+- **修补对必须写「最终形态」而非中间态** —— 规则的执行顺序（`TIDY → PAIRS → TIDY`）会让片段在中间态 MATCH 不到。
+- **一次只补一批**，补完立刻重跑干跑 + 专项探针，否则会叠出二次损伤（本批曾把「框没铺满」叠成两遍）。
+- 改完先从备份恢复再重跑，⛔ 不要在已清理的文本上二次叠加改写。

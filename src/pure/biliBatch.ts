@@ -24,7 +24,7 @@
  *    ⑴ **多P 候选不自动勾**（并标出分P 数）；⑵ 行内给一枚「展开分P」⇒ 走**现成的分P 勾选表**
  *    （`buildBiliFillRows`，锚 `BATCH_PARTS_ANCHOR = 0`）一次把整季填完。⛔ 两处入口共用同一份口径。
  */
-import { biliEpisodeQueries, biliEpisodeQuery, type BiliPart, type BiliVideo } from 'pure/dl/bilibili';
+import { biliEpisodeQueries, biliEpisodeQuery, buildBiliPartUrl, type BiliPart, type BiliVideo } from 'pure/dl/bilibili';
 
 /**
  * 两集之间的请求间隔（ms）—— 两入口共用的**唯一**限速常量。
@@ -276,9 +276,44 @@ export function pickedCandidate(row: BatchRow | undefined): BiliVideo | undefine
     return row.videos[row.picked];
 }
 
-/** 要填入的链接（= 选中候选的 `webUrl`，即它的 P1；没有 ⇒ 空串） */
+/** 要填入的链接（= 选中候选的 `webUrl`，即它的 P1；没有 ⇒ 空串）
+ *
+ *  ⚠️ **这个值恒为 P1**（`?p=` 一个都不带）。它只适合做「有没有链接可填」的判据，
+ *  ⛔ **不要**拿它去写第 N 集的网络地址 —— 那正是「点第 4 集却播第 1 集」的病根，
+ *  真正落库请用 `pickedFillUrl`。
+ */
 export function pickedUrl(row: BatchRow | undefined): string {
     return String(pickedCandidate(row)?.webUrl ?? '').trim();
+}
+
+/**
+ * 真正要**写进第 N 集**的链接 —— 多P 合集按「集号 = 分P 号」算出真实的 `?p=`。
+ *
+ * 🔴 病根（用户 2026-11-03 报障：「点选集4还是重复为第一集」）：
+ *    「填入」这条链一直写的是 `pickedUrl()` = 候选的 `webUrl`，而 `webUrl` **恒定是 P1**。
+ *    `#526` 当时只做到「多P 候选默认不勾」，**用户手动勾上照样写同一条 P1**
+ *    ⇒ 第 1 集和第 4 集落库成**逐字相同**的链接，点哪一集都只有第 1 集的内容。
+ *    那是个「拦住了自动路径，没堵住手动路径」的半截修复。
+ *
+ * 口径（三条，缺一条就会退回静默填错）：
+ *  ⑴ **已知多P**（`partCounts[bvid] >= 2`）：按 `epNo` 算 `buildBiliPartUrl(bvid, epNo)`
+ *     —— 批量行是「一集一条」，多P 合集又能被展开，它的 P1 就是第 1 集（见 `BATCH_PARTS_ANCHOR`），
+ *     所以「第 N 集 ↔ 第 N 个分P」是本表唯一自洽的映射。
+ *  ⑵ **超出分P 数**（`epNo > partCounts`）：返回**空串**，让调用方跳过这一行
+ *     —— ⛔ 绝不回落到 P1：那会把一个空集静默填成第 1 集的内容。
+ *  ⑶ **未知分P数 / 已知单P**：回落 `webUrl`（此时 P1 就是全部内容，写它是对的）。
+ *     ⚠️ 「未知」不猜多P：猜错会把单集投稿写成 `?p=4`，那是个空地址，比填重更糟。
+ */
+export function pickedFillUrl(row: BatchRow | undefined): string {
+    const v = pickedCandidate(row);
+    if (!v) return '';
+    const base = String(v.webUrl ?? '').trim();
+    if (!base) return '';
+    const parts = Number(row?.partCounts?.[v.bvid] ?? 0);
+    if (!Number.isFinite(parts) || parts < 2) return base; // 单P / 未知 ⇒ P1 即全部
+    const ep = Math.floor(Number(row?.epNo) || 0);
+    if (ep < 1 || ep > Math.floor(parts)) return ''; // 越界 ⇒ 不填，⛔ 别回落 P1
+    return buildBiliPartUrl(v.bvid, ep);
 }
 
 /**

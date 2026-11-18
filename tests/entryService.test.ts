@@ -54,6 +54,19 @@ describe('EntryService 增删改查', () => {
         await svc.remove(e.id);
         expect(await svc.list()).toHaveLength(0);
     });
+
+    it('🔴 update 不携带 steamDetailFilledAt ⇒ 旧标记保留（Steam 详情收敛标记不能被普通编辑抹掉）', async () => {
+        // ⚠️ 真实风险：`EntryForm.submit` 组装 input 时**不带**这个标记（表单没有该字段的输入框）。
+        //    若 `update` 不是「prev 与 patch 合并后归一」，用户随手编辑一次标题就会洗掉盖章
+        //    ⇒ 下轮同步重新判定「没补过」、再拉一次 appdetails，收敛失效。
+        const svc = new EntryService(memIO());
+        const e = await svc.create({ type: 'game', title: '传送门2', source: 'steam', sourceUrl: 'https://store.steampowered.com/app/620' });
+        const stamped = await svc.update(e.id, { steamDetailFilledAt: '2026-11-08T06:00:00.000Z' });
+        expect(stamped.steamDetailFilledAt).toBe('2026-11-08T06:00:00.000Z');
+        const edited = await svc.update(e.id, { title: '传送门 2（改名）' });
+        expect(edited.title).toBe('传送门 2（改名）');
+        expect(edited.steamDetailFilledAt).toBe('2026-11-08T06:00:00.000Z');
+    });
 });
 
 describe('EntryService 删除条目+笔记（removeWithNote）', () => {
@@ -91,6 +104,82 @@ describe('EntryService 删除条目+笔记（removeWithNote）', () => {
     it('不存在的条目抛错', async () => {
         const svc = new EntryService(memIO());
         await expect(svc.removeWithNote('nope')).rejects.toThrow('not found');
+    });
+});
+
+// 🔴 改名孤儿清理：`entryNotePath` 按标题生成 ⇒ 改标题后旧笔记文件没人引用，
+//    会永久堆在笔记目录里（用户报的「条目消失但笔记文件还在」有一半是这种）。
+//    这里锁死两条判据：该删的必须删，**共用同一个 notePath 的绝不能删**。
+describe('EntryService 改名后清理旧笔记（dropStaleNote）', () => {
+    it('改标题后重写笔记，旧文件被删、新文件存在', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '旧标题' });
+        const oldPath = await svc.writeNote(e.id);
+        expect(io.files[oldPath]).toBeDefined();
+
+        await svc.update(e.id, { title: '新标题' });
+        const newPath = await svc.writeNote(e.id);
+
+        expect(newPath).not.toBe(oldPath);
+        expect(io.files[newPath]).toBeDefined();
+        expect(io.files[oldPath]).toBeUndefined();
+    });
+
+    it('标题没变（路径相同）时不删任何文件', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '沙丘' });
+        const path = await svc.writeNote(e.id);
+        const again = await svc.writeNote(e.id);
+        expect(again).toBe(path);
+        expect(io.files[path]).toBeDefined();
+    });
+
+    it('旧路径仍被另一条活条目引用时，绝不可删（防止删别人的笔记）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const a = await svc.create({ type: 'movie', title: '熊出没·年年有熊' });
+        const sharedPath = await svc.writeNote(a.id);
+
+        // 造第二条同标题条目，手工让它共用同一个 notePath（历史脏数据的真实形态）
+        const b = await svc.create({ type: 'movie', title: '熊出没·年年有熊' });
+        await svc.update(b.id, { notePath: sharedPath });
+
+        // A 改名后重写：旧路径 b 还指着 ⇒ 必须保留
+        await svc.update(a.id, { title: '熊出没·年年有熊 重制版' });
+        const aNew = await svc.writeNote(a.id);
+
+        expect(aNew).not.toBe(sharedPath);
+        expect(io.files[aNew]).toBeDefined();
+        expect(io.files[sharedPath]).toBeDefined(); // ← 关键：没有被误删
+    });
+
+    it('旧文件已不存在 / 删除抛错时，不阻断新笔记写入', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'movie', title: '旧标题' });
+        const oldPath = await svc.writeNote(e.id);
+        // 模拟外部已删掉旧文件
+        delete io.files[oldPath];
+
+        await svc.update(e.id, { title: '新标题' });
+        await expect(svc.writeNote(e.id)).resolves.toBeTruthy();
+    });
+
+    it('旧笔记里的用户标注区在新文件里被保留（清理不能先于内容搬运）', async () => {
+        const io = memIO();
+        const svc = new EntryService(io);
+        const e = await svc.create({ type: 'book', title: '旧书名', bookKind: 'novel' });
+        const oldPath = await svc.writeNote(e.id);
+        // 往旧笔记追加一个「## 摘抄」区（模板本身没有这一区，是用户/摘抄功能后来加出来的真实形态）
+        io.files[oldPath] += '\n## 摘抄\n\n> 用户手写：这段不能被清理逻辑吃掉\n';
+
+        await svc.update(e.id, { title: '新书名' });
+        const newPath = await svc.writeNote(e.id);
+
+        expect(io.files[newPath]).toContain('用户手写：这段不能被清理逻辑吃掉');
+        expect(io.files[oldPath]).toBeUndefined();
     });
 });
 

@@ -143,6 +143,48 @@ describe('pure/videoMarks marksForEpisode', () => {
     });
 });
 
+describe('pure/videoMarks marksForEpisode 路径精确匹配（同名文件不许串集）', () => {
+    // 🔴 用户 2026-11-01 裁定「顺手修本地集串集风险」：
+    //    `第1集/01.mp4` 与 `第3集/01.mp4` 的 basename 都是 `01.mp4`，
+    //    只比 basename ⇒ 两集的标记互相串到对方的进度条与抽屉里。
+    const note = [
+        '## 时间戳',
+        vaultLink(10, '第1集/01.mp4'),
+        vaultLink(20, '第3集/01.mp4'),
+    ].join('\n');
+    const marks = parseNoteMarks(note);
+
+    it('同名不同目录：各集只认自己的那一个', () => {
+        expect(marksForEpisode(marks, { ep: 0, fileName: '库/动画/第1集/01.mp4' }).map((m) => m.seconds)).toEqual([10]);
+        expect(marksForEpisode(marks, { ep: 2, fileName: '库/动画/第3集/01.mp4' }).map((m) => m.seconds)).toEqual([20]);
+    });
+
+    it('笔记里是相对笔记目录的路径（`../`）也能对上库内完整路径', () => {
+        const rel = parseNoteMarks(['## 时间戳', vaultLink(33, '../视频/第3集/01.mp4')].join('\n'));
+        expect(marksForEpisode(rel, { ep: 2, fileName: '媒体库/视频/第3集/01.mp4' }).map((m) => m.seconds)).toEqual([33]);
+    });
+
+    it('🔴 路径明确对不上 ⇒ 不认（不许退回 basename 把同名文件混进来）', () => {
+        const got = marksForEpisode(marks, { ep: 5, fileName: '库/动画/第9集/01.mp4' });
+        expect(got).toEqual([]);
+    });
+
+    it('老数据只有文件名、没有目录（手写 `01.mp4#t=…`）⇒ 仍按 basename 认同名文件', () => {
+        const bare = parseNoteMarks(['## 时间戳', vaultLink(44, '01.mp4')].join('\n'));
+        expect(marksForEpisode(bare, { ep: 7, fileName: '库/动画/第7集/01.mp4' }).map((m) => m.seconds)).toEqual([44]);
+    });
+
+    it('`201.mp4` 不会被 `01.mp4` 当成尾部命中（按整段路径比对，不是子串）', () => {
+        const got = parseNoteMarks(['## 时间戳', vaultLink(55, '第1集/201.mp4')].join('\n'));
+        expect(marksForEpisode(got, { ep: 0, fileName: '库/第1集/01.mp4' })).toEqual([]);
+    });
+
+    it('反斜杠路径与重复斜杠都能规范到同一路径', () => {
+        const win = parseNoteMarks(['## 时间戳', vaultLink(66, '第2集\\01.mp4')].join('\n'));
+        expect(marksForEpisode(win, { ep: 1, fileName: '库//第2集/01.mp4' }).map((m) => m.seconds)).toEqual([66]);
+    });
+});
+
 describe('pure/videoMarks markPct', () => {
     it('百分比：按总时长折算并夹在 0~1；总时长未知（0/负）→ 0', () => {
         expect(markPct(30, 120)).toBeCloseTo(0.25);

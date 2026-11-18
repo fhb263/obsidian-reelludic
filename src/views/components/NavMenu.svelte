@@ -35,6 +35,14 @@
     import { HOME_TAB_ORDER, homeTabIcon, homeTabLabel, type HomeTab } from 'pure/homeTabs';
     import { resolveTabKey } from 'pure/tabNav';
 
+    /**
+     * 🔴 #727 实际渲染的页签列表（由宿主按当前视图勾选的类型算好传进来）。
+     * ⚠️ 缺省 `HOME_TAB_ORDER` 只服务「宿主还没算好」的极端兜底，⛔ 别据此以为这里可以自己判定 ——
+     *    视图池只有宿主（`HomeView`）知道；本组件再算一份就会与顶部胶囊漂移。
+     * 🔴 渲染与键盘导航**必须共用这一个值**：只改渲染会让 ↑/↓ 按旧顺序数下标、焦点落到不存在的按钮上。
+     */
+    export let tabs: readonly HomeTab[] = HOME_TAB_ORDER;
+
     /** 当前页签：大字显示它，面板里那一项高亮 */
     export let activeTab: HomeTab;
     /** 选中回调（宿主负责切页并落库） */
@@ -67,12 +75,12 @@
      * ⚠️ 与顶部胶囊走**同一份**纯逻辑 `pure/tabNav`，差别只在轴向（#541 起「按布局换轴」）。
      */
     function onTabKeydown(ev: KeyboardEvent, current: HomeTab) {
-        const r = resolveTabKey(ev.key, HOME_TAB_ORDER.indexOf(current), HOME_TAB_ORDER.length, {
+        const r = resolveTabKey(ev.key, tabs.indexOf(current), tabs.length, {
             orientation: 'vertical',
         });
         if (!r.handled) return;
         ev.preventDefault();
-        const next = HOME_TAB_ORDER[r.index];
+        const next = tabs[r.index];
         if (next !== current) onSelect(next);
         // 焦点跟随：不主动聚焦会留在原按钮上，而那个按钮已变成 tabindex=-1
         void tick().then(() => {
@@ -113,7 +121,7 @@
         aria-labelledby="rl-nav-tabs-label"
         aria-orientation="vertical"
         bind:this={tabsEl}>
-        {#each HOME_TAB_ORDER as t}
+        {#each tabs as t}
             <button
                 id={`rl-tab-${t}`}
                 class:on={activeTab === t}
@@ -160,12 +168,24 @@
     /* 🔴 #597：大字变色跟着**状态**（⛔ 不是悬停 / 焦点态）—— 面板被选中动作收起来后，
        大字也跟着回到常规色（否则会留下「鼠标压着的地方还是强调色、面板却没了」的错位感）。 */
     .rl-nav-wrap.is-open .rl-nav-title { color: var(--interactive-accent); }
+    /* 🔴🔴 2026-11-15（m07364）**灰色大圆角容器 → 幽灵风（Ghost）**。
+       用户逐字：「针对纵向页签的改造采用"幽灵风 (Ghost) 去掉外框和所有内框：完全抛弃那个
+       灰色大圆角容器和每个列表项的黑边框。列表项设计：每个项（计划、文学、网文...）改为
+       透明背景，无边框。」
+       用户经反问后裁定：面板**留一层极淡底 + 阴影**（不是全透明）—— 因为本面板是绝对定位
+       浮层，底下就是媒体卡片，全透明会让文字直接压在卡图上没法读。
+       故本块两条改动：
+         ⑴ 删 `border: 1px solid var(--background-modifier-border)`（「去掉外框」）；
+         ⑵ 底色由 `--background-secondary` 换成**页面色混 7% 正文色**的极淡面 ——
+            浅色下即用户要的 #F1F3F5 量级浅灰，深色下自动变成比页面略亮的一档，
+            ⛔ 别写成字面色值：主题一换就失真，且下面 `body.theme-dark` 那条专门管深色。
+       阴影保留（`--rl-t-shadow-menu`）—— 去掉边框后**全靠它**把浮层与内容分开。 */
     .rl-nav {
         position: absolute; right: 0; top: 100%;
-        display: flex; flex-direction: column; gap: 4px;
-        width: 208px; box-sizing: border-box; padding: 10px;
-        background: var(--background-secondary);
-        border: 1px solid var(--background-modifier-border);
+        display: flex; flex-direction: column; gap: 2px;
+        width: 208px; box-sizing: border-box; padding: 8px;
+        background: color-mix(in srgb, var(--background-primary) 93%, var(--text-normal) 7%);
+        border: none;
         border-radius: var(--rl-t-radius-lg, 8px);
         box-shadow: var(--rl-t-shadow-menu, 0 4px 14px rgba(0, 0, 0, .15));
         /* 🔴 默认态用 `opacity + pointer-events` 收起来、⛔ **不用 visibility 藏**：
@@ -187,19 +207,38 @@
     :global(body.theme-dark) .rl-nav {
         background: color-mix(in srgb, var(--background-primary), var(--color-base-100, #ffffff) 6%);
     }
+    /* 🔴 m07364：列表项改成**幽灵风**——
+         ⑴ 透明背景、零边框（面板的边框已删，项自己的边框本来就没有）；
+         ⑵ 用 `padding: 10px 16px` 撑出行高与呼吸感（用户逐字「增加上下内边距
+            （padding: 10px 16px），让它们有呼吸感」）⇒ ⛔ 别再写回 `height: 36px`：
+            固定高度 + 大内距会互相打架，且挡住字体缩放时的自适应。
+         ⑶ `border-left: 3px solid transparent` 是**竖条占位**：选中时只把它换色，
+            不改变盒模型 ⇒ 文字不会因为「突然多出一条竖条」而右移 3px。
+            `padding-left` 因此取 13px（13 + 3 = 16px，与右侧 16px 对称）。
+         ⑷ 过渡补上 `background` —— 选中态现在有底色，只过渡 color 会显得生硬。 */
     .rl-nav-wrap .rl-nav button {
         display: flex; align-items: center; gap: 10px;
-        width: 100%; height: 36px; box-sizing: border-box; padding: 0 10px;
-        border: none; border-radius: var(--rl-t-radius-md, 6px);
+        width: 100%; box-sizing: border-box; padding: 10px 16px 10px 13px;
+        border: none; border-left: 3px solid transparent;
+        border-radius: var(--rl-t-radius-md, 6px);
         background: transparent; color: var(--text-muted);
         font-family: inherit; font-size: 13.5px; font-weight: 500;
         text-align: left; white-space: nowrap; cursor: pointer;
-        transition: color var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
+        transition: color var(--rl-t-dur, .18s) var(--rl-t-ease, ease),
+                    background var(--rl-t-dur, .18s) var(--rl-t-ease, ease),
+                    border-left-color var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
     }
-    /* 激活态 / 悬停**都只变色**（用户裁定的 C 档，与全仓「并排切换只变色」同口径）——
-       一旦悬停铺底，「悬停」与「我在这一页」就会互相冒充。 */
+    /* 悬停**仍只变色、不铺底**（用户裁定的 C 档）—— 一旦悬停也铺底，
+       「悬停」与「我在这一页」就会互相冒充。
+       🔴 m07364 只把**选中态**升级成「浅灰底 + 左 3px 蓝竖条 + 主题色文字」这一组
+       （用户裁定「两者合并」）；悬停那条刻意保持原样，两者靠「有没有底色」区分。 */
     .rl-nav-wrap .rl-nav button:hover { color: var(--text-normal); }
-    .rl-nav-wrap .rl-nav button.on { color: var(--interactive-accent); }
+    .rl-nav-wrap .rl-nav button.on {
+        color: var(--interactive-accent);
+        background: var(--background-modifier-hover);
+        border-left-color: var(--interactive-accent);
+        font-weight: 600;
+    }
     .rl-nav-wrap .rl-nav button:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
     .rl-nav-label { overflow: hidden; text-overflow: ellipsis; }
 </style>

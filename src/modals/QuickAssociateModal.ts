@@ -45,7 +45,11 @@ import {
     type BiliPart,
     type BiliVideo,
 } from 'pure/dl/bilibili';
+/** 🔴「网络集可搜索 YouTube」：判默认源 + 候选形状（`YtSearchItem` 与 `BiliVideo` 不通用，⛔ 别混数组） */
+import { isYouTubeUrl, type YtSearchItem } from 'pure/youtube';
 import { forceHideScroll } from 'services/scrollPref';
+// 提示 + 读屏名统一走组件基座（①-9：⛔ 别再手写 aria-label，会与 data-tip 叠两层气泡）
+import { setTip, srLabel } from 'ui/components';
 // 🔴 #519：批量搜索未填集（确认表）—— 循环/限速/行模型全在纯模块，⛔ 这里不自己维护游标与进度
 import {
     BATCH_PARTS_ANCHOR,
@@ -65,6 +69,7 @@ import {
     normalizeEpRange,
     partCountLabel,
     pickedCandidate,
+    pickedFillUrl,
     pickedUrl,
     runBatchSearch,
     withChecked,
@@ -75,7 +80,7 @@ import {
 } from 'pure/biliBatch';
 
 /** 系统文件选择器类别（映射 plugin.pick*Path 白名单） */
-export type QuickAssocPickKind = 'book' | 'game' | 'music' | 'video';
+export type QuickAssocPickKind = 'book' | 'game' | 'music' | 'video' | 'subtitle';
 
 /**
  * 🔴 2026-10-21 二轮裁定（用户：「关联入口网络地址回填要的是**可播放的网络**，如 B站 搜索」）：
@@ -107,10 +112,29 @@ export type PlayableCandOutcome = { cands: PlayableCand[]; error?: string };
     readUrl?: string;
     gameUrl?: string;
     audioUrl?: string;
+    /**
+     * 🔴 2026-11-16（用户：「游戏类型卡快捷关联入口里怎么没获取swf入口」）：
+     * 游戏条目的**本地 Flash 影片**（`.swf` 库内相对路径）—— 与「本地路径」（.lnk 启动器）
+     * **并列的第三条路**，不是替代关系：有 swf 就内嵌 Ruffle 直接玩，没有才走 .lnk。
+     * ⚠️ 落库是 `entry.gameSwf`（与编辑表单那一行**同一字段**，⛔ 别在这里另起一个键）。
+     */
+    gameSwf?: string;
+    /**
+     * 🔴 2026-11-16（用户 m04805）：游戏条目的**内嵌播放页**（H5 / Unity 类没有 swf 可下，
+     * 改在 iframe 里跑网页）—— 与 `gameSwf`（本地 Ruffle）、`gameLaunchPath`（.lnk）并列。
+     * ⚠️ 与 `gameUrl` 不是一回事：那条交给系统浏览器，这条在插件内跑。
+     */
+    gameEmbed?: string;
     /** 影视：压缩空位后的连续已关联序列（index 0 = 第 1 个已关联集；与 entry.episodeFiles 存储语义一致） */
     episodeFiles?: string[];
     episodeUrls?: string[];
     episodeTitles?: string[];
+    /**
+     * 🔴 用户 2026-10-29：每集字幕路径（key = 集下标字符串）。
+     * ⚠️ 只在**有变化**时才产出（见 `collectResult`），⛔ 别无条件带上 —— 这个字段会被
+     *    `service.update` 整个覆盖写回，无脑带上会把用户刚在播放器里导入的字幕冲掉。
+     */
+    subtitlePaths?: Record<string, string>;
     /** tv/anime 总集数（弹窗内可调）；movie 固定 1 不传 */
     totalEpisodes?: number;
 }
@@ -148,11 +172,37 @@ export interface QuickAssociateCallbacks {
     biliSearch?: (keyword: string) => Promise<{ videos: BiliVideo[]; error?: string }>;
     biliParts?: (bvid: string) => Promise<{ title: string; parts: BiliPart[]; error?: string }>;
     /**
+     * 🔴「网络集可搜索 YouTube」（用户 2026-10-31：「网络集可搜索油管」）。
+     *
+     * 把「网络地址」标签旁那枚 globe 的候选卡从「只能搜 B 站」扩成「B站 / YouTube 两源切换」：
+     * · ⛔ 不新增第二枚按钮（#669「同一功能只留一个入口」）；
+     * · 默认源由**这一集已填的地址**猜（YouTube 链接 ⇒ YouTube），不是硬编码 B 站；
+     * · YouTube 选中**直接填这一条**，⛔ 不做分P 勾选表 —— YouTube 播放列表分集结构与
+     *   B 站分P 不是一回事（失效条目 / 顺序 / 要多跑一次 `entries`），硬做表容易错位；
+     * · ⚠️ 没注入 ⇒ 只画 B 站那一源（⛔ 不画一个点了没反应的按钮）。
+     */
+    ytSearch?: (keyword: string) => Promise<{ videos: YtSearchItem[]; error?: string }>;
+    /**
      * 🔴 #599：影视「本地路径」标签旁那枚 **单集本地检索**（`folder-search`）——
      * 与编辑浮层 #563 **同一条链**：宿主 `main.searchLocalEpisode`（设置页分类目录递归找当前集）。
      * ⚠️ 没注入 ⇒ 那枚按钮**不渲染**（⛔ 不画一个点了没反应的按钮，与 B站 那枚同一条纪律）。
      */
     searchLocalEpisode?: (opts: LocalEpisodeQuery) => Promise<LocalEpisodeOutcome>;
+    /**
+     * 🔴 用户 2026-10-29：字幕路径的**存在性探针**（「上次选的字幕文件被删了/挪走了」要标红）。
+     * ⚠️ 由宿主注入（`main` 侧走 `vault.adapter` / `fs`，弹窗 ⛔ 不直接碰 fs）；
+     *    没注入 ⇒ 不做丢失检测，⛔ 也不画一个永远不变的红框假装检过了。
+     */
+    fileExists?: (path: string) => Promise<boolean>;
+    /**
+     * 🔴 `b23.tv` 短链 → 落地页（宿主联网跳一次拿 `finalUrl`）。
+     *
+     * 由来：手机分享出来的短码形如 `b23.tv/AbCd123`，里面**不含** BV 号 —— 本层是纯 UI，
+     *  ⛔ 不发网络请求（那是宿主 `main` 的事），所以只能把整串原样交给这里。
+     * ⚠️ 没注入 / 跳不动 ⇒ 返回原串（调用方照旧走「请在浏览器打开」那句提示）。
+     */
+    resolveBiliShort?: (url: string) => Promise<string>;
+
     /**
      * 🔴 #601/#602：单路径三类（书 / 游戏 / 音乐）「本地路径」标签旁那枚**检索**（`folder-search`）——
      *    与编辑表单**同一条链**，但三类**分流**（由宿主决定，见 `main.searchLocalForAssociate`）：
@@ -174,6 +224,25 @@ export interface QuickAssociateCallbacks {
      *    ⚠️ 没注入 ⇒ 不渲染；⚠️ **只有文学**才建那枚（#535 口径：网文 / 漫画不接在线源）。
      */
     searchOnlineBook?: (keyword: string) => Promise<{ books: WereadCandidate[]; error?: string }>;
+    /**
+     * 🔴 2026-11-16（用户：「游戏类型卡快捷关联入口里怎么没获取swf入口」）：
+     * 游戏条目「本地 Flash 影片」那两枚能力的宿主出口 ——
+     *  · `pickGameSwf`：系统文件选择器挑一个 `.swf`（宿主 `pickGameSwfPath`，与编辑表单那枚**同一个方法**）；
+     *  · `fetchGameSwf`：问一个游戏详情页地址 → 抓真实 swf → 下载入库 → 回传库内相对路径
+     *    （宿主 `promptFetchGameSwf`，与编辑表单那枚**同一个方法**，⛔ 别在这写第二份地址解析）。
+     *
+     * ⚠️ 没注入 ⇒ 对应按钮**不渲染**（与其余几枚同一条纪律：不画点了没反应的按钮）。
+     */
+    pickGameSwf?: () => Promise<string | undefined>;
+    fetchGameSwf?: () => Promise<{ ok: boolean; message: string; relPath?: string }>;
+    /**
+     * 🔴 2026-11-16（用户：「我这个只有获取一个文件怎么办改成关联目录」）：
+     * 选一整个**游戏文件夹**，由宿主纯层 `pickMainSwf` 挑出主影片回传。
+     *
+     * 三态返回值（⛔ 别拿 `!p` 一把抓）：
+     *   `string` = 挑中了；`null` = 目录里没有 `.swf`；`undefined` = 用户取消 / 无系统对话框。
+     */
+    pickGameSwfDir?: () => Promise<string | null | undefined>;
     /**
      * ⚠️ 音乐「网络地址」行的图标是**在 B 站按歌名搜**（`biliSearch`，#686）——
      *    与这枚「下载音频」无关：一个是「挑一条打开就能播的视频页链接」，一个是「下载音频文件并回填本地路径」，
@@ -285,12 +354,28 @@ const SINGLE_ROWS: {
     },
 };
 
+/** 两个字幕路径表是否等价（键数相同 + 每个键值都相同）；`subtitlePaths` 的变更检测用 */
+function sameSubPaths(a: Record<string, string>, b: Record<string, string>): boolean {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    for (const k of ka) if (a[k] !== b[k]) return false;
+    return true;
+}
+
 export class QuickAssociateModal extends Modal {
     private saving = false;
     // 影视状态：集数组（本地编辑副本，prefill 自 entry；总集数只扩不缩防丢数据）
     private files: (string | undefined)[] = [];
     private urls: (string | undefined)[] = [];
     private titles: (string | undefined)[] = [];
+    /**
+     * 🔴 用户 2026-10-29「字幕要双向持久化」：每集字幕路径（key = 集下标字符串；来自
+     * `entry.subtitlePaths`）。与 `files`/`urls`/`titles` **同一套标语义**（index 0 = 第 1 集），
+     * ⚠️ 但存盘形状是 **Record 不是数组** —— 因为大多数集没有字幕，数组会存出一串 `undefined`。
+     * 保存时由 `buildSubtitlePaths` 压回 Record（空值不写 key）。
+     */
+    private subs: Record<string, string> = {};
     private total = 1;
     private curEp = 0;
     // DOM 引用
@@ -299,10 +384,25 @@ export class QuickAssociateModal extends Modal {
     private urlInput!: HTMLInputElement;
     private fileInput!: HTMLInputElement;
     private titleInput!: HTMLInputElement;
+    /** 用户 2026-10-29：当前集**字幕路径**输入框（每集一条；缺失 = 该集没记忆） */
+    private subInput: HTMLInputElement | null = null;
     private totalInput: HTMLInputElement | null = null;
     /** 🔴 #601：单路径三类的**两行** —— 网络地址 / 本地路径（两枚都必须建，缺一个就是「只有一条路」） */
     private singleNetInput: HTMLInputElement | null = null;
     private singleLocalInput: HTMLInputElement | null = null;
+    /**
+     * 🔴 2026-11-16：游戏条目**第三条路** —— 本地 Flash 影片（`.swf`）输入框。
+     * 只在 `type === 'game'` 且宿主注入了能力时创建（书 / 音乐没有这一行）。
+     */
+    private singleSwfInput: HTMLInputElement | null = null;
+    /**
+     * 🔴 2026-11-16（用户 m04805：「还是内嵌游玩的怎么链接填在哪里了没看到」）：
+     * 游戏条目**第四条路** —— 内嵌播放页（H5 / Unity 类没有 swf 可下，改在 iframe 里跑网页）。
+     * 与「网络地址」那行**不是一回事**：那条交给系统浏览器，这条在插件内跑。
+     */
+    private singleEmbedInput: HTMLInputElement | null = null;
+    /** 「浏览」/「获取」在途（期间忽略重复点击，避免并发下载两份） */
+    private swfBusy = false;
     /** #599：影视「本地路径」标签旁那枚单集本地检索（宿主没注入能力 ⇒ 不建） */
     private localBtn: HTMLButtonElement | null = null;
     // ── 候选卡（书籍 = 微信读书阅读链接、音乐 = B站 视频页；与 B站 卡同一套壳类、不同数据源）──
@@ -328,12 +428,14 @@ export class QuickAssociateModal extends Modal {
      *    用户：「设置已保存提示放在网络地址和本地路径标题旁边」。
      *    `hintEl`（窗口底部那条）**保留**：集标题 / 总集数 / 集号格子这些没有专属标签行的改动仍用它。
      */
-    private readonly rowHints: Partial<Record<'url' | 'local', HTMLElement>> = {};
+    private readonly rowHints: Partial<Record<'url' | 'local' | 'sub' | 'swf' | 'embed', HTMLElement>> = {};
     /**
-     * 🔴 #599：**最后一次落到哪个字段**（`url` / `local` / `other`）—— 决定保存提示闪在哪一行。
+     * 🔴 #599：**最后一次落到哪个字段**（`url` / `local` / `sub` / `other`）—— 决定保存提示闪在哪一行。
      *    由那两个委托监听按 `event.target` 判定（⛔ 不在每个控件各挂一份）。
+     * 🔴 2026-11-16：多出 `swf` 一档（游戏条目「Flash 影片」行）—— 它有自己的标签行，
+     *    提示落到「本地路径」那一行会让人以为改的是 .lnk。
      */
-    private lastField: 'url' | 'local' | 'other' = 'other';
+    private lastField: 'url' | 'local' | 'sub' | 'swf' | 'embed' | 'other' = 'other';
     /** 单集本地检索在途（按钮转圈 + 期间忽略重复点击） */
     private localBusy = false;
     /**
@@ -347,7 +449,10 @@ export class QuickAssociateModal extends Modal {
         this.lastField =
             t === this.urlInput || t === this.singleNetInput ? 'url'
                 : t === this.fileInput || t === this.singleLocalInput ? 'local'
-                    : 'other';
+                    : t === this.singleSwfInput ? 'swf'
+                        : t === this.singleEmbedInput ? 'embed'
+                            : t === this.subInput ? 'sub'
+                                : 'other';
         this.markDirty();
     };
     // ── #506 B站 候选 / 分P 勾选表（DOM 卡片；`biliCard` = null 表示没开）──
@@ -361,6 +466,16 @@ export class QuickAssociateModal extends Modal {
     private biliPickTitle = '';
     private biliBusy = false;
     private biliErr = '';
+    // ── 「网络集可搜索 YouTube」：候选卡里的第二个搜索源 ──
+    /**
+     * 当前搜哪个源。`bili` = 原有分P 链；`yt` = YouTube（选中直接填）。
+     * ⚠️ 与 `EntryForm` 那个 `epNetSrc` 是**两份独立状态**：两个入口各自有生命周期，
+     *    共用一份会让「在弹窗里切到 YouTube」影响编辑表单那边的默认源。
+     */
+    private biliSrc: 'bili' | 'yt' = 'bili';
+    private ytVideos: YtSearchItem[] = [];
+    private ytBusy = false;
+    private ytErr = '';
     // ── #519 批量搜索未填集（确认表）／#520 加集数区间 ──
     private batchRows: BatchRow[] = [];
     /** 全部未填集的目标（区间只筛它，⛔ 不重新算一遍） */
@@ -526,6 +641,159 @@ export class QuickAssociateModal extends Modal {
             const folder = locRow.createEl('button', { cls: 'rl-btn rl-link-act', text: '选文件夹' });
             folder.setAttribute('data-tip', '选择图片文件夹（散装图片序列型漫画）');
             folder.onclick = () => void this.pickFolderInto(this.singleLocalInput!);
+        }
+
+        // ── 游戏专属：本地 Flash 影片（.swf，内置 Ruffle 直接玩）───────────────────
+        // 🔴 2026-11-16 用户报障：「游戏类型卡快捷关联入口里怎么没获取swf入口」——
+        //    编辑表单里早就有这一行（浏览 / 获取），但快捷关联弹窗只有 .lnk 那条，
+        //    用户在这个入口里根本没法把 swf 挂上去。
+        // 🔴 **第三条路，不替代 .lnk**：有 swf 就内嵌玩（`launchGame` 里 swf 优先），
+        //    没有才走 .lnk。两行并存，⛔ 别把「本地路径」那行改成 swf。
+        // ⚠️ 两枚按钮各自按注入情况渲染（宿主那边两个方法都存在，契约上保持独立）。
+        if (t === 'game' && (this.cbs.pickGameSwf || this.cbs.fetchGameSwf || this.cbs.pickGameSwfDir)) {
+            const swfLbl = wrap.createDiv({ cls: 'rl-qa-lbl-row' });
+            swfLbl.createDiv({ cls: 'rl-qa-lbl', text: 'Flash 影片' });
+            this.rowHints.swf = swfLbl.createSpan({ cls: 'rl-saved-hint' });
+            const swfRow = wrap.createDiv({ cls: 'rl-qa-row' });
+            this.singleSwfInput = swfRow.createEl('input', {
+                cls: 'rl-qa-input',
+                attr: { type: 'text', placeholder: '库内路径，或系统绝对路径（.swf）', spellcheck: 'false' },
+            });
+            this.singleSwfInput.value = this.entry.gameSwf ?? '';
+            if (this.cbs.pickGameSwf) {
+                const pick = swfRow.createEl('button', { cls: 'rl-btn rl-link-act', text: '浏览' });
+                pick.setAttribute('data-tip', '选择本地 .swf 影片');
+                pick.onclick = () => void this.pickSwfInto(this.singleSwfInput!);
+            }
+            // 2026-11-16「改成关联目录」：选整个游戏文件夹，自动挑主影片
+            if (this.cbs.pickGameSwfDir) {
+                const dirBtn = swfRow.createEl('button', { cls: 'rl-btn rl-link-act', text: '目录' });
+                dirBtn.setAttribute('data-tip', '选择一个游戏文件夹（自动挑出里面的主影片）');
+                dirBtn.onclick = () => void this.pickSwfDirInto(this.singleSwfInput!);
+            }
+            if (this.cbs.fetchGameSwf) {
+                const get = swfRow.createEl('button', { cls: 'rl-btn rl-link-act', text: '获取' });
+                get.setAttribute('data-tip', '填游戏详情页地址（4399 / 7k7k / 17yy 等），自动找出真实 swf 并下载入库');
+                get.onclick = () => void this.fetchSwfInto(this.singleSwfInput!, get);
+            }
+        }
+        // 🔴 2026-11-16（用户 m04805）：游戏条目**第四条路** —— 内嵌播放页。
+        //    H5 / Unity 类没有 swf 可下，「获取」会自己写这个字段；但用户也可能从浏览器
+        //    地址栏复制播放页过来，所以留一个手填口子。
+        //    ⚠️ 它**总是**建（不像上面那行要注入能力）：纯输入框，不需要宿主方法。
+        //    ⚠️ 与「网络地址」那行不是一回事：那条交出浏览器，这条在插件内 iframe 跑。
+        if (t === 'game') {
+            const embedLbl = wrap.createDiv({ cls: 'rl-qa-lbl-row' });
+            embedLbl.createDiv({ cls: 'rl-qa-lbl', text: '内嵌播放页' });
+            this.rowHints.embed = embedLbl.createSpan({ cls: 'rl-saved-hint' });
+            const embedRow = wrap.createDiv({ cls: 'rl-qa-row' });
+            this.singleEmbedInput = embedRow.createEl('input', {
+                cls: 'rl-qa-input',
+                attr: {
+                    type: 'text',
+                    placeholder: 'H5 / Unity 游戏的播放页（https://…）',
+                    spellcheck: 'false',
+                },
+            });
+            this.singleEmbedInput.value = this.entry.gameEmbed ?? '';
+        }
+    }
+
+    /**
+     * 游戏「Flash 影片」：**关联整个目录**（2026-11-16 用户「我这个只有获取一个文件怎么办改成关联目录」）。
+     *
+     * 宿主侧会弹目录选择器、用纯层 `pickMainSwf` 挑出主影片再回传，这里只负责把结果填框。
+     *
+     * 🔴 三态必须分开处理（⛔ 别拿 `!p` 一把抓，那会把「用户取消」也弹一句提示）：
+     *   `undefined` = 取消 / 无系统对话框 ⇒ **静默**（用户已经表达了不要）；
+     *   `null` = 目录里没有 `.swf` ⇒ 明确提示（点了没反应会被当成 bug）；
+     *   `string` = 挑中 ⇒ 填框 + 自动保存 + 行内闪提示。
+     */
+    private async pickSwfDirInto(input: HTMLInputElement): Promise<void> {
+        const fn = this.cbs.pickGameSwfDir;
+        if (!fn || this.swfBusy) return;
+        this.swfBusy = true;
+        try {
+            const picked = await fn();
+            if (picked === undefined) return;
+            if (picked === null) {
+                new Notice('这个目录里没有 .swf 文件', 5000);
+                return;
+            }
+            const p = String(picked).trim();
+            if (!p) {
+                new Notice('这个目录里没有 .swf 文件', 5000);
+                return;
+            }
+            input.value = p;
+            this.lastField = 'swf';
+            this.markDirty();
+            this.flashHint(false);
+            new Notice(`已关联「${p}」（改动会自动保存）`, 5000);
+        } catch (e) {
+            new Notice(`选择目录失败：${e instanceof Error ? e.message : String(e)}`, 5000);
+        } finally {
+            this.swfBusy = false;
+        }
+    }
+
+    /** 游戏「Flash 影片」：系统选择器挑 .swf → 填框 + 自动保存（与「浏览」那条通道同款） */
+    private async pickSwfInto(input: HTMLInputElement): Promise<void> {
+        const fn = this.cbs.pickGameSwf;
+        if (!fn || this.swfBusy) return;
+        this.swfBusy = true;
+        try {
+            const picked = await fn();
+            const p = String(picked ?? '').trim();
+            if (!p) {
+                new Notice('未选择 .swf 文件，可手动输入路径');
+                return;
+            }
+            input.value = p;
+            this.lastField = 'swf';
+            this.markDirty();
+            this.flashHint(false);
+            new Notice('已选择 Flash 影片（改动会自动保存）');
+        } catch (e) {
+            new Notice(`选择失败：${e instanceof Error ? e.message : String(e)}`, 5000);
+        } finally {
+            this.swfBusy = false;
+        }
+    }
+
+    /**
+     * 游戏「Flash 影片」：填详情页地址 → 抓取并下载入库 → 回填库内相对路径。
+     *
+     * 🔴 走宿主 `promptFetchGameSwf`（与编辑表单那枚**同一个方法**）：地址解析、代理回退、
+     *    swf 魔数校验、落 `下载/Flash 游戏`（或用户改过的游戏目录）全在那里，⛔ 这里不重写一份。
+     * 🔴 成败都要有反馈：失败弹 Notice 保留原因（用户要知道是「页面没 swf」还是「下载失败」），
+     *    成功则回填 + 自动保存 + 行内闪提示。
+     */
+    private async fetchSwfInto(input: HTMLInputElement, btn: HTMLButtonElement): Promise<void> {
+        const fn = this.cbs.fetchGameSwf;
+        if (!fn || this.swfBusy) return;
+        this.swfBusy = true;
+        btn.disabled = true;
+        const prevText = btn.textContent ?? '获取';
+        btn.setText('获取中…');
+        try {
+            const r = await fn();
+            if (r.ok && r.relPath) {
+                input.value = r.relPath;
+                this.lastField = 'swf';
+                this.markDirty();
+                this.flashHint(false);
+                new Notice(r.message || '已获取并关联 Flash 影片', 4000);
+            } else if (r.message && r.message !== '已取消获取') {
+                // 用户自己取消没必再弹一次「已取消」
+                new Notice(r.message, 6000);
+            }
+        } catch (e) {
+            new Notice(`获取失败：${e instanceof Error ? e.message : String(e)}`, 6000);
+        } finally {
+            this.swfBusy = false;
+            btn.disabled = false;
+            btn.setText(prevText);
         }
     }
 
@@ -764,8 +1032,15 @@ export class QuickAssociateModal extends Modal {
             cls: 'rl-bili-card-title',
             text: weread ? '检索在线阅读（微信读书，点一条填阅读链接）' : '在 B 站搜歌（点一条填可播放链接）',
         });
-        const close = head.createEl('button', { cls: 'rl-bili-close', text: '✕' });
-        close.setAttribute('data-tip', '关闭');
+        // 🔴 用户 2026-11-22 逐字：「这个关联入口批量集Ui这个关闭按钮改成Obsidian原生的
+        //    关闭按钮无边框式」⇒ 换成宿主自己的关闭钮写法：`clickable-icon` + `setIcon('x')`。
+        //    ⛔ 别再退回 `<button>` + `text: '✕'` —— 宿主 `button:not(.clickable-icon)`（0,1,1）
+        //    会给它铺一层灰底 + 内阴影 + 圆角，无论怎么盖单类样式都盖不干净（本仓老账，见
+        //    `ReaderPanelBase.ts:1633`）。`clickable-icon` 正是宿主豁免那条规则的那个类。
+        const close = head.createEl('button', { cls: 'clickable-icon rl-bili-close' });
+        setIcon(close, 'x');
+        setTip(close, '关闭');
+        srLabel(close, '关闭');
         close.onclick = () => this.closeCandCard();
 
         const row = card.createDiv({ cls: 'rl-bili-searchrow' });
@@ -830,6 +1105,8 @@ export class QuickAssociateModal extends Modal {
         this.files = pad(e.episodeFiles);
         this.urls = pad(e.episodeUrls);
         this.titles = pad(e.episodeTitles);
+        // 🔴 用户 2026-10-29：字幕路径回显（`subtitlePaths` 是 Record，⛔ 不走 `pad` 那套数组补齐）
+        this.subs = { ...(e.subtitlePaths ?? {}) };
 
         // 🔴 #521：**电影也挂这两枚**（用户：「电影条目观看链接也把这两个按钮移上来」）——
         //    tv/anime 挂在「总集数」行右侧；电影没有总集数行 ⇒ 单开一行只放这两枚工具。
@@ -940,6 +1217,43 @@ export class QuickAssociateModal extends Modal {
         const browse = frow.createEl('button', { cls: 'rl-btn rl-link-act', text: '浏览' });
         browse.setAttribute('data-tip', '选择本地视频');
         browse.onclick = () => void this.pickInto(this.fileInput, 'video');
+
+        // ── 字幕路径（用户 2026-10-29「字幕要双向持久化」的**关联入口侧**）──────────────
+        //    ⚠️ 与上面两条路**并列的第三条**，不是附属：视频、字幕由用户各自指定，
+        //    存进 `catalog.subtitlePaths[集号]`，播放器靠它恢复（见 `VideoPlayerView.autoLoadSubtitle`）。
+        //    ⚠️ 「文件丢失」判定：只在**有值**时探一次，缺失 = 上次选过的文件被挪走/删了，
+        //    标红 + 提示（⛔ 不静默清空 —— 用户可能只是临时拔了移动硬盘）。
+        const subLblRow = div.createDiv({ cls: 'rl-qa-lbl-row' });
+        subLblRow.createDiv({ cls: 'rl-qa-lbl', text: '字幕路径' });
+        this.rowHints.sub = subLblRow.createSpan({ cls: 'rl-saved-hint' });
+        const srow = div.createDiv({ cls: 'rl-qa-row' });
+        this.subInput = srow.createEl('input', {
+            cls: 'rl-qa-input',
+            attr: { type: 'text', placeholder: '同目录 .srt / .vtt / .ass（可留空）', spellcheck: 'false' },
+        });
+        // 🔴 2026-11-06 用户：「关联入口每集各个字幕文件框旁也要加个浏览按钮」
+        //    ⚠️ 与上面「本地路径」那枚**完全同构**（同 `.rl-btn.rl-link-act`、同 `pickInto`），
+        //    ⛔ 别再手写一套选择器逻辑 —— `pickInto` 已经处理了「取消选择」的提示文案。
+        const subBrowse = srow.createEl('button', { cls: 'rl-btn rl-link-act', text: '浏览' });
+        subBrowse.setAttribute('data-tip', '选择这一集的字幕文件');
+        subBrowse.onclick = () => {
+            if (!this.subInput) return;
+            // ⚠️ `pickInto` 只往 input 里写值，**不会**触发 `input` 事件 ⇒
+            //    `subs[集号]` 那份编辑副本必须自己补写，否则「选了但没存」。
+            void this.pickInto(this.subInput, 'subtitle').then(() => {
+                if (!this.subInput) return;
+                this.subs[String(this.curEp)] = this.subInput.value.trim();
+                this.subInput.removeClass('is-missing');
+                this.markDirty();
+            });
+        };
+        this.subInput.addEventListener('input', () => {
+            this.subs[String(this.curEp)] = this.subInput?.value.trim() ?? '';
+            // ⚠️ 用户改动即视为"用户知道这里是什么"，撤掉丢失标红（否则红框永远擦不掉）
+            this.subInput?.removeClass('is-missing');
+            this.markDirty();
+        });
+
         this.populateCur();
     }
 
@@ -1066,6 +1380,19 @@ export class QuickAssociateModal extends Modal {
         this.biliRows = [];
         const epNo = this.entry.type === 'movie' ? 0 : this.curEp + 1;
         this.biliQuery = biliEpisodeQuery(this.entry.title, epNo, this.titles[this.curEp] ?? '');
+        // 🔴「网络集可搜索 YouTube」：默认源按**这一集已填的地址**猜（⛔ 不是硬编码 B 站）——
+        //    已经填了 YouTube 链接却默认搜 B 站，等于每次都要多切一次。
+        //    ⚠️ 没注入 `ytSearch` ⇒ 强制留在 B 站（否则会切到一个点了没反应的源上）。
+        this.biliSrc = this.cbs.ytSearch && isYouTubeUrl(String(this.urls[this.curEp] ?? '').trim()) ? 'yt' : 'bili';
+        this.renderBiliCard();
+        await this.runBiliSearch();
+    }
+
+    /** 切搜索源：切过去顺手搜一次（不让用户切了还得再点一下「搜索」） */
+    private async switchBiliSrc(next: 'bili' | 'yt'): Promise<void> {
+        if (this.biliSrc === next) return;
+        this.biliSrc = next;
+        // ⚠️ 两个源的候选分开存，切换时**不清对方的**（切回来还能看到上次结果）
         this.renderBiliCard();
         await this.runBiliSearch();
     }
@@ -1084,8 +1411,9 @@ export class QuickAssociateModal extends Modal {
         this.biliQuery = '';
     }
 
-    /** 搜一次（卡里那颗「搜索」按钮；也供打开时自动跑） */
+    /** 搜一次（卡里那颗「搜索」按钮；也供打开时自动跑）—— 按当前源分发 */
     private async runBiliSearch(): Promise<void> {
+        if (this.biliSrc === 'yt') return this.runYtSearch();
         if (this.biliBusy || !this.cbs.biliSearch) return;
         const kw = this.biliQuery.trim();
         this.biliVideos = [];
@@ -1107,6 +1435,53 @@ export class QuickAssociateModal extends Modal {
             this.biliBusy = false;
         }
         this.renderBiliCard();
+    }
+
+    /**
+     * YouTube 搜一次。
+     * ⚠️ 与 `runBiliSearch` **分开两个函数**（⛔ 别合并）：结果形状不同（`YtSearchItem` 没有分P 概念）、
+     *    错误前缀不同，合并后每条分支都要判源，读起来比两份更糟。
+     */
+    private async runYtSearch(): Promise<void> {
+        const fn = this.cbs.ytSearch;
+        if (!fn || this.ytBusy) return;
+        const kw = this.biliQuery.trim();
+        this.ytVideos = [];
+        this.ytErr = '';
+        if (!kw) {
+            this.ytErr = '先填检索词（默认取作品标题 + 集标题）';
+            this.renderBiliCard();
+            return;
+        }
+        this.ytBusy = true;
+        this.renderBiliCard();
+        try {
+            const out = await fn(kw);
+            this.ytVideos = out.videos ?? [];
+            this.ytErr = out.error ?? '';
+        } catch (e) {
+            this.ytErr = `YouTube 搜索出错：${e instanceof Error ? e.message : String(e)}`;
+        } finally {
+            this.ytBusy = false;
+        }
+        this.renderBiliCard();
+    }
+
+    /**
+     * 点一条 YouTube 候选 ⇒ **直接填进当前这一集的网络地址**并关掉卡片。
+     * 🔴 与 B 站那条（先展开分P 勾选表）**刻意不同**：用户已裁定「直接填这一条视频的链接」，
+     *    理由见 `cbs.ytSearch` 的注释（播放列表分集结构与分P 不是一回事）。
+     * ⚠️ 只写**弹窗内的副本**（`this.urls` + `urlInput`），落库交给自动保存 —— 与 `openBiliParts`
+     *    的回落路径**同一条纪律**，⛔ 这里不直接改条目。
+     */
+    private pickYtVideo(v: YtSearchItem): void {
+        this.urlInput.value = v.url;
+        this.urls[this.curEp] = v.url;
+        this.flushCurIntoArrays();
+        this.renderEpGrid();
+        const dup = this.dupNote(v.url);
+        this.closeBiliCard();
+        new Notice(`已填入这一集的网络地址${dup}`);
     }
 
     /**
@@ -1218,15 +1593,31 @@ export class QuickAssociateModal extends Modal {
      * ⚠️ 宿主集 = **第一个未填集**（不是第 1 集）：第 1 集可能本来就已填好，
      *    而 `curEp` 在这里只是「当前正在编辑哪一集」的容器（填完 `applyBiliParts` 会收掉卡片）。
      */
-    private async pasteBatchLink(): Promise<void> {
-        if (this.batchRunning) return;
+    /**
+     * 文本里含 `b23.tv` 短链时，**先让宿主跳一次**换回落地页；其它情况原样返回（一次请求都不发）。
+     * ⚠️ `resolveBiliShort` 没注入 / 抛错 ⇒ 原样返回，让调用方照旧给「请在浏览器打开」那句。
+     */
+    private async resolveShortIfNeeded(text: string): Promise<string> {
+        if (!/b23\.tv/i.test(text) || !this.cbs.resolveBiliShort) return text;
+        try {
+            const out = await this.cbs.resolveBiliShort(text);
+            return out || text;
+        } catch {
+            return text;
+        }
+    }
+
+    private async pasteBatchLink(): Promise<void> {        if (this.batchRunning) return;
         const raw = await readClipboardText();
         const text = raw ? cleanPastedText(raw) : '';
         if (!text) {
             new Notice('读不到剪贴板内容（请手动复制后重试）');
             return;
         }
-        const bvid = bvidFromPaste(text);
+        // 🔴 短链先让宿主跳一次拿落地页（`b23.tv/AbCd123` 里没有 BV 号，本层静态抠不出来）；
+        //    没注入 `resolveBiliShort` ⇒ 保持原样，下面照旧给出「请在浏览器打开」那句。
+        const resolved = await this.resolveShortIfNeeded(text);
+        const bvid = bvidFromPaste(resolved);
         if (!bvid) {
             new Notice(/b23\.tv/i.test(text)
                 ? '这是 b23.tv 短链 —— 请在浏览器里打开后复制完整链接（带 BV 号）'
@@ -1298,10 +1689,21 @@ export class QuickAssociateModal extends Modal {
 
         const head = card.createDiv({ cls: 'rl-bili-head' });
         const title =
-            this.biliView === 'parts' ? '选择分P' : this.biliView === 'batch' ? '批量搜索未填集' : '搜索 B 站';
+            this.biliView === 'parts'
+                ? '选择分P'
+                : this.biliView === 'batch'
+                  ? '批量搜索未填集'
+                  : this.biliSrc === 'yt'
+                    ? '搜索 YouTube'
+                    : '搜索 B 站';
         head.createDiv({ cls: 'rl-bili-card-title', text: title });
-        const close = head.createEl('button', { cls: 'rl-bili-close', text: '✕' });
-        close.setAttribute('data-tip', '关闭');
+        // 🔴 同上（用户 2026-11-22「改成Obsidian原生的关闭按钮无边框式」）：
+        //    这是**批量填集那张卡**的关闭钮，两个入口共用 `renderBiliCard()` 的这段头，
+        //    所以改这一处就把「批量集 UI」和「单集搜索」的关闭钮一起换成原生样子。
+        const close = head.createEl('button', { cls: 'clickable-icon rl-bili-close' });
+        setIcon(close, 'x');
+        setTip(close, '关闭');
+        srLabel(close, '关闭');
         close.onclick = () => this.closeBiliCard();
 
         if (this.biliView === 'batch') {
@@ -1317,6 +1719,25 @@ export class QuickAssociateModal extends Modal {
 
     /** 候选列表视图 */
     private renderBiliSearch(card: HTMLElement): void {
+        // 🔴「网络集可搜索 YouTube」：同一张候选卡里的**搜索源切换**。
+        //    ⛔ 不新增第二枚标签行按钮（#669 同一功能只留一个入口）。
+        //    ⚠️ 没注入 `ytSearch` ⇒ 这一行**整个不画**（⛔ 不画一个点了没反应的按钮）。
+        if (this.cbs.ytSearch) {
+            const srcRow = card.createDiv({ cls: 'rl-bili-srcrow' });
+            for (const src of ['bili', 'yt'] as const) {
+                const b = srcRow.createEl('button', {
+                    // ⚠️ 选中态用全局 `.rl-bili-srcbtn.is-on`（与 `EntryForm` 浮层同一份规则）——
+                    //    ⛔ 别用 `.mod-cta`：核心主按钮样式会盖掉 `.rl-link-act` 的小尺寸。
+                    cls: this.biliSrc === src ? 'rl-btn rl-link-act rl-bili-srcbtn is-on' : 'rl-btn rl-link-act rl-bili-srcbtn',
+                    text: src === 'yt' ? 'YouTube' : 'B站',
+                });
+                b.setAttribute(
+                    'data-tip',
+                    src === 'yt' ? '在 YouTube 里搜（选中直接填这一条链接）' : '在 B 站里搜（选中后可展开分P 勾选多集）',
+                );
+                b.onclick = () => void this.switchBiliSrc(src);
+            }
+        }
         const row = card.createDiv({ cls: 'rl-bili-searchrow' });
         const input = row.createEl('input', {
             cls: 'rl-input',
@@ -1329,9 +1750,46 @@ export class QuickAssociateModal extends Modal {
         input.onkeydown = (ev: KeyboardEvent) => {
             if (ev.key === 'Enter') void this.runBiliSearch();
         };
-        const go = row.createEl('button', { cls: 'rl-btn rl-link-act', text: this.biliBusy ? '搜索中…' : '搜索' });
-        go.disabled = this.biliBusy;
+        const busy = this.biliBusy || this.ytBusy;
+        const go = row.createEl('button', { cls: 'rl-btn rl-link-act', text: busy ? '搜索中…' : '搜索' });
+        go.disabled = busy;
         go.onclick = () => void this.runBiliSearch();
+
+        if (this.biliSrc === 'yt') {
+            if (this.ytErr) card.createDiv({ cls: 'rl-hint-note is-error', text: this.ytErr });
+            // 🔴 这里**只列候选、点中直接填**，⛔ 不做分P 勾选表（理由见 `cbs.ytSearch` 的注释）。
+            const ylist = card.createDiv({ cls: 'rl-bili-list' });
+            for (const v of this.ytVideos) {
+                const r = ylist.createEl('button', { cls: 'rl-bili-row' });
+                r.disabled = this.ytBusy;
+                r.setAttribute('data-tip', `填入这一条：${v.title}`);
+                r.onclick = () => this.pickYtVideo(v);
+                if (v.thumbnail) {
+                    const img = r.createEl('img', { cls: 'rl-bili-cover' });
+                    img.src = v.thumbnail;
+                    img.alt = '';
+                    // ⚠️ YouTube 图床同样按 Referer 判 ⇒ 加上这条（与 B 站那侧同款，⛔ 别省）
+                    img.setAttribute('referrerpolicy', 'no-referrer');
+                } else {
+                    const ph = r.createSpan({ cls: 'rl-bili-cover rl-bili-cover-ph' });
+                    try {
+                        setIcon(ph, 'video');
+                    } catch {
+                        /* 图标不可用：忽略 */
+                    }
+                }
+                const main = r.createSpan({ cls: 'rl-bili-main' });
+                main.createSpan({ cls: 'rl-bili-name', text: v.title });
+                main.createSpan({ cls: 'rl-bili-artist', text: v.channel || '未知频道' });
+                // ⚠️ 复用 `fmtBiliDur`（它已把 0 / 非法判成 `—`）—— ⛔ 别在这里另写一份时长格式化
+                //    （`pure/dl/utils.formatDuration` 对 0 返回 `'0:00'`，直接用会把「未知时长」显示成零秒视频）
+                r.createSpan({ cls: 'rl-bili-pill', text: this.fmtBiliDur(v.duration) });
+            }
+            if (!this.ytBusy && !this.ytErr && this.ytVideos.length === 0 && this.biliQuery.trim()) {
+                card.createDiv({ cls: 'rl-hint-note', text: '没搜到，换个检索词试试（YouTube 上试英文原名命中率更高）' });
+            }
+            return;
+        }
 
         if (this.biliErr) card.createDiv({ cls: 'rl-hint-note is-error', text: this.biliErr });
         if (this.biliBusy) card.createDiv({ cls: 'rl-hint-note', text: '正在读取分P…' });
@@ -1553,6 +2011,15 @@ export class QuickAssociateModal extends Modal {
         toIn.onchange = () => {
             this.batchTo = Number(toIn.value);
         };
+        // 🔴 用户 2026-11-23（①a）：「粘贴链接」移到「搜索」**左侧** ——
+        //    两枚都是「怎么拿到链接」的入口，并排才能一眼看出二选一：
+        //    左 = 我手里已有链接（省掉整轮搜索）｜右 = 替我按区间搜。
+        // ⚠️ 它**常驻**（不随下面三态切换）：「我已经知道是哪一条」与搜到哪一步无关 (#542)。
+        // ⚠️ 与 `EntryForm.svelte` 的 `.rl-bili-batch-range` 必须同构 —— 两处共用同一套样式，结构一分叉就有一边会崩。
+        const pasteLink = range.createEl('button', { cls: 'rl-bili-batch-btn is-ghost', text: '粘贴链接' });
+        pasteLink.disabled = this.batchRunning;
+        pasteLink.setAttribute('data-tip', '粘贴一条 B 站链接，按它的分P 顺序填未填的集');
+        pasteLink.onclick = () => void this.pasteBatchLink();
         const go = range.createEl('button', { cls: 'rl-bili-batch-btn is-primary', text: '搜索' });
         go.disabled = this.batchRunning;
         go.setAttribute('data-tip', '按这个区间搜**未填**的集（整表重来）');
@@ -1560,12 +2027,16 @@ export class QuickAssociateModal extends Modal {
 
         const bar = card.createDiv({ cls: 'rl-bili-batch-bar' });
         if (this.batchRunning) {
+            // 🔴 2026-11-20 用户：「搜索中时给顶部状态栏加 loading 动画」
+            //    ⚠️ spinner 与文案是**兄弟**：文案靠 `flex:1` + 省略号吃掉剩余宽度，spinner `flex:none` 永远不会被挤掉。
+            const spin = bar.createSpan({ cls: 'rl-bili-batch-spin' });
+            try {
+                setIcon(spin, 'loader');
+            } catch {
+                /* 图标不可用：忽略（文案本身仍然说明在搜） */
+            }
+            spin.addClass('rl-bili-batch-spin-anim');
             bar.createDiv({ cls: 'rl-bili-batch-note', text: batchProgressText(this.batchDone, this.batchTotal, this.batchEpNo) });
-            const stop = bar.createEl('button', { cls: 'rl-bili-batch-btn is-ghost', text: '停止' });
-            stop.setAttribute('data-tip', '停下（已搜到的保留，可再点「继续」）');
-            stop.onclick = () => {
-                this.batchCancel = true;
-            };
         } else if (this.batchFinished) {
             bar.createDiv({
                 cls: 'rl-bili-batch-note',
@@ -1580,18 +2051,17 @@ export class QuickAssociateModal extends Modal {
             more.setAttribute('data-tip', `从第 ${this.batchLastEpNo + 1} 集接着搜`);
             more.onclick = () => void this.continueBatch();
         } else {
+            // 🔴 用户 2026-11-23（①d）逐字指定，⛔ 别改写别精简：
+            //    「选定集数区间后点击搜索。
+            //      如果已有现成链接，可直接点击右侧『粘贴链接』即可一键搜索关联。」
+            // ⚠️ 两句话用 `\n` 分行、靠 `.is-hint { white-space: pre-line }` 落地 ——
+            //    父级 `.rl-bili-batch-note` 是 `nowrap`（进度那侧要单行省略），
+            //    故这里必须走 `.is-hint` 变体，⛔ 不能直接裸放两行文字。
             bar.createDiv({
-                cls: 'rl-bili-batch-note',
-                text: `选好区间后点「搜索」——只会搜**还没关联**的集（共 ${this.batchAllTargets.length} 个）`,
+                cls: 'rl-bili-batch-note is-hint',
+                text: '选定集数区间后点击搜索。\n如果已有现成链接，可直接点击右侧『粘贴链接』即可一键搜索关联。',
             });
         }
-
-        // 🔴 #542 与「搜索」互补的一枚：手里已经有合集链接时不必再替用户搜一轮。
-        // ⚠️ 它**常驻**（不随上面三态切换）—— 「我已经知道是哪一条」与搜到哪一步无关。
-        const pasteLink = bar.createEl('button', { cls: 'rl-bili-batch-btn is-ghost', text: '粘贴链接' });
-        pasteLink.disabled = this.batchRunning;
-        pasteLink.setAttribute('data-tip', '粘贴一条 B 站链接，按它的分P 顺序填未填的集');
-        pasteLink.onclick = () => void this.pasteBatchLink();
 
         const list = card.createDiv({ cls: 'rl-bili-batch-list' });
         this.batchRows.forEach((r, idx) => {
@@ -1599,6 +2069,10 @@ export class QuickAssociateModal extends Modal {
             const hitRow = item.createDiv({
                 cls: 'rl-bili-batch-row' + (pickedCandidate(r) ? '' : ' rl-bili-batch-off'),
             });
+            // 🔴 2026-11-20 三列栅格（用户：「列表项分为三列：左侧 Checkbox + 缩略图（80x45），中间是标题和标签，
+            //    右侧是操作区」「Checkbox、图片和文字必须垂直居中对齐」）。
+            //    ⚠️ checkbox / 缩略图 / 正文 / 操作区是**四个平级 flex 子项**，靠行的 `align-items:center` 对齐；
+            //       ⛔ 别再套「左列包一层」—— 那样 checkbox 与缩略图会各自对齐、反而不在一条轴上。
             const box = hitRow.createEl('input', { attr: { type: 'checkbox' } });
             box.checked = r.checked;
             box.disabled = !pickedUrl(r);
@@ -1607,64 +2081,68 @@ export class QuickAssociateModal extends Modal {
                 ? '这一集没有可填的链接'
                 : (canExpandParts(r) ? '整季合集：直接勾上只会填第 1 集 —— 建议用「展开分P」' : '参与「填入」'));
             box.onchange = () => this.toggleBatchRow(idx, box.checked);
-            hitRow.createSpan({ cls: 'rl-bili-batch-ep', text: `第 ${r.epNo} 集` });
 
-            const hit = hitRow.createDiv({ cls: 'rl-bili-batch-hit' });
             const v = pickedCandidate(r);
             if (v) {
                 if (v.coverUrl) {
-                    const img = hit.createEl('img', { cls: 'rl-bili-cover' });
+                    const img = hitRow.createEl('img', { cls: 'rl-bili-batch-thumb' });
                     img.src = v.coverUrl;
                     img.alt = '';
-                    // B站图床按 Referer 防盗链 ⇒ 少了就是一个灰底占位**且不报错**（与候选列表同款）
+                    // B站图床按 Referer 防盗链 ⇒ 少了就是一个灰底占位**且不报错**
                     img.setAttribute('referrerpolicy', 'no-referrer');
                 } else {
-                    const ph = hit.createSpan({ cls: 'rl-bili-cover rl-bili-cover-ph' });
+                    const ph = hitRow.createSpan({ cls: 'rl-bili-batch-thumb rl-bili-cover-ph' });
                     try {
                         setIcon(ph, 'video');
                     } catch {
                         /* 图标不可用：忽略 */
                     }
                 }
-                const main = hit.createDiv({ cls: 'rl-bili-main' });
+                // 中间列：标题（14px/600/单行省略）+ 一行 Tag
+                const main = hitRow.createDiv({ cls: 'rl-bili-batch-hit' });
                 main.createSpan({ cls: 'rl-bili-batch-name', text: v.title });
-                main.createSpan({ cls: 'rl-bili-artist', text: v.author || '未知 UP 主' });
+                const tags = main.createDiv({ cls: 'rl-bili-batch-tags' });
+                tags.createSpan({ cls: 'rl-bili-batch-ep', text: `第 ${r.epNo} 集` });
                 // 🔴 分P 胶囊：一眼区分「单集投稿」与「整季合集」（没标出来 ⇒ 不显示，⛔ 别写 `?P`）
                 const pc = partCountLabel(r.partCounts[v.bvid] ?? 0);
                 if (pc) {
-                    const pill = hit.createSpan({ cls: 'rl-bili-batch-parts', text: pc });
+                    const pill = tags.createSpan({ cls: 'rl-bili-batch-parts', text: pc });
                     pill.setAttribute('data-tip', pc === '1P' ? '单集投稿（只有 1 个分P）' : `整季合集（${pc} 个分P）`);
                 }
-                // 🔴 #520：**不展示链接**（用户：「要把视频标题完整展示不展示链接」）——
-                //    链接挪到这条命中区的 data-tip（想核对链接时悬停即可）。
-                hit.setAttribute('data-tip', pickedUrl(r));
+                // 标题不含作品名的行：一枚告示 Tag —— 它**不会**被自动勾上，但可以手勾（#520 用户裁定）
                 if (!r.matched) {
-                    hitRow
+                    tags
                         .createSpan({ cls: 'rl-bili-batch-warn', text: '标题不含作品名' })
                         .setAttribute('data-tip', '标题里没有本条目作品名，所以没替你勾上');
                 }
+                tags.createSpan({ cls: 'rl-bili-batch-sub', text: v.author || '未知 UP 主' });
+                // 🔴 #520：**不展示链接**（用户：「要把视频标题完整展示不展示链接」）—— 链接挪到 data-tip
+                main.setAttribute('data-tip', pickedUrl(r));
             } else {
-                hitRow.createDiv({
-                    cls: 'rl-bili-batch-note',
+                // 没候选：仍然占住中间列（栅格不能塌），文案 12px 灰
+                const main = hitRow.createDiv({ cls: 'rl-bili-batch-hit' });
+                main.createSpan({
+                    cls: 'rl-bili-batch-sub',
                     text: r.error || (this.batchRunning ? '…' : '未搜到'),
                 });
             }
+
+            // 右侧操作区：**文字按钮**（用户：「去除列表里丑陋的灰色圆角按钮，改为文字按钮」）
+            const acts = hitRow.createDiv({ cls: 'rl-bili-batch-acts' });
             // 🔴 #523：**单集检索**入口 —— 原「网络地址」旁那枚 B站 图标撤除后合并到这里
-            //    （切到这一集 + 打开单集搜索卡；分P 勾选表与候选列表都是原样那套）。
             if (v) {
-                const one = hitRow.createEl('button', { cls: 'rl-bili-batch-toggle', text: '单集' });
+                const one = acts.createEl('button', { cls: 'rl-bili-batch-toggle', text: '单集' });
                 one.setAttribute('data-tip', '打开这一集的搜索卡并搜 B站（含分P 勾选）');
                 one.onclick = () => void this.openBiliFromBatch(idx);
             }
             // 🔴 #526：**整季合集专用**入口 —— 直接开这一条候选的分P 勾选表（锚 = 第 1 集）。
-            //    批量「填入」对多P 候选只会写 P1（= 第 1 集），所以多P 行默认不勾、走这枚一次填整季。
             if (canExpandParts(r)) {
-                const ex = hitRow.createEl('button', { cls: 'rl-bili-batch-toggle is-parts', text: '展开分P' });
+                const ex = acts.createEl('button', { cls: 'rl-bili-batch-toggle is-parts', text: '展开分P' });
                 ex.setAttribute('data-tip', '这条是整季合集：展开分P 勾选表，一次填多集（分P i ↔ 第 i 集）');
                 ex.onclick = () => void this.expandBatchParts(idx);
             }
             if (r.videos.length > 1) {
-                const tg = hitRow.createEl('button', {
+                const tg = acts.createEl('button', {
                     cls: 'rl-bili-batch-toggle',
                     text: this.batchOpenRow === idx ? '收起' : '换一条',
                 });
@@ -1675,6 +2153,19 @@ export class QuickAssociateModal extends Modal {
         });
 
         const ops = card.createDiv({ cls: 'rl-bili-batch-ops' });
+        // 🔴 用户 2026-11-23（①b）：「停止」移到「填入勾中的 N 集」**左侧** ——
+        //    停止是「这一次搜索到此为止」，填入是「把结果收进弹窗」，
+        //    同属一次批量操作的收尾动作，放一起才符合「先停、再收」的顺序。
+        // ⚠️ 只在 batchRunning 时出现（无搜索在跑就没有可停的东西）；
+        //    ⛔ 别挪回顶部进度条那侧 —— 那是 2026-11-23 之前的旧位置。
+        // ⚠️ 与 `EntryForm.svelte` 的 `.rl-bili-batch-ops` 必须同构。
+        if (this.batchRunning) {
+            const stop = ops.createEl('button', { cls: 'rl-bili-batch-btn is-ghost', text: '停止' });
+            stop.setAttribute('data-tip', '停下（已搜到的保留，可再点「继续」）');
+            stop.onclick = () => {
+                this.batchCancel = true;
+            };
+        }
         const n = batchCheckedRows(this.batchRows).length;
         const fill = ops.createEl('button', { cls: 'rl-bili-batch-btn is-primary', text: `填入勾中的 ${n} 集` });
         fill.disabled = !canFillBatch(this.batchRows);
@@ -1723,17 +2214,27 @@ export class QuickAssociateModal extends Modal {
             const b = box.createEl('button', { cls: 'rl-bili-batch-cand' + (ci === r.picked ? ' is-cur' : '') });
             b.setAttribute('data-tip', ci === r.picked ? '当前选中' : '换成这一条');
             b.onclick = () => void this.pickBatchCand(idx, ci);
+            // 🔴 2026-11-20：候选行与主行同一套「缩略图 + 正文两行」栅格（缩略图小一号，见 `.rl-bili-batch-cand .rl-bili-batch-thumb`）。
+            //    ⛔ 别再退回 `rl-bili-cover` + `rl-bili-artist` 那套平铺 —— 主行已经不用它们了，两处样式会越走越远。
             if (v.coverUrl) {
-                const img = b.createEl('img', { cls: 'rl-bili-cover' });
+                const img = b.createEl('img', { cls: 'rl-bili-batch-thumb' });
                 img.src = v.coverUrl;
                 img.alt = '';
                 img.setAttribute('referrerpolicy', 'no-referrer');
+            } else {
+                const ph = b.createSpan({ cls: 'rl-bili-batch-thumb rl-bili-cover-ph' });
+                try {
+                    setIcon(ph, 'video');
+                } catch {
+                    /* 图标不可用：忽略 */
+                }
             }
-            const main = b.createDiv({ cls: 'rl-bili-main' });
+            const main = b.createDiv({ cls: 'rl-bili-batch-hit' });
             main.createSpan({ cls: 'rl-bili-batch-name', text: v.title });
-            main.createSpan({ cls: 'rl-bili-artist', text: v.author || '未知 UP 主' });
+            const tags = main.createDiv({ cls: 'rl-bili-batch-tags' });
             const pc = partCountLabel(r.partCounts[v.bvid] ?? 0);
-            if (pc) b.createSpan({ cls: 'rl-bili-batch-parts', text: pc });
+            if (pc) tags.createSpan({ cls: 'rl-bili-batch-parts', text: pc });
+            tags.createSpan({ cls: 'rl-bili-batch-sub', text: v.author || '未知 UP 主' });
         });
     }
 
@@ -1762,7 +2263,9 @@ export class QuickAssociateModal extends Modal {
         if (picked.length === 0) return;
         let n = 0;
         for (const r of picked) {
-            const url = pickedUrl(r);
+            // 🔴 必须走 `pickedFillUrl`：`pickedUrl` 恒定是 P1，多P 合集会把每一集都写成第 1 集
+            //    （用户 2026-11-03 报障「点选集4还是重复为第一集」）。越界行返回空串 ⇒ 直接跳过。
+            const url = pickedFillUrl(r);
             if (!url) continue;
             this.urls[r.epIndex] = url;
             n += 1;
@@ -1894,6 +2397,39 @@ export class QuickAssociateModal extends Modal {
         this.urlInput.value = this.urls[this.curEp] ?? '';
         this.fileInput.value = this.files[this.curEp] ?? '';
         this.titleInput.value = this.titles[this.curEp] ?? '';
+        if (this.subInput) {
+            const v = this.subs[String(this.curEp)] ?? '';
+            this.subInput.value = v;
+            // 用户 2026-10-29：切到这一集时顺手验一次「上次选的文件还在不在」
+            void this.markSubMissing(v);
+        }
+    }
+
+    /**
+     * 字幕文件存在性检查（用户 2026-10-29「丢失要标红 + Toast」的**关联入口侧**）。
+     *
+     * ⚠️ 只做**视觉提示**，⛔ 不清空输入框的值：文件被挪走/移动硬盘没插，用户的关联意图还在，
+     *    静默清空等于把用户的设置删了。真要解除关联，用户自己清空即可。
+     * ⚠️ 探针是宿主注入的（`cbs.fileExists`）：弹窗是 `src/modals` 层，⛔ 不直接碰 fs。
+     *    没注入 ⇒ 直接返回，不画红框（不假装能验）。
+     */
+    private async markSubMissing(path: string): Promise<void> {
+        const input = this.subInput;
+        if (!input) return;
+        const probe = this.cbs.fileExists;
+        if (!probe || !path) {
+            input.removeClass('is-missing');
+            return;
+        }
+        let ok = false;
+        try {
+            ok = await probe(path);
+        } catch {
+            ok = false;
+        }
+        // 探针是异步的：回来时用户可能已经切集/改了输入 ⇒ 只有内容仍是同一条才标
+        if (this.subInput !== input || input.value.trim() !== path) return;
+        input.toggleClass('is-missing', !ok);
     }
 
     /** 将当前集输入写回数组（切换/保存前调用；trim 后空串存 undefined） */
@@ -1902,6 +2438,10 @@ export class QuickAssociateModal extends Modal {
         this.urls[i] = this.urlInput.value.trim() || undefined;
         this.files[i] = this.fileInput.value.trim() || undefined;
         this.titles[i] = this.titleInput.value.trim() || undefined;
+        // 🔴 用户 2026-10-29：字幕与上面三个同一口径。⚠️ 输入框的 `input` 监听已经即时写过一遍，
+        //    这里再写是**幂等兜底** —— 万一将来有人把那监听改成 `change`（失焦才触发），
+        //    切换集/保存时也不丢当前这一集（与 `titles` 完全同构，别只给三个数组开小灶）。
+        if (this.subInput) this.subs[String(i)] = this.subInput.value.trim();
     }
 
     private curLabel(): string {
@@ -2012,12 +2552,43 @@ export class QuickAssociateModal extends Modal {
             } else if (this.entry.type === 'game') {
                 r.gameLaunchPath = local || undefined;
                 r.gameUrl = net || undefined;
+                // 🔴 2026-11-16：本地 Flash 影片是**第三条路**，与 .lnk 并存（清空 = 只解除这一条）。
+                //    没有这一行（非游戏 / 没注入能力）⇒ `singleSwfInput` 为 null ⇒ 不产出该键，
+                //    不会把已有 `gameSwf` 冲掉（`patch` 里没这个键 ⇒ `service.update` 不动它）。
+                if (this.singleSwfInput) r.gameSwf = this.singleSwfInput.value.trim() || undefined;
+                // 🔴 2026-11-16：内嵌播放页同理 —— 没建这行（非游戏）就不产出该键，不冲掉旧值。
+                if (this.singleEmbedInput) r.gameEmbed = this.singleEmbedInput.value.trim() || undefined;
             } else {
                 r.audioPath = local || undefined;
                 r.audioUrl = net || undefined;
             }
         }
+        // 🔴 用户 2026-10-29：字幕路径 —— 只有**真变了**才带出去。
+        //    ⚠️ 判据是「新 Record 与原 Record 是否逐键相等」，⛔ 不是「新 Record 非空」：
+        //    这个字段一旦出现在结果里就会被 `service.update` 整体覆盖，无条件带上 =
+        //    把用户刚在播放器里导入的字幕冲掉（那是本需求另一半的写入方）。
+        if (this.isVideo()) {
+            const next = this.buildSubPaths();
+            if (!sameSubPaths(next, this.entry.subtitlePaths ?? {})) r.subtitlePaths = next;
+        }
         return r;
+    }
+
+    /**
+     * 把编辑态的 `subs` 压成落库形状：**空值不写 key**（大多数集没有字幕，
+     * 存一串空串既浪费又会让「有没有字幕」的判断变成非空判断）。
+     */
+    private buildSubPaths(): Record<string, string> {
+        const out: Record<string, string> = {};
+        for (const [k, v] of Object.entries(this.subs)) {
+            const p = String(v ?? '').trim();
+            if (!p) continue;
+            // 只收合法集号键：`subs` 是编辑副本，理论上只会被 `curEp` 写入，
+            // 但它是 Record（用户可以在控制台乱塞），落库前把形状收干净。
+            if (!/^\d+$/.test(k)) continue;
+            out[k] = p;
+        }
+        return out;
     }
 
     /** 提交结果的**签名**：键排序后再序列化 ⇒ 「同一份内容」不论字段写入顺序都得到同一串 */
@@ -2038,9 +2609,12 @@ export class QuickAssociateModal extends Modal {
      * 🔴 #599：**闪在哪一行**由 `lastField` 决定 —— 网络地址 / 本地路径各有自己的行内提示
      *    （用户：「设置已保存提示放在网络地址和本地路径标题旁边」）；其余字段（集标题 / 总集数 / 集号格子）
      *    仍落窗口底部那条。判据逐元素各算一次（两个位置互不干扰）。
+     * 🔴 2026-11-06：`sub` 也接进来 —— 字幕路径这一行现在有了「浏览」按钮，
+     *    选完文件走 `markDirty` ⇒ `flashHint`。不接的话提示会跑到窗口底部，
+     *    而用户的视线正停在字幕那一行（`rowHints.sub` 早就建好了，只是一直没人路由过来）。
      */
     private flashHint(bad: boolean): void {
-        const el = (this.lastField === 'url' || this.lastField === 'local')
+        const el = (this.lastField === 'url' || this.lastField === 'local' || this.lastField === 'sub' || this.lastField === 'swf')
             ? this.rowHints[this.lastField] ?? this.hintEl
             : this.hintEl;
         if (!el) return;

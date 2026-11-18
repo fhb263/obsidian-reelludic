@@ -10,13 +10,17 @@
 //     （评分取 Metacritic 媒体分 ÷10 成 10 分制、评价人数取 recommendations.total，取法与残缺说明见 SteamDetail）
 // 结果映射为 GameSearchResult（与豆瓣游戏同型，字段对齐 resultTypes.GameSearchResult）
 import { asRecord } from 'pure/record';
+import { steamCoverUrl } from 'pure/steamCover';
 import type { GameSearchResult } from 'services/resultTypes';
 
 export type HttpGet = (url: string) => Promise<string>;
 
 const SEARCH_ENDPOINT = 'https://store.steampowered.com/api/storesearch/';
-/** 竖版封面图床（library_600x900：Steam 商店页横版 + 搜索列表竖版封面；以 appid 拼 URL，不随响应字段变化） */
-export const COVER_IMAGE_BASE = 'https://cdn.cloudflare.steamstatic.com/steam/apps';
+/**
+ * ⚠️ 封面图床常量**已迁到 `pure/steamCover.ts`**（唯一真源，`steamCoverUrl()`）。
+ * 这里保留 re-export 只为不打断既有引用；⛔ 别再往这里加新常量。
+ */
+export { STEAM_COVER_BASE as COVER_IMAGE_BASE } from 'pure/steamCover';
 /**
  * 详情端点（公开免 Key，与 storesearch 同域）。
  * ⚠️ `cc` / `l` 必须与搜索**保持同一组值**：两处口径不同时，详情里的发行年 / 题材会与搜索结果对不上
@@ -47,6 +51,30 @@ export interface RawSteamItem {
     id: number;
     /** 名称 */
     name: string;
+    /**
+     * 🔴 2026-11-08 补：Metacritic 媒体均分（0-100 整数），**已归一为 number**（原始字段是字符串）。
+     * 无收录 / 空串 `""` / 非数字 ⇒ undefined（⛔ 不编 0）。
+     */
+    metascore?: number;
+}
+
+/**
+ * storesearch 的 `metascore` → number。
+ *
+ * 🔴🔴 三个实测事实（2026-11-08 真网取证，portal/witcher/cyberpunk/stardew/dota2/cs2/eldenring/apex 共 33 条）：
+ *    1. 它是**字符串**（`"94"` / `"90"`），⛔ 不是 number；
+ *    2. **没收录时是空串 `""`，而不是缺键**（CS2 730 = `""`、NIGHTREIGN 2622380 = `""`）⇒
+ *       判据必须是「转换后 `0 < n <= 100`」，⛔ 不能写 `!= null`（空串不是 null，会被当有效分）；
+ *    3. `Number('') === 0` 会让上面那条判据自然兜住空串，但**别依赖这点**——
+ *       显式 `trim()` 后判空更好读，也挡住 `'   '` 这种脏值。
+ */
+function metascoreOf(v: unknown): number | undefined {
+    if (typeof v !== 'string') return undefined;
+    const t = v.trim();
+    if (!t) return undefined;
+    const n = Number(t);
+    if (!Number.isFinite(n) || n <= 0 || n > 100) return undefined;
+    return Math.round(n);
 }
 
 /** 构造搜索 URL（cc=US&l=english 固定——storesearch 检索为商店英文索引） */
@@ -58,6 +86,9 @@ export function buildSearchUrl(query: string): string {
  * 解析 storesearch 响应：items[] → RawSteamItem[]。
  * 异常条目容错：仅保留 type=app（appid 语义，sub/bundle 的 sourceUrl app/{id} 不正确）；
  * 缺 id（非 number）或缺 name 的条目一并过滤；items 缺失/空 → 空数组。
+ *
+ * 🔴 2026-11-08 补 metascore：用户报障「搜索获取评分不到」——数据**一直在响应里**
+ *    （真网实测 33/33 条都带 `metascore` 键），是这里只挑 type/id/name 三字段把它扔了。
  */
 export function parseSteamResults(text: string): RawSteamItem[] {
     const data = asRecord(JSON.parse(text));
@@ -65,11 +96,16 @@ export function parseSteamResults(text: string): RawSteamItem[] {
     return items
         .map(asRecord)
         .filter((it) => it.type === 'app' && typeof it.id === 'number' && typeof it.name === 'string')
-        .map((it) => ({
-            type: it.type as string,
-            id: it.id as number,
-            name: it.name as string,
-        }));
+        .map((it) => {
+            const item: RawSteamItem = {
+                type: it.type as string,
+                id: it.id as number,
+                name: it.name as string,
+            };
+            const meta = metascoreOf(it.metascore);
+            if (meta != null) item.metascore = meta;
+            return item;
+        });
 }
 
 /**
@@ -86,16 +122,20 @@ export function parseSteamResults(text: string): RawSteamItem[] {
  */
 export function toGameResult(item: RawSteamItem): GameSearchResult {
     const id = item.id;
-    return {
+    const out: GameSearchResult = {
         id,
         title: item.name,
-        // ⚠️ 搜索级确实拿不到平台（storesearch 不返回；要它得走 appdetails，另行排期）——
-        //    但键**必须存在**，见上方说明。
+        // ⚠️ 搜索级拿不到平台字符串（storesearch 只给 `platforms: {windows/mac/linux}` 布尔组，
+        //    要拼成「Windows / macOS」得走 appdetails，另行排期）—— 但键**必须存在**，见上方说明。
         platform: undefined,
-        cover: `${COVER_IMAGE_BASE}/${id}/library_600x900.jpg`,
+        cover: steamCoverUrl(id),
         source: 'steam',
         sourceUrl: `https://store.steampowered.com/app/${id}`,
     };
+    // 🔴 2026-11-08 修障（用户「搜索获取评分不到」）：Metacritic 分写进 rating。
+    //    有值才写键，无收录（CS2 之类）就不写 —— 界面按 `rating != null` 判空，⛔ 不编 0 分。
+    if (item.metascore != null) out.rating = item.metascore / 10;
+    return out;
 }
 
 /**
@@ -239,7 +279,14 @@ export function parseReviewHistogram(text: string): SteamReviewStats {
         return {};
     }
     const r = asRecord(root);
-    if (r.success !== true) return {};
+    // 🔴🔴 2026-11-08 修障：这里曾经写的是 `r.success !== true` —— 而 **Steam 实际返回的是数字 `1`**
+    //    （实测 620 / 292030 / 730 / 570 / 1091500 五个 appid：`{"success":1,"results":{...}}`，
+    //    `typeof success === 'number'`），于是严格相等判据**每次都判假**、整个 histogram 被当失败丢掉
+    //    ⇒ `reviewPercent` 永远 undefined、`ratingCount` 只剩 appdetails 的 `recommendations.total` 兜底。
+    //    用户报障「steam 同步和搜索获取评分不到」的主因就是这个：数据一直都在，是判据把它扔了。
+    // ⚠️ 必须**同时接受** `true` 与 `1`：不同区域 / 不同端点历史上两种形态都出现过（单测两种都要锁）。
+    // ⛔ 别写成 `if (!r.success)`：字符串 `'0'` / `'false'` 也是真值，会把失败响应当成功解析。
+    if (r.success !== true && r.success !== 1) return {};
     const rollups = asRecord(r.results).rollups;
     const list = Array.isArray(rollups) ? rollups : [];
     let up = 0;

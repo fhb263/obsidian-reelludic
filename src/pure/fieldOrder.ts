@@ -73,6 +73,49 @@ export function isGlobalFieldKey(key: string): boolean {
 }
 
 /**
+ * 🔴🔴 #721：**禁止隐藏**的结构性键（2026-11-07 用户「笔记属性配置也可增删，删除后不拉取改属性字段」）。
+ *
+ * 为什么必须有这份清单：`applyFieldOrder` 的隐藏是**真删行**，隐藏错了笔记就坏了 ——
+ *   · `id` / `type`：插件靠它们认条目，删了等于把笔记变成孤儿；
+ *   · `title`：列表、搜索、关联全靠它；
+ *   · `created` / `updated`：时间线唯一的真源，删了排序与统计一起塌。
+ * 其余字段（评分、年份、导演、ISBN……）都只是**内容**，不写不影响插件读这条笔记 —— 可以隐藏。
+ *
+ * ⚠️ 清单外的键**一律可隐藏**：⛔ 别在这里追求「完整」，写进来的都是「删了会坏」的，
+ *    多写一个就等于把用户本可以关掉的字段锁死。
+ */
+export const FIELD_ORDER_LOCKED_KEYS: readonly string[] = ['id', 'type', 'title', 'created', 'updated'];
+
+/** 某键是否允许隐藏（见 {@link FIELD_ORDER_LOCKED_KEYS}） */
+export function isHidableFieldKey(key: string): boolean {
+    return !FIELD_ORDER_LOCKED_KEYS.includes(key);
+}
+
+/** 存储形态：`{ [target]: string[] }`，target = `'__global'` / `EntryType` / `k:<BookKind>` */
+export type FieldOrderHiddenConfig = Record<string, string[]>;
+
+/**
+ * 取某个隐藏目标的**生效隐藏集**（收窄：只留该目标允许、且不是结构性键的）。
+ *
+ * 🔴 为什么也要收窄：`hidden` 是用户手改 data.json 也能写的键 ⇒ 里面可能混着已不存在的字段、
+ *    拼错的键、甚至 `id`。不收窄的话「隐藏 id」会真的把笔记写坏，而且没有任何提示。
+ * ⚠️ 与「顺序」不同，这里**⛔ 不补缺省** —— 空就是空，没有「缺省隐藏集」这回事。
+ */
+export function normalizeHidden(hidden: unknown, allowed: readonly string[]): string[] {
+    if (!Array.isArray(hidden)) return [];
+    const allowedSet = new Set(allowed);
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const k of hidden) {
+        if (typeof k !== 'string' || !allowedSet.has(k) || seen.has(k)) continue;
+        if (!isHidableFieldKey(k)) continue;
+        seen.add(k);
+        out.push(k);
+    }
+    return out;
+}
+
+/**
  * 某类型的**专属字段**（= 该类型适用、且不属于 {@link GLOBAL_FIELD_KEYS} 的那批键）。
  * 🔴 设置页「某类型」那一页显示的就是它；顺序沿用 `defaultOrderFor`（= `META_FIELDS` 的登记序）。
  *
@@ -263,18 +306,68 @@ export function resolveAllOrders(cfg: unknown): Record<EntryType, string[]> {
 }
 
 /**
+ * 🔴 #721：一次算出**所有隐藏目标**的生效隐藏集（宿主构造时算一次，⛔ 别在每次写笔记时重算）。
+ *
+ * 目标键与设置页的分页键同口径：`'__global'` / 六个 `EntryType` / `k:<BookKind>`。
+ * 每一档都按**该档的允许字段集**收窄（`normalizeHidden`）—— 手改 data.json 塞进来的
+ * `id` / 拼错的键 / 不属于该档的键一律丢掉，隐藏错了笔记会坏。
+ *
+ * ⚠️ 只算**配置里真有的目标**：没配的目标不必出现在表里（读取侧用 `?? []` 兜底），
+ *    免得每次构造都摊开十几份空数组。
+ */
+export function resolveAllHidden(cfg: unknown): FieldOrderHiddenConfig {
+    const rec = (cfg ?? {}) as Record<string, unknown>;
+    const out: FieldOrderHiddenConfig = {};
+    const allowedOf = (target: string): readonly string[] => {
+        if (target === '__global') return GLOBAL_FIELD_KEYS;
+        if (target.startsWith('k:')) {
+            const kind = target.slice(2) as BookKind;
+            return BOOK_KINDS.includes(kind) ? defaultOrderForBookKind(kind) : [];
+        }
+        return FIELD_ORDER_TYPES.includes(target as EntryType) ? defaultOrderFor(target as EntryType) : [];
+    };
+    for (const target of Object.keys(rec)) {
+        const allowed = allowedOf(target);
+        if (!allowed.length) continue; // 不认识的目标键（旧版本残留 / 手改）⇒ 整档忽略
+        const list = normalizeHidden(rec[target], allowed);
+        if (list.length) out[target] = list;
+    }
+    return out;
+}
+
+/**
  * 把生成好的 YAML 里的**键行**按 `order` 重排。
  *
  * 🔴 为什么在**文本层**做（与字段映射同一层）：`entryFrontmatter` 是按固定顺序「有值才 push」的，
  *    要在生成侧排序就得先把 42 个条件分支拆成「先收集再排」，那会把那段读起来很顺的代码毁掉；
  *    文本层只认「行首到第一个冒号」，与生成逻辑完全解耦。
  *
+ * 🔴🔴 #721（2026-11-07 用户：「笔记属性配置也可增删，删除后不拉取改属性字段」）：
+ *    新增可选的 `hidden` —— **列在这里的键会被整行丢掉**，不再写进 frontmatter。
+ *
+ *    为什么必须另开一个参数、而不是「从 order 里删掉」：`normalizeFieldOrder` 的收窄器
+ *    有一条**保命规则** —— 允许集里有、配置里没有的键会**补到末尾**（否则以后新增字段会
+ *    直接从「没配过」变成「写不出来」）。所以「不在 order 里」**表达不了删除**，
+ *    它表达的是「排到最后」。删除必须是一份**显式的隐藏集**，两个语义分开。
+ *
+ *    ⚠️ 与 `order` 重叠时以 `hidden` 为准（隐藏永远赢）。
+ *    ⚠️ 隐藏的粒度是**目标**（全局 / 某类型 / 某书籍子类），由调用方算好再传进来 ——
+ *       本函数只做纯粹的「这个键写不写」判定，⛔ 不在这里拼回落链。
+ *    ⚠️ `id` / `type` / `title` / `created` / `updated` 这类**结构性键**由 UI 层禁止隐藏
+ *       （见 `pure/fieldOrder` 的 `FIELD_ORDER_LOCKED_KEYS`），但本函数**不替调用方把关**：
+ *       真被隐藏就是真不写，那样生成的笔记会坏。把关放在唯一能配置的地方，不放这里。
+ *
  * ⚠️ `order` 里没有的键（正常不会有，除非代码新增字段而配置没跟上）⇒ **保持原相对位置、统一落到末尾**，
  *    ⛔ 绝不清掉那一行。
  * ⚠️ 值里含冒号（如 `title: "沙丘2: Part Two"`）不受影响 —— 键永远在行首，取的是**第一个**冒号。
  */
-export function applyFieldOrder(fm: string, order: readonly string[]): string {
-    if (!order.length) return fm;
+export function applyFieldOrder(
+    fm: string,
+    order: readonly string[],
+    hidden?: Iterable<string>,
+): string {
+    const hiddenSet = hidden ? new Set(hidden) : null;
+    if (!order.length && !hiddenSet?.size) return fm;
     const lines = fm.split('\n');
     if (lines[0] !== '---') return fm;
     const endIdx = lines.indexOf('---', 1);
@@ -287,6 +380,7 @@ export function applyFieldOrder(fm: string, order: readonly string[]): string {
     };
     const body = lines
         .slice(1, endIdx)
+        .filter((line) => !hiddenSet || !hiddenSet.has(keyOf(line)))
         .map((line, i) => ({ line, i, r: rank.get(keyOf(line)) ?? Number.MAX_SAFE_INTEGER }));
     // ⚠️ 用原下标做二级比较 ⇒ 同秩（都未登记）的项保持原有先后（显式稳定，别赌引擎实现）
     body.sort((a, b) => a.r - b.r || a.i - b.i);

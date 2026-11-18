@@ -133,11 +133,26 @@ export const META_FIELDS: readonly MetaField[] = [
     { key: 'series_index', label: '系列序号', kind: 'number', writable: true, readable: true },
     { key: 'status', label: '状态', kind: 'enum', writable: true, readable: true },
     { key: 'rating', label: '个人评分', kind: 'number', writable: true, readable: true, dataviewAligned: true },
+    // 🔴 #772 心情（⑳）：紧跟 `rating` 之后 —— 两者在表单里相邻（评分 → 心情 → 评语），
+    //    登记序同时决定 frontmatter 写出序，排在这里用户看到的属性表也是这个顺序。
+    //    ⚠️ 形态记 `enum`（值是 6 个固定 id 之一，不是数字）：语义 = 情绪反应，⛔ 不参与均分/排序。
+    { key: 'mood', label: '心情', kind: 'enum', writable: true, readable: true, note: '六档：🤩 震撼 / 🥰 治愈 / 🤔 烧脑 / 😭 致郁 / 😴 无聊 / 🤬 受罪（存英文 id，展示时拼 emoji）' },
     { key: 'tags', label: '标签', kind: 'list', writable: true, readable: false, dataviewAligned: true },
     { key: 'aliases', label: '又名', kind: 'list', writable: true, readable: true },
     { key: 'planned_date', label: '计划日期', kind: 'date', writable: true, readable: true },
     // 用户表口径：影视看、书籍读、玩游戏都是同一个「看过/读过/玩过的那天」⇒ 一个键、一个名字。
-    { key: 'watched_date', label: '观看/阅读/游玩日期', kind: 'date', writable: true, readable: true },
+    // 🔴 2026-11-16 用户 m01057：「还有一个类型怎么有观看阅读日期的」——
+    //    键仍是一个（数据口径不变），但**显示名按类型分开**：同一张卡上不该出现
+    //    「观看/阅读/游玩日期」这种斜杠三拼。⛔ 别为此新开 `read_date` / `play_date` 键 ——
+    //    那会让同一条数据在两处各存一半（与 `developer` 复用同一口径）。
+    {
+        key: 'watched_date',
+        label: '观看/阅读/游玩日期',
+        kind: 'date',
+        writable: true,
+        readable: true,
+        labelFor: { movie: '观看日期', tv: '观看日期', anime: '观看日期', game: '游玩日期', book: '阅读日期', music: '收听日期' },
+    },
     { key: 'created', label: '创建日期', kind: 'date', writable: true, readable: false, dataviewAligned: true },
     { key: 'updated', label: '更新日期', kind: 'date', writable: true, readable: false, dataviewAligned: true },
 

@@ -42,7 +42,7 @@ export class PosterMigrateProgressModal extends Modal {
     private closeBtnEl: HTMLButtonElement | null = null;
     private finished = false;
 
-    constructor(app: App) {
+    constructor(app: App, private readonly onClosedByUser?: () => void) {
         super(app);
     }
 
@@ -85,6 +85,9 @@ export class PosterMigrateProgressModal extends Modal {
         this.failsEl = null;
         this.closeBtnEl = null;
         this.contentEl.empty();
+        // 🔴 用户 m01938「切到别的笔记去工作」：关掉这个弹窗**不等于放弃任务**，
+        //    调用方据此把进度接管到悬浮球上（任务本体与弹窗无关，见文件头职责划分）
+        this.onClosedByUser?.();
     }
 
     /**

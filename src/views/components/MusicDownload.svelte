@@ -45,6 +45,20 @@
         type PlaylistSource,
         type RecommendedPlaylist,
     } from 'services/dl';
+    /**
+     * 🔴 m03052 ⑤：B站下载的所有权在**服务层**（不是本组件）—— 关掉弹窗任务照跑，
+     *    进度改由悬浮球展示。⛔ 别退回「在本组件里 await biliDownload(...)」（改造前的形态，
+     *    那样 `stage/stagePct` 绑在组件生命周期上，弹窗一销毁进度就没人画了）。
+     *
+     * `isBiliDownloading` 已不用（`runningBiliDownloads()` 覆盖了它且能一次拿到全部在跑的），
+     * 但服务层仍导出它供别处查单条 —— 这里不 import 就不会触发 `noUnusedLocals`。
+     */
+    import {
+        onBiliOutcome,
+        onBiliProgress,
+        runningBiliDownloads,
+        startBiliDownload,
+    } from 'services/biliDownloadService';
 
     export let title = '';
     export let author = '';
@@ -90,6 +104,7 @@
     export let biliDownload: (
         video: BiliVideo,
         onProgress?: DownloadProgressCallback,
+        songTitle?: string,
     ) => Promise<{ ok: boolean; message: string; relPath?: string }>;
     /**
      * 下载成功回传库内相对路径 —— 条目侧把「本地音频」指过去（**自动关联**，#402）；
@@ -134,8 +149,60 @@
      * `null` = 不知道进度 ⇒ 进度条走不确定态动画（四平台链路恒为 null，⛔ 别给它们编一个百分比）。
      */
     let stagePct: number | null = null;
+    /**
+     * 🔴 m03052 ⑤：进度订阅的退订句柄。
+     * 下载本体在 `services/biliDownloadService`（所有权上移），本组件只是**订阅者之一** ——
+     * 关掉弹窗就是「少一个订阅者」，任务照跑、进度改由悬浮球展示。
+     * ⚠️ 必须是 `let` + 可空：`onMount` 里赋值、`onDestroy` 里摘掉并置 null。
+     */
+    let offBiliProgress: (() => void) | null = null;
+    /** 同上，结局订阅的退订句柄 */
+    let offBiliOutcome: (() => void) | null = null;
+    /**
+     * 🔴 m03052 ⑤：已处理过的结局（`bvid@结束时刻`）。同一次结局只处理一次 ——
+     * 因为 `onPicked(relPath)` 会把「本地音频」写进条目，重复调 = 重复写库。
+     */
+    const seenOutcomes = new Set<string>();
 
     onMount(() => {
+        // 🔴 m03052 ⑤：订阅后台进度 —— 弹窗开着时在**当前行**显示阶段；
+        //    关掉弹窗后没人听，进度只走悬浮球（⛔ 不影响下载）。
+        offBiliProgress = onBiliProgress((bvid, pct, label) => {
+            // 只认本组件当前跟踪的那一首（多个任务时其他歌的进度不该串到这一行）
+            if (downloadingId !== `bili:${bvid}`) return;
+            stagePct = pct;
+            stage = label;
+        });
+        /**
+         * 🔴 m03052 ⑤：结局也走订阅（⛔ 不在 `pickBili` 里 `.then` 回显）。
+         *  理由见 `pickBili` 注释：关窗后续体拿到的是已销毁组件的变量，回显白费；
+         *  而**重开弹窗**时又需要有人把结局补画出来（用户「退出弹窗也能继续下载」后
+         *  回来得看见「下好了/为什么失败」）。两条路合成一条订阅才不会重复关联。
+         *  ⚠️ `seenOutcomes` 按 `bvid@at` 去重：同一次结局只处理一次（`onPicked` 会把
+         *     「本地音频」写进条目，重复调 = 重复写库）。
+         */
+        offBiliOutcome = onBiliOutcome((outcome) => {
+            const key = `${outcome.bvid}@${outcome.at}`;
+            if (seenOutcomes.has(key)) return;
+            seenOutcomes.add(key);
+            downloadingId = '';
+            stage = '';
+            stagePct = null;
+            if (outcome.ok) {
+                tip = outcome.message;
+                if (outcome.relPath) onPicked(outcome.relPath);
+            } else {
+                err = outcome.message;
+            }
+        });
+        /**
+         * 🔴 m03052 ⑤：**重开弹窗时恢复「正在下载」** —— 用户关窗去干别的，
+         * 再打开这个条目，正在跑的那首必须仍然显示转圈 + 全部下载按钮禁用
+         * （⛔ 别让它看起来「没在下」从而允许再点一次；服务层虽会去重，
+         * 但用户会以为第一次白点了）。
+         */
+        const runningNow = runningBiliDownloads();
+        if (runningNow.length > 0) downloadingId = `bili:${runningNow[0]}`;
         /**
          * 🔴 **打开即搜**（2026-09-28 用户：「我在音乐条目编辑条目界面时点那个下载歌曲的按钮怎么不直接搜索
          * 该歌曲返回结果还要我自己搜」）：条目已经有标题 / 作者 ⇒ 直接用「标题 作者」当检索词**立刻搜一次**。
@@ -247,6 +314,11 @@
     });
     onDestroy(() => {
         bodyEl?.removeEventListener('scroll', onBodyScroll);
+        // 🔴 m03052 ⑤：只摘订阅，**不中止下载** —— 任务在服务层跑，关弹窗后由悬浮球接管展示。
+        offBiliProgress?.();
+        offBiliProgress = null;
+        offBiliOutcome?.();
+        offBiliOutcome = null;
     });
 
     async function runSearch(): Promise<void> {
@@ -360,30 +432,26 @@
      * B站下载（#496）。🔴 `downloadingId` 存 **`bili:<bvid>`** —— 与音乐行的 `song.id`（纯平台 id）
      * 天然不撞车，于是 `class:is-busy` / 「同时只跑一个下载」这套既有约束**原样复用**，
      * ⛔ 不必为 B站 另开一个状态变量（那样反而会出现「两边同时在下」）。
+     *
+     * 🔴 m03052 ⑤（用户逐字）：「给音乐从B站下载并转录的加个后台下载退出弹窗也能继续下载，
+     *    样式复用下载模型的那个悬浮球和进度框」
+     * ⇒ 下载**所有权已上移到 `services/biliDownloadService`**，本函数只是「起任务 + 挂订阅」。
+     * ⛔ 别把 `await biliDownload(...)` 写回这里 —— 那样进度又绑在组件生命周期上，关弹窗就丢
+     *    （这正是改造前的 bug 形态：`stage/stagePct` 是组件状态，弹窗一销毁就没人画进度了）。
      */
-    async function pickBili(v: BiliVideo): Promise<void> {
+    function pickBili(v: BiliVideo): void {
         if (downloadingId) return;
-        downloadingId = `bili:${v.bvid}`;
         err = '';
         tip = '';
+        downloadingId = `bili:${v.bvid}`;
         stage = '';
         stagePct = null;
-        try {
-            const r = await biliDownload(v, (pct, label) => {
-                stage = label;
-                stagePct = pct;
-            });
-            if (r.ok) {
-                tip = r.message;
-                if (r.relPath) onPicked(r.relPath);
-            } else {
-                err = r.message;
-            }
-        } finally {
-            downloadingId = '';
-            stage = '';
-            stagePct = null;
-        }
+        // 🔴 m03052 ⑤：**不在这里等结果**（没有 `await`、也没有 `.then` 回显）——
+        //    结局统一走 `onBiliOutcome` 订阅（`onMount` 里挂的那条）。理由：弹窗关掉后这个函数
+        //    的续体虽然还会跑，但它拿到的是**已销毁组件**的变量，回显等于白费；而重开弹窗时
+        //    又需要有人把结局补画出来 —— 两条路合并成一条订阅才不会出现「同一首歌关联两次」。
+        //    ⚠️ 服务层已按 bvid 去重，重复点到同一首只会复用那条 promise。
+        void startBiliDownload(biliDownload, v, title);
     }
 
     /** 正在拉取的试听键（`source:id`，按钮显示转圈并禁用；⛔ 与 `downloadingId` 分开，两件事可并行） */

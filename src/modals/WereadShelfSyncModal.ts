@@ -13,6 +13,8 @@
 import { Modal, Notice, type App } from 'obsidian';
 import type { WereadShelfBook } from 'pure/wereadShelf';
 import { shelfLastReadLabel } from 'pure/wereadShelf';
+import { wereadHintSections } from 'pure/syncHint';
+import { renderSyncHint } from 'modals/syncHintView';
 import { applyScrollPref } from 'services/scrollPref';
 
 /** 列表一行（`imported` = 库里已有同名书，由宿主用 `partitionShelfBooks` 预先算好） */
@@ -60,12 +62,8 @@ export class WereadShelfSyncModal extends Modal {
         contentEl.addClass('rl-wshelf-modal');
         this.titleEl.setText('从微信读书同步书架');
 
-        contentEl.createDiv({
-            cls: 'rl-wshelf-hint',
-            text:
-                '读取你微信读书书架里的电子书，勾选后导入本库（只读微信读书，不会改动那边的内容）。' +
-                '库里已有同名的书会跳过、不会被覆盖。需要先在「设置 › 元数据源配置 › 元数据搜索源凭据 › 微信读书」里粘贴 Cookie。',
-        });
+        // 🔴 2026-11-11 用户 m05717 ②：三段式（同步数据 / 冲突处理 / 前置条件），标签加粗 + 全角冒号
+        renderSyncHint(contentEl.createDiv({ cls: 'rl-wshelf-hint' }), wereadHintSections());
 
         const status = contentEl.createDiv({ cls: 'rl-wshelf-status', text: '正在读取书架…' });
         const bar = contentEl.createDiv({ cls: 'rl-wshelf-bar' });

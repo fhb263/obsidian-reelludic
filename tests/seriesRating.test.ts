@@ -220,3 +220,79 @@ describe('seriesUnratedRatio（页签计数条）', () => {
         expect(seriesUnratedRatio([], undefined)).toEqual([0, 0]);
     });
 });
+
+/**
+ * 🔴 2026-11-14（用户 m02498）：「也给评分看板加个系列卡堆叠和单卡平铺的循环切换图标按钮
+ * 同首页的按钮放在评分看板导航栏上」。
+ *
+ * 这里钉的是**平铺态（`unfold === true`）的投影口径**：
+ *   · 同系列**不再折成合集卡** —— 每条各出一张 `kind:'single'` 卡；
+ *   · 顺序 = 传入流（⛔ 不按标题/序号重排，那会与用户在看板上看到的视图顺序不一致）；
+ *   · **合集分表一个字不动** —— 平铺态只是「看不见」，切回堆叠态立刻恢复（清掉就是不可逆丢数据）；
+ *   · 「未评分 N / M」的**分母跟着格数走**（这也是 `seriesUnratedRatio` 必须吃同一个布尔的理由）。
+ */
+describe('seriesBoardItems / buildSeriesBoard 的 unfold（全部单卡平铺）', () => {
+    it('🔴 平铺态：同系列不再折成一张合集卡，每条各占一格', () => {
+        const entries = [mk('a', 'S1', 5), mk('b', 'S1', 4), mk('c', undefined, 3)];
+        // 堆叠态：S1 折成 1 张合集卡 + c 一张散卡 = 2 格
+        expect(seriesBoardItems(entries, undefined)).toHaveLength(2);
+        // 平铺态：3 条各一格
+        const flat = seriesBoardItems(entries, undefined, 'all', true);
+        expect(flat).toHaveLength(3);
+        expect(flat.every((x) => x.kind === 'single')).toBe(true);
+        expect(flat.map((x) => x.key)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('🔴 平铺态：顺序沿用传入流，⛔ 不按序号/标题重排组内成员', () => {
+        // 传入顺序刻意与系列序号相反
+        const entries = [
+            mk('second', 'S1', 4, { seriesIndex: 2 }),
+            mk('first', 'S1', 5, { seriesIndex: 1 }),
+        ];
+        const flat = seriesBoardItems(entries, undefined, 'all', true);
+        expect(flat.map((x) => x.key)).toEqual(['second', 'first']);
+    });
+
+    it('🔴 平铺态：合集分表不被改写（只是看不见，切回来还在）', () => {
+        const entries = [mk('a', 'S1', 5), mk('b', 'S1', 4)];
+        const key = seriesKeyOf(entries[0]) as string;
+        const map = { [key]: 4 };
+        const snapshot = JSON.stringify(map);
+        seriesBoardItems(entries, map, 'all', true);
+        expect(JSON.stringify(map)).toBe(snapshot);
+        // 切回堆叠态，合集分原样读得出来
+        const stacked = seriesBoardItems(entries, map);
+        expect(stacked).toHaveLength(1);
+        expect(stacked[0].kind).toBe('series');
+        expect(stacked[0].rating).toBe(4);
+    });
+
+    it('平铺态：页签过滤照旧生效', () => {
+        const entries = [mk('a', 'S1', 5), mk('g', undefined, 4, { type: 'game' })];
+        expect(seriesBoardItems(entries, undefined, 'movie', true)).toHaveLength(1);
+        expect(seriesBoardItems(entries, undefined, 'game', true)).toHaveLength(1);
+        expect(seriesBoardItems(entries, undefined, 'all', true)).toHaveLength(2);
+    });
+
+    it('buildSeriesBoard：平铺态把所有条目按各自评分分行（不再有 series 行）', () => {
+        const entries = [mk('a', 'S1', 5), mk('b', 'S1', 4), mk('c', undefined, 3)];
+        const key = seriesKeyOf(entries[0]) as string;
+        const rows = buildSeriesBoard(entries, { [key]: 2 }, 'all', true);
+        const total = rows.reduce((n, r) => n + r.items.length, 0);
+        expect(total).toBe(3);
+        expect(rows.every((r) => r.items.every((x) => x.kind === 'single'))).toBe(true);
+        // 合集分 2 在没有合集卡的情况下不该凭空多出格子
+        expect(rows.find((r) => r.rating === 2)?.items).toHaveLength(0);
+    });
+
+    it('🔴 seriesUnratedRatio：分母跟着 unfold 变（堆叠 2 格 → 平铺 3 格）', () => {
+        const entries = [
+            mk('a', 'S1', 5), mk('b', 'S1', 4), // 堆叠时合成 1 格且已打合集分 ⇒ 不算未评分
+            mk('c', undefined, 0),              // 散卡 1 格，未评分
+        ];
+        const key = seriesKeyOf(entries[0]) as string;
+        expect(seriesUnratedRatio(entries, { [key]: 4 })).toEqual([1, 2]);
+        // 平铺：a(5) b(4) c(0) ⇒ 只有 c 未评分，分母 3
+        expect(seriesUnratedRatio(entries, { [key]: 4 }, 'all', true)).toEqual([1, 3]);
+    });
+});

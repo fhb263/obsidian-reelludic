@@ -3,6 +3,7 @@ import {
     LIBRARY_AUDIO_MIN_SCORE,
     audioStem,
     isExactTitleFile,
+    matchAudioFileToEntry,
     pickLibraryAudio,
     scoreLibraryAudio,
     splitSongStem,
@@ -120,3 +121,59 @@ describe('pickLibraryAudio', () => {
         });
     });
 });
+
+// 🔴 m04435 ②：B站下载完**自动关联已有音乐条目**（用户：「不要求用户再手动搜索」）。
+// 方向与 `pickLibraryAudio` 相反 —— 手里只有文件名，要反查条目。
+const m = (o: Partial<{ id: string; type: string; title: string; author: string; audioPath: string }> = {}) =>
+    ({ id: 'e1', type: 'music', title: '晴天', ...o }) as { id: string; type: string; title?: string; author?: string; audioPath?: string };
+
+describe('matchAudioFileToEntry（下载完反查条目）', () => {
+    it('同名文件 ↔ 同名音乐条目：常规命中', () => {
+        const hit = matchAudioFileToEntry([m()], '晴天.mp3');
+        expect(hit?.id).toBe('e1');
+    });
+
+    it("落盘的「艺人 - 歌名」形态也能命中（取最后一个 ` - ` 之后那段当歌名）", () => {
+        const hit = matchAudioFileToEntry([m()], '周杰伦 - 晴天.mp3');
+        expect(hit?.id).toBe('e1');
+    });
+
+    it('⛔ 只认 music：书籍 / 影视条目同名也不算', () => {
+        expect(matchAudioFileToEntry([m({ type: 'book' })], '晴天.mp3')).toBeNull();
+        expect(matchAudioFileToEntry([m({ type: 'tv' })], '晴天.mp3')).toBeNull();
+    });
+
+    it('⛔ 已有 `audioPath` 的条目跳过（不冲掉用户手工挑好的关联）', () => {
+        expect(matchAudioFileToEntry([m({ audioPath: '下载/音乐/别的.mp3' })], '晴天.mp3')).toBeNull();
+    });
+
+    it('⛔ 分数不过门槛就不关联（宁可让用户手动挑）', () => {
+        expect(matchAudioFileToEntry([m({ title: '七里香' })], '晴天.mp3')).toBeNull();
+    });
+
+    it('空文件名 / 空条目表 / 条目无标题 ⇒ null（都是正常结局，⛔ 不抛）', () => {
+        expect(matchAudioFileToEntry([m()], '')).toBeNull();
+        expect(matchAudioFileToEntry([], '晴天.mp3')).toBeNull();
+        expect(matchAudioFileToEntry([m({ title: '' })], '晴天.mp3')).toBeNull();
+    });
+
+    it('多条同类命中时：**同名硬证据**优先于高相似度（与 pickLibraryAudio 同一把尺）', () => {
+        // 两条都能过门槛，但只有第二条的歌名与文件名完全同名
+        const hit = matchAudioFileToEntry(
+            [m({ id: 'loose', title: '晴天转多云' }), m({ id: 'exact', title: '晴天' })],
+            '晴天.mp3',
+        );
+        expect(hit?.id).toBe('exact');
+    });
+
+    it('同名且同分时退回 id 字典序（结果稳定可断言）', () => {
+        const hit = matchAudioFileToEntry([m({ id: 'b' }), m({ id: 'a' })], '晴天.mp3');
+        expect(hit?.id).toBe('a');
+    });
+
+    it('返回的是**条目本身**，不是包装对象', () => {
+        const hit = matchAudioFileToEntry([m()], '晴天.mp3');
+        expect(hit).toMatchObject({ id: 'e1', type: 'music', title: '晴天' });
+    });
+});
+

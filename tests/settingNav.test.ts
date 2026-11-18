@@ -1,7 +1,7 @@
 // 设置页导航真源（pure/settingNav）—— 这里守的是「改版后最容易静默出错」的四件事：
 //   ① 图标名写错：Obsidian 的 setIcon() 遇到不存在的名字**静默失败**（safeSetIcon 把异常吞掉）
 //      ⇒ 界面上是一个**空白图标、没有任何报错**（tests/searchIcons.test.ts 里已记录同一个坑）
-//   ② 标签被顺手改动：全仓有多处路径文案在引用「元数据源配置 / AI集成」这两个名字
+//   ② 标签被顺手改动：全仓有多处路径文案在引用「搜索配置 / AI集成」这两个名字
 //      （改标签不同步文案 ⇒ 提示会指向一个不存在的入口）
 //   ③ id 撞车 / 漏页：页的数量与顺序是导航契约
 //   ④ **#354**：4 页**全部**是平级 Tab（「关于」已从 #353 的"附属页 + 右上角小图标"回归 Tab 栏），
@@ -19,8 +19,15 @@ import {
 
 /**
  * 对 `D:\Obsidian\resources\obsidian.asar`（本机 Obsidian 1.13.7）**实测确定存在**的图标名。
- * ⚠️ 探针判据是产物里的 `"name":[[` 形态（`_probe_icons.cjs`）；这份表是**正向白名单** ——
- *    只有「确定存在」才准进，实测 MISS 的（如 `palette` / `database` / `sparkles`）**不得**凭推测加入。
+ * ⚠️ 这份表是**正向白名单** —— 只有「确定存在」才准进，实测 MISS 的**不得**凭推测加入。
+ *
+ * 🔴 1.5.1 修正探测判据（踩过坑，别再退回）：
+ *    图标表条目形态是 `name:[[…]]`，**键可能带引号也可能不带** ——
+ *    短名是裸标识符（`,mic:[[6,"M12 19v3"]…`、`,x:[[6,"M18 6 6 18"]]`、`check:[[6,"M20 6 9 17l-5-5"]]`），
+ *    只有长名才带引号（`"audio-lines":[[…]]`）。
+ *    ⇒ 只探 `"name":\[\[` 会把**全部短名**判成不存在（`mic`/`x`/`check`/`sparkles`/`repeat` 全假阴性，
+ *      旧判据 1408 个 vs 正确判据 1983 个）。正确正则：
+ *        /(?:^|[,{])"?([a-z][a-z0-9-]*(?:-[a-z0-9-]+)*)"?:\[\[/g
  */
 const ASAR_VERIFIED_ICONS = [
     'hard-drive', 'flask-conical', 'sliders-horizontal', 'circuit-board', 'share-2', 'sun-moon',
@@ -28,6 +35,11 @@ const ASAR_VERIFIED_ICONS = [
     'wand-2', 'list-tree', 'plug-zap', 'folder-tree', 'folder-open', 'file-text', 'scroll-text',
     'book-marked', 'library-big', 'book-open', 'book-copy', 'gamepad-2', 'disc-3', 'trash-2',
     'badge-info', 'circle-help', 'life-buoy', 'chevron-down', 'chevron-right',
+    // 🔴 2026-11-06（用户逐字）：「基本设置-实验性功能组和高级设置-ASR和TTS组全部移动到新开插件页签
+    //    【沉浸体验】放在搜索配置和AI集成中间」⇒ 新增 Tab 图标 + 两组图标。
+    //    三者均在本轮 `tools/.probe-icons.cjs` 的实测输出里（该轮共枚举 1983 个图标）：
+    //    `OK monitor-play` / `OK clapperboard`（`mic` 上面已有，复用给「语音服务」）。
+    'monitor-play', 'clapperboard',
     // 🔴 #483：AI集成两组改名后的新图标（`_probe_lucide.cjs` 实测在 asar 内）
     'server', 'target',
     // 🔴 1.3.1 ①：新增「高级设置」Tab 及其两个分组图标（同样经 `_probe_lucide.cjs` 实测；
@@ -36,18 +48,28 @@ const ASAR_VERIFIED_ICONS = [
     // 🔴 #640（1.4.0）：「笔记属性顺序」补上此前唯一缺失的组图标，实测命令与输出见下
     //    `node _probe_lucide.cjs list-ordered` → ✅ list-ordered
     'list-ordered',
+    // 🔴 1.5.1：高级设置页「音频转文字」组图标。短名，**必须用上面那条同时认裸标识符的正则**实测
+    //    （`node tools/.probe-icons.cjs` → `OK mic`，该轮共枚举 1983 个图标）
+    'mic',
 ];
 
-describe('settingNav（#354 设置页导航真源；1.3.1 ① 起 5 个平级 Tab）', () => {
-    it('5 个页、id 唯一、顺序固定', () => {
-        expect(SETTING_NAV_PAGES.map((p) => p.id)).toEqual(['basic', 'sources', 'ai', 'advanced', 'about']);
+describe('settingNav（#354 设置页导航真源；1.3.1 ① 起 5 个平级 Tab；2026-11-06 「沉浸体验」插到第 2 位 ⇒ 6 个）', () => {
+    it('6 个页、id 唯一、顺序固定', () => {
+        expect(SETTING_NAV_PAGES.map((p) => p.id)).toEqual(['basic', 'sources', 'immersive', 'ai', 'advanced', 'about']);
         expect(new Set(SETTING_NAV_PAGES.map((p) => p.id)).size).toBe(SETTING_NAV_PAGES.length);
     });
 
-    it('🔴 标签 = 用户点名的 5 项（三次改名：数据管理→基本设置、数据源管理→数据源配置→**元数据源配置**；1.3.1 ① 新增「高级设置」）', () => {
+    it('🔴 标签 = 用户点名的 6 项（三次改名：数据管理→基本设置、数据源管理→数据源配置→**元数据源配置**；1.3.1 ① 新增「高级设置」；2026-11-06 新增「沉浸体验」，2026-11-07 用户改口叫「**播放阅读**」）', () => {
         expect(SETTING_NAV_PAGES.map((p) => p.label)).toEqual([
-            '基本设置', '元数据源配置', 'AI集成', '高级设置', '关于',
+            '基本设置', '搜索配置', '播放阅读', 'AI集成', '高级设置', '关于',
         ]);
+    });
+
+    it('🔴 第 3 页 id 仍是 immersive（只改标签，⛔ 别顺手把 id 也改掉）', () => {
+        // id 是 `renderPage` 的分发键、进 `data-page` 属性、也被 `SETTING_GROUP_ICONS` 之外的断言引用；
+        // 改它只牵动代码、不产生任何用户可见收益 ⇒ 用户改的是"叫法"，不是"身份"。
+        expect(SETTING_NAV_PAGES[2].id).toBe('immersive');
+        expect(SETTING_NAV_PAGES[2].label).toBe('播放阅读');
     });
 
     it('🔴 每个导航图标都在 asar 实测白名单内（不在 → setIcon 静默失败 → 空白图标）', () => {
@@ -97,22 +119,46 @@ describe('settingNav（#354 设置页导航真源；1.3.1 ① 起 5 个平级 Ta
         expect(groupIcon('API凭据')).toBeNull();
         // #354 新增的 4 组
         expect(groupIcon('外观与体验')).toBe('sliders-horizontal');
-        expect(groupIcon('实验性功能')).toBe('flask-conical');
         expect(groupIcon('数据与备份')).toBe('hard-drive');
-        expect(groupIcon('封面与清理')).toBe('trash-2');
+        // 🔴 2026-11-06（用户逐字）：基本设置「实验性功能」组与高级设置「音频转文字」组整体搬到
+        //    新页签【沉浸体验】，并各自改名为「媒体载体」「语音服务」。
+        //    ⇒ 两个旧组名**必须整体退场**（与上面「语音合成」「AI服务」同一条口径）：
+        //       旧键留着就是永远不会命中的死配置，而且改名后它**静默取不到图标**。
+        expect(groupIcon('媒体载体')).toBe('clapperboard');
+        expect(groupIcon('实验性功能')).toBeNull();
+        expect(groupIcon('音频转文字')).toBeNull();
+        // 🔴🔴 2026-11-10 用户逐字（m03321）：「将设置页语音服务组下两个项语音转文字、文字转语音
+        //    移出来为单独组」⇒ **「语音服务」这个中间层整体退场**，两个小节升格为平级组；
+        //    用户 m03346 追加裁定「词典另外开一个独立分组」⇒ 第三组「字幕面板学习模式」。
+        //    ⚠️ 这里必须同时钉住「新组名有图标」与「旧组名已死」—— 只钉前者的话，有人
+        //      把 `语音服务` 键留着兜底（想让旧配置仍能取到图标）也不会有人发现，
+        //      但那正是一条**永远不会命中的死配置**（组名已不在渲染里出现）。
+        expect(groupIcon('语音转文字')).toBe('mic');
+        expect(groupIcon('文字转语音')).toBe('volume-2');
+        expect(groupIcon('字幕面板学习模式')).toBe('book-open');
+        expect(groupIcon('语音服务')).toBeNull();
+        // 🔴 组名演变：「封面与清理」→「数据与维护」→（2026-11-07 用户 m02783）「管理与维护」。
+        //    该组早就不只清封面（还管条目还原 / 附件清理 / 迁移进度）⇒ 「封面」已拿掉；
+        //    本轮用户逐字要求把「数据与维护」改成「管理与维护」。
+        //    图标仍是 `trash-2`（语义依旧是「清理」），⛔ 别把任何旧键留着兜底 —— 那会让改名形同虚设。
+        expect(groupIcon('管理与维护')).toBe('trash-2');
+        expect(groupIcon('数据与维护')).toBeNull();
+        expect(groupIcon('封面与清理')).toBeNull();
         expect(groupIcon('这个词不存在')).toBeNull();
     });
 
-    it('🔴 #354：Tab 栏就是全部 5 页 —— 「关于」回归为**平级 Tab**（推翻 #353 的外挂形态）', () => {
-        expect(SETTING_NAV_TABS.map((p) => p.id)).toEqual(['basic', 'sources', 'ai', 'advanced', 'about']);
+    it('🔴 #354：Tab 栏就是全部 6 页 —— 「关于」回归为**平级 Tab**（推翻 #353 的外挂形态）', () => {
+        expect(SETTING_NAV_TABS.map((p) => p.id)).toEqual(['basic', 'sources', 'immersive', 'ai', 'advanced', 'about']);
         expect(SETTING_NAV_TABS.some((p) => p.id === 'about')).toBe(true);
         // 回归 Tab 之后，关于那页的图标是 badge-info（原外挂按钮用的就是它）
         expect(SETTING_NAV_TABS.find((p) => p.id === 'about')?.icon).toBe('badge-info');
+        // 🔴 2026-11-06：沉浸体验**必须**夹在搜索配置与 AI集成之间（用户逐字给的位置）
+        expect(SETTING_NAV_TABS.find((p) => p.id === 'immersive')?.icon).toBe('monitor-play');
     });
 
     it('🔴 #354：页集合 = Tab 栏（不再有「TABS + 附属页」两份常量）', () => {
         expect(SETTING_NAV_PAGES).toEqual([...SETTING_NAV_TABS]);
-        expect(SETTING_NAV_PAGES).toHaveLength(5);
+        expect(SETTING_NAV_PAGES).toHaveLength(6);
     });
 
     it('🔴 默认页 = 第一项 basic（否则一打开设置页就落在第二页）', () => {
@@ -140,13 +186,14 @@ describe('settingNav（#354 设置页导航真源；1.3.1 ① 起 5 个平级 Ta
         expect(tabStates('sources')).toEqual([
             { id: 'basic', selected: false, tabindex: '-1' },
             { id: 'sources', selected: true, tabindex: '0' },
+            { id: 'immersive', selected: false, tabindex: '-1' },
             { id: 'ai', selected: false, tabindex: '-1' },
             { id: 'advanced', selected: false, tabindex: '-1' },
             { id: 'about', selected: false, tabindex: '-1' },
         ]);
     });
 
-    it('🔴 5 页全在栏内 ⇒ 任意合法 id 都**有且只有一个** tabindex="0"', () => {
+    it('🔴 6 页全在栏内 ⇒ 任意合法 id 都**有且只有一个** tabindex="0"', () => {
         for (const p of SETTING_NAV_PAGES) {
             const st = tabStates(p.id);
             expect(st.filter((s) => s.tabindex === '0').map((s) => s.id)).toEqual([p.id]);
@@ -156,7 +203,7 @@ describe('settingNav（#354 设置页导航真源；1.3.1 ① 起 5 个平级 Ta
 
     it('🔴 兜底：activeId 不在栏内 → 无任何选中，但第一项必须回到 Tab 键序列（否则键盘进不了栏）', () => {
         const st = tabStates('nope');
-        expect(st).toHaveLength(5);
+        expect(st).toHaveLength(6);
         expect(st.every((s) => !s.selected)).toBe(true);
         expect(st.filter((s) => s.tabindex === '0').map((s) => s.id)).toEqual(['basic']);
     });

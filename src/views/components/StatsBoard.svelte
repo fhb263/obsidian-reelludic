@@ -39,8 +39,25 @@
     // 🔴 #635 ④：评分看板（拖拽改评分）。纯逻辑在 `pure/ratingBoard`（25 例单测），本组件只做接线。
     import RatingBoard from './RatingBoard.svelte';
     import type { Rating } from 'pure/rating';
+    // 🔴 ②-3（用户 m00353）：标签词云。词源 = `MediaEntry.tags`，聚合/排序/分档全在 `pure/wordCloud`（19 例单测），
+    //    本组件只负责把 `{text, weight, level}` 渲染成 `<span class="rl-cloud-w lv-N">`。
+    import { buildWordCloud, cloudHueIndexOf, WORD_CLOUD_MAX } from 'pure/wordCloud';
+    // 🔴 m04642 ①（用户：「按参考 @isoterik/react-word-cloud、araea-wordcloud 实现词云效果
+    //    在有限空间内"见缝插针"」）：摆放逻辑下沉到 `pure/wordCloudLayout`（螺旋 + 矩形碰撞检测 + 自动降档），
+    //    本组件只量容器宽、把结果写成 `left/top/font-size`。⛔ 别把螺旋/碰撞写回这里。
+    import { cloudHeightFor, layoutWordCloud } from 'pure/wordCloudLayout';
 
     export let entries: MediaEntry[] = [];
+    /**
+     * 要从**标签词云**里整体排除的标签（= 所有自定义视图的归属标签并集，见 `pure/mediaViews.customViewTagPool`）。
+     *
+     * 🔴 2026-11-16 用户逐字：「如果按标签归属自定义视图（如日常、工作），那标签词云统计的
+     *   如工作、日常标签怎么办这些不是正常的标签」——裁定从词云里排除。
+     * ⚠️ 由 `HomeView` 算好传下来（那里才有 `views` 真源）；本组件**只透传**，
+     *    ⛔ 别在这里读设置/`views` —— 那会让统计页多一条独立的数据依赖，刷新时机必然漂移。
+     * ⚠️ 缺省空数组 = 不排除任何词（没有自定义视图的用户，词云行为与之前完全一致）。
+     */
+    export let discardTags: string[] = [];
     /** 书籍摘抄计数（bookId → 摘抄区块数），概览书籍 Tab 用 */
     export let excerptCounts: Record<string, number> = {};
     export let onAdd: (t?: EntryType) => void = () => {};
@@ -74,6 +91,17 @@
     export let onSetSeriesRating: (key: string, rating: Rating) => Promise<void> = async () => {};
     /** 🔴 #635：Ctrl+滚轮缩放开关（跟随设置页那条既有开关，⛔ 不新开） */
     export let ctrlWheelZoom = false;
+    /**
+     * 🔴 2026-11-14（用户 m02498）：「也给评分看板加个系列卡堆叠和单卡平铺的循环切换图标按钮
+     * 同首页的按钮放在评分看板导航栏上」。
+     *
+     * 本组件在这里只是**透传层**：`HomeView → StatsBoard → RatingBoard`，三个 prop 一路到底，
+     * ⛔ 别在这里自己消化（那不是它的职责，两层各存一份状态必然漂移）。
+     * 语义见 `RatingBoard.svelte` 里 `unfoldSeries` 的注释（与首页共用 `settings.unfoldSeries`）。
+     */
+    export let unfoldSeries = false;
+    /** 切「系列卡堆叠 ⟷ 全部单卡平铺」；未注入 ⇒ `RatingBoard` 那枚按钮不渲染 */
+    export let onToggleUnfoldSeries: ((next: boolean) => void) | null = null;
     /** 🔴 #657：统计页区块顺序（`settings.statsOrder` 归一后的值；缺省 = 原视觉顺序） */
     export let order: StatsBlockKey[] = [...STATS_BLOCK_DEFAULTS];
 
@@ -114,6 +142,29 @@
         boardWidth = sbEl.clientWidth || boardWidth;
         return () => ro.disconnect();
     });
+
+    /**
+     * 🔴 m07854 ⑩：趋势图 viewBox 宽度跟**实测像素宽度**走（理由见 `trendW` 定义处）。
+     *
+     * 为什么写成 **Svelte action** 而不是 `$:` 响应式语句：
+     *   `$:` 只在它读到的**引用**变化时重跑 —— 元素被 resize（拖窗口 / 拖分栏 / 拖区块顺序）
+     *   时 `trendEl` 这个引用纹丝不动，语句根本不会执行，`trendW` 永远停在上一次的值。
+     *   必须挂 `ResizeObserver` 才能收到「同一个元素换了尺寸」这件事。
+     * ⚠️ 用 `getBoundingClientRect().width` 而不是 `clientWidth`：SVG 元素没有 clientWidth。
+     * ⚠️ 取整到 0.5 像素：亚像素抖动会让 viewBox 每帧都变，触发无意义的重排。
+     * ⚠️ 下限 240：极端窄栏下留一条能看的线，⛔ 别让它缩到 0（除零后坐标全成 NaN）。
+     */
+    function trendWidth(el: SVGSVGElement) {
+        const apply = (w: number): void => {
+            trendW = Math.max(240, Math.round(w * 2) / 2);
+        };
+        apply(el.getBoundingClientRect().width);
+        const ro = new ResizeObserver((es) => {
+            for (const e of es) apply(e.contentRect.width);
+        });
+        ro.observe(el);
+        return { destroy: () => ro.disconnect() };
+    }
 
     /** 每块在网格里占几列（真源 = `pure/statsLayout.statsBlockCols`；2 = 整行，1 = 半行） */
     function spanOf(k: StatsBlockKey): 1 | 2 {
@@ -345,7 +396,20 @@
     function toggleTrend(k: OverviewCategory) {
         trendSel = trendSel.includes(k) ? trendSel.filter((x) => x !== k) : [...trendSel, k];
     }
-    const TREND_W = 620;
+    /**
+     * 🔴🔴 m07854 ⑩（用户：「左下图表标题两端对齐且图表自适应撑满、刻度与网格对齐」）：
+     * 趋势图的 **viewBox 宽度 = 真实像素宽度**，不再写死 620。
+     *
+     * 改前：`viewBox="0 0 620 130"` + `preserveAspectRatio="none"` + CSS `width: 100%`
+     *   ⇒ 半栏里 SVG 实际只有 ~320px，横向被压到 **0.516 倍**（实测 320/620）。
+     *   `none` 是非等比拉伸，**不只是线变密**：`<text>` 的 9px 字号被横向压成约 4.6px 宽，
+     *   月份刻度挤成一条、网格线与刻度中心也随宽度错位 —— 用户看到的「没对齐」就是它。
+     * ⇒ 现在把 viewBox 的宽跟着**容器实测宽度**走（`trendW`），CSS 仍是 `width:100%`，
+     *   于是 `none` 退化成 1:1 等比，文字不再变形、刻度与网格同源同宽。
+     *   ⚠️ 别改成「删掉 `preserveAspectRatio="none"`」：那会让 620×130 的 viewBox 按
+     *   `xMidYMid meet` 等比缩放并**上下留白**，130px 里有近一半变成空白。
+     */
+    let trendW = 620;
     const TREND_H = 130;
     /** T2 截断：当年视图实线/点位只画到当前月，未来月份刻度淡显（2026-09-12 用户批准） */
     $: shownMonths = trendShownMonths(year, now);
@@ -361,18 +425,27 @@
     }
     const TREND_PAD_X = 26;
     const TREND_PAD_Y = 10;
-    function trendPts(arr: number[]): string {
+    /**
+     * 🔴 `width` 必须由调用方传进来，⛔ 别改成读闭包里的 `trendW`。
+     *
+     * Svelte 4 的响应式依赖是**编译期**按标识符收集的：模板里写 `x={trendTickX(i)}`，
+     * 编译器只看到 `trendTickX` 这个标识符，看不进函数体 ⇒ `trendW` 变了它不知道要重算。
+     * 实测代价：`ResizeObserver` 把 viewBox 从 620 改成 320/470 后，网格线与热区（模板里
+     * 直接写了 `trendW`）跟着变了，但月份刻度、圆点、折线**原地不动**——刻度 x 停在旧宽度
+     * 算出的 594，跑到 viewBox 之外被裁掉。传参后模板自己引用了 `trendW`，依赖才成立。
+     */
+    function trendPts(arr: number[], width: number): string {
         return arr
             .slice(0, shownMonths)
             .map((v, i) => {
-                const x = TREND_PAD_X + (i * (TREND_W - 2 * TREND_PAD_X)) / 11;
+                const x = TREND_PAD_X + (i * (width - 2 * TREND_PAD_X)) / 11;
                 const y = trendPtY(v);
                 return `${x.toFixed(1)},${y.toFixed(1)}`;
             })
             .join(' ');
     }
-    function trendTickX(i: number): number {
-        return TREND_PAD_X + (i * (TREND_W - 2 * TREND_PAD_X)) / 11;
+    function trendTickX(i: number, width: number): number {
+        return TREND_PAD_X + (i * (width - 2 * TREND_PAD_X)) / 11;
     }
 
     // ── 第三层：分类概览（Tab 一次看一类：指标 + 子类型行 + Top3）──
@@ -384,6 +457,84 @@
         const h = minutes / 60;
         return Number.isInteger(h) ? `${h}h` : `${h.toFixed(1)}h`;
     }
+
+    // ── 标签词云（②-3，用户 m00353 裁定：词源 = 条目标签 tags）──
+    //   聚合/排序/分档全在 `pure/wordCloud`（19 例单测钉着口径），这里只取结果。
+    //   ⚠️ 传**全部条目**而不是「本年条目」：标签是长期兴趣画像，按年切会让词云每年归零。
+    // 🔴 2026-11-16 用户逐字：「如果按标签归属自定义视图（如日常、工作），那标签词云统计的
+    //   如工作、日常标签怎么办这些不是正常的标签」⇒ 自定义视图的归属标签**整体排除**。
+    //   ⚠️ 必须在 `buildWordCloud` 里排（第三参），⛔ 不能在这里过滤它的返回值：
+    //      那样被排除的词已经占掉 40 个名额、还把 `level` 的排名垫高过（见纯层注释）。
+    $: cloudWords = buildWordCloud(entries, WORD_CLOUD_MAX, discardTags);
+    /** 词云空态文案要区分「没有任何标签」与「有条目但没打标签」—— 后者才需要指路怎么打标签 */
+    $: cloudHasEntries = entries.length > 0;
+
+    // ── 词云摆放（🔴 m04642 ①：螺旋 + 碰撞检测，见 `pure/wordCloudLayout`）──
+    //   为什么必须实测容器：螺旋是从画布中心往外找位的，画布尺寸直接决定能塞下几个词。
+    //   ⚠️ 基准字号也从容器 `font-size` 取 —— 词云的字号档位全是 `em`，
+    //      用户把 Obsidian「界面字号」调大后，这里的基准必须跟着变，否则估算宽度全错、词会视觉重叠。
+    let cloudWidth = 0;
+    let cloudBasePx = 13;
+    /**
+     * 🔴 m05266（用户逐字）：「不要显示"另有6个标签没塞进这块空间（拉宽统计页或换整行布局可显示更多）"
+     * 改成ctrl+鼠标滚轮放大和缩小以展示更多」。
+     *
+     * 改前：塞不下的词直接丢弃，只在下方留一行灰字说明「另有 N 个没塞进来」——
+     * 用户能看到的只有"丢了多少"，却没法改变结果（除非去拖整个统计页的布局）。
+     * 改后：缩放系数由 Ctrl+滚轮直接控制，缩小字号 = 同样大小的画布里能挤进更多词，
+     * 塞不下的**不再提示**（用户手上已经有调节手段，再提示就成了抱怨）。
+     *
+     * 口径：
+     *   · 与评分看板共用同一个 `ctrlWheelZoom` 开关（⛔ 别为词云新开设置项）：
+     *     两者都是「按住 Ctrl 滚轮改这块的显示密度」，一个开关管两处才符合用户心智；
+     *   · `1` = 手感的基准（容器实测字号），范围 `CLOUD_ZOOM_MIN..CLOUD_ZOOM_MAX`；
+     *   · 缺省 `1`，不改任何人的默认观感。
+     */
+    const CLOUD_ZOOM_MIN = 0.55;
+    const CLOUD_ZOOM_MAX = 1.8;
+    const CLOUD_ZOOM_STEP = 0.1;
+    let cloudZoom = 1;
+    /** Ctrl+滚轮：缩小字号以塞进更多词（与 `RatingBoard.onWheel` 同一套手势与节流口径） */
+    function onCloudWheel(ev: WheelEvent): void {
+        if (!ctrlWheelZoom || !ev.ctrlKey) return;
+        ev.preventDefault();
+        const dir = ev.deltaY > 0 ? -1 : 1;
+        const next = Math.round((cloudZoom + dir * CLOUD_ZOOM_STEP) * 100) / 100;
+        cloudZoom = Math.max(CLOUD_ZOOM_MIN, Math.min(CLOUD_ZOOM_MAX, next));
+    }
+    /**
+     * 量词云容器并跟随尺寸变化。
+     *
+     * 与 `trendWidth` 同理写成 action 而不是 `$:`：元素被拖分栏 / 换区块顺序时
+     * `cloudEl` 引用不变，`$:` 不会重跑。
+     * ⚠️ 用 `getBoundingClientRect().width`（不四舍五入到 0.5 —— 词云不是矢量图，
+     *    亚像素抖动只会让整块重排一次，无视觉收益）。
+     */
+    function cloudMeasure(el: HTMLDivElement) {
+        const apply = (): void => {
+            cloudWidth = Math.max(0, el.getBoundingClientRect().width);
+            const fs = parseFloat(getComputedStyle(el).fontSize);
+            if (Number.isFinite(fs) && fs > 0) cloudBasePx = fs;
+        };
+        apply();
+        const ro = new ResizeObserver(() => apply());
+        ro.observe(el);
+        return { destroy: () => ro.disconnect() };
+    }
+    /**
+     * 摆放结果。
+     * `cloudWidth === 0`（首帧未量到）时给 `null`，模板退回普通流式渲染一帧 ——
+     * 这样即使 ResizeObserver 因容器被 `display:none` 而报 0，也不会渲染出「全部叠在左上角」的残局。
+     */
+    $: cloudLayout = cloudWidth > 20 && cloudWords.length > 0
+        ? layoutWordCloud(cloudWords, {
+            width: cloudWidth,
+            height: cloudHeightFor(cloudWidth),
+            basePx: cloudBasePx * cloudZoom,
+            gap: 4,
+            padding: 2,
+        })
+        : null;
 
     // ── 快捷入口（次要动作）：随机推荐 / 想看的清单弹层 ──
     let wantOpen = false;
@@ -570,35 +721,35 @@
             {#if trendEmpty}
                 <div class="rl-s-empty">本年暂无完成记录 — 添加并标记观看/阅读/通关/收听后显示趋势</div>
             {:else}
-                <svg class="rl-trend" viewBox={`0 0 ${TREND_W} ${TREND_H}`} preserveAspectRatio="none" role="img" aria-label="{year} 月度看完趋势折线图">
+                <svg class="rl-trend" use:trendWidth viewBox={`0 0 ${trendW} ${TREND_H}`} preserveAspectRatio="none" role="img" aria-label="{year} 月度看完趋势折线图">
                     {#each [0, 2, 4] as g}
-                        <line class="rl-trend-grid" x1={TREND_PAD_X} y1={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} x2={TREND_W - TREND_PAD_X} y2={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} />
+                        <line class="rl-trend-grid" x1={TREND_PAD_X} y1={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} x2={trendW - TREND_PAD_X} y2={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} />
                     {/each}
                     <text class="rl-trend-y" x="2" y={TREND_PAD_Y + 3} text-anchor="start">{trendMax}</text>
                     <text class="rl-trend-y" x="2" y={TREND_H - TREND_PAD_Y + 3} text-anchor="start">0</text>
                     {#each trendVisible as s}
-                        <polyline class="rl-trend-line" points={trendPts(s.arr)} stroke={CATEGORY_COLORS[s.key]} />
+                        <polyline class="rl-trend-line" points={trendPts(s.arr, trendW)} stroke={CATEGORY_COLORS[s.key]} />
                     {/each}
                     {#each trendVisible as s}
                         {#each s.arr.slice(0, shownMonths) as v, i}
                             {#if v > 0}
-                                <circle class="rl-trend-dot" cx={trendTickX(i)} cy={trendPtY(v)} r="2.5" fill={CATEGORY_COLORS[s.key]} />
+                                <circle class="rl-trend-dot" cx={trendTickX(i, trendW)} cy={trendPtY(v)} r="2.5" fill={CATEGORY_COLORS[s.key]} />
                             {/if}
                         {/each}
                     {/each}
                     {#each MONTH_TICKS as m, i}
-                        <text class="rl-trend-tick" class:rl-trend-tick-future={i + 1 > shownMonths} x={trendTickX(i)} y={TREND_H - 1} text-anchor="middle">{m}</text>
+                        <text class="rl-trend-tick" class:rl-trend-tick-future={i + 1 > shownMonths} x={trendTickX(i, trendW)} y={TREND_H - 1} text-anchor="middle">{m}</text>
                     {/each}
                     {#each MONTH_TICKS as _, i}
                         {#if i < shownMonths}
-                            <rect class="rl-trend-hot" role="presentation" aria-hidden="true" x={trendTickX(i) - (TREND_W - 2 * TREND_PAD_X) / 22} y="0" width={(TREND_W - 2 * TREND_PAD_X) / 11} height={TREND_H} fill="transparent" on:mouseenter={() => (hoverM = i)} on:mouseleave={() => (hoverM = null)} />
+                            <rect class="rl-trend-hot" role="presentation" aria-hidden="true" x={trendTickX(i, trendW) - (trendW - 2 * TREND_PAD_X) / 22} y="0" width={(trendW - 2 * TREND_PAD_X) / 11} height={TREND_H} fill="transparent" on:mouseenter={() => (hoverM = i)} on:mouseleave={() => (hoverM = null)} />
                         {/if}
                     {/each}
                 </svg>
             {/if}
             {#if !trendEmpty}<div class="rl-trend-foot">{momText}</div>{/if}
             {#if hoverM !== null && hoverRows.length > 0}
-                <div class="rl-trend-tip" style={`left:${(trendTickX(hoverM) / TREND_W) * 100}%; transform:${hoverM < 2 ? 'none' : hoverM > 9 ? 'translateX(-100%)' : 'translateX(-50%)'};`}>
+                <div class="rl-trend-tip" style={`left:${(trendTickX(hoverM, trendW) / trendW) * 100}%; transform:${hoverM < 2 ? 'none' : hoverM > 9 ? 'translateX(-100%)' : 'translateX(-50%)'};`}>
                     <b>{hoverM + 1} 月</b>
                     {#each hoverRows as r}
                         <span><i style={`background:${r.color}`}></i>{r.label} {r.v}</span>
@@ -667,7 +818,59 @@
             {seriesRatings}
             {onSetSeriesRating}
             {ctrlWheelZoom}
+            {unfoldSeries}
+            {onToggleUnfoldSeries}
         />
+    </section>
+    {/if}
+
+    {#if k === 'cloud'}
+    <!-- 🔴 ②-3（用户 m00353「增强统计页（如词云）」）：标签词云。
+         词源 = `MediaEntry.tags`（用户选定），聚合/排序/分档在 `pure/wordCloud` —— 本处只渲染。
+         ⛔ 每个词不做点击跳转：标签在库内没有对应的可打开对象（不像条目/笔记），
+            挂成按钮会给人「点了会有事发生」的错觉。 -->
+    <section class="rl-s-panel rl-s-cloud">
+        <div class="rl-s-panel-title">
+            标签词云
+            {#if cloudWords.length > 0}<span class="rl-s-aux-inline">共 {cloudWords.length} 个标签</span>{/if}
+        </div>
+        {#if cloudWords.length === 0}
+            <!-- 🔴 空态**不带按钮组**：用户 2026-09-22 已裁定「三个次要入口有一处就行了」，
+                 统计页唯一的行动入口在「概览」空态那一处。这里再放一枚「添加条目」会变成第二处，
+                 与既有裁定打架（`assert-symbols` 有反向守卫盯着 `rl-s-empty-act` = 2 处）。 -->
+            <div class="rl-cloud-empty">
+                <div class="rl-s-empty-t">{cloudHasEntries ? '还没有条目打过标签' : '还没有条目'}</div>
+                <div class="rl-s-empty-d">
+                    {cloudHasEntries ? '在条目编辑表单的「标签」里填几个词（逗号分隔），这里就会长成词云' : '添加条目后，把它常看的题材/类型打成标签，词云就会出现在这里'}
+                </div>
+            </div>
+        {:else}
+            <!-- 🔴 m04642 ①（用户：「在有限空间内"见缝插针"」）：从 `flex-wrap` 行内流式改为
+                 **绝对定位 + 螺旋摆放**（`pure/wordCloudLayout`）。每个词的 left/top/字号都由纯函数算好，
+                 这里只写样式。⛔ 别再退回 flex-wrap —— 那是"排版"不是"词云"。
+                 `role="list"` 保留：读屏仍按 DOM 顺序（= 频次降序）播报，与视觉位置无关。 -->
+            <div class="rl-cloud-body" class:is-spiral={!!cloudLayout} role="list"
+                 aria-label="标签词云（字号表示使用频次，Ctrl + 滚轮可缩放）"
+                 style={cloudLayout ? `height:${cloudLayout.height}px` : ''}
+                 on:wheel={onCloudWheel}
+                 use:cloudMeasure>
+                {#if cloudLayout}
+                    {#each cloudLayout.placed as w (w.text)}
+                        <span class="rl-cloud-w is-abs lv-{w.level} hue-{cloudHueIndexOf(w.text)}" role="listitem"
+                              style="left:{Math.round(w.x)}px; top:{Math.round(w.y)}px; font-size:{Math.round(w.fontPx)}px;"
+                        >{w.text}<span class="rl-cloud-n">{w.weight}</span></span>
+                    {/each}
+                {:else}
+                    <!-- 首帧 / 容器不可见时的回落：与改前同一套流式渲染，保证不闪空 -->
+                    {#each cloudWords as w (w.text)}
+                        <span class="rl-cloud-w lv-{w.level} hue-{cloudHueIndexOf(w.text)}" role="listitem">{w.text}<span class="rl-cloud-n">{w.weight}</span></span>
+                    {/each}
+                {/if}
+            </div>
+            <!-- 🔴 m05266：塞不下的词**不再**提示「另有 N 个没塞进来」。
+                 用户手上已经有 Ctrl+滚轮缩放这个调节手段（缩小字号 = 塞进更多词），
+                 再叠一行灰字抱怨只会让人以为出了故障。⛔ 别把 `.rl-cloud-drop` 加回来。 -->
+        {/if}
     </section>
     {/if}
         </div>
@@ -702,7 +905,12 @@
 
 <style>
     /* ── 页面骨架（三层倒金字塔：核心指标 → 动态 / 趋势 → 分类概览；圆角走 --rl-t-*，克制卡片） ── */
-    .rl-sb { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    /* 🔴 m07854 ⑩（用户：「统一全局卡片横纵间距以保证自适应缩放」）：全页间距只认这两个变量。
+       改前实测：`.rl-sb` 12 / `.rl-sb-blocks` 12 / `.rl-hero` 10 / `.rl-hero-side` 10 /
+       `.rl-part-metrics` 8 —— 五处各写各的，半栏与整行下视觉密度不一致。
+       ⇒ 块间（区块与区块之间）统一 12，块内（同一张卡片里的格子之间）统一 10。
+       ⚠️ 间距只在这里改，⛔ 别在子规则里再写死 px（那会让"统一"重新散掉）。 */
+    .rl-sb { display: flex; flex-direction: column; gap: 12px; min-width: 0; --rl-sb-gap: 12px; --rl-sb-inner-gap: 10px; }
 
     .rl-s-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
     .rl-s-title { font-size: 16px; font-weight: 800; color: var(--text-normal); }
@@ -738,11 +946,86 @@
     .rl-s-empty-d { font-size: 11.5px; color: var(--text-faint); text-align: center; }
     .rl-s-empty-btns { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 
+    /* ── 标签词云（②-3）──
+       字号用 `em` 从基准派生（5 档），⛔ 不写 px 绝对值：Obsidian 有「界面字号」设置，
+       用 px 的话别人调大字号时词云不跟着变，整块会显得比邻块小一圈。
+       颜色只取 `--text-*` 三档（normal / muted / faint）—— 频次越低越淡，与字号同向递减，
+       这样一屏扫过去"大且深"的词自然跳出来，不靠颜色区分频次（那会和主题色打架）。 */
+    .rl-s-cloud { min-width: 0; }
+    .rl-s-aux-inline { font-size: 11px; font-weight: 400; color: var(--text-faint); }
+    /* 词云空态：只有两行字，复用 `.rl-s-empty-t/-d` 的排版，但**不借 `.rl-s-empty-act`**
+       （那个类带着底部按钮组的位置约定，且被断言按 2 处计数 —— 见上方模板注释）。 */
+    .rl-cloud-empty { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 18px 0 14px; }
+    .rl-cloud-body {
+        display: flex; flex-wrap: wrap; align-items: baseline;
+        gap: 6px 10px; line-height: 1.5; padding: 2px 0 4px;
+    }
+    /* 🔴 m04642 ①：螺旋摆放态。容器变定位上下文，每个词绝对定位到纯函数算好的坐标。
+       ⛔ 保留上面的 `flex-wrap` 作为**未量到尺寸时的回落**（`cloudLayout === null` 那一帧），
+          两套样式靠 `.is-spiral` 互斥，别把 flex 那几条删了。 */
+    .rl-cloud-body.is-spiral {
+        display: block; position: relative; overflow: hidden;
+        padding: 0; line-height: 1;
+    }
+    .rl-cloud-body.is-spiral .rl-cloud-w.is-abs {
+        position: absolute; margin: 0; line-height: 1; gap: 0;
+    }
+    /* 🔴 m04642 ①（真机实测修）：螺旋态的**频次角标必须脱离文档流**。
+       角标平时 `opacity: 0` 但它仍参与布局宽度（`gap: 3px` + 9px 的数字），
+       而 `layoutWordCloud` 是按**纯文字**估宽的 ⇒ 渲染宽度比估算宽 ~14px，
+       相邻词块互相压住（真机 320px 宽下量到 13 处重叠，oy 约等于整个字高）。
+       绝对定位到词尾右侧：悬停照常压出来，但不参与排布、不撑宽盒子。
+       ⛔ 别把它改回 inline —— 那就等于让估宽口径和渲染口径继续对不上。 */
+    .rl-cloud-body.is-spiral .rl-cloud-w.is-abs .rl-cloud-n {
+        position: absolute; left: 100%; top: 0; margin-left: 3px;
+    }
+    .rl-cloud-w {
+        display: inline-flex; align-items: baseline; gap: 3px;
+        white-space: nowrap; cursor: default;
+    }
+    /* 频次角标：只在悬停时显示，平时不占视觉重量 */
+    .rl-cloud-n {
+        font-size: 9px; font-weight: 600; color: var(--text-faint);
+        opacity: 0; transition: opacity var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
+    }
+    .rl-cloud-w:hover .rl-cloud-n { opacity: 1; }
+    /* 🔴 m05266（用户逐字）：「标签词云加更多的颜色」。
+       改前五档颜色全是灰阶（`--text-faint` / `--text-muted` / `--text-normal`），
+       只有明暗差别，一屏看过去还是一坨灰。现在：
+         · **色相**按词文本哈希到 8 个桶（`cloudHueIndexOf`，同一文本永远同色，
+           重新排序 / 新增标签都不会让已有的词换色）；
+         · **浓淡与字号**仍由档位决定（低频淡、高频浓且略粗）——
+           色相只承担"这是不同的标签"，频次信号还是字号，⛔ 别让颜色也去编码频次（两套编码会打架）。
+       ⛔ 颜色一律走 Obsidian 主题色令牌 `var(--color-*)`：
+         不用裸 hex / rgb() / hsl()（仓规 `styles.css:13792` 明令），也不写死颜色名 ——
+         主题换了、用户改强调色，词云必须跟着变。 */
+    .rl-cloud-w.hue-0 { --rl-cloud-hue: var(--color-blue); }
+    .rl-cloud-w.hue-1 { --rl-cloud-hue: var(--color-cyan); }
+    .rl-cloud-w.hue-2 { --rl-cloud-hue: var(--color-green); }
+    .rl-cloud-w.hue-3 { --rl-cloud-hue: var(--color-orange); }
+    .rl-cloud-w.hue-4 { --rl-cloud-hue: var(--color-red); }
+    .rl-cloud-w.hue-5 { --rl-cloud-hue: var(--color-purple); }
+    .rl-cloud-w.hue-6 { --rl-cloud-hue: var(--color-pink); }
+    .rl-cloud-w.hue-7 { --rl-cloud-hue: var(--color-yellow); }
+    .rl-cloud-w { color: var(--rl-cloud-hue, var(--text-normal)); }
+    /* 低频词降低存在感：把色相往正文色里收一档，避免 8 个饱和色把词云变成圣诞树。
+       ⚠️ 必须混 `--rl-cloud-hue` 而**不是** `currentColor` —— `color` 属性里的 `currentColor`
+       解析成"继承下来的颜色"（= 父元素的正文色），混完色相就没了。
+       `color-mix` 已在仓内用了 56 处（`styles.css`），是既有写法。 */
+    .rl-cloud-w.lv-1,
+    .rl-cloud-w.lv-2 { color: color-mix(in srgb, var(--rl-cloud-hue, var(--text-muted)) 62%, var(--text-muted)); }
+    .rl-cloud-w.lv-1 { font-size: 0.82em; }
+    .rl-cloud-w.lv-2 { font-size: 0.95em; }
+    .rl-cloud-w.lv-3 { font-size: 1.1em; }
+    .rl-cloud-w.lv-4 { font-size: 1.3em; }
+    .rl-cloud-w.lv-5 { font-size: 1.55em; font-weight: 600; }
+    @media (prefers-reduced-motion: reduce) { .rl-cloud-n { transition: none; } }
+
     /* ── 第一层：核心指标（1 主 + 4 辅）── */
     /* 🔴 #661（用户：「动态、核心指标我希望也能半行显示」）：下面两条用到**容器查询** ——
    半栏里（`.rl-sb-block { container-type: inline-size }`）自动换成更窄的排布，
    ⛔ 不用媒体查询（媒体查询认的是**窗口**宽度，而这里要认的是**区块自己**的宽度）。 */
-    .rl-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    .rl-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--rl-sb-inner-gap, 10px); }
     @container (min-width: 620px) {
         .rl-hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
     }
@@ -757,7 +1040,7 @@
     .rl-yoy { font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
     .rl-yoy-up { color: var(--rl-good); }
     .rl-yoy-down { color: var(--rl-warn); }
-    .rl-hero-side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .rl-hero-side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--rl-sb-inner-gap, 10px); }
     /* 半栏下把 4 个辅指标折成 2×2（⛔ 不硬撑一行 —— 会各自被压成一条） */
     @container (max-width: 619px) {
         .rl-hero-side { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -816,10 +1099,17 @@
     }
     .rl-s-part .rl-part-tab:hover { color: var(--text-normal); }
     .rl-s-part .rl-part-tab.on { color: var(--rl-cat, var(--interactive-accent)); border-bottom-color: var(--rl-cat, var(--interactive-accent)); }
-    .rl-part-body { display: flex; flex-direction: column; gap: 10px; border-left: 3px solid var(--rl-cat, var(--interactive-accent)); padding-left: 12px; min-width: 0; }
+    /* 🔴 m07854 ⑩（用户：「右下 Tab 及下方 2x2 卡片左侧基线与内部间隙完全对齐」）：
+       实测改前 `.rl-part-tab` 文字左缘在面板内容盒 +10px（tab 自己的 `padding-left: 10px`），
+       而 `.rl-part-metrics` 左缘在 +15px（`.rl-part-body` 的 `border-left: 3px` + `padding-left: 12px`）
+       ⇒ 上下差 5px，肉眼就是「卡片没挂在 Tab 底下」。
+       ⇒ 把 body 内距从 12 收到 **7**：3 + 7 = 10，与 tab 文字左缘同一条竖线。
+       ⚠️ ⛔ 别反过来把 tab 内距改成 15（那会让每个 tab 的点击热区都胖 5px，且选中药丸变宽）。
+       ⚠️ 色条（border-left）保留 3px —— 它是分类色的唯一载体，⛔ 不许为了对齐把它删掉。 */
+    .rl-part-body { display: flex; flex-direction: column; gap: 10px; border-left: 3px solid var(--rl-cat, var(--interactive-accent)); padding-left: 7px; min-width: 0; }
     .rl-part-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 13px; font-weight: 700; color: var(--text-normal); }
     .rl-part-sub { font-size: 10.5px; font-weight: 400; color: var(--text-faint); }
-    .rl-part-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .rl-part-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--rl-sb-inner-gap, 10px); }
     /* 半栏下概览的 4 个指标格折成 2×2（同上：认**区块自己**的宽度） */
     @container (max-width: 519px) {
         .rl-part-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -882,8 +1172,16 @@
     .rl-want-meta { flex: none; font-size: 11px; color: var(--text-faint); }
 
     /* ── 动态：面板题头右侧（次要入口 + 时间范围 + 记录今天）── */
-    .rl-s-today .rl-s-panel-title { justify-content: space-between; align-items: center; }
-    .rl-s-title-right { margin-left: auto; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    /* 🔴 m07854 ⑩（用户：「右上按钮组换行时左侧对齐且时间控件靠右」）：
+       改前 `.rl-s-title-right { margin-left: auto }` 把**整组**（三个快捷入口 + 时间范围 + 记录）
+       一起甩到右边；一旦窄到换行，第二行的内容仍然被 auto 边距推着靠右，
+       于是换行后的行看起来是"悬在空中"的一段，与左边的标题毫无关系。
+       ⇒ `.rl-s-panel-title` 改 `justify-content: space-between`（标题首、组尾），
+         并把 `margin-left: auto` 交给**组本身**：单行时仍然贴右，换行时组成为 flex 的第二项
+         从左开始排，`flex-wrap` 让组内元素自己换行 —— 组内仍整体靠右（时间控件在组尾 ⇒ 靠右）。
+       ⚠️ ⛔ 别把 `margin-left: auto` 从组上删掉：删了单行时它就不贴右了。 */
+    .rl-s-today .rl-s-panel-title { align-items: center; }
+    .rl-s-title-right { margin-left: auto; display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
     .rl-s-aux { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
     /* 时间范围切换（日/周/月/年）：分段控件，当前项用 accent 实心 */
     .rl-feed-switch { display: inline-flex; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); overflow: hidden; }
@@ -929,6 +1227,12 @@
         .rl-hero { grid-template-columns: 1fr; }
         .rl-hero-side { grid-template-columns: repeat(4, minmax(0, 1fr)); }
         .rl-part-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        /* 🔴 2026-11-14（用户 m05195 / m05299，手机平板窄屏适配）：
+           「月度看完趋势」+「分类概览」本来是 1fr/1fr 并排（见 `.rl-s-mid` 定义处注释）。
+           窄屏下两列各不到 180px，趋势柱子与概览图例会挤成一条，所以退成上下堆叠。
+           ⚠️ 900px 与上面三条同阈值、同一个媒体块 —— ⛔ 别为它单独再开一个断点：
+              本仓断点遵循「够用就复用」（900 / 760 / 719 / 700 / 560 / 420），多一个阈值就多一处漂移。 */
+        .rl-s-mid { grid-template-columns: minmax(0, 1fr); }
     }
 
     /* ── 🔴 #657 区块自由排序 / 自适应 ────────────────────────────────────────────────
@@ -939,7 +1243,7 @@
         /* 🔴 #658 自由左右布局：两等分列；`span 2` 的区块占满整行、`span 1` 的半行 ⇒ 相邻两块自动并排。
            ⚠️ 列数写死 2（⛔ 不用 auto-fit）：auto-fit 会在只剩一块时把它拉成整行宽，与"自由排版"不符。 */
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        gap: 12px;
+        gap: var(--rl-sb-gap, 12px);
         align-items: stretch;
     }
     /* 窄屏：一律单列（阈值在 JS 里，`statsBlockCols` 已返回 1 ⇒ 这里只需让 span 失效） */
@@ -950,6 +1254,31 @@
         position: relative;
         border-radius: var(--rl-t-radius-lg, 10px);
         transition: opacity .12s ease, box-shadow .12s ease;
+        /* 🔴 2026-11-13 用户逐字（m12719）：「统计页各个模块（除评分看板外的）要高度对齐」。
+           真因 = 上面 `.rl-sb-blocks` 的 `align-items: stretch` 只把**这一层外框**拉到行高，
+           而框里的 `.rl-s-panel` / `.rl-hero` 是普通块级子项，高度仍是 auto ⇒ 内容少的那块
+           在框里**顶在上方**，于是并排两块的白卡片底边一高一低（截图里右「动态」比左「核心指标」
+           矮一大截、右「分类概览」比左「趋势」高一截，都是这个原因，不是 padding 不统一）。
+           ⇒ 本层改纵向 flex，下面那条让唯一的区块子项吃掉剩余高度。
+           ⚠️ 外框本身没有背景/描边，所以「评分看板」那块（`.rl-s-block` 里放 RatingBoard）
+             被一起拉高也看不出变化 —— 用户说的「除评分看板外」在视觉上自然满足，⛔ 不必为它写例外。 */
+        display: flex;
+        flex-direction: column;
+    }
+    /* 区块内容必须吃掉 `.rl-sb-block` 的剩余高度，否则 stretch 只作用在外框上、内层卡片还是会缩。
+       `min-height: 0` 是配套的：不给它的话块内若有滚动区（如今日动态列表）会把整块撑破。
+       ⚠️ 用子选择器 `>` 限定，⛔ 别写成后代选择器 —— `.rl-s-panel` 在别处也有嵌套用法。 */
+    .rl-sb-block > .rl-s-panel,
+    .rl-sb-block > .rl-hero,
+    .rl-sb-block > .rl-s-block {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+    /* hero 本身是 grid：它吃满高度后，两列子项各自再吃满（否则 `.rl-hero-main` / `.rl-hero-side`
+       只会按内容高度排在顶部，半栏下又会露出下半截空白）。 */
+    .rl-sb-block > .rl-hero > .rl-hero-main,
+    .rl-sb-block > .rl-hero > .rl-hero-side {
+        height: 100%;
     }
     /* 🔴 #658：把手**一直可见**（上一版只在悬停时浮出、且整块 draggable 抢不到手势 ⇒ 用户以为不能用） */
     .rl-sb-grip {

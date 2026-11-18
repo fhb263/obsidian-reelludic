@@ -129,6 +129,42 @@ function bareId(id: string): string {
 }
 
 /**
+ * 模型名 → 给人看的短名：`FunAudioLLM/CosyVoice2-0.5B` → `CosyVoice2`。
+ * 🔴 用户 m09565 ①-3：「硅基流动的选择模型要明确知道这些是来自哪个模型的，而不是什么音色
+ *    （如显示为 `CosyVoice2 · alex（沉稳男声）`）」。
+ * 规则：先砍掉 `厂商/` 前缀，再砍首个 `-` 之后的部分；认不出（空串）⇒ 回空串，⛔ 别编一个假模型名。
+ */
+export function cloudModelShortName(model: string = SILICONFLOW_MODEL): string {
+    const raw = typeof model === 'string' ? model.trim() : '';
+    if (!raw) return '';
+    const afterSlash = raw.includes('/') ? raw.slice(raw.lastIndexOf('/') + 1) : raw;
+    const head = afterSlash.split('-')[0] ?? '';
+    return head.trim();
+}
+
+/**
+ * 云音色的**完整展示名**：`CosyVoice2 · alex（沉稳男声）`。
+ *
+ * 🔴 为什么另开一个函数、⛔ 不改 `cloudVoiceGroups` 的 label：
+ *    `cloudVoiceGroups` 产出的 `VoiceGroup` 被**阅读器面板**（`ReaderPanelBase:414` →
+ *    `TxtReaderModal` / `EpubReaderModal`）共用，那里的音色标签就是短标签（`沉稳男声`），
+ *    而且 `tests/ttsSettings.test.ts:66` 已经钉死 `ttsVoiceLabel('cloud', …) === '沉稳男声'`。
+ *    设置页要的是「看得出这是哪个模型的」，两处诉求不同 ⇒ 分开给，别让一边的需求去改另一边的数据。
+ *
+ * ⚠️ 音色 id 可能在表里（8 个预置），也可能是用户手改的未知值：
+ *    认不出就只给 `模型 · 裸id`，⛔ 不要因为查不到中文标签就整条回空。
+ */
+export function cloudVoiceFullLabel(id: string | null | undefined, model = SILICONFLOW_MODEL): string {
+    const raw = typeof id === 'string' ? id.trim() : '';
+    const bare = raw ? bareId(raw) : '';
+    const short = cloudModelShortName(model);
+    if (!bare) return short;
+    const hit = SILICONFLOW_VOICES.find((v) => v.id === bare);
+    const prefix = short ? `${short} · ` : '';
+    return hit ? `${prefix}${bare}（${hit.label}）` : `${prefix}${bare}`;
+}
+
+/**
  * 云失败归一。`status = 0` 表示连接层就失败了（调用方传入）。
  * 🔴 400 里带「余额 / balance / 充值」也归 `quota` —— 各家习惯把余额不足塞在 400 里，
  *    只看状态码会把「欠费」误报成「服务异常」，用户按提示去查网络就白折腾。

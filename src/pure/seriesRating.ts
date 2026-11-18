@@ -110,14 +110,29 @@ export interface SeriesBoardItem {
     title: string;
 }
 
-/** 把条目流折成看板格：合集的**组内成员不再各自出格**，只出一张合集卡。 */
+/** 把条目流折成看板格：合集的**组内成员不再各自出格**，只出一张合集卡。
+ *
+ * 🔴 2026-11-14（用户 m02498）新增 `unfold`：看板导航栏加了「系列卡堆叠 ⟷ 全部单卡平铺」循环切换。
+ *    `unfold === true` ⇒ **不折叠**（每条各出一张 `kind:'single'` 卡），看板上不再出现合集卡。
+ * ⚠️ 平铺态里合集分**自然看不见**（没有合集卡可承载它），但 `Catalog.seriesRatings` 一个字没动 ——
+ *    切回堆叠态立刻恢复。⛔ 别在平铺时去清合集分（那是不可逆的数据丢失）。
+ * ⚠️ 平铺态**复用同一个 `foldSeries` 的入口判断**（`seriesKeyOf` 为空 = 不参与分组）：这里直接
+ *    逐条出 single 就够，⛔ 别另写一套「哪些条目算无系列」的判定。 */
 export function seriesBoardItems(
     entries: readonly MediaEntry[],
     map: SeriesRatingMap | undefined,
     tab: BoardTab = 'all',
+    unfold = false,
 ): SeriesBoardItem[] {
     const scoped = entries.filter((e) => entryInTab(e, tab));
     const out: SeriesBoardItem[] = [];
+    // 平铺：每条各占一格（顺序沿用传入流，⛔ 不再按标题重排组内成员）
+    if (unfold) {
+        for (const e of scoped) {
+            out.push({ kind: 'single', key: e.id, rating: normalizeRating(e.rating), entry: e, title: String(e.title ?? '') });
+        }
+        return out;
+    }
     for (const row of foldSeries(scoped)) {
         if (row.kind === 'single') {
             const e = row.entry;
@@ -153,6 +168,7 @@ export function buildSeriesBoard(
     entries: readonly MediaEntry[],
     map: SeriesRatingMap | undefined,
     tab: BoardTab = 'all',
+    unfold = false,
 ): SeriesBoardRow[] {
     const rows: SeriesBoardRow[] = boardRows().map((r) => ({
         rating: r.rating,
@@ -164,7 +180,7 @@ export function buildSeriesBoard(
     }));
     const bucket = new Map<number, SeriesBoardItem[]>();
     for (const r of rows) bucket.set(r.rating, []);
-    for (const it of seriesBoardItems(entries, map, tab)) {
+    for (const it of seriesBoardItems(entries, map, tab, unfold)) {
         bucket.get(it.rating)?.push(it);
     }
     for (const r of rows) {
@@ -175,13 +191,16 @@ export function buildSeriesBoard(
     return rows;
 }
 
-/** 合集/散卡的**总格数**与**未评价格数**（页签计数条用；`[未评分, 总数]`） */
+/** 合集/散卡的**总格数**与**未评价格数**（页签计数条用；`[未评分, 总数]`）
+ *  ⚠️ `unfold` 必须与 `buildSeriesBoard` **传同一个值** —— 否则「未评分 N / M」的分母
+ *     与实际画出来的格数对不上（堆叠态 M=折后格数、平铺态 M=条目数）。 */
 export function seriesUnratedRatio(
     entries: readonly MediaEntry[],
     map: SeriesRatingMap | undefined,
     tab: BoardTab = 'all',
+    unfold = false,
 ): [number, number] {
-    const items = seriesBoardItems(entries, map, tab);
+    const items = seriesBoardItems(entries, map, tab, unfold);
     let unrated = 0;
     for (const it of items) if (it.rating === 0) unrated += 1;
     return [unrated, items.length];

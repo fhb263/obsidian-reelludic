@@ -69,3 +69,33 @@ describe('createSearchProgress source 逐源事件', () => {
         expect((seen[seen.length - 1] as { done: number }).done).toBe(2);
     });
 });
+
+// 🔴 2026-11-12（m00353 ①-12）：逐源事件要能**带着条目**回到界面。
+//
+// 用户原话：「多源搜索其中一源超时不返回时，要显示骨架屏展示另一个已返回的源（否则等待太长）」。
+// 只报 `count` 是不够的 —— 界面知道「有 8 条」却拿不到那 8 条，还是得等整轮合并才渲染，
+// 卡住的源有几秒，用户就干等几秒。所以事件里直接带 `items`，谁先回来谁先出卡片。
+//
+// 这里锁的是「带得出去、且原样带出去」：⛔ 别在 pure 层做 map/filter
+//（`DoubanSubject` 与 `SearchResult` 不同形，映射是宿主的事，见 `main.ts` 的 `doubanFallback`）。
+describe('createSearchProgress source 逐源条目（①-12 骨架屏的数据通道）', () => {
+    it('items 原样透传，能与 count 不一致也不做二次加工', () => {
+        const seen: unknown[] = [];
+        const prog = createSearchProgress((p) => seen.push(p));
+        const items = [{ id: 'openLibrary:1', title: 'A' }, { id: 'openLibrary:2', title: 'B' }];
+        prog.source({ id: 'openLibrary', state: 'ok', count: 2, items });
+        const p = seen[0] as { source?: { items?: readonly unknown[] } };
+        expect(p.source?.items).toHaveLength(2);
+        expect(p.source?.items?.[0]).toBe(items[0]); // ⛔ 不是副本、不是映射后的新对象
+    });
+
+    it('没带 items 的源（failed/timeout/blocked）不凭空造空数组', () => {
+        const seen: unknown[] = [];
+        const prog = createSearchProgress((p) => seen.push(p));
+        prog.source({ id: 'tmdb', state: 'timeout' });
+        const p = seen[0] as { source?: { items?: readonly unknown[] } };
+        // ⚠️ 这里是 `undefined` 而不是 `[]` —— 界面靠「有没有 items」区分
+        //   「这个源真的啥都没有」和「这个源压根没答」，写空数组会把池子里该源的旧结果盖掉。
+        expect(p.source?.items).toBeUndefined();
+    });
+});

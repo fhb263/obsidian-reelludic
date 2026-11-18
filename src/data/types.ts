@@ -1,6 +1,12 @@
 // 数据层类型定义（schema 契约：只增不改）
 import type { MediaStatus } from 'pure/status';
 import type { Rating } from 'pure/rating';
+import type { MediaView } from 'pure/mediaViews';
+// 心情六档（#772 ⑳）：只取类型，`pure/mood` 不反向依赖本文件 ⇒ 无循环依赖
+import type { MoodId } from 'pure/mood';
+// ③ 单集评价的**类型**（判据在 `pure/episodeReview`，这里只要形状 —— 与 MoodId 同一手法：
+// `data/types` 只声明接口，不引运行期逻辑，否则 `pure → data` 与 `data → pure` 会成环）。
+import type { EpisodeReview } from 'pure/episodeReview';
 
 // 六库扩展点：movie/tv/anime 影视动画，book/game 预留，music 已落地（平铺单选，schema 只增不改）
 export type EntryType = 'movie' | 'tv' | 'anime' | 'book' | 'game' | 'music';
@@ -218,6 +224,17 @@ export interface MediaEntry {
      * ⚠️ 只在 `series` 有值时才有意义（没填系列名的孤立序号不参与任何分组）。
      */
     seriesIndex?: number;
+    /**
+     * **归属合集**（append-only 可选字段；2026-11-24 用户裁定新增）。
+     *
+     * 🔴 用户原话：「在所有类型条目属性窗口上加个归属合集，**只有写了才能进合集视图**」。
+     *    ⇒ 合集视图（`kind === 'collection'`，见 `pure/mediaViews`）**只认这个字段**，
+     *    ⛔ 不再回落 `series` —— `series` 的职责仍然是海报墙「系列折叠卡」的分组名
+     *    （见上面那条注释），两者语义分开。
+     * ⚠️ 留空 = 该条目**不进**任何合集视图（这是用户的显式意志，⛔ 别兜底成 series）。
+     * ⚠️ 必须进 `normalizeEntry` 白名单，否则保存即被静默丢弃（本仓踩过多次）。
+     */
+    collection?: string;
     /** 游戏平台（如 PC / Switch） */
     platform?: string;
     /** 游戏开发商 */
@@ -242,6 +259,63 @@ export interface MediaEntry {
      * ⚠️ 与 `sourceUrl`（数据来源平台页，搜索回填自动记录）不是一回事：那是出处，这是手填的入口。
      */
     gameUrl?: string;
+    /**
+     * 游戏**本地 Flash 影片**（.swf；append-only 可选字段，2026-11-16 用户裁定「先做本地 swf 播放」）。
+     *
+     * 语义 = 「这个游戏挂了一个本地 swf，点「▶ 启动」在插件内用 Ruffle 直接玩」——
+     * 与 `gameLaunchPath`（.lnk/.exe，交给系统 shell 拉起外部程序）**并列**，不是它的替代：
+     * 两者都填时**swf 优先**（能内嵌玩就不用把用户甩出 Obsidian）。
+     *
+     * ⚠️ 值可以是**库内相对路径**或**库外绝对路径**（与 `gameLaunchPath` 同一条容错口径）；
+     *    播放端统一经宿主 `resolveEmbedUrl` 换成 `app://` URL 交给 Ruffle。
+     * ⚠️ 新增字段必须同步 `catalog.ts` 的 normalizeEntry 白名单，漏了会被静默丢弃（历史踩坑）。
+     */
+    gameSwf?: string;
+    /**
+     * 游戏的**网页内嵌地址**（H5 / Unity 小游戏；append-only 可选字段，2026-11-16 用户问「怎么才能支持unity和h5的小游戏」）。
+     *
+     * 语义 = 「这个游戏没有可下载的 swf，但有一个能在 iframe 里跑的在线播放页」——
+     * 点「▶ 启动」时在 Flash 游戏标签页里用 iframe 打开它。
+     *
+     * 🔴 为什么这条路成立（真机实测，不是猜的）：
+     *   4399 的详情页 `…/flash/<id>.htm` 响应头**没有** `X-Frame-Options`、也**没有** `Content-Security-Policy`
+     *   ⇒ 可以在 Obsidian 里 iframe 嵌 4399 页面（截图 `_shot/h5-embed-0.png` 实证：整页正常渲染）。
+     *   而 Unity/H5 游戏真正的中间页（`…/index.html`）带 Referer 校验，插件**直连拿不到**（返回「访问错误」）——
+     *   但嵌在 4399 页面里时 Referer 是 4399 自己，于是能跑。
+     *   ⇒ 所以这里存的是**4399 自己的播放页**（`…/flash/<id>_2.htm`），不是中间页地址。
+     *
+     * ⚠️ 与 `gameUrl`（手填的商店页/官网/攻略链接，点了交给系统浏览器）**不是一回事**：
+     *    那个是「去外面看」，这个是「在插件里玩」。
+     * ⚠️ 新增字段必须同步 `catalog.ts` 的 normalizeEntry 白名单，漏了会被静默丢弃（历史踩坑）。
+     */
+    gameEmbed?: string;
+    /**
+     * 这份 `gameSwf` 的**原始网络地址**（append-only 可选字段，2026-11-16 用户裁定「留档原始 swf URL」）。
+     *
+     * 语义 = 「这个本地 swf 当初是从哪儿下的」——用于三件事，缺一个都不行：
+     *  ① **补抓关联资源**：`fetchFlashAssets` 要靠 `swfUrl` 当 base 去 `resolveUrl()` 拼资源真实地址，
+     *     只有本地路径时相对资源名（`sounds/bgm.mp3`）根本无从解析；
+     *  ② **重新下载**：文件被误删 / 挪走后不用再让用户翻收藏夹找那串地址；
+     *  ③ **溯源**：文件名已经按游戏标题改过名，原始末段（`04.swf` / `play.swf`）只剩这里还留着。
+     *
+     * 🔴 与 `gameSwf` 的**生命周期不同**：`gameSwf` 是本地路径，换机器 / 挪文件夹就失效；
+     *    这个字段一旦写下就一直有效。⛔ 别在重设 `gameSwf` 时把它清掉。
+     * ⚠️ 新增字段必须同步 `catalog.ts` 的 normalizeEntry 白名单，漏了会被静默丢弃（历史踩坑）。
+     */
+    gameSwfUrl?: string;
+    /**
+     * 游戏画面的**原始宽**（像素；append-only 可选字段，2026-11-16 用户问「怎么才能支持unity和h5的小游戏」的连带项）。
+     *
+     * 语义 = 站点在详情页里声明的舞台尺寸（4399 `_w = 800,`、7k7k `gamewidth: 800,`、17yy `flash_w = 800;`）。
+     * 有了它播放页才能按**原生比例**摆舞台：默认 Ruffle 的 `scale: 'showAll'` 会把 4:3 游戏塞进 16:9 容器、
+     * 上下各留一条黑边；按原生比例居中摆放则画面更大、黑边更窄。
+     *
+     * ⚠️ 可能是 0 / 缺失（不少页面不写，或写的是广告位尺寸）——`clampGameStage()` 会连宽高一起校验，
+     *    不可信就整对丢弃，⛔ 别只信其中一个（1×800 这种是解析噪声）。
+     */
+    gameWidth?: number;
+    /** 游戏画面的**原始高**（像素；与 `gameWidth` 成对，单边存在时一律不采用） */
+    gameHeight?: number;
     /** 书籍文件路径（TXT/EPUB，阅读器打开入口；vault 相对路径，复用 audioPath 模式） */
     bookFile?: string;
     /**
@@ -284,6 +358,32 @@ export interface MediaEntry {
     readMinutes?: number;
     /** 本地视频播放位置（key = 剧集下标字符串，value = 秒）：内置播放器打开时续播、暂停/切集/关闭时写回 */
     videoPositions?: Record<string, number>;
+    /**
+     * 字幕文件路径（key = 剧集下标字符串，value = 字幕路径；append-only 可选字段）。
+     *
+     * 🔴 用户 2026-10-29：「字幕要双向持久化」——播放器里导入/选中的字幕**必须落库到这一集**，
+     *    下次打开同一集自动挂上；同时「关联入口（右键 → 关联本地文件）」里也要能**看见并可编辑**。
+     *    这是「双向」的两个方向：① 播放器 ⇒ 数据库 ② 数据库 ⇒ 播放器 / 关联入口回显。
+     * ⚠️ 路径可以是 **vault 相对路径** 或 **操作系统绝对路径**（与 `episodeFiles` / `audioPath`
+     *    同一容忍度）：库内字幕存相对、库外字幕存绝对，读取时两条通路都试（见 `readSubtitleAsVtt`）。
+     * ⚠️ 与 `videoPositions` 同一形状（下标字符串键），便于「换集即换字幕」的按集绑定。
+     */
+    subtitlePaths?: Record<string, string>;
+    /**
+     * **单集评价**（③，append-only 可选字段，用户 2026-11-17：「各集数据写入整部单季 md 文件 yaml」）。
+     *
+     * 语义 = 「这一集我看成什么样、观感如何」：观看状态（未看/在看/已看）+ 高光/平庸/槽点标签 +
+     * 六档心情 + 一句话短评。播放器详情页的「单集评价」面板读写它，选集格子据此画流斑/崩坏特效。
+     *
+     * 🔴 形状刻意与 `videoPositions` / `subtitlePaths` **完全同构**（`Record<集下标字符串, …>`）：
+     *    选集格子的 `index` 就是 `episodeFiles` 的下标，共用同一个键空间才能「换集即换评价」，
+     *    也不需要任何保位/压缩逻辑。⛔ 别改成数组 —— 三个集数组已经因压缩空位踩过「第 2 集的
+     *    标题跑到第 1 集」的坑（`catalog.storeEpisodeList` 的注释里钉着）。
+     * ⚠️ 归一/空值裁剪的唯一收口点是 `pure/episodeReview.normalizeEpisodeReviews`
+     *    （读侧白名单与写侧 yaml 共用同一份判据）。
+     * ⚠️ 新增字段必须同步 `catalog.ts` 的 normalizeEntry 白名单，漏了会被静默丢弃（历史踩坑）。
+     */
+    episodeReviews?: Record<string, EpisodeReview>;
     /** 书籍元数据页数（豆瓣实体书；仅展示与统计，不参与进度换算——进度基准 totalPage 以本地文件为准） */
     pageCount?: number;
     /** 游戏游玩时长（分钟，可选；playSessions 的快捷累计，两者保持同步） */
@@ -332,6 +432,20 @@ export interface MediaEntry {
      *    编辑态只读展示。⛔ 它不是 `source`：`source` 是**数据源键**（douban/tmdb/…），决定走哪条搜索链。
      */
     sourceName?: string;
+    /**
+     * 🔴 **心情**（append-only 可选字段；用户 m07854 ⑳，2026-11-13）。
+     *
+     * 语义 = 看完 / 读完 / 玩完**那一下的情绪反应**，与 `rating`（好不好，0~5 数值）
+     * 是**两个维度**：⛔ 别把心情折算成数值塞进 `rating` —— 那会污染系列均分、
+     * 统计页与 `rating >= 4` 这类既有 Dataview 查询。
+     *
+     * 六个合法值见 `pure/mood.MOODS`（wow 震撼/神作、heal 治愈/开心、brain 烧脑/思考、
+     * sad 致郁/破防、meh 无聊/犯困、rage 受罪/愤怒）。落盘存 **id**，
+     * ⛔ 不存 emoji（emoji 在 YAML 里是裸字符，换字体渲染宽度不一，且用户改文案就废）。
+     *
+     * ⚠️ 必须进 `normalizeEntry` 白名单，否则保存即被静默丢弃（本仓踩过多次）。
+     */
+    mood?: MoodId;
     /** 大众评分（数据源评分，搜索回填自动记录；分制随数据源：豆瓣/TMDB/Bangumi 10 分制、Google Books 5 分制） */
     communityScore?: number;
     /** 大众评分评价人数（豆瓣「评分（N人评价）」展示；搜索/详情回填） */
@@ -347,6 +461,19 @@ export interface MediaEntry {
      * ⚠️ 与 `communityScore` **并存不互算**：两者都有的条目，展示层优先显示百分比（裁决见 `pure/scoreDisplay`）。
      */
     reviewPercent?: number;
+    /**
+     * 🔴 **Steam 详情补全标记**（append-only 可选字段；ISO 日期串，只有 Steam 条目会有）。
+     *
+     * 用途 = **收敛**：`syncSteamNow` 用 `steamEntryNeedsDetail` 决定要不要花一次 appdetails 请求，
+     * 旧判据只看「有没有封面」，导致**已有封面但缺评分**的条目永远补不上（用户 2026-11-08
+     * 报障「steam 同步和搜索获取评分不到」）。而改用「缺评分」当判据又会漏进
+     * 「该游戏零评测、永远没百分比」那类 —— 每轮开机重拉、白耗配额。
+     * ⇒ 换成**请求过就盖章**：无论拿到多少字段，都写本字段；下一轮判据立刻为假。
+     *
+     * ⚠️ 必须进 `normalizeEntry` 白名单，否则保存即被静默丢弃（本仓踩过多次）。
+     * ⛔ 它不是「同步时间」：条目的 `updatedAt` 由 service 维护，别用本字段做客情或排序。
+     */
+    steamDetailFilledAt?: string;
     /** 作者简介（书籍，豆瓣详情页回填；表单可改，笔记展示用） */
     authorIntro?: string;
     /** 目录（书籍，豆瓣详情页回填；表单可改，笔记展示用） */
@@ -394,6 +521,17 @@ export interface Catalog {
      * ⚠️ append-only 可选字段：老 catalog 没有它照常读（缺省 = 全都是未评分）。
      */
     seriesRatings?: Record<string, number>;
+    /**
+     * **分类视图**（用户 2026-11-23 裁定「按场景/项目分类」，即「事本位」）。
+     *
+     * 🔴 存这里而不是插件设置：视图就是**分类维度本身**，跟库走才能保证
+     *    换设备 / 同步 vault 后分类结构一致（用户明确选了「存进媒体库 Catalog」）。
+     * 🔴 **默认视图恒在数组第 1 位**（`pure/mediaViews.normalizeViews` 强制构造）——
+     *    它是物理库本身，不是逻辑分组，⛔ 不可删 / 不可改名 / 不可换种类。
+     * ⚠️ append-only 可选字段：老 catalog 没有它照常读（缺省 = 只有默认视图）。
+     * ⚠️ 读写收口点：`pure/mediaViews.normalizeViews`（读）/ `EntryService.setViews`（写）。
+     */
+    views?: MediaView[];
 }
 
 /** 一条状态翻转记录（谁、何时、变成什么状态；标题展示时按 id 现查，条目删除后该条不再展示） */

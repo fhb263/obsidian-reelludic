@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+    hitShotHandle,
     normalizeShotRect,
     readerShotBlock,
     readerShotFileName,
     readerShotLabel,
+    rectFromDrag,
+    resizeShotRect,
     sanitizeShotStem,
+    SHOT_HANDLE_HIT,
+    SHOT_HANDLES,
     SHOT_MIN_SIZE,
     SHOT_SECTION_READER,
     shotStamp,
@@ -183,6 +188,92 @@ describe('readerShot 区域截图纯逻辑（2026-10-23 用户指令）', () => 
     describe('区段常量', () => {
         it('区段名是「阅读截图」', () => {
             expect(SHOT_SECTION_READER).toBe('阅读截图');
+        });
+    });
+
+    // 🔴 2026-11-13 用户指令：「批注模式下框选后可进行六向调整宽高」。
+    //    这三个纯函数是那套手柄的全部逻辑，必须钉住，否则手柄可以「看着有、拖着不动」。
+    describe('rectFromDrag 调整模式造框（不判最小尺寸）', () => {
+        it('正向拖：右上角就是尺寸', () => {
+            expect(rectFromDrag(120, 70, 300, 200, bounds)).toEqual({ x: 120, y: 70, width: 180, height: 130 });
+        });
+
+        it('反向拖也摆正', () => {
+            expect(rectFromDrag(300, 200, 120, 70, bounds)).toEqual({ x: 120, y: 70, width: 180, height: 130 });
+        });
+
+        it('拖出容器：钳进 bounds，不产生负数宽度', () => {
+            const r = rectFromDrag(40, 10, 900, 900, bounds);
+            expect(r).toEqual({ x: 100, y: 50, width: 400, height: 400 });
+        });
+
+        it('零面积拖拽也返回矩形（调整过程允许暂时很小，松手才判）', () => {
+            expect(rectFromDrag(200, 200, 200, 200, bounds)).toEqual({ x: 200, y: 200, width: 0, height: 0 });
+        });
+    });
+
+    describe('hitShotHandle 命中测试（手柄优先于框内）', () => {
+        const r = { x: 100, y: 100, width: 200, height: 100 };
+
+        it('八个手柄都能命中，方向对得上', () => {
+            expect(hitShotHandle(r, 100, 100)).toBe('nw');
+            expect(hitShotHandle(r, 200, 100)).toBe('n');
+            expect(hitShotHandle(r, 300, 100)).toBe('ne');
+            expect(hitShotHandle(r, 300, 150)).toBe('e');
+            expect(hitShotHandle(r, 300, 200)).toBe('se');
+            expect(hitShotHandle(r, 200, 200)).toBe('s');
+            expect(hitShotHandle(r, 100, 200)).toBe('sw');
+            expect(hitShotHandle(r, 100, 150)).toBe('w');
+        });
+
+        it('手柄命中半径内即算命中（手感容差）', () => {
+            expect(hitShotHandle(r, 100 + SHOT_HANDLE_HIT, 100 - SHOT_HANDLE_HIT)).toBe('nw');
+        });
+
+        it('框正中算 inside，远离则 null', () => {
+            expect(hitShotHandle(r, 200, 150)).toBe('inside');
+            expect(hitShotHandle(r, 900, 900)).toBeNull();
+        });
+
+        it('⛔ 角点优先于边：边与角的容差重叠时不能误判成 n', () => {
+            expect(hitShotHandle(r, 103, 103)).toBe('nw');
+        });
+    });
+
+    describe('resizeShotRect 六向调整', () => {
+        const r = { x: 100, y: 100, width: 200, height: 100 };
+        const wide = { left: 0, top: 0, right: 1000, bottom: 1000 };
+
+        it('拖 e 只改宽，右边跟着走', () => {
+            expect(resizeShotRect(r, 'e', 50, 999, wide)).toEqual({ x: 100, y: 100, width: 250, height: 100 });
+        });
+
+        it('拖 w 只改左边，右边钉住', () => {
+            expect(resizeShotRect(r, 'w', 40, 999, wide)).toEqual({ x: 140, y: 100, width: 160, height: 100 });
+        });
+
+        it('拖 n 只改上边，下边钉住（⛔ 不然会整框上移）', () => {
+            expect(resizeShotRect(r, 'n', 999, 30, wide)).toEqual({ x: 100, y: 130, width: 200, height: 70 });
+        });
+
+        it('拖 s 只改下边', () => {
+            expect(resizeShotRect(r, 's', 999, 25, wide)).toEqual({ x: 100, y: 100, width: 200, height: 125 });
+        });
+
+        it('角点同时改两向', () => {
+            expect(resizeShotRect(r, 'se', 30, 40, wide)).toEqual({ x: 100, y: 100, width: 230, height: 140 });
+        });
+
+        it('缩到下限时钉住，不让框消失', () => {
+            const tiny = resizeShotRect(r, 'e', -9999, 0, wide);
+            expect(tiny.width).toBe(SHOT_MIN_SIZE);
+            expect(tiny.x).toBe(100);
+        });
+
+        it('越界钳制后仍不小于 min', () => {
+            const squeezed = resizeShotRect({ x: 990, y: 990, width: 10, height: 10 }, 'se', 999, 999, wide);
+            expect(squeezed.width).toBeGreaterThanOrEqual(SHOT_MIN_SIZE);
+            expect(squeezed.height).toBeGreaterThanOrEqual(SHOT_MIN_SIZE);
         });
     });
 });

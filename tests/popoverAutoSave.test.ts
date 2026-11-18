@@ -5,13 +5,15 @@ import { describe, expect, it } from 'vitest';
 import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_KEYS, AUTOSAVE_KEY_VALUES, shouldAutoSave } from 'pure/popoverAutoSave';
 
 describe('popoverAutoSave（浮层自动保存的三条触发口径）', () => {
-    it('键空间：九条键都带 `<浮层>:<字段>` 形态，且不重复（拼错键 = 提示落错行，静默）', () => {
-        expect(AUTOSAVE_KEY_VALUES.length).toBe(9);
-        expect(new Set(AUTOSAVE_KEY_VALUES).size).toBe(9);
+    it('键空间：十一条键都带 `<浮层>:<字段>` 形态，且不重复（拼错键 = 提示落错行，静默）', () => {
+        expect(AUTOSAVE_KEY_VALUES.length).toBe(11);
+        expect(new Set(AUTOSAVE_KEY_VALUES).size).toBe(11);
         for (const k of AUTOSAVE_KEY_VALUES) expect(k).toMatch(/^[a-z]+:[a-zA-Z]+$/);
-        // 四类浮层都在（集 3 / 游戏 2 / 音乐 2 / 书籍 2）—— 🔴 #601 起音乐多一条「网络地址」
+        // 四类浮层都在（集 3 / 游戏 4 / 音乐 2 / 书籍 2）—— 🔴 #601 起音乐多一条「网络地址」；
+        // 🔴 2026-11-16 起游戏多两条：「Flash 影片（.swf）」（`game:swf`，内置 Ruffle 直接玩）
+        //    ＋「内嵌播放页」（`game:embed`，H5 / Unity 走 iframe）。
         expect(AUTOSAVE_KEY_VALUES.filter((k) => k.startsWith('ep:'))).toHaveLength(3);
-        expect(AUTOSAVE_KEY_VALUES.filter((k) => k.startsWith('game:'))).toHaveLength(2);
+        expect(AUTOSAVE_KEY_VALUES.filter((k) => k.startsWith('game:'))).toHaveLength(4);
         expect(AUTOSAVE_KEY_VALUES.filter((k) => k.startsWith('audio:'))).toHaveLength(2);
         expect(AUTOSAVE_KEY_VALUES.filter((k) => k.startsWith('book:'))).toHaveLength(2);
     });

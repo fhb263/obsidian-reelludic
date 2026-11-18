@@ -6,7 +6,7 @@
 // ⚠️ 「版本号与日期必须与用户向 CHANGELOG 的标题逐字一致」这条**不在单测里**（它要读仓根文件，
 //    属断言脚本的活 —— 见 assert-symbols 的 #492 块），这里只钉形态与顺序。
 import { describe, it, expect } from 'vitest';
-import { RELEASE_NOTES, RELEASES_URL, releaseNotesMd } from 'pure/releaseNotes';
+import { RELEASE_NOTES, RELEASES_URL } from 'pure/releaseNotes';
 
 describe('RELEASE_NOTES 版本一句话表', () => {
     it('非空，且每条的 version / date / summary 都不为空', () => {
@@ -48,19 +48,20 @@ describe('RELEASE_NOTES 版本一句话表', () => {
     });
 });
 
-describe('releaseNotesMd 弹窗正文', () => {
-    it('每条一行，形状 = `- **vX.Y.Z**（yyyy-mm-dd）：…`，行数 == 条目数', () => {
-        const lines = releaseNotesMd().split('\n');
-        expect(lines.length).toBe(RELEASE_NOTES.length);
-        RELEASE_NOTES.forEach((n, i) => {
-            expect(lines[i].startsWith(`- **v${n.version}**（${n.date}）：`)).toBe(true);
-            expect(lines[i].endsWith(n.summary)).toBe(true);
-        });
+describe('折叠展示的数据前提（弹窗按版本建 <details>，⛔ 不再拼 markdown 列表）', () => {
+    // 🔴 本轮用户裁定：「更新日志按版本折叠，默认只展开最新版，旧版本点标题或 v 箭头才展开」。
+    //    弹窗因此从「一次 MarkdownRenderer.render(releaseNotesMd())」改成「每条 version/summary 建一块」。
+    //    下面两条守的是**折叠所依赖的数据前提**：顺序（第一条 = 展开的那条）与文案形态。
+    it('第一条就是当前最新版（弹窗默认展开的那块）', () => {
+        expect(RELEASE_NOTES[0].version).toBe('1.5.0');
     });
 
-    it('正文里不出现节标题（`#`）与空行 —— 标题由弹窗自己渲染', () => {
-        expect(/^#/m.test(releaseNotesMd())).toBe(false);
-        expect(/^\s*$/m.test(releaseNotesMd())).toBe(false);
+    it('每条都是一行小标题可承受的长度（⛔ 不退回成一段散文）', () => {
+        for (const n of RELEASE_NOTES) {
+            // 摘要行只显示 `vX.Y.Z` + 日期；一句话在展开区里渲染，所以这里守「没有换行」
+            expect(n.summary).not.toMatch(/[\n\r]/);
+            expect(n.version).not.toMatch(/\s/);
+        }
     });
 });
 

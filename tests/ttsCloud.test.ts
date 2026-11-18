@@ -8,8 +8,10 @@ import {
     SPEECH_MAX_RETRY,
     buildSpeechBody,
     classifySpeechError,
+    cloudVoiceFullLabel,
     cloudVoiceGroups,
     cloudVoiceId,
+    cloudModelShortName,
     loadCloudVoice,
     normalizeCloudVoice,
     prefetchIndex,
@@ -124,6 +126,49 @@ describe('cloudVoiceGroups（云音色按性别分两组）', () => {
     it('非法 / 空当前值 → 一个都不亮（交渲染层回退缺省，不虚亮一项）', () => {
         expect(cloudVoiceGroups('不存在的音色').flatMap((g) => g.items).filter((i) => i.on)).toHaveLength(0);
         expect(cloudVoiceGroups(null).flatMap((g) => g.items).filter((i) => i.on)).toHaveLength(0);
+    });
+});
+
+describe('cloudModelShortName / cloudVoiceFullLabel（m09565 ①-3：要说清来自哪个模型）', () => {
+    it('模型短名：砍掉厂商前缀与 - 之后的版本号', () => {
+        expect(cloudModelShortName('FunAudioLLM/CosyVoice2-0.5B')).toBe('CosyVoice2');
+        expect(cloudModelShortName('fishaudio/fish-speech-1.5')).toBe('fish');
+        expect(cloudModelShortName('IndexTTS-2')).toBe('IndexTTS');
+    });
+
+    it('模型短名：空 / 非字符串 → 空串（⛔ 不编假模型名）', () => {
+        expect(cloudModelShortName('')).toBe('');
+        // @ts-expect-error 故意传脏值
+        expect(cloudModelShortName(null)).toBe('');
+    });
+
+    it('🔴 全称形如 `CosyVoice2 · alex（沉稳男声）`（用户点名的显示形态）', () => {
+        expect(cloudVoiceFullLabel(cloudVoiceId('alex'))).toBe('CosyVoice2 · alex（沉稳男声）');
+    });
+
+    it('裸 id 也能出全称（记忆里可能是裸 id）', () => {
+        expect(cloudVoiceFullLabel('david')).toBe('CosyVoice2 · david（欢快男声）');
+    });
+
+    it('未知音色 id → 只给「模型 · 裸id」，⛔ 不因为查不到中文标签就整条回空', () => {
+        expect(cloudVoiceFullLabel('FunAudioLLM/CosyVoice2-0.5B:nobody')).toBe('CosyVoice2 · nobody');
+    });
+
+    it('空值 → 只回模型短名（调用方自行决定要不要显示）', () => {
+        expect(cloudVoiceFullLabel(null)).toBe('CosyVoice2');
+        expect(cloudVoiceFullLabel('')).toBe('CosyVoice2');
+    });
+
+    it('换模型时短名跟着换（⛔ 别把 CosyVoice2 写死）', () => {
+        expect(cloudVoiceFullLabel(cloudVoiceId('alex', 'fishaudio/fish-speech-1.5'), 'fishaudio/fish-speech-1.5')).toBe(
+            'fish · alex（沉稳男声）',
+        );
+    });
+
+    it('🔴 反向守卫：cloudVoiceGroups 的 label 仍是短标签（阅读器面板共用，不许被设置页的需求污染）', () => {
+        const all = cloudVoiceGroups(null).flatMap((g) => g.items);
+        expect(all.map((i) => i.label)).not.toContain('CosyVoice2 · alex（沉稳男声）');
+        expect(all[0].label).toBe('沉稳男声');
     });
 });
 

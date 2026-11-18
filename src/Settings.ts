@@ -1,23 +1,27 @@
 // 设置类型、默认值与设置面板（字段只能追加，不能删除——AGENTS 红线）
-import { Modal, Notice, Platform, PluginSettingTab, Setting, setIcon, requestUrl, TFolder } from 'obsidian';
+import { Menu, Modal, Notice, Platform, PluginSettingTab, Setting, setIcon, requestUrl, TFolder } from 'obsidian';
 import type ReelLudicPlugin from '../main';
 import type { ColorTheme, UiTheme } from 'data/types';
 // #604 内置播放器的播放模式（四档真源在纯模块；设置里只存这个联合类型）
 import type { PlayMode } from 'pure/playerMenu';
-import { ENTRY_TYPES, ENTRY_TYPE_LABELS, type BookKind, type EntryType } from 'data/types';
+import { ENTRY_TYPES, ENTRY_TYPE_LABELS, TYPE_COLORS, type BookKind, type EntryType } from 'data/types';
 // 🔴 #640e：书籍子分类（文学 / 网文 / 漫画）的两个真源 —— 标签取自 `BOOK_KIND_LABELS`（⛔ 不手写）
 import { BOOK_KINDS, BOOK_KIND_LABELS } from 'pure/bookKind';
 import type { ProviderId, SourceGroup, ProviderMeta } from 'pure/sourceRegistry';
 import {
-    PROVIDERS, PROVIDER_META, GROUP_LABELS,
-    resolveSourceChain, normalizeSourceChain, DEFAULT_CHAINS,
+    PROVIDERS, PROVIDER_META, GROUP_LABELS, SOURCE_GROUP_ICONS, SOURCE_GROUP_COLOR_KEY,
+    resolveSourceChain, normalizeSourceChain,
 } from 'pure/sourceRegistry';
+// 🔴 本轮新增：「元数据搜索源启用」勾选项的 hover 一句话说明（六组 13 条，真源在纯模块，可单测）
+import { sourcePitch } from 'pure/sourcePitch';
+import { splitHintLinks } from 'pure/sourceLink';
+import { rememberOpenFolds, restoreOpenFolds } from 'pure/detailsState';
 import { normalizeAiChoice, normalizeProvider, normalizeAiBaseUrl, AI_PROVIDER_OPTIONS, aiProviderOptions, AI_PROVIDER_OFF, AI_PURPOSE_DEFAULT, DEFAULT_MODELS, DEFAULT_TRANSLATE_PROMPT, aiBaseUrlIssue, providerLabel, mergeModelCandidates, aiChoiceLabel, aiChoiceLabelNamed, aiPickText, isAiOff, aiKeyField, isCustomSlot, customSlotName, normalizeCustomName, CUSTOM_SLOTS, CUSTOM_SLOT_FIELDS, CUSTOM_SLOT_DEFAULT_NAME, type CustomSlot, type AiProviderChoice, type TranslateProvider, type ModelFetched } from 'pure/translate';
 // #484：模型拣选弹窗的筛选 / 置顶判定（纯逻辑，可单测）
 import { togglePin, toggleHidden, clearHiddenFor } from 'pure/aiPick';
 // #479 AI集成页整页重排：服务商品牌标（LobeHub Icons，MIT）+ 可搜索的模型选择
 // #480：图标绘制与「服务商图标」抽到 services/aiIcon（设置页与拣选弹窗共用一份）
-import { AI_PROVIDER_ICON, TTS_ICON, type AiIcon } from 'pure/aiIcons';
+import { AI_PROVIDER_ICON, type AiIcon } from 'pure/aiIcons';
 // 🔴 #689：`pure/comicViewer` 的两个导出**已不再被设置页使用**（漫画阅读方式下拉已移除，
 //    入口只在漫画阅读器内）⇒ import 一并删除。⛔ 别因为「以后可能用」留着 —— 本仓死码不留。
 // 🔴 #639 ⑥：Steam 凭据（SteamID 校验是纯函数，⛔ 不在设置页另写一份位数判断）
@@ -28,29 +32,47 @@ import { tmdbApiKeyFieldIssue, tmdbSessionFieldIssue } from 'pure/tmdbAuth';
 import { renderAiIcon, aiChoiceIcon } from 'services/aiIcon';
 // #488：元数据源 / 音乐平台图标真源（simple-icons CC0 品牌标 + 内置兜底；**生成器写盘**，
 // 见 `_gen_source_icons.cjs`）。与 AI 服务商图标共用**同一个** `renderAiIcon` 渲染端。
-import { SOURCE_ICON, MUSIC_COOKIE_ICON, type KeySourceId, type MusicSourceId } from 'pure/sourceIcons';
+import { SOURCE_ICON, MUSIC_COOKIE_ICON, NET_COOKIE_ICON, type KeySourceId, type MusicSourceId, type NetSourceId } from 'pure/sourceIcons';
 // #589 开机凭据自检：凭据行的徽标要能显示「连接失败」（#634 由「已失效」改名）
 // 🔴 #634：`aiCheckKey` 让 AI 服务（翻译/总结/云合成/自定义端点）也走**同一张三态结果表**
-import { EXPIRED_BADGE, isExpired, aiCheckKey, musicCheckKey, sourceCheckKey, type CredentialStatusMap } from 'pure/credentialCheck';
+import { EXPIRED_BADGE, isExpired, aiCheckKey, musicCheckKey, netCheckKey, sourceCheckKey, type CredentialStatusMap } from 'pure/credentialCheck';
+// 🔴 ③-1（2026-11-12 用户 m00353）：「统一周期管理」面板的**唯一数据源**。
+//    ⛔ 面板里不许再自己算「是否配置 / 是否失效 / 上次检测」—— 一律走 `buildCredentialMeta`，
+//    否则面板与下面几组凭据行的徽标必然漂移（用户原话：「必须共享同一个 credentialMeta 数据源」）。
+import {
+    buildCredentialMeta,
+    credentialStateLabel,
+    formatCheckedAt,
+    summarizeCredentialMeta,
+    type CredentialMeta,
+} from 'pure/credentialMeta';
+// 🔴 ③-5：全局 UI 组件基座（`src/ui/components.ts`）。分段 chips / 组头部 / 状态表格只从这里建，
+//    ⛔ 别再在设置页里手搓 —— 用户原话「彻底消灭视觉上的东拼西凑」，根因就是同类控件各手写一份。
+import { cell, chipBar, ghostIconButton, groupHeader, iconButton, setFeedback, splitTable, statusTable } from 'ui/components';
 // #491「更新日志」= 内置弹窗（⛔ 不再跳浏览器）；正文是 `pure/releaseNotes` 里那张**手写**的版本一句话表
 import { ReleaseNotesModal } from 'modals/ReleaseNotesModal';
 // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑧）：关于页那枚「新手引导」按钮换成「未来规划」，
 //    引导弹窗（`modals/GuideModal`）与它的 `GUIDE_PAGE_COUNT` 一并下线 ⇒ 这里只留路线图弹窗。
 import { RoadmapModal } from 'modals/RoadmapModal';
+// ③-2 / ③-3 / ③-4（2026-11-12）：豆瓣 / B 站 / 微信读书的**扫码登录**弹窗。
+// ⚠️ 用户裁定 m05063 =「弹出对应网页扫码」⇒ 弹窗里不画二维码，只开官方扫码页子窗口 + 轮询。
+import { QrLoginModal, type QrLoginPicked } from 'modals/QrLoginModal';
+import { accountNameOf, type QrPlatform } from 'pure/qrLogin';
 // #598 对外链接的唯一真源（仓库 / 报 Bug / 提需求 / 爱发电）—— 「关于」页那几枚按钮只读它
-import { REPO_URL, AFDIAN_URL, SUPPORT_BUTTONS } from 'pure/supportLinks';
+import { REPO_URL, AFDIAN_URL, SUPPORT_BUTTONS, AUTHOR_GITHUB_URL, AUTHOR_GITHUB_TIP, AUTHOR_GITHUB_ICON } from 'pure/supportLinks';
 import { AiPickerModal, AiModelNameModal, type AiModelItem, type AiPickerPick } from 'modals/AiPickerModal';
 // #480 ④ / #482 ③：朗读音源行的「音源 + 音色 + 试听」（纯逻辑在 pure/ttsSettings；引擎复用阅读器那两套）
 import {
-    TTS_ENGINE_CHOICES, normalizeTtsEngineKind, ttsVoiceGroups, ttsVoiceLabel,
+    normalizeTtsEngineKind, ttsVoiceGroups, ttsVoiceLabel,
     effectiveTtsVoice, ttsEngineBlockedReason,
 } from 'pure/ttsSettings';
 import { SystemSpeechEngine, ttsSupported, type SpeechEngine } from 'services/SpeechEngine';
 import { CloudSpeechEngine } from 'services/CloudSpeechEngine';
 import { VOICE_PREVIEW_TEXT, loadTtsRate, loadTtsVolume, loadVoiceUri, saveVoiceUri, TTS_RATE_DEFAULT, TTS_PITCH_DEFAULT, TTS_VOLUME_DEFAULT, type TtsEngineKind, type TtsVoiceLite } from 'pure/tts';
-import { loadCloudVoice, saveCloudVoice } from 'pure/ttsCloud';
+import { cloudModelShortName, cloudVoiceFullLabel, loadCloudVoice, saveCloudVoice } from 'pure/ttsCloud';
 import type { AudioPlayMode } from 'pure/audioQueue';
 import { DEFAULT_SUMMARY_PROMPT } from 'pure/aiSummary';
+import { DEFAULT_CUE_SUMMARY_PROMPT, DEFAULT_CUE_ASK_PROMPT } from 'pure/cueSummary';
 import { DEFAULT_PREFILL_PROMPT } from 'pure/aiPrefill';
 import { DEFAULT_SEARCH_PROMPT } from 'pure/readerSearch';
 import { loadTtsEngine, saveTtsEngine } from 'pure/tts';
@@ -81,6 +103,22 @@ import {
 } from 'pure/settingNav';
 // 1.3.1 ①「高级设置」页：字段映射（纯逻辑校验 + 字段清单真源）
 import { parseFieldMap } from 'pure/fieldMap';
+// 🔴 2026-11-23 分类视图：模型 / 归一 / 新建全在 pure/mediaViews（配单测）——
+//    ⛔ 别在本文件里再归一一次，否则「设置页存的」和「首页读的」两套口径必然漂。
+import {
+    DEFAULT_VIEW_ID,
+    VIEW_TYPE_CHOICES,
+    isBuiltinView,
+    MAX_VIEWS,
+    VIEW_KIND_DESCS,
+    createView,
+    nextViewId,
+    normalizeViewTags,
+    viewIconOf,
+    viewSelectionOf,
+    viewSelectionPatch,
+    type MediaView,
+} from 'pure/mediaViews';
 // 🔴 #653：属性顺序「对比预览」的位次矩阵（纯逻辑，⛔ 不在这里另算一套）
 // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑦）：对比预览从 7 列扩到 9 列（书籍拆成
 //    文学 / 网文 / 漫画三列）⇒ 列清单改从 `FIELD_ORDER_COMPARE_COLUMNS` 取，⛔ 别再在设置页手写列。
@@ -96,6 +134,9 @@ import {
     // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑦）：书籍三子类各有排除表（网文去掉画师 / ISBN），
     //    子类页与对比预览的 `k:<kind>` 列都走它 —— ⛔ 不许在设置页拿 `exclusiveFieldsFor('book')` 顶替。
     exclusiveFieldsForBookKind,
+    // 🔴 #721：结构性键（id / type / title / created / updated）**不给删除入口** ——
+    //    删了笔记就坏（插件认不出条目）。判据只有这一份真源，⛔ 别在设置页写名单。
+    isHidableFieldKey,
     isDefaultKindOrder,
     isDefaultOrder,
     orderForBookKind,
@@ -106,15 +147,84 @@ import {
     resolveAllOrders,
 } from 'pure/fieldOrder';
 import { moveItem } from 'pure/seriesGroup';
+// 🔴 第二期 ⑤：本地音频转文字（ASR）语言码归一 —— 与本页工具栏同一把尺，⛔ 别在设置页自己判
+import { normalizeAsrLang } from 'pure/asrEngine';
+import { ASR_ENGINES, engineDefOf } from 'pure/asrEngines';
+// 🔴 2026-11-06：「沉浸体验 › 语音服务」顶部摘要行要写「Whisper.cpp (Base)」这种**具体档位名**，
+//    靠 `presetByFileName` 从当前模型路径反查；⛔ 别在设置页自己按文件名 `includes` 猜（同 `main.ts` 同源）。
+import { ASR_MODEL_PRESETS, presetByFileName, presetOf, presetSizeLabel, type AsrModelTier } from 'pure/asrModels';
+import { asrBrandSvg } from 'pure/asrBrandIcon';
+// 🔴 用户 m07854 ⑤：文字转语音两处小图标换品牌标 —— 本地 = 当前操作系统（`systemVoiceIcon`），
+//    云端 = 硅基流动（复用 `AI_PROVIDER_ICON.siliconflow`，⛔ 别另抄路径）。
+import { currentPlatform, systemVoiceIcon } from 'pure/osIcons';
+// 🔴 2026-11-14（用户 m05673 手机实测）：「空白一片应该给个提示不支持」——
+//    哪些组在移动端要打「仅桌面端」徽标，判定真源只此一份（⛔ 别在本页硬编码组名）。
+import { DESKTOP_ONLY_LABEL, shouldMarkDesktopOnly } from 'pure/platformGates';
+// 🔴 2026-11-10：左列表是「按家分组的平铺单选」，体积/准确度/标签/场景集中在这张纯数据表里
+//    （来自用户给的 12 行模型表），⛔ 别在渲染处再拼一份数字。
+import { accuracyLabel, asrCatalog } from 'pure/asrCatalog';
+// 🔴 2026-11-11 用户 m05717 ①：AI 运行管家要**真数据**（显存/内存/CMake/C++）。
+//    纯函数全在 `pure/asrHardware`（零 IO，被 35 条单测钉住），⛔ 别在本页自己解析 nvidia-smi 输出。
+import {
+    defaultDevice,
+    estimateFootprint,
+    footprintWarning,
+    formatMb,
+    gpuRowState,
+    hasFatalMissing,
+    vramFits,
+    type HardwareInfo,
+} from 'pure/asrHardware';
+// 🔴 2026-11-06 m09123：另两家（Qwen3 / SenseVoice）的模型行也要显示「这一家一共多大」，
+//    体积口径统一走 `pure/asrBundles`（那里已经有按字节求和的实现，⛔ 别在这页再算一遍）。
+// 🔴 2026-11-06 m09432：另外还要给 Qwen3 / SenseVoice 各挂一个档位下拉，档位表与体积同样来自这里。
+import {
+    bundleBytes,
+    bundleOf as asrBundleOf,
+    bundleSizeLabel,
+    formatBundleBytes,
+    CONFUCIUS_VARIANTS,
+    PARAFORMER_VARIANTS,
+    QWEN_ASR_VARIANTS,
+    QWEN_ALIGN,
+    XASR_VARIANTS,
+    confuciusVariantOf,
+    paraVariantOf,
+    qwenBundle,
+    SENSEVOICE_VARIANTS,
+    senseVoiceBundle,
+    svVariantOf,
+    qwenVariantOf,
+    xasrVariantOf,
+} from 'pure/asrBundles';
+import { installSupported, installUnsupportedMessage } from 'pure/whisperRuntime';
+// 🔴 1.5.1：编辑窗口「条目属性」（属性块的显示 / 隐藏 / 先后）—— 与 fieldOrder / cardMeta / tableColumns 三套各管一件事
+import {
+    ENTRY_FORM_MAX_SPAN,
+    ENTRY_FORM_SLOTS,
+    ENTRY_FORM_SPAN_PRESETS,
+    defaultEntryFormFieldsFor,
+    entryFormFieldIsFixed,
+    entryFormFieldsFor,
+    isDefaultEntryFormFields,
+    normalizeEntryFormFields,
+    withFixedEntryFormFields,
+    type EntryFormFieldEntry,
+    type EntryFormFieldLayout,
+} from 'pure/entryFormFields';
 // #541「个性化体验」四项：主导航布局 / 起始页 / 卡片风格 / 界面动效。
 // 🔴 三项归一与文案**一律走 pure 模块**，⛔ 别在渲染处另写一份选项表（第二份真源）。
-import { HOME_TAB_ORDER, homeTabLabel, normalizeStartTab, type HomeTab } from 'pure/homeTabs';
+import { homeTabLabel, normalizeStartTab, normalizeStartTabFor, normalizeTabAxis, tabOrderFor, type HomeTab, type TabAxis } from 'pure/homeTabs';
 import { NAV_LAYOUTS, NAV_LAYOUT_LABELS, normalizeNavLayout, type NavLayout } from 'pure/navLayout';
 import {
     CARD_STYLES, CARD_STYLE_LABELS, MOTION_MODES, MOTION_MODE_LABELS,
     normalizeCardStyle, normalizeMotionMode, type CardStyle, type MotionMode,
 } from 'pure/appearance';
 import { safeSetIcon } from 'services/safeIcon';
+// 提示 + 读屏名统一走组件基座（①-9：⛔ 别再手写 aria-label，会与 data-tip 叠两层气泡）
+import { setTip, srLabel } from 'ui/components';
+import { bindTooltipDocument } from 'services/globalTooltip';
+import { probeEmbedCookies } from 'services/embedCookie';
 
 export interface ReelLudicSettings {
     /** TMDB API Key（免费注册，设置页引导） */
@@ -191,6 +301,18 @@ export interface ReelLudicSettings {
      * 落盘走 `plugin.setListGrouping(next)`（唯一出口，⛔ 别在视图里直接改 `settings` 字段）。
      */
     listGrouping?: boolean;
+    /**
+     * 🔴 m07854 ⑬（2026-11-13，append-only 可选字段）**系列卡是否摊平**。
+     *
+     * `undefined` 或 `false` = 系列卡堆叠（同系列折成一张卡，与 1.5.0 之前一致）；`true` = 全部单卡平铺。
+     * ⚠️ 与上面的 `listGrouping` **是两件事**，⛔ 别合并成一个开关：
+     *    `listGrouping` 管的是**列表视图的行形态**（树形父子行 ⇄ 每条独立一行），
+     *    本字段管的是**海报墙 / 卡片网格的系列折叠卡**（`seriesRows` 那一支）。
+     *    两者作用面不同，合成一个会让「在列表里摊平 → 切到网格发现系列也没了」这种连带出现。
+     * ⚠️ 只在**卡片网格 / 海报墙**两个视图可见（那两视图才有折叠卡）；列表 / 瀑布流 / 时间线不受它影响。
+     * 落盘走 `plugin.setUnfoldSeries(next)`（唯一出口，⛔ 别在视图里直接改 `settings` 字段）。
+     */
+    unfoldSeries?: boolean;
     /** 界面主题（1.0.3）：全面 modern 后恒为 'modern'（设置页已无切换入口；字段按 schema append-only 保留） */
     uiTheme?: UiTheme;
     /**
@@ -202,8 +324,9 @@ export interface ReelLudicSettings {
      */
     navLayout?: NavLayout;
     /**
-     * 🔴 #657（用户：「统计页的所有元素支持自由排序，自适应」）：统计页**五个区块的顺序**。
-     * `['hero','feed','trend','overview','board']` = 缺省（与原三层倒金字塔的视觉顺序一致）。
+     * 🔴 #657（用户：「统计页的所有元素支持自由排序，自适应」）：统计页**各区块的顺序**。
+     * `['hero','feed','trend','overview','board','cloud']` = 缺省（与原三层倒金字塔的视觉顺序一致，
+     * `cloud`（标签词云，②-3）追加在末尾）。
      * 🔴 落盘口径：与缺省逐位一致 ⇒ **删掉该键**（⛔ 不存缺省副本）—— 这样以后新增区块能自动落在缺省位置。
      * 归一 / 移动 / 自适应档见 `pure/statsLayout`（唯一真源，⛔ 别在视图里再写一遍阈值）。
      */
@@ -221,6 +344,20 @@ export interface ReelLudicSettings {
      * （只认一级导航那 6 个 id，`anime`/`tv`/`movie` 这类聚合内部类型一律回 `media`）。
      */
     startTab?: HomeTab;
+    /**
+     * 🔴 用户 m09565 ①-4（append-only；缺省 `expanded` = 2026-11-08 起的全类型十枚）。
+     *
+     * 用户逐字：「设置页基本设置加个启用顶部胶囊/文字菜单则按全类型分页签，关闭则按
+     * 计划、阅读、影视、音乐、游戏、统计分页签（**两种模式的导航状态（当前选中项）要独立保存**，
+     * 切换开关时不要丢失各自的位置）」
+     *
+     * · `expanded` = 全类型摊开（计划/文学/网文/漫画/电影/剧集/动画/游戏/音乐/统计）
+     * · `classic`  = 聚合六枚（计划/阅读/影视/音乐/游戏/统计）
+     * 归一走 `pure/homeTabs.normalizeTabAxis`（脏值回 `expanded`，⛔ 升级不得换脸）。
+     * ⚠️ 切换时**两条轴各自的选中项**由 `main.ts` 的 `homeTabByAxis` 分别记着（⛔ 别写进 settings：
+     *    那是「上次看到哪」，落盘会把「起始页」永久盖掉 —— 同 `startTab` 的注释口径）。
+     */
+    tabAxis?: TabAxis;
     /** 🔴 #541 界面动效（append-only；缺省 `full` = 与 1.2.0 一致）。`reduced` = 关掉过渡与悬停位移。 */
     motionMode?: MotionMode;
     /** 🔴 #541 卡片风格（append-only；缺省 `standard` = 与 1.2.0 一致）。`soft` 圆润 / `flat` 扁平。 */
@@ -302,6 +439,29 @@ export interface ReelLudicSettings {
      */
     audioInlinePlayer?: boolean;
     /**
+     * 是否启用**内置游戏启动器**（append-only 可选字段；**默认 true = 开**）。
+     * 用户 m02844：「游戏下载目录放播放阅读启用启动器下」。
+     *
+     * 语义：开启后，游戏条目「▶ 启动」优先在**插件内**用 Ruffle 播放本地 swf
+     * （`FlashGameView`，工作区独立标签页）；关闭时沿用原行为 —— 打开 `.lnk` 快捷方式
+     * 把游戏交给系统。
+     *
+     * 🔴 为什么缺省是 **true** 而不是 false：设置加载是 `Object.assign({}, DEFAULT_SETTINGS, raw)`
+     *    ⇒ 老用户的 settings 文件里根本没有这个键，缺省 false 会让「刚刚才给 swf 配好路径的人」
+     *    升级后被**静默关停**（点了没反应、也不报错），这种回归比多下载一次运行时严重得多。
+     *    ⇒ 默认开、只有**显式关掉**才拦住；开了也确实符合用户意图（填了 swf 就是想内嵌玩）。
+     * ⛔ 判断点只有 `main.launchGame` 一处，别在 UI 里再摊一份。
+     */
+    internalGameLauncher?: boolean;
+    /**
+     * 游戏（swf）的**下载 / 存放目录**（append-only 可选字段；留空 = `下载/Flash 游戏`）。
+     * 用户 m02844 同期要求：「游戏下载目录」作为「启用内置游戏启动器」的子行。
+     *
+     * ⚠️ 与 `musicDownloadDir` / `bookDownloadDir` 同一套口径：空值不是「根目录」，
+     *    而是**该类下载的默认子目录**（见 `pure/downloadPlan.DOWNLOAD_DIR_DEFAULT.flash`）。
+     */
+    gameDownloadDir?: string;
+    /**
      * #538 音乐「在线曲库」检索开关（append-only 可选字段；**默认 false = 关**）。
      * 用户 2026-10-05：「设置项可选择开启或关闭新增音乐条目『在线曲库』的搜索，默认关闭」。
      *
@@ -346,6 +506,20 @@ export interface ReelLudicSettings {
      *  ⚠️ 只在 `onload` 里读：置 true 后**永不回退**（用户可能故意填 `下载`，每次载入都改＝改不回去）。 */
     downloadDirMigrated?: boolean;
     /**
+     * 🔴 用户 m07854 ①（2026-11-13）：「仅在第一次启用插件时」把默认源链播种成显式配置的一次性标记。
+     *
+     * 为什么必须有个标记位：默认链原先靠 `resolveSourceChain` **动态回退**生效，等于「默认值是一个
+     * 随代码演进的活值」—— 将来改 `DEFAULT_CHAINS` 会追溯性改掉用户已确认的配置（详见
+     * `pure/sourceRegistry.seedSourceChains` 的注释）。播种一次并落盘后，配置就只认磁盘上那份。
+     *
+     * ⚠️ 口径与 `downloadDirMigrated` 完全一致：置 `true` 后**永不回退**（否则每次载入都重新播种，
+     *    用户把某组改回「不启用免费源」后会被反复改回来 —— 那正是「强制覆盖用户已修改过」）。
+     * ⚠️ 与 `main.ts:onload` 头部那条「⛔ 别塞首次安装标志」的历史结论不冲突：那条讲的是
+     *    **新手引导**用的「首次安装」判据（引导已下线）；这里是一次性**数据迁移**标记，与
+     *    `downloadDirMigrated` / `biliCookie` 自愈同属「存量数据必须只改一次」的类别。
+     */
+    sourceChainsSeeded?: boolean;
+    /**
      * #562 分类「本地目录」六个（append-only）：**单集 / 单文件本地检索**的搜索根目录。
      *
      * 🔴 用户 2026-10-08：「把音乐路径目录放在启用内置音乐播放器折叠分组下、三个各个的电视剧/动画/电影
@@ -383,6 +557,173 @@ export interface ReelLudicSettings {
      */
     ytdlpPath?: string;
     /**
+     * 本地音频转文字（ASR）的 whisper.cpp 可执行文件路径。append-only 可选字段。
+     *
+     * 🔴 **留空 = 走系统 PATH**（按 `pure/asrEngine.ASR_EXE_CANDIDATES_*` 逐个试：whisper-cli / main / …）
+     *    —— whisper.cpp **改过二进制名**（老版叫 `main`、新版叫 `whisper-cli`），只认一个名字会让
+     *    相当一部分用户「明明装了却说没找到」。所以「空」是合法缺省，⛔ 别在读取端兜底成某个固定名。
+     * ⚠️ 与 `ytdlpPath` 是**两条互不相干的链路**（一个取流、一个转写）：⛔ 不共用一个字段，
+     *    否则用户在音乐设置里改了路径、却没意识到转写也跟着变了。
+     */
+    asrExePath?: string;
+    /**
+     * ffmpeg 可执行文件路径（ASR 抽音轨用）。append-only 可选字段。
+     *
+     * 🔴 为什么这次**单独设一项**（而 `ytdlpPath` 的注释里说「不另设 ffmpeg 路径项」）：
+     *    yt-dlp 会自己去 PATH 与「它自己所在目录」找 ffmpeg，用户不用管；
+     *    而 ASR 这条链路是**我们自己**起 ffmpeg，它不去别处找 ⇒ 找不到就整条链路不可用。
+     *    ⚠️ 留空仍然走 PATH（多数装了 ffmpeg 的用户不用填）。
+     */
+    asrFfmpegPath?: string;
+    /**
+     * whisper.cpp 的模型文件（`.bin`，ggml 格式）路径。**没有它转写不可用**。
+     *
+     * 🔴 模型文件**不进插件、不自动下载**（用户 m02009 裁定的第二期就是「用户自装」版）：
+     *    最小的 `ggml-tiny` 也有 ~75MB，`main.js` 上限是 5MB —— 塞进去等于把插件变成模型分发器。
+     *    第三期才做「按需下载」。
+     */
+    asrModelPath?: string;
+    /**
+     * 转写模型的**下载 / 存放目录**（留空 = 默认 `~/.reelludic/models`）。
+     *
+     * 🔴 用户 m06789 需求②：「要显示当前模型及环境下载路径和**可选择指定路径下载**」。
+     *    ⚠️ 这是比 `asrModelPath` 更粗的一层：`asrModelPath` 指到**文件**，本字段指到**目录**，
+     *    插件自己下的三档 ggml 全都落在这个目录里。两个字段各管一件事，⛔ 别用一个顶另一个。
+     *    ⛔ 目录默认仍在**库外**（465MB 进 vault 会被同步盘整份上传）。
+     */
+    asrModelDir?: string;
+    /**
+     * 转写语言（whisper.cpp 的 `-l`）。`auto` = 让它自己判。
+     * ⚠️ 走 `pure/asrEngine.normalizeAsrLang` 归一，非法值一律回落 `auto`（⛔ 不把脏值透传给子进程）。
+     */
+    asrLang?: string;
+    /**
+     * 转写线程数（`-t`）。0 / 缺省 = 不传，让 whisper.cpp 自己按核数定。
+     * ⚠️ 只对桌面端有意义；极端大值会被 `buildAsrArgs` 夹到 64。
+     */
+    asrThreads?: number;
+    /**
+     * 用哪一家转写引擎。append-only 可选字段，缺省 `whisper`。
+     *
+     * - `whisper`    —— 插件内建：ffmpeg 抽轨 + `whisper-cli -osrt`，模型可一键下载；
+     * - `qwen3`      —— 中文精准版：调用户自备 Python 环境里的桥接脚本；
+     * - `sensevoice` —— 极速版：同样走桥接脚本（用户自装 sherpa-onnx 运行时）。
+     *
+     * 🔴 用户 m04641：「按需加载，要有不能没有」⇒ 三家都要在界面上可选，
+     *    但后两家**不随插件分发**（`main.js` 已 97%+，装不下 onnxruntime，更装不下 3.5GB 模型）。
+     * ⚠️ 认不出来的值一律回落 `whisper`（见 `pure/asrEngines.engineDefOf`），⛔ 别抛错 ——
+     *    用户手改 config 写了个生僻值时，插件该继续能用而不是整个转写入口消失。
+     */
+    asrEngine?: string;
+    /**
+     * Qwen3 桥接用的 Python 解释器路径（如 `D:\Qwen3-aligner\.venv\Scripts\python.exe`）。
+     *
+     * 🔴 **必须由用户指**：插件不去猜 Python 装在哪（conda / venv / 系统 Python 三种都常见），
+     *    猜错了会起一个「没有 torch 的 python」，报错信息完全看不懂。
+     * ⚠️ 空值是合法缺省（= 没配这一家），此时选这家会在转写时给引导文案，⛔ 不报硬错。
+     */
+    asrPythonPath?: string;
+    /**
+     * Qwen3 桥接脚本路径（`cli_bridge.py`）。
+     *
+     * 🔴 与 `asrPythonPath` 成对出现：只填一个等于没配（两者都是起进程的必要条件）。
+     * 脚本本身不随插件分发 —— 它在用户的 Qwen3 工程目录里，由那份工程负责模型与依赖。
+     */
+    asrBridgeScript?: string;
+    /**
+     * 极速版（SenseVoice）的识别程序 `sherpa-onnx-offline.exe` 路径。
+     *
+     * 🔴 **2026-12 用户裁定（m05240）之后拆成独立槽位**：原先把三家的程序挤在 `asrExePath`、
+     *    模型挤在 `asrModelPath`，UI 做成「一个下拉 + 六行输入框」—— 用户原话「太丑了而且没有用户引导，
+     *    完全不知道怎么做」。改成三张卡片后，每张卡必须有自己的输入框，否则展开这家会显示那家的值。
+     * ⚠️ `asrExePath` 从此**只属于**轻量多语版（whisper-cli），⛔ 别再让它兼职。
+     */
+    asrSenseVoiceExePath?: string;
+    /**
+     * 极速版（SenseVoice）的模型文件 `model.int8.onnx` 路径。
+     *
+     * 🔴 与 `asrModelPath`（whisper 的 ggml `.bin`）**不是同一个文件、不是同一个格式**，拆开存。
+     * ⚠️ 极速版要三个文件才跑得起来：本项 + `asrSenseVoiceExePath` + `asrTokensPath`。
+     */
+    asrSenseVoiceModelPath?: string;
+    /**
+     * SenseVoice（极速版）用的词表文件 `tokens.txt`。
+     *
+     * 🔴 与 `model.int8.onnx` 在同一个发布包里一起下载；另两家不需要这一项。
+     */
+    asrTokensPath?: string;
+    /**
+     * Qwen3-ASR 用哪一档（`'0.6B'` / `'1.7B'`，缺省 = 0.6B）。
+     *
+     * 🔴 用户 m09432：「还有其他两家模型没有档位切换吗」—— 有。上游发布了 0.6B 与 1.7B 两个仓库
+     *    （1.7B 的权重分两片，合计约 4.4GB）。档位影响三件事，缺一件都会「装了但用不上」：
+     *    ① 下载清单下哪些文件（`qwenBundle(tier)`）；② 环境自检去哪个目录找（目录名 = 上游仓库名）；
+     *    ③ 传给桥接脚本的 `--model`（`qwenModelOf`）。
+     * ⚠️ 对齐模型**不跟档位联动** —— 上游只有 `Qwen3-ForcedAligner-0.6B` 一档。
+     */
+    asrQwenTier?: string;
+    /**
+     * SenseVoice 用哪一档量化（`'int8'` / `'fp32'`，缺省 = int8）。
+     *
+     * 🔴 用户 m09432 同上：同一个发布仓库里就有 `model.int8.onnx`（228MB）与 `model.onnx`（894MB）。
+     *    档位决定下载哪个文件、自检找哪个文件名、转写时 `--sv-model` 传哪个路径。
+     */
+    asrSvVariant?: string;
+    /**
+     * Paraformer 用哪一档量化（`'int8'` / `'fp32'`，缺省 = int8）。
+     *
+     * 🔴 用户表格第 10/11 行：int8 237MB、fp32 880MB，中文准确度同为 1.95。
+     *    与 SenseVoice 同一个套路 —— 档位决定三件事：下哪个文件、自检找哪个文件名、
+     *    转写时 `--paraformer` 传哪个路径。
+     */
+    asrParaVariant?: string;
+    /**
+     * X-ASR 用哪一档分块（`'160'` / `'480'` / `'960'` / `'1920'`，缺省 = 1920）。
+     *
+     * 🔴 上游按 chunk 长度发了四套权重，目录名各不同（`chunk-160ms-model` 等）。
+     *    用户裁定（m00449）：**列表里只列一行**，四档放进右侧配置面板的下拉里切 ——
+     *    因为四档体积几乎一致（encoder 都在 593MB 上下），摊成四行没有信息量。
+     * ⚠️ 这是**上游事实**，不是我们能合并的：三件套（encoder/decoder/joiner）必须同档配套，
+     *    混用会直接崩（形状不匹配）。
+     */
+    asrXasrChunk?: string;
+    /**
+     * Confucius4 用哪一档量化（`'Q4_K_M'` / `'F16'`，缺省 = Q4_K_M）。
+     *
+     * 🔴 用户表格第 12/13 行：Q4_K_M 1.0GB、F16 3.2GB，两档准确度同为 8.2/6.1。
+     * ⚠️ 每档都是「语言模型 + 投影器」一对文件，`--mmproj` 必填 ——
+     *    只下 gguf 不下 mmproj 时 exe 会直接拒绝运行（真机实测）。
+     */
+    asrConfuciusTier?: string;
+    /**
+     * 每家引擎的自定义安装目录（用户 m01935 在安装弹窗里改过的路径会落到这里）。
+     *
+     * 🔴 为什么需要它：用户点「下载 / 一键装好」时可以在弹窗里改目录，改成 D:\asr\xasr
+     *    之后插件必须**从同一处**去装、去找。⛔ 别把绝对路径写进 `asrEnginePaths` 的
+     *    `program/model/extra` 那三个字段 —— 那三个是「单个文件」的覆盖，表达不了
+     *    「这一家的程序、权重、词表整体换了地方」，而且换档位时会对不上新文件名。
+     * ⚠️ 空对象 = 全部走默认（`asrModelDir()/<engine>`），旧数据不需要迁移。
+     */
+    asrEngineDirOverrides?: Record<string, string>;
+    /**
+     * whisper 识别程序（`whisper-cli.exe` + dll）的自定义安装目录。
+     *
+     * ⚠️ 只有 whisper 需要：它的程序在 `~/.reelludic/bin`，模型在 `models/whisper`，
+     *    两家共用 `asrEngineDirOverrides` 会把程序也塞进模型目录 —— 而
+     *    `pure/asrLocate.commonInstallDirs` 认的就是 bin 那个位置（装别处会「装好了还是红的」）。
+     */
+    asrBinDirOverride?: string;
+    /**
+     * 学习模式悬停查词用的本地词典文件（ECDICT 精简 CSV，或自己整理的「词<TAB>释义」表）。
+     *
+     * 🔴 **为什么不内置词典**：`main.js` 已 96.9%，距 5MB 上限只剩 150KB；ECDICT 精简版也有几 MB。
+     *    所以只带解析器（`pure/wordDict`），词典文件由用户在设置里指路径 —— 与 whisper 模型、
+     *    yt-dlp 同一条路（用户自装、插件只读）。
+     * ⚠️ 空值是合法缺省：没配词典时学习模式照样能用（悬停只显示词形 + 🔊），
+     *    ⛔ 不要让「查不到释义」弹出错误或红字。
+     */
+    dictPath?: string;
+    /**
      * B 站 Cookie（2026-10-25，用户：「b站cookie凭据放音乐下载源「B站音频流」下」）—— append-only 可选字段。
      *
      * 🔴 **为什么不并进 `musicDlCookies`**：那张表的键是 `MusicSourceId`（`netease|qq|kugou`），
@@ -394,9 +735,51 @@ export interface ReelLudicSettings {
      *
      * 🔴 **不填也能用**：B 站的公开字幕接口（`x/player/wbi/v2`）免登录就能拿到**已公开**的字幕；
      *    填了 Cookie 才能看到「仅登录可见」的以及更稳地过风控。⇒ 空值是合法缺省，⛔ 别在读取端兜底成假值。
+     * 🔴 **2026-11-02 复用**：用户裁定「B 站网络集要能用内置播放器播 + 支持填 Cookie 冲 1080p」，
+     *    而 1080P 与字幕都要登录态 ⇒ **同一条 Cookie 两个用途**（播放取流 / 字幕接口）。
+     *    ⛔ 不为播放另开一个字段：同一凭据存两份，用户改了 A 却不知道 B 还是旧的。
      * ⚠️ 明文存 `data.json`（与各源 API Key、音乐 Cookie 同款），说明写在行内描述里，⛔ 不做额外加密。
      */
     biliCookie?: string;
+    /**
+     * 🔴 ③-3（2026-11-12 用户 m00353）：「扫码成功返回的 `refresh_token` **必须持久化**」。
+     *
+     * B 站扫码登录（`modals/QrLoginModal` → `services/qrLogin.pollQrLogin`）在成功那一轮
+     * 会同时给出 Cookie 与 `refresh_token`；后者是**唯一能续期的凭据** ——
+     * Cookie 里的 `SESSDATA` 有固定有效期，过期后只有拿 `refresh_token` 走
+     * `passport.bilibili.com/x/passport-login/web/cookie/refresh` 才能换回新的一套。
+     * ⇒ 只存 Cookie 不存它 = 用户过几周又得重扫一次（用户明确不接受）。
+     *
+     * ⚠️ **append-only 可选字段**：旧数据没有这个键 ⇒ `undefined`，一切照旧走「Cookie 有效就用到失效」。
+     * ⛔ 别在 `DEFAULT_SETTINGS` 之外做迁移、⛔ 别把它塞进 `credentialStatus`（那是 boolean 结论表）。
+     * ⚠️ 与 Cookie 同一条口径：明文存 `data.json`（与各源 API Key 同款），⛔ 不做额外加密。
+     * 🔴 失效处理：`refreshBiliCookie` 返回 `null` 时**只清这一个键**，⛔ 别顺手清 `biliCookie`
+     *    —— 刷新失败不等于 Cookie 立刻失效，用户可能只是网络断了。
+     */
+    biliRefreshToken?: string;
+    /**
+     * 🔴 用户 2026-11-09 裁定：「播放器继续接入 youtube 网络集」+ 选定「新增代理设置项」。
+     *
+     * YouTube 的取流口只能靠 `yt-dlp` 子进程，而**本机实测**：直连
+     * `googlevideo.com` 一律 `ETIMEDOUT`，yt-dlp 自己是从环境代理
+     * `http://127.0.0.1:7897` 走出去的才成功 ⇒ 插件必须能把代理显式传给子进程。
+     *
+     * 值形如 `http://127.0.0.1:7897`（也接受裸 `127.0.0.1:7897`，读取端会补 scheme）。
+     * ⛔ 空值是合法缺省 = 直连（海外用户就是这样），别在读取端兜底成 `127.0.0.1:7897`
+     * —— 那会把「我没配」变成「我配了个错的」，报错更难懂。
+     */
+    ytProxy?: string;
+    /**
+     * YouTube 的浏览器 Cookie（`Netscape` 或裸 `name=value; …` 都接受）。
+     *
+     * 🔴 为什么要单独一条、不复用 `biliCookie`：两个站点的域与登录态完全无关，
+     *    复用会让「填了 B 站 Cookie」变成「YouTube 也以为登录了」，实际仍然被风控。
+     *
+     * ⚠️ 真机实测：**部分**视频无 Cookie 也能取（`dQw4w9WgXcQ` 可以），
+     *    另一些直接 `Sign in to confirm you're not a bot` ⇒ 这条是「遇到风控时的解」，
+     *    不是必填。空值合法。
+     */
+    ytCookie?: string;
     /** 每类型源链（六组自选源及顺序；缺省/空 = 默认链，见 pure/sourceRegistry.DEFAULT_CHAINS。append-only 可选字段，旧数据无此键不迁移）。
      *  ⚠️ #580：书籍组因新增「微信读书」成为**首个 4 候选组**（豆瓣 / 微信读书 / Open Library / Google Books），
      *     ⛔ 原「≤3 源」不再是各组通用上限（其余五组仍 ≤3）。 */
@@ -409,10 +792,41 @@ export interface ReelLudicSettings {
      * append-only 可选字段；读写一律走 `normalizeCredentialStatus` / `withStatus` / `withoutStatus`。
      */
     credentialStatus?: CredentialStatusMap;
+    /**
+     * 🔴 ③-1（2026-11-12 用户 m00353）：「统一周期管理」状态面板要显示**上次检测时间**。
+     *
+     * 键与 `credentialStatus` **逐字同源**（`source:` / `music:` / `net:` 前缀族）；
+     * 值 = `Date.now()` 毫秒。**没有键 = 没测过**（与结论表同一口径）。
+     *
+     * ⚠️ 为什么单开一张表、不把 `credentialStatus` 改成 `{ok, at}` 对象：
+     *   那个字段已被 #589 的「重启后仍显示连接失败」口径钉住，值**必须是 boolean**
+     *   （`normalizeCredentialStatus` 会把非 boolean 丢掉）；改结构会让所有旧数据静默失效。
+     *   两张表同写同清（见 `main.ts` 的 `setCredentialStatus` / `clearCredentialStatus`），
+     *   ⛔ 别只写一张 —— 那会让面板出现「有结论但没时间」或反之的鬼状态。
+     */
+    credentialCheckedAt?: Record<string, number>;
     /** 阅读翻译服务商（'zhipu' 智谱 GLM / 'deepseek' / **'siliconflow'（#480）** / **'custom' 自定义 OpenAI 兼容端点（#478）** / 'off' 不启用；
      *  默认 zhipu。批3 r3 双源。
      *  append-only 可选字段；'off' 由 normalizeAiChoice 认，勿用 normalizeProvider 归一（会把 off 吃掉）） */
     readerTranslateProvider?: AiProviderChoice;
+    /**
+     * 🔴🔴 2026-11-06（用户逐字：「AI集成-用途页重构，在顶部设置一个全局默认AI模型
+     * （下方的所有服务全部继承这个）」）—— **全局默认 AI 模型** 的服务商与模型名。
+     *
+     * 🔴 **为什么是一个「动作」而不是一条「持续约束」**：本仓五个服务（翻译 / 总结 / 搜索 /
+     *    预填 / 字幕总结）各自都有一份独立的 `reader*Provider` + `reader*Model`，且**必须**保持独立
+     *    —— 那是 #478~#511 一路定下来的（用户可以只让翻译走 DeepSeek、总结继续走智谱）。
+     *    若把「全局」做成一条**运行时覆盖**（服务没配就回落全局），就必须区分「用户主动选了不启用」
+     *    与「用户没配过」这两件事，而它们现在都是同一个值 `'off'` ⇒ 只能新增一个三态取值，
+     *    那会动到 `pure/translate.normalizeAiChoice` 这条公共归一链（有既有单测钉着）。
+     *    ⇒ 本轮取**用户在设置页点一次、把值一次性铺到五个服务上**的做法：
+     *      点完的**结果**就是「全部继承」，之后任何一张卡仍可单独改（那就是覆盖）。
+     *      ⚠️ 所以这两个字段存的是**上一次全局选择**（回显用），⛔ 别把它当运行时真源。
+     *    append-only 可选字段。
+     */
+    aiGlobalProvider?: AiProviderChoice;
+    /** 全局默认 AI 模型的**模型名**（与上面 `aiGlobalProvider` 成对；空 = 该服务商默认模型） */
+    aiGlobalModel?: string;
     /** 智谱 AI 翻译 API Key（Bearer，发往 open.bigmodel.cn；cform 同款 key，形如 xxx.yyy。批3 r3。append-only 可选字段） */
     readerZhipuKey?: string;
     /** DeepSeek AI 翻译 API Key（Bearer，发往 api.deepseek.com。批3 r3。append-only 可选字段） */
@@ -427,6 +841,26 @@ export interface ReelLudicSettings {
     /** AI 搜索服务商（'zhipu' / 'deepseek' / 'siliconflow'（#480）/ **'custom'**（#478）/ 'off'；与翻译、总结各自独立可调。缺省 zhipu。append-only 可选字段）
      *  与翻译/总结共用同一组 Key——服务商只是选「用哪家跑」。 */
     readerSearchProvider?: AiProviderChoice;
+    /**
+     * 🔴 字幕总结服务商（详情页时间轴面板那颗 ✨ 用它跑）。
+     *
+     * 用户 2026-11-11 裁定：「在设置页为字幕总结单独开一组服务商/模型」
+     * —— 与翻译 / 总结 / 搜索 / 预填**各自独立**可调，但共用同一组 Key
+     * （服务商只决定「用哪家跑」，凭据不重复配置，本仓既有口径）。
+     * append-only 可选字段。
+     */
+    readerCueSummaryProvider?: AiProviderChoice;
+    /** 字幕总结自定义服务提示词（system）；留空/缺省 = 用 DEFAULT_CUE_SUMMARY_PROMPT。append-only 可选字段 */
+    readerCueSummaryPrompt?: string;
+    /**
+     * 字幕**提问**自定义提示词（system）；留空/缺省 = 用 DEFAULT_CUE_ASK_PROMPT。
+     *
+     * 🔴 用户 2026-11-11（第二轮）：「给字幕面板的AI改现代化点，如透明化去边框，给加个提问框」
+     * ⚠️ 刻意与 `readerCueSummaryPrompt` 分开两格：总结要 JSON + 分点，提问要自然语言 + 克制，
+     *    硬塞进一个 prompt 会互相打架（模型会拿总结的规矩去答问题，答出个 JSON 壳）。
+     *    append-only 可选字段。
+     */
+    readerCueAskPrompt?: string;
     /** 划词搜索自定义服务提示词（system）；留空/缺省 = 用 DEFAULT_SEARCH_PROMPT。append-only 可选字段 */
     readerSearchPrompt?: string;
     /**
@@ -436,6 +870,8 @@ export interface ReelLudicSettings {
      */
     readerTranslateModel?: string;
     readerSummaryModel?: string;
+    /** 字幕总结的模型名（空/缺省 ⇒ 该服务商的默认模型）。append-only 可选字段 */
+    readerCueSummaryModel?: string;
     /** ⚠️「解读选段」与「自定义提问」共用搜索这一栏的模型 */
     readerSearchModel?: string;
     /**
@@ -569,6 +1005,40 @@ export interface ReelLudicSettings {
      *    ⛔ `fieldOrder` 里书籍那一份**保留不动** —— 它既是老数据、也是这里的回落源。
      * 归一 / 回落链见 `pure/fieldOrder.orderForBookKind`（唯一真源）。 */
     fieldOrderByKind?: Record<string, string[]>;
+    /**
+     * 🔴🔴 #721（2026-11-07 用户：「笔记属性配置也可增删，删除后不拉取改属性字段」）：
+     * **不写出**的属性键。与 `fieldOrder` / `fieldOrderByKind` 是两个正交的维度 ——
+     * 那两份管「先后」，这一份管「写不写」。
+     *
+     * 形态：`{ [target]: string[] }`，`target` 与设置页的分页键同口径 ——
+     *   · `'__global'`：全局属性（对六个类型**都**隐藏）；
+     *   · 某 `EntryType`（`movie` / `book` / …）：该类型的专属属性；
+     *   · `'k:<BookKind>'`（`k:novel` / `k:comic`）：书籍子类各自的专属属性。
+     *
+     * 🔴 **为什么必须单独存一份**：`normalizeFieldOrder` 有一条保命规则 ——
+     *    允许集里有、配置里没有的键会**补到末尾**（否则以后新增字段会直接「写不出来」）。
+     *    所以「不在顺序数组里」表示的是「排到最后」，**表达不了删除**。删除只能是显式排除集。
+     *
+     * ⚠️ **结构性键不可隐藏**（`id` / `type` / `title` / `created` / `updated`）——
+     *    由 `pure/fieldOrder.FIELD_ORDER_LOCKED_KEYS` 把关，设置页 UI 也不给入口。
+     * ⚠️ append-only 可选键，零迁移：缺席 = 什么都不隐藏（老用户观感零变化）。 */
+    fieldOrderHidden?: Record<string, string[]>;
+    /**
+     * 🔴🔴 1.5.1（用户 2026-11-27）：「高级设置里增加个自由删减各类型条目属性展示的面板，然后可以
+     * 预览拖动调整剩下的属性的编辑属性窗口」⇒ **按条目类型各一份的「编辑窗口属性块」配置**。
+     *
+     * 数组 = 该类型**要显示**的表单块键，**顺序 = 渲染顺序**（键是表单向的块 id，如 `summary` /
+     * `comic-author-artist`，⛔ 不是 frontmatter 键名 —— 别拿 `META_FIELDS` 的 key 来对）。
+     *
+     * ⚠️ `Partial` 语义 ⇒ **只存被用户动过的类型**，没动过的走 `pure/entryFormFields` 的缺省
+     *    （全显示、模板原顺序）。与缺省一致时 Settings 侧会 delete 该键 ⇒ 不落冗余数据。
+     * 真源 / 归一 / 施加见 `pure/entryFormFields`（唯一真源）。 */
+    entryFormFieldsByType?: Record<string, EntryFormFieldEntry[]>;
+    /** 🔴 1.5.1：**书籍三子类各一份**的编辑窗口属性块（文学 / 网文 / 漫画）。
+     *  🔴 **append-only 可选键，零迁移**：缺席 ⇒ 三个子类一律回落 `entryFormFieldsByType.book`
+     *     （与 `fieldOrderByKind → fieldOrder.book`、`cardFieldsByKind → cardFieldsByType.book` 同一条回落链）。
+     *  ⚠️ ⛔ 别往 `entryFormFieldsByType` 里塞 `novel` / `comic` —— 那张表按 `EntryType` 键。 */
+    entryFormFieldsByKind?: Record<string, EntryFormFieldEntry[]>;
     /** 打卡日记所在文件夹（vault 内相对路径，如 日记）；留空/缺省 = 自动跟随核心「日记」插件配置。
      *  09-10 起**设置页不再提供入口**（打卡动作只在统计页「今日」面板），字段保留兼容/兜底读取。 */
     journalDir?: string;
@@ -603,6 +1073,8 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     navLayout: 'top',
     navCollapsed: false,
     startTab: 'media',
+    // 🔴 m09565 ①-4：页签分类轴缺省 `expanded`（= 2026-11-08 起全类型十枚，升级不变脸）。
+    tabAxis: 'expanded',
     motionMode: 'full',
     cardStyle: 'standard',
     // #591 Ctrl+滚轮缩放：**缺省关**（要接管系统手势，不能替所有人改行为）。旧数据无此键 ⇒ falsy ⇒ 关。
@@ -621,6 +1093,8 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     audioVolume: 1,
     lyricsWordHighlight: true,
     audioInlinePlayer: false,
+    // m02844：内置游戏启动器（**默认开** —— 见字段注释：缺省 false 会让老用户升级后点了没反应）
+    internalGameLauncher: true,
     // #538 在线曲库检索（默认关：不主动开就与旧版行为一致）
     musicSongLibrary: false,
     musicDownloadEnabled: false,
@@ -628,6 +1102,9 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     //   否则老用户/新装用户的默认落点会从 `下载/音乐` 变成 `下载/`（与既有文件分家、检索扫不到）。
     musicDownloadDir: DOWNLOAD_DIR_DEFAULT.music,
     bookDownloadDir: DOWNLOAD_DIR_DEFAULT.book,
+    // m02844：游戏（swf）下载目录 —— 口径同上面两项（值 = 目录本身），
+    //   缺省就得带 `Flash 游戏` 这一层，否则默认落点会从 `下载/Flash 游戏` 变成 `下载/`。
+    gameDownloadDir: DOWNLOAD_DIR_DEFAULT.flash,
     // #562 分类本地目录：缺省**空串** = 未配置（⛔ 别给个默认目录 —— 那会让「单集本地检索」在
     //   用户从没说过媒体放哪的前提下，去扫一个凭空冒出来的路径）。
     localDirBook: '',
@@ -639,10 +1116,46 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     musicDlCookies: {},
     // #496：空串 = 用系统 PATH 里的 yt-dlp（见 `ytdlpPath` 字段注释，⛔ 别填成 `yt-dlp`）
     ytdlpPath: '',
+    // 本地音频转文字（第二期「用户自装」版）：三项留空 = 走 PATH / 模型未配置
+    // ⚠️ 留空是**合法缺省**，⛔ 别在这里预填任何路径（预填等于假装用户装好了）
+    asrExePath: '',
+    asrFfmpegPath: '',
+    asrModelPath: '',
+    // 模型下载目录：留空 = `~/.reelludic/models`（⛔ 默认不放库里，见字段注释）
+    asrModelDir: '',
+    // 语言缺省 auto（让它自己判）；线程 0 = 不传 -t
+    asrLang: 'auto',
+    asrThreads: 0,
+    // 引擎缺省 = 内建那家（另两家要用户自备环境，⛔ 不能默认选中一个跑不起来的）
+    asrEngine: 'whisper',
+    // Qwen3 桥接两件（空 = 没配这一家，选它时给引导而不是报错）
+    asrPythonPath: '',
+    asrBridgeScript: '',
+    // 极速版三件（程序 / 模型 / 词表）：与 whisper 那两槽位**分开存**，⛔ 别复用（见字段注释）
+    asrSenseVoiceExePath: '',
+    asrSenseVoiceModelPath: '',
+    asrTokensPath: '',
+    // 另两家的档位（缺省 = 各自的最小/最稳那一档；归一函数在 `pure/asrBundles`，认不出就回落这里）
+    asrQwenTier: '0.6B',
+    asrSvVariant: 'int8',
+    // 新增三家的档位（缺省 = 默认档；归一函数在 `pure/asrBundles`，认不出就回落这里）
+    // ⚠️ X-ASR 只存 chunk 档（160/480/960/1920），列表里只算一行，四档在配置面板里切
+    asrParaVariant: 'int8',
+    asrXasrChunk: '1920',
+    asrConfuciusTier: 'Q4_K_M',
+    // 学习模式查词词典（空 = 没配，悬停只显示词形 + 🔊，⛔ 不报错）
+    dictPath: '',
     // 2026-10-25：B 站 Cookie（空 = 免登录，只能拿到已公开的字幕）
     biliCookie: '',
+    // ③-3：B 站扫码登录拿到的续期凭据（空 = 没扫过码 / 已失效；Cookie 仍可用）
+    biliRefreshToken: '',
+    // YouTube 取流的两条前置（都不填也能工作：直连 / 无 Cookie，能取到多少算多少）
+    ytProxy: '',
+    ytCookie: '',
     // 凭据测试结论（空表 = 全部「还没测过」；⛔ 别预填任何 false）
     credentialStatus: {},
+    // ③-1：结论的检测时刻（空表 = 没测过；键集合与上表同源，⛔ 别预填 0）
+    credentialCheckedAt: {},
     // 🔴🔴 2026-10-25 用户裁定（默认值收紧）：「默认配置下 设置-AI集成-用途 默认全部为不启用」。
     //
     // 为什么必须写在这里、而不是去改 `normalizeAiChoice` 的兜底：
@@ -659,6 +1172,17 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     readerSummaryProvider: AI_PURPOSE_DEFAULT,
     readerSearchProvider: AI_PURPOSE_DEFAULT,
     readerPrefillProvider: AI_PURPOSE_DEFAULT,
+    // 字幕总结（详情页时间轴面板 ✨）：第五行同样独立、同样默认「不启用」——理由同上。
+    readerCueSummaryProvider: AI_PURPOSE_DEFAULT,
+    // 🔴 2026-11-06（用户逐字）：「在顶部设置一个全局默认AI模型（下方的所有服务全部继承这个）」
+    //    ⇒ 「用途」页顶部那颗「全局默认模型」的**回显值**。
+    //    ⚠️ 默认 `AI_PURPOSE_DEFAULT`（= 'off'）而不是某个真服务商：新装用户没配过任何 Key，
+    //       预先点亮 "zhipu" 会让那颗按钮读起来像「已经设好了」。
+    //    ⚠️ 空模型名 = 用该服务商的默认模型（与各服务行同口径，`shownModel` 会补齐缺省）。
+    aiGlobalProvider: AI_PURPOSE_DEFAULT,
+    aiGlobalModel: '',
+    // 🔴 2026-11-27（m06545）：原这里还有第七行 `aiChatProvider`（AI 悬浮挂件），已随挂件删除。
+    //    ⛔ 别补回来 —— 它对应的设置页服务行与字段都已不存在。
 };
 
 export const PLATFORM_URL_PRESETS: Record<string, string> = {
@@ -669,7 +1193,7 @@ export const PLATFORM_URL_PRESETS: Record<string, string> = {
     腾讯视频: 'https://v.qq.com/x/search/?q=',
 };
 
-/** ① 元数据源配置折叠项内**需 Key 源**展示顺序（spec S5 + IGDB 回归：Douban/TMDB/Bangumi/OMDb/Google Books/IGDB；遍历 PROVIDERS 派生，本表定序） *  ⛔ 2026-09-29：原来还有一张「免 Key 源展示顺序」表（Open Library/Steam/MusicBrainz/iTunes/AniList）——
+/** ① 搜索配置折叠项内**需 Key 源**展示顺序（spec S5 + IGDB 回归：Douban/TMDB/Bangumi/OMDb/Google Books/IGDB；遍历 PROVIDERS 派生，本表定序） *  ⛔ 2026-09-29：原来还有一张「免 Key 源展示顺序」表（Open Library/Steam/MusicBrainz/iTunes/AniList）——
  *     那一批只读行随用户要求整体删除（「不显示这类凭据」），表随之退场。
  *  🔴 #488：类型从 `ProviderId` **收窄成 `KeySourceId`**（`pure/sourceIcons` 那张图标表的键）——
  *     这样「加一个凭据源却忘了配图标」会在**编译期**报错，⛔ 别再退回宽类型（那会静默缺图标）。
@@ -701,6 +1225,31 @@ const KEY_SOURCE_ORDER: readonly KeySourceId[] = [
  * ⚠️ 存储上是**并行的可选键** `fieldOrderByKind`（见 `pure/fieldOrder` 模块头），零迁移。
  */
 type FieldOrderTarget = { type: EntryType } | { kind: BookKind } | null;
+
+/**
+ * 「用途」组一个条目的定义（主从两栏共用这一份真源：⛔ 别在左栏和右栏各列一遍）。
+ * 字段含义见 `aiServiceDefs()` 的实例表。
+ *
+ * 🔴 #723（2026-11-07 用户裁定）：**删掉「全局默认模型」那一档** —— 它带来的
+ *   「先选一个默认、再一键铺到五处」是第二套心智模型，而用户真正要的是「每个场景各自选」。
+ *   ⇒ `prompt` 现在恒为必填对象、`applyAll` 字段**整套退场**（右栏不再有「应用到全部服务」）。
+ *   ⚠️ `plugin.settings.aiGlobalProvider / aiGlobalModel` 两个**存储字段仍保留**（老 data.json
+ *   里可能已有值，删字段会让 `loadData` 把它们当脏数据；它们现在只影响 `normalizeAiChoice`
+ *   的兜底语义，界面上不再暴露）。⛔ 别顺手把字段也删了。
+ */
+type AiServiceDef = {
+    id: string;
+    name: string;
+    desc: string;
+    sceneTitle: string;
+    /** 该条目是否为所在分组的第一个（左栏在它上方插一条分组标签） */
+    groupTop?: boolean;
+    getProvider: () => unknown;
+    setProvider: (v: AiProviderChoice) => void;
+    getModel: () => string | undefined;
+    setModel: (v: string | undefined) => void;
+    prompt: { label: string; value?: string; defaultText: string; onSave: (v: string | undefined) => void };
+};
 
 /**
  * 🔴🔴 #653：「卡片信息栏」的八个切换格（用户点名顺序：**电影、剧集、动画、文学、网文、漫画、游戏、音乐**）。
@@ -761,48 +1310,138 @@ const DL_COOKIE_ROWS: ReadonlyArray<{
         id: 'netease',
         name: '网易云音乐',
         site: 'music.163.com',
-        desc: '粘贴网页版登录 Cookie 后按会员档位下载（会员走无损/320k）；不填则只走免密标准音质。',
+        desc: '登录 music.163.com 后复制 Cookie 以搜索和同步清单',
     },
     {
         id: 'qq',
         name: 'QQ 音乐',
         site: 'y.qq.com',
-        desc: 'QQ 下载必需：在 y.qq.com 登录后复制 Cookie（需含 uin），否则该平台只能搜索、不能下载。',
+        desc: '登录 y.qq.com 后复制 Cookie 以搜索和同步清单',
     },
-    { id: 'kugou', name: '酷狗音乐', site: 'kugou.com', desc: '可选：不填也能下载免费曲目。' },
+    { id: 'kugou', name: '酷狗音乐', site: 'kugou.com', desc: '登录 kugou.com 后复制 Cookie' },
 ];
 
 /**
- * ④-B 站下载（yt-dlp）那行的行内说明（#496）—— 与上面三条 `desc` 同款：**纯文本**
+ * ④-A 音视频取流（yt-dlp）那行的行内说明 —— 与上面三条 `desc` 同款：**纯文本**
  * （`createDiv({ text })`，不解析 markdown）⇒ ⛔ 不许写 `**`。
- * 🔴 三件必须说清的事：⑴ 它是干什么的；⑵ **留空会怎样**（不是「没配」而是「走系统 PATH」）；
- *    ⑶ mp3 还要 ffmpeg、yt-dlp 会去**哪两个地方**找它（⛔ 别只说「请安装 ffmpeg」，
- *    用户不知道放哪儿等于没说）。
+ *
+ * 🔴 2026-11-09（第 15 轮需求④，用户当面给了逐字口径）：**整条换成短句**，
+ *    用户原文是一句里两半「yt-dlp 可执行文件路径，留空 = …；ffmpeg 可执行文件路径，留空 = …」，
+ *    这里对应两个输入框 ⇒ 拆成 `YTDLP_PATH_DESC` 与 `FFMPEG_PATH_DESC` 两条 hint，
+ *    各自紧贴自己的输入框（合写成一条会让第二半离自己的框太远）。
+ *    ⚠️ 旧文案里的「mp3 还要 ffmpeg（放 yt-dlp 同目录或系统 PATH 中）」被用户口径顶掉了 ——
+ *    「留空 = 自动在系统 PATH 里找」已经覆盖「放哪儿」，⛔ 别再把长解释塞回去。
  */
-const YTDLP_PATH_DESC =
-    'B 站音频下载用的 yt-dlp 可执行文件路径；留空则用系统 PATH 里的 yt-dlp。转 mp3 还需 ffmpeg（放 yt-dlp 同目录或系统 PATH 中）。';
+const YTDLP_PATH_DESC = 'yt-dlp 可执行文件路径，留空 = 自动在系统 PATH 里找';
+
+const ASR_EXE_DESC =
+    '本地识别程序的可执行文件。留空 = 让插件在系统里自动找（whisper-cli / main / whisper-cpp 都认，老版本 whisper.cpp 编译出来叫 main）。只有自动找不到、你又装在了特别的位置时才需要填。';
+const FFMPEG_PATH_DESC = 'ffmpeg 可执行文件路径，留空 = 自动在系统 PATH 里找';
+const ASR_MODEL_DESC =
+    'whisper.cpp 的识别模型（ggml 格式，.bin）。体积越大越准也越慢；日常用 base，中文要更准可以用 small 以上。模型不随插件分发 —— 点上面卡片里的「下载模型」由插件替你下，或者自己从别处下载后填路径。';
+const ASR_TOKENS_DESC =
+    '极速版专用的词表文件 tokens.txt（与 model.int8.onnx 在同一个发布包里，一起下载即可）。另两家不需要这一项。';
+/**
+ * 极速版的识别程序与模型。
+ * 🔴 2026-12（m05240）拆卡片时必须有这两条独立的说明：原先三家用同一段 `ASR_MODEL_DESC`，
+ *    而那段讲的是 whisper 的 ggml —— 展开极速版却看到「用 whisper.cpp 的 ggml 模型」等于骗人。
+ */
+const ASR_SV_EXE_DESC =
+    'sherpa-onnx 的可执行文件 sherpa-onnx-offline.exe。它要和同目录下的几个 dll 待在一起，别只把它单独拷出来用。';
+const ASR_SV_MODEL_DESC =
+    'SenseVoice 的识别模型 model.int8.onnx（约 228MB）。纯 CPU 也能跑，中文与中英混说都支持。';
+/**
+ * 「当前文字识别模型」这块的说明。
+ *
+ * 🔴🔴 2026-11-11 用户 m09233（逐字）：「删除掉描述文字『把音视频里的声音识别成字幕，全部在本机完成』
+ *    选择模型(小标题分组，这没用排序了删除掉) 左边按大模型分组平铺所有档位，随时能看到体积与中/英
+ *    准确度；右边是当前选中项的配置与环境检查。六家都在，不会按装没装隐藏。」
+ *    ⇒ 这段「左边按大模型分组平铺…」**连同小标题「1 选择模型」一起退场**，界面直接从左导航 + 档位格开始。
+ * ⛔ 常量整条删掉了（不留空字符串）：留着就有人会顺手接回去。要恢复说明请重新写，别指望旧文案。
+ */
+/**
+ * 三家引擎在设置页用的图标（与 `ASR_ENGINES` 的 id 一一对应）。
+ * ⚠️ 三个名字都已在 `obsidian.asar` 图标表里实测存在（`feather` / `brain` / `zap`），
+ *    写错会被 `setIcon` 静默吞掉、界面留白且零报错。
+ */
+const ASR_ENGINE_ICONS: Record<string, AiIcon> = {
+    whisper: { kind: 'builtin', id: 'feather' },
+    qwen3: { kind: 'builtin', id: 'brain' },
+    sensevoice: { kind: 'builtin', id: 'zap' },
+};
 
 /**
- * 「B站音频流」行内的 **B 站 Cookie** 说明（2026-10-25，用户：「b站cookie凭据放音乐下载源「B站音频流」下」）。
+ * 「使用哪一家引擎」这段的文案（用户 m04641「按需加载，要有不能没有」之后补）。
  *
- * 🔴 与上面三条 Cookie 的 `desc` 同款：**纯文本**（`createDiv({ text })`，不解析 markdown）⇒ ⛔ 不许写 `**`。
- * 🔴 三件必须说清：⑴ 它干什么用；⑵ **不填会怎样**（不是「不能用」，而是「只能拿到已公开的字幕」）；
+ * 🔴 必须讲清三件事，否则用户会以为另外几家是坏掉的：
+ *  ⑴ **六家都在**，不是按安装情况显隐 —— 藏起来等于宣称这家不存在；
+ *  ⑵ **只有 Whisper 的模型随插件一键下载**，其余各家要么靠插件的安装器补齐、要么要你自己的本地环境；
+ *  ⑶ **都不能上传**，识别一律在本机完成。
+ * ⚠️ 纯文本（不解析 markdown）⇒ ⛔ 不许写 `**`。
+ */
+const ASR_ENGINE_DESC =
+    '六家都能选，识别全部在本机完成。Whisper 与 SenseVoice / Paraformer / X-ASR / Confucius4 的运行时和权重可以在这里一键装好；Qwen3-ASR 需要你自己已经装好 Python 环境，插件只负责调用它。';
+const ASR_PYTHON_DESC =
+    '中文精准版用的 Python 解释器完整路径（通常是某个虚拟环境里的 python.exe）。留空 = 没有配置这一家，选它时会给出引导而不是报错。';
+const ASR_BRIDGE_DESC =
+    '中文精准版用的桥接脚本完整路径（cli_bridge.py）。要和上面的 Python 解释器配套 —— 只填一个等于没配。';
+
+/**
+ * 「学习模式 · 悬停查词」那几行的说明文案。
+ *
+ * 🔴 #723（2026-11-07 用户裁定）：**删掉了原先那段「学习模式里把鼠标停在一个单词上时…」的长说明**
+ *   （原 `DICT_DESC`，整经常量已一并删除）。用户原话点名要删的正是那三句 —— 它们把
+ *   「为什么、留空会怎样、去哪拿」全讲了一遍，但这一行上面已有 `name` 与下面这句格式说明，
+ *   再说一遍只是噪音。⇒ 现在本组只剩 `DICT_PATH_DESC` 一条说明。
+ *   ⚠️ 想恢复那段话之前先想清楚：它在页面上占两行，而「留空 = 不查词」这句
+ *   `DICT_PATH_DESC` 末尾已经说过了（不重复写在两处，是本页的一贯口径）。
+ */
+const DICT_PATH_DESC =
+    '支持两种格式：ECDICT 导出的 CSV（word,phonetic,definition 三列），或你自己整理的「词<TAB>释义」纯文本表。留空 = 不查词。';
+
+/**
+ * 「网络播放」组里 **B 站那行**的行内说明。
+ *
+ * 🔴 与音乐源那三条 `desc` 同款：**纯文本**（`createDiv({ text })`，不解析 markdown）⇒ ⛔ 不许写 `**`。
+ * 🔴 三件必须说清：⑴ 它干什么用；⑵ **不填会怎样**（不是「不能用」，而是「最高 720P」）；
  *    ⑶ 到哪去拿（⛔ 只说「请填 Cookie」，用户不知道从哪复制）。
- * ⚠️ 别写进「音乐源凭据」那三条的 `DL_COOKIE_ROWS`：那张表的键必须与 `MusicSourceId` 一致（见 `biliCookie` 字段注释）。
+ *
+ * 🔴 2026-10-31 搬家（用户裁定「把网络播放组放在音乐下载源下」）：这段文案原来挂在
+ *    「音乐下载源凭据 › B站音频流」行里（描述的是**下载音频**那个用途），现在这行搬进
+ *    「网络播放」组、描述的是**内置播放器取流** ⇒ 文案跟着用途改写。
+ *    ⚠️ `biliCookie` 仍是**同一个字段**：取流冲 1080P 与读字幕要的就是同一份登录态
+ *    （见 `Settings` 里 `biliCookie` 的字段注释），⛔ 别为播放另开一个字段（存两份必然漂）。
  */
 const BILI_COOKIE_DESC =
-    'B 站的登录 Cookie：用于读取视频字幕（转成 LRC 歌词）与音频流。不填也能用——只是仅能拿到已公开的字幕。获取：浏览器登录 bilibili.com 后，开发者工具 → 网络 → 任一请求的 Cookie 整行复制。';
+    '登录 bilibili.com 后按 F12 进入 Network 面板，刷新页面并复制任意请求 Headers 中的整条 Cookie 以正常登录态iframe播放及显示AI字幕';
 
-/** **空态徽标**要标「可选 Key」而非「未配置」的源。
+/**
+ * 「网络播放」组里 **YouTube 那行**的行内说明。
  *
- *  ⚠️ 本集合**只决定徽标那两个字**，与「不填凭据能不能搜」是两码事 ——
- *     后者在 `main.ts` 的 `OPTIONAL_KEY_AUX`（`providerConfigured`），两处已解耦。
+ * 🔴 2026-11-09（第 15 轮需求④，用户当面给了逐字口径）：文案换成 Cookie 那半句。
+ *    ⚠️ 代理那半句**没有丢**——它由下面 `YT_PROXY_LABEL`「代理地址（留空 = 直连）」承担，
+ *    且紧贴代理输入框，比塞在这段总说明里更靠近它要解释的那个框。
+ *    所以这里只讲 Cookie，⛔ 别再把它扩回「代理 + Cookie」的长段。
+ * ⚠️ 纯文本（`createDiv({ text })`，不解析 markdown）⇒ ⛔ 不许写 `**`；
+ *    用户原文里 `**EditThisCookie**` 的星号已按他本人裁定去掉（否则星号会原样露在页面上）。
+ */
+const YT_NET_DESC =
+    '登录 youtube.com 后复制完整 cookies（推荐浏览器插件 EditThisCookie一键复制）以正常登录态iframe播放及显示AI字幕';
+
+/** 「网络播放」组里 YouTube 行两个输入框的行内小标签（类名见 styles.css 的 `.rl-net-lbl`）。 */
+const YT_PROXY_LABEL = '代理地址（留空 = 直连）';
+const YT_COOKIE_LABEL = 'Cookie（可选）';
+
+/**
+ * 🔴🔴 本轮用户裁定：「Google Books 的配置标签从『可选Key』统一为『未配置』」
+ *     ⇒ 原先这里有 `OPTIONAL_KEY_SOURCES = new Set(['googleBooks'])`，只服务徽标那两个字；
+ *    用户要求全页只留「已配置 / 未配置」两套词后它**没有存在理由**了，整个集合与分支一起删除
+ *    （⛔ 别退回「集合留空但分支还在」——那是死码，下次有人往里加一个 id 就静默复活第三套文案）。
  *
- *  🔴 2026-10-25 用户裁定：「微信读书未配置时的状态标签从『可选 cookie』改成『未配置』以统一」
- *     ⇒ `weread` 已从本集合移出（它在设置页显示「未配置」），但它**仍然免登录可搜**：
- *     放行逻辑留在 `main.ts` 的 `OPTIONAL_KEY_AUX` 里，一个字没动。
- *     ⛔ 别为了「看起来一致」把 weread 加回来 —— 用户明确要同页只有「已配置 / 未配置」两套词。 */
-const OPTIONAL_KEY_SOURCES: ReadonlySet<ProviderId> = new Set(['googleBooks']);
+ *  ⚠️ 「可选 Key」从来只管徽标，与「不填凭据能不能搜」是两码事 —— 后者在 `main.ts` 的
+ *     `OPTIONAL_KEY_AUX`（`providerConfigured`），两处解耦，**那边一个字没动**：
+ *     googleBooks / weread 仍然免登录可搜，只是设置页不再标「可选」。
+ */
 
 /** 折叠 API 行的测试结果类型 */
 export interface SourceTestResult {
@@ -827,12 +1466,78 @@ function previewRowClass(f: CardFieldKey): string {
     return 'rl-pvw-sub';
 }
 
+/**
+ * 🔴 #718（用户第⑧条）：**编辑窗口预览里那一块该画成什么控件**。
+ *
+ * 依据是 `src/views/components/EntryForm.svelte` 里每个 `data-fld` 块真实的渲染标签
+ * （逐条核对过：`<input class="rl-input">` / `<textarea>` / `.rl-meta-row` 四格 / `.rl-lbl-row` 带按钮）。
+ * ⛔ 别再拿「属性名长什么样」去猜控件类型 —— 那正是上一版只能画一个通用伪输入框的原因。
+ *
+ * 五种形态：
+ * - `text`  单行输入（大多数：题材 / 年份 / 作者 / 出版社…）
+ * - `num`   数字输入（`type="number"`：总集数 / 页数 / 系列序号 / 游戏时长…）
+ * - `area`  多行文本域（简介 / 导演 / 主演 / 作者简介 / 目录）
+ * - `btn`   标签行 + 右侧按钮（总结摘要 AI / 歌词 / 阅读进度）
+ * - `meta`  一行四格（「来源 / 大众评分 / 评价人数 / 平台链接」）
+ */
+function entryFormControlKind(key: string): 'text' | 'num' | 'area' | 'btn' | 'meta' {
+    switch (key) {
+        case 'meta':
+            return 'meta';
+        case 'summary':
+        case 'director':
+        case 'cast':
+        case 'author-intro':
+        case 'toc':
+            return 'area';
+        case 'lrc':
+        case 'ai-summary':
+        case 'book-progress':
+            return 'btn';
+        case 'total-episodes':
+        case 'episode':
+        case 'pages':
+        case 'series-index':
+        case 'playtime':
+        case 'read-hours':
+        case 'novel-chapters':
+        case 'comic-chapters':
+            return 'num';
+        default:
+            return 'text';
+    }
+}
+
 /*
  * 🔴 #480：`renderAiIcon` / `aiChoiceIcon` 已搬到 **`services/aiIcon.ts`** —— 设置页与「服务商+模型」
  *    拣选弹窗两处共用，而两者的 **fill 分治**（品牌标填充式 / 内置标描边式）只许有一份。
  * `aiChoiceLabel` 搬到 **`pure/translate.ts`**（下拉选项与显示名同源）。
  * `keyRowIcon` 已删 —— #480 起 `siliconflow` 就是 `TranslateProvider` 的一员，直接查表即可。
  */
+
+/**
+ * 🔴 #721：在「只看得见一部分项」的情况下把 `from` 挪到 `to` 的位置。
+ *
+ * 为什么不直接用 `moveItem(order, from, to)`：那个按**数组下标**挪，而列表里画的是
+ * 「`order` 过滤掉隐藏项」后的视图 —— 下标与真数组对不上，混着隐藏项时会挪错位、甚至
+ * 把隐藏项挤到别的相对位置。这里改成**按 key** 操作：
+ *   ⑴ 把 `from` 从数组里摘出来；
+ *   ⑵ 找 `to` 在摘除后的数组里的位置，按原先后决定插到它**前面**（上移）还是**后面**（下移）。
+ *
+ * ⚠️ 隐藏项一个都不动：它们既不在视图里、也不参与比较，摘除 + 插回全程不碰它们的下标。
+ * ⚠️ `from` / `to` 有一方不在数组里（列表刚重画、状态错位）⇒ **原样返回**，⛔ 别硬挪出一个非法顺序。
+ */
+function moveInVisibleOrder(order: readonly string[], from: string, to: string): string[] {
+    const fi = order.indexOf(from);
+    const ti = order.indexOf(to);
+    if (fi < 0 || ti < 0 || fi === ti) return [...order];
+    const out = [...order];
+    out.splice(fi, 1);
+    // 摘除后 from 已不在，`to` 的位置即落点基准
+    const base = out.indexOf(to);
+    out.splice(fi < ti ? base + 1 : base, 0, from);
+    return out;
+}
 
 /** Tab 的 DOM id（`aria-controls` / `aria-labelledby` 互指用；稳定、可作断言锚点） */
 function tabDomId(pageId: string): string {
@@ -862,11 +1567,58 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     /** 🔴 #425 「书籍文件目录」输入框的同款实例 —— 与上面两个**各存一份**（三个输入框可能先后各开一个浮层，
      *  共用一个字段会让先开的那个失去引用、关不掉）。⚠️ 同样要在重渲染 / 关闭设置页时 `close()`。 */
     private bookFolderSuggest: FolderInputSuggest | null = null;
+    /** 🔴 m02844「游戏下载目录」输入框的同款实例 —— 与前两个**各存一份**（四个输入框可能先后各开一个浮层，
+     *  共用一个字段会让先开的那个失去引用、关不掉）。⚠️ 同样要在重渲染 / 关闭设置页时 `close()`。 */
+    private gameFolderSuggest: FolderInputSuggest | null = null;
     /** 🔴 #425 起三个目录输入框的自动补全实例各存一份（见上）；#562 又添四个"分类本地目录"输入框
      *  —— 它们**共用**本 Map（一个「本地目录」浮层同时只可能开一个，用不到各存一份的粒度）。
      *  但**键必须包含键名**：同一个键的输入框在重绘后是**新元素**，旧实例仍指向已卸载的 input，
      *  不 close 就会留下一个飘在已删节点旁边的孤儿浮层。 */
     private localDirSuggests = new Map<LocalDirKey, FolderInputSuggest | null>();
+
+    /**
+     * 🔴🔴 #758（2026-11-12 用户 `m07505` 逐字：「怎么我在搜索配置里配置了项和测试了连接但
+     *   统一管理周期的不实时显示我的新增项」）—— 「统一周期管理」面板的**外部刷新入口**。
+     *
+     * 为什么要有这个字段：那张表的所有绘制逻辑（`paintRow` / `summaryEl`）原本只活在
+     *   `renderCredentialTable` 的闭包里，**唯一**能触发重绘的是它自己那颗「一键检测」的 click。
+     *   而用户真正会改数据的地方全在**别的行**上：
+     *     · 元数据源凭据的 `onInput` / `onPicked` / `onLogout`（填了 Cookie / Key）
+     *     · 音乐源凭据、网络播放凭据的同款写入
+     *     · 各行里那颗「测试连接」（走 `plugin.setCredentialStatus`）
+     *     · 开机自检（同样走 `setCredentialStatus`）
+     *   ⇒ 填完/测完，上面那张表还是 `display()` 那一刻的快照，「是否配置 / 是否失效 /
+     *     上次检测」三列全不动，用户看到的就是「不实时」。
+     *
+     * ⚠️ 为什么不改成切页时重建整个设置页：`setActivePage` 刻意**不重建 DOM**
+     *   （见其注释），整页重建会把用户的滚动位置、各折叠组的展开态全部重置 ——
+     *   为了刷新一张表付这个代价，是拿大 sledgehammer 敲小钉子。
+     * ⚠️ 为什么不用事件总线（`app.workspace.trigger`）：本仓没有既存的设置页事件通道，
+     *   为一张表新造一条全局事件注册/注销的生命周期，比一个回调字段更容易漏、更容易悬空。
+     *   而设置页 DOM 是 `display()` 一次性建好的（`renderPage` 逐页渲染），
+     *   那张表在打开设置页期间**一定存在**，回调字段的存活期与它天然对齐。
+     *
+     * 生命周期：`display()` 开头置 `null`（旧 DOM 已 `empty()`，旧闭包必须失效，
+     *   ⛔ 别让一次刷新打到已卸载的节点上），`renderCredentialTable` 建表时赋上新闭包。
+     * 调用方一律走 `refreshCredentialTable()`（带空守卫），⛔ 别直接碰这个字段。
+     */
+    private credentialTableRefresh: (() => void) | null = null;
+    /**
+     * 🔴 用户 m07854 ②（2026-11-13）：「统一周期检测的怎么不同步到对应的搜索配置项里」。
+     *
+     * 修 #758 时只打通了「搜索配置 → 面板」一个方向；反方向一直是断的 —— 面板顶上那颗
+     * 「一键检测」跑完只会 `paintRow` 面板自己那一行，而下面「搜索配置」里同名那行的徽标
+     * 是**另一个闭包**（各 builder 里自己捕获 `badge` / `current()`），没人通知它
+     * ⇒ 用户看到「面板说连接失败，展开下面那行还写着已配置」。
+     *
+     * 键 = `pure/credentialCheck` 的 `sourceCheckKey` / `musicCheckKey` / `netCheckKey` /
+     * `aiCheckKey`（**带族前缀**，⛔ 别用裸 id —— 三族 id 有重名）。
+     * 值 = 该行自己的 `refreshBadge` 闭包，只重算徽标文字与两个类名，⛔ 不重建 DOM。
+     *
+     * 生命周期：`display()` 整页重建时清空（旧闭包指向已 `empty()` 的节点）；
+     * 各 builder 建行时登记，行被重建则**同一键覆盖**（后建的那份才是活的）。
+     */
+    private credentialBadgeRefresh = new Map<string, () => void>();
 
     /**
      * #562 可折叠分组行的展开态（内存态，⛔ 不落库）：键 = 那一行的标题文本。
@@ -887,14 +1639,57 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     private cardFieldsToastEl: HTMLElement | null = null;
     /** 🔴 #640 ⑶：淡出定时器（**只保留一个** —— 连点会叠多个定时器，旧的到点把新的也隐掉） */
     private cardFieldsToastTimer: number | null = null;
+    /**
+     * 🔴 1.5.1「条目属性」组**当前正在配置的那一格**（八格：`f:<EntryType>` / `k:<BookKind>`）。
+     * ⚠️ 同 `cardFieldsType`：只是「我现在在看哪一类」的视图状态，⛔ 别持久化。
+     */
+    private entryFormSlot = 'f:movie';
+    /** 🔴 1.5.1：「条目属性」组的内容容器（挂「已保存」轻提示时反查组标题用） */
+    private entryFormGroupEl: HTMLElement | null = null;
+    /** 「已保存」轻提示本体（一次建好、反复点亮） */
+    private entryFormToastEl: HTMLElement | null = null;
+    /** 淡出定时器（只保留一个） */
+    private entryFormToastTimer: number | null = null;
     /** 🔴 #479 「用途 › 模型」拉取到的真实模型清单（按服务商缓存）。#482 起**带真元数据** —— 见 `ModelFetched`。
      *  ⚠️ **只活在本次设置页会话**（实例字段），⛔ 不落库 —— 模型清单易变，存下来就是第二个「会过期的预置表」。 */
     private aiFetchedModels = new Map<TranslateProvider, ModelFetched[]>();
+    /**
+     * 🔴 2026-11-07「用途」主从布局：左栏**当前选中哪一条**（条目 id）。
+     * ⚠️ 它是「此刻在看哪一项」的界面焦点，**不是用户配置** —— ⛔ 不写进 `plugin.settings`
+    *    （落盘只会长出一个没人读的键）；与 `entryFormSlot` / `cardFieldsType` 同族。
+     */
+    private aiPick = '';
+    /**
+     * 🔴 #720b：条目属性栅格的列数观察器。
+     *   设置页每次 `display()` 都整页重建 DOM ⇒ 旧观察器必须摘掉，否则越积越多（每个都还在观察已废弃的节点）。
+     *   ⛔ 别换成全局单例：多个设置窗口并存时各自有自己的画布。
+     */
+    private efColsObs: ResizeObserver | null = null;
     /** #480 ④：试听用的两个引擎（**懒建 + 复用**；系统引擎会给 window 挂监听 ⇒ 必须能释放） */
     private ttsSystemEngine: SystemSpeechEngine | null = null;
     private ttsCloudEngine: CloudSpeechEngine | null = null;
     /** 系统语音 `voiceschanged` 只重绘一次（异步列表加载完那一趟），⛔ 别反复挂 */
     private ttsVoicesHooked = false;
+    /**
+     * 「选择模型」左列表是否展开了「其余模型家族」。
+     *
+     * 🔴 用户 m01935：「感觉太多模型了只留三个显示其他收起来」。
+     * ⚠️ 故意**不落盘**：这是「看的时候的临时姿势」，不是偏好设置。
+     *    落盘的话下次进设置页会莫名其妙全展开，用户还得再折一次。
+     *    组内的「展开其余 N 档」更临时，连字段都不给，直接闭包变量。
+     */
+    private asrGroupExpanded = false;
+
+    /**
+     * 「选择模型」右侧配置面板是否展开。
+     *
+     * 🔴 用户 2026-11-10（m03035）：「设置页选择模型处默认折叠起来只有用户点击模型行才展开配置」。
+     * ⇒ 初值 `false`（默认收起），点某一档的行才置 `true`。
+     * ⚠️ 必须**存在实例字段**里：`switchAsrModel` 落盘后走 `display()` 整块重绘，闭包变量
+     *    会跟着旧 DOM 一起没了 ⇒ 用户点了行、面板闪一下又收回，看起来像点了没反应。
+     * ⚠️ 同样**不落盘**：这是看的姿势，不是偏好（与 `asrGroupExpanded` 同口径）。
+     */
+    private asrConfOpen = false;
 
     constructor(app: unknown, private plugin: ReelLudicPlugin) {
         super(app as never, plugin);
@@ -970,6 +1765,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         this.dlFolderSuggest = null;
         this.bookFolderSuggest?.close(); // #425：书籍文件目录那颗
         this.bookFolderSuggest = null;
+        this.gameFolderSuggest?.close(); // m02844：游戏下载目录那颗
+        this.gameFolderSuggest = null;
         // #562：六个「分类本地目录」输入框的浮层（一个 Map 装全部；见 `localDirSuggests` 的说明）
         for (const inst of this.localDirSuggests.values()) inst?.close();
         this.localDirSuggests.clear();
@@ -1064,11 +1861,14 @@ export class ReelLudicSettingTab extends PluginSettingTab {
              * 不传 = 本格自建一条（老路径，单格场景）。
              */
             issueSlot?: { register: (input: HTMLInputElement, issue: (v: string) => string | null) => void };
+            /** 插在「输入框」与「显示/隐藏」之间的额外控件（扫码图标用，见 `fillSecretRow`） */
+            beforeEye?: (wrap: HTMLDivElement) => void;
+            /** 插在「输入框」**之前**的控件（扫码图标按 m05813 改到这里，见 `fillSecretRow`） */
+            beforeInput?: (wrap: HTMLDivElement) => void;
         },
     ): HTMLInputElement {
         const wrap = body.createDiv({ cls: 'rl-secret' });
-        const input = this.fillSecretRow(wrap, opts);
-        // 🔴 2026-10-25 用户裁定「占位说明也是」⇒ 光改占位不够：TMDB 两格**各只收一种**形态，
+        const input = this.fillSecretRow(wrap, opts);        // 🔴 2026-10-25 用户裁定「占位说明也是」⇒ 光改占位不够：TMDB 两格**各只收一种**形态，
         //    填错格的人必须当场看见「你填错格了、该去哪拿」。旧版填错也能保存、要到点同步才 401，
         //    用户只能反复重填（#700/#701 就是这么来的）。
         //    ⚠️ 校验器是**纯函数**注入（`pure/tmdbAuth` 的 `tmdbApiKeyFieldIssue` / `tmdbSessionFieldIssue`），
@@ -1114,14 +1914,39 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      */
     private fillSecretRow(
         wrap: HTMLDivElement,
-        opts: { placeholder: string; value: string; onInput: (v: string) => void; masked?: boolean },
+        opts: {
+            placeholder: string;
+            value: string;
+            onInput: (v: string) => void;
+            masked?: boolean;
+            /**
+             * 在「输入框」与「显示/隐藏」之间插一个额外控件（历史插槽，现无消费者）。
+             * @deprecated 用户 `m05813` 改口径：扫码图标要放在**输入框最左边**，用 `beforeInput`。
+             *   本插槽保留是因为 `createSecretField` 的类型仍对外暴露它，删了要动调用面；
+             *   ⛔ 不要在新代码里用它 —— 它插在输入框**右侧**，正是用户点名不要的位置。
+             */
+            beforeEye?: (wrap: HTMLDivElement) => void;
+            /**
+             * 插在「输入框」**之前**的控件（扫码图标用）。
+             *
+             * 🔴 用户 `m05813` 原话：「把二维码小图标按钮放在 cookie 框的**最左旁**」。
+             *    上一版按 m05505 放在「显示」左边（输入框右侧），本轮改为整行的最左端。
+             * ⚠️ 顺序必须是 lead → input → eye：这是「行内首元素」，靠建序保证，
+             *    ⛔ 别用 `order`/`flex-direction` 之类的 CSS 手段事后挪 —— 那会让 DOM 顺序与
+             *    视觉顺序不一致，键盘 Tab 的次序与看到的次序就分家了。
+             */
+            beforeInput?: (wrap: HTMLDivElement) => void;
+        },
     ): HTMLInputElement {
         const masked = opts.masked !== false;
+        // 最左旁的额外控件（扫码图标）：必须在 input 之前建，见 `beforeInput` 的注释
+        opts.beforeInput?.(wrap);
         const input = wrap.createEl('input', {
             cls: 'rl-secret-input',
             attr: { placeholder: opts.placeholder, type: masked ? 'password' : 'text', spellcheck: 'false' },
         });
         input.value = opts.value;
+        opts.beforeEye?.(wrap);
         const toggle = wrap.createEl('button', {
             cls: 'rl-secret-eye',
             attr: { type: 'button' },
@@ -1145,7 +1970,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
 
     /**
      * 「元数据源配置」页（#352：原为 `renderServiceSection` 的前半段，标题升格成导航项后独立成页；
-     * #354 标签由「数据源管理」改成「数据源配置」；**#422 再改成「元数据源配置」** ——
+     * #354 标签由「数据源管理」改成「数据源配置」；**#422 再改成「搜索配置」** ——
      * 每次改名都必须同步全仓处方文案，见 `pure/sourceRegistry` / `ImportBangumiModal` / 下载弹窗）。
      *
      * 🔴 **折叠能力已整体撤除**：改版前是「一级标题常显 + 子分组可折叠」，现在
@@ -1186,7 +2011,23 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    ⇒ 本页三个组名（以及全仓处方文案里的路径）统一带上「搜索 / 下载」这个**用途后缀**：
         //       元数据搜索源凭据 = 填搜索服务商的凭据；音乐下载源凭据 = 填下载 / 试听的 Cookie；
         //       元数据搜索源启用 = 勾选哪几类搜索、每类用哪些源。
-        //    ⚠️ **页签名「元数据源配置」不动**（用户只点了三个组名）—— 导航图标表同理，见 `pure/settingNav`。
+        //    ⚠️ **页签名「搜索配置」不动**（用户只点了三个组名）—— 导航图标表同理，见 `pure/settingNav`。
+        // 🔴🔴 2026-11 用户裁定（本轮）：「搜索配置页把『元数据搜索源启用』组移到第一顺位」。
+        //    ⇒ 本页组序改为 **启用 → 搜索源凭据 → 网络播放源凭据 → 音乐下载源凭据**：
+        //    用户的心智起点是「我要搜哪几类、每类用哪些源」（勾选决定一切），凭据是它的下游配套
+        //    ⇒ 勾选在最前，填凭据在后。⚠️ #488 定的「凭据一律排到启用之前」由此**作废**，
+        //    那几个基的「先连上 → 再选它用在哪」不再是本页口径（用户本轮点名要反过来）。
+        //    ⚠️ 组内容与能力一字未改，只换位置；本页 `createGroupSection` 仍是 4 处。
+        this.createGroupSection(parent, '元数据搜索源启用', (body) => {
+            for (const g of GROUP_DISPLAY_ORDER) this.createGroupCheckRow(body, g);
+        });
+        // 🔴🔴 2026-11-07 用户裁定（本轮，第二遍）：「把组内顺序调整为『元数据搜索源启用、
+        //    元数据搜索源凭据、网络播放源凭据、音乐下载源凭据』」⇒ 本页组序**逐字按这个来**。
+        //    上一轮（同日早些时候）曾把「网络播放源凭据」提到第二顺位 —— 那条**已被本轮覆盖**，
+        //    ⛔ 别再把网络播放往前提：它现在排第三，理由是「搜索」这条线（启用 → 搜索源凭据）
+        //    要先自成一段，网络播放与音乐下载都属于**另一件事**（播放 / 下载源），排在后面成第二段。
+        //    ⚠️ 组名与 `pure/settingNav.ts` 的 `SETTING_GROUP_ICONS` 键**必须逐字一致**，
+        //      否则图标静默丢失（`groupIcon()` 未登记直接回 null）。
         this.createGroupSection(parent, '元数据搜索源凭据', (body) => {
             // #488：整组先包一层 `.rl-prov-list`（flex column + gap 8px），行长什么样子由 `createApiKeyRow`
             // 自己挂 `.rl-prov-card` 决定 —— 与 AI 页「模型服务」那组**同一套容器 + 同一个类**。
@@ -1197,17 +2038,15 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             //    它们本来就**没有任何可配置的东西**（源名 + 「免 Key」徽标，展开只有一句说明），
             //    列在「凭据」组里属于名不副实：没凭据可填的源不需要出现在凭据页。
             //    ⇒ `FREE_SOURCE_ORDER` / `createFreeSourceRow` / `.rl-key-badge-free` 一并退场（死码不留）。
-            //    ⚠️ 这些源**照常参与搜索** —— 删掉的只是「凭据页里那一行只读说明」，不是源本身（enabled 开关在下一组）。
+            //    ⚠️ 这些源**照常参与搜索** —— 删掉的只是「凭据页里那一行只读说明」，不是源本身（enabled 开关在本页第一组）。
         });
-        // 2026-09-28 #400（用户：「设置页音乐源改成仿上折叠样式，为音乐源凭据分组下」）：
-        // 四平台 Cookie 从「元数据源凭据」里**搬出来自成一组**，行形态也换成**与上面源行同款的可折叠行**
-        // （源名 + 徽标 + ▸ → 展开才是密文输入 + 测试连接）。
-        // #488：与本组同样卡片化（用户本轮点名「音乐源凭据一起改」）—— 容器与卡片类都由
-        // `renderMusicCookieRows` 内部挂，调用点形态不变。
+        // 第三、第四顺位：网络播放源凭据 → 音乐下载源凭据（顺序见上面那段裁定注释）。
+        this.createGroupSection(parent, '网络播放源凭据', (body) => this.renderNetPlaybackRows(body));
         this.createGroupSection(parent, '音乐下载源凭据', (body) => this.renderMusicCookieRows(body));
-        this.createGroupSection(parent, '元数据搜索源启用', (body) => {
-            for (const g of GROUP_DISPLAY_ORDER) this.createGroupCheckRow(body, g);
-        });
+        // 🔴🔴 ③-1（2026-11-12 用户 m00353 逐字）：「设置-搜索配置页『音乐下载源凭据』分组下再加组
+        //    『统一周期管理』，为 13 个凭据做表格列项状态面板…」⇒ 本页**最后一组**，位置逐字照用户说的来。
+        //    ⚠️ 组名必须与 `pure/settingNav.SETTING_GROUP_ICONS` 的键逐字一致，否则图标静默丢失。
+        this.createGroupSection(parent, '统一周期管理', (body) => this.renderCredentialTable(body));
         // ⛔ 2026-09-27 #399 起「音乐集成」分组已整体撤除（用户：「把设置页-音乐集成分组和其下项都删除掉」）。
         //    「启用歌曲下载」「下载目录」两项随之从**本页**消失：下载能力改由**「启用内置音乐播放器」**
         //    （基本设置 · 实验性功能）单点门控。
@@ -1227,7 +2066,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      */
 
     /**
-     * 「元数据源配置」页 · **「音乐源凭据」组**：各平台下载 / 试听的登录 Cookie（#399-D 移植批；#400 独立成组）。
+     * 「搜索配置」页 · **「音乐源凭据」组**：各平台下载 / 试听的登录 Cookie（#399-D 移植批；#400 独立成组）。
      *
      * 🔴 **行形态与上面「元数据源凭据」里的源行完全同款**（`rl-key-row` / `rl-key-head` / `rl-key-body`）：
      *    来源图标 + 源名 + 状态徽标 + ▸，点行头才展开密文输入与「测试连接」。
@@ -1243,9 +2082,24 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      * ⚠️ Cookie 明文存 `data.json`（与各源 API Key 同款）—— 说明写在行内描述里，⛔ 不做额外加密（保持既有凭据一致）。
      */
     private renderMusicCookieRows(parent: HTMLDivElement): void {
+        // 🔴 2026-11-09 第 16 轮（用户：「我的歌单三大平台放个同步按钮统一在凭据行里分别同步」）：
+        //    **每行各一颗**，点了直接锁定那一家（弹窗标题也会带平台名）。
+        // 🔴 2026-11-10 第 17 轮（用户：「把全部平台同步按钮删除掉」）：组头那颗「同步全部平台」
+        //    **已整块删除**。理由不是「重复入口」而是**动作粒度与这一组不匹配**：
+        //    这一组是三个平台的凭据卡，每组内容的动作应该只作用于这一行；
+        //    「一次同步三家」在三家都没配 Cookie 时只会打开一个全是「未粘贴 Cookie」的空弹窗。
+        //    ⛔ 别再往组头加回来 —— 也别把 group 级的同步另起一颗放在别处（同一动作两处入口，
+        //    用户已经点错过一次）。
+        //    ⚠️ 与元数据源那组不同，这里**不做前置校验**：三家里可能有没配的，
+        //    弹窗会把没配的那家如实标成「未粘贴 Cookie」，⛔ 别在点之前就拦下。
         const list = parent.createDiv({ cls: 'rl-prov-list' });
         for (const p of DL_COOKIE_ROWS) {
-            const row = list.createDiv({ cls: 'rl-key-row rl-prov-card' });
+            // 🔴 ③-1（2026-11-12）：「统一周期管理」面板点名称要跳到**这一行** ⇒ 挂 `data-cred-key`。
+            //    值与 `pure/credentialMeta` 的 `key` 逐字同源（`music:<id>`），⛔ 两处不许各拼一套。
+            const row = list.createDiv({
+                cls: 'rl-key-row rl-prov-card',
+                attr: { 'data-cred-key': musicCheckKey(p.id) },
+            });
             const head = row.createDiv({ cls: 'rl-key-head' });
             renderAiIcon(head.createSpan({ cls: 'rl-ai-icon' }), MUSIC_COOKIE_ICON[p.id]);
             head.createSpan({ cls: 'rl-key-name', text: p.name });
@@ -1261,11 +2115,15 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 badge.toggleClass('rl-key-badge-on', has && !expired);
                 badge.toggleClass('rl-key-badge-bad', expired);
             };
+            // m07854 ②：登记给「统一周期管理」面板的一键检测回调（否则面板测完这行徽标不动）
+            this.registerCredentialBadge(musicCheckKey(p.id), refreshBadge);
             refreshBadge();
             head.createSpan({ cls: 'rl-key-caret', text: '▸' });
 
             const body = row.createDiv({ cls: 'rl-key-body' });
-            body.createDiv({ cls: 'rl-hint-note', text: p.desc });
+            // 🔴 2026-11-06：原先这里是 `createDiv({ text: p.desc })` 纯文本 ⇒ 音乐下载源的「到 xx 官网
+            //    拿 Cookie」在 Tab 上点不动（用户要求「所有要 cookie 或 key 的都加链接」）。统一走 renderHintNote。
+            this.renderHintNote(body, p.desc);
             this.createSecretField(body, {
                 placeholder: `${p.site} 的 Cookie`,
                 value: current(),
@@ -1280,12 +2138,30 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     // #589：值一改 ⇒ 旧的「连接失败」作废
                     this.plugin.clearCredentialStatus(musicCheckKey(p.id));
                     refreshBadge();
+                    // #758：上面的面板要跟着从「未配置」变「已配置」（用户 m07505 报的正是这个）
+                    this.refreshCredentialTable();
                 },
             });
             // 「测试连接」与源行同款反馈（✓/✗ 文案 · Nms；失败红、成功绿）
             // 用户裁定：结果文字在按钮**左边**、点测试时按钮**不许跳**（见 styles.css `.rl-key-actions` 注释）。
             const actions = body.createDiv({ cls: 'rl-key-actions' });
             const resultEl = actions.createSpan({ cls: 'rl-key-result' }); // 行首：文字向左长，按钮贴右不动
+            // 🔴 2026-11-09 第 16 轮（用户：「三大平台放个同步按钮统一在凭据行里分别同步」）：
+            //    每行一颗，点了就只同步这一家（`onlyPlatform` 收窄采集与展示两侧）。
+            // 🔴 2026-11-10 第 17 轮（用户：「改成『立即同步』样式和其他凭据行按钮样式统一」）：
+            //    文案与 class 都对齐**另外五个账号同步行**（Steam / 微信读书 / Bangumi / TMDB / 豆瓣 / 书架）：
+            //    `cls: 'mod-cta rl-sync-btn'` + 文案「立即同步」。
+            //    ⚠️ class 必须带上 `rl-sync-btn`：那几条的宽度 / 图标间距 / hover 由它统一，
+            //    只写 `mod-cta` 会变成另一套尺寸（用户点名的正是「样式统一」）。
+            //    顺序也照那几条：回执槽 → 同步 → 测试连接（同步是这一行的主操作，排前面）。
+            //    ⚠️ 酷狗那颗也照给 —— `KUGOU_SYNC_UNSUPPORTED` 会在弹窗里如实说明不支持，
+            //    ⛔ 别在这里按平台隐藏按钮（用户会以为「点了没反应」比「明确说不支持」更难排查）。
+            const syncRowBtn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '立即同步' });
+            syncRowBtn.addEventListener('click', () => {
+                // 🔴 口径与另外五个账号同步弹窗一致：**先列清单、勾选后才落库**（⛔ 不做「点一下全量落库」）；
+                //    传 `p.id` ⇒ 这次只拉这一家的歌单（弹窗标题也会带平台名）。
+                this.plugin.openMusicSync(p.id);
+            });
             const testBtn = actions.createEl('button', { text: '测试连接', cls: 'mod-cta' });
             testBtn.addEventListener('click', async () => {
                 testBtn.disabled = true;
@@ -1302,33 +2178,300 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 // 🔴 #589：结论记进同一张结果表 ⇒ 徽标（含刚被打开的「连接失败」）同步刷新
                 this.plugin.setCredentialStatus(musicCheckKey(p.id), r.ok);
                 refreshBadge();
+                // #758：测完结论要立刻反映到面板的「是否失效 / 上次检测」两列
+                this.refreshCredentialTable();
                 resultEl.setText(`${r.ok ? '✓ ' : '✗ '}${r.message} · ${elapsedMs}ms`);
                 resultEl.toggleClass('rl-key-result-ok', r.ok);
                 resultEl.toggleClass('rl-key-result-bad', !r.ok);
             });
             head.addEventListener('click', () => row.toggleClass('rl-key-open', !row.hasClass('rl-key-open')));
         }
-        // ── ④-B 站音频流（#496）：yt-dlp 可执行文件路径 ──
-        // 🔴 为什么排在**同一个组**里：它是「下载这一件事的配置」，与三条 Cookie 一起读最省事；
-        //    但它是**路径不是凭据** ⇒ 输入框走明文（不挂「显示/隐藏」眼睛），⛔ 别用 `createSecretField`。
-        // ⚠️ 这行是**追加**在 `DL_COOKIE_ROWS` 循环**之后**的 —— #488/#489 那几条按「循环体内前几行」
-        //    锚死的断言因此不受影响（改这里别把循环挪走）。
+        // ── 🔴🔴 历史裁定：「B站音频流」那一行当时改成跨站通用名并搬到「网络播放源凭据」下第一顺位
+        //    ⇒ 整行**跨组搬走**，实现在 `renderYtdlpRow`。
+        //    🔴 2026-11-09 第 15 轮需求④：那一行现在叫「音视频取流」（用户逐字口径）。
+        //    ⚠️ 注释里不复述中间那个旧名 —— 反向守卫会连同注释一起查（本仓老坑：写了就自撞）。
+        //
+        //    为什么搬（⛔ 别搬回来）：
+        //      · 它早就不是「只给 B 站下载音频用」了 —— 内置播放器冲 1080P 取流也走同一条 yt-dlp，
+        //        名字里带「B站」会把 YouTube 用户直接劝退（用户点名要改成跨站通用名）。
+        //      · 它和「网络播放源凭据」里那两条是**同一件事的三个前置**（可执行文件 + 两个站的 Cookie /
+        //        代理），拆在两页读是上一版的结构债。
+        //    ⚠️ 字段仍是同一个 `ytdlpPath`（逐字未改），下载与取流两条链路一个字没动。
+        //    ⚠️ 本组现在**只剩三条 Cookie**（`DL_COOKIE_ROWS` 循环），循环体内前几行未动 ⇒
+        //      #488/#489 那几条按循环体锚死的断言不受影响。
+    }
+
+    /**
+     * 「统一周期管理」组 —— 13 条凭据的**生命周期状态面板**（③-1，2026-11-12 用户 m00353）。
+     *
+     * 用户原话：「为 13 个凭据做表格列项状态面板，表头 = 名称 / 是否配置 / 是否失效 /
+     *   预计过期时间或上次刷新时间，最右表头为一键检测按钮（无边框透明化）；没配置的源整行变灰
+     *   但点名称可快速跳转到 Setting Tab 对应位置」。
+     *
+     * 🔴🔴 本方法**一行状态都不自己算** —— 全部来自 `pure/credentialMeta.buildCredentialMeta`
+     *   （与下面几组凭据行的徽标同一套判据）。用户点名：「状态面板和搜索配置页必须共享同一个
+     *   `credentialMeta` 数据源，⛔ 不要在状态面板里维护独立的『是否失效』状态」。
+     *   所以这里只做三件事：读表、画表、把「点了要发生什么」接出去。
+     *
+     * ⚠️ 「预计过期时间」给不出真实值（13 条里 11 条是不透明 Cookie/Key，上游从不告知过期时刻）
+     *   ⇒ 那一列显示**可核查的事实**「上次检测：YYYY-MM-DD HH:mm」，
+     *   微信读书额外标「可续期」（它 -2012 登录超时能 HEAD 续期）。
+     *   ⛔ 别为了填满格子编一个假时间 —— 用户会拿它做判断。
+     */
+    private renderCredentialTable(parent: HTMLDivElement): void {
+        const head = parent.createDiv({ cls: 'rl-cred-head' });
+        const title = head.createDiv({ cls: 'rl-cred-title' });
+        const summaryEl = title.createSpan({ cls: 'rl-cred-summary' });
+        // 一键检测：**纯小图标**、无边框透明化（用户 `m05813` 逐字：「一键检测改成纯小图标（无边框透明化）」）。
+        // ⛔ 用 `<button>` 而非 span —— 它真要点（键盘 Enter/Space、焦点环、disabled 全白拿）。
+        // ⛔ 别再带「一键检测」四个字：这组标题已经叫「统一周期管理」，旁边一行字纯属占位；
+        //    文案改走 `srLabel`（读屏读得到）+ `data-tip`（鼠标悬停看得到），视觉上只剩一枚图标。
+        // 🔴 `clickable-icon` 是**宿主豁免**，不是装饰：Obsidian 的 `button:not(.clickable-icon)`
+        //    （0,1,1）会给所有按钮铺「整行灰底 + 内阴影 + 边框」，单类选择器 (0,1,0) 压不过它
+        //    ⇒ 只写 `.rl-cred-name { border: 0 }` 在真机上**完全不生效**（用户 `m05813` 截图里
+        //    名称、刷新图标全带灰框，就是这个原因）。本仓同款处理见
+        //    `src/modals/ReaderPanelBase.ts:1633` 与 `src/services/progressBall.ts:112`。
+        //    ⚠️ 加了它之后，`.rl-cred-name` 里那些 `border/background/box-shadow: 0` 才真正起作用。
+        const testAllBtn = head.createEl('button', { cls: 'rl-cred-testall clickable-icon' });
+        testAllBtn.setAttribute('type', 'button');
+        safeSetIcon(testAllBtn, 'refresh-cw');
+        setTip(testAllBtn, '一键检测全部凭据');
+        // 无边框按钮的读屏名走隐藏文本，⛔ 不写 aria-label（会与 data-tip 叠双层气泡，见 UI-GUIDE §3）
+        srLabel(testAllBtn, '一键检测全部凭据');
+
+        /**
+         * 检测回执槽（③-5 组件库 `setFeedback`）。
+         * 为什么需要：检测结果只落在**行内两格**（是否失效 / 上次检测），而一键检测会连刷十几行 ——
+         * 用户视线停在顶部的「一键检测」按钮上，看不到下面某一行悄悄变了红；
+         * 单条检测同理，点完除了那一行没有任何「点到了、测完了」的确认。
+         * ⚠️ 用「就近回执」而不是 `Notice`：Notice 在右上角、离按钮很远（同 `mountGroupReset` 的口径）。
+         */
+        const feedback = parent.createDiv({ cls: 'rl-ui-feedback' });
+
+        /**
+         * 表头/表体走全局组件 `statusTable()`（③-5）。
+         * 为什么换：这里原先是手写 `.rl-cred-table` / `.rl-cred-row` / `.rl-cred-cell` 五列
+         * （grid 列宽写死在 CSS 里），而字段映射那组又是另一套 `<table>` 语汇 ——
+         * 同一个设置页里两套表格实现，正是用户说的「组件规范不统一」。
+         * `statusTable` 把列宽写进 `gridTemplateColumns`（表头与每行各写一次，grid 不继承），
+         * 所以列对齐只由**这一个数组**决定，不再散落在 CSS 与 JS 两处。
+         */
+        const table = statusTable(parent, [
+            { label: '名称', width: 'minmax(0, 2.4fr)' },
+            { label: '是否配置', width: 'minmax(0, 1fr)' },
+            { label: '是否失效', width: 'minmax(0, 1fr)' },
+            { label: '上次检测', width: 'minmax(0, 1.8fr)' },
+        ]);
+        const bodyEl = table.body;
+
+        const rows = buildCredentialMeta(this.plugin.credentialMetaInput());
+        const sum = summarizeCredentialMeta(rows);
+        summaryEl.setText(
+            `共 ${sum.total} 条 · 已配置 ${sum.configured} · 失效 ${sum.expired}`
+            + (sum.unchecked > 0 ? ` · 未检测 ${sum.unchecked}` : ''),
+        );
+
+        /**
+         * 单行的重绘（改动就地更新，⛔ 不整表重建 —— 那会让用户刚滚到的行位置跳动）。
+         *
+         * 🔴 2026-11-12（用户 `m05813` 逐字）：「去掉单独检测……名称旁的描述（元数据源、
+         *   音乐平台等）删除掉，名称列项把边框去掉」
+         *   ⇒ 本行现在只有四格：名称 / 是否配置 / 是否失效 / 上次检测。
+         *   ⛔ 别把「检测」那列加回来：13 行各挂一枚刷新图标，是整张表最吵的一层，
+         *      而它做的事和顶上那颗「一键检测」完全重复 —— 单条检测的价值只在于
+         *      「不想等十几条串行」时省几十秒，代价却是每行常驻一个可点控件。
+         *      真要单条重测：一键检测本来就是串行逐条刷新，中途能看见每行先后变。
+         */
+        const paintRow = (host: HTMLDivElement, row: CredentialMeta): void => {
+            host.empty();
+            host.toggleClass('is-unconfigured', !row.configured);
+            host.toggleClass('is-expired', row.expired);
+            host.setAttribute('data-cred-row', row.key);
+
+            const nameCell = cell(host, { cls: 'rl-cred-cell-name' });
+            // 点名称跳转：未配置的源也允许跳（正是要去填它）⇒ ⛔ 不按 configured 门控
+            // 🔴 `clickable-icon` 必带 —— 理由同上面「一键检测」那处：宿主的
+            //    `button:not(.clickable-icon)`（0,1,1）会把名称压成一枚带灰框的按钮，
+            //    `.rl-cred-name` 的 `border: 0` 单独压不过（用户 `m05813`：「名称列项把边框去掉」）。
+            const nameBtn = nameCell.createEl('button', { cls: 'rl-cred-name clickable-icon', text: row.label });
+            nameBtn.setAttribute('type', 'button');
+            nameBtn.addEventListener('click', () => this.jumpToCredentialRow(row.key));
+            // ⛔ 不再挂 `rl-cred-family`（族名）：一列里「豆瓣 元数据源 / 网易云音乐 音乐平台」
+            //    重复了表头已经说清的事，且让名称列宽被它挤掉一半。
+
+            cell(host, { text: row.configured ? '已配置' : '未配置' });
+            // 失效列：未配置时给「—」（它的「测不通」是必然，标出来等于骂用户没填）
+            cell(host, { text: row.configured ? credentialStateLabel(row) : '—' });
+            const whenCell = cell(host, { cls: 'rl-cred-cell-when' });
+            whenCell.createSpan({ text: formatCheckedAt(row.lastCheckedAt) });
+            // ⛔ 2026-11-12 第 28 轮（用户 `m07505` 逐字：「把上次检测的提示描述『登录超时可续期』
+            //    删除掉」）⇒ 这里原来还有一句 `const hint = credentialExpiryHint(row)`
+            //    + `whenCell.createSpan({ cls: 'rl-cred-hint', text: hint })`，已**整条删除**。
+            //    「上次检测」这一格现在只有时间本身 —— 多一句主观说明会被用户当成可核查事实。
+            //    ⛔ 别再往这一格补第二行字（要补说明就写进表头，那处只出现一次）。
+        };
+
+        const paintAll = (): void => {
+            const fresh = buildCredentialMeta(this.plugin.credentialMetaInput());
+            for (const row of fresh) {
+                const host = bodyEl.querySelector<HTMLDivElement>(`[data-cred-row="${row.key}"]`);
+                // ⚠️ 找不到就跳过而不是补建：行集合是 `buildCredentialMeta` 恒定的 13 条，
+                //    和建表时**同一份数据源** ⇒ 正常路径不可能缺行。真缺了说明 DOM 已被重建
+                //    （`display()` 会把 `credentialTableRefresh` 置空，就不会走到这里）。
+                //    ⛔ 别在这里 `table.row()` 补建 —— 新行会append到末尾，与 13 条的固定顺序错位。
+                if (host) paintRow(host, row);
+            }
+            const after = summarizeCredentialMeta(fresh);
+            summaryEl.setText(
+                `共 ${after.total} 条 · 已配置 ${after.configured} · 失效 ${after.expired}`
+                + (after.unchecked > 0 ? ` · 未检测 ${after.unchecked}` : ''),
+            );
+        };
+
+        for (const row of rows) {
+            // 行容器走 `statusTable.row()` —— 它已经把 `gridTemplateColumns` 写上了（grid 不继承，
+            // 表头写一次不够），⛔ 别在这里手写 `.rl-cred-row` 再补一遍列宽。
+            const host = table.row({ cls: 'rl-cred-row' });
+            paintRow(host, row);
+        }
+
+        // 建完就把刷新入口交出去（#758，理由见 `credentialTableRefresh` 字段注释）。
+        // ⚠️ 必须**在建完行之后**赋值：`paintAll` 靠 `[data-cred-row]` 找行，早于建行时一行都找不到。
+        this.credentialTableRefresh = paintAll;
+
+        testAllBtn.addEventListener('click', async () => {
+            testAllBtn.disabled = true;
+            testAllBtn.addClass('rl-btn-loading');
+            // 🔴 串行、只测已配置的：11 条 Cookie 并发打同一批站点 = 自找风控；
+            //    未配置的源没有可测对象（测了必然 false，会把「没填」写成「连接失败」）。
+            const targets = buildCredentialMeta(this.plugin.credentialMetaInput()).filter((r) => r.configured);
+            const failed: string[] = [];
+            for (const [i, row] of targets.entries()) {
+                // 逐条报「第几条 / 共几条」—— 十几条串行下来要几十秒，只转圈用户会以为卡死
+                setFeedback(feedback, `正在检测 ${row.label}（${i + 1} / ${targets.length}）…`, 'neutral');
+                const host = bodyEl.querySelector<HTMLDivElement>(`[data-cred-row="${row.key}"]`);
+                const r = await this.plugin.testCredentialByKey(row.key);
+                this.plugin.setCredentialStatus(row.key, r.ok);
+                // 🔴 m07854 ②：把结论同步到「搜索配置」里那一行 —— 否则用户看到的还是旧徽标
+                this.refreshCredentialBadge(row.key);
+                if (!r.ok) failed.push(row.label);
+                if (host) {
+                    const fresh = buildCredentialMeta(this.plugin.credentialMetaInput()).find((x) => x.key === row.key);
+                    if (fresh) paintRow(host, fresh);
+                }
+            }
+            testAllBtn.disabled = false;
+            testAllBtn.removeClass('rl-btn-loading');
+            const after = summarizeCredentialMeta(buildCredentialMeta(this.plugin.credentialMetaInput()));
+            summaryEl.setText(
+                `共 ${after.total} 条 · 已配置 ${after.configured} · 失效 ${after.expired}`
+                + (after.unchecked > 0 ? ` · 未检测 ${after.unchecked}` : ''),
+            );
+            // 一键检测的回执：只汇总「哪几条没通」，⛔ 不复述成功条数（成功是默认预期，说多了是噪音）
+            if (targets.length === 0) {
+                setFeedback(feedback, '还没有已配置的凭据可以检测', 'neutral');
+            } else if (failed.length === 0) {
+                setFeedback(feedback, `已检测 ${targets.length} 条，全部连接正常`, 'ok');
+            } else {
+                setFeedback(feedback, `${targets.length} 条中 ${failed.length} 条未通过：${failed.join('、')}`, 'warn');
+            }
+        });
+    }
+
+    /**
+     * #758：「统一周期管理」面板重绘一次（幂等，可随时调）。
+     *
+     * 所有**会改变凭据派生结果**的写入点都要调它 —— 判断标准很简单：
+     *   「这次写入会不会让 13 行里某一行的『是否配置 / 是否失效 / 上次检测』变？」会 ⇒ 调。
+     *   已经接上的：8 处 `clearCredentialStatus`（填/改/登出凭据）+ 3 处 `setCredentialStatus`
+     *   （音乐行测连接、元数据源行测连接、网络播放行测连接）。
+     * ⚠️ 开机自检那条路径**不接**：它发生在 `onload`，那时设置页可能根本没打开
+     *   （`credentialTableRefresh === null` ⇒ 自然空转）；用户下次打开设置页时
+     *   `display()` 会拿最新的 `credentialStatus` 重新算，快照天生是新的。
+     * ⛔ 别改成「无条件重建整页」—— 见 `credentialTableRefresh` 字段注释里的代价分析。
+     */
+    private refreshCredentialTable(): void {
+        this.credentialTableRefresh?.();
+    }
+
+    /**
+     * 登记某行凭据的徽标刷新闭包（m07854 ②）。同一键重复登记 ⇒ 覆盖（后建的 DOM 才是活的）。
+     * ⚠️ 键必须是 `*CheckKey` 的产物（带族前缀），与「统一周期管理」面板的 row.key 同源。
+     */
+    private registerCredentialBadge(key: string, refresh: () => void): void {
+        this.credentialBadgeRefresh.set(key, refresh);
+    }
+
+    /**
+     * 把「检测结论变了」通知到**搜索配置**里对应的那一行（m07854 ②）。
+     *
+     * 与 `refreshCredentialTable()` 是**成对的两个方向**：
+     *   · 搜索配置里填/改/测 → `refreshCredentialTable()`（表要不要跟着变）
+     *   · 面板里一键检测     → `refreshCredentialBadge(key)`（下面那行徽标要不要跟着变）
+     * ⚠️ 传 `undefined` ⇒ 全部刷新（一键检测跑完那种「一次改了十几条」的情况）。
+     */
+    private refreshCredentialBadge(key?: string): void {
+        if (key !== undefined) {
+            this.credentialBadgeRefresh.get(key)?.();
+            return;
+        }
+        for (const refresh of this.credentialBadgeRefresh.values()) refresh();
+    }
+
+    /**
+     * 面板里点名称 → 跳到本页对应那行凭据（③-1，用户：「没配置的源整行变灰但点名称可快速跳转到
+     *   Setting Tab 对应位置」）。
+     *
+     * 三条要点：
+     *   ① 目标行靠 `data-cred-key` 找 —— 三处凭据行（元数据源 / 音乐 / 网络播放）现在都挂了它，
+     *      值由 `credentialCheck` 那三个 `*CheckKey` 现拼，与面板 key **同源**；
+     *   ② 已经在本页 ⇒ ⛔ 别整页重建（`setActivePage` 会重画，用户面板上的滚动位置就丢了）；
+     *   ③ 找到后**就地展开**那一行（`.rl-key-open`）再滚过去 —— 只滚不展开，用户看到的是一行折叠卡，
+     *      还得自己再点一下才知道里面是输入框。
+     */
+    private jumpToCredentialRow(key: string): void {
+        // 「是否已经在本页」只看 `activePage` 这一个真源 —— ⛔ 别去嗅 DOM 类名：
+        // 页切换用的是 `.rl-set-page.is-active`（见 `setActivePage`），嗅类名等于把内部实现抄一份。
+        const inPage = this.activePage === 'sources';
+        const reveal = (): void => {
+            const sel = `[data-cred-key="${key}"]`;
+            const target = this.containerEl.querySelector<HTMLElement>(sel);
+            if (!target) return;
+            target.addClass('rl-key-open');
+            target.addClass('rl-cred-flash');
+            // 先滚后清高亮：`scrollIntoView` 是同步的，但主题的 smooth 滚动会延后 ⇒ 高亮留 1.2s 足够看见
+            target.scrollIntoView({ block: 'center' });
+            window.setTimeout(() => target.removeClass('rl-cred-flash'), 1200);
+        };
+        if (inPage) {
+            reveal();
+            return;
+        }
+        this.setActivePage('sources');
+        // `setActivePage` 只切 class，DOM 已在 `display()` 时建好 ⇒ 下一帧再找元素最稳
+        window.requestAnimationFrame(reveal);
+    }
+
+    /**
+     * 「网络播放源凭据」组 · **第一顺位**：yt-dlp / ffmpeg 可执行文件路径（本轮从音乐组搬来）。
+     *
+     * 🔴 行形态与同组三条 Cookie 行**逐字同款**（`.rl-key-row.rl-prov-card` + 行头图标/名称/徽标/▸ +
+     *    点行头开合），所以用户学会一次就会用第二次。
+     * ⚠️ 它是**路径不是凭据** ⇒ 输入框走明文（⛔ 别用 `createSecretField`：那会挂一个毫无意义的
+     *    「显示/隐藏」眼睛，路径本来就该看得见）。
+     * ⚠️ 徽标只有「已配置 / 未配置」两态：未配置 = 走系统 PATH，那件事由 `YTDLP_PATH_DESC` 说清。
+     */
+    private renderYtdlpRow(list: HTMLElement): void {
         const dlRow = list.createDiv({ cls: 'rl-key-row rl-prov-card' });
         const dlHead = dlRow.createDiv({ cls: 'rl-key-head' });
         renderAiIcon(dlHead.createSpan({ cls: 'rl-ai-icon' }), { kind: 'builtin', id: 'terminal' });
-        // 🔴 #555：本行名称按用户裁定改名（原先是「工具名 + 括号里的用途」那种写法）——
-        //    旧名把**实现工具**当成了功能名，用户看不出这行到底在开什么；新名先说是「B 站音频流」，
-        //    再把两个外部依赖写进括号（与下面 `YTDLP_PATH_DESC` 说的事一致，⛔ 别改成第二套说法）。
+        // 🔴 2026-11-09 第 15 轮需求④（用户逐字口径）：本行标题改成「音视频取流」。
+        //    旧名把范围说死（四个并列名词 + 「通用」），而这条路就是 yt-dlp + ffmpeg 取音视频流。
         //    ⚠️ 注释里**刻意不复述旧名** —— 反向守卫会连同注释一起查（本仓老坑：写了就自撞）。
-        // 🔴 用户裁定（1.4.x）：标题只写「B站音频流」——⛔ 别在这里挂「（需yt-dlp、ffmpeg）」：
-        //    依赖说明已经是下方那个路径项的描述（`YTDLP_PATH_DESC`，写了留空=走 PATH、转 mp3 还需 ffmpeg），
-        //    标题里再重复一遍只是噪音（用户原话：去掉）。
-        dlHead.createSpan({ cls: 'rl-key-name', text: 'B站音频流' });
+        dlHead.createSpan({ cls: 'rl-key-name', text: '音视频取流' });
         const dlBadge = dlHead.createSpan({ cls: 'rl-key-badge' });
         const currentExe = (): string => this.plugin.settings.ytdlpPath ?? '';
         const refreshExeBadge = (): void => {
-            // ⚠️ 徽标与上面三条**逐字同款**（#489 的「已配置 / 未配置」）：本行的「未配置」= 走系统 PATH，
-            //    那件事由行内 desc 说清（往徽标里塞第三套词反而与同页两份凭据打架）。
             const has = !!currentExe().trim();
             dlBadge.setText(has ? '已配置' : '未配置');
             dlBadge.toggleClass('rl-key-badge-on', has);
@@ -1337,7 +2480,6 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         dlHead.createSpan({ cls: 'rl-key-caret', text: '▸' });
         const dlBody = dlRow.createDiv({ cls: 'rl-key-body' });
         dlBody.createDiv({ cls: 'rl-hint-note', text: YTDLP_PATH_DESC });
-        // 明文输入（复用 `.rl-secret*` 的盒模型，⛔ 不加眼睛按钮）
         const exeWrap = dlBody.createDiv({ cls: 'rl-secret' });
         const exeInput = exeWrap.createEl('input', {
             cls: 'rl-secret-input',
@@ -1349,48 +2491,30 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             void this.plugin.saveSettings();
             refreshExeBadge();
         });
-        // ── B 站 Cookie（2026-10-25）──
-        // 🔴 用户原话：「b站cookie凭据放音乐下载源「B站音频流」下」⇒ 位置就在**这一行里**、路径框**下面**。
-        //    ⛔ 别另建一个并列的源行（那张表的键受 `MusicSourceId` 钉死，见 `biliCookie` 字段注释）。
-        // 🔴 **本行的徽标仍然只表示「路径」**：一个行头挂两个徽标会让人分不清哪个在说哪件事
-        //    （本仓 #489 已经因为「同页两组说同一件事却两套词」被用户点过一次）。
-        //    Cookie 有没有填，用输入框上的小标签「（可选）」+ 空态说明表达 —— 不占徽标。
-        dlBody.createDiv({ cls: 'rl-hint-note', text: BILI_COOKIE_DESC });
-        const biliLabel = dlBody.createDiv({ cls: 'rl-lbl-inline', text: 'B 站 Cookie（可选）' });
-        biliLabel.addClass('rl-bili-cookie-lbl');
-        this.createSecretField(dlBody, {
-            placeholder: '粘贴 bilibili.com 的 Cookie（可留空）',
-            value: this.plugin.settings.biliCookie ?? '',
-            // 与三条音乐 Cookie 同款：只在下一次请求那一刻被读，边打边存没有副作用。
-            onInput: (v) => {
-                this.plugin.settings.biliCookie = v.trim();
-                void this.plugin.saveSettings();
-            },
+
+        /**
+         * 🔴 2026-11-07 本轮第⑤条（用户裁定）：ffmpeg 从「语音转文字 › 环境配置」里搬出来，
+         *    归到这条通用取流路径下面 —— 因为它本来就不是 ASR 专属：取流（yt-dlp）与
+         *    本地转字幕（whisper.cpp 等）用的是同一个 ffmpeg，分两处填只会让用户填两遍
+         *    或者只填一处然后百思不得其解。用户原话：「全局跟随『音视频取流』那个路径
+         *    （加个 ffmpeg 框）」。
+         *
+         *  ⚠️ 这里仍写 `settings.asrFfmpegPath`（字段名带 asr 前缀是历史），⛔ 别为了好看改字段名 ——
+         *    它会连同老用户 data.json 一起失效，得写迁移。名字丑，但值是全局唯一的。
+         *  ⚠️ 明文框：路径不是凭据，⛔ 别套 `createSecretField`（那会多一个没意义的眼睛按钮）。
+         */
+        dlBody.createDiv({ cls: 'rl-hint-note', text: FFMPEG_PATH_DESC });
+        const ffWrap = dlBody.createDiv({ cls: 'rl-secret' });
+        const ffInput = ffWrap.createEl('input', {
+            cls: 'rl-secret-input',
+            attr: { placeholder: 'ffmpeg.exe 的完整路径（留空 = 自动找）', type: 'text', spellcheck: 'false' },
         });
-        // 🔴 2026-10-25（用户：「在b站音频流凭据行底下加个测试连接按钮」）：
-        //    形态与上面三条音乐 Cookie **逐字同款**（`.rl-key-actions` + 行首回执槽 + 按钮贴右），
-        //    ⛔ 别再发明第四套按钮/回执布局（#488/#489 已经把同页两套说法的账算过一次）。
-        //    ⚠️ **结论不写进行头徽标**：本行徽标只表示「yt-dlp 路径配没配」（见上方 :1352 注释），
-        //    Cookie 有没有效是另一件事，混进徽标会让用户分不清哪个在说哪件事。
-        //    所以这里只做「就地回执」，不调 `setCredentialStatus`。
-        const biliActions = dlBody.createDiv({ cls: 'rl-key-actions' });
-        const biliResult = biliActions.createSpan({ cls: 'rl-key-result' });
-        const biliTestBtn = biliActions.createEl('button', { text: '测试连接', cls: 'mod-cta' });
-        biliTestBtn.addEventListener('click', async () => {
-            biliTestBtn.disabled = true;
-            // ⛔ 不改文案：`.rl-btn-loading` 已把文字置透明并叠 spinner；改文案会让按钮变窄 ⇒ 横向跳动
-            biliTestBtn.addClass('rl-btn-loading');
-            biliResult.setText('');
-            biliResult.removeClass('rl-key-result-ok', 'rl-key-result-bad');
-            const started = Date.now();
-            const r = await this.plugin.dlTestConnection('bilibili', this.plugin.settings.biliCookie ?? '');
-            const elapsedMs = Date.now() - started;
-            biliTestBtn.disabled = false;
-            biliTestBtn.removeClass('rl-btn-loading');
-            biliResult.setText(`${r.ok ? '✓ ' : '✗ '}${r.message} · ${elapsedMs}ms`);
-            biliResult.toggleClass('rl-key-result-ok', r.ok);
-            biliResult.toggleClass('rl-key-result-bad', !r.ok);
+        ffInput.value = this.plugin.settings.asrFfmpegPath ?? '';
+        ffInput.addEventListener('input', () => {
+            this.plugin.settings.asrFfmpegPath = ffInput.value.trim();
+            void this.plugin.saveSettings();
         });
+
         dlHead.addEventListener('click', () => dlRow.toggleClass('rl-key-open', !dlRow.hasClass('rl-key-open')));
     }
 
@@ -1433,8 +2557,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    ⇒ 基本设置页**直接用核心的类名**，让它自己算，⛔ 别再手写分组卡 + 覆盖 ——
         //      #541 手写过一版（分组卡）、#551 又手写过一版压制（压主题给的框），两版都在替核心打工，
         //      还一路踩到「每一行各自一个框」。用户上手后一句话点到根上：「还是改回 Obsidian 原生吧」。
-        //    ⚠️ 数据源 / AI 页**不传**这个参数：那两页组内各有自己的卡片（`.rl-prov-list` / `.rl-ai-svc-card`），
-        //      再套一层原生卡就是卡中卡。
+        //    ⚠️ 数据源 / AI 页**不传**这个参数：那两页组内各有自己的容器（`.rl-prov-list` / #717 起
+        //      「用途」组用 `.rl-ai-master-wrap`），再套一层原生卡就是卡中卡。
         //    ⚠️ 代价是核心的 `.setting-group { max-width: var(--setting-group-max-width) }`（默认 700px、
         //      且 `margin-inline: auto`）会一起生效 —— 那正是原生设置页的观感，本批**刻意接受**。
         const wrap = parent.createDiv({ cls: nativeGroup ? 'rl-svc-group setting-group' : 'rl-svc-group' });
@@ -1443,6 +2567,20 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         const icon = groupIcon(title);
         if (icon) safeSetIcon(head.createSpan({ cls: 'rl-svc-group-icon' }), icon);
         head.createSpan({ text: title });
+        /**
+         * 🔴🔴 2026-11-14（用户 m05673 手机实测）：「有的分两行有的一行显示空白一片
+         *    **应该给个提示不支持**」。
+         *
+         * 这些组在移动端不是「窄了不好看」，而是**整组控件根本没建**（`main.ts` 里
+         * `Platform.isDesktopApp` 的门面提前返回，按钮压根不渲染）⇒ 用户看到的是一片空白，
+         * 分不清「不支持」和「插件坏了」。这里在组标题行右侧补一枚小徽标说清楚。
+         *
+         * ⚠️ 判据（哪些组算桌面专属）只准在 `pure/platformGates` 里写一份 ——
+         *    那个名单必须与 `main.ts` 的门控同源，⛔ 别在这里硬编码标题。
+         */
+        if (shouldMarkDesktopOnly(title, Platform.isDesktopApp)) {
+            head.createSpan({ cls: 'rl-svc-group-badge-desktop', text: DESKTOP_ONLY_LABEL });
+        }
         // ⛔ #490：这里原有一行「组级说明」（`if (note) …`）—— 已随旧的第 4 参一并删除（死码不留）
         // 🔴 #553：`nativeGroup` 时给内容器补核心的 `.setting-items`（组卡与行平铺都由它触发，见上）。
         const body = wrap.createDiv({ cls: nativeGroup ? 'rl-svc-group-body setting-items' : 'rl-svc-group-body' });
@@ -1549,8 +2687,21 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //       这也是 Cherry Studio 的顺序（设置 → 模型服务里配 Provider，再回聊天页选模型）；
         //       中转站（New API / one-api）同理 —— 渠道在前、令牌在后。已核对，见 UI-GUIDE §11.7。
         //    ⚠️ 组名换了 ⇒ `pure/settingNav.SETTING_GROUP_ICONS` 的键同步换过（⛔ 旧键不留）。
-        this.createGroupSection(body, '模型服务', (inner) => this.renderProviderCards(inner));
+        // 🔴🔴 本轮用户裁定：「AI 集成页把『用途』组移到第一顺位」。
+        //    ⇒ 组序改为 **用途 → 模型服务**。⚠️ #483 当年定的「先连上 → 再选它用在哪」由此**作废**
+        //    （用户本轮明确要求反过来：先看这一页能干什么，再决定接哪家）。
+        //    ⚠️ 组内容与能力一字未改，只换位置。
+        // 🔴🔴 2026-11-06 用户逐字：「AI集成-用途页重构，在顶部设置一个全局默认AI模型
+        //    （下方的所有服务全部继承这个），然后根据场景分类：阅读器AI快捷（翻译、搜索）、
+        //    编辑属性AI快捷（总结、预填）、播放器AI快捷（字幕总结、字幕提问）」。
+        //
+        // 🔴 **为什么从「六张平铺卡」改成「顶部全局 + 三张场景卡」**：原来六张卡
+        //    （翻译/总结/搜索/预填/字幕总结/字幕提问）是**按功能点**平铺的 —— 用户看到的是六行
+        //    「服务商 + 模型」，却看不出「我现在正在阅读器里读东西，该调哪一张」。
+        //    三张场景卡对应的是**用户真正遇到它的三个地方**：读的时候、填条目的时候、看片的时候。
+        //    ⚠️ 卡数变少但**服务一个没少**：六项仍各自独立、各自有提示词，只是被收进对应的场景卡里。
         this.createGroupSection(body, '用途', (inner) => this.renderAiServiceRows(inner));
+        this.createGroupSection(body, '模型服务', (inner) => this.renderProviderCards(inner));
     }
 
     /**
@@ -1580,69 +2731,200 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *    两个 id 空间各自读自己的记忆，与「切音源装该音源自己的记忆音色」同口径）。
      * ⚠️ 改完对**已打开**的阅读器不立即生效（它读的是打开时的快照）—— 重开即可。
      */
+    /**
+     * 「文字转语音」这一行。
+     *
+     * 🔴 2026-11-06 m08348（用户：「还是太复杂了改成卡片式一体化」）：
+     *    它现在长在 `.rl-voice-card` **里面**，所以自己**不再套** `.rl-ai-svc-card` ——
+     *    否则就是「卡中卡」（外白框套内白框，边距叠两层，实测会多出 18px 空白）。
+     *    ⚠️ #717 之后 **`.rl-ai-svc-card` 全仓已无调用**（AI 用途组改成主从布局，
+     *    `renderAiServiceRow` 随整套场景卡一起退场）—— 本行当初对齐的就是那套行距，
+     *    现在它是**这条语音行独有**的类（见下面 `addClass('rl-ai-svc')` 的注释）。
+     */
     private renderTtsVoiceRow(body: HTMLDivElement): void {
-        // #487：与上面三行**同款卡片**（用户要「各个服务之间空开间距」⇒ 四行各自成卡）
-        const card = body.createDiv({ cls: 'rl-ai-svc-card' });
-        const row = new Setting(card)
-            .setName('朗读音源')
-            // #477：「用哪种声音」偏口语 ⇒ 去掉疑问句式（口径见 renderAppearanceRows）
-            .setDesc('朗读使用的声音');
-        row.settingEl.addClass('rl-ai-svc'); // #480 ③：与其它 AI 服务行同款的行距
+        this.renderTtsVoiceRows(body, () => this.display());
+    }
 
+    /**
+     * 「文字转语音」——**与「语音转文字」同构的两栏**（用户 m09233：
+     * 「把文字转语音的UI也改成语音转文字选择模型那样分本地和云端」）。
+     *
+     * 结构完全复用 STT 那套布局类（`.rl-asr-pick2` / `.rl-asr-row` / `.rl-asr-nav` /
+     * `.rl-asr-top` / `.rl-asr-bt`）：
+     *   · 左栏：`本地语音`（系统语音）+ `云端接入`（硅基流动）两段，单选互斥、未选中变灰；
+     *   · 右上：当前音源的**音色格**（每格显示音色名 + 所属分组，如「中文 / 男性」）；
+     *   · 右下：试听与可用性。
+     * ⛔ 别另起一套类名：两栏骨架的宽度、间距、灰化、键盘可达性都已经在 STT 那里调好了，
+     *   抄一份必然漂移（本仓「同一功能只留一个实现」）。
+     */
+    private renderTtsVoiceRows(host: HTMLDivElement, redraw: () => void): void {
         const { kind, remembered } = this.currentTtsState();
         const voices = this.systemVoices();
         const curVoice = effectiveTtsVoice(kind, voices, remembered);
-        const curLabel = ttsVoiceLabel(kind, voices, remembered);
+        /**
+         * 🔴 用户 m09565 ①-3：「硅基流动要明确知道这些来自哪个模型，而不是只显示音色
+         *    （如显示为 `CosyVoice2 · alex（沉稳男声）`）」。
+         * ⇒ 云端走 `cloudVoiceFullLabel`（带模型短名 + 音色 id + 中文标签）；
+         *   系统语音保持 `ttsVoiceLabel`（系统音色名本身就是全名，再套一层反而更乱）。
+         * ⚠️ 只改设置页的**展示**，⛔ 不动 `ttsVoiceLabel`：阅读器面板共用它，单测也钉着它的返回值。
+         * ⚠️ 传 `curVoice`（`effectiveTtsVoice` 已把「还没选过」补成缺省音色）而不是 `remembered`：
+         *    真机第一版传的是 `remembered`，没选过时它为空 ⇒ 「当前：」只剩 `CosyVoice2` 三个字，
+         *    用户看不出马上会用哪个音色。这跟 `effectiveTtsVoice` 的注释是同一句话：
+         *    显示的必须是**马上会念的那个**。
+         */
+        const curLabel = kind === 'cloud' ? cloudVoiceFullLabel(curVoice) : ttsVoiceLabel(kind, voices, remembered);
+        const cloudReady = !!this.settingValue('readerSiliconflowKey');
 
-        const dock = row.controlEl.createDiv({ cls: 'rl-ai-tts' });
+        const pick2 = host.createDiv({ cls: 'rl-asr-pick2' });
+        const row = pick2.createDiv({ cls: 'rl-asr-row' });
+        const nav = row.createDiv({ cls: 'rl-asr-nav' });
 
-        // ① 音源 = **控件区最左的一枚图标钮**（#495：从名称行尾**挪进控件区**，排在下拉框之前）
-        //    🔴 用户 2026-10-03 第三条要求：「把切换开关移到下拉框之前，排列顺序 = 切换开关 + 下拉框，
-        //    两者水平对齐、间距一致，整体作为一个整体保持右对齐」—— 两者现在同在 `.rl-ai-tts` 这个
-        //    flex 容器里（`gap: 6px`），天然等高同间距；整组随控件区 `justify-content: flex-end` 贴右。
-        //    🔴 **挪位置必须同步改 CSS 选择器**（已从 `.rl-ai-name-row …` 改成行级 `.rl-ai-svc …`）——
-        //    否则两级前缀不命中，按钮退回宿主裸 `button` 的盒模型（实测宽 38px 而非 30px）。
-        //    图标本身就是状态（喇叭 = 系统语音 / 硅基流动标 = 云端）⇒ 不用写文字；两个选项 ⇒ 点击切到另一个。
-        const engineBtn = dock.createEl('button', { cls: 'rl-ai-engine-btn', attr: { type: 'button' } });
-        const engineLabel = TTS_ENGINE_CHOICES.find((c) => c.value === kind)?.label ?? kind;
-        renderAiIcon(engineBtn.createSpan({ cls: 'rl-ai-icon' }), kind === 'cloud' ? AI_PROVIDER_ICON.siliconflow : TTS_ICON);
-        engineBtn.setAttribute('data-tip', `朗读音源：${engineLabel}（点击切换）`);
-        engineBtn.addEventListener('click', () => {
-            saveTtsEngine(kind === 'cloud' ? 'system' : 'cloud');
-            this.display(); // 音色清单整批换 ⇒ 重建（与「服务商切换整页重渲染」同一口径）
-        });
+        /**
+         * 一个音源 = 一行导航。
+         * ⚠️ 这里的「云端」和 STT 的云端**不是一回事**：TTS 的云端（硅基流动）是真实现，
+         *    所以它是可点按钮、有 `is-todo` 的只有 STT 那边。
+         */
+        const mkItem = (value: TtsEngineKind, name: string, count: string, tip: string): void => {
+            const item = nav.createEl('button', { cls: 'rl-asr-navi' });
+            item.setAttribute('type', 'button');
+            const on = value === kind;
+            if (on) item.addClass('is-on');
+            item.setAttribute('aria-pressed', on ? 'true' : 'false');
+            const ico = item.createSpan({ cls: 'rl-asr-navi-icon' });
+            /**
+             * 🔴 用户 m07854 ⑤：「文字转语音组下的『系统语音』和『硅基流动』标题前的小图标
+             *    改成对应品牌图标」。
+             *    · 云端 = 硅基流动 ⇒ 它本来就有官方标（`AI_PROVIDER_ICON.siliconflow`，slug `siliconcloud`），
+             *      直接复用，⛔ 别在别处再抄一份路径；
+             *    · 本地 = 操作系统自带 TTS ⇒ 挂**当前操作系统**的标（真源 `pure/osIcons`，
+             *      用户当场选的这一档；认不出平台回退内置 `monitor`）。
+             * ⚠️ 走 `renderAiIcon` 而不是 `safeSetIcon`：品牌标是填充式、内置标是描边式，
+             *    那条分治只准有一份（`services/aiIcon.ts`）。
+             */
+            renderAiIcon(ico, value === 'cloud' ? AI_PROVIDER_ICON.siliconflow : systemVoiceIcon());
+            const txt = item.createSpan({ cls: 'rl-asr-navi-text' });
+            txt.createSpan({ cls: 'rl-asr-navi-name', text: name });
+            item.setAttribute('data-tip', tip);
+            item.createSpan({ cls: on ? 'rl-asr-navi-count is-ok' : 'rl-asr-navi-count', text: count });
+            item.addEventListener('click', () => {
+                if (value === kind) return;
+                saveTtsEngine(value);
+                /**
+                 * 🔴 用户 m09565 ①-2：「文字转语音点一个交互怎么就重置滚动了，修复一下保持位置不变」
+                 *    真因：这里原本是 `this.display()` —— 那是**整页重建**，
+                 *    设置页 DOM 全部换新 ⇒ 滚动位置被甩回顶部。
+                 *    ⇒ 改走 `redraw()`（`mountVoiceCard` 那个闭包，只 `card.empty()` 后重画这张卡：
+                 *      滚动容器、页签栏、其它分组一个都不动）。
+                 *    ⚠️ 音色清单确实要整批换（系统语音 ↔ 硅基流动），但**换的是卡内内容**，
+                 *      不需要动卡以外的任何节点。⛔ 别改回 `this.display()`。
+                 */
+                redraw();
+            });
+        };
 
-        // ② 音色（**唯一**的下拉；宽度 = `--rl-ai-ctl-w`，窄窗可缩不凸出）
-        //    ⚠️ #482 的「窄 + 宽」两格、#493 的「两格等宽平分」都已退场 —— 同一根因（控件区塞不下两个下拉）。
+        this.mkNavHead(nav, 'house', '本地语音', '不走网络');
+        const sysBlocked = ttsEngineBlockedReason('system', cloudReady, ttsSupported());
+        mkItem(
+            'system',
+            '系统语音',
+            voices.length ? String(voices.length) : '0',
+            sysBlocked ?? '用系统自带语音朗读，完全在本机，不走网络。',
+        );
+        this.mkNavHead(nav, 'cloud', '云端接入', '按次计费', true);
+        const cloudBlocked = ttsEngineBlockedReason('cloud', cloudReady, ttsSupported());
+        mkItem('cloud', '硅基流动', '云', cloudBlocked ?? '云端合成，音色更多；需要先在设置里填硅基流动 API Key。');
+
+        /* ── 右上：音色格 ── */
+        const top = row.createDiv({ cls: 'rl-asr-top' });
+        const topHead = top.createDiv({ cls: 'rl-asr-top-head' });
+        // 🔴 m07854 ⑤：右上的「当前音色来自谁」也要品牌标，与左栏那两行同一份真源
+        //    （云端 = 硅基流动官方标 / 本地 = 当前操作系统的标）。⛔ 别写回 `cloud` / `volume-2`。
+        renderAiIcon(topHead.createSpan({ cls: 'rl-asr-top-icon' }), kind === 'cloud' ? AI_PROVIDER_ICON.siliconflow : systemVoiceIcon());
+        topHead.createSpan({ cls: 'rl-asr-top-title', text: kind === 'cloud' ? '硅基流动' : '系统语音' });
+        if (curLabel) topHead.createSpan({ cls: 'rl-asr-top-cur', text: '当前：' + curLabel });
+
         const groups = ttsVoiceGroups(kind, voices, curVoice);
-        this.renderDropdown(dock, {
-            cls: 'rl-ai-tts-voice',
-            // ⚠️ 列表空（系统语音还没加载出来）时给占位，⛔ 不留空按钮
-            text: curLabel || (kind === 'cloud' ? '默认音色' : '默认语音'),
-            tip: curLabel || undefined,
-            current: curVoice,
-            items: groups.flatMap((g) => g.items.map((o) => ({ value: o.value, label: o.label, group: g.label }))),
-            onPick: (v) => {
-                if (kind === 'cloud') saveCloudVoice(v);
-                else saveVoiceUri(v);
-                this.display();
-            },
+        const blocked = kind === 'cloud' ? cloudBlocked : sysBlocked;
+        top.createDiv({
+            cls: 'rl-asr-top-desc',
+            text: blocked ?? (kind === 'cloud' ? '当前音色来自硅基流动的云端合成。' : '当前音色来自系统语音，全部在本机完成。'),
         });
 
-        // ③ 试听（语音类设置最要紧的体验：不点一下就不知道选的是谁）
-        const play = dock.createEl('button', {
-            cls: 'rl-ai-tts-play clickable-icon',
-            attr: { type: 'button', 'data-tip': '试听' },
+        const grid = top.createDiv({ cls: 'rl-asr-tiergrid is-voice' });
+        const total = groups.reduce((n, g) => n + g.items.length, 0);
+        if (!total) {
+            // ⚠️ 系统语音列表是异步加载的，首次常为空 —— 给一句人话，⛔ 不留白板
+            top.createDiv({ cls: 'rl-bt-adv-title', text: '音色列表还在加载…' });
+        }
+        for (const g of groups) {
+            for (const o of g.items) {
+                const cell = grid.createDiv({ cls: 'rl-asr-tg' });
+                cell.setAttribute('role', 'button');
+                cell.setAttribute('tabindex', '0');
+                cell.addClass(o.on ? 'is-on' : 'is-off');
+                cell.setAttribute('aria-pressed', o.on ? 'true' : 'false');
+                /**
+                 * 🔴 m09565 ①-3：云端音色的 `o.label` 只有「沉稳男声」这类中文标签，
+                 *    三个不同 id 的男声在界面上分不出谁是谁，也看不出是**哪个模型**出的。
+                 * ⇒ 云端格子名显式带上 id：`alex（沉稳男声）`，脚注显示模型短名 `CosyVoice2`。
+                 *    系统语音保持原样（`o.label` 本身已含「名 · 语言」全名）。
+                 */
+                const cellName = kind === 'cloud' ? cloudVoiceFullLabel(o.value) : o.label;
+                const cellFoot = kind === 'cloud' ? cloudModelShortName() : g.label;
+                cell.setAttribute('data-tip', kind === 'cloud' ? `${cellName}　·　${g.label}` : `${o.label}　·　${g.label}`);
+                const pick = (): void => {
+                    if (kind === 'cloud') saveCloudVoice(o.value);
+                    else saveVoiceUri(o.value);
+                    // 🔴 同上（m09565 ①-2）：切音色只重画这张卡，⛔ 别用 this.display() 整页重建
+                    redraw();
+                };
+                cell.createDiv({ cls: 'rl-asr-tg-name', text: cellName });
+                const foot = cell.createDiv({ cls: 'rl-asr-tg-foot' });
+                foot.createSpan({ cls: 'rl-asr-tg-size', text: cellFoot });
+                if (o.on) foot.createSpan({ cls: 'rl-asr-tg-ok', text: '✓' });
+                cell.addEventListener('click', pick);
+                cell.addEventListener('keydown', (ev: KeyboardEvent) => {
+                    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+                    ev.preventDefault();
+                    pick();
+                });
+            }
+        }
+
+        /* ── 右下：试听 + 可用性 ── */
+        const bt = row.createDiv({ cls: 'rl-asr-bt' });
+        const mod = bt.createDiv({ cls: 'rl-bt-mod' });
+        const head = mod.createDiv({ cls: 'rl-bt-mod-head' });
+        safeSetIcon(head.createSpan({ cls: 'rl-bt-mod-icon' }), 'play');
+        head.createSpan({ cls: 'rl-bt-mod-title', text: '试听' });
+        head.createSpan({
+            cls: blocked ? 'rl-bt-mod-badge' : 'rl-bt-mod-badge is-ok',
+            text: blocked ? '不可用' : '可以试听',
         });
-        safeSetIcon(play, 'play');
-        play.createSpan({ cls: 'rl-sr', text: '试听' });
+        const body = mod.createDiv({ cls: 'rl-bt-run-body' });
+        const play = body.createEl('button', { cls: 'rl-asr-fixbtn', attr: { type: 'button' } });
+        play.setText('▶ 试听这句');
         play.addEventListener('click', () => this.previewTtsVoice(kind, curVoice));
+        body.createDiv({ cls: 'rl-bt-adv-title', text: `朗读内容：「${VOICE_PREVIEW_TEXT}」` });
+        if (blocked) body.createDiv({ cls: 'rl-bt-adv-title', text: blocked });
 
-        // ⚠️ 系统语音列表是**异步**加载的（首次常为空）⇒ 变更后重绘一次（`once` 自摘，不会累积）
+        // ⚠️ 系统语音列表是**异步**加载的（首次常为空）⇒ 变更后只重画这张卡（不整页刷新，避免滚动位置跳回顶部）
         if (kind === 'system' && ttsSupported() && !this.ttsVoicesHooked) {
             this.ttsVoicesHooked = true;
-            window.speechSynthesis?.addEventListener('voiceschanged', () => this.display(), { once: true });
+            window.speechSynthesis?.addEventListener('voiceschanged', () => redraw(), { once: true });
         }
+    }
+
+    /**
+     * 左栏分组标题（「本地部署 / 云端接入」那一条灰字）。
+     * 🔴 从 `renderAsrEngineRows` 的局部函数提出来：TTS 也要用同一款标题，
+     *    复制一份必然漂移（字体、那条分隔横线的 margin 都要跟着抄）。
+     */
+    private mkNavHead(nav: HTMLElement, icon: string, title: string, note: string, cloud = false): void {
+        const h = nav.createDiv({ cls: cloud ? 'rl-asr-nav-head is-cloud' : 'rl-asr-nav-head' });
+        safeSetIcon(h.createSpan({ cls: 'rl-asr-nav-headicon' }), icon);
+        h.createSpan({ cls: 'rl-asr-nav-headtitle', text: title });
+        h.createSpan({ cls: 'rl-asr-nav-headnote', text: note });
     }
 
     /**
@@ -1794,197 +3076,339 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
-     * 「AI服务」组内容：翻译 / 总结 / 搜索三套「服务商 + 模型 + 提示词」+ 朗读音源（#356 移入）。
-     * 🔴 #479 整页重排：提示词**并入各自的服务行**（默认收起）—— 原来三块 4 行 textarea 恒展开，
-     *    把这一页撑到约 3 屏；收起后约 1 屏。⛔ 功能与字段一个没少（展开即是原来那块）。
+     * 「用途」组 = **主从布局**（2026-11-07 用户从十版方案里选定「I 主从」）。
+     *
+     * 🔴 三块结构：
+     *    ① 左栏 `.rl-ai-master` —— **六个条目**的索引：三个场景各两个服务（阅读 / 播放 / 编辑），
+     *       每条一颗状态点（服务商已选 = 绿 / 不启用 = 灰），场景用分组小标签；
+     *       ⚠️ #723 起「全局默认模型」那一档已删，⛔ 别再补回来（理由见 `AiServiceDef` 类型注释）。
+     *    ② 右栏 `.rl-ai-detail` —— **只画当前选中那一条**的完整配置：模型控件 + 常驻提示词输入框；
+     *    ③ 选中项存 `this.aiPick`（实例字段）—— ⛔ 不写进 `plugin.settings`：
+     *       它是「此刻在看哪一项」的界面焦点，不是用户配置，落盘只会长出一个没人读的键。
+     *
+     * 🔴 **为什么提示词从折叠块变常驻输入框**（这正是选主从方案唯一的实质收益）：
+     *    折叠形态下改一段 40 字提示词要点开、改、再点合，一屏里三张卡各有各的开合态；
+     *    主从形态下右栏本来就只装一屏内容，不折叠也不会把页面撑长。
+     *    ⚠️ 名行尾那颗「提示词 ›」按钮（`.rl-ai-prompt-btn`）随之**整套退场** —— ⛔ 别再为它加回来。
+     *
+     * ⚠️ 六个服务的 provider/model/提示词**仍完全独立**（#478~#511 定下的独立性，⛔ 别合并）；
+     *    「全局默认模型」是它们共同的上游，靠一次**显式铺开**实现（见 renderAiServiceDetail 里
+     *    那段逐项赋值），⛔ 不是运行时回落（三态语义的理由见 `aiGlobalProvider` 字段注释）。
      */
     private renderAiServiceRows(body: HTMLDivElement): void {
-        // 🔴🔴 #487 用户裁定：「各个服务之间**空开间距**」⇒ 四行**各自成卡**（#483 的「一张 `rl-ai-card`
-        //    + 行间发丝线」作废）。容器复用 `.rl-prov-list`（卡片列表：flex column + gap 8px），
-        //    于是上下两组（模型服务 / 用途）的**卡间距与观感完全一致**。
-        //    ⚠️ ⛔ 卡片不许 `overflow: hidden`：朗读音源那格的下拉面板是 `position: absolute`，
-        //    会被裁掉（与 #354「设置页内容区 overflow-y:auto」同族坑，#480 已栽过一次）。
-        const card = body.createDiv({ cls: 'rl-prov-list' });
-        // 翻译服务（服务商 + 模型 + 提示词）
-        this.renderAiServiceRow(card, {
-            name: '翻译服务',
-            desc: '阅读时划词即时翻译',
-            getProvider: () => this.plugin.settings.readerTranslateProvider,
-            setProvider: (v) => { this.plugin.settings.readerTranslateProvider = v; },
-            getModel: () => this.plugin.settings.readerTranslateModel,
-            setModel: (v) => { this.plugin.settings.readerTranslateModel = v; },
-            prompt: {
-                label: '翻译提示词',
-                value: this.plugin.settings.readerTranslatePrompt,
-                defaultText: DEFAULT_TRANSLATE_PROMPT,
-                onSave: (v) => {
-                    this.plugin.settings.readerTranslatePrompt = v;
-                    void this.plugin.saveSettings();
-                },
-            },
-        });
+        const wrap = body.createDiv({ cls: 'rl-ai-master-wrap' });
+        const master = wrap.createDiv({ cls: 'rl-ai-master' });
+        const detail = wrap.createDiv({ cls: 'rl-ai-detail' });
 
-        // 总结服务（与翻译服务各自独立：条目 AI 生成一句话总结/核心看点用它跑）
-        this.renderAiServiceRow(card, {
-            name: '总结服务',
-            // #477：「给条目一键生成总结」偏口语 ⇒ 改标准句式（口径见 renderAppearanceRows）
-            desc: '为条目生成 AI 总结',
-            getProvider: () => this.plugin.settings.readerSummaryProvider,
-            setProvider: (v) => { this.plugin.settings.readerSummaryProvider = v; },
-            getModel: () => this.plugin.settings.readerSummaryModel,
-            setModel: (v) => { this.plugin.settings.readerSummaryModel = v; },
-            prompt: {
-                label: '总结提示词',
-                value: this.plugin.settings.readerSummaryPrompt,
-                defaultText: DEFAULT_SUMMARY_PROMPT,
-                onSave: (v) => {
-                    this.plugin.settings.readerSummaryPrompt = v;
-                    void this.plugin.saveSettings();
-                },
-            },
-        });
+        const defs = this.aiServiceDefs();
+        // 上次看到的那一项可能已不存在（例如日后增删条目）⇒ 回落第一项，⛔ 别让右栏空着。
+        let pick = defs.some((d) => d.id === this.aiPick) ? this.aiPick : defs[0].id;
+        const items: Array<{ def: AiServiceDef; el: HTMLDivElement }> = [];
 
-        // 搜索服务（同样独立：阅读器划词搜索卡内的 AI 答案用它跑；网络搜索那一半不走 AI、无需配置）
-        this.renderAiServiceRow(card, {
-            name: '搜索服务',
-            desc: '阅读时划词联网搜索',
-            getProvider: () => this.plugin.settings.readerSearchProvider,
-            setProvider: (v) => { this.plugin.settings.readerSearchProvider = v; },
-            getModel: () => this.plugin.settings.readerSearchModel,
-            setModel: (v) => { this.plugin.settings.readerSearchModel = v; },
-            prompt: {
-                label: '搜索提示词',
-                value: this.plugin.settings.readerSearchPrompt,
-                defaultText: DEFAULT_SEARCH_PROMPT,
-                onSave: (v) => {
-                    this.plugin.settings.readerSearchPrompt = v;
-                    void this.plugin.saveSettings();
-                },
-            },
-        });
+        for (const def of defs) {
+            // 场景分组的第一个条目上方插一条分组标签（全局那一条自成一档）
+            if (def.groupTop) master.createDiv({ cls: 'rl-ai-mgrp', text: def.sceneTitle });
+            const el = master.createDiv({ cls: 'rl-ai-mitem', attr: { role: 'button', tabindex: '0' } });
+            const dot = el.createSpan({ cls: 'rl-ai-mdot' });
+            // 状态点：全局那一档看 `aiGlobalProvider`；服务看各自 provider。
+            // 🔴 「不启用」是 `'off'`，与「还没配」同值 —— 所以这里只能表达「有没有选服务商」，
+            //    ⛔ 别试图区分二者（要区分得改 `normalizeAiChoice` 的三态，那是另一件事）。
+            dot.toggleClass('is-off', isAiOff(normalizeAiChoice(def.getProvider())));
+            el.createSpan({ cls: 'rl-ai-mname', text: def.name });
+            el.setAttribute('aria-label', `${def.name}，${def.sceneTitle}`);
+            const go = (): void => {
+                pick = def.id;
+                this.aiPick = pick;
+                for (const it of items) it.el.toggleClass('is-on', it.def.id === pick);
+                this.renderAiServiceDetail(detail, def);
+                detail.scrollTop = 0;
+            };
+            el.addEventListener('click', go);
+            el.addEventListener('keydown', (ev: KeyboardEvent) => {
+                if (ev.key !== 'Enter' && ev.key !== ' ') return;
+                ev.preventDefault();
+                go();
+                el.focus();
+            });
+            items.push({ def, el });
+        }
 
-        // 预填服务（#499）：新增条目「手动填写」界面标题行 ✨ 用它跑 —— 与上面三项同构，
-        // 独立提示词（改写预填措辞不影响总结/搜索）。⚠️ 它是**第五张卡**（#487 的「各自成卡」照旧）。
-        this.renderAiServiceRow(card, {
-            name: '预填服务',
-            desc: '为条目自动填写字段',
-            getProvider: () => this.plugin.settings.readerPrefillProvider,
-            setProvider: (v) => { this.plugin.settings.readerPrefillProvider = v; },
-            getModel: () => this.plugin.settings.readerPrefillModel,
-            setModel: (v) => { this.plugin.settings.readerPrefillModel = v; },
-            prompt: {
-                label: '预填提示词',
-                value: this.plugin.settings.readerPrefillPrompt,
-                defaultText: DEFAULT_PREFILL_PROMPT,
-                onSave: (v) => {
-                    this.plugin.settings.readerPrefillPrompt = v;
-                    void this.plugin.saveSettings();
-                },
-            },
-        });
-
-        // 🔴 #356（用户指令）：朗读音源从「语音合成」组搬到本组末尾 —— 它和上面三项同属
-        //    「用谁来做这件事」的服务选择；位置放在**最后一项服务之后**（提示词已并入各自服务行）。
-        this.renderTtsVoiceRow(card);
+        const first = items.find((it) => it.def.id === pick) ?? items[0];
+        first.el.addClass('is-on');
+        this.renderAiServiceDetail(detail, first.def);
     }
 
+    /** 一个「用途」条目的定义（主从两栏共用这一份真源：⛔ 别在左栏和右栏各列一遍） */
+    private aiServiceDefs(): AiServiceDef[] {
+        const s = () => this.plugin.settings;
+        /**
+         * 🔴 #723（2026-11-07 用户裁定，三条一起改）：
+         *   ① **删掉「全局默认模型」** —— 用户原话「AI集成-用途删除全局配置模型」。
+         *      ⚠️ 存储字段 `aiGlobalProvider / aiGlobalModel` 保留（见 `AiServiceDef` 类型注释），
+         *      ⛔ 别顺手删字段 —— 老 data.json 里有值时删键等同静默丢配置。
+         *   ② 分组名去掉「AI 快捷」后缀：`阅读器 AI 快捷 → 阅读` / `播放器 AI 快捷 → 播放` /
+         *      `编辑属性 AI 快捷 → 编辑`（用户原话「删除『AI 快捷』」）。
+         *   ③ 顺序按**场景在插件里出现的先后**排：阅读 → 播放 → 编辑。
+         *      ⛔ 别按字母或按当年加的批次排 —— 用户看这一列时想的是「我在哪儿用它」。
+         *   ④ 服务名统一成「AI + 动作」：AI翻译 / AI搜索 / AI字幕总结 / AI字幕提问 / AI总结 / AI预填
+         *      （用户原话「翻译服务搜索服务等名称改成『AI翻译、AI搜索』」）。
+         */
+        return [
+            {
+                id: 'translate',
+                name: 'AI翻译',
+                desc: '阅读时划词即时翻译',
+                sceneTitle: '阅读',
+                groupTop: true,
+                getProvider: () => s().readerTranslateProvider,
+                setProvider: (v) => { s().readerTranslateProvider = v; },
+                getModel: () => s().readerTranslateModel,
+                setModel: (v) => { s().readerTranslateModel = v; },
+                prompt: {
+                    label: '翻译提示词',
+                    value: s().readerTranslatePrompt,
+                    defaultText: DEFAULT_TRANSLATE_PROMPT,
+                    onSave: (v) => { s().readerTranslatePrompt = v; void this.plugin.saveSettings(); },
+                },
+            },
+            {
+                id: 'search',
+                name: 'AI搜索',
+                desc: '阅读时划词联网搜索',
+                sceneTitle: '阅读',
+                getProvider: () => s().readerSearchProvider,
+                setProvider: (v) => { s().readerSearchProvider = v; },
+                getModel: () => s().readerSearchModel,
+                setModel: (v) => { s().readerSearchModel = v; },
+                prompt: {
+                    label: '搜索提示词',
+                    value: s().readerSearchPrompt,
+                    defaultText: DEFAULT_SEARCH_PROMPT,
+                    onSave: (v) => { s().readerSearchPrompt = v; void this.plugin.saveSettings(); },
+                },
+            },
+            {
+                id: 'cue-summary',
+                name: 'AI字幕总结',
+                desc: '总结详情页里的字幕内容',
+                sceneTitle: '播放',
+                groupTop: true,
+                getProvider: () => s().readerCueSummaryProvider,
+                setProvider: (v) => { s().readerCueSummaryProvider = v; },
+                getModel: () => s().readerCueSummaryModel,
+                setModel: (v) => { s().readerCueSummaryModel = v; },
+                prompt: {
+                    label: '字幕总结提示词',
+                    value: s().readerCueSummaryPrompt,
+                    defaultText: DEFAULT_CUE_SUMMARY_PROMPT,
+                    onSave: (v) => { s().readerCueSummaryPrompt = v; void this.plugin.saveSettings(); },
+                },
+            },
+            {
+                id: 'cue-ask',
+                name: 'AI字幕提问',
+                desc: '对详情页字幕提问时使用的提示词',
+                sceneTitle: '播放',
+                // 🔴 服务商 / 模型与上面那行**完全共用**（再开一行只会让人重复选一遍），
+                //    只有提示词独立：总结要 JSON 分点、提问要自然语言克制，同一段服务不了两件事。
+                getProvider: () => s().readerCueSummaryProvider,
+                setProvider: (v) => { s().readerCueSummaryProvider = v; },
+                getModel: () => s().readerCueSummaryModel,
+                setModel: (v) => { s().readerCueSummaryModel = v; },
+                prompt: {
+                    label: '字幕提问提示词',
+                    value: s().readerCueAskPrompt,
+                    defaultText: DEFAULT_CUE_ASK_PROMPT,
+                    onSave: (v) => { s().readerCueAskPrompt = v; void this.plugin.saveSettings(); },
+                },
+            },
+            {
+                id: 'summary',
+                name: 'AI总结',
+                desc: '为条目生成 AI 总结',
+                sceneTitle: '编辑',
+                groupTop: true,
+                getProvider: () => s().readerSummaryProvider,
+                setProvider: (v) => { s().readerSummaryProvider = v; },
+                getModel: () => s().readerSummaryModel,
+                setModel: (v) => { s().readerSummaryModel = v; },
+                prompt: {
+                    label: '总结提示词',
+                    value: s().readerSummaryPrompt,
+                    defaultText: DEFAULT_SUMMARY_PROMPT,
+                    onSave: (v) => { s().readerSummaryPrompt = v; void this.plugin.saveSettings(); },
+                },
+            },
+            {
+                id: 'prefill',
+                name: 'AI预填',
+                desc: '为条目自动填写字段',
+                sceneTitle: '编辑',
+                getProvider: () => s().readerPrefillProvider,
+                setProvider: (v) => { s().readerPrefillProvider = v; },
+                getModel: () => s().readerPrefillModel,
+                setModel: (v) => { s().readerPrefillModel = v; },
+                prompt: {
+                    label: '预填提示词',
+                    value: s().readerPrefillPrompt,
+                    defaultText: DEFAULT_PREFILL_PROMPT,
+                    onSave: (v) => { s().readerPrefillPrompt = v; void this.plugin.saveSettings(); },
+                },
+            },
+        ];
+    }
+
+    /** 右栏：当前选中条目的完整配置（模型控件 + 常驻提示词 + 标题行的恢复默认） */
+    private renderAiServiceDetail(detail: HTMLDivElement, def: AiServiceDef): void {
+        detail.empty();
+        const head = detail.createDiv({ cls: 'rl-ai-dhead' });
+        /**
+         * 🔴 2026-11-07 本轮（用户：「这个恢复默认按钮样式改成高级设置那些项恢复默认样式统一放在
+         *    服务标题旁边」）：
+         *    · 位置：从提示词块**底部**搬到**标题行右侧**（`.rl-ai-dtitlerow`），与
+         *      「高级设置」三组的 `mountGroupReset` 同一位置语言 —— 标题右边就是这一项的复位入口；
+         *    · 样式：直接复用 `.rl-group-reset`（`rotate-ccw` 图标 + 「恢复默认」文字、透明底、
+         *      悬停才铺底色），⛔ 不再用实心 `.rl-btn.rl-ai-dreset`（两处观感不一致，用户点名要统一）。
+         *    ⚠️ 按钮**只在有提示词的那六条**上出现（全局那条 `prompt: null`，没有提示词可复位）。
+         */
+        const titleRow = head.createDiv({ cls: 'rl-ai-dtitlerow' });
+        titleRow.createEl('h4', { cls: 'rl-ai-dtitle', text: def.name });
+        head.createDiv({ cls: 'rl-ai-dsub', text: `${def.desc} · ${def.sceneTitle}` });
+
+        const field = detail.createDiv({ cls: 'rl-ai-dfield' });
+        field.createDiv({ cls: 'rl-ai-dlabel', text: '服务商 · 模型' });
+        this.renderAiPickControl(field, {
+            serviceName: def.name,
+            getProvider: def.getProvider,
+            setProvider: def.setProvider,
+            getModel: def.getModel,
+            setModel: def.setModel,
+        });
+
+        // 🔴 #723：「全局默认模型」那一档删掉之后，**每条都有提示词** ⇒ 这里不再包 `if (def.prompt)`。
+        //    ⛔ 别为了「以后可能有不带提示词的条目」把条件加回来 —— 真到那天应该改类型，不是留个恒真的判断。
+        /**
+         * 标题行右侧的「恢复默认」（#653 口径：**常显**，未修改时点了给轻提示而不是禁用/隐藏）。
+         * ⛔ 不用 `disabled`：高级设置那三枚也是常显可点的，禁用态会让同一套交互出现两种观感。
+         */
+        const reset = titleRow.createEl('button', {
+            cls: 'rl-group-reset',
+            attr: {
+                type: 'button',
+                'aria-label': `恢复「${def.prompt.label}」的内置默认`,
+                'data-tip': '清空这一项的自定义提示词，回到内置默认',
+            },
+        });
+        safeSetIcon(reset.createSpan({ cls: 'rl-group-reset-icon' }), 'rotate-ccw');
+        reset.createSpan({ cls: 'rl-group-reset-text', text: '恢复默认' });
+        /** 未修改时点按钮的轻提示（与 `.rl-group-hint` 同款，1.5s 淡出；⛔ 不弹 Notice） */
+        const hintEl = titleRow.createDiv({
+            cls: 'rl-group-hint',
+            text: '已经是默认值',
+            attr: { role: 'status', 'aria-live': 'polite' },
+        });
+
+        const pf = detail.createDiv({ cls: 'rl-ai-dfield' });
+        // 🔴 标签只画**一次**（与「服务商 · 模型」同款 `.rl-ai-dlabel`，由本格自己画）：
+        //    `renderPromptField` 内部**不再**画 `.rl-prompt-label` —— 两边各画一遍时，
+        //    同一句「翻译提示词」会上下叠成两个标签（2026-11-07 修的真 bug）。
+        pf.createDiv({ cls: 'rl-ai-dlabel', text: def.prompt.label });
+        const block = this.renderPromptField(pf, def.prompt);
+        /**
+         * 🔴 2026-11-07 本轮：脚注**只留「已自定义 · 共 N 字」**。
+         *    用户点名删掉的那句「没改过，用内置默认（灰字就是默认提示词）」不再出现 ——
+         *    textarea 的 placeholder 本身就把默认提示词灰字显示出来了，再说一遍是噪音。
+         *    ⇒ 没自定义时整条脚注 `hidden`（不是留一行空白：空白会让两个字段之间的间距忽大忽小）。
+         */
+        const foot = pf.createDiv({ cls: 'rl-ai-dfoot' });
+        const hint = foot.createSpan({ cls: 'rl-ai-dhint' });
+        const input = (): HTMLTextAreaElement | null => {
+            const el = block.querySelector('.rl-prompt-input');
+            return el instanceof HTMLTextAreaElement ? el : null;
+        };
+        const flashHint = (): void => {
+            hintEl.addClass('is-on');
+            window.setTimeout(() => hintEl.removeClass('is-on'), 1500);
+        };
+        // 🔴 提示与按钮状态必须**回读输入框当前内容**：失焦保存后要立刻刷新，
+        //    ⛔ 别用渲染时的 `def.prompt.value` 快照 —— 它会一直停在保存前（2026-11-07 修的真 bug）。
+        const refreshFoot = (): void => {
+            const cur = input()?.value.trim() ?? '';
+            if (cur) {
+                hint.setText(`已自定义 · 共 ${cur.length} 字`);
+                foot.hidden = false;
+            } else {
+                hint.setText('');
+                foot.hidden = true; // 没改过 ⇒ 整条脚注收掉（那句「没改过…」已按用户要求删除）
+            }
+        };
+        refreshFoot();
+        // `renderPromptField` 自己的 change 监听负责写盘（注册在前）⇒ 本条只刷新提示，顺序天然正确。
+        block.addEventListener('change', refreshFoot);
+        reset.addEventListener('click', () => {
+            const el = input();
+            if (!el) return;
+            if (!el.value.trim()) {
+                flashHint(); // 未修改：只给轻提示，⛔ 不写盘（与高级设置三枚同款）
+                return;
+            }
+            el.value = '';
+            // ⚠️ `bubbles: true` 是必须的：默认 false 时事件冒不出 textarea，本格那条刷新监听收不到。
+            el.dispatchEvent(new Event('change', { bubbles: true })); // 复用同一条「归一化 → 写盘 → 刷新」通路
+        });
+
+        // 🔴 #723：`applyAll`（全局默认模型 → 一键铺到五处）已随该档一起退场，⛔ 别加回来。
+    }
+
+
     /**
-     * 一行「AI 服务」= **服务商（自绘下拉，选项带品牌图标）+ 模型（可搜索弹窗）+ 提示词（可开合）**（#479 整页重排）。
+     * 模型控件 = **服务商 + 模型合成一个拣选按钮**（#480 ② 方案 A：点开是「左服务商 / 右模型」大面板）。
      *
-     * 🔴 三行（翻译 / 总结 / 搜索）**共用本方法** —— ⛔ 别给某一行开小灶（选项文案、显隐规则、提交口径必须一致）。
+     * 🔴 主从布局之后它被**两处**复用（全局那一档、以及其余六个服务）⇒ 抽成一个方法，
+     *    ⛔ 别再像旧版那样把这段代码在 `renderAiServiceRow` / `renderAiGlobalRow` 各抄一遍
+     *    （两份实现各写一套正是本仓栽过的坑，见 `pure/lineBuffer` 那次丢段的来龙去脉）。
+     *
      * 🔴 **模型为什么必须能手填**：模型 ID 时效性极强 —— `pure/translate` 里有实测记录
-     *    （2026-10-02：智谱免费档已从 `GLM-4-Flash` 扩到 `GLM-4.7-Flash`，而 `GLM-4.5-Flash` 官方标注「即将下线」）
-     *    ⇒ 模型控件是「**可搜索 + 可获取 + 可手填**」，⛔ 别做成「只能从预置里选」（那样每加一个模型都要发一版）。
-     * 🔴 三件控件的分工（#478 实测过「一行三控件不挤」，第四件必挤）：
-     *    ① 服务商 = **自绘下拉**（原生 `<select>` 的 option 放不进 SVG）；
-     *    ② 模型   = 一颗按钮 ⇒ **可搜索弹窗**（模型可能上百个，且「获取模型 / 手动输入」都在弹窗里）；
-     *    ③ 提示词 = **名称行尾**的小按钮，开合下面那块（默认收起，页面从约 3 屏降到约 1 屏）。
-     * ⚠️ 服务商切换会**整页重渲染**（`display()`）：模型候选随服务商变，重建比原地改 `<option>` 简单可靠。
-     *    代价是切完丢焦点（可接受 —— 用户本来就在这一行操作）。模型字段**不清空**：切过去若模型名不适用，
-     *    按钮会落到「非预置」观感（主题强调色），一点就能改。
+     *    （2026-10-02：智谱免费档已从 `GLM-4-Flash` 扩到 `GLM-4.7-Flash`，而 `GLM-4.5-Flash`
+     *    官方标注「即将下线」）⇒ 控件必须「可搜索 + 可获取 + 可手填」，⛔ 别做成只能从预置里选。
      */
-    private renderAiServiceRow(
-        body: HTMLDivElement,
+    private renderAiPickControl(
+        host: HTMLElement,
         opts: {
-            name: string;
-            desc: string;
+            serviceName: string;
             getProvider: () => unknown;
             setProvider: (v: AiProviderChoice) => void;
             getModel: () => string | undefined;
             setModel: (v: string | undefined) => void;
-            /** 本服务的提示词块（#479 起默认收起，由名称行的小按钮开合） */
-            prompt: { label: string; value?: string; defaultText: string; onSave: (v: string | undefined) => void };
         },
     ): void {
-        // 🔴🔴 #487 用户裁定（附截图）：「各个服务之间**空开间距**」⇒ 四行**各自成卡**
-        //    （与上面「模型服务」那四张卡同款），推翻 #483 的「四行收进一张 `rl-ai-card` + 发丝线」。
-        //    做法：**先建本行的卡片容器**，`Setting` 与提示词块都往它里面挂 ——
-        //    ⛔ 别再靠 `insertAdjacentElement('afterend')` 把块挪出去（那样块会落到卡外，
-        //      变成「展开的输入框悬在两张卡之间」）。
-        const card = body.createDiv({ cls: 'rl-ai-svc-card' });
-        const row = new Setting(card).setName(opts.name).setDesc(opts.desc);
-        // #480 ③：标题与副标题拉开 4px（类挂在行上，样式见 styles.css 的 `.rl-ai-svc`）
-        row.settingEl.addClass('rl-ai-svc');
-
-        // ① 提示词块建在**本卡内**（名称行那颗小按钮要开合它）——
-        //    创建顺序 = 行 → 块 ⇒ DOM 顺序天然就是 #483 要的那一种，⛔ 不用再手动挪。
-        const block = this.renderPromptField(card, opts.prompt);
-        block.addClass('rl-ai-prompt-block');
-
-        // ② 提示词入口 = **名称行尾的「提示词 ›」文字按钮**
-        //    🔴 #481 用户指令**撤回** #480 的「笔形图标挪进控件区」：
-        //       「提示词改成笔形图标挪到下拉框左边这条命令代码撤回改回原『提示词 ›』」。
-        //       理由也站得住：图标按钮混进控件区后，与「选择模型」那颗按钮并列 ⇒ 分不清谁是主控件。
-        //    ⛔ 仍挂**名称行**（不占控件区）：一行三件是本仓实测的上限（#478）。
-        row.nameEl.addClass('rl-ai-name-row');
-        const promptBtn = row.nameEl.createEl('button', { cls: 'rl-ai-prompt-btn', attr: { type: 'button' } });
-        const paintPrompt = (): void => {
-            const open = block.hasClass('rl-open');
-            promptBtn.empty();
-            promptBtn.createSpan({ text: '提示词' });
-            promptBtn.createSpan({ cls: 'rl-ai-caret', text: '▸' });
-            promptBtn.toggleClass('rl-open', open);
-            // 已自定义 ⇒ 主题强调色（用户裁定：本页只走「主题色 + 已配置绿」两色）
-            promptBtn.toggleClass('is-set', !!opts.prompt.value?.trim());
-            promptBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-        };
-        promptBtn.addEventListener('click', () => {
-            block.toggleClass('rl-open', !block.hasClass('rl-open'));
-            paintPrompt();
-        });
-        paintPrompt();
-
-        // ③ 服务商 + 模型 = **一个** 拣选控件（#480 ② 方案 A：点开是「左服务商 / 右模型」的大面板）
         const choice = normalizeAiChoice(opts.getProvider());
-        const model = this.shownModel(normalizeProvider(choice), opts.getModel());
-        const pick = row.controlEl.createDiv({ cls: 'rl-ai-pick' });
+        // 🔴 #480 ①：**不启用时模型段根本不参与计算**。`normalizeProvider('off')` 会归一到 zhipu，
+        //    `shownModel()` 于是回一个 `GLM-4-Flash` ⇒ 下面 `model ||` 把 `aiPickText` 的「不启用」盖掉，
+        //    真机上就是「灰点 + 亮着模型名」两套信息打架（`aiPickText` 的单测钉不住组装处）。
+        const off = isAiOff(choice);
+        const model = off ? '' : this.shownModel(normalizeProvider(choice), opts.getModel());
+        const pick = host.createDiv({ cls: 'rl-ai-pick' });
         const btn = pick.createEl('button', {
             cls: 'rl-ai-pick-btn',
             attr: { type: 'button', 'aria-haspopup': 'dialog' },
         });
         renderAiIcon(btn.createSpan({ cls: 'rl-ai-icon' }), aiChoiceIcon(choice));
-        // 🔴 #494（用户：「『智谱 GLM · GLM-4-Flash』改成**只显示 GLM-4-Flash**，图标保留」）：
-        //    文本只留**模型名**，服务商由**左侧图标**承担（`aiChoiceIcon` 就是为这件事存在的，#479/#480）。
-        //    ⚠️ 「不启用」没有模型可显示 ⇒ 仍退回服务商名（`aiPickText` 的原口径），⛔ 别显示成空白格。
+        // 🔴 #494：文本只留**模型名**，服务商由左侧图标承担（`aiChoiceIcon` 就是为这件事存在的）。
+        //    ⚠️ 「不启用」没有模型可显示 ⇒ 仍退回服务商名，⛔ 别显示成空白格。
         btn.createSpan({ cls: 'rl-ai-pick-text', text: model || aiPickText(choice, model, this.customSlotNames()) });
         btn.createSpan({ cls: 'rl-ai-caret', text: '▾' });
-        // 🔴 #481 ②（用户：模型名过长会把格子撑满 / 各行宽度不一）：
-        //    控件**固定宽度**（`--rl-ai-ctl-w`，样式层），文本超出走省略号 ⇒ 悬停提示必须给全称。
-        //    🔴 #494：文本已经只剩模型名，所以气泡改给**完整串**「服务商 · 模型」—— 复用 `aiPickText`
-        //    这**一个真源**（⛔ 别另拼一个格式），且只在有模型时挂（「不启用」时文本已是全称）。
-        //    走 `data-tip` 自绘气泡（本仓 UI 规范：禁原生 `title` 黄条），由全局 tooltip 委托读取。
+        // 🔴 #481 ②：控件固定宽度、文本超长走省略号 ⇒ 悬停提示必须给全称。
+        //    走 `data-tip` 自绘气泡（本仓 UI 规范：禁原生 `title` 黄条），只在有模型时挂。
         if (model) btn.setAttribute('data-tip', aiPickText(choice, model, this.customSlotNames()));
-        if (isAiOff(choice)) btn.addClass('is-off');
-        // ⛔ #485 用户裁定**撤掉**「当前模型不在该家预置表里 ⇒ 整格文字走主题色」（旧 `is-custom`）：
-        //    实测后果是同一列三行**颜色不一致**（用户：「一个蓝一个黑的不同」）——
-        //    因为 `deepseek-chat` 在预置里（黑）、`deepseek-flash` 与硅基的模型不在（蓝），看着像两种控件。
-        //    ⇒ 现在文字一律 `--text-normal`（与「朗读音源」那两格、与卡片行名一致）；
-        //    「这不是本仓写死的候选」这个信息**留在弹窗的小字里**（`modelNote` 已写明来源），
-        //    ⛔ 不再占用整个控件的颜色（那还会被误读成「选中态 / 链接」）。
+        if (off) btn.addClass('is-off');
+        // ⛔ #485 用户裁定撤掉「非预置模型 ⇒ 整格文字走主题色」：实测同一列三行颜色不一致，
+        //    看着像两种控件。「这不是本仓写死的候选」这个信息留在弹窗小字里。
         btn.addEventListener('click', () =>
-            this.openAiPicker(opts.name, choice, opts.getProvider, opts.setProvider, opts.getModel, opts.setModel),
+            this.openAiPicker(opts.serviceName, choice, opts.getProvider, opts.setProvider, opts.getModel, opts.setModel),
         );
     }
+
 
     /** 当前生效的模型名：存的值 → 该家默认（自定义槽位无默认 ⇒ 空串） */
     private shownModel(provider: TranslateProvider, picked: string | undefined): string {
@@ -2098,19 +3522,19 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
-     * 提示词编辑块（翻译 / 总结 / 搜索各一块）。**#479 起默认收起**（由各自服务行名称行的小按钮开合）：
+     * 提示词编辑块（2026-11-07 主从布局后**只剩右栏详情**一个调用方，常驻、不再折叠）：
      *  - 默认提示词（DEFAULT_*_PROMPT）只作 **placeholder 灰字**呈现——不可编辑、点不掉，纯粹让人知道默认长什么样；
      *  - 用户点进框里就是**空框**，写入自己的提示词即覆盖默认；清空（或粘贴回与默认完全一致）→ 存 undefined 恢复默认。
      *  - 改动在失焦（change）时保存，不逐键写盘。
-     * 返回该块元素（调用方拿它开合）。🔴 收起只靠 `.rl-open` 类 + CSS —— ⛔ 别用内联 `display:none`
-     *    （产物断言与仿真页都要能读到这块结构）。
+     * ⚠️ **本方法不画标签**：标签由调用方用 `.rl-ai-dlabel` 画（与「服务商 · 模型」同款）。
+     *    曾经这里也画一条 `.rl-prompt-label`，与调用方的标签同文案叠成两行（2026-11-07 修）。
+     * 返回该块元素（调用方拿它查 textarea / 挂「保存后刷新提示」监听）。
      */
     private renderPromptField(
         body: HTMLDivElement,
-        opts: { label: string; value?: string; defaultText: string; onSave: (v: string | undefined) => void },
+        opts: { value?: string; defaultText: string; onSave: (v: string | undefined) => void },
     ): HTMLDivElement {
         const wrap = body.createDiv({ cls: 'rl-prompt-row' });
-        wrap.createDiv({ cls: 'rl-prompt-label', text: opts.label });
         const ta = wrap.createEl('textarea', {
             cls: 'rl-prompt-input',
             attr: { rows: '4', spellcheck: 'false', placeholder: opts.defaultText },
@@ -2125,11 +3549,11 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
-     * 渲染单个服务商 Key 行（AI 翻译 / 总结 / 搜索内，翻译与总结共用）：可折叠（同 ① 元数据源配置 createApiKeyRow 观感）——
+     * 渲染单个服务商 Key 行（AI 翻译 / 总结 / 搜索内，翻译与总结共用）：可折叠（同 ① 搜索配置 createApiKeyRow 观感）——
      * 头 = 服务商名 + 已配置徽标 + ▸，点击展开 body（Key 密文输入 + 测试连接 + 结果）。
      */
     /**
-     * 渲染单个服务商 Key 行（翻译 / 总结 / 搜索 / **云合成**共用）：可折叠（同 ① 元数据源配置 createApiKeyRow 观感）——
+     * 渲染单个服务商 Key 行（翻译 / 总结 / 搜索 / **云合成**共用）：可折叠（同 ① 搜索配置 createApiKeyRow 观感）——
      * 头 = 服务商名 + 已配置徽标 + ▸，点击展开 body（Key 密文输入 + 测试连接 + 结果）。
      * ⚠️ 云合成（`siliconflow`）的「测试连接」走**另一条路**：真合成一句并检查有没有拿到音频二进制 ——
      *    对朗读来说「Key 有效」不等于「能出声」，只查凭证的测试在这个场景里没有意义。
@@ -2158,6 +3582,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             badge.toggleClass('rl-key-badge-on', has && !failed);
             badge.toggleClass('rl-key-badge-bad', failed);
         };
+        // m07854 ②：登记给「统一周期管理」面板的一键检测回调
+        this.registerCredentialBadge(aiCheckKey(provider), refreshBadge);
         refreshBadge();
 
         const bodyEl = row.createDiv({ cls: 'rl-key-body' });
@@ -2227,6 +3653,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             badge.toggleClass('rl-key-badge-on', has && !failed);
             badge.toggleClass('rl-key-badge-bad', failed);
         };
+        // m07854 ②：登记给「统一周期管理」面板的一键检测回调（自定义槽位按 slot 分键）
+        this.registerCredentialBadge(aiCheckKey(slot), refreshBadge);
         refreshBadge();
 
         const bodyEl = row.createDiv({ cls: 'rl-key-body' });
@@ -2406,6 +3834,109 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // 🔴 #639 ⑥：Steam 的 Key **只服务同步**（搜索/详情免 Key）—— 占位符要说清这一点
         if (meta.id === 'steam') return 'Steam Web API Key（同步库用）';
         return `输入 ${meta.label} API Key`;
+    }
+
+    /**
+     * ③-3 / ③-4（2026-11-12 用户 m00353 / m05505）：凭据行里的**扫码登录**图标按钮。
+     *
+     * 🔴 m05505 用户原话：「扫码登录按钮改成二维码小图标按钮放在输入框的右侧旁边
+     *    （紧挨着"显示"按钮的左侧）」⇒ 本方法产出的按钮**属于输入框那一行**（`.rl-secret`），
+     *    ⛔ 不属于下面那排 `.rl-key-actions`（与「立即同步」「测试连接」同行会变回他不要的样子）。
+     *    位置由 `fillSecretRow` 的 `beforeEye` 保证：input → 本按钮 → 「显示」。
+     *
+     * 🔴 为什么是图标不是带字按钮（不是审美问题）：一行里已经有「立即同步」「测试连接」两颗带字的，
+     *    再塞第三颗带字的，窄侧栏会把它们挤成两三行；图标只占 `--icon-size`。
+     *    提示走 `iconButton` 的 `data-tip`（①-9 的单一真源，⛔ 别另挂 aria-label 叠两层）。
+     *
+     * 🔴 按钮只负责**开弹窗**：抓 Cookie、轮询、开子窗口全在 `modals/QrLoginModal` +
+     *    `services/qrLogin`（设置页是同步渲染路径，⛔ 别在这里发请求）。
+     * 🔴 落盘在**回调里**（不在弹窗里）：写盘要连 `saveSettings` + `clearCredentialStatus` +
+     *    徽标刷新三件事，散在弹窗里必漏其中一件。`onPicked` 就是干这三件事的唯一入口。
+     *
+     * @param host 输入框那一行（`.rl-secret` 容器）
+     * @param platform 平台（只剩 B 站 / 微信读书 —— 豆瓣扫码已按 m05505 删除）
+     * @param onPicked 拿到凭据后落盘（由调用方提供，因为它要碰该行自己的输入框与徽标）
+     */
+    private renderQrLoginButton(
+        host: HTMLElement,
+        platform: QrPlatform,
+        onPicked: (picked: QrLoginPicked) => void,
+    ): HTMLButtonElement {
+        const label = platform === 'bilibili' ? 'B 站' : '微信读书';
+        const btn = iconButton('rl-qr-open', 'qr-code', `扫码登录${label}`);
+        host.appendChild(btn);
+        btn.addEventListener('click', () => {
+            new QrLoginModal(this.app, {
+                platform,
+                onPicked: (picked) => onPicked(picked),
+            }).open();
+        });
+        return btn;
+    }
+
+    /**
+     * ③-3 / ③-4：凭据行 = 「输入框 + 扫码图标」**或**「当前账号 + 退出登录」二选一。
+     *
+     * 🔴 用户 m05505 原话：「用扫码登录的 UI 要变化成原来的输入框区域替换为
+     *    『当前账号: 微信读书用户』」⇒ 登录成功后**输入框整块消失**，不是「框里填上 Cookie」。
+     *    理由（用户视角）：Cookie 是几百字符的密文，显示出来既没法核对也没法用；
+     *    用户真正要知道的是「我现在是谁」。
+     *
+     * 🔴 图标按钮在两种形态下**都在**（用户 m05529 裁定「保留图标按钮 + 加一个『退出登录』」）：
+     *    登录后仍要能换账号 —— 那就是再扫一次，⛔ 别让用户先退出再扫。
+     *
+     * ⚠️ 账号名取不到（Cookie 里没有身份字段）时**退回输入框**，⛔ 别显示「当前账号: 未知」
+     *    把框藏掉 —— 那样用户既看不到值、也没法手改，等于把凭据锁死。
+     */
+    private renderQrAccountField(
+        host: HTMLDivElement,
+        opts: {
+            platform: QrPlatform;
+            placeholder: string;
+            value: string;
+            onInput: (v: string) => void;
+            /** 落盘（调用方提供：字段名、徽标刷新各不相同） */
+            onPicked: (picked: QrLoginPicked) => void;
+            /** 退出登录（调用方清字段 + 刷徽标） */
+            onLogout: () => void;
+        },
+    ): void {
+        const { platform } = opts;
+        const name = accountNameOf(platform, opts.value);
+        host.empty();
+
+        if (!name) {
+            this.createSecretField(host, {
+                placeholder: opts.placeholder,
+                value: opts.value,
+                onInput: opts.onInput,
+                // 🔴 用户 `m05813`：「把二维码小图标按钮放在 cookie 框的**最左旁**」
+                //    ⇒ 走 `beforeInput`（行内首元素），不再是「显示」左边的 `beforeEye`。
+                beforeInput: (wrap) => {
+                    this.renderQrLoginButton(wrap, platform, (picked) => {
+                        opts.onPicked(picked);
+                        // 重绘：账号名变了 ⇒ 整块切成「当前账号」形态
+                        this.renderQrAccountField(host, { ...opts, value: picked.cookie });
+                    });
+                },
+            });
+            return;
+        }
+
+        // 已登录形态：当前账号 + 重新扫码 + 退出登录
+        const row = host.createDiv({ cls: 'rl-acct' });
+        row.createSpan({ cls: 'rl-acct-label', text: '当前账号' });
+        row.createSpan({ cls: 'rl-acct-name', text: name });
+        // 换账号 = 再扫一次（用户 m05529 裁定「保留图标按钮」）
+        this.renderQrLoginButton(row, platform, (picked) => {
+            opts.onPicked(picked);
+            this.renderQrAccountField(host, { ...opts, value: picked.cookie });
+        });
+        const logout = row.createEl('button', { cls: 'rl-btn', text: '退出登录' });
+        logout.addEventListener('click', () => {
+            opts.onLogout();
+            this.renderQrAccountField(host, { ...opts, value: '' });
+        });
     }
 
     /**
@@ -2695,7 +4226,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
-     * 元数据源配置折叠项内「单源配置行」：**来源图标** + 源名 + 状态徽标（已配置/未配置/可选 Key）+ ▸，
+     * 搜索配置折叠项内「单源配置行」：**来源图标** + 源名 + 状态徽标（已配置/未配置/可选 Key）+ ▸，
      * 点击行头内联展开配置区（hint + 密文输入 + 「测试连接」✓/✗ · 耗时），再点收起。
      * 输入变更写 settings[keyField] + saveSettings + 刷新徽标；不抛未捕获异常（测试内部 catch）。
      *
@@ -2708,6 +4239,42 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      *       （⛔ 别退回「传 meta 再 `as` 断言」：那样加一个凭据源忘了配图标**编译期不报错**，只会静默缺图标）。
      *    ⚠️ 折叠行为一字未改：图标在行头最前，点行头仍是开合开关。
      */
+    /**
+     * 建一条**可点链接**的提示条（2026-11-06 用户裁定：「各项描述里的『获取官网』从纯文本改成可点击超链接
+     * —— 所有要 cookie 或 key 的都加」）。
+     *
+     * 🔴 为什么抽成一个方法：全仓有**五处**要渲染这类 hint（元数据凭据 / 音乐下载凭据 / 网络播放两条 /
+     *    yt-dlp），原先只有元数据凭据那一处做了切段，另外三处仍是 `createDiv({ text })` 纯文本
+     *    ⇒ 同一句「到 xx.com 获取」在一个 Tab 能点、在另一个 Tab 点不动（用户报的就是这个）。
+     *    ⛔ 别让任何一个调用点再写 `text:` —— 那会静默退回不可点。**统一走这里**。
+     *
+     * ⛔ 不在数据层（`pure/sourceRegistry` 的 `hint` / 常量 `*_DESC`）里塞 `<a>` 或 markdown：
+     *    那些是纯数据（有单测按三段式钉住），且渲染端一旦用 `innerHTML` 就是注入面（本仓铁律）。
+     *    ⇒ 文案一个字不改，只把「像域名的片段」变成 `<a>`（切段逻辑真源 = `pure/sourceLink`）。
+     *
+     * ⚠️ 既写 `href` 也绑 `click`：桌面端裸 `<a>` 的默认跳转有时被 shell 拦掉，click 里再 `window.open`
+     *    一次是双保险（与同文件 `REPO_URL` 那两处按钮同款）。
+     */
+    private renderHintNote(host: HTMLElement, text: string, cls = 'rl-hint-note'): HTMLElement {
+        const note = host.createDiv({ cls });
+        for (const part of splitHintLinks(text)) {
+            if (!part.url) {
+                note.createSpan({ text: part.text });
+                continue;
+            }
+            const a = note.createEl('a', {
+                cls: 'rl-hint-link',
+                text: part.text,
+                attr: { href: part.url, target: '_blank', rel: 'noopener noreferrer', 'data-tip': part.url },
+            });
+            a.addEventListener('click', (ev: MouseEvent) => {
+                ev.preventDefault();
+                window.open(part.url as string, '_blank');
+            });
+        }
+        return note;
+    }
+
     private createApiKeyRow(parent: HTMLDivElement, id: KeySourceId): void {
         const meta = PROVIDER_META[id];
         if (!meta.keyField) return; // 免 Key 源不在此列
@@ -2717,7 +4284,10 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             cls: 'rl-key-row rl-prov-card',
             // 🔴 #664：带上源 id —— 同步完要刷新徽标时，靠它把**同一行**找回来、
             //    保住它的展开态与回执（否则整页重建后那一行会自己合上，用户什么都看不到）。
-            attr: { 'data-source-id': id },
+            // 🔴 ③-1（2026-11-12）：再加 `data-cred-key` ——「统一周期管理」面板点名称要跳到**这一行**。
+            //    值与 `pure/credentialMeta` 的 `key` 逐字同源（`source:<id>`），⛔ 两处不许各拼一套；
+            //    跳转实现见 `jumpToCredentialRow`。
+            attr: { 'data-source-id': id, 'data-cred-key': sourceCheckKey(id) },
         });
         const head = row.createDiv({ cls: 'rl-key-head' });
         renderAiIcon(head.createSpan({ cls: 'rl-ai-icon' }), SOURCE_ICON[id]);
@@ -2748,18 +4318,25 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             } else if (has) {
                 badge.setText('已配置');
             } else {
-                // 🔴 #489 / 2026-10-25：空态只有两套词 —— 「可选 Key」（真的可留空的 Key 源）
-                //    与「未配置」（其余全部，含微信读书的 Cookie）。⛔ 别再加第三套文案。
-                badge.setText(OPTIONAL_KEY_SOURCES.has(meta.id) ? '可选 Key' : '未配置');
+                // 🔴 本轮用户裁定：空态只有**一套**词 —— 「未配置」（Google Books 也从「可选 Key」统一过来）。
+                //    ⛔ 别再加第二套文案（曾经的「可选 Key」分支已连同 `OPTIONAL_KEY_SOURCES` 一起删除）。
+                badge.setText('未配置');
             }
             badge.toggleClass('rl-key-badge-on', has && !expired);
             badge.toggleClass('rl-key-badge-bad', expired);
         };
+        // m07854 ②：登记给「统一周期管理」面板的一键检测回调
+        this.registerCredentialBadge(sourceCheckKey(meta.id), refreshBadge);
         refreshBadge();
         head.createSpan({ cls: 'rl-key-caret', text: '▸' });
 
         const body = row.createDiv({ cls: 'rl-key-body' });
-        body.createDiv({ cls: 'rl-hint-note', text: meta.hint });
+        // 🔴 本轮用户裁定：「各项描述里的『获取官网』从纯文本改成**可点击超链接**（所有要 cookie 或 key 的都加）」。
+        //    ⛔ 不在 `pure/sourceRegistry` 的 `hint` 里塞 `<a>`/markdown —— 那份是纯数据（有单测按三段式钉住），
+        //       且渲染端一旦用 `innerHTML` 就是注入面（本仓铁律）。
+        //    ⇒ 文案不动，交给 `pure/sourceLink.splitHintLinks` 切段，这里逐段建节点。
+        //    ⚠️ 链接只认**绝对 https**（splitHintLinks 已补前缀）；`window.open` 与同文件 `REPO_URL` 两处按钮同款。
+        this.renderHintNote(body, meta.hint, 'rl-hint-note');
         /**
          * 🔴🔴 #667（用户：「tmdb 怎么多显示了一行 key 框」+「统一 id 框在上，key 框在下」）：
          * 双凭据源的两个输入框，**统一「标识」在上、「密钥」在下**：
@@ -2779,7 +4356,38 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //     （与 IGDB / Steam 等所有单格源同一数值），提示展开只往下推、⛔ 不动按钮。
         //   ⚠️ 槽必须**最后** mount：先建就又会夹在两个框中间（或框与按钮之间），等于没修。
         const issueSlot = meta.id === 'tmdb' && keyField2 ? this.makeIssueSlot() : null;
+        /**
+         * ③-4（2026-11-12 用户 m00353 / m05505）：微信读书这一行 = 「输入框 + 扫码图标」
+         * 或「当前账号 + 退出登录」二选一，整块由 `renderQrAccountField` 渲染。
+         *
+         * 🔴 为什么不在这里直接建输入框：登录成功后要**整块换形态**（用户 m05505 原话
+         *    「原来的输入框区域替换为『当前账号: 微信读书用户』」）⇒ 必须有个稳定的宿主容器，
+         *    换形态就是重绘这个容器，⛔ 不是往输入框里塞值。
+         * ⚠️ 宿主容器同时承担「重绘后 DOM 位置不变」——它建在原来的位置，
+         *    重绘只清它的子节点，动作行（同步/测试）不会跟着跑位。
+         */
         const mainField = (): void => {
+            if (meta.id === 'weread') {
+                const host = body.createDiv({ cls: 'rl-acct-host' });
+                const persist = (cookie: string): void => {
+                    this.plugin.settings.wereadCookie = cookie;
+                    void this.plugin.saveSettings();
+                    // #589：换了凭据，旧的「连接失败」结论立刻作废
+                    this.plugin.clearCredentialStatus(sourceCheckKey(meta.id));
+                    refreshBadge();
+                    // #758：扫码登录 / 手动粘贴 / 退出登录都会走到这里 ⇒ 面板要立刻反映
+                    this.refreshCredentialTable();
+                };
+                this.renderQrAccountField(host, {
+                    platform: 'weread',
+                    placeholder: this.credentialPlaceholder(meta),
+                    value: this.settingValue(keyField),
+                    onInput: (v) => persist(v),
+                    onPicked: (picked) => persist(picked.cookie),
+                    onLogout: () => persist(''),
+                });
+                return;
+            }
             this.createSecretField(body, {
                 placeholder: this.credentialPlaceholder(meta),
                 value: this.settingValue(keyField),
@@ -2793,6 +4401,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     // #589：值一改，旧的「连接失败」结论立刻作废（⛔ 别让红标挂在一个刚填的新值上）
                     this.plugin.clearCredentialStatus(sourceCheckKey(meta.id));
                     refreshBadge();
+                    // #758：这一行从「未配置」变「已配置」要立刻反映到上面的面板
+                    this.refreshCredentialTable();
                 },
             });
         };
@@ -2813,6 +4423,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     void this.plugin.saveSettings();
                     this.plugin.clearCredentialStatus(sourceCheckKey(meta.id));
                     refreshBadge();
+                    // #758：同 `mainField` —— 双凭据源（IGDB / TMDB）两格任一变动都要刷新面板
+                    this.refreshCredentialTable();
                 },
             });
         };
@@ -2887,6 +4499,10 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    豆瓣也有一颗同步按钮 —— 位置 / 样式 / 次序与微信读书**完全同构**
         //    （⛔ 别另起一行、别另用一种颜色：三个源的动作行必须长得一样，用户才不用重新认）。
         if (meta.id === 'douban') this.renderDoubanSyncButton(actions);
+        // ③-4（2026-11-12 用户 m00353）：微信读书的**扫码登录图标**已经挂进输入框那一行
+        //   （见 `mainField()` 里的 `beforeEye`），⛔ 不再往动作行里加按钮。
+        //   ⚠️ 豆瓣扫码整条删除是用户 m05505 的明确要求（原话：「删除豆瓣的扫码登录」），
+        //      别再按 ③-2 把它加回来。
         // 🔴 #665（用户：「Bangumi 元数据源凭据行加个同步按钮并排，也做 TMDB 的同步接入」）：
         //    Bangumi / TMDB 也各加一颗 —— 五个可同步源的动作行**同构**（Steam / 微信读书 / 豆瓣 / Bangumi / TMDB）。
         //    TMDB 需要第二凭据 session_id（meta.keyField2 已声明，双字段输入框自动出现）。
@@ -2920,6 +4536,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             // 🔴 #589：手动测试的结论**记进同一个结果表** —— 徽标（含刚被打开的「连接失败」）据此同步刷新。
             this.plugin.setCredentialStatus(sourceCheckKey(meta.id), res.ok);
             refreshBadge();
+            // #758：元数据源行内「测试连接」的结论也要落到上面的面板
+            this.refreshCredentialTable();
             resultEl.setText(`${res.ok ? '✓ ' : '✗ '}${res.message} · ${res.elapsedMs}ms`);
             // 反馈配色（用户 2026-09-14 裁定）：失败才红，成功一律绿 —— 不再区分「偏慢」档
             resultEl.toggleClass('rl-key-result-ok', res.ok);
@@ -2943,6 +4561,21 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     private createGroupCheckRow(parent: HTMLDivElement, group: SourceGroup): void {
         const box = parent.createDiv({ cls: 'rl-srcchk-group' });
         const head = box.createDiv({ cls: 'rl-srcchk-head' });
+        // 🔴 2026-11-12（用户 m00353 ①-14）：「组下的书籍/漫画/影视/动画/音乐/游戏前面加
+        //    **主题色通用类型小图标按钮**」⇒ 组名前补一枚类型图标，颜色走类型色真源 `TYPE_COLORS`。
+        //    ⚠️ 三点口径：
+        //    ⑴ **⛔ 不是按钮**：用户原话写「小图标按钮」，但它没有点击行为 —— 做成 `<button>` 会给
+        //       读屏和键盘多一个空 tab 停靠点（本仓 `.rl-srcchk-gname` 旁也没有任何交互）。
+        //       故用装饰性 `<span aria-hidden="true">`，语义上它就是标题的一部分。
+        //    ⑵ **颜色内联**：`TYPE_COLORS` 是唯一色源（`data/types`），CSS 里 ⛔ 不许再写一份 hex；
+        //       `comic` 不是 `EntryType`（它是 book 的子分类）⇒ 取 `TYPE_COLORS.book`，
+        //       与它「和书籍同属书籍类目、在 UI 里紧跟书籍成行」的定位一致。
+        //    ⑶ 图标名取 `SOURCE_GROUP_ICONS`（纯数据表，六个值均已实测存在于 asar 白名单）
+        //       —— 未知名会让 `setIcon` **静默 no-op**，界面上只剩空白，故不在此处手写字符串。
+        const gicon = head.createSpan({ cls: 'rl-srcchk-gicon' });
+        gicon.setAttribute('aria-hidden', 'true');
+        gicon.style.color = TYPE_COLORS[SOURCE_GROUP_COLOR_KEY[group]];
+        safeSetIcon(gicon, SOURCE_GROUP_ICONS[group]);
         head.createSpan({ cls: 'rl-srcchk-gname', text: GROUP_LABELS[group] });
         const list = box.createDiv({ cls: 'rl-srcchk-list' });
         const candidates = this.groupCandidates(group);
@@ -2955,14 +4588,14 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 render(); // 组内不可全空：恢复上一有效态（与 resolve 回退默认链语义一致，不落空键）
                 return;
             }
+            // 🔴 用户 m07854 ①（2026-11-13）：**显式落盘，⛔ 不再「等于默认链就删键」**。
+            //    旧行为有两个后遗症：⑴ 用户勾成「与当前默认一致」⇒ 键被删 ⇒ 读回走 `resolveSourceChain`
+            //    的 undefined 回退 ⇒ 将来 `DEFAULT_CHAINS` 一改，他**确认过**的配置被追溯性改掉；
+            //    ⑵ 「默认值」因此不是用户配置的一部分，而是一个随代码演进的活值 —— 与用户原话
+            //    「不要强制覆盖用户已修改过」直接冲突。现在只要用户动手，就把它落成他自己的值。
             const next = { ...(this.plugin.settings.sourceChains ?? {}) };
-            const def = DEFAULT_CHAINS[group];
-            if (norm.length === def.length && norm.every((id, i) => id === def[i])) {
-                delete next[group]; // 等于默认链 → 删键（保持 undefined = 默认）
-            } else {
-                next[group] = norm;
-            }
-            this.plugin.settings.sourceChains = Object.keys(next).length > 0 ? next : undefined;
+            next[group] = norm;
+            this.plugin.settings.sourceChains = next;
             void this.plugin.saveSettings();
             render();
         }
@@ -2973,9 +4606,33 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             for (const c of candidates) {
                 const checked = chain.includes(c.id);
                 const line = list.createEl('label', { cls: 'rl-srcchk-line' });
+                // 🔴🔴 本轮用户裁定：「元数据搜索源启用，对各个勾选项鼠标 hover 2 秒后轻提示」，
+                //    并逐字给了六组 13 条一句话说明（真源 = `pure/sourcePitch`，⛔ 别在这里写死字面量）。
+                //    ⑴ 文案优先用 `sourcePitch(group, id)`；查不到才回退到「是否启用…搜索」那句通用话
+                //       —— 这样以后新接入一个源、忘配文案时**仍有提示**，只是话比较干（⛔ 别回退成空串）。
+                //    ⑵ `data-tip-delay` 是本轮新加的能力（见 `services/globalTooltip.tipDelayOf`）：
+                //       这一排勾选框密集，用全局 500ms 会在扫过时连闪一堆气泡。
+                const pitch = sourcePitch(group, c.id);
+                const genericTip = `是否启用「${c.label}」参与「${GROUP_LABELS[group]}」搜索`;
+                // 🔴🔴 2026-11-06 修「勾选项 hover 无反应」（真缺陷，用户报障）：
+                //    原先把 `data-tip` / `data-tip-delay` 挂在 `<input type="checkbox">` 上，
+                //    而 `globalTooltip.onOver` 用的是 `target.closest('[data-tip]')` ——
+                //    用户鼠标停在**源名文字**上时（这是绝大多数实际操作），target 是兄弟 `<span>`，
+                //    `closest` 往上只找到 `<label>` 就停（span 自己没 data-tip）⇒ **一个气泡都不出**。
+                //    只有把鼠标精确停在 15×15 的勾选框上才碰得到 —— 难怪用户说「hover 无反应」。
+                //    ⇒ 属性必须挂在**整行** `label` 上：文字、勾选框、行内空白都能触发。
+                //    ⛔ 别同时在 input 上留一份：`closest` 会命中最近的 input，延迟就会变成「鼠标一进
+                //       勾选框就立刻出气泡、进文字反而没有」—— 两个来源必须收敛成一个（本行）。
+                //    ⑶ 延迟 2000 → **1000**：2000ms 是当年「怕扫过时连闪」的估计值，
+                //       用户实测反馈「hover 后像是坏了、要等好久」⇒ 取 1 秒（仍是全局 500 的两倍，
+                //       足够区分「扫过」与「真停留」，又不会让人怀疑功能失效）。
+                line.setAttribute('data-tip', pitch || genericTip);
+                line.setAttribute('data-tip-delay', '1000');
                 const cb = line.createEl('input', {
                     cls: 'checkbox',
-                    attr: { type: 'checkbox', 'data-tip': `是否启用「${c.label}」参与「${GROUP_LABELS[group]}」搜索` },
+                    attr: {
+                        type: 'checkbox',
+                    },
                 });
                 cb.checked = checked;
                 cb.addEventListener('change', () => {
@@ -3013,17 +4670,40 @@ export class ReelLudicSettingTab extends PluginSettingTab {
      */
     display(): void {
         const { containerEl } = this;
-        // 🔴 #484（用户报的「不能实时点击反馈」根因 ①）：
-        //    本方法**整页重建**（`containerEl.empty()`），而内容区 `.rl-set-content` 是**独立滚动容器**（#354）
-        //    ⇒ 不存/复 `scrollTop` 的话，选完一个模型、弹窗一关，页面就**跳回顶部**，
-        //      你刚改的那一行已经滚出视野 —— 看起来就像「点了没反应」。
-        //    ⚠️ 只在**重建前**取旧值；切 Tab 走的是 `setActivePage`（不重建），不受影响。
-        const prevContent = containerEl.querySelector('.rl-set-content');
-        const keepScroll = prevContent instanceof HTMLElement ? prevContent.scrollTop : 0;
+        /**
+         * 🔴 #484（「不能实时点击反馈」根因 ①）→ m09565 ② 二次修正：
+         *    本方法**整页重建**（`containerEl.empty()`），不存取滚动位置的话，
+         *    点完一处、弹窗一关，页面就**跳回顶部**，刚改的那行已经滚出视野。
+         *
+         * 🔴🔴 2026-11-12 真机实测：原来这里读的是 `.rl-set-content` —— **读错了元素**。
+         *    真机量到的链路（设置页 popout，800×520）：
+         *      `.rl-set-content`      ch 1666 / sh 1666 / overflow visible  ⇒ **永远不滚**
+         *      `.rl-set-shell`        ch 1765 / sh 1765 / overflow visible  ⇒ 不滚
+         *      `.vertical-tab-content` ch 490 / sh 1837 / **overflow auto** ⇒ **真正在滚的是它**
+         *    也就是说旧的 `keepScroll` 恒为 0，从来没生效过；「点交互被甩回顶部」
+         *    不是 TTS 独有，**任何走 `display()` 的点击都会**（用户 m09565 ② 的原话
+         *    「还有搜索UI层其他项是否也存在这种问题」——存在，而且是全页级的）。
+         *
+         * ⇒ 改成**沿祖先链找第一个真的可滚的元素**，而不是写死某个类名：
+         *    判据 = `overflow-y` 是 auto/scroll 且 `scrollHeight > clientHeight + 4`。
+         *    ⚠️ ⛔ 别退回写死 `.rl-set-content`：它的 `overflow` 是 visible，高度跟着内容长，
+         *       `scrollTop` 赋什么都会被夹回 0 —— 看起来「有代码」其实一次都没跑。
+         *    ⚠️ 判据里要留 4px 容差：亚像素舍入会让 `sh === ch` 抖动。
+         */
+        const scrollHost = ReelLudicSettingTab.findScrollHost(containerEl);
+        const keepScroll = scrollHost ? scrollHost.scrollTop : 0;
         containerEl.empty();
         this.tabItems.clear();
         this.pageEls.clear();
         this.tabsEl = null;
+        // #758：旧 DOM 已整体丢弃 ⇒ 指向它的刷新闭包必须立刻失效，
+        //   ⛔ 别让任何一次迟到的 `refreshCredentialTable()` 打到已卸载的节点上。
+        //   新闭包由下面 `renderPage('search')` → `renderCredentialTable` 重新赋值。
+        this.credentialTableRefresh = null;
+        // m07854 ②：同理 —— 各凭据行的徽标闭包也指向旧 DOM，必须整批丢弃。
+        //   新闭包由下面各 builder（`renderCredentialRows` / `renderNetPlaybackRows` /
+        //   `createApiKeyRow` / 自定义槽位）重新登记。
+        this.credentialBadgeRefresh.clear();
 
         const shell = containerEl.createDiv({ cls: 'rl-set-shell' });
         const bar = shell.createDiv({ cls: 'rl-set-bar' });
@@ -3073,41 +4753,273 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 attr: { id: pageDomId(page.id), 'data-page': page.id, role: 'tabpanel', 'aria-labelledby': tabDomId(page.id) },
             });
             const body = el.createDiv({ cls: 'rl-set-page-body' });
-            this.renderPage(page.id, body);
+            /**
+             * 🔴🔴 2026-11-14（用户 m05673 手机实测：「点页签后只有顶部页签，内容一片空白」）：
+             *
+             * 真因不是某一页懒渲染 —— 是**这里没有围栏**。六个页是同一个循环里连着建的，
+             * `renderPage` 一旦抛异常（手机端 `process` 不存在之类），循环当场中断：
+             *   · 后面的页**一个都没建**；
+             *   · 第 4708 行的 `setActivePage()` 根本没执行到 ⇒ 没有任何 `.rl-set-page` 拿到 `is-active`
+             *     （`.rl-set-page` 默认 `display:none`）；
+             *   · 页签栏是在这个循环**之前**建的，所以它好好地在 ⇒ 用户看到的就是「页签在、内容是空的」。
+             *
+             * 修法两层，缺一不可：
+             *   ① **逐页 try/catch** —— 一页坏只塌一页，其余页照常可用；
+             *   ② 坏掉的那页**自己写清原因**（而不是留白），用户才知道是插件的问题还是环境不支持。
+             * ⛔ 别把 catch 写成静默吞掉（`catch {}` 或只 `console.warn`）—— 那样下次同样的白屏
+             *    又只能靠用户在真机上盯着发愣才发现。
+             */
+            try {
+                this.renderPage(page.id, body);
+            } catch (err) {
+                const detail = err instanceof Error ? err.message : String(err);
+                console.error(`[ReelLudic] 设置页「${page.label}」渲染失败：`, err);
+                body.empty();
+                const fail = body.createDiv({ cls: 'rl-set-pagefail' });
+                fail.createDiv({ cls: 'rl-set-pagefail-title', text: `「${page.label}」这一页没能渲染出来` });
+                fail.createDiv({
+                    cls: 'rl-set-pagefail-desc',
+                    text: '多半是这台设备缺少桌面端才有的能力（例如本地转写、文件系统访问）。其它页不受影响。',
+                });
+                fail.createDiv({ cls: 'rl-set-pagefail-detail', text: detail });
+            }
             this.pageEls.set(page.id, el);
         }
 
         this.setActivePage(this.activePage);
 
-        // 🔴 #484：把滚动位置还回去（接上面的取值）。
+        // 🔴🔴 2026-11-07 修用户报障「搜索配置页 hover 没有任何提示」：
+        //    这一版 Obsidian 把设置页开在**独立窗口**，它有**自己的 document**；
+        //    而全局 tooltip 原来只绑了主窗口的 document（`const doc = document`），
+        //    独立窗口里的 mouseover 压根到不了那套监听 ⇒ 整页 `data-tip` 全是哑的。
+        //    ⇒ 在这里把**本页所在的那部 document** 登记进 tooltip（幂等，切 Tab 重复调无副作用）。
+        //    ⚠️ 用 `containerEl.ownerDocument` 而不是全局 `document`/`activeDocument`：
+        //      前者是这部容器**真实所在**的文档，后者取决于焦点，开设置页时并不保证已切过来。
+        //    ⚠️ ⛔ 别把这行删掉换个「看起来更通用」的全局初始化 —— 那等于又只绑主窗口，
+        //      而且**不会报错**，只能在真机上盯着 hover 发愣才发现。
+        bindTooltipDocument(containerEl.ownerDocument);
+
+        // 🔴 #484 / m09565 ②：把滚动位置还回去（接上面的取值）。
         //    ⚠️ 必须等**布局完成**才能设：`scrollTop` 会被「内容还不够高」悄悄夹到 0
         //    ⇒ 放 `requestAnimationFrame` 里（与首帧补算溢出遮罩同一时机）。
+        //    ⚠️ 目标元素是**重建后**重新找出来的滚动祖先，不是旧的 `scrollHost`（那已经被 empty 掉了）。
         if (keepScroll > 0) {
             requestAnimationFrame(() => {
-                content.scrollTop = keepScroll;
+                const host = ReelLudicSettingTab.findScrollHost(containerEl);
+                if (host) host.scrollTop = keepScroll;
             });
         }
+    }
+
+    /**
+     * 找出**真正会滚动**的祖先容器（`display()` 重建前后都要靠它存取 `scrollTop`）。
+     *
+     * 🔴 为什么不写死 `.rl-set-content`：它的 `overflow-y` 是 `visible`、高度跟着内容长，
+     *    `scrollTop` 赋任何值都会被夹回 0（真机实测 ch 1666 / sh 1666）。
+     *    实际在滚的是 Obsidian 原生的 `.vertical-tab-content`（ch 490 / sh 1837 / `overflow-y: auto`）。
+     *
+     * 判据（两条都要满足）：
+     *   ① `overflow-y` 是 `auto` 或 `scroll`；
+     *   ② `scrollHeight` 比 `clientHeight` 大 **4px 以上**（留容差：亚像素舍入会让两者抖动）。
+     * ⚠️ 找不到就返回 `null`（调用方自己判空），⛔ 别退化成「回传 containerEl 反正不报错」。
+     */
+    private static findScrollHost(from: HTMLElement | null): HTMLElement | null {
+        for (let el = from?.parentElement ?? null; el; el = el.parentElement) {
+            const oy = getComputedStyle(el).overflowY;
+            if (oy !== 'auto' && oy !== 'scroll') continue;
+            if (el.scrollHeight > el.clientHeight + 4) return el;
+        }
+        return null;
     }
 
     /** 按页 id 分发到各页渲染（id 全部来自 `pure/settingNav` 的常量） */
     private renderPage(id: string, body: HTMLElement): void {
         if (id === 'basic') this.renderBasicPage(body);
         else if (id === 'sources') this.renderSourcePage(body);
+        else if (id === 'immersive') this.renderImmersivePage(body);
         else if (id === 'ai') this.renderAiPage(body);
         else if (id === 'advanced') this.renderAdvancedPage(body);
         else this.renderAboutPage(body);
     }
 
     /**
-     * 「高级设置」页（1.3.1 ①，2026-10-12）：**3 组**。
+     * 「沉浸体验」页（2026-11-06，用户逐字：「基本设置-实验性功能组和高级设置-ASR和TTS组
+     * 全部移动到新开插件页签【沉浸体验】放在搜索配置和AI集成中间」）。
+     *
+     * 🔴 **两组的语义**（就是用户给的示意图）：
+     *    · **【媒体载体】** —— 这个插件能不能在你眼前「播」：内置阅读器 / 视频播放器 / 音乐播放器
+     *      三个总开关（原「基本设置 › 实验性功能」，连它的折叠子面板一起搬来）。
+     *    · **【语音服务】** —— 声音与文字的互转：🎙️ 语音转文字（STT，原「高级设置 › 音频转文字」）
+     *      + 🔊 文字转语音（TTS，原「AI集成 › 用途」卡堆末位的「朗读音源」）。
+     *
+     * 🔴 **为什么把 STT 与 TTS 并成一组**：它们是同一条链的两头（把片子里的声音变成字、
+     *    把字念出来），配置方式也同构（选一个引擎 + 看它是否就绪）。分在两页时，
+     *    用户想「让这个插件能听会说」要找两个 Tab —— 那正是本轮要消灭的东西。
+     *
+     * ⚠️ **「媒体载体」传 `nativeGroup`**（2026-11-07 用户裁定：样式改回基本设置页那版）；
+     *    **「语音服务」不传** —— 那组内部是 `.rl-voice-card`（自带边框底色的独立卡），
+     *    再套一层核心原生分组卡就是「卡中卡」。⛔ 两者别写成一样的。
+     * ⚠️ 页内**不设页标题**（页名只由 Tab 承载）—— 与其余各页同口径。
+     */
+    private renderImmersivePage(parent: HTMLElement): void {
+        // 🔴 2026-11-07 用户裁定（本轮第④条）：「播放阅读的媒体载体组样式改回基本设置页那版」
+        //    ⇒ 「媒体载体」补上第 4 参 `true`，借核心原生的 `.setting-group` + `.setting-items`
+        //      （组 = 一张卡、行平铺、行间发丝线），与「外观与体验」「数据与备份」同源同值。
+        //    ⚠️ 这里**原本刻意不传**（见下条注释的历史口径「本页两组都不传」）—— 那是把
+        //      「组内各有自己的卡片」当成前提。实际从基本设置页搬过来时，「媒体载体」的三行是
+        //      `makeCollapsible` 生成的**裸 `.setting-item`**（子面板挂在行后面，不是组内独立卡），
+        //      套原生分组卡**不会**变成卡中卡，反而正是它在基本设置页时的原样。
+        //    ⛔ 别把这条参数删回 `false`：用户点名要的就是那个观感。
+        //    ⚠️「语音服务」**仍不传**：那组内部是 `.rl-voice-card`（自带边框/底色的独立卡），
+        //      再套一层原生分组卡才是真的卡中卡。
+        this.createGroupSection(parent, '媒体载体', (body) => this.renderExperimentalRows(body as HTMLDivElement), true);
+        // 🔴 语音服务：STT 在上（它是"重"配置、且要自检环境），TTS 在下（一次选完就不碰）。
+        //    ⚠️ 顺序是用户示意图给的：【语音服务】里先「语音转文字 STT」再「文字转语音 TTS」。
+        // 🔴 2026-11-07 用户裁定（本轮第⑥条）：「语音转文字、文字转语音图标去掉」
+        //       ⇒ 标题**只留文字**，⛔ 别再给它们加 emoji / 图标。
+        //       （那条裁定针对的是当时 `.rl-voice-sec-title` 里的 emoji；现在标题改由组承载，
+        //        组的图标走 `SETTING_GROUP_ICONS`，与这条裁定不冲突。）
+        // 🔴🔴 2026-11-10 用户逐字（m03321）：「将设置页语音服务组下两个项语音转文字、文字转语音
+        //    移出来为单独组」⇒ 原来的「语音服务」一个大组**整体退场**，里面两个小节升格成
+        //    **两个平级组**；用户 m03346 追加裁定「词典另外开一个独立分组」⇒ 再加第三组。
+        //    最终组序：**语音转文字 → 文字转语音 → 字幕面板学习模式**。
+        //    ⚠️ 为什么是「独立组」而不是原来那种「组内小节」：用户在设置页左侧导航里
+        //      直接按组名跳转，小节名进不了导航 ⇒ STT/TTS 永远得先找大组再找小节。
+        //    ⛔ 旧组名 `语音服务` 已从 `SETTING_GROUP_ICONS` 删除，别再建回来（图标会静默丢失）。
+        //    ⚠️ 组名必须与 `pure/settingNav.SETTING_GROUP_ICONS` 的键**逐字一致**。
+        //    ⚠️ 组内卡片走 `mountVoiceCard` 的 `.rl-voice-card.is-bare`（**不画边框/底色**）：
+        //      组本身已经给了外框，卡再画一层就是卡中卡。旧的小节标题样式 `.rl-voice-sec*`
+        //      已随 `renderVoiceSection` 一起删除，⛔ 别再把那层壳建回来。
+        this.createGroupSection(parent, '语音转文字', (body) => {
+            // 🔴 2026-11-11 用户 m09233：删掉组内那句「把音视频里的声音识别成字幕，全部在本机完成」——
+            //    ⇒ 传空串（`mountVoiceCard` 内部 `if (desc)` 会跳过建节点）。
+            this.mountVoiceCard(body as HTMLDivElement, '', (card, redraw) => this.renderAsrEngineRows(card, redraw));
+        });
+        this.createGroupSection(parent, '文字转语音', (body) => {
+            // 同上：说明文字一并退场，用户要的是「同语音转文字一样」的左导航 + 右面板，不要标题下再挂一句话。
+            this.mountVoiceCard(body as HTMLDivElement, '', (card, redraw) => this.renderTtsVoiceRows(card, redraw));
+        });
+        // 🔴 用户 m03321：「字典文件配置项放新增字幕面板学习模式下（放在文字转语音项下）」
+        //    ⇒ 词典那行从「语音转文字 › 偏好与词典」整段搬到这里，单独成组、紧跟 TTS。
+        this.createGroupSection(parent, '字幕面板学习模式', (body) => {
+            this.renderDictRows(body as HTMLDivElement);
+        });
+    }
+
+    /**
+     * 组内挂一张「语音卡」：一句说明 + 卡体，卡体**不自带边框**（`.is-bare`）。
+     *
+     * 🔴 为什么从 `renderVoiceSection` 改成这个形态：小节升格为**组**之后，组卡
+     *    （`.rl-svc-group` / 原生 `.setting-group`）已经提供了外框与底色，
+     *    卡再自带一层 border + background 就是**卡中卡**（踩过：视觉上多出两条平行边框）。
+     *    ⇒ 组内这一层只负责「一个可重画的容器」，边框交给组。
+     *
+     * 🔴 `fill` 收到第二个参数 `redraw`：卡内出现「装完之后状态要变」的场景（一键装好别的引擎）时，
+     *    调用它即可**只重画这张卡**，⛔ 不要整页 `display()` —— 那会把滚动位置跳回顶部，
+     *    用户反而看不到「已就绪」。
+     *    ⚠️ 重画方式是「清空卡 + 重跑 fill」，所以 fill 必须是幂等的（只往传入的容器里建节点，
+     *      自己不清空、不复用外部状态）—— 本页两处 fill 都满足。
+     */
+    private mountVoiceCard(
+        host: HTMLDivElement,
+        desc: string,
+        fill: (card: HTMLDivElement, redraw: () => void) => void,
+    ): void {
+        if (desc) host.createDiv({ cls: 'rl-voice-group-desc', text: desc });
+        const card = host.createDiv({ cls: 'rl-voice-card is-bare' });
+        // ⚠️ 每次重画都新建一个闭包（不是复用同一个 `card` 变量）：
+        //    卡是**原地复用**的，只清它的子节点，⛔ 不换 DOM 节点 —— 换节点会让宿主里的滚动锚点丢失。
+        const redraw = (): void => {
+            // 🔴 **先记住哪些折叠块是展开的**，重画后再还原。
+            //    不记的后果很具体：用户展开某个折叠块 → 点一键装好 → 装成功 ⇒ 卡被重画，
+            //    而折叠块的自动展开条件往往是「缺程序或缺模型」，**装成功后该条件恰好变假**
+            //    ⇒ 折叠块反而合上，用户看不到刚装好的结果。这跟不刷新一样糟。
+            const opened = rememberOpenFolds(card);
+            card.empty();
+            fill(card, redraw);
+            restoreOpenFolds(card, opened);
+        };
+        fill(card, redraw);
+    }
+
+    /**
+     * 「字幕面板学习模式」组：本地词典文件那一行。
+     *
+     * 🔴 用户 2026-11-10（m03321 + m03346）：这行原来在「语音转文字 › 偏好与词典」里，
+     *    与「识别语言 / 识别线程数 / 模型下载目录」并排；那三项已按用户裁定**全部删除**，
+     *    只剩词典这一项，且它服务的是**学习模式悬停查词**、与转写是两件独立的事
+     *    ⇒ 单独成组，放在「文字转语音」之后（用户点名的位置）。
+     *
+     * ⚠️ 提交时机与其余路径类设置**同一口径**：失焦 / 回车才落库，⛔ 不在 `onChange` 里
+     *    每敲一个字符存一次（那会把半截路径写进配置）。
+     */
+    private renderDictRows(host: HTMLDivElement): void {
+        const s = this.plugin.settings;
+        let touched = false;
+        const row = new Setting(host).setName('本地词典文件').setDesc(DICT_PATH_DESC);
+        row.addText((text) => {
+            text.setPlaceholder('ECDICT.csv 的完整路径（留空 = 不查词）').setValue(s.dictPath ?? '');
+            text.inputEl.addEventListener('input', () => {
+                touched = true;
+            });
+            const commit = async (): Promise<void> => {
+                if (!touched) return;
+                touched = false;
+                s.dictPath = text.getValue().trim();
+                await this.plugin.saveSettings();
+                text.setValue(s.dictPath ?? '');
+            };
+            text.inputEl.addEventListener('blur', () => void commit());
+            text.inputEl.addEventListener('keydown', (ev: KeyboardEvent) => {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    void commit();
+                }
+            });
+        });
+        row.addButton((b) => {
+            b.setButtonText('浏览');
+            b.buttonEl.addClass('rl-dir-browse');
+            b.onClick(() => {
+                // ⚠️ 不限制扩展名：用户自己整理的词表常常是 .txt / .tsv，限制成 csv 会让他们选不中
+                void this.plugin
+                    .pickSystemFilePath(['csv', 'txt', 'tsv', ''], '词典文件')
+                    .then((picked) => {
+                        if (!picked) return;
+                        s.dictPath = picked;
+                        void this.plugin.saveSettings().then(() => this.display());
+                    });
+            });
+        });
+    }
+
+    /**
+     * 「高级设置」页（1.3.1 ①，2026-10-12）：**5 组**（组序见方法内注释）。
+     *   · 分类视图 —— 首页切换条上有哪几颗胶囊（2026-11-26 提到第一组）
+     *   · 条目属性 —— 编辑弹窗里显示哪些属性块、什么顺序、多宽
      *   · 字段映射 —— 把插件写出的 frontmatter 键名改成用户习惯的名字（**读写闭环**）
-     *   · 卡片信息栏 —— 决定卡片（卡片网格 / 海报墙）上显示哪几行属性
      *   · 笔记属性顺序 —— 决定 frontmatter 的写出顺序
+     *   · 卡片信息栏 —— 决定卡片（卡片网格 / 海报墙）上显示哪几行属性
      * 🔴 页内**不设页标题**（页名只由 Tab 承载）—— 与其余 4 页同口径。
      * ⚠️ 第二组原名「海报墙卡片」，#624 随视图改名一并改成「**卡片信息栏**」——
      *    它配的本来就是「卡片上那几行」，而「海报墙」现在指的是**另一个视图**（纯封面那档）。
      */
     private renderAdvancedPage(parent: HTMLElement): void {
+        // 🔴 2026-11-26 用户逐字：「高级设置-分类视图加图标把移动到第一顺位」
+        //    ⇒ 「分类视图」提到**第一组**（原在末尾）。理由：用户改视图的频率远高于字段映射，
+        //      每次都要滚到页尾才找得到。⛔ 别再按「语义递进」把它挪回末尾。
+        //      （图标见 `pure/settingNav.ts` 的 `SETTING_GROUP_ICONS.分类视图`。）
+        this.createGroupSection(parent, '分类视图', (body) => void this.renderMediaViewsRows(body));
+        // 🔴 2026-11-14 用户逐字：「高级设置-条目属性分组**移到『字段映射』组上面**」
+        //    ⇒ 「条目属性」从**页尾**提到「字段映射」之前。⛔ 别再按「语义递进」把它挪回末尾。
+        //    组序现为：分类视图 → 条目属性 → 字段映射 → 笔记属性顺序 → 卡片信息栏。
+        //    （图标见 `pure/settingNav.ts` 的 `SETTING_GROUP_ICONS.条目属性`。）
+        // 🔴🔴 1.5.1（用户 2026-11-27）：「高级设置里增加个自由删减各类型条目属性展示的面板，
+        //    然后可以预览拖动调整剩下的属性的编辑属性窗口」
+        this.createGroupSection(parent, '条目属性', (body) => {
+            this.entryFormGroupEl = body;
+            this.renderEntryFormRows(body);
+        });
         // 🔴 #640（1.4.0，用户点名）组序：**字段映射 → 笔记属性顺序 → 卡片信息栏**。
         //    原来的顺序是「字段映射 → 卡片信息栏 → 笔记属性顺序」，改动理由 = 语义递进：
         //    前两组都是**笔记 frontmatter** 的事（先管「叫什么名字」、再管「排第几位」），
@@ -3119,6 +5031,388 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             this.cardFieldsGroupEl = body;
             this.renderCardFieldsRows(body);
         });
+        // 🔴🔴 2026-11-06 用户逐字：「…和高级设置-ASR和TTS组全部移动到新开插件页签【沉浸体验】」⇒
+        //    「音频转文字」组**已整体搬走**，与「朗读音源」合并成新页里的「语音服务」组
+        //    （见 `renderImmersivePage`）。⛔ 别搬回来：
+        //    ⑴ 同一功能只留一个入口（本仓 #669 立的铁律）—— 两处都留，用户会以为哪一处是坏掉的备份；
+        //    ⑵ STT 与 TTS 是同一条链的两头，分在两页正是本轮要消灭的「找一个开关要翻两个 Tab」。
+        //    ⚠️ `renderAsrEngineRows` 本体一字未改（三张 `.rl-prov-card` 引擎卡 + 环境自检 + 一键安装全在），
+        //       只是换了挂载点。
+    }
+
+    /**
+     * 「分类视图」组（用户 2026-11-23 裁定）。
+     *
+     * 🔴 **物本位 → 事本位**：用户原话「我更希望这个软件支持**自定义分类维度**：
+     *    顶层『默认视图』（物理归档库）+ 用户自建顶栏视图（如『工作』『日常』），
+     *    自定义视图内部再自由添加二级分类」。
+     * ⚠️ **物理目录结构一字不动**：视图是**纯筛选器**（按标签命中），
+     *    ⛔ 别在这里或别处去改用户的文件夹结构 —— 那是不可逆的操作，用户没要。
+     *
+     * 🔴 默认视图（`id === DEFAULT_VIEW_ID`）：**不可删 / 不可改名 / 不可换种类**（只读一行），
+     *    其余每一行都能改名、换种类、配类型与标签、删除。归一器（`normalizeViews`）在数据层
+     *    同样强制这三条 ⇒ 这里少做一步也不会把库写坏，但 UI 上禁掉能少一次误解。
+     */
+
+    private async renderMediaViewsRows(parent: HTMLElement): Promise<void> {
+        const wrap = parent.createDiv({ cls: 'rl-views-admin' });
+        const intro = wrap.createDiv({ cls: 'rl-views-intro' });
+        // 🔴 2026-11-25 用户逐字给的文案，⛔ 别改写、别合并、别加感叹号
+        intro.createEl('div', {
+            text: '视图仅作“筛选器”，不会移动或复制你的文件。',
+        });
+        // 模板里的**第一条**分割线：说明文字 与 视图列表 之间
+        wrap.createDiv({ cls: 'rl-views-sep', attr: { role: 'separator' } });
+
+        const listEl = wrap.createDiv({ cls: 'rl-views-list' });
+        /**
+         * 🔴 用户 2026-11-25 模板里那条**固定的第二条**分割线：
+         *    「（可勾选隐藏）合集视图 [系统内置] / 按系列/IP 聚合你的媒体。
+         *      --- (分割线)
+         *      **[ + 新建自定义视图 ]**」
+         *    ⇒ 它分隔的是「已有视图」与「新建入口」，**与有没有自定义视图无关** ——
+         *      所以它建在 `listEl` 外面、`addBar` 之前，⛔ 别塞进行区里（行区会被 `empty()` 清掉，
+         *      而且行区那条分隔只在内置/自定义之间，是另一条线）。
+         */
+        wrap.createDiv({ cls: 'rl-views-sep', attr: { role: 'separator' } });
+        const addBar = wrap.createDiv({ cls: 'rl-views-add' });
+        // 🔴 用户 2026-11-25：「**[ + 新建自定义视图 ]** _(做成一个普通的按钮)_」
+        //    ⇒ 普通按钮（`rl-btn`），⛔ 不再用 `mod-cta` 那种实心强调按钮抢注意力。
+        const addBtn = addBar.createEl('button', {
+            cls: 'rl-btn',
+            text: '+ 新建自定义视图',
+            attr: { type: 'button' },
+        });
+        const addHint = addBar.createSpan({ cls: 'rl-view-row-hint' });
+
+        /** 只重画行区（骨架 build 一次，行区随数据重画） */
+        const rerender = (): void => {
+            void (async () => {
+                let views: MediaView[] = [];
+                try {
+                    views = await this.plugin.service.views();
+                } catch {
+                    listEl.empty();
+                    listEl.createDiv({ cls: 'rl-views-empty', text: '读取视图失败，请稍后重试。' });
+                    return;
+                }
+                listEl.empty();
+                this.renderMediaViewsRowList(listEl, views, commit);
+                const full = views.length >= MAX_VIEWS;
+                addBtn.disabled = full;
+                addHint.setText(full ? `最多 ${MAX_VIEWS} 个视图` : '');
+            })();
+        };
+
+        /**
+         * 落盘 + **只重画行区**（唯一写出口走宿主 `setMediaViews` ⇒ 归一在那里做一次）。
+         *
+         * 🔴🔴 2026-11-24 用户报障（逐字）：「加个归属标签（自定义视图）这个**每点击一下就刷新重载**啊」。
+         *    真因 = 这里原来调的是 `this.display()` —— 那是**整页重建**：每点一次类型标签 / 改一次名字，
+         *    整个设置页（含左侧导航、其余所有分组）全部销毁重画 ⇒ 页面闪一下、滚动位置回顶部、焦点丢失。
+         *    而视图配置恰是**高频连点**的操作（勾类型 / 敲标签），体感就是「点了就重载」。
+         *    ⇒ 改成只重画 `.rl-views-list` 的行。
+         *    ⚠️ 失败分支也必须**重画回去**：否则一次失败会留下一片空白，用户连现有视图都看不到。
+         */
+        /**
+         * 🔴🔴 2026-11-08（用户 m05024 报障）：「我在设置里勾选了漫画、电影，怎么在首页视图上还显示
+         *    其他类型的分类」。
+         *
+         * 真根因**不在页签过滤**（`pure/homeTabs.visibleTabs` 已用探针验过是对的），而在**这里**：
+         *    原来 `commit(next: MediaView[])` 收的是一份**整数组快照** —— 每个行内控件的闭包都握着
+         *    自己渲染那一刻的 `views`。而 `setMediaViews` 是异步写盘、写完才 `rerender()`：
+         *      · 用户连点两个类型 chip（间隔 < 一次写盘）⇒ 第二下拿的还是旧数组，
+         *        把第一下刚加的项**整条覆盖掉**；
+         *      · 真实库证据：`catalog.json` 里 `types` 只剩 `["anime","book"]` —— 用户点的 movie 丢了。
+         *    ⇒ 改成**补丁函数**：每次落盘前现读一遍最新视图再应用补丁（read-modify-write）。
+         *    ⚠️ ⛔ 别再退回「传整数组」：只要有两枚控件能在同一次重画生命周期内被连点，就会互相覆盖。
+         */
+        function commit(patch: (cur: MediaView[]) => MediaView[]): void {
+            void (async () => {
+                let cur: MediaView[] = [];
+                try {
+                    cur = await thisPlugin.service.views();
+                } catch {
+                    new Notice('读取视图失败，未能保存。');
+                    rerender();
+                    return;
+                }
+                thisPlugin.setMediaViews(patch(cur)).then(
+                    () => rerender(),
+                    (e: unknown) => {
+                        new Notice('视图保存失败：' + (e instanceof Error ? e.message : String(e)));
+                        rerender();
+                    },
+                );
+            })();
+        }
+        const thisPlugin = this.plugin;
+
+        addBtn.addEventListener('click', () => {
+            // 上限判据也放进补丁里现读：`addBtn.disabled` 只有等到下一次 rerender 才会更新，
+            // 连点两下仍有窗口期能超建一条（补丁式 commit 让这道判断和写入是同一次读）。
+            commit((cur) =>
+                cur.length >= MAX_VIEWS
+                    ? cur
+                    : [...cur, createView('custom', '新视图', nextViewId(cur.map((v) => v.id)))],
+            );
+        });
+
+        rerender();
+        await Promise.resolve();
+    }
+
+    /**
+     * 「分类视图」行区渲染（骨架由 `renderMediaViewsRows` 建一次，本函数只画行）。
+     *
+     * 🔴 拆出来只为「局部重画」（2026-11-24 用户报障「每点击一下就刷新重载」）：
+     *    `commit()` 之后只调本函数重画行，⛔ 不许再 `this.display()` 整页重建。
+     * ⚠️ 调用方负责 `listEl.empty()`；本函数**不碰** intro / 导航 / 新增按钮。
+     */
+    private renderMediaViewsRowList(
+        listEl: HTMLElement,
+        views: MediaView[],
+        commit: (patch: (cur: MediaView[]) => MediaView[]) => void,
+    ): void {
+        /**
+         * 🔴 2026-11-25 用户给的模板（逐字）：
+         *    「视图仅作"筛选器"，不会移动或复制你的文件。
+         *      --- (分割线)
+         *      （可勾选隐藏）**默认视图** `[系统内置]` / 物理归档库，收录所有媒体笔记。
+         *      （可勾选隐藏）**合集视图** `[系统内置]` / 按系列/IP 聚合你的媒体。
+         *      --- (分割线)
+         *      **[ + 新建自定义视图 ]**」
+         *    ⇒ 行结构 = 勾选框 + 名字 + `[系统内置]` 标记 + 一句说明；
+         *      内置两条与自定义之间有一条分割线（自定义视图是「用户的东西」，视觉上要和内置分开）。
+         * ⚠️ 分割线**只在内置与自定义之间插一次**，⛔ 别每行都插（那就成了表格线，不是分组）。
+         */
+        const builtinViews = views.filter((v) => isBuiltinView(v));
+        const customViews = views.filter((v) => !isBuiltinView(v));
+
+        for (const v of builtinViews) this.renderOneViewRow(listEl, v, commit, true);
+
+        if (customViews.length > 0) {
+            // 内置 / 自定义 两组之间的那条线（模板里两行内置视图与「+ 新建」之间另有一条固定的，
+            // 那条建在行区外面，见 `renderMediaViewsRows`）
+            listEl.createDiv({ cls: 'rl-views-sep', attr: { role: 'separator' } });
+            for (const v of customViews) this.renderOneViewRow(listEl, v, commit, false);
+        }
+    }
+
+    /**
+     * 画一行视图配置。
+     *
+     * 🔴 内置行（`builtin === true`）：勾选框 + 只读名字 + `[系统内置]` + 说明 + 类型/标签**只读**
+     *    —— 名字/种类/类型/标签都会被归一器按常量重造（见 `pure/mediaViews`），放开改只会「改了没反应」。
+     *    ✅ 但**勾选框是能用的**：用户 2026-11-25 明确要求内置视图也可勾选隐藏。
+     * ⚠️ 勾选框语义统一为「在首页显示」：勾 = 显示（`hidden` 缺省），不勾 = 隐藏（`hidden: true`）。
+     *    用「显示」而不是「隐藏」做正向语义：勾选框表达「现在首页有哪些」，比反向的「隐藏」少绕一层。
+     * 🔴 出厂态（2026-11-14 用户逐字：「分类视图，用户初始**仅勾选默认视图**，不再勾选合集视图」）：
+     *    **默认视图勾上、合集视图不勾** —— 见 `pure/mediaViews` 的 `builtinViewHiddenByDefault`。
+     *    ⛔ 别再按 2026-11-25 那句「默认全是勾上的」改回来：首页只有在**勾了 ≥2 个视图**时才出下拉框
+     *    （见 `ViewChips.svelte`），出厂就把两条都勾上等于让新用户第一次开机就看见一个用不上的切换器。
+     */
+    private renderOneViewRow(
+        listEl: HTMLElement,
+        v: MediaView,
+        commit: (patch: (cur: MediaView[]) => MediaView[]) => void,
+        builtin: boolean,
+    ): void {
+        const isDefault = v.id === DEFAULT_VIEW_ID;
+        const card = listEl.createDiv({ cls: 'rl-view-row' });
+        if (builtin) card.addClass('is-default');
+
+        // ── 头顶行：勾选框 + 名字 + [系统内置] + （非内置的删除按钮）──
+        const head = card.createDiv({ cls: 'rl-view-row-head' });
+
+        /**
+         * 红色拦截提示（挂在头顶行**下面**：`card` 此刻只有 `head` 一个子元素，
+         * 所以这里追加出来的节点天然排在它之后）。
+         * 默认 `is-hidden` 收起，只在拦截时露出来。
+         */
+        const warn = card.createDiv({
+            cls: 'rl-view-row-warn is-hidden',
+            attr: { role: 'alert' },
+        });
+        let warnTimer: number | null = null;
+        const flashShowWarn = (text: string): void => {
+            warn.setText(text);
+            warn.removeClass('is-hidden');
+            if (warnTimer !== null) window.clearTimeout(warnTimer);
+            warnTimer = window.setTimeout(() => {
+                warn.addClass('is-hidden');
+                warnTimer = null;
+            }, 5000);
+        };
+
+        const cbWrap = head.createEl('label', { cls: 'rl-view-row-show' });
+        const cb = cbWrap.createEl('input', {
+            attr: { type: 'checkbox', 'aria-label': `在首页显示「${v.name}」` },
+        }) as HTMLInputElement;
+        cb.checked = v.hidden !== true;
+        /**
+         * 🔴🔴 2026-11-15 用户 m05159 问题一（逐字）：
+         *    「「高级设置-分类视图」不允许全部取消勾选。仅剩最后一个勾选项时再取消，
+         *      应拦截并显示红色提示；拦截后该项保持勾选，不能出现全部未勾选状态。」
+         *
+         * 判据在 change 里**现读**一遍视图表再算（与 `commit` 同一套 read-modify-write 口径）：
+         * ⛔ 别用渲染那一刻闭包里的 `v` / 视图快照 —— 连点两枚勾选框时，第二下拿的还是旧数组，
+         *    会把第一下刚取消掉的那条又算成「还勾着」，于是两条一起被取消 ⇒ 恰好破掉这条约束。
+         *
+         * 三种出口：
+         *   勾上     ⇒ 恒放行（只会让可见数变多）。
+         *   取消且仍有别的可见项 ⇒ 放行。
+         *   取消但本条是最后一条可见项 ⇒ **把勾选框打回勾上**并闪红提示（不写盘）。
+         */
+        cb.addEventListener('change', () => {
+            if (cb.checked) {
+                commit((cur) => cur.map((x) => (x.id === v.id ? { ...x, hidden: false } : x)));
+                return;
+            }
+            void (async () => {
+                let cur: MediaView[] = [];
+                try {
+                    cur = await this.plugin.service.views();
+                } catch {
+                    // 读不到就**不许放行**：放行等于「可能全不勾」，宁可按未生效处理
+                    cb.checked = true;
+                    flashShowWarn('读取视图失败，这次取消没有生效。');
+                    return;
+                }
+                const others = cur.filter((x) => x.id !== v.id && x.hidden !== true).length;
+                if (others <= 0) {
+                    cb.checked = true;
+                    flashShowWarn('至少要保留一个视图在首页显示。想换成别的视图，请先勾上它，再取消这一条。');
+                    return;
+                }
+                commit((c) => c.map((x) => (x.id === v.id ? { ...x, hidden: true } : x)));
+            })();
+        });
+        cbWrap.createSpan({ cls: 'rl-view-row-showtxt', text: '显示' });
+
+        safeSetIcon(head.createSpan({ cls: 'rl-view-row-icon' }), viewIconOf(v));
+
+        // ── 名字：内置视图只读，其余可改 ──
+        if (builtin) {
+            head.createSpan({ cls: 'rl-view-row-name', text: v.name });
+            // 🔴 用户模板里的字面标记 `[系统内置]`
+            head.createSpan({ cls: 'rl-view-row-badge', text: '[系统内置]' });
+        } else {
+            const nameIn = head.createEl('input', {
+                cls: 'rl-input rl-view-row-namein',
+                attr: { type: 'text', value: v.name, 'aria-label': '视图名称' },
+            });
+            nameIn.value = v.name;
+            // ⚠️ 用 change 不是 input：每次按键都落盘会把磁盘写满
+            nameIn.addEventListener('change', () => {
+                const name = nameIn.value.trim();
+                if (!name) {
+                    nameIn.value = v.name;
+                    return;
+                }
+                commit((cur) => cur.map((x) => (x.id === v.id ? { ...x, name } : x)));
+            });
+
+            // 🔴 2026-11-08（用户 m04478「自定义视图项怎么有个切换合集视图和该自定义视图的下拉框删除掉这没用」）：
+            //    这里原本有一枚「视图种类」下拉（collection / custom）。它退场的原因不是字段无用，
+            //    而是**用户没有第二种合理选择**：合集看板只由系统内置的「合集视图」提供，
+            //    新建视图的入口恒为 `createView('custom', …)`（本文件里就这一处）⇒ 下拉的另一个选项
+            //    永远是「把一个自建视图改成看板形态」。留着它只会让自建视图被点成看板后卡在那，
+            //    且「自定义视图按标签过滤」这条语义对该视图当场失效（`pure/mediaViews` 的 `viewMatchesEntry`）。
+            //    ⇒ 归一器把自建视图的 kind 钉成 `'custom'`（见 `pure/mediaViews` 的 `normalizeViews`），
+            //      这里不再提供入口。⛔ 别按「一个字段没人填了就当它死了」把 `kind` 从数据模型里删掉：
+            //      内置两枚视图（默认 / 合集）仍然靠它区分，`viewIconOf` / `viewMatchesEntry` 也还在读。
+
+            const del = head.createEl('button', {
+                cls: 'clickable-icon rl-view-row-del',
+                // 🔴 2026-11-08 修双提示：原来这里同时挂 `aria-label` 与 `data-tip`，
+                //    Obsidian 会给带 `aria-label` 的悬停目标自绘官方气泡，与本插件的 `data-tip`
+                //    气泡叠成两层（UI-GUIDE §3 v3）。读屏名改走 `.rl-sr` 隐藏 span。
+                attr: { 'data-tip': '删除视图（不动任何文件）' },
+            });
+            del.createSpan({ cls: 'rl-sr', text: `删除视图「${v.name}」` });
+            safeSetIcon(del, 'trash-2');
+            del.addEventListener('click', () => {
+                void (async () => {
+                    const ok = await new ConfirmModal(
+                        this.app,
+                        `删除视图「${v.name}」？\n\n只会删掉这条分类设置，条目与文件都不会动。`,
+                        '删除视图',
+                    ).open();
+                    if (!ok) return;
+                    commit((cur) => cur.filter((x) => x.id !== v.id));
+                })();
+            });
+        }
+
+        // ── 一句说明（真源在 pure/mediaViews，⛔ 别在这里手抄）──
+        card.createDiv({ cls: 'rl-view-row-desc', text: VIEW_KIND_DESCS[v.kind] });
+
+        // ── 类型白名单（哪几种媒体进这个视图；全不勾 = 不限制）──
+        // ⚠️ 内置视图不给改：默认视图必须吃全量，合集视图的 types 也被归一器重造
+        if (!builtin) {
+            const typesRow = card.createDiv({ cls: 'rl-view-row-types' });
+            typesRow.createSpan({ cls: 'rl-view-row-label', text: '媒体类型' });
+            /**
+             * 🔴 2026-11-26（m05012）用户逐字：「高级设置的选择类型扩充到九类」
+             *    「用户自定义视图可选择现有的文学网文漫画动画剧集电影游戏音乐可选展示」
+             * ⇒ 这里**不再**遍历 `ENTRY_TYPES`（那只有 6 个主类型，书籍只能整块勾），
+             *   改遍历 `VIEW_TYPE_CHOICES`（八项：文学/网文/漫画/动画/剧集/电影/游戏/音乐）。
+             * ⚠️ 勾选态与写回都走 `viewSelectionOf` / `viewSelectionPatch` 这对逆运算：
+             *   `types` 与 `bookKinds` 是**两维**，分别提交必然互相踩（本仓踩过硬删字段的坑）。
+             */
+            const picked = new Set(viewSelectionOf(v));
+            for (const c of VIEW_TYPE_CHOICES) {
+                const on = picked.has(c.key);
+                const chip = typesRow.createEl('button', {
+                    cls: 'rl-view-type-chip' + (on ? ' is-on' : ''),
+                    text: c.label,
+                    attr: { type: 'button', 'aria-pressed': on ? 'true' : 'false' },
+                });
+                /**
+                 * 🔴🔴 2026-11-08（用户 m05024 报障「勾了漫画、电影，首页还显示其他类型」）：
+                 *    这里原来闭包吃的是渲染那一刻的 `picked` 与 `on` 两个**快照**：
+                 *        const next = new Set(picked);  if (on) next.delete(c.key);  else next.add(c.key);
+                 *    ⇒ 连点两枚 chip 时，第二下仍从旧 `picked` 重算 ⇒ 把第一下刚勾的项覆盖掉。
+                 *    真实库证据：`catalog.json` 里 `types` 只剩 `["anime","book"]`（用户点的 movie 丢了）。
+                 *    ⇒ 改成**现算**：补丁函数里用当前最新视图重新求勾选态，再翻转这一枚。
+                 *    ⚠️ ⛔ 别把 `on` 当省事缓存：它只配用来画初始 `is-on`/`aria-pressed`，不配参与写回。
+                 */
+                chip.addEventListener('click', () => {
+                    commit((cur) =>
+                        cur.map((x) => {
+                            if (x.id !== v.id) return x;
+                            const now = new Set(viewSelectionOf(x));
+                            if (now.has(c.key)) now.delete(c.key);
+                            else now.add(c.key);
+                            return { ...x, ...viewSelectionPatch([...now]) };
+                        }),
+                    );
+                });
+            }
+            typesRow.createSpan({ cls: 'rl-view-row-hint', text: '全不勾 = 不限' });
+        }
+
+        // ── 标签白名单（自定义视图才需要；命中任一标签即进） ──
+        if (v.kind === 'custom') {
+            const tagsRow = card.createDiv({ cls: 'rl-view-row-tags' });
+            tagsRow.createSpan({ cls: 'rl-view-row-label', text: '按标签收录' });
+            const tagsIn = tagsRow.createEl('input', {
+                cls: 'rl-input rl-view-row-tagin',
+                attr: { type: 'text', placeholder: '多个标签用逗号分隔，如 工作, 项目A', 'aria-label': '按标签收录' },
+            });
+            tagsIn.value = v.tags.join(', ');
+            tagsIn.addEventListener('change', () => {
+                const tags = normalizeViewTags(tagsIn.value.split(/[,，]/));
+                commit((cur) => cur.map((x) => (x.id === v.id ? { ...x, tags } : x)));
+            });
+            if (v.tags.length === 0) {
+                tagsRow.createSpan({ cls: 'rl-view-row-hint is-warn', text: '还没配标签 ⇒ 这个视图永远是空的' });
+            }
+        }
+
+        // `isDefault` 目前只在上面判名字只读分支用得到；显式消费避免「声明了没用」的噪音
+        void isDefault;
     }
 
     /**
@@ -3164,51 +5458,50 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             },
         });
 
-        body.createDiv({
-            cls: 'rl-fo-help',
-            text: '拖动调整笔记里属性的排列顺序；只影响之后写入或重写的笔记。',
-        });
+        // 🔴 ③-5：说明行改走全局组件 `groupHeader()`（本组只需要说明行，回执槽留空 —— 空槽 CSS 用
+        //    `:empty` 收掉，不占高度）。`rl-fo-help` 作为附加语义类保留，避免与断言/历史引用错位。
+        groupHeader(body, '拖动调整笔记里属性的排列顺序；只影响之后写入或重写的笔记。', { helpCls: 'rl-fo-help' });
 
         // 🔴 #653（用户：「再加个对比视图，如一整个表格滑动并览」）：**编辑 / 对比预览**两档切换。
         //    编辑 = 左主右从（一次看一组）；对比 = 一整个表格横向滑动（七组并排、按位次对齐）。
         //    ⚠️ 两个视图共用同一份取数（`orderForType` / `GLOBAL_FIELD_KEYS`），⛔ 别各算一套。
+        //
+        // 🔴 ③-5：分段条改走全局组件库 `chipBar()`（与「卡片信息栏」「条目属性」两组同一份实现）。
+        //    原来这里是**第三份**手写分段条（`rl-fo-modebar` + 两个 `rl-fo-mode` 按钮 + 自己 sync 高亮），
+        //    与另两组逐字重复 —— 正是用户说的「同一手势两处（此处三处）实现」。
+        //    ⇒ 高亮与 `aria-selected` 交给 `chipBar` 内部 sync（它建完立刻 sync 一次，#659 那条
+        //      「首屏不高亮」的坑由组件库兜住，⛔ 不再依赖调用点记得手调）。
+        //    本方法只剩「哪档可见」这一件真属于它自己的事（`syncMode`）。
         let mode: 'edit' | 'compare' = 'edit';
-        const modeBar = body.createDiv({
-            cls: 'rl-fo-modebar',
-            attr: { role: 'tablist', 'aria-label': '属性顺序视图' },
-        });
-        const editBtn = modeBar.createEl('button', {
-            cls: 'rl-fo-mode', text: '编辑', attr: { type: 'button', role: 'tab', 'aria-selected': 'true' },
-        });
-        const cmpBtn = modeBar.createEl('button', {
-            cls: 'rl-fo-mode', text: '对比预览', attr: { type: 'button', role: 'tab', 'aria-selected': 'false' },
-        });
         const editHost = body.createDiv({ cls: 'rl-fo-view' });
         const cmpHost = body.createDiv({ cls: 'rl-fo-view' });
         cmpHost.addClass('is-hidden');
         const syncMode = (): void => {
             const isEdit = mode === 'edit';
-            editBtn.toggleClass('is-on', isEdit);
-            editBtn.setAttribute('aria-selected', isEdit ? 'true' : 'false');
-            cmpBtn.toggleClass('is-on', !isEdit);
-            cmpBtn.setAttribute('aria-selected', isEdit ? 'false' : 'true');
             editHost.toggleClass('is-hidden', !isEdit);
             cmpHost.toggleClass('is-hidden', isEdit);
             // 切到对比时才重算（横向长表，不必常驻 DOM 陪着编辑视图）
             if (!isEdit) this.renderFieldOrderCompare(cmpHost);
         };
-        editBtn.addEventListener('click', () => {
-            mode = 'edit';
-            syncMode();
-        });
-        cmpBtn.addEventListener('click', () => {
-            mode = 'compare';
-            syncMode();
+        chipBar({
+            parent: body,
+            ariaLabel: '属性顺序视图',
+            items: [
+                { key: 'edit', label: '编辑' },
+                { key: 'compare', label: '对比预览' },
+            ],
+            getKey: () => mode,
+            onPick: (next) => {
+                mode = next === 'compare' ? 'compare' : 'edit';
+                syncMode();
+            },
         });
         // 🔴🔴 #659（用户：「怎么不默认高亮『编辑』按钮啊，要切换一下才能正常高亮」）：
-        //    上一版只在**点击时**调 `syncMode()` ⇒ 首屏两个按钮都还没有 `is-on`，
-        //    初始 `aria-selected="true"` 是写在 HTML 里的字面量、类名却没跟上 ⇒ "看起来没高亮"。
-        //    ⇒ 首次渲染就要跑一次（与点击走**同一个**函数，⛔ 不另写一份初始态）。
+        //    上一版只在**点击时**调同步 ⇒ 首屏两个按钮都还没有选中态。
+        //    ⚠️ ③-5 之后这条不变量**拆成两半**：
+        //      · 「按钮高亮」由 `chipBar` 建完自己 sync（组件库保证，⛔ 调用点不用管）；
+        //      · 「哪档可见」仍必须在这里**无条件跑一次** —— 否则首屏两个视图容器都按默认显示，
+        //        编辑区与对比区会同时出现在页面上。
         syncMode();
 
         const wrap = editHost.createDiv({ cls: 'rl-fo-wrap' });
@@ -3496,6 +5789,31 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
         };
 
+        /**
+         * 🔴🔴 #721：这一页的**隐藏集真源键**（用户「笔记属性配置也可增删，删除后不拉取改属性字段」）。
+         *
+         * 为什么按「页」存、而不是按类型存一份大表：用户是在**这一页**删的，就该只影响这一页的字段集
+         * （全局页删 = 六个类型都不写；网文页删 = 只网文不写）。口径与 `EntryService.hiddenForEntry`
+         * 的并集算法一一对应 —— 那边读的正是这三个键。
+         */
+        const hideTarget = isGlobal ? '__global' : kind ? `k:${kind}` : (type as string);
+        /** 生效隐藏集：只留 `baseKeys` 里的（历史残留 / 手改进来的脏键在这里就丢掉，不带到写盘） */
+        const readHidden = (): Set<string> =>
+            new Set((this.plugin.settings.fieldOrderHidden?.[hideTarget] ?? []).filter((k) => baseKeys.includes(k)));
+
+        /**
+         * 落盘隐藏集。**与顺序完全解耦** —— 顺序那份照旧写 `fieldOrder` / `fieldOrderByKind`，
+         * 这里只动 `fieldOrderHidden`，⛔ 不要顺手重排（删一个字段不该让别的字段跳位置）。
+         * 与缺省（空集）一致时 delete 该键 ⇒ 不落冗余数据（同 `entryFormFieldsByType` 的口径）。
+         */
+        const commitHidden = async (next: string[]): Promise<void> => {
+            const cfg = { ...(this.plugin.settings.fieldOrderHidden ?? {}) };
+            if (next.length) cfg[hideTarget] = next;
+            else delete cfg[hideTarget];
+            this.plugin.settings.fieldOrderHidden = cfg;
+            await this.plugin.saveSettings();
+        };
+
         const list = pane.createEl('ul', {
             cls: 'rl-fo-list',
             attr: {
@@ -3505,6 +5823,11 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         });
 
         let order = readOrder();
+        /**
+         * 🔴 #721：当前隐藏集（每次 render 前重读真源 —— 与 `order` 同一口径，⛔ 不留本地副本）：
+         * 列表里只画「没被隐藏」的，被隐藏的进下方的「已隐藏的属性」池。
+         */
+        let hiddenSet = readHidden();
         /** 正在拖的那一项（`dragstart` 记下、`drop` 取用） */
         let dragKey: string | null = null;
         /**
@@ -3515,9 +5838,24 @@ export class ReelLudicSettingTab extends PluginSettingTab {
          */
         const labelType: EntryType | undefined = isGlobal ? undefined : kind ? 'book' : (type as EntryType);
 
+        /**
+         * 🔴 #721：被隐藏属性的「池子」是**常驻节点**，⛔ 别在 `render()` 里现建。
+         *
+         *    第一版把它写在 `render()` 内部（`if (hiddenInPage.length) pane.createDiv(...)`），
+         *    于是每渲染一次就往 `pane` 里多塞一个池子、旧的从不移除 —— 真机实测到的症状是
+         *    「从池子点回来、列表已经恢复满项，池子却还写着『已隐藏 1 项』」：
+         *    那一个残留的旧池子就躺在下面（把原来的项又画了一遍）。
+         *    改成常驻 + 每次渲染 `empty()` 后按需 `hidden` 显隐，就没有副本可言了。
+         */
+        const pool = pane.createDiv({ cls: 'rl-fo-pool' });
+        pool.hidden = true;
+
         const render = (): void => {
             list.empty();
-            order.forEach((key, i) => {
+            hiddenSet = readHidden();
+            // 🔴 #721：列表只画**没被隐藏**的项 —— 顺序仍是 `order` 的相对次序（隐藏的跳过，不重排）
+            const shown = order.filter((k) => !hiddenSet.has(k));
+            shown.forEach((key, i) => {
                 const label = labelOf(key, labelType);
                 const li = list.createEl('li', {
                     cls: 'rl-fo-item',
@@ -3532,6 +5870,22 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 safeSetIcon(li.createSpan({ cls: 'rl-fo-grip' }), 'grip-vertical');
                 li.createSpan({ cls: 'rl-fo-label', text: label });
                 li.createSpan({ cls: 'rl-fo-key' }).createEl('code', { text: key });
+
+                // 🔴 #721：删除（隐藏）入口。结构性键**不挂**这枚按钮 —— 删了笔记会坏。
+                if (isHidableFieldKey(key)) {
+                    const del = li.createEl('button', {
+                        cls: 'rl-fo-del',
+                        // 🔴 2026-11-08 修双提示：`aria-label` 与 `data-tip` 同元素 ⇒ 官方气泡 + 自绘气泡叠两层。
+                        attr: { 'data-tip': '删除：之后不再写入这条笔记' },
+                    });
+                    del.createSpan({ cls: 'rl-sr', text: `删除「${label}」：之后不再写入这条笔记` });
+                    safeSetIcon(del, 'x');
+                    del.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        // 只改隐藏集，**不动顺序** —— 以后想恢复，位置还在原位（这是刻意的）
+                        void commitHidden([...hiddenSet, key]).then(() => render());
+                    });
+                }
 
                 li.addEventListener('dragstart', (ev) => {
                     dragKey = key;
@@ -3551,7 +5905,9 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     ev.preventDefault();
                     li.removeClass('is-over');
                     if (!dragKey || dragKey === key) return;
-                    order = moveItem(order, order.indexOf(dragKey), order.indexOf(key));
+                    // 🔴 #721：拖拽动的是**可见项之间**的次序 ⇒ 按 `shown` 算位置，再回写完整 `order`
+                    //    （隐藏项不参与比较；它们的相对位置由「恢复」时回到原位保证）
+                    order = moveInVisibleOrder(order, dragKey, key);
                     void commit(order);
                     render();
                 });
@@ -3561,14 +5917,42 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
                     ev.preventDefault();
                     const to = ev.key === 'ArrowUp' ? i - 1 : i + 1;
-                    if (to < 0 || to >= order.length) return;
-                    order = moveItem(order, i, to);
+                    if (to < 0 || to >= shown.length) return;
+                    order = moveInVisibleOrder(order, key, shown[to]);
                     void commit(order);
                     render();
                     // 重建后焦点会掉 ⇒ 放回**同一项**的新位置（否则连按第二下就没反应）
                     (list.children[to] as HTMLElement | undefined)?.focus();
                 });
             });
+
+            // 🔴 #721：被隐藏的属性进这个池子 —— 用户「也可以增删」，所以必须给回得来的路。
+            //    ⚠️ 池子里放的是**本页字段集里**被隐藏的项（不是全库），点一下即为「恢复」。
+            //    ⚠️ `pool` 是渲染前建好的常驻节点（见上方注释），这里只 `empty()` 重画、按需显隐，
+            //       ⛔ 别再 `pane.createDiv({cls:'rl-fo-pool'})` —— 那样每次渲染都会多一个。
+            pool.empty();
+            const hiddenInPage = order.filter((k) => hiddenSet.has(k));
+            pool.hidden = hiddenInPage.length === 0;
+            if (hiddenInPage.length) {
+                pool.createDiv({
+                    cls: 'rl-fo-pool-cap',
+                    text: `已隐藏 ${hiddenInPage.length} 项（点一下恢复）`,
+                });
+                const chips = pool.createDiv({ cls: 'rl-fo-pool-chips' });
+                for (const key of hiddenInPage) {
+                    const chip = chips.createEl('button', {
+                        cls: 'rl-fo-chip',
+                        // 🔴 2026-11-08 修双提示：`aria-label` 与 `data-tip` 同元素 ⇒ 官方气泡 + 自绘气泡叠两层。
+                        //    这枚 chip 本身有可见文字（下面的 `labelOf`），读屏名不需要再靠 `aria-label`。
+                        attr: { 'data-tip': '恢复：重新写入这条笔记' },
+                    });
+                    chip.createSpan({ text: labelOf(key, labelType) });
+                    safeSetIcon(chip.createSpan({ cls: 'rl-fo-chip-plus' }), 'plus');
+                    chip.addEventListener('click', () => {
+                        void commitHidden([...hiddenSet].filter((k) => k !== key)).then(() => render());
+                    });
+                }
+            }
         };
         render();
 
@@ -3605,11 +5989,19 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     private renderFieldMapRows(body: HTMLElement): void {
         // 🔴 #652：标题行右侧「恢复默认」（用户：「高级设置下的三个组都要有恢复默认项」）。
         //    ⚠️ 挂**组标题行**而不是组内容顶部：三个组的位置一致，用户扫一眼就在同一个地方找到它。
-        const help = body.createDiv({ cls: 'rl-fieldmap-help' });
-        /** 说明行的主体句式（未配置时状态就折在它前面，见 `renderFieldMapStatus`） */
+        /**
+         * 🔴 ③-5：说明行改走全局组件 `groupHeader()`。
+         *    旧写法是 `body.createDiv({ cls: 'rl-fieldmap-help' })` + `body.createDiv({ cls: 'rl-fieldmap-feedback' })`
+         *    —— 与另外四组各写一套，正是用户说的「东拼西凑」。
+         *    ⚠️ 但这两个类名**不能直接扔**：`rl-fieldmap-help` 还承担「未配置那句折进同一行」
+         *    （`display:flex; flex-wrap:wrap`），`rl-fieldmap-feedback` 承担「有错时整块变红告警」
+         *    （`is-bad` + `role="alert"`）。⇒ 作为**附加语义类**挂到通用容器上，通用排版仍归 `.rl-ui-help`。
+         */
         const HELP_TEXT = '在「新属性名」列填你想要的键名，回车或失焦生效；留空 = 保持原属性名。';
-        /** 回执槽：放在**说明与表头之间**（⛔ 不占固定高度，空态由 CSS 的 `:empty` 收掉） */
-        const feedback = body.createDiv({ cls: 'rl-fieldmap-feedback' });
+        const { help, feedback } = groupHeader(body, '', {
+            helpCls: 'rl-fieldmap-help',
+            feedbackCls: 'rl-fieldmap-feedback',
+        });
 
         // 🔴 #640（1.4.0，用户报障）：「表头区域超出了自身容器的边界，与上方设置页签的底部发生了
         //    视觉重叠/粘连。同时表格右侧出现了独立的滚动条，导致表格容器没有合理的内边距」。
@@ -3631,17 +6023,31 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    剩下的全归输入区 —— 三列之间有明确比例关系，不再是被内容「挤」出来的。
         //    ⚠️ 列宽真源只在这里：CSS ⛔ 不得再写 `td { width: … }`（`table-layout: fixed` 下会打架）。
         const COL_WIDTHS = ['30%', '24%', '46%'];
-        const headWrap = body.createDiv({ cls: 'rl-fieldmap-headwrap' });
-        const headTable = headWrap.createEl('table', { cls: 'rl-fieldmap-table rl-fieldmap-head' });
-        const colgroupHtml = COL_WIDTHS.map((w) => `<col style="width:${w}">`).join('');
-        headTable.innerHTML = `<colgroup>${colgroupHtml}</colgroup>`;
-        const hr = headTable.createEl('thead').createEl('tr');
+        /**
+         * 🔴 ③-5 收口（2026-11-14 用户 m03626「彻底消灭视觉上的东拼西凑」）：
+         *    这两张表原先在**本方法里手写** `createDiv('rl-fieldmap-headwrap')` + `createEl('table')`
+         *    + `innerHTML = '<colgroup>…'`，而凭据表走的是全局组件 `statusTable()` ——
+         *    同一个设置页里两套表格建法，正是用户点名的那件事。
+         *    ⇒ 拆表这套结构（表头在外 / 表体滚动 / 两张表共用 colgroup）收进 `ui/components.splitTable()`，
+         *      本方法只给列宽与类名。DOM 结构与类名逐字不变（视觉零变化，既有断言全部照旧）。
+         *    ⚠️ 但这里**仍然不换成 `statusTable()`**：那是 grid 只读表，而本表 42 行都有可编辑
+         *      `<input>`，必须靠 `table-layout: fixed` 保证输入框宽度不随内容抖动。
+         */
+        const split = splitTable(body, {
+            widths: COL_WIDTHS,
+            headWrapCls: 'rl-fieldmap-headwrap',
+            wrapCls: 'rl-fieldmap-wrap',
+            tableCls: 'rl-fieldmap-table',
+            headCls: 'rl-fieldmap-head',
+            bodyCls: 'rl-fieldmap-body',
+        });
+        const headTable = split.headTable;
+        const table = split.bodyTable;
+        const hr = split.headRow;
         // ⚠️ 三列表头文字被既有断言钉住（逐字），⛔ 别顺手改词
         for (const h of ['字段', '原属性名', '新属性名']) hr.createEl('th', { text: h });
 
-        const wrap = body.createDiv({ cls: 'rl-fieldmap-wrap' });
-        const table = wrap.createEl('table', { cls: 'rl-fieldmap-table rl-fieldmap-body' });
-        table.innerHTML = `<colgroup>${colgroupHtml}</colgroup>`;
+        // 表体（在 `split.wrap` 里）已经由 `splitTable()` 建好 `<colgroup>`，这里直接用 `split.bodyTable`
 
         // 初值：把现有映射文本反解回「原键 → 新键」（未映射的字段留空）
         const current = new Map<string, string>();
@@ -3773,25 +6179,30 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    三个子分类分别映射到 `book` 的哪一份？⇒ 用户选哪个子类就显示 / 写那一类的**独立**配置
         //    （`cardFieldsByKind`）。没配过的子类回落到 `cardFieldsByType.book`（与 `fieldOrderByKind`
         //    同一条回落链，⛔ 别各写一套）。
-        const typeRow = body.createDiv({ cls: 'rl-cf-typerow' });
-        typeRow.createDiv({ cls: 'rl-cf-typerow-cap', text: '条目类型' });
-        const typeBar = typeRow.createDiv({
-            cls: 'rl-cf-typebar',
-            attr: { role: 'tablist', 'aria-label': '条目类型' },
+        // 🔴 ③-5：分段条改走全局组件库 `chipBar()` —— 本组与「条目属性」组原先各手写一份
+        //    （`rl-cf-typerow` / `rl-cf-typebar` / `typeBtns` / `syncTypeBar()` 逐字重复），
+        //    只差 panel 类名与取 key 的函数。用户原话「彻底消灭视觉上的东拼西凑」正是指这个。
+        //    ⚠️ 语义不变：平级枚举、点已选中的那格不重画（防冲掉面板里的滚动位置与展开态）。
+        //
+        // 🔴 顺序（三条都别改）：
+        //    ⑴ 先把默认槽位抬到「当前类型对应的那一格」（电影 → f:movie）——
+        //       `chipBar` 建完会**立刻 sync 一次**，槽位没归位就会按旧值高亮，用户看到「条上和下面对不上」；
+        //    ⑵ 再建 chips（它往 body 末尾追加，故必须在 panel **之前**建，否则会排到面板下面）；
+        //    ⑶ 最后建 panel 并首绘。
+        if (!CARD_TYPE_SLOTS.some((e) => e.key === this.cardFieldsSlot)) this.cardFieldsSlot = `f:${this.cardFieldsType}`;
+        chipBar({
+            parent: body,
+            caption: '条目类型',
+            items: CARD_TYPE_SLOTS.map((e) => ({ key: e.key, label: e.label })),
+            getKey: () => this.cardFieldsSlotKey(),
+            onPick: (next) => {
+                this.cardFieldsSlot = next;
+                this.renderCardFieldsPanel(panelHost.el);
+            },
         });
+        // 切类型要重画**面板**（预览 + 已选 + 池子）—— 类型条高亮由 `chipBar` 自己 sync
         const panel = body.createDiv({ cls: 'rl-cf-panel' });
-
-        // 切类型要重画**面板**（预览 + 已选 + 池子）与**类型条自身**的高亮 —— 同源刷新
         const panelHost = { el: panel };
-        const typeBtns = new Map<string, HTMLButtonElement>();
-        const syncTypeBar = (): void => {
-            const cur = this.cardFieldsSlotKey();
-            for (const [k, b] of typeBtns) {
-                const on = k === cur;
-                b.toggleClass('is-on', on);
-                b.setAttribute('aria-selected', on ? 'true' : 'false');
-            }
-        };
 
         // 🔴 #652：本组的「恢复默认」—— 六类**全部**回到各自预填（不只是当前类型）
         this.mountGroupReset(body, {
@@ -3808,23 +6219,6 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             },
         });
 
-        for (const e of CARD_TYPE_SLOTS) {
-            const btn = typeBar.createEl('button', {
-                cls: 'rl-cf-type',
-                text: e.label,
-                attr: { type: 'button', role: 'tab', 'aria-selected': 'false' },
-            });
-            typeBtns.set(e.key, btn);
-            btn.addEventListener('click', () => {
-                if (this.cardFieldsSlotKey() === e.key) return;
-                this.cardFieldsSlot = e.key;
-                syncTypeBar();
-                this.renderCardFieldsPanel(panelHost.el);
-            });
-        }
-        // 首次进入：把默认槽位抬到「当前类型对应的那一格」（电影 → f:movie）
-        if (!CARD_TYPE_SLOTS.some((e) => e.key === this.cardFieldsSlot)) this.cardFieldsSlot = `f:${this.cardFieldsType}`;
-        syncTypeBar();
         this.renderCardFieldsPanel(panelHost.el);
     }
 
@@ -4089,6 +6483,493 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         sync();
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // 🔴🔴 1.5.1「条目属性」组（编辑窗口里属性块的显示 / 隐藏 / 先后）
+    //
+    // 用户（2026-11-27）逐字：「高级设置里增加个自由删减各类型条目属性展示的面板，
+    // 然后可以预览拖动调整剩下的属性的编辑属性窗口」。
+    //
+    // 🔴 与「卡片信息栏」的**关键差别**（⛔ 别把两组当同一种东西抄）：
+    //   · 卡片信息栏 —— 海报墙**卡片上**那几行，最多 5 条，只管「显示哪几个」；
+    //   · 本组       —— **编辑弹窗里**的属性块，不设上限（那是用户填表的主战场），
+    //                   而且**顺序也要管**（拖动预览列表 = 改弹窗里的先后）。
+    //   真源在 `pure/entryFormFields`（归一 / 缺省 / 补回全在那儿，⛔ 别在这里另写一套）。
+    // ────────────────────────────────────────────────────────────────────────
+
+    /** 当前槽位键（八格；没设过按当前类型算，保证永远有值） */
+    private entryFormSlotKey(): string {
+        return ENTRY_FORM_SLOTS.some((e) => e.key === this.entryFormSlot) ? this.entryFormSlot : `f:${this.cardFieldsType}`;
+    }
+
+    /** 当前槽位对应的条目类型 */
+    private entryFormSlotType(): EntryType {
+        const e = ENTRY_FORM_SLOTS.find((x) => x.key === this.entryFormSlotKey());
+        return e ? e.type : this.cardFieldsType;
+    }
+
+    /** 当前槽位对应的书籍子分类（仅 `k:*` 有值） */
+    private entryFormSlotKind(): BookKind | null {
+        const e = ENTRY_FORM_SLOTS.find((x) => x.key === this.entryFormSlotKey());
+        return e && e.kind ? e.kind : null;
+    }
+
+    /**
+     * 读**当前那一格**的配置（已归一：只留本格适用键、去重、保持用户先后）。
+     * 🔴 归一**不回填缺失** —— 缺项就是「用户把这块收起来了」（见 `pure/entryFormFields`）。
+     * 🔴 子分类的回落链与 `cardFieldsByKind → cardFieldsByType.book` 同一条：
+     *    `entryFormFieldsByKind[kind]` 缺失 ⇒ 回落 `entryFormFieldsByType.book`（零迁移）。
+     */
+    private currentEntryFormFields(): EntryFormFieldLayout[] {
+        const kind = this.entryFormSlotKind();
+        const raw = kind
+            ? (this.plugin.settings.entryFormFieldsByKind ?? {})[kind]
+                ?? (this.plugin.settings.entryFormFieldsByType ?? {}).book
+            : (this.plugin.settings.entryFormFieldsByType ?? {})[this.entryFormSlotType()];
+        return normalizeEntryFormFields(raw, kind ? 'book' : this.entryFormSlotType(), kind ?? undefined);
+    }
+
+    /**
+     * 落盘当前那一格。
+     *
+     * 🔴 **与缺省一致的配置不落盘**（本仓铁律：冗余配置 = 以后改缺省时老用户不动）——
+     *   但那句「与缺省一致」对**子分类格**要更严一点：`k:*` 删键后会**回落
+     *   `entryFormFieldsByType.book`**，若那一份不是缺省，删了就会显示成另一套 ⇒
+     *   只有当「删掉后算出来的结果仍等于要存的这份」才允许删（见下方 `fallback`）。
+     */
+    private async commitEntryFormFields(entries: EntryFormFieldLayout[]): Promise<void> {
+        const kind = this.entryFormSlotKind();
+        const type = kind ? 'book' : this.entryFormSlotType();
+        const s = this.plugin.settings;
+        const byType = { ...(s.entryFormFieldsByType ?? {}) };
+        const byKind = { ...(s.entryFormFieldsByKind ?? {}) };
+        /**
+         * 🔴 面板交上来的**没有固定键**（`meta` 已被 `renderEntryFormPanel` 滤掉，用户看不到也拖不动）。
+         *   落库前必须补回去，否则 `isDefaultEntryFormFields` 整份比对永远不相等 ⇒
+         *   用户什么都没改也会被写一份自定义配置，且编辑弹窗会因为「配置里缺 meta」而把那一行当未登记。
+         */
+        const full = withFixedEntryFormFields(entries, type, kind ?? undefined);
+
+        if (kind) {
+            // 删键后会拿到什么（= 回落链的结果）—— 判断「删了是否等价」
+            const fallback = normalizeEntryFormFields(byType.book, 'book', kind);
+            const same = full.length === fallback.length
+                && full.every((e, i) => e.key === fallback[i].key && e.span === fallback[i].span);
+            if (same) delete byKind[kind];
+            else byKind[kind] = full;
+        } else if (isDefaultEntryFormFields(full, type, undefined)) {
+            delete byType[type];
+        } else {
+            byType[type] = full;
+        }
+
+        s.entryFormFieldsByType = byType;
+        s.entryFormFieldsByKind = byKind;
+        await this.plugin.saveSettings();
+        this.flashEntryFormToast();
+        // 编辑弹窗若正开着，刷新能看到结果（与卡片信息栏同口径）
+        this.plugin.refreshViews();
+    }
+
+    /**
+     * 在「条目属性」组标题行右侧挂「已保存」轻提示。
+     * ⚠️ 挂**组标题**而不是面板里：面板每次拖完 / 切类型都会 `empty()` 重画（同 `mountCardFieldsToast`）。
+     */
+    private mountEntryFormToast(): void {
+        const group = this.entryFormGroupEl;
+        if (!group) return;
+        const head = group.querySelector('.rl-svc-group-title');
+        if (!head) return;
+        if (head.querySelector('.rl-ef-toast')) return;
+        const toast = document.createElement('div');
+        toast.className = 'rl-ef-toast';
+        toast.setAttribute('role', 'status');
+        toast.setAttribute('aria-live', 'polite');
+        const icon = document.createElement('span');
+        const label = document.createElement('span');
+        label.textContent = '已保存';
+        toast.appendChild(icon);
+        toast.appendChild(label);
+        safeSetIcon(icon, 'check');
+        head.appendChild(toast);
+        this.entryFormToastEl = toast;
+    }
+
+    /** 点亮轻提示（单定时器，同 `flashCardFieldsToast`） */
+    private flashEntryFormToast(): void {
+        const el = this.entryFormToastEl;
+        if (!el) return;
+        el.addClass('is-on');
+        if (this.entryFormToastTimer !== null) window.clearTimeout(this.entryFormToastTimer);
+        this.entryFormToastTimer = window.setTimeout(() => {
+            el.removeClass('is-on');
+            this.entryFormToastTimer = null;
+        }, 1500);
+    }
+
+    /** 「条目属性」组：类型条 + 面板（结构 / 口径见 `renderEntryFormPanel`） */
+    private renderEntryFormRows(body: HTMLElement): void {
+        this.mountEntryFormToast();
+
+        // 八格与「卡片信息栏」**逐格对齐**（六类型 + 书籍三子类原地展开）—— 用户在这两组之间来回看时，
+        // 位置一致才不会点错。⛔ 别只列六类型、把书籍三子类藏进下拉。
+        //
+        // 🔴 ③-5：分段条改走全局组件库 `chipBar()`（与「卡片信息栏」组同一份实现）。
+        //    原先这里与那一组各手写一份 `rl-cf-typerow` / `rl-cf-typebar` / `typeBtns` / `syncTypeBar()`
+        //    （闭包体逐字相同），只差 panel 类名与取 key 的函数 —— 本次收掉。
+        // 🔴 顺序同「卡片信息栏」：槽位归位 → 建 chips（往 body 末尾追加，须在 panel 之前）→ 建 panel 首绘。
+        if (!ENTRY_FORM_SLOTS.some((e) => e.key === this.entryFormSlot)) {
+            this.entryFormSlot = `f:${this.cardFieldsType}`;
+        }
+        chipBar({
+            parent: body,
+            caption: '条目类型',
+            items: ENTRY_FORM_SLOTS.map((e) => ({
+                key: e.key,
+                label: e.kind ? BOOK_KIND_LABELS[e.kind] : ENTRY_TYPE_LABELS[e.type],
+            })),
+            getKey: () => this.entryFormSlotKey(),
+            onPick: (next) => {
+                this.entryFormSlot = next;
+                this.renderEntryFormPanel(panelHost.el);
+            },
+        });
+        const panel = body.createDiv({ cls: 'rl-ef-panel' });
+        const panelHost = { el: panel };
+
+        // 「恢复默认」= 八格**全部**回到「全显示 + 模板顺序」（不只是当前格）
+        this.mountGroupReset(body, {
+            title: '条目属性',
+            isCustomized: () =>
+                Object.keys(this.plugin.settings.entryFormFieldsByType ?? {}).length > 0
+                || Object.keys(this.plugin.settings.entryFormFieldsByKind ?? {}).length > 0,
+            message: '将把八个类型（含文学 / 网文 / 漫画）的编辑窗口属性一起恢复成默认：全部显示、按原顺序。',
+            apply: async () => {
+                this.plugin.settings.entryFormFieldsByType = {};
+                this.plugin.settings.entryFormFieldsByKind = {};
+                await this.plugin.saveSettings();
+                this.plugin.refreshViews();
+            },
+        });
+
+        this.renderEntryFormPanel(panelHost.el);
+    }
+
+    /**
+     * 面板：**左 = 编辑窗口预览（可拖动排序，所见即该类型弹窗的先后）**，右 = 已隐藏属性池。
+     *
+     * 🔴 「预览」在这里不是装饰：左边那一列就是用户点开条目后看到的属性块顺序，
+     *    拖动它 = 直接改弹窗（⛔ 别做成「预览只读、另开一个列表去拖」—— 那要多看两处、还容易对不上）。
+     * 🔴 锁定块（`ENTRY_FORM_LOCKED_KEYS`：标题 / 封面 / 状态 / 评分 / 评语 / 启动路径）**不进本面板**，
+     *    它们由 `pure/entryFormFields` 的锁定表兜住 —— 那些块各自有硬依赖，隐藏会静默坏功能。
+     */
+    private renderEntryFormPanel(host: HTMLElement): void {
+        host.empty();
+        const slotType = this.entryFormSlotType();
+        const slotKind = this.entryFormSlotKind();
+        const allDefsAll = entryFormFieldsFor(slotType, slotKind ?? undefined);
+        /**
+         * 🔴 2026-11-15 用户 m07047（逐字）：「高级设置-条目属性排序**不要显示第一行了**，
+         *   如标题、年份、评分来源都不要显示，都是固定的不能改换顺序」
+         *
+         *   ⇒ **固定键一个都不画**（`ENTRY_FORM_FIXED_KEYS` = 五个年份键 + `meta`）。
+         *      这里直接把它们从 `allDefs` 里滤掉：画布不画、隐藏池没有、计数分母不含。
+         *
+         *   ⚠️ 本节**推翻**上一轮 m06462 的「灰块占位」方案（当时用户说「固定的不可改变也要
+         *      显示预览变灰（不可拖动）按各自调序占位」）—— 两个口径是矛盾的，以新口径为准：
+         *      用户现在认为「既然不能改顺序，画出来只会让人以为能拖」。
+         *      ⛔ 别把灰块加回来（`styles.css` 里的 `.rl-ef-blk.is-fixed` 也已一并删除）。
+         *
+         *   ⚠️ 固定键仍留在 `ENTRY_FORM_FIELDS` 里登记着 —— `buildEntryFormPlan` 靠注册表给它
+         *      算位次与宽度、`sortEntryFormKeys` 靠 `plan.order` 把它排到第一行。
+         *      ⛔ 别顺手从注册表删掉，否则编辑窗里第一行整组会错位。
+         *   ⚠️ 落库时固定键由 `commitEntryFormFields` 里的 `withFixedEntryFormFields` 补回，
+         *      所以面板上「不画」不代表它不在配置里。
+         */
+        const allDefs = allDefsAll.filter((d) => !entryFormFieldIsFixed(d.key));
+
+        const wrap = host.createDiv({ cls: 'rl-ef-wrap' });
+
+        // ── 左：编辑窗口镜像（= 可拖动的 6 列栅格）──────────────────────────
+        const preview = wrap.createDiv({ cls: 'rl-ef-preview' });
+        const pHead = preview.createDiv({ cls: 'rl-ef-prevhead' });
+        pHead.createDiv({ cls: 'rl-cf-cap', text: '编辑窗口预览' });
+        const counter = pHead.createDiv({ cls: 'rl-cf-counter' });
+        /**
+         * 🔴🔴 #720（2026-11-07 用户 m03168「编辑属性条目给我结构重构啊参考网站给我 5 版方案」，
+         *    选定**方案 D：真弹窗镜像**）—— 把「左边一条竖列表 + 底下一条只读色带」合并成
+         *    **一块 6 列栅格**：每个属性块按它的 `span` 真实占位（6 = 整行、3 = 两并排、2 = 三并排），
+         *    顺序就是弹窗里的书写顺序 ⇒ **设置页看到的就是编辑窗口**。
+         *
+         *    为什么废掉旧的两段式（#719 形态）：
+         *      ⑴ 列表里每行右侧的「整行 / 1⁄2 / 1⁄3」只能告诉你「当前是几等分」，
+         *         **看不出两个并排到底有多宽**，于是底下还得再画一条 `.rl-ef-mirror` 色带补位；
+         *      ⑵ 那块色带是**只读装饰** —— 用户在色带上想拖却拖不动，两处长得像却只有一处能操作；
+         *      ⑶ 3 个 1⁄3 是否正好凑满一行，得靠读数字心算。
+         *    ⇒ 现在**只有这一块**：占位即结果，拖它就是排弹窗，没有第二个需要对照的地方。
+         *
+         *    ⚠️ 拖拽语义保持「插到目标块的**位置**上」（`moveItem(from, to)`），不改成
+         *      「插到目标左侧 / 右侧」—— 后者在跨行换位时会产生两个落点区域、要画插入指示线，
+         *      对本面板（最多 11 块）是过度设计。
+         *    ⚠️ 块宽随 `span` 变，所以**块内的控件小样改成吃满块宽**（旧版是固定 72px 小样）——
+         *      这正是「所见即所得」要表达的信息。
+         */
+        const canvas = preview.createDiv({ cls: 'rl-ef-canvas' });
+
+        // ── 右：已隐藏属性池 ─────────────────────────────────────────────────
+        const picker = wrap.createDiv({ cls: 'rl-ef-picker' });
+        picker.createDiv({ cls: 'rl-cf-cap', text: '已隐藏的属性' });
+        const chips = picker.createDiv({ cls: 'rl-cf-chips' });
+        const emptyTip = picker.createDiv({ cls: 'rl-ef-hint-empty', text: '全部属性都在显示中' });
+        picker.createDiv({
+            cls: 'rl-cf-hint',
+            text: '拖动左侧列表调整编辑窗口的先后；鼠标移到某一块上，右上角会出现一个宽度图标，点它选「整行 / 1⁄2 / 1⁄3 / 1⁄6」（1⁄2 = 两个并排，1⁄3 = 三个并排，1⁄6 = 六个并排）；点 ✕ 收起它。点右侧标签随时放回来。',
+        });
+        void emptyTip;
+
+        /** 把 span 说成人话（给 `aria-label` / `data-tip` 用；⛔ 别在 aria 里直接念数字） */
+        const spanLabelOf = (span: number): string => {
+            const hit = ENTRY_FORM_SPAN_PRESETS.find((p) => p.span === span);
+            return hit ? hit.hint : '自定义宽度';
+        };
+
+        /** 正在拖的块键（`dragstart` 记下、`drop` 取用） */
+        let dragKey: string | null = null;
+
+        /** 一处同刷：预览列表 + 计数 + 隐藏池（⛔ 别各刷各的，三处必须同源） */
+        const sync = (): void => {
+            // 🔴 固定键不进 `cur`：`cur` 只装**可管理**项，后面所有下标（拖动 / ↑↓ / 删除）才和屏幕对得上。
+            const cur = this.currentEntryFormFields().filter((e) => !entryFormFieldIsFixed(e.key));
+            const shownKeys = cur.map((e) => e.key);
+            const hidden = allDefs.map((d) => d.key).filter((k) => !shownKeys.includes(k));
+            // 「显示 N / M」只数可管理项 —— 固定键压根不画，不进分母
+            counter.setText(`显示 ${cur.length} / ${allDefs.length}`);
+
+            canvas.empty();
+            cur.forEach((entry, i) => {
+                const key = entry.key;
+                const def = allDefs.find((d) => d.key === key);
+                const label = def?.label ?? key;
+                const row = canvas.createDiv({
+                    cls: 'rl-ef-blk',
+                    attr: {
+                        role: 'button',
+                        tabindex: '0',
+                        draggable: 'true',
+                        /**
+                         * 🔴 #720b（2026-11-07 用户拍板「按窗口宽度降列数」）：占位**不写行内 `grid-column`**，
+                         *   改成 `data-span` 交给 CSS —— 窄窗时列数会从 6 降到 2 / 1，
+                         *   行内的 `span 6` 在 2 列网格里会越过末列（grid 会静默把它挤到下一行，
+                         *   于是「整行」块反而排到最后、顺序看起来被打乱）。
+                         *   CSS 侧按 `--rl-ef-cols` 现算：`span min(N, 列数)` 用 `min()` 表达。
+                         */
+                        'data-span': String(entry.span),
+                        'aria-label': `${label}，第 ${i + 1} 位，宽度 ${spanLabelOf(entry.span)}；方向键可调整顺序`,
+                    },
+                });
+                // 🔴 #720：块在 6 列栅格里按自己的 `span` 真实占位 —— 这就是「所见即所得」的全部。
+                const grip = row.createSpan({ cls: 'rl-cf-grip' });
+                safeSetIcon(grip, 'grip-vertical');
+                /**
+                 * 🔴 #718（2026-11-07 用户第⑧条）：「高级设置 › 条目属性重构 —— 就想根据现有
+                 *    编辑属性 UI 页面拖动排序编辑增删不行吗」。选择的做法是 **A：真实控件外观 + 现有拖拽**。
+                 *
+                 * 🔴🔴 #719（2026-11-07 用户 m02783）：「这个条目属性什么鬼太丑了也不好调整，参考更多主流」
+                 *    ⇒ 形态从「一行一张卡（标签在上、控件在下）」改成**主流属性编辑器**那种
+                 *      「一张卡 + 发丝分隔线 + 每行一条」：
+                 *        [⋮⋮] 属性名 ·············· [控件示意] [整行|1⁄2|1⁄3] [✕]
+                 *      为什么改：
+                 *        ⑴ 11 行 = 11 张带边框的卡片，纵向拉满 1000px，扫一眼全是框，这是「丑」的主因；
+                 *        ⑵ 每行的「整行 / 1⁄2 / 1⁄3」三枚按钮常驻，三枚一排比属性名还抢眼，
+                 *           11 行就是 33 枚按钮；改成**同行右侧的紧凑分段器**后视线不再被打断；
+                 *    🔴🔴 #720（方案 D）本条注释的结论已翻面：现在**就是**在复刻弹窗排版 ——
+                 *       块内「标签在上、控件在下」，块宽 = 弹窗里的实际占位。上一版「刻意不同」
+                 *       的折中（横排一行 + 固定 72px 小样 + 只读色带）已整体退场，别再据它回潮。
+                 *    ⚠️ 五种控件类型判据一字未改（`entryFormControlKind`），只改了**排布**。
+                 */
+                const fld = row.createDiv({ cls: 'rl-ef-fld' });
+                fld.createSpan({ cls: 'rl-ef-lbl', text: label });
+                const kind = entryFormControlKind(key);
+                const ctl = fld.createSpan({ cls: `rl-ef-ctl is-${kind}` });
+                if (kind === 'meta') {
+                    // 「来源 / 大众评分 / 评价人数 / 平台链接」在真弹窗里是**一行四格**（`.rl-meta-row`）
+                    for (let k = 0; k < 4; k++) ctl.createSpan({ cls: 'rl-ef-ctl-cell' });
+                } else if (kind === 'btn') {
+                    // 「总结摘要 / 歌词 / 阅读进度」这类带 AI 或操作按钮的标签行
+                    ctl.createSpan({ cls: 'rl-ef-ctl-btn', text: '按钮' });
+                }
+                /**
+                 * 块底工具行：跨度分段器 + 隐藏按钮。
+                 *   🔴 #720 为什么从「一行右侧」挪到「块底」：块宽现在随 `span` 变化，
+                 *      1⁄3 宽的块只有约 1/6 容器宽（约 120px），右栏塞不下三枚按钮 + ✕；
+                 *      拆成独立一行后，无论块多窄都能放下（窄块里分段器会自己换行）。
+                 */
+                /**
+                 * 🔴 ③-5（用户 m00353 逐字举例）：「去掉每个输入框下面那排紫色胶囊按钮，
+                 *    改为输入框右上角一个极小图标（如 `layout-template`），点击才弹出下拉选 1/1、1/2、1/3」。
+                 *
+                 * 上一版（#720）是**块底**一行 `[整行|1⁄2|1⁄3] [✕]`。当时的理由写得很诚实：
+                 *   「1⁄3 宽的块只有约 120px，右栏塞不下三枚按钮 + ✕」。那个理由**今天仍成立**，
+                 *   所以这次不是把三枚按钮挪到右边，而是把它们**收进一枚图标**——
+                 *   一枚 18px 图标在任何块宽下都放得下，展开后的菜单浮在块外，不占块内横向空间。
+                 *
+                 * 为什么用 `Menu`（Obsidian 原生）而不是手搓下拉：
+                 *   用户 ③-5 的硬约束是「强制使用原生 API，不要手搓」。`Menu` 自带键盘导航、
+                 *   焦点陷阱、Esc 关闭、视口边缘翻转，手搓一个不可能比它更原生。
+                 *   ⚠️ 但**当前选中档要能被看到**：原生 `Menu` 的 checkbox 项会把勾选画在最左，
+                 *   这里用 `setTitle` 把「当前档」写进菜单标题，并对当前档 `setDisabled(true)`
+                 *   —— 点当前档本来就只有「什么都不发生」这一种结果，禁用比静默 no-op 更诚实。
+                 */
+                /**
+                 * ⚠️ m07047 起画布上**只有可管理项**（固定键整组不画），所以工具行与拖拽
+                 *   /键盘**无条件挂载** —— 这里不再有 `if (!isFixed)` 分支。
+                 *   ⛔ 别把那个分支加回来：它的前提（固定键也画出来）已经被用户推翻。
+                 */
+                const tools = row.createDiv({ cls: 'rl-ef-tools' });
+                const spanBtn = ghostIconButton('rl-ef-span', 'layout-template', `这一块在编辑窗口里占几列（当前：${spanLabelOf(entry.span)}）`);
+                spanBtn.setAttribute('aria-haspopup', 'menu');
+                tools.appendChild(spanBtn);
+                spanBtn.addEventListener('click', (ev) => {
+                    // 块本身是 `role="button"` + 可拖，冒泡上去会被当成「选中该块」——
+                    // 下拉/隐藏这类块内动作一律掐断冒泡（#720 就有的坑，别丢）
+                    ev.stopPropagation();
+                    const menu = new Menu();
+                    menu.addItem((mi) => {
+                        mi.setTitle(`宽度（当前：${spanLabelOf(entry.span)}）`);
+                        mi.setIsLabel(true);
+                    });
+                    for (const preset of ENTRY_FORM_SPAN_PRESETS) {
+                        const on = preset.span === entry.span;
+                        menu.addItem((mi) => {
+                            mi.setTitle(`${preset.label} · ${preset.hint}`);
+                            mi.setChecked(on);
+                            if (on) mi.setDisabled(true);
+                            mi.onClick(() => {
+                                if (on) return;
+                                const next = cur.map((e) => (e.key === key ? { key, span: preset.span } : e));
+                                void this.commitEntryFormFields(next).then(sync);
+                            });
+                        });
+                    }
+                    const rect = spanBtn.getBoundingClientRect();
+                    menu.showAtPosition({ x: rect.left, y: rect.bottom + 4 });
+                });
+                const hide = tools.createEl('button', {
+                    cls: 'rl-ef-x',
+                    attr: { type: 'button', 'aria-label': `隐藏「${label}」` },
+                });
+                safeSetIcon(hide, 'x');
+                hide.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    void this.commitEntryFormFields(cur.filter((e) => e.key !== key)).then(sync);
+                });
+
+                row.addEventListener('dragstart', (ev) => {
+                    dragKey = key;
+                    row.addClass('is-dragging');
+                    ev.dataTransfer?.setData('text/plain', key);
+                });
+                row.addEventListener('dragend', () => {
+                    dragKey = null;
+                    row.removeClass('is-dragging');
+                });
+                row.addEventListener('dragover', (ev) => {
+                    ev.preventDefault();
+                    row.addClass('is-over');
+                });
+                row.addEventListener('dragleave', () => row.removeClass('is-over'));
+                row.addEventListener('drop', (ev) => {
+                    ev.preventDefault();
+                    row.removeClass('is-over');
+                    if (!dragKey || dragKey === key) return;
+                    const from = cur.findIndex((e) => e.key === dragKey);
+                    const to = cur.findIndex((e) => e.key === key);
+                    if (from < 0 || to < 0) return;
+                    const next = moveItem(cur.slice(), from, to);
+                    void this.commitEntryFormFields(next).then(sync);
+                    dragKey = null;
+                });
+                // 键盘等价物：上下移动（本列表是纵向的 ⇒ 用 ↑/↓，与「卡片信息栏」那组的 ←/→ 区分得开）
+                row.addEventListener('keydown', (ev: KeyboardEvent) => {
+                    if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+                    ev.preventDefault();
+                    const to = ev.key === 'ArrowUp' ? i - 1 : i + 1;
+                    if (to < 0 || to >= cur.length) return;
+                    const next = moveItem(cur.slice(), i, to);
+                    void this.commitEntryFormFields(next).then(() => {
+                        sync();
+                        // 重建后焦点会掉 ⇒ 放回同一项的新位置
+                        (canvas.children[to] as HTMLElement | undefined)?.focus();
+                    });
+                });
+            });
+
+            // 🔴 #720：空态直接画在栅格里（占满 6 列），不再额外挂一条 `.rl-cf-empty` 到列表外
+            if (cur.length === 0) {
+                // 空态同理：占位交给 CSS（`grid-column: 1 / -1`），窄窗降列时也能横跨整行
+                const empty = canvas.createDiv({ cls: 'rl-ef-empty-note', text: '可管理的属性已全部收起（第一行的标题 / 年份 / 评分来源是固定项，不在此列）' });
+                empty.setAttribute('data-span', '6');
+            }
+
+            // 隐藏池：点一下放回**末尾**（与卡片信息栏「新加的排末尾」同口径 ⇒ 之后接着拖就行）
+            chips.empty();
+            emptyTip.toggleClass('is-hidden', hidden.length > 0);
+            for (const key of hidden) {
+                const def = allDefs.find((d) => d.key === key);
+                const label = def?.label ?? key;
+                const chip = chips.createEl('button', {
+                    cls: 'rl-cf-chip',
+                    text: label,
+                    attr: { type: 'button', 'aria-label': `显示「${label}」` },
+                });
+                chip.addEventListener('click', () => {
+                    const now = this.currentEntryFormFields();
+                    if (now.some((e) => e.key === key)) return;
+                    void this.commitEntryFormFields([...now, { key, span: def?.span ?? ENTRY_FORM_MAX_SPAN }]).then(sync);
+                });
+            }
+        };
+
+        /**
+         * 🔴 #720b：栅格列数 = **画布自身宽度**说了算（用户 2026-11-07 拍板「按窗口宽度降列数」）。
+         *
+         * 为什么不用 CSS 的 `@media` / `@container`：实测（`tools/.out/probe-720b.cjs`，1440→520 五档）
+         *   ⑴ 窗口宽度与画布宽度**不成正比** —— 窗口 1440 时画布只有 324px（预览被右侧「已隐藏的属性」
+         *      挤窄），窗口 900 时画布反而 599px。按窗口写断点会把宽窄判反。
+         *   ⑵ `container-type` 写在 `.rl-ef-canvas` 自身上不生效（容器查询只作用于后代）；
+         *      挪到外层 `.rl-ef-preview` 会套上尺寸包含 ⇒ 固有宽度塌成 324px，宽窗反而变 1 列。
+         * ⇒ 只认画布自己的 `clientWidth`，写回 `--rl-ef-cols` + `data-cols`，CSS 里逐档给映射。
+         *   ⚠️ 阈值只在这里写一份，⛔ 别在 CSS 里再插一条 `@media`（会与这里打架）。
+         *   ⚠️ 观察器必须 `disconnect()`：设置页每次 `display()` 都重建 DOM，不摘会越积越多。
+         */
+        const applyEntryFormCols = (): void => {
+            const w = canvas.clientWidth;
+            const cols = w < 240 ? 1 : w < 480 ? 2 : 6;
+            canvas.setAttribute('data-cols', String(cols));
+            canvas.style.setProperty('--rl-ef-cols', String(cols));
+        };
+        applyEntryFormCols();
+        /**
+         * 🔴 必须用**画布所在 document 的** `ResizeObserver`，不能用主窗口那个。
+         *
+         * 实测（`tools/.out/probe-720b.cjs`）：直接用全局 `ResizeObserver` 时，1440→520 五档画布宽度
+         * 分别是 324/324/599/424/280px，但 `data-cols` 恒为初始的 `"1"` —— 回调**一次都没触发**。
+         * 根因：Obsidian 1.14.4 把设置页开在**独立窗口**，`ResizeObserver` 绑定的是构造它的那个
+         * document，观察别的 document 里的节点会被静默忽略（与 globalTooltip 只绑主窗口是同一类坑）。
+         * ⇒ 从 `canvas.ownerDocument.defaultView` 取构造器；拿不到才退回全局。
+         */
+        const win = canvas.ownerDocument.defaultView ?? window;
+        const RO = win.ResizeObserver ?? ResizeObserver;
+        const colsObs = new RO(() => applyEntryFormCols());
+        colsObs.observe(canvas);
+        this.efColsObs?.disconnect();
+        this.efColsObs = colsObs;
+        // ⚠️ 首次调用时画布还没进布局（`clientWidth === 0` ⇒ 先算成 1 列），
+        //   等这一帧渲染落地再量一次；之后交给 ResizeObserver 接管。
+        win.requestAnimationFrame(() => applyEntryFormCols());
+
+        sync();
+    }
+
     /**
      * 映射状态回执（成功 / 逐条错误）—— **#644 起「未配置」这一态不再单独占一行**。
      *
@@ -4131,15 +7012,22 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     }
 
     /**
-     * 「基本设置」页（#354 合并三页）：**4 组 / 17 行**。
-     *   ⚠️ 行数：#399 时点 2/3/3/2 → #425 数据与备份 +1 → **#541 外观与体验 +4**（导航布局 / 起始页 /
-     *      卡片风格 / 界面动效）⇒ 现为 **8 / 3 / 4 / 2**。
+     * 「基本设置」页（#354 合并三页）：**4 组**。
+     *   ⚠️ 组内行数：#399 时点 2/3/3/2 → #425 数据与备份 +1 → **#541 外观与体验 +4**（导航布局 / 起始页 /
+     *      卡片风格 / 界面动效）⇒ **8 / 3 / 4 / 2**。
+     *
+     * 🔴 2026-10-31 翻面（用户裁定）：「把网络播放组放在音乐下载源下」——
+     *    当天早些时候临时加在本页的第 3 组「网络播放」**已整体搬到「搜索配置」页**，
+     *    紧跟「音乐下载源凭据」之后。本页因此退回 **4 组**，实验性功能也回到纯开关。
+     *    ⛔ 别搬回来：本页的职责是「**开关类**设置」（一次设定后不再碰），
+     *      凭据类是「用户被报错赶过来填的东西」，必须与音乐四平台的 Cookie 聚在同一页
+     *      （见 `renderSourcePage` 那段注释的完整理由）。
      *
      * 🔴 分组是用户可见的层级，顺序即下表（用户 2026-09-21 要求「为基本设置页面设计合理的内部排版
      *    （建议按外观偏好、数据清理等小标题分组）」）：
      *      外观与体验 → 实验性功能 → 数据与备份 → 封面与清理
      *    ⚠️ 「实验性功能」这个词**保留为组名**（它承载"这些开关还不稳"的用户预期），只是从"页"降级成"组"。
-     *    ⚠️ 组间**只用间距、⛔ 不画分割线**（D-6）：8 行里插 4 条线会把面板切碎，
+     *    ⚠️ 组间**只用间距、⛔ 不画分割线**（D-6）：行数越多越要守这条，插 N 条线会把面板切碎，
      *       而分组标题本身已有足够强度（13px/600 + 图标）。
      * 🔴 三页合并**只改归属、不改任何一行设置项本身**（名字、描述、回调一律原样搬运）
      *    —— 免得读者以为"顺手优化"了什么。
@@ -4175,18 +7063,35 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //        （内距归零的初衷是"没有卡了别留卡的内衬"，卡回来后它会让文字贴到卡边）。
         //    ⚠️ 用户说的「折叠下拉容器可深色一点」指**展开后的子面板**，不是本组容器 ——
         //      子面板底色在 `styles.css` 的 `.rl-exp-panel.is-open` 上，见那里注释。
-        this.createGroupSection(parent, '实验性功能', (body) => this.renderExperimentalRows(body), true);
+        // 🔴🔴 2026-11-06 用户逐字：「基本设置-实验性功能组和高级设置-ASR和TTS组全部移动到新开插件页签
+        //    【沉浸体验】放在搜索配置和AI集成中间」⇒ 这组**已整体搬走**（见 `renderImmersivePage` 的
+        //    「媒体载体」组）。⛔ 别搬回来：三条「启用内置…」是「这个插件能不能在你眼前播」的事，
+        //    与「外观怎么显示、数据怎么备份」不是一类；留在本页它只会被日常开关埋掉。
+        //    ⚠️ `renderExperimentalRows` 本体一字未改（含 #399 钉死的「恰 3 条、阅读→视频→音乐」），
+        //       只是换了挂载点 —— 那里面的折叠子面板、目录行、后台播放开关全部随它一起搬过去。
+        // 🔴🔴 2026-10-31（用户裁定）：「把网络播放组放在音乐下载源下」——
+        //    原本加在这里的第 3 组「网络播放」**已整体搬到「搜索配置」页**、
+        //    紧跟「音乐下载源凭据」之后（见 `renderSourcePage` 里那段注释）。
+        //    ⛔ 别搬回来：凭据类是「填了才能用」的东西，与音乐四个平台的 Cookie 同类，
+        //    它们必须聚在一起；本页只留**开关类**（一次设定后不再碰）的设置。
         this.createGroupSection(parent, '数据与备份', (body) => this.renderDataBackupRows(body), true);
-        this.createGroupSection(parent, '封面与清理', (body) => this.renderPosterCleanupRows(body), true);
+        // ⚠️ 组名演变：「封面与清理」→（上一轮）**「数据与维护」**→（本轮用户 m02783 ②）**「管理与维护」**。
+        //    该组早已不只管封面（条目还原 / 附件清理 / 迁移进度都在里面），上一轮已把「封面」拿掉；
+        //    本轮用户逐字要求「基本设置-数据与维护名称改成『管理与维护』」—— 组内是**动作**（清理/还原/
+        //    检测/管理），不是数据本身，叫「管理」更贴。⛔ 别再叫回「数据与维护」。
+        //    组名必须与 `pure/settingNav.SETTING_GROUP_ICONS` 的键逐字一致（已同步改），否则图标静默丢失。
+        this.createGroupSection(parent, '管理与维护', (body) => this.renderPosterCleanupRows(body), true);
     }
 
     /**
      * 「基本设置」页 · 第 1 组「外观与体验」（8 行）。
      *
      * 🔴🔴 **子项顺序（#596 用户点名重排，2026-10-10）**：导航布局 → 起始页 → 卡片风格 → 界面动效 →
-     *    海报密度 → Ctrl + 滚轮缩放 → 隐藏插件内滚动条 → 笔记表格。
+     *    海报密度 → **按全类型分页签** → Ctrl + 滚轮缩放 → 隐藏插件内滚动条 → 笔记表格。
      *    ⚠️ 本次把「卡片风格 / 界面动效」提到多档设置的中段、把两处二元开关与「笔记表格」压到组尾
      *    （⛔ 别按「谁先做的」排 —— 断言按本组函数体里 `setName` 的**出现顺序**逐项钉住）。
+     *    🔴 m07854 ③（2026-11-13）：「按全类型分页签」从「导航布局」之后挪到「海报密度」之后
+     *    （用户逐字：「把『基本设置-外观与体验』的按全类型分页签开关项移动到海报密度项下面」）。
      *
      * 🔴🔴 **#477 设置页描述总口径（设置页 17 条 `setDesc` 一体适用；#476 立、#477 收紧措辞）**：
      *    #476（用户 2026-10-02）立了「**用途式 + 每条 ≤ 15 字**」，这两条硬约束**本批沿用不变**；
@@ -4232,9 +7137,10 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    ⚠️ 「左文右控 + 描述换行时控件仍贴最右」由 styles.css 的 `.rl-appearance-rows` 三条兜住
         //       （核心 `.setting-item` 本来就是 flex，但 `setting-item-info` 缺 `min-width: 0` 时
         //        长描述会把控件挤出容器；三条一起写才稳）。
-        //    🔴 **行序（8 行，见方法上方那条）**：导航布局 → 起始页 → 卡片风格 → 界面动效 → 海报密度 →
-        //       **Ctrl + 滚轮缩放** → 隐藏插件内滚动条 → 笔记表格。
-        //       ⚠️ 既有断言按 `setName` 的出现顺序钉着，⛔ 别顺手调。
+        //    🔴 **行序（9 行，见方法上方那条）**：导航布局 → 起始页 → 卡片风格 → 界面动效 → 海报密度 →
+        //       **按全类型分页签** → **Ctrl + 滚轮缩放** → 隐藏插件内滚动条 → 笔记表格。
+        //       ⚠️ 既有断言按 `setName` 的出现顺序钉着，⛔ 别顺手调（m07854 ③ 已按用户要求调过一次，
+        //          对应断言已同步改成新序）。
         //       🔴 #574：原第 5 项「歌词逐字高亮」已**搬去「实验性功能 › 启用内置音乐播放器」折叠分组**
         //       （用户：「将『歌词逐字高亮』、『启用在线曲库』移入【启用内置音乐播放器】折叠分组下」）。
         //    🔴 选项与文案仍**全部来自 pure 模块**（`NAV_LAYOUT_LABELS` / `homeTabLabel` /
@@ -4266,11 +7172,16 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //  缺省 `media` = `plugin.homeTab` 的历史初值 ⇒ 不选它就跟旧版一样。
         //  🔴 #591 起**一直保留原生下拉框**（用户：「起始页：保留原生的下拉框，因为选项较多，下拉框更合适」）；
         //     #596 之后本组有 **5 处**下拉（本行 + 导航布局 / 卡片风格 / 界面动效 / 海报密度）。
+        //  🔴 m09565 ①-4：候选表按**当前分类轴**取（`tabOrderFor`）——
+        //     聚合轴下列出「电影」这种当前不存在的页签，用户选了不生效，是最容易被当成 bug 的坑。
         new Setting(parent)
-            .setName('起始页').setDesc('打开顶部胶囊/文字菜单视图时的默认页签')
+            .setName('起始页').setDesc('打开横向页签/纵向页签视图时的默认页签')
             .addDropdown((d) => {
-                for (const t of HOME_TAB_ORDER) d.addOption(t, homeTabLabel(t));
-                d.setValue(normalizeStartTab(this.plugin.settings.startTab)).onChange(async (key) => {
+                const axisNow = normalizeTabAxis(this.plugin.settings.tabAxis);
+                for (const t of tabOrderFor(axisNow)) d.addOption(t, homeTabLabel(t));
+                d.setValue(normalizeStartTabFor(axisNow, this.plugin.settings.startTab)).onChange(async (key) => {
+                    // ⚠️ 落盘存**原始值**（不折轴）：用户可能来回切开关，存折过的值会让
+                    //    「切回全类型后起始页莫名变成电影」——但用户当初选的其实是另一枚。
                     this.plugin.settings.startTab = normalizeStartTab(key);
                     await this.plugin.saveSettings();
                     this.plugin.syncStartTab();
@@ -4361,6 +7272,32 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     colsInputEl.value = String(normalizePosterColumns(colsInputEl.value));
                 });
                 syncColsVisible();
+            });
+
+        // ── ⑤-a 按全类型分页签（🔴 用户 m09565 ①-4；m07854 ③ 起排到「海报密度」之后）──
+        //  用户逐字：「设置页基本设置加个启用顶部胶囊/文字菜单则按全类型分页签，关闭则按
+        //  计划、阅读、影视、音乐、游戏、统计分页签（**两种模式的导航状态（当前选中项）要独立保存**，
+        //  切换开关时不要丢失各自的位置）」
+        //  🔴 m07854 ③（2026-11-13）用户原话：「把『基本设置-外观与体验』的按全类型分页签开关项
+        //     移动到**海报密度**项下面」⇒ 本行原先紧跟在「导航布局」后面（第 1.5 位），现在挪到
+        //     海报密度之后。⚠️ 挪的只是**渲染位置**，行为一字未改（落盘键仍是 `tabAxis`）。
+        //  ⚠️ 用它 `addToggle` 而不是下拉：这是**二态开关**（开 = 全类型十枚 / 关 = 聚合六枚），
+        //     本组「多档选择才用下拉」的口径（见方法上方那段）在这里正好划出分界线。
+        //  ⚠️ 关掉时两件事必须一起做：落盘 + `syncTabAxis()`。少了后者用户当场看不到页签变化
+        //     （同 `syncNavLayout` 的理由：换的是 DOM 节点集合，纯 CSS 变不出来）。
+        new Setting(parent)
+            .setName('按全类型分页签').setDesc('关闭则按计划/阅读/影视/音乐/游戏/统计')
+            .addToggle((t) => {
+                t.setValue(normalizeTabAxis(this.plugin.settings.tabAxis) === 'expanded').onChange(async (on) => {
+                    this.plugin.settings.tabAxis = on ? 'expanded' : 'classic';
+                    await this.plugin.saveSettings();
+                    // 🔴 两条轴各自的选中项由 `main.ts` 的 `homeTabByAxis` 分别记着 ⇒ 这里只重推轴，
+                    //    ⛔ 别顺手 `syncStartTab()`：那会把**起始页**强行盖到用户当前停留的位置上。
+                    this.plugin.syncTabAxis();
+                    // 起始页下拉的候选**按轴变**（聚合轴没有「电影」这些）⇒ 本行变了要重建这一页，
+                    // 否则下拉里还列着当前轴不存在的页签（选了也不会生效）。
+                    this.display();
+                });
             });
 
         // ── ⑤-b 🔴 #626「海报墙列数」这一行**已删除**（用户 2026-10-20：「设置页里的海报墙列数项删除掉」）──
@@ -4503,6 +7440,17 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 //    ⚠️ 仍**单独一个方法**：本方法体内 `setName` 被 #399 钉成**恰 3 条**（阅读→视频→音乐），
                 //      塞进来会当场撞红那条判据（#562/#574 同款理由）。
                 this.renderBgPlayRow(panel);
+                // 🔴 2026-11-24 用户裁定：「将网络集用插件播放器播放的全部功能和样式全部从插件移除，
+                //    但有官方 iframe 内嵌播放的不要移除」⇒ 这里原有的「网络集用插件播放器」开关
+                //    （`netInlinePlayer`）**连同设置字段一起删除**：现在没有第二条路可选，
+                //    网络集固定走官方 iframe。⛔ 别再补回这个开关（补回来就是又开了一条内置播放器的路）。
+                // 🔴🔴 2026-10-31（用户报障，逐字）：「设置页里没有 youtube 的 cookie 填写入口啊」
+                //    —— 病根不是"没实现"，而是**藏在折叠面板里**：`makeCollapsible` 的 `.rl-exp-panel`
+                //    默认 `display:none`，不点开「启用内置视频播放器」这一行，那两条输入框根本不存在于屏幕上。
+                //    ⇒ 「B 站 / YouTube」两站的**取流凭据**搬去了「搜索配置」页的「网络播放」组
+                //      （见 `renderNetPlaybackRows`；2026-10-31 下午用户又裁定「放在音乐下载源下」，
+                //      所以它最终落在那一页、与音乐四平台的 Cookie 相邻）。
+                //    ⛔ 别再搬回这个 panel：凭据是"用户主动要填"的东西，藏起来就等于没有。
             },
         );
 
@@ -4527,15 +7475,16 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 await this.plugin.saveSettings();
             },
             (panel) => {
-                // 🔴 #562：**「音频文件目录」整行从「数据与备份」搬到这里**（用户：「把音乐路径目录放在
-                //    启用内置音乐播放器折叠分组下」）。⛔ 不是新建一个「音乐目录」设置 —— 它就是同一个
-                //    `musicDownloadDir`，只是换了个摆放位置（两份设置必然打架，见 `pure/localDirs` 模块头）。
+                // 🔴🔴 本轮用户裁定（需求①）：「『音频下载目录』项改成**音乐目录**（与音频下载路径统一）」。
+                //    ⇒ 行名从「音频文件目录」改为「音乐目录」，描述同步去掉「音频」二字（同一个字段没变）。
+                //    ⚠️ 它就是同一个 `musicDownloadDir`，只是换了名字与摆放位置
+                //      （两份设置必然打架，见 `pure/localDirs` 模块头）。
                 //    ⚠️ 因此这里仍走 `createLibraryDirRow`（下载根口径：归一 / 校验 / 「将落到 X」提示都在它里面），
                 //      ⛔ 别改用下面那个 `createLocalDirRow`（那是「本地检索根目录」口径，不做下载根归一）。
                 this.createLibraryDirRow(
                     panel,
-                    '音频文件目录',
-                    '音频下载的存放与检索目录',
+                    '音乐目录',
+                    '音乐文件的存放与检索目录',
                     () => this.plugin.settings.musicDownloadDir,
                     async (next) => {
                         this.plugin.settings.musicDownloadDir = next;
@@ -4553,6 +7502,60 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 //    ⚠️ ⛔ 别再在「外观与体验」组里留一份 —— 同一个设置字段只许一个输入框/开关。
                 this.renderLyricsWordRow(panel);
                 this.renderSongLibraryRow(panel);
+                // 🔴 1.5.1（用户 2026-11-28）：「将音频转文字放在高级设置下」
+                //    ⇒ 本折叠项里**不再**渲染 ASR 引擎配置，已整段搬到「高级设置 › 音频转文字」组。
+                //    ⛔ 别在这里补回来 —— 同一个设置字段只许有一个输入框（那会让两处状态不同步）。
+                //    转写按钮（字幕面板那颗 🎙️）与引擎配置是正交的：按钮不受这块搬家的影响。
+            },
+        );
+
+        // 🔴 m02844（用户逐字：「游戏下载目录放播放阅读启用启动器下」）——第 4 条折叠项。
+        //    ⇒ 新增「启用内置游戏启动器」，把「游戏目录」作为它的从属子行（缩进，同一个
+        //      `createLibraryDirRow` 口径：归一 / 校验 / 「将落到 X」提示都在它里面）。
+        //    ⚠️ 顺序只在末尾追加，⛔ 别插进前面三条之间 —— 阅读→视频→音乐 是用户多轮定下的顺序。
+        //    ⚠️ desc 沿用同组「在插件内做某事」句式。
+        // 🔴 2026-11-17（①）：整行**抽成 `renderGameLauncherRow`** —— 本方法体内 `setName`
+        //    被 #399 钉成**恰 3 条**（阅读 → 视频 → 音乐，见上面 7500-7501 行那条纪律）。
+        //    1.5.0 期把游戏那行直接塞在这里 ⇒ 方法体变成 4 条，当场撞红那条判据。
+        //    ⛔ 别为了「看着紧凑」再把它内联回来，也别去改 #399 的期望值 —— 那条判据守的是
+        //       「这三行同组且顺序固定」，放宽它等于放任顺序被随手改。
+        this.renderGameLauncherRow(parent);
+    }
+
+    /**
+     * 「启用内置游戏启动器」+ 从属的「游戏目录」行。
+     *
+     * 独立方法的理由见调用点注释（#399 把 `renderExperimentalRows` 的 `setName` 钉成恰 3 条）。
+     */
+    private renderGameLauncherRow(parent: HTMLDivElement): void {
+        const game = new Setting(parent).setName('启用内置游戏启动器').setDesc('在插件内启动本地 Flash 游戏');
+        this.makeCollapsible(
+            game,
+            parent,
+            !!this.plugin.settings.internalGameLauncher,
+            async (value) => {
+                this.plugin.settings.internalGameLauncher = value;
+                await this.plugin.saveSettings();
+            },
+            (panel) => {
+                // 游戏（swf）的下载落点 —— 与「音乐目录」同一套下载根口径（`kind: 'flash'` 决定
+                // 空值回落到 `下载/Flash 游戏`，⛔ 别改成 'other'：那个白名单是空的，swf 会被直接拒）。
+                // 🟠 ① 用户 2026-11-17 的目录约定：这个设置项**不动**，约定的是它**内部**的分层 ——
+                //    `<游戏目录>/swf/` 放「单文件无存档」的影片（统一管理，几百个单文件也不会散落一地），
+                //    `<游戏目录>/<游戏名>/` 放「多文件 / 有存档」的（主影片 + 关联资源 + `saves/` 备份）。
+                //    判据收口在 `pure/gameLayout`，⛔ 别在别处再拼一遍路径。
+                this.createLibraryDirRow(
+                    panel,
+                    '游戏目录',
+                    'Flash 游戏文件的存放与检索目录（其下 `swf/` 收单文件、`<游戏名>/` 收多文件与存档）',
+                    () => this.plugin.settings.gameDownloadDir,
+                    async (next) => {
+                        this.plugin.settings.gameDownloadDir = next;
+                        await this.plugin.saveSettings();
+                    },
+                    'game',
+                    'flash',
+                );
             },
         );
     }
@@ -4683,7 +7686,11 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑥）：这一行的输入框宽度不受控（换行 / 溢出都见过），
         //    给整行挂一个钩子类，宽度规则**统一写在 `styles.css`** —— ⛔ 别在这里写内联 width
         //    （内联会盖掉主题与 CSS 的收敛规则，之后想改就得回来动 TS）。
+        // 🔴 本轮追加：再挂一个 `.rl-dir-sub` —— 这几个目录行是**折叠项下的从属项**，
+        //    用户要求「缩进区分于折叠项主次」。缩进值写在 `styles.css`（⛔ 别内联 padding）。
+        //    ⚠️ 两个类各管一件事：`rl-dir-row` 管输入框宽度收敛，`rl-dir-sub` 管层级缩进。
         row.settingEl.addClass('rl-dir-row');
+        row.settingEl.addClass('rl-dir-sub');
         // 🔴 2026-10-25 用户指令：这一行的状态提示（未配置时的「未配置 — 单集本地检索不可用」与
         //    配置后的「检索目录：…」）**两条都去掉** —— 输入框里已经是当前值，再复述一遍纯属噪音。
         //    ⛔ 别把 `rl-hint-note` 加回来；「没配目录 ⇒ 本地检索不可用」由检索动作当场给 Notice 承担。
@@ -4711,13 +7718,31 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             };
             const inst = attachFolderInputSuggest(this.app, text.inputEl, folders, fromPick);
             this.localDirSuggests.set(key, inst);
-            if (!inst) {
-                row.addButton((b) =>
-                    b.setButtonText('浏览').onClick(() => {
-                        new VaultFolderSuggest(this.app, folders, fromPick).open();
-                    }),
-                );
-            }
+            // 🔴🔴 本轮用户裁定（需求①）：「给这些本地检索目录框右侧加『浏览』按钮，
+            //    **直接唤起系统文件选择器**；且要**缩进区分于折叠项主次**」。
+            //    ⑴ 按钮**恒常出现**（旧实现在 `!inst` 时才建 ⇒ 桌面用户反而没有浏览器，是本轮要修的病灶）。
+            //    ⑵ 点击首选 `plugin.pickSystemDirectory()`（Electron 的 showOpenDialog，能选库外绝对路径）；
+            //       它回 `undefined` 有两种情况 —— 用户取消、或环境不支持。**只有后者**才回退
+            //       `VaultFolderSuggest`（库内选择器）；用户取消时什么都不做，⛔ 别弹一个意料之外的补全框。
+            //       判据用 `Platform.isDesktopApp` 而**不是**「返回值是否 undefined」：
+            //       取消与不支持在返回值上不可区分（都回 undefined）。
+            //    ⑶ 行挂 `.rl-dir-sub`（缩进）—— 这几个目录是折叠项**下面的从属项**，
+            //       不缩进会与折叠行头平齐，用户分不清哪行是主项。
+            row.addButton((b) => {
+                b.setButtonText('浏览');
+                b.buttonEl.addClass('rl-dir-browse');
+                b.onClick(() => {
+                    if (Platform.isDesktopApp) {
+                        void this.plugin.pickSystemDirectory(localDirOf(this.plugin.settings, key)).then((picked) => {
+                            if (!picked) return; // 用户取消（或环境静默失败）⇒ 保持原值
+                            text.setValue(picked);
+                            void commit();
+                        });
+                        return;
+                    }
+                    new VaultFolderSuggest(this.app, folders, fromPick).open();
+                });
+            });
         });
     }
 
@@ -4778,30 +7803,254 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             );
     }
 
-    /**
-     * 🔴🔴 #689（用户 2026-10-19 裁定）：「设置页-基本设置**去掉漫画阅读模式的选择**，
-     *    只由**漫画阅读器内**设置调整」。
-     *
-     * ⇒ 原来这里那个 `renderComicReaderRows`（「漫画阅读方式」下拉）**已连同方法一起删除** ——
-     *    调用点没了就是死码，本仓「死码不留」。阅读方式只在漫画阅读器内切换。
-     *    ⚠️ `comicViewMode` 字段与 `pure/comicViewer` 的归一函数**照旧保留**（红线：字段只增不删），
-     *       `ComicReaderModal` 仍在用。
-     *    ⚠️ 沿用 #669 立的同一条口径：**同一功能只留一个入口** ——
-     *       两个入口会让用户以为哪一处是坏掉的备份。⛔ 别再把下拉搬回来。
-     */
 
     /**
-     * #538 音乐「在线曲库」检索开关（用户 2026-10-05：「设置项可选择开启或关闭新增音乐条目『在线曲库』的搜索，
-     * **默认关闭**」）。
+     * 「搜索配置」页 · 「网络播放」组：**B 站 / YouTube 两站的取流凭据**。
      *
-     * 🔴 #574：摆放位置从「实验性功能**组尾**」改为**音乐子面板内**（用户：「将『歌词逐字高亮』、
-     *    『启用在线曲库』移入【启用内置音乐播放器】折叠分组下」）⇒ 接线处传的是 `panel` 而不是组容器。
-     * ⚠️ 仍**单独一个方法**：`renderExperimentalRows` 组内 `setName` 被既有断言钉成**恰 3 条、顺序
-     *    阅读→视频→音乐**（#399），⛔ 别把这一行并进那个方法体（会当场撞红那条判据）。
+     * 🔴🔴 2026-10-31 用户裁定（逐字）：「把网络播放组放在音乐下载源下，并添加同款折叠行和测试链接按钮」。
+     *    三件事一次性落地：
+     *      ⑴ **位置**：从「基本设置」页整体搬到本页，紧跟「音乐下载源凭据」；
+     *      ⑵ **形态**：从「一行一个常显输入框」改成与音乐源**逐字同款**的折叠行
+     *         （`rl-prov-list` / `rl-key-row rl-prov-card` / 图标 + 名称 + 徽标 + ▸）；
+     *      ⑶ **测试连接**：每行一颗，反馈形态也与音乐源同款（✓/✗ 文案 · Nms，按钮贴右不动）。
      *
-     * 默认**关**：曲库检索要打四个平台，默认关能保证「升级后音乐检索结果与旧版一模一样」。
-     * desc 走组内统一句式「启用后…」，且 ≤ 15 字（#477）。
+     * 🔴 为什么「同款」这条必须守死（⛔ 别再发明第五套布局）：
+     *    同页现在有两组凭据、共六行。用户学会「点行头展开、右下角有测试连接」一次，就该处处适用；
+     *    每换一组就换一套交互，等于让用户为同一件事学两遍（本仓 #488/#489 已经为
+     *    「同页两组说同一件事却两套词」被用户点过一次）。
+     *
+     * 🔴 为什么两条都要「测试连接」（用户点名要）：
+     *    这两站的取流失败**都很安静**——B 站是悄悄把画质降到 720P，YouTube 是报一句
+     *    「要求验证机器人身份」。用户看到的现象是「怎么画质不对 / 怎么放不出来」，
+     *    根本不知道是凭据问题。有一颗按钮能把原因当场问出来，比读一百行文档有用。
+     *
+     * ⚠️ 结论键走 `netCheckKey`（`net:bilibili` / `net:youtube`），⛔ **不**复用 `music:bilibili`：
+     *    音乐那族测的是「Cookie 能不能下载音频」，本族测的是「能不能在内置播放器里取到流」——
+     *    同一个 Cookie、两套判据，共用一个键会让一边的结论覆盖另一边
+     *    （B 站那行现在恰好两个判据都成立，但 YouTube 那行没有「下载」这回事，不对称迟早出错）。
      */
+    private renderNetPlaybackRows(parent: HTMLDivElement): void {
+        const list = parent.createDiv({ cls: 'rl-prov-list' });
+
+        // ── ⓪ 音视频取流（yt-dlp / ffmpeg 路径）—— 🔴 本轮从「音乐下载源凭据」搬来，占**第一顺位**。
+        //    为什么它排最前：两个站的取流都**依赖它**（没有 yt-dlp 连测试连接都跑不了），
+        //    先有工具再有凭据，读起来才是「前提 → 配置」的顺序。
+        //    ⚠️ 它仍挂在**同一个** `.rl-prov-list` 容器里，行形态与下面两条逐字同款。
+        this.renderYtdlpRow(list);
+
+        // ── ① B 站：取流冲 1080P + 读字幕，共用同一个 `biliCookie` ──
+        const curBili = (): string => this.plugin.settings.biliCookie ?? '';
+        const bili = this.createNetRow(list, 'bilibili', 'B站', () => !!curBili().trim());
+        // 🔴 2026-11-06：B 站 Cookie 说明里的官网地址改走可点链接（用户裁定「所有要 cookie 或 key 的都加」）
+        this.renderHintNote(bili.body, BILI_COOKIE_DESC);
+        /**
+         * ③-3（2026-11-12 用户 m00353 / m05505）：B 站这一行 = 「输入框 + 扫码图标」
+         * 或「当前账号 + 退出登录」，整块交给 `renderQrAccountField`。
+         *
+         * 🔴 扫码图标在**输入框那一行**（用户 m05505 原话「紧挨着『显示』按钮的左侧」），
+         *    ⛔ 不再放到下面那排动作行里。
+         * 🔴 `refresh_token` 只在**真拿到**时才写（`undefined` 时不动旧值）—— 用户重扫一次
+         *    不该把上一次的续期凭据抹掉（新 Cookie 可能只是同账号再登一次，旧 token 仍可续）。
+         */
+        const biliHost = bili.body.createDiv({ cls: 'rl-acct-host' });
+        const persistBili = (cookie: string): void => {
+            this.plugin.settings.biliCookie = cookie.trim();
+            void this.plugin.saveSettings();
+            // 值一改 ⇒ 旧的「连接失败」作废（与音乐源那几条同一口径）
+            this.plugin.clearCredentialStatus(netCheckKey('bilibili'));
+            bili.refreshBadge();
+            // #758：扫码拿到真凭据 / 手动粘贴 / 退出登录都经过这里 ⇒ 面板同步
+            this.refreshCredentialTable();
+        };
+        this.renderQrAccountField(biliHost, {
+            platform: 'bilibili',
+            placeholder: '粘贴 bilibili.com 的 Cookie（可留空）',
+            value: curBili(),
+            onInput: (v) => persistBili(v),
+            onPicked: (picked) => {
+                persistBili(picked.cookie);
+                // 🔴 用户 m00353 ③-3 硬要求：「扫码成功返回的 `refresh_token` 必须持久化」
+                if (picked.refreshToken) this.plugin.settings.biliRefreshToken = picked.refreshToken;
+                void this.plugin.saveSettings();
+            },
+            onLogout: () => {
+                persistBili('');
+                // 退出登录 = Cookie 作废 ⇒ 续期凭据也一起清（留着它只会去换一个已退出的账号）
+                this.plugin.settings.biliRefreshToken = '';
+                void this.plugin.saveSettings();
+            },
+        });
+        // 🔴 判据复用下载侧那条 `dlTestConnection('bilibili', …)`：它打的是 B 站官方的
+        //    `x/web-interface/nav`（`code === 0 && isLogin === true`），判的正是「这份 Cookie 登没登录」——
+        //    而「登没登录」就是「能不能冲 1080P、能不能读字幕」的**同一个前置**。
+        //    ⛔ 别为播放另写一套登录探测：两套判据迟早给出互相矛盾的结论。
+        this.mountNetTestAction(
+            bili.body,
+            () => this.plugin.dlTestConnection('bilibili', curBili()),
+            (ok) => {
+                this.plugin.setCredentialStatus(netCheckKey('bilibili'), ok);
+                bili.refreshBadge();
+                // #758：B 站行的测试结论落到面板
+                this.refreshCredentialTable();
+            },
+        );
+
+        // ── ② YouTube：代理 + Cookie，两条都可不填 ──
+        const curProxy = (): string => this.plugin.settings.ytProxy ?? '';
+        const curYtCookie = (): string => String(this.plugin.settings.ytCookie ?? '');
+        const yt = this.createNetRow(
+            list,
+            'youtube',
+            'YouTube',
+            // ⚠️ 两个前置**任一**有值就算「已配置」：它们都可不填，且都只在排障时才需要填，
+            //    要求两个同时有值会把「只填了代理」这种完全正常的配置画成「未配置」。
+            () => !!curProxy().trim() || !!curYtCookie().trim(),
+        );
+        // 🔴 2026-11-06：YouTube 说明里的地址同样可点（用户裁定「所有要 cookie 或 key 的都加」）
+        this.renderHintNote(yt.body, YT_NET_DESC);
+        yt.body.createDiv({ cls: 'rl-net-lbl', text: YT_PROXY_LABEL });
+        // 代理走**明文**（与 `rl-secret` 的同款盒模型）：它是个 URL，不是密钥，
+        // 用户需要能核对端口有没有打错（⛔ 别挂眼睛按钮，`masked: false` 也已给出切换）。
+        const proxyWrap = yt.body.createDiv({ cls: 'rl-secret' });
+        const proxyInput = proxyWrap.createEl('input', {
+            cls: 'rl-secret-input',
+            attr: { placeholder: 'http://127.0.0.1:7897', type: 'text', spellcheck: 'false' },
+        });
+        proxyInput.value = curProxy();
+        proxyInput.addEventListener('input', () => {
+            // ⚠️ 边打边存会留下半截地址（`http://127.0`），但那只是**临时**状态：
+            //    取流时 `normalizeProxyUrl` 会判它不可用并当直连处理，不会把播放搞崩。
+            this.plugin.settings.ytProxy = proxyInput.value.trim();
+            void this.plugin.saveSettings();
+            this.plugin.clearCredentialStatus(netCheckKey('youtube'));
+            yt.refreshBadge();
+            // #758：代理地址也算「是否配置」的一半（见 `isNetConfigured('youtube')`）
+            this.refreshCredentialTable();
+        });
+        yt.body.createDiv({ cls: 'rl-net-lbl', text: YT_COOKIE_LABEL });
+        this.createSecretField(yt.body, {
+            placeholder: 'SID=…; HSID=…; SSID=…（可留空）',
+            value: curYtCookie(),
+            onInput: (v) => {
+                this.plugin.settings.ytCookie = v.trim();
+                void this.plugin.saveSettings();
+                this.plugin.clearCredentialStatus(netCheckKey('youtube'));
+                yt.refreshBadge();
+                // #758：YouTube Cookie 变了，面板「是否配置」也要跟上
+                this.refreshCredentialTable();
+            },
+        });
+        // 🔴 2026-11-26 用户：「可内嵌播放了，把检查按钮移除吧」
+        //    这枚「检查内嵌登录态」按钮已完成使命（定位 YouTube 内嵌的登录态问题），
+        //    用户确认能播之后按要求撤掉界面上这颗入口。
+        //    ⚠️ 底层诊断能力**留着**：`probeEmbedCookies()` 仍在 `services/embedCookie` 里导出，
+        //       下次再出登录态问题直接写个临时入口调它，⛔ 别把函数本身删了重写一遍。
+        //    ⛔ 别把按钮补回界面上 —— 用户点名移除。
+        // ⚠️ 测试用的是**真实取流那条路**（`main.ts` 的 `ytTestConnection` → `fetchYtInfo` 探测片），
+        //    ⛔ 别在这里另起一个 `https.get('youtube.com')` 之类的轻量探测 ——
+        //    那样会出现本仓栽过的「测试 ✓ 但播放 ✗」（真正卡住的是 yt-dlp 与代理的组合）。
+        this.mountNetTestAction(
+            yt.body,
+            () => this.plugin.ytTestConnection(),
+            (ok) => {
+                this.plugin.setCredentialStatus(netCheckKey('youtube'), ok);
+                yt.refreshBadge();
+                // #758：YouTube 行的测试结论落到面板
+                this.refreshCredentialTable();
+            },
+        );
+    }
+
+    /**
+     * 「网络播放」组里一行折叠行的**壳**（图标 + 名称 + 徽标 + ▸ + 空行体）。
+     *
+     * 🔴 抽出来而不是复制两遍：行头那五件（图标/名称/徽标/箭头/展开事件）与音乐源那套
+     *    是同一份几何，⛔ 两处各写一遍迟早会漂（本仓「同一件事写两遍」栽过多次）。
+     * ⚠️ 与 `renderMusicCookieRows` 里那几行**刻意不再合并**：那边被 #488/#489 的既有断言锚着，
+     *    动它是另一件事的账，⛔ 别顺手统一。
+     *
+     * @param has 判定「这一行算不算已配置」（各行的字段组合不同，由调用方给）
+     */
+    private createNetRow(
+        list: HTMLElement,
+        id: NetSourceId,
+        name: string,
+        has: () => boolean,
+    ): { row: HTMLDivElement; body: HTMLDivElement; refreshBadge: () => void } {
+        // 🔴 ③-1（2026-11-12）：「统一周期管理」面板点名称要跳到**这一行** ⇒ 挂 `data-cred-key`。
+        //    值与 `pure/credentialMeta` 的 `key` 逐字同源（`net:<id>`），⛔ 两处不许各拼一套。
+        const row = list.createDiv({
+            cls: 'rl-key-row rl-prov-card',
+            attr: { 'data-cred-key': netCheckKey(id) },
+        });
+        const head = row.createDiv({ cls: 'rl-key-head' });
+        renderAiIcon(head.createSpan({ cls: 'rl-ai-icon' }), NET_COOKIE_ICON[id]);
+        head.createSpan({ cls: 'rl-key-name', text: name });
+        const badge = head.createSpan({ cls: 'rl-key-badge' });
+        // 🔴 三态徽标与音乐源**逐字同款**：已配置 / 未配置 / 连接失败
+        //    （「连接失败」= 开机自检或刚点过测试测不通；没测过 ⇒ `undefined` ⇒ 不标，⛔ 别把「没测」画成「失败」）。
+        const refreshBadge = (): void => {
+            const filled = has();
+            const expired = filled && isExpired(this.plugin.credentialStatusOf(netCheckKey(id)));
+            badge.setText(expired ? EXPIRED_BADGE : (filled ? '已配置' : '未配置'));
+            badge.toggleClass('rl-key-badge-on', filled && !expired);
+            badge.toggleClass('rl-key-badge-bad', expired);
+        };
+        // m07854 ②：登记给「统一周期管理」面板的一键检测回调
+        this.registerCredentialBadge(netCheckKey(id), refreshBadge);
+        refreshBadge();
+        head.createSpan({ cls: 'rl-key-caret', text: '▸' });
+        const body = row.createDiv({ cls: 'rl-key-body' });
+        head.addEventListener('click', () => row.toggleClass('rl-key-open', !row.hasClass('rl-key-open')));
+        return { row, body, refreshBadge };
+    }
+
+    /**
+     * 「网络播放」组里一行的**测试连接按钮 + 就地回执**（与音乐源那几颗逐字同款）。
+     *
+     * 🔴 三条不能改的细节，每条都有用户报障垫底：
+     *   · 回执文字在按钮**左边**、按钮**贴右不动**（`.rl-key-actions` 的布局注释）；
+     *   · 测试中**不改按钮文案**、只加 `.rl-btn-loading` —— 改文案会让按钮变窄 ⇒ 横向跳动；
+     *   · 结论要么写进徽标、要么只留回执，⛔ 别两个地方说同一件事又说反。
+     *
+     * @param run   真正跑测试（由调用方选判据：B 站查登录态 / YouTube 真跑 yt-dlp）
+     * @param after 拿到结论后刷新徽标（写结果表的动作由调用方做，本方法只负责画）
+     */
+    private mountNetTestAction(
+        body: HTMLDivElement,
+        run: () => Promise<{ ok: boolean; message: string }>,
+        after: (ok: boolean) => void,
+        /**
+         * ③-3（2026-11-12）：在「测试连接」**之前**插入额外按钮（B 站用它是「扫码登录」）。
+         *
+         * ⚠️ 为什么做成回调而不是多传一个布尔：动作行的次序是本仓报障最多的区域
+         *    （#641 的 16px gap、#655 的按钮反序），把「往这一行加按钮」收成一个明确的接缝，
+         *    比在这里散写 `if (platform === 'bilibili')` 更难改错。
+         * 🔴 建在测试按钮**之前**：测试是「用凭据」，扫码是「填凭据」—— 后者必须在前面。
+         */
+        beforeTest?: (actions: HTMLElement) => void,
+    ): void {
+        const actions = body.createDiv({ cls: 'rl-key-actions' });
+        const resultEl = actions.createSpan({ cls: 'rl-key-result' });
+        beforeTest?.(actions);
+        const testBtn = actions.createEl('button', { text: '测试连接', cls: 'mod-cta' });
+        testBtn.addEventListener('click', async () => {
+            testBtn.disabled = true;
+            testBtn.addClass('rl-btn-loading');
+            resultEl.setText('');
+            resultEl.removeClass('rl-key-result-ok', 'rl-key-result-bad');
+            const started = Date.now();
+            const r = await run();
+            const elapsedMs = Date.now() - started;
+            testBtn.disabled = false;
+            testBtn.removeClass('rl-btn-loading');
+            after(r.ok);
+            resultEl.setText(`${r.ok ? '✓ ' : '✗ '}${r.message} · ${elapsedMs}ms`);
+            resultEl.toggleClass('rl-key-result-ok', r.ok);
+            resultEl.toggleClass('rl-key-result-bad', !r.ok);
+        });
+    }
+
     private renderSongLibraryRow(parent: HTMLDivElement): void {
         new Setting(parent)
             .setName('启用在线曲库检索')
@@ -4813,6 +8062,1377 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 }),
             );
     }
+
+    /**
+     * 「当前文字识别模型」下拉的落点（m06789 需求②：「上面下拉框选择 ➡️ 下面详情卡片联动展示」）。
+     *
+     * 🔴 两件事一起做，**顺序不能反**：
+     *   ⑴ `whisper:<tier>` 先把 `asrModelPath` 指到该档的**预期路径**（插件下次下载就落这里）；
+     *      文件不在也没关系 —— 详情卡会依 `asrEngineStatus` 如实显示「未配置」。
+     *   ⑵ 再改 `asrEngine`，最后重画：换引擎后「已就绪」的判据完全不同，不重画就会看到
+     *      「上面选了 Qwen、下面还是 whisper 的三勾」。
+     * ⚠️ 选到 `whisper:<tier>` 时若该档文件**已经存在**，等价于「切换使用中的模型」，直接生效无需下载。
+     *
+     * 🔴 2026-11-06 m08893：「我每次选择模型怎么重载了页面啊」——
+     *    原来结尾是 `this.display()`（整页重绘：滚动跳回顶部、其它组也重画）。
+     *    改成接收 `refresh` 回调只重画这张卡。判据不是「看起来没闪」，
+     *    而是**页面 DOM 节点没被换掉**：`renderVoiceSection` 的 redraw 走的是 `card.empty()`，
+     *    卡外的节点（页签栏、其它设置组）一个都不动。
+     */
+    private async switchAsrModel(pickId: string, refresh?: () => void): Promise<void> {
+        const s = this.plugin.settings;
+        if (pickId.startsWith('whisper:')) {
+            const tier = pickId.slice('whisper:'.length);
+            const preset = presetOf(tier);
+            s.asrEngine = 'whisper';
+            if (preset) {
+                // 已经下载过就用它的实际路径；没下过也先指到预期位置（下载完成即生效）
+                s.asrModelPath = this.plugin.asrModelPathFor(preset);
+            }
+        } else if (pickId.startsWith('qwen3:')) {
+            // 🔴 m09432：`qwen3:1.7B` = 「切到 Qwen3 的 1.7B 档」
+            //    ⛔ 别写成裸 `qwen3` 再另想办法带档位 —— 那样下拉里选档和选家会走两条路。
+            s.asrEngine = 'qwen3';
+            s.asrQwenTier = pickId.slice('qwen3:'.length);
+        } else if (pickId.startsWith('sensevoice:')) {
+            s.asrEngine = 'sensevoice';
+            s.asrSvVariant = pickId.slice('sensevoice:'.length);
+        } else if (pickId.startsWith('paraformer:')) {
+            // 🔴 六家统一前缀约定：`<engine>:<档位>`。⛔ 别让某一家只写裸 id，
+            //    那样下拉里「选家」与「选档」会走两条不同的路，续加引擎必漏。
+            s.asrEngine = 'paraformer';
+            s.asrParaVariant = pickId.slice('paraformer:'.length);
+        } else if (pickId.startsWith('xasr:')) {
+            s.asrEngine = 'xasr';
+            s.asrXasrChunk = pickId.slice('xasr:'.length);
+        } else if (pickId.startsWith('confucius:')) {
+            s.asrEngine = 'confucius';
+            s.asrConfuciusTier = pickId.slice('confucius:'.length);
+        } else {
+            s.asrEngine = engineDefOf(pickId).id;
+        }
+        await this.plugin.saveSettings();
+        if (refresh) refresh();
+        else this.display();
+    }
+
+    /**
+     * 另两家的档位下拉项（Qwen3 / SenseVoice）。
+     *
+     * 🔴 m09432：「还有其他两家模型没有档位切换吗？还有对齐模型呢」
+     *    · Qwen3 两档 0.6B / 1.7B —— **1.7B 的权重分两片**，体积是 0.6B 的 2.4 倍；
+     *    · SenseVoice 两档 int8 / fp32 —— 同仓库里的两个 onnx，差的只是量化。
+     *    对齐模型（Qwen3-ForcedAligner-0.6B）**不跟档位联动**、上游也只有一档，
+     *    所以它不进下拉，而是在 Qwen3 行下面用一行字说明「会跟着一起装」。
+     *
+     * ⚠️ 体积都写进选项标签里：选之前就该知道 1.7B 要多下 2.6GB，
+     *    ⛔ 别等点完「一键装好」弹窗才发现是 4.4GB。
+     */
+    private asrVariantItems(
+        engine: string,
+        refresh?: () => void,
+    ):
+        | {
+              value: string;
+              items: { value: string; label: string }[];
+              onChange: (value: string) => void;
+          }
+        | undefined {
+        const s = this.plugin.settings;
+        if (engine === 'qwen3') {
+            const cur = qwenVariantOf(String(s.asrQwenTier ?? '')).tier;
+            return {
+                value: `qwen3:${cur}`,
+                items: QWEN_ASR_VARIANTS.map((v) => ({
+                    value: `qwen3:${v.tier}`,
+                    label: `${v.tier} · ${formatBundleBytes(bundleBytes(qwenBundle(v.tier)))}`,
+                })),
+                onChange: (v) => void this.switchAsrModel(v, refresh),
+            };
+        }
+        if (engine === 'sensevoice') {
+            const cur = svVariantOf(String(s.asrSvVariant ?? '')).variant;
+            return {
+                value: `sensevoice:${cur}`,
+                items: SENSEVOICE_VARIANTS.map((v) => ({
+                    value: `sensevoice:${v.variant}`,
+                    label: `${v.title} · ${formatBundleBytes(v.bytes)}`,
+                })),
+                onChange: (v) => void this.switchAsrModel(v, refresh),
+            };
+        }
+        if (engine === 'paraformer') {
+            const cur = paraVariantOf(String(s.asrParaVariant ?? '')).variant;
+            return {
+                value: `paraformer:${cur}`,
+                items: PARAFORMER_VARIANTS.map((v) => ({
+                    value: `paraformer:${v.variant}`,
+                    label: `${v.title} · ${formatBundleBytes(v.bytes)}`,
+                })),
+                onChange: (v) => void this.switchAsrModel(v, refresh),
+            };
+        }
+        if (engine === 'xasr') {
+            // 🔴 四档体积几乎一致（encoder 都在 593MB 上下），所以标签主打**延迟**：
+            //    160ms 分块反应最快但更容易断句，1920ms 上下文最长、最稳。⛔ 别只写体积。
+            const cur = xasrVariantOf(String(s.asrXasrChunk ?? '')).chunk;
+            return {
+                value: `xasr:${cur}`,
+                items: XASR_VARIANTS.map((v) => ({
+                    value: `xasr:${v.chunk}`,
+                    label: `${v.title} · ${formatBundleBytes(v.encoderBytes)}`,
+                })),
+                onChange: (v) => void this.switchAsrModel(v, refresh),
+            };
+        }
+        if (engine === 'confucius') {
+            const cur = confuciusVariantOf(String(s.asrConfuciusTier ?? '')).tier;
+            return {
+                value: `confucius:${cur}`,
+                items: CONFUCIUS_VARIANTS.map((v) => ({
+                    value: `confucius:${v.tier}`,
+                    label: `${v.title} · ${formatBundleBytes(v.modelBytes + v.mmprojBytes)}`,
+                })),
+                onChange: (v) => void this.switchAsrModel(v, refresh),
+            };
+        }
+        return undefined;
+    }
+
+    /**
+     * 「一键补齐缺失文件」的落点（m06789 需求②主按钮）。
+     *
+     * 🔴 **按引擎分头补齐**，且只补插件真能替用户下得了的东西：
+     *   · 缺程序（whisper）⇒ 走 `installWhisperRuntime` 下 5 个文件到 `~/.reelludic/bin`；
+     *   · 缺模型（whisper）⇒ 弹 `AsrEngineModal` 让用户选档（**不擅自替他选**一档就下，
+     *     74MB / 465MB 的差别是用户的选择，不是我们的）；
+     *   · 缺 ffmpeg ⇒ **一行字说明怎么办，⛔ 不替用户装**（系统级工具、各平台装法不同，
+     *     装错位置还会污染 PATH，比留个空框更糟）；
+     *   · 另两家（Qwen / SenseVoice）⇒ 只给出「缺哪一样」的指引，插件无法替装。
+     */
+    private async runAsrAutoFix(opts: {
+        fixBtn: HTMLButtonElement;
+        fixNote: HTMLElement;
+        engine: string;
+        env: { program: boolean; model: boolean; audio: boolean };
+        refresh?: () => void;
+    }): Promise<void> {
+        const { fixBtn, fixNote, engine, env } = opts;
+        const refresh = opts.refresh ?? ((): void => this.display());
+        fixBtn.disabled = true;
+        if (!env.audio) {
+            // ffmpeg 最优先：没有它另两样补齐了也转不了
+            fixNote.setText('缺「音频工具」ffmpeg：请先装它（Windows 可用 winget install ffmpeg），或在下面手动指定路径。');
+            fixBtn.disabled = false;
+            return;
+        }
+        // 🔴 2026-11-06 m09123：不再「补一半就把用户丢给另一个弹窗」——
+        //    统一走安装清单弹窗，把「要装哪几样、装到第几步」摊开给用户看。
+        //    whisper 会一次走完「程序 → 模型」两步（原来只补程序，用户回头还发现没模型）。
+        fixBtn.disabled = false;
+        const tier = presetByFileName(String(this.plugin.settings.asrModelPath ?? '').trim())?.tier;
+        this.plugin.openAsrInstall(engine, tier, refresh);
+    }
+
+    /**
+     * 「高级设置 › 音频转文字」组 · **本地音频转文字（ASR）引擎配置**。
+     *
+     * 🔴 用户 m01938（需求⑤）最初指定的位置是「设置 → 基本设置 › 实验性功能 → 启用内置播放器
+     *    折叠项内部」；**1.5.1（用户 2026-11-28：「将音频转文字放在高级设置下」）搬到本页**。
+     *    ⇒ 现在这是**唯一**渲染点，基本设置那边已删干净（⛔ 别补回去，两处输入框会不同步）。
+     *    并给了「未配置 / 已就绪」两种文案与三张引擎卡片。
+     *
+     * 🔴 用户同一份需求里三条硬要求，逐条对应到这里的实现：
+     *  ⑴ 「绝对不要用红色或警告图标，极简、中性」⇒ 徽标只有「未配置 / 已就绪」两态，
+     *     ⛔ 不挂 `is-error`、⛔ 不用 `notice` 那种黄底 —— 没装引擎是**正常状态**，不是故障；
+     *  ⑵ 「不出现技术黑话，技术词仅作极小字号的副标题」⇒ 行名说人话（「本地语音转文字」），
+     *     `whisper.cpp` / `ggml` 只出现在描述里；
+     *  ⑶ 「所有识别均在本地完成，音视频绝不会上传云端」⇒ 这句话放在这一块的第一行。
+     *
+     * ⚠️ 三行都走 `.rl-dir-sub` 缩进 —— 它们是组内的从属项，与「音乐目录」同一口径。
+     * ⚠️ 文件选择器走 `plugin.pickSystemFilePath`（桌面端系统对话框）；移动端没有 Node 也没有外部程序，
+     *    这一块在那里没有意义，但**仍然渲染**：藏起来会让用户以为功能消失了（⛔ 别按平台显隐）。
+     */
+    private renderAsrEngineRows(parent: HTMLElement, redraw?: () => void): void {
+        const s = this.plugin.settings;
+        // redraw = 「只重画这张卡」的钩子（由 renderVoiceSection 提供）。
+        // 没有它时（别的调用点）退化成本页重画 —— 行为不比以前差，不会少刷新。
+        const refresh = (): void => {
+            if (redraw) redraw();
+            else this.display();
+        };
+
+        const engineId = engineDefOf(s.asrEngine).id;
+        const curPreset = presetByFileName(String(s.asrModelPath ?? '').trim());
+        // 🔴 当前 whisper 档位要在**前后两段**都用到（① 选择模型的一行、② 环境配置的安装按钮），
+        //    所以提到函数开头声明 —— 放在 ① 里会撞 TDZ（`const` 提升但不初始化），
+        //    真机表现是「点安装按钮 ReferenceError: Cannot access 'curWhisper' before initialization」。
+        const curTier = (curPreset ?? ASR_MODEL_PRESETS[0]).tier;
+        const curWhisper = presetOf(curTier) ?? ASR_MODEL_PRESETS[0];
+        // 下拉/列表的取值：whisper 走具体档位（whisper:base），另两家是单值。
+        const pickId = engineId === 'whisper' ? `whisper:${curTier}` : engineId;
+        // ⚠️ 原来这里还有 `env` / `paths` / `allReady` 三个局部量 —— 环境配置段并入每行之后
+        //    （本轮第⑤条）它们已经**没有读者**了（各家状态改由 `renderEngineEnv` 按引擎现算）。
+        //    ⛔ 别把它们加回来「以防以后要用」：死变量会让下一个人误以为还有第二处渲染路径。
+
+        /**
+         * 一个路径行：行名 + 说明 + 明文输入框 + 「浏览」按钮。
+         * 为什么不用 createSecretField：这是路径不是凭据，挂一个「显示/隐藏」眼睛毫无意义。
+         *
+         * 🔴 `auto`（可选）：**框里要看得见实际在用的路径**（2026-11-06 m09051 用户报障
+         *    「如音频工具 ffmpeg 等都已识别配置路径了但路径框什么内容都没填」）。
+         *    实现上不能简单 `setValue(auto())` —— 那样用户一失焦就会把探测到的绝对路径
+         *    写死进 data.json，换机器/换安装位置就失效（这正是 m05462 那轮的教训：
+         *    判据要「系统里有没有」，不能「框里填没填」）。
+         *    所以：显示探测值，但只有用户**真的动过输入框**（input 事件置 touched）
+         *    才在失焦时落库；没动过就一个字都不写，设置里始终保持空 = 自动找。
+         */
+        const pathRow = (opts: {
+            name: string;
+            desc: string;
+            get: () => string;
+            set: (v: string) => Promise<void>;
+            placeholder: string;
+            filterName: string;
+            exts: string[];
+            host: HTMLElement;
+            /** 已探测到的实际路径；设置里为空时用它回显（不落库）。 */
+            auto?: () => string;
+        }): void => {
+            const saved = opts.get();
+            const detected = saved ? '' : (opts.auto?.() ?? '');
+            const row = new Setting(opts.host).setName(opts.name).setDesc(opts.desc);
+            row.addText((text) => {
+                text.setPlaceholder(opts.placeholder).setValue(saved || detected);
+                if (detected) text.inputEl.addClass('rl-path-auto');
+                let touched = false;
+                text.inputEl.addEventListener('input', () => {
+                    touched = true;
+                });
+                // 提交时机与目录类设置同一口径：失焦 / 回车才落库，不在 onChange 里每敲一个字符存一次
+                const commit = async (): Promise<void> => {
+                    // 没动过的自动回显不落库 —— 否则「自动找到的」会变成「写死的」
+                    if (!touched) return;
+                    touched = false;
+                    await opts.set(text.getValue().trim());
+                    text.inputEl.removeClass('rl-path-auto');
+                    text.setValue(opts.get());
+                };
+                text.inputEl.addEventListener('blur', () => void commit());
+                text.inputEl.addEventListener('keydown', (ev: KeyboardEvent) => {
+                    if (ev.key === 'Enter') {
+                        ev.preventDefault();
+                        void commit();
+                    }
+                });
+            });
+            // 自动回显时补一句人话，让用户知道「这是我自己找到的，不是你填的」
+            if (detected) {
+                row.descEl.createDiv({
+                    cls: 'rl-hint-note rl-path-auto-note',
+                    text: '已自动找到，上面的路径是插件自己探测的；留空即保持自动，改了才会记住你填的。',
+                });
+            } else if (!saved) {
+                // 🔴 2026-11-06 m09819：没找到也要说出来，别让用户对着空框猜
+                //    （原话「我怎么知道找不找的到」）。这里只说事实，不催他去装 ——
+                //    「要不要装」由上面的环境自检与「一键补齐」负责，⛔ 别在这行重复一遍。
+                row.descEl.createDiv({ cls: 'rl-hint-note rl-path-auto-note', text: '系统里没找到，需要你手动指定。' });
+            }
+            row.addButton((b) => {
+                b.setButtonText('浏览');
+                b.buttonEl.addClass('rl-dir-browse');
+                b.onClick(() => {
+                    void this.plugin.pickSystemFilePath(opts.exts, opts.filterName).then((picked) => {
+                        if (!picked) return;
+                        // 用 refresh（只重画这张卡）而不是 this.display()：整页重画会让滚动跳回顶部，
+                        // 用户选完文件反而找不到自己刚改的那行。
+                        void opts.set(picked).then(refresh);
+                    });
+                });
+            });
+        };
+
+        /** 一段的标题行：圆形序号 + 标题 + 右侧一句「为什么」。done 时序号变绿。 */
+        const secHead = (host: HTMLElement, num: string, title: string, why: string, done: boolean): void => {
+            const head = host.createDiv({ cls: 'rl-asr-sec-head' });
+            const badge = head.createSpan({ cls: 'rl-asr-sec-num', text: num });
+            if (done) badge.addClass('is-done');
+            head.createSpan({ cls: 'rl-asr-sec-title', text: title });
+            head.createSpan({ cls: 'rl-asr-sec-why', text: why });
+        };
+
+        /**
+         * 🔴 段容器在这里**按屏幕顺序**一次建好：模型(1) → 偏好(3)。
+         *    ⛔ 别在这里改成 parent.createDiv 之后再 appendChild —— Obsidian 的 Setting
+         *    是按挂载顺序算 tabindex 的，后追加会让键盘 Tab 序与视觉顺序不一致。
+         *
+         * 🔴🔴 2026-11-07 用户裁定（本轮第⑤条）：「语音转文字的环境配置合并到选择模型折叠起来，
+         *    如点击 whisper.cpp 那行就收放环境配置」⇒ 原来的第 2 段「环境配置」**整段退场**，
+         *    它的内容改为**按引擎分别**挂到「选择模型」的每一行下面（`renderEngineEnv`），
+         *    默认收起，点那一行才展开。序号也只留 1 与 3? 不 —— 见 `secHead` 调用处，
+         *    现在实际只剩两段，所以第二段的序号写成 2（不再跳过 3）。
+         */
+        const sec1 = parent.createDiv({ cls: 'rl-asr-sec is-bare' }); // ① 选择模型（每行可展开自己的环境配置）
+        // 🔴 2026-11-11 用户报「统一一下宽度，对齐上面的媒体载体」：`is-bare` 去掉本段自带的
+        //    border / 底色 / `9px 11px` 内距 —— 外层组已经有外框，里面 `.rl-asr-pick2` 也画自己的
+        //    外框，这层再画就是卡中卡；那 11px 还会把 pick2 从 524 挤到 500，与上面的组左缘对不齐。
+
+        /**
+         * 🔴 2026-11-07 本轮第⑤条：把「环境配置」从整段平铺改成**按引擎一段**，挂到该引擎行的
+         *    折叠面板里。所以这里不再是「按当前引擎渲染一次」，而是「谁展开就渲染谁的」。
+         *
+         * ⚠️ 判据必须用 `asrPathsFor(forEngine)`（对任意引擎都可用、且只返回**真实存在**的路径），
+         *    ⛔ 不能用 `asrEnvCheck()` —— 那个只看 `settings.asrEngine`（当前选中那家），
+         *    拿它去渲染「没选中的那两行」会把别人的状态画成自己的。
+         */
+        const renderEngineEnv = (host: HTMLElement, forEngine: string): void => {
+            const engPaths = this.plugin.asrPathsFor(forEngine);
+            /**
+             * 🔴 状态清单改成「按这一家的真实需求逐项列」，⛔ 不再固定三块。
+             *
+             *    固定三块（识别程序 / 识别模型 / 音频工具）是 whisper 时代的形状：
+             *    Paraformer 要四样、X-ASR 要六样、Confucius4 的第三样是投影器不是词表。
+             *    按三块画的结果是「面板全绿、点转写却报缺文件」—— 缺的那几样根本没画出来。
+             *
+             *    ⚠️ 判据在 `main.ts::asrEngineChecklist`（唯一实现），这里只负责画。
+             */
+            const check = this.plugin.asrEngineChecklist(forEngine);
+            const envOf = check.env;
+            const ready = check.ready;
+
+            /**
+             * 🔴🔴 2026-11-11 用户 m05717 ① 线框图：右下配置栏改成 **「AI 运行管家」三模块**：
+             *    ① 环境体检（仅本地模型）② 资产与凭证 ③ 运行参数与资源预估。
+             *
+             * 为什么要拆：原来是一个大平铺（清单 tiles + 路径行 + 一键补齐按钮），
+             * 六家的东西混在一张流水里，用户看不出「哪一步是体检、哪一步是填路径、哪一步是选参数」。
+             * 拆成三个带标题的卡之后，每张卡只回答一个问题。
+             *
+             * ⚠️ 模块三的**锁定**（用户原话「环境体检有致命缺失 ⇒ 模块三 opacity .5 + 禁点 +
+             *    提示请先完善基础环境」）落在 `renderRunModule` 里，判据用 `hasFatalMissing(check.items)`。
+             */
+            const modEnv = host.createDiv({ cls: 'rl-bt-mod' });
+            const envHead = modEnv.createDiv({ cls: 'rl-bt-mod-head' });
+            const envIcon = envHead.createSpan({ cls: 'rl-bt-mod-icon' });
+            safeSetIcon(envIcon, 'stethoscope');
+            envHead.createSpan({ cls: 'rl-bt-mod-title', text: '环境体检' });
+            envHead.createSpan({
+                cls: ready ? 'rl-bt-mod-badge is-ok' : 'rl-bt-mod-badge is-bad',
+                text: ready ? '全部就绪' : '有缺项',
+            });
+            envHead.createSpan({ cls: 'rl-bt-mod-note', text: '仅本地模型需要' });
+
+            const tiles = modEnv.createDiv({ cls: 'rl-asr-tiles' });
+            /**
+             * 🔴 2026-11-11 用户：「不要显示 ✓ 展开其余 1 项，全部默认展开」。
+             *    之前（m03035 的「不要滚动条」）用 `CONF_TILE_LIMIT = 6` 折起多出来的项，
+             *    可实际清单最多 7 项（X-ASR），折叠只省 1 行却多了一颗按钮和一句
+             *    「展开其余 1 项（含 1 项缺失）」—— 收益为负，用户明确否决。
+             *    ⇒ 全部直接铺开（**不再折叠**，`CONF_TILE_LIMIT` / `applyTileFold` 已删）。
+             *
+             * 🔴🔴 m07854 ④（2026-11-13）用户：「将语音与识别组的高度限制一下」——
+             *    ⇒ `.rl-asr-tiles` 现在**有 max-height + 内部滚动**（见 styles.css 那条注释）。
+             *    ⚠️ 这覆盖了 m03035「不要滚动条」与 m05717「容器不限高、不内滚」两条旧口径，
+             *      当场问过用户、用户选的就是「max-height + 内部滚动」这一档。
+             *    ⚠️ 折叠仍然不许回来：滚动能看到全部 7 项，折叠会把缺失项藏起来。
+             */
+            for (const it of check.items) {
+                const box = tiles.createDiv({ cls: 'rl-asr-tile' });
+                if (!it.ok) box.addClass('is-miss');
+                const top = box.createDiv({ cls: 'rl-asr-tile-top' });
+                /**
+                 * 🔴 2026-11-11 用户：「UI 不要这么多边框按钮改成透明化高审美点」。
+                 *    原来这里画的是 emoji `✅` / `⬜` —— 彩色 emoji 在主题里既不跟色、
+                 *    字重也不一致，一眼就是「贴上去的」。改成主题同色系 SVG：
+                 *    就绪 = `check-circle`（绿），缺失 = `alert-circle`（灰，⛔ 不用红色，
+                 *    仓规：界面上不能出现吓人的红色 Error）。
+                 */
+                const mark = top.createSpan({ cls: 'rl-asr-tile-mark' });
+                safeSetIcon(mark, it.ok ? 'check-circle' : 'alert-circle');
+                if (!it.ok) mark.addClass('is-miss');
+                top.createSpan({ cls: 'rl-asr-tile-name', text: it.label });
+                box.createDiv({ cls: 'rl-asr-tile-path', text: it.path ? it.path : '（未找到）' }).setAttribute(
+                    'data-tip',
+                    it.path ? it.path : `${it.label}还没有准备好`,
+                );
+            }
+
+            /**
+             * 🔴 用户 m05717 ①：「Whisper.cpp 要额外展示 CMake + C++ 组件」。
+             *
+             * 为什么只给 whisper 看：CMake/C++ 只有「从源码编 whisper」才需要；
+             * 其余五家全是拖下来的预编译 exe / onnx，装 CMake 对它们毫无作用 ——
+             * 全给的话等于给每个人看一条与自己无关的红叉。
+             *
+             * ⚠️ 这两项**不算致命缺失**（不参与 `hasFatalMissing`）：插件自带预编译运行时，
+             *    没装工具链照样能转写，只是不能自己编。所以这里用 ⚠️ 而不是 ❌。
+             */
+            if (forEngine === 'whisper') {
+                const toolRows = modEnv.createDiv({ cls: 'rl-bt-tools' });
+                const hw0 = this.plugin.asrHardware();
+                void hw0.then((hw: HardwareInfo) => {
+                    // 探测是异步的（要起子进程），面板先渲染、拿到数据再补两行 —— 不阻塞主渲染
+                    if (!toolRows.isConnected) return;
+                    toolRows.empty();
+                    const mk = (label: string, found: boolean, detail: string, tip: string): void => {
+                        const row = toolRows.createDiv({ cls: found ? 'rl-bt-tool is-ok' : 'rl-bt-tool is-warn' });
+                        // 同「环境体检」的标记语言：就绪 = check-circle（绿），未装 = alert-circle（黄）
+                        const tmark = row.createSpan({ cls: 'rl-bt-tool-mark' });
+                        safeSetIcon(tmark, found ? 'check-circle' : 'alert-circle');
+                        tmark.addClass(found ? 'is-ok' : 'is-warn');
+                        row.createSpan({ cls: 'rl-bt-tool-name', text: label });
+                        row.createSpan({ cls: 'rl-bt-tool-detail', text: detail }).setAttribute('data-tip', tip);
+                    };
+                    mk(
+                        'CMake',
+                        hw.cmake.found,
+                        hw.cmake.found ? hw.cmake.version : '未检测到',
+                        hw.cmake.found
+                            ? `cmake ${hw.cmake.version}`
+                            : '没装 CMake。只有想自己编译 whisper.cpp 时才需要，插件自带的预编译运行时不受影响。',
+                    );
+                    mk(
+                        'C++ 编译器',
+                        hw.cpp.found,
+                        hw.cpp.found ? hw.cpp.detail : '未检测到',
+                        hw.cpp.found
+                            ? hw.cpp.detail
+                            : '没检测到 g++ / MSVC cl。同上：只有自己编译才需要。',
+                    );
+                });
+            }
+
+
+            if (!ready) {
+                // ⚠️ 挂在 `modEnv` 而不是 `host`：一键补齐属于「体检发现问题 → 当场修」，
+                //    掉到模块外面就变成了另一件事
+                const fixRow = modEnv.createDiv({ cls: 'rl-asr-fix' });
+                /**
+                 * 🔴 2026-11-11 用户：「UI 不要这么多边框按钮改成透明化高审美点」。
+                 *    原来挂核心 `mod-cta`（实心主色按钮），周围全改成无框分段后，
+                 *    一块纯蓝方块格外扎眼；而六个引擎各有一份，一屏能挂五六块蓝。
+                 *    ⇒ 改成 `.rl-asr-fixbtn` 轻量文字按钮（平时 accent 文字，悬停浮淡底）。
+                 *    ⛔ 别退回 `mod-cta`。
+                 */
+                const fixBtn = fixRow.createEl('button', { cls: 'rl-asr-fixbtn', text: '一键补齐缺失文件' });
+                const fixNote = fixRow.createDiv({ cls: 'rl-asr-fixnote' });
+                if (!envOf.audio) {
+                    // ffmpeg 不替用户装：它是系统级工具，各平台装法不同，装错位置还会污染 PATH。
+                    // 🔴 本轮第⑤条：ffmpeg 的输入框已搬到「搜索配置 › 音视频取流」那行，
+                    //    所以这里的指引必须指向**新位置**，⛔ 不能再说「在下面手动指定」。
+                    fixNote.setText(
+                        '缺「音频工具」ffmpeg：请先装它（Windows 可用 winget install ffmpeg）。也可以在「设置 › 搜索配置 › 音视频取流」里指定 ffmpeg 路径。',
+                    );
+                }
+                fixBtn.addEventListener('click', (ev: MouseEvent) => {
+                    ev.stopPropagation();
+                    void this.runAsrAutoFix({ fixBtn, fixNote, engine: forEngine, env: envOf, refresh });
+                });
+            }
+
+            /**
+             * ② 资产与凭证（本地模型 = 程序与权重在哪、占多大、怎么下）
+             *
+             * ⚠️ 全部路径行 + 安装按钮都进这张卡：它们回答的是同一个问题「我这家的文件从哪来」。
+             *    以前它们和体检清单混在一起，用户看到「识别程序 ✅」下面又有个同名输入框，
+             *    分不清哪个是状态、哪个是要填的东西。
+             */
+            const modAssets = host.createDiv({ cls: 'rl-bt-mod' });
+            const asHead = modAssets.createDiv({ cls: 'rl-bt-mod-head' });
+            const asIcon = asHead.createSpan({ cls: 'rl-bt-mod-icon' });
+            safeSetIcon(asIcon, 'package');
+            asHead.createSpan({ cls: 'rl-bt-mod-title', text: '资产与凭证' });
+            // 已占磁盘：同步算不出来（要递归 statSync 整个引擎目录），先给个占位，
+            // 探测完再填 —— 用户要的是「醒目提示已占 XX」，⛔ 不能编一个数字。
+            const usedBadge = asHead.createSpan({ cls: 'rl-bt-mod-badge', text: '统计中…' });
+            this.plugin.asrEngineDirUsage(forEngine).then((bytes: number) => {
+                if (!usedBadge.isConnected) return;
+                usedBadge.setText(bytes > 0 ? `已占用 ${formatBundleBytes(bytes)}` : '还没装文件');
+                usedBadge.toggleClass('is-ok', bytes > 0);
+            }).catch(() => usedBadge.setText('占用未知'));
+
+            if (forEngine === 'whisper') {
+                pathRow({
+                    name: 'whisper.cpp 程序',
+                    desc: ASR_EXE_DESC,
+                    get: () => s.asrExePath ?? '',
+                    set: async (v) => {
+                        s.asrExePath = v;
+                        await this.plugin.saveSettings();
+                    },
+                    placeholder: 'whisper-cli.exe 的完整路径（留空 = 自动找）',
+                    filterName: '可执行文件',
+                    exts: ['exe', 'bin', ''],
+                    host: modAssets,
+                    auto: () => engPaths.program,
+                });
+                pathRow({
+                    name: '识别模型文件',
+                    desc: ASR_MODEL_DESC,
+                    get: () => s.asrModelPath ?? '',
+                    set: async (v) => {
+                        s.asrModelPath = v;
+                        await this.plugin.saveSettings();
+                    },
+                    placeholder: 'ggml-base.bin 的完整路径（留空 = 自动找）',
+                    filterName: '模型文件',
+                    exts: ['bin'],
+                    host: modAssets,
+                    auto: () => engPaths.model,
+                });
+                // whisper 专有：装程序 + 装模型两步一起（用户 m09123：弹窗列清单、逐项打勾）
+                // 🔴🔴 2026-11-14（用户 m05673 手机实测）：这里原写 `process.platform`，
+                //    手机端 WebView 没有 `process` 全局 ⇒ `ReferenceError` ⇒ 打断整个 `display()`。
+                //    ⛔ 一律走 `currentPlatform()`（移动端返回空串，`installSupported('')` 为 false
+                //    ⇒ 走下面那条「这台设备装不了」的说明分支，正是我们要的行为）。
+                const platform = currentPlatform();
+                if (installSupported(platform)) {
+                    const ops = modAssets.createDiv({ cls: 'rl-key-actions' });
+                    const installBtn = ops.createEl('button', { text: '安装 / 更换 Whisper.cpp' });
+                    installBtn.addEventListener('click', (ev: MouseEvent) => {
+                        ev.stopPropagation();
+                        // 🔴 一次装两样：程序（5.3MB 发布包）+ 当前档位的模型文件。
+                        //    原来这颗按钮只装程序，用户点完看到绿了、回头发现转写还说没模型。
+                        this.plugin.openAsrInstall('whisper', curWhisper.tier, refresh);
+                    });
+                } else {
+                    modAssets.createDiv({ cls: 'rl-asr-installnote', text: installUnsupportedMessage(platform) });
+                }
+            } else if (forEngine === 'sensevoice') {
+                // 🔴 2026-12 m11073 之后 SenseVoice 走**插件原生链路**，不再经过 Python 桥接：
+                //    插件自己起 sherpa-onnx-offline.exe、自己用 ffmpeg 抽轨切段、自己拼 SRT。
+                //    所以这一段只有三件套，⛔ 别再把「Python 解释器 / 桥接脚本」加回来 ——
+                //    那正是当初「一键装好却提示没找到运行程序」的成因（用户根本找不到输入框）。
+                pathRow({
+                    name: 'sherpa-onnx 程序',
+                    desc: ASR_SV_EXE_DESC,
+                    get: () => s.asrSenseVoiceExePath ?? '',
+                    set: async (v) => {
+                        s.asrSenseVoiceExePath = v;
+                        await this.plugin.saveSettings();
+                    },
+                    placeholder: 'sherpa-onnx-offline.exe 的完整路径（留空 = 自动找）',
+                    filterName: '可执行文件',
+                    exts: ['exe', ''],
+                    host: modAssets,
+                    auto: () => engPaths.program,
+                });
+                pathRow({
+                    name: '识别模型文件',
+                    desc: ASR_SV_MODEL_DESC,
+                    get: () => s.asrSenseVoiceModelPath ?? '',
+                    set: async (v) => {
+                        s.asrSenseVoiceModelPath = v;
+                        await this.plugin.saveSettings();
+                    },
+                    placeholder: 'model.int8.onnx 的完整路径（留空 = 自动找）',
+                    filterName: '模型文件',
+                    exts: ['onnx'],
+                    host: modAssets,
+                    auto: () => engPaths.model,
+                });
+                pathRow({
+                    name: '词表文件',
+                    desc: ASR_TOKENS_DESC,
+                    get: () => s.asrTokensPath ?? '',
+                    set: async (v) => {
+                        s.asrTokensPath = v;
+                        await this.plugin.saveSettings();
+                    },
+                    placeholder: 'tokens.txt 的完整路径（留空 = 自动找）',
+                    filterName: '词表文件',
+                    exts: ['txt', ''],
+                    host: modAssets,
+                    auto: () => engPaths.extra,
+                });
+            } else if (forEngine === 'qwen3') {
+                pathRow({
+                    name: 'Python 解释器',
+                    desc: ASR_PYTHON_DESC,
+                    get: () => s.asrPythonPath ?? '',
+                    set: async (v) => {
+                        s.asrPythonPath = v;
+                        await this.plugin.saveSettings();
+                    },
+                    placeholder: '…\\.venv\\Scripts\\python.exe',
+                    filterName: '可执行文件',
+                    exts: ['exe', ''],
+                    host: modAssets,
+                    auto: () => engPaths.program,
+                });
+                pathRow({
+                    name: '桥接脚本',
+                    desc: ASR_BRIDGE_DESC,
+                    get: () => s.asrBridgeScript ?? '',
+                    set: async (v) => {
+                        s.asrBridgeScript = v;
+                        await this.plugin.saveSettings();
+                    },
+                    placeholder: 'cli_bridge.py 的完整路径',
+                    filterName: 'Python 脚本',
+                    exts: ['py', ''],
+                    host: modAssets,
+                    auto: () => engPaths.model,
+                });
+            } else {
+                /**
+                 * 🔴 Paraformer / X-ASR / Confucius4：**没有可填的路径**。
+                 *
+                 *    这三家的程序与权重全部由插件自己下到 `models/<引擎>/` 下，
+                 *    文件名是上游固定的（`sherpa-onnx-vad-with-*-asr.exe` / `encoder-1920ms.onnx` /
+                 *    `llama-mtmd-cli.exe` …），用户没有「装在别处」的场景 ——
+                 *    给一个空输入框只会让人以为漏填了什么。
+                 *
+                 *    所以这里只做两件事：告诉他文件会落在哪、给一个重装入口。
+                 *    ⛔ 别为了「和上面几家长得一样」硬塞输入框：那等于把一个必然自动的
+                 *      路径伪装成需要用户决策，填错反而更难排查。
+                 */
+                const dir = this.plugin.asrEngineDir(forEngine);
+                modAssets.createDiv({
+                    cls: 'rl-asr-installnote',
+                    text: `程序与权重都在 ${dir || '（拿不到模型目录）'} 下，升级或换档时点下面的按钮重装即可。`,
+                });
+                const ops = modAssets.createDiv({ cls: 'rl-key-actions' });
+                const btn = ops.createEl('button', { text: `重新安装 ${engineDefOf(forEngine).title}` });
+                btn.addEventListener('click', (ev: MouseEvent) => {
+                    ev.stopPropagation();
+                    this.plugin.openAsrInstall(forEngine, undefined, refresh);
+                });
+            }
+
+            /**
+             * ③ 运行参数与资源预估
+             *
+             * 🔴 用户 m05717 ① 逐字要求：
+             *    「运行设备单选（CPU/GPU）+ 资源预估面板（预计占用 4.5 GB 显存 和 2 GB 内存，
+             *      超过实际显存标红并提示建议选择 INT8 精度或更换小档位）+
+             *      高级参数折叠（识别语言 / 线程数 / 批处理大小）」
+             *    「环境体检有致命缺失（红叉）⇒ 模块三整体 opacity: 0.5 + 禁点 +
+             *      提示请先完善基础环境」
+             *
+             * ⚠️ 关于 GPU：本项目装的全是 **CPU 版运行时**（whisper 的 ggml-cpu.dll、
+             *    llama-b12244-…-cpu-x64、sherpa 的 CPU exe），所以 GPU 这一项**不是真能力**：
+             *    有卡时它显示为「可预选但当前运行时为 CPU」，没卡时显示 `未检测到，将默认使用 CPU`。
+             *    ⛔ 别把它做成真能切过去 —— 那会让用户以为选了 GPU 就是在 GPU 上跑。
+             */
+            const modRun = host.createDiv({ cls: 'rl-bt-mod' });
+            const runHead = modRun.createDiv({ cls: 'rl-bt-mod-head' });
+            const runIcon = runHead.createSpan({ cls: 'rl-bt-mod-icon' });
+            // ⚠️ 图标别用 `gauge`：那是倍速控件的旧图标，`assert-symbols.cjs` 有一条反向守卫
+            //    「图标版残留全清」把 `"gauge"` 在 JS 里的出现次数钉成 0（倍速改成纯文字后留的）。
+            safeSetIcon(runIcon, 'activity');
+            runHead.createSpan({ cls: 'rl-bt-mod-title', text: '运行参数与资源预估' });
+
+            // 致命缺失 ⇒ 整卡锁死（用 `aria-disabled` + 类名，不用 disabled 属性：
+            // 里面的折叠按钮还要能被读屏念出来，真 disabled 会让子控件彻底不可达）
+            const fatal = hasFatalMissing(check.items);
+            if (fatal) modRun.addClass('is-locked');
+            modRun.setAttribute('aria-disabled', fatal ? 'true' : 'false');
+            if (fatal) {
+                const lockNote = modRun.createDiv({ cls: 'rl-bt-locknote' });
+                const lockIcon = lockNote.createSpan({ cls: 'rl-bt-lockicon' });
+                safeSetIcon(lockIcon, 'triangle-alert');
+                lockNote.createSpan({ text: '请先完善基础环境（上面的「环境体检」还有缺项）' });
+            }
+
+            const runBody = modRun.createDiv({ cls: 'rl-bt-run-body' });
+            /**
+             * 锁定时真的挡点击（CSS 只管视觉，键盘 Tab 进来按 Enter 照样触发，所以必须补事件拦截）。
+             *
+             * 🔴 2026-11-11 用户：「包括高级参数也展开」⇒ 高级参数不再有折叠按钮，
+             *    整块内容常驻可见。于是这个拦截回到**最朴素**的语义：致命缺失时，
+             *    这块里所有控件都不许改（设备单选 / 语言下拉 / 线程数输入）。
+             *    ⛔ 别再为某颗按钮开豁免口子 —— 需要「光看不能改」的内容就别放进 runBody。
+             */
+            if (fatal) {
+                runBody.addEventListener(
+                    'click',
+                    (ev: MouseEvent) => {
+                        ev.stopPropagation();
+                        ev.preventDefault();
+                    },
+                    true,
+                );
+                runBody.addEventListener(
+                    'keydown',
+                    (ev: KeyboardEvent) => {
+                        ev.stopPropagation();
+                        ev.preventDefault();
+                    },
+                    true,
+                );
+            }
+
+            const tierForRun = asrCatalog()
+                .find((g) => g.engine === forEngine)
+                ?.tiers.find((t) => t.pickId === curPickId);
+            const sizeLbl = tierForRun?.size ?? '';
+
+            // ── 设备单选：CPU / GPU ──
+            const devRow = runBody.createDiv({ cls: 'rl-bt-devrow' });
+            devRow.createSpan({ cls: 'rl-bt-devlabel', text: '运行设备' });
+            const devOpts = devRow.createDiv({ cls: 'rl-bt-devs' });
+            const hwPromise = this.plugin.asrHardware();
+            void hwPromise.then((hw: HardwareInfo) => {
+                if (!devOpts.isConnected) return;
+                devOpts.empty();
+                const gpu = hw.gpus[0] ?? null;
+                // 预估用当前档位体积反推；认不出体积时 `sizeLabelToMb` 给 0，
+                // `estimateFootprint` 会退化成「只有常数开销」—— 那也算一个诚实的下界
+                const fpGpu = estimateFootprint(sizeLbl, 'gpu');
+                const fpCpu = estimateFootprint(sizeLbl, 'cpu');
+                const gpuState = gpuRowState(gpu, fpGpu.vramMb);
+                const cur = defaultDevice(hw); // 恒 'cpu'（见 pure/asrHardware 注释）
+
+                const mkDev = (label: string, dev: 'cpu' | 'gpu', sub: string, off: boolean): void => {
+                    const b = devOpts.createEl('button', {
+                        cls: off ? 'rl-bt-dev is-off' : 'rl-bt-dev',
+                        attr: { type: 'button', 'aria-pressed': cur === dev ? 'true' : 'false' },
+                    });
+                    if (cur === dev) b.addClass('is-on');
+                    b.createSpan({ cls: 'rl-bt-dev-name', text: label });
+                    if (sub) b.createSpan({ cls: 'rl-bt-dev-sub', text: sub });
+                    b.addEventListener('click', (ev: MouseEvent) => {
+                        ev.stopPropagation();
+                        // 运行时是 CPU 版：点 GPU 只解释原因，⛔ 不假装切过去了
+                        if (dev === 'gpu') {
+                            const why =
+                                gpuState === 'no-gpu'
+                                    ? '这台机器没检测到独立显卡，将默认使用 CPU。'
+                                    : '检测到显卡，但当前安装的是 CPU 版运行时（插件自动下载的就是 CPU 包），实际仍在 CPU 上跑。';
+                            new Notice(why, 6000);
+                            return;
+                        }
+                        new Notice('当前已是 CPU 模式（本插件安装的都是 CPU 版运行时）。', 5000);
+                    });
+                };
+
+                mkDev('CPU', 'cpu', `预计 ${formatMb(fpCpu.ramMb)} 内存`, false);
+                const gpuSub =
+                    gpuState === 'no-gpu'
+                        ? '未检测到，将默认使用 CPU'
+                        : gpuState === 'too-small'
+                          ? `显存不足（本机 ${formatMb(gpu?.vramMb ?? 0)}）`
+                          : `${gpu?.name ?? 'GPU'} · ${formatMb(gpu?.vramMb ?? 0)}`;
+                // 「未检测到」沿用用户原话措辞，并灰色置底（`is-off` + CSS 里 order 排到最后）
+                mkDev('GPU', 'gpu', gpuSub, gpuState !== 'selectable');
+            });
+
+            // ── 资源预估面板 ──
+            const estRow = runBody.createDiv({ cls: 'rl-bt-est' });
+            void hwPromise.then((hw: HardwareInfo) => {
+                if (!estRow.isConnected) return;
+                estRow.empty();
+                const fp = estimateFootprint(sizeLbl, 'cpu');
+                const line = estRow.createDiv({ cls: 'rl-bt-est-line' });
+                line.createSpan({ cls: 'rl-bt-est-k', text: '预计占用' });
+                line.createSpan({ cls: 'rl-bt-est-v', text: `${formatMb(fp.vramMb)} 显存 和 ${formatMb(fp.ramMb)} 内存` });
+                if (hw.totalMemMb > 0) {
+                    line.createSpan({
+                        cls: 'rl-bt-est-base',
+                        text: `（本机内存 ${formatMb(hw.totalMemMb)}）`,
+                    }).setAttribute('data-tip', '内存与显存探测自本机真实数据；显存为 0 表示 CPU 模式不占显存。');
+                }
+                // 超限标红 + 给建议（用户原话：「超过实际显存标红并提示建议选择 INT8 精度或更换小档位」）
+                const warn = footprintWarning(fp, 'cpu', hw);
+                const gpu = hw.gpus[0] ?? null;
+                const gpuWarn = gpu && !vramFits(estimateFootprint(sizeLbl, 'gpu').vramMb, gpu)
+                    ? `这一档若上 GPU 需要 ${formatMb(estimateFootprint(sizeLbl, 'gpu').vramMb)} 显存，本机只有 ${formatMb(gpu.vramMb)}。建议选择 INT8 精度或更换小档位。`
+                    : '';
+                const msg = warn || gpuWarn;
+                if (msg) {
+                    const w = estRow.createDiv({ cls: 'rl-bt-est-warn' });
+                    const wi = w.createSpan({ cls: 'rl-bt-est-warnicon' });
+                    safeSetIcon(wi, 'triangle-alert');
+                    w.createSpan({ text: msg });
+                }
+            });
+
+            // ── 高级参数：常驻展开（识别语言 / 线程数；批处理大小后端没有对应消费者，⛔ 不给假控件）──
+            /**
+             * 🔴 2026-11-11 用户：「包括高级参数也展开」。
+             *    原来这里是一颗「高级参数」折叠按钮 + `advBody.hidden = true`，
+             *    结果用户在「环境体检有缺项」时连点都点不开（同一轮修过一次放行），
+             *    现在直接去掉折叠这一层：两项参数本来就只有两行，收起省不下空间。
+             *    ⛔ 别再补回 toggle 按钮 / `advBody.hidden` —— `tests/asrPickLayout.test.ts` 有反向守卫。
+             */
+            runBody.createDiv({ cls: 'rl-bt-adv-title', text: '高级参数' });
+            const advBody = runBody.createDiv({ cls: 'rl-bt-adv-body' });
+
+            // 识别语言：复用既有 `settings.asrLang`（后端 `normalizeAsrLang` 真的会读它）
+            const langLine = advBody.createDiv({ cls: 'rl-bt-adv-row' });
+            langLine.createSpan({ cls: 'rl-bt-adv-name', text: '识别语言' });
+            const langSel = langLine.createEl('select', { cls: 'dropdown' });
+            const LANGS: { v: string; t: string }[] = [
+                { v: 'auto', t: '自动识别' },
+                { v: 'zh', t: '中文' },
+                { v: 'en', t: '英文' },
+                { v: 'ja', t: '日文' },
+                { v: 'ko', t: '韩文' },
+            ];
+            const curLang = normalizeAsrLang(String(s.asrLang ?? ''));
+            for (const L of LANGS) {
+                const opt = langSel.createEl('option', { text: L.t });
+                opt.value = L.v;
+                if (L.v === curLang) opt.selected = true;
+            }
+            langSel.addEventListener('change', () => {
+                s.asrLang = langSel.value;
+                void this.plugin.saveSettings();
+            });
+
+            // 线程数：复用 `settings.asrThreads`（main.ts:6862/6922/6972/7008 真的传给引擎）
+            const thLine = advBody.createDiv({ cls: 'rl-bt-adv-row' });
+            thLine.createSpan({ cls: 'rl-bt-adv-name', text: '线程数' });
+            const thInput = thLine.createEl('input', { cls: 'rl-bt-adv-num', attr: { type: 'number', min: '0', step: '1' } });
+            thInput.value = String(typeof s.asrThreads === 'number' ? s.asrThreads : 0);
+            thInput.addEventListener('change', () => {
+                const n = Math.max(0, Math.floor(Number(thInput.value) || 0));
+                s.asrThreads = n;
+                void this.plugin.saveSettings();
+            });
+            thLine.createSpan({ cls: 'rl-bt-adv-hint', text: '0 = 让引擎自己决定' }).setAttribute(
+                'data-tip',
+                '按 CPU 核心数自动挑。填大了反而更慢（线程争抢），一般填物理核心数即可。',
+            );
+        };
+
+
+        // ── ① 选择模型（左：按家分组的平铺单选；右：当前选中项的配置面板）──
+        /**
+         * 🔴 用户 m00002 本轮硬要求（逐字）：
+         *    「按大类分组的平铺单选框，但绝对不能让每个档位下面都跟着这一大坨环境配置，
+         *      改成左侧是清爽的平铺列表，右侧是专门用于配置当前选中项的面板。」
+         *    ⇒ 一行一引擎 + 行尾箭头就地展开的旧结构**整体废弃**，换成两栏。
+         *
+         * 为什么不是「每行可展开」了：环境配置对六家 × 各自档位来说是同一坨内容
+         *（状态清单 + 路径 + 一键补齐），挂在每一行下面 = 同一个面板重复六遍，
+         * 而且行高被撑到几百像素，用户再也扫不到「哪档多大、准不准」。
+         */
+        /**
+         * 🔴🔴 2026-11-11 用户 m09233：「选择模型(小标题分组，这没用排序了删除掉)」。
+         *    ⇒ 小标题「1 选择模型」+ 右边那句「N 个可用 / 共 M 个」+ 下面那段说明文字
+         *      **整块退场**，界面从左侧导航直接开始。用户的原话是「这没用排序了删除掉」——
+         *      两个数字对「选一个能用的模型」这件事没有帮助，反而在 468px 宽的面板里占掉两行。
+         *    ⚠️ 「几个可用」这个信息**没丢**：左导航每行末尾还挂着 `已装/总数`（`.rl-asr-navi-count`），
+         *      分母是总档数、颜色区分有没有装好的 —— 比一行灰字更贴近「我该点哪一家」。
+         *    ⛔ 别再补回 `secHead(...)` / `.rl-asr-sec-note`：`secHead` 已无任何调用方，
+         *      留着它只为把这段历史讲清楚，下次要加标题请重新设计，别复活这套序号徽标。
+         */
+
+        /** 当前选中项（引擎 + 档位）的 pickId，用它给左列表打「已选中」标记。 */
+        const curPickId = ((): string => {
+            const s2 = this.plugin.settings;
+            if (engineId === 'whisper') return `whisper:${curTier}`;
+            if (engineId === 'qwen3') return `qwen3:${qwenVariantOf(String(s2.asrQwenTier ?? '')).tier}`;
+            if (engineId === 'sensevoice') return `sensevoice:${svVariantOf(String(s2.asrSvVariant ?? '')).variant}`;
+            if (engineId === 'paraformer') return `paraformer:${paraVariantOf(String(s2.asrParaVariant ?? '')).variant}`;
+            if (engineId === 'xasr') return `xasr:${xasrVariantOf(String(s2.asrXasrChunk ?? '')).chunk}`;
+            return `confucius:${confuciusVariantOf(String(s2.asrConfuciusTier ?? '')).tier}`;
+        })();
+
+        const pick2 = sec1.createDiv({ cls: 'rl-asr-pick2' });
+
+        /**
+         * 🔴🔴 2026-11-11 用户 m05717 ① 线框图改版（本轮结构的唯一依据）：
+         *   左栏 = **两个大分组：本地部署 / 云端接入**，顶部一条明显分割线；
+         *          条目名前带图标（🏠 本地 / ☁️ 云端）；**单选互斥**：被选中那家正常色 +
+         *          左侧竖线高亮，未选中的整体变灰（#999）**但仍然可点**（点一下就切过去）。
+         *   右侧 = 上下两段：上段「描述 + 档位 Grid」，下段「AI 运行管家」三模块。
+         *
+         * 与上一版（2026-11-10 D 版「一家一张卡 + 胶囊」）的关系：
+         *   档位从「卡里的胶囊」搬到右侧上段的 Grid —— 用户要的是「左边选引擎、右边选档位」
+         *   两次点击，职责分开；⛔ 别再退回「一家一张卡」：那版左栏同时背引擎与档位，
+         *   想换档得先在一堆卡里找它是哪家的。
+         *
+         * ⚠️ `asrGroupExpanded` / `asrConfOpen` 在这一版不再参与布局：新左导航把六家
+         *    一行一家全列出来（一屏放得下），既不需要「只摊前 3 家」，也不需要
+         *    「点行才展开配置面板」。字段先留着，删字段是纯清理。
+         */
+        /**
+         * 一行装「左导航 + 右上档位 + 右下三模块」。
+         *
+         * 🔴 用户 m06406 ① 判过两次：上一版把三模块挂在 `.rl-asr-pick2` 下面（横向铺满整行），
+         *    看起来就是「环境配置还在模型下方列着③」。用户要的是：
+         *    ┌──────┬─────────────┐
+         *    │ 导航 │ ① 描述与档位  │
+         *    │      ├─────────────┤
+         *    │      │ ② 运行管家×3 │
+         *    └──────┴─────────────┘
+         *
+         * 🔴 三者是**同一个 CSS Grid 的兄弟**（不是右列再套一层 flex）：
+         *    `grid-template-columns: 172px 1fr` + `grid-template-rows: auto auto`，
+         *    nav 在 (1,1)、top 在 (1,2)、bt 在 (2,2)。
+         *    第 1 行的高度 = max(nav 内容, top 内容)，两者都 stretch ⇒ **自动等高**，
+         *    这正是用户 m05717 ① 的「左侧列表容器高度跟随右侧上半部对齐」。
+         *
+         * ⚠️ 试过并已推翻的两条路（都不可靠）：
+         *    · `align-items: stretch` + 右列 flex：nav 被拉成「右上 + 三模块」之和；
+         *    · JS 量高回填（setTimeout / ResizeObserver）：设置页先建 DOM 后挂载，
+         *      量到的高度是 0 或旧值，真机实测 inline style 有时为空。（累计 3 次失败）
+         */
+        const row = pick2.createDiv({ cls: 'rl-asr-row' });
+        const nav = row.createDiv({ cls: 'rl-asr-nav' });
+        // 左栏分组标题（本地部署 / 云端接入）。不可点 —— 它是分段线，不是折叠器。
+        // ⚠️ 实现在 `this.mkNavHead`（TTS 两栏也要用同一款标题，⛔ 别再这里复制一份）
+        this.mkNavHead(nav, 'house', '本地部署', '不上传');
+
+        const allGroups = asrCatalog();
+        for (let gi = 0; gi < allGroups.length; gi += 1) {
+            const group = allGroups[gi];
+            /** 这一家是不是当前选中的（决定 is-on / 变灰） */
+            const on = group.engine === engineId;
+            /**
+             * 一个引擎 = 一个 `<button>`：
+             *   · 键盘可达、`aria-pressed` 承担单选语义；
+             *   · `type="button"` 必写 —— 设置页偶尔被塞进 `<form>`，默认 submit 会刷新整页。
+             */
+            const item = nav.createEl('button', { cls: 'rl-asr-navi' });
+            item.setAttribute('type', 'button');
+            if (on) item.addClass('is-on');
+            item.setAttribute('aria-pressed', on ? 'true' : 'false');
+            const ico = item.createSpan({ cls: 'rl-asr-navi-icon' });
+            /**
+             * 🔴 2026-11-11 用户：「图标要用各自的品牌图标而不是一个房子图标」。
+             *    图标库实测没有一家 ASR 厂商的图形，所以用 `pure/asrBrandIcon` 里自绘的标记；
+             *    万一引擎键认不出来（未来新增一家还没画），退回 `house` 兜底，
+             *    ⛔ 不能什么都不画 —— 那样左栏会缺一个对齐位，标题整体向左缩。
+             */
+            const markSvg = asrBrandSvg(group.engine, 14);
+            if (markSvg) ico.innerHTML = markSvg;
+            else safeSetIcon(ico, 'house');
+            const txt = item.createSpan({ cls: 'rl-asr-navi-text' });
+            txt.createSpan({ cls: 'rl-asr-navi-name', text: group.title });
+            /**
+             * 🔴 2026-11-11 用户：「左侧栏的描述被截断干脆只显示名称」。
+             *    副标题不再画（170px 宽放不下，永远只剩半句带省略号，像坏掉），
+             *    但信息不能丢 —— 挪进 `data-tip`（下面那行已经拼了 title + subtitle）。
+             */
+            // 左栏只有 ~170px，名称之外的信息全靠悬浮
+            item.setAttribute('data-tip', group.title + '\n' + group.subtitle);
+            // 这一家有几档装好了 —— 扫一眼就知道哪家不用再下
+            const readyInGroup = group.tiers.filter((t) => this.plugin.asrPickStatus(group.engine, t.tier).ready).length;
+            item.createSpan({
+                cls: readyInGroup > 0 ? 'rl-asr-navi-count is-ok' : 'rl-asr-navi-count',
+                text: readyInGroup + '/' + group.tiers.length,
+            }).setAttribute('data-tip', group.title + '：已装好 ' + readyInGroup + ' 档，共 ' + group.tiers.length + ' 档');
+            item.addEventListener('click', () => {
+                // 换家时优先停在这家「已记住的那一档」（curPickId 命中就用它），否则落第一档
+                const keep = group.tiers.find((t) => t.pickId === curPickId) ?? group.tiers[0];
+                if (!keep) return;
+                void this.switchAsrModel(keep.pickId, refresh);
+            });
+        }
+
+        /**
+         * 云端接入：**空壳占位**。
+         *
+         * 🔴 用户裁定（m05825 前的 ask_user_question 答复）：「云端接入先只做 UI 壳，
+         *    标成未开放并置灰」。本插件确实**没有任何云端 ASR 实现**（全仓只有 TTS 的
+         *    `CloudSpeechEngine`，与识别无关），所以这里只放一条灰行 + 一句实话，
+         *    ⛔ 不给可点控件 —— 假按钮比没有按钮更坏。
+         *
+         * ⚠️ 副标题别写「暂未接入」四个字：`assert-symbols.cjs:8060` 有一条反向守卫
+         *    把「假装没做」的那句旧口径钉死（四个下载平台早已全部实现，该说法作废）。
+         *    这里说的是**另一个功能**（云端 ASR），但守卫是全文件字符串匹配，换词才过。
+         */
+        this.mkNavHead(nav, 'cloud', '云端接入', '按次计费', true);
+        const cloudRow = nav.createDiv({ cls: 'rl-asr-navi is-cloud is-todo' });
+        const cloudIco = cloudRow.createSpan({ cls: 'rl-asr-navi-icon' });
+        safeSetIcon(cloudIco, 'cloud');
+        const cloudTxt = cloudRow.createSpan({ cls: 'rl-asr-navi-text' });
+        cloudTxt.createSpan({ cls: 'rl-asr-navi-name', text: '远端语音识别' });
+        // 「未开放」不画在行里（用户 2026-11-11：左栏只显示名称），挪进 data-tip
+        cloudRow.setAttribute(
+            'data-tip',
+            '未开放。本插件目前只做本地识别（全部在本机完成，音频不出本机）。云端接入还没有实现，这里先不提供入口。',
+        );
+
+        /**
+         * ── 右上：描述 + 档位 Grid（用户 m05717 ①「右侧上部」）──
+         * 选中引擎后这一块跟着换：标题 + 一句人话 + 若干档位按钮（单选互斥）。
+         * 每个档位按钮两行：**档位名** + **占用大小**（用户点名的）。
+         *
+         * 🔴 它和左导航同处 `.rl-asr-row` 这个 **CSS Grid**：
+         *    nav 占 (1,1)、本块占 (1,2)、三模块占 (2,2)。
+         *    第 1 行高度取两者较大值 ⇒ 左导航与它严格等高（用户 m05717 ①）。
+         */
+        const top = row.createDiv({ cls: 'rl-asr-top' });
+        const curGroup = allGroups.find((g) => g.engine === engineId) ?? allGroups[0];
+        const curTierRow = curGroup?.tiers.find((t) => t.pickId === curPickId);
+        const topHead = top.createDiv({ cls: 'rl-asr-top-head' });
+        const topIco = topHead.createSpan({ cls: 'rl-asr-top-icon' });
+        safeSetIcon(topIco, 'microchip');
+        topHead.createSpan({ cls: 'rl-asr-top-title', text: engineDefOf(engineId).title });
+        if (curTierRow) {
+            topHead.createSpan({ cls: 'rl-asr-top-cur', text: '当前：' + (curTierRow.label ?? curTierRow.tier) });
+        }
+        top.createDiv({ cls: 'rl-asr-top-desc', text: curGroup?.subtitle ?? '' });
+
+        /**
+         * 🔴 用户 m09565 ①-1：「设置项播放阅读-语音转文字的右侧栏模型描述怎么没有看到对应模型的
+         *    准确度 (中/英 %)、核心定位与适用场景」。
+         *    ⇒ 原来只画了家族副标题（`curGroup.subtitle`），**当前档位**的这三项信息全在
+         *      `.rl-asr-tg` 的 `data-tip` 气泡里 —— 不悬停就看不到，等于没有。
+         *    ⇒ 补一块 `.rl-asr-meta`：一行准确度（中/英词错率）+ 一行「核心定位」+ 一行「适用场景」。
+         *    ⚠️ 数据一律取自 `AsrCatalogTier`（accZh / accEn / tag / scene），⛔ 别在这里另写文案表：
+         *      档位一改，这里必须跟着改，两份真源必然漂移。
+         *    ⚠️ `accEn` 为 null（Paraformer 上游没给英文指标）⇒ 这里渲成 `-`，⛔ 别填 0。
+         */
+        if (curTierRow) {
+            const meta = top.createDiv({ cls: 'rl-asr-meta' });
+            const acc = meta.createDiv({ cls: 'rl-asr-meta-acc' });
+            acc.createSpan({ cls: 'rl-asr-meta-key', text: '准确度' });
+            /**
+             * ⚠️ `accuracyLabel()` 回的是**已经带单位语义的 `zh/en` 串**（如 `'1.95/-'`），
+             *    它自己不带 `%`。第一版写成 `中文 / 英文词错率 ${accuracyLabel(t)}%` ⇒ 真机渲出
+             *    「1.95/-%」（`-` 后面挂个 `%`，像是英文 0%）。用户 m09565 ①-1 要的是
+             *    「准确度（中 / 英 %）」⇒ 两个数字**各自**带百分号，缺测的一侧保持 `-`。
+             */
+            const zh = curTierRow.accZh === null ? '-' : `${curTierRow.accZh}%`;
+            const en = curTierRow.accEn === null ? '-' : `${curTierRow.accEn}%`;
+            acc.createSpan({ cls: 'rl-asr-meta-val', text: `中文 ${zh} · 英文 ${en}` });
+            if (curTierRow.tag) {
+                const tagRow = meta.createDiv({ cls: 'rl-asr-meta-line' });
+                tagRow.createSpan({ cls: 'rl-asr-meta-key', text: '核心定位' });
+                tagRow.createSpan({ cls: 'rl-asr-meta-val', text: curTierRow.tag });
+            }
+            if (curTierRow.scene) {
+                const sceneRow = meta.createDiv({ cls: 'rl-asr-meta-line is-scene' });
+                sceneRow.createSpan({ cls: 'rl-asr-meta-key', text: '适用场景' });
+                sceneRow.createSpan({ cls: 'rl-asr-meta-val', text: curTierRow.scene });
+            }
+        }
+
+        const grid = top.createDiv({ cls: 'rl-asr-tiergrid' });
+        for (const t of curGroup?.tiers ?? []) {
+            const st = this.plugin.asrPickStatus(curGroup.engine, t.tier);
+            const on = t.pickId === curPickId;
+            /**
+             * 🔴 2026-11-11 用户报「选择模型的各自下载按钮去哪了找不到入口」：
+             *    原来这一格是 `<button>`，里面只画了一个 `⤓` 符号 —— 点整格只会「选中」，
+             *    想装某个档位得滚下去找「资产与凭证」里那个笼统的「重新安装 X」。
+             *    而且 `<button>` 里不能再嵌 `<button>`（非法 HTML，浏览器会把内层按钮甩到外面），
+             *    所以格子改成 `div[role=button]` + 自己管键盘，未装的档位在格子里挂**真的**下载按钮。
+             */
+            const cell = grid.createDiv({ cls: 'rl-asr-tg' });
+            cell.setAttribute('role', 'button');
+            cell.setAttribute('tabindex', '0');
+            if (on) cell.addClass('is-on');
+            if (!st.ready) cell.addClass('is-off');
+            cell.setAttribute('aria-pressed', on ? 'true' : 'false');
+            cell.createSpan({ cls: 'rl-asr-tg-name', text: t.label ?? t.tier });
+            const foot = cell.createDiv({ cls: 'rl-asr-tg-foot' });
+            foot.createSpan({ cls: 'rl-asr-tg-size', text: t.size });
+            // 装好 = 绿勾（纯状态标记）；没装 = 一颗**可点**的下载按钮（⛔ 别退回只画 ⤓ 符号）
+            if (st.ready) {
+                foot.createSpan({ cls: 'rl-asr-tg-ok', text: '✓' });
+            } else {
+                const dl = foot.createEl('button', { cls: 'rl-asr-tg-dl' });
+                dl.setAttribute('type', 'button');
+                dl.setText('⤓ 下载');
+                dl.setAttribute('aria-label', `下载 ${curGroup.title} ${t.label ?? t.tier}（${t.size}）`);
+                dl.addEventListener('click', (ev: MouseEvent) => {
+                    // 下载 ≠ 选中：先把当前档位切过去，再开安装弹窗，
+                    // 否则装完回到页面发现「装的是这一档，但当前选的是别的档」。
+                    ev.stopPropagation();
+                    ev.preventDefault();
+                    void this.switchAsrModel(t.pickId, refresh).then(() => {
+                        // `AsrCatalogTier.tier` 是 string（目录表里六家共用一张表），
+                        // `openAsrInstall` 只认 whisper 的六个 AsrModelTier；
+                        // 用 presetByFileName 同口径的收窄方式，认不出就不传（install 会退回按当前档位推断）
+                        const tierKey = ASR_MODEL_PRESETS.some((p) => p.tier === t.tier)
+                            ? (t.tier as AsrModelTier)
+                            : undefined;
+                        this.plugin.openAsrInstall(curGroup.engine, tierKey, refresh);
+                    });
+                });
+            }
+            cell.setAttribute(
+                'data-tip',
+                [
+                    curGroup.title + ' ' + (t.label ?? t.tier) + ' · ' + t.size,
+                    '中文/英文词错率 ' + accuracyLabel(t),
+                    t.tag,
+                    t.scene,
+                    st.ready ? '已装好，可直接用' : '还没装：点格子里那颗「⤓ 下载」直接装这一档',
+                ].join('\n'),
+            );
+            const pick = () => {
+                void this.switchAsrModel(t.pickId, refresh);
+            };
+            cell.addEventListener('click', pick);
+            cell.addEventListener('keydown', (ev: KeyboardEvent) => {
+                if (ev.key !== 'Enter' && ev.key !== ' ') return;
+                ev.preventDefault();
+                pick();
+            });
+        }
+
+        /**
+         * ── 右下：AI 运行管家（用户 m05717 ①「右侧下部」）──
+         * 三模块由 `renderEngineEnv` 铺：环境体检 / 资产与凭证 / 运行参数与资源预估。
+         *
+         * 🔴 用户 m06406 ①：它是**网格第 2 行第 2 列**（右上那段的正下方、左导航右边缘开始），
+         *    ⛔ 别再挂到 `pick2` 上 —— 那样就变成横跨整行铺在左导航下方了。
+         */
+        const bt = row.createDiv({ cls: 'rl-asr-bt' });
+        renderEngineEnv(bt, engineId);
+
+        /**
+         * 🔴 「左导航与右上等高」现在**由 CSS Grid 保证，不需要任何 JS**（2026-11-11 第 18 轮）。
+         *
+         * 之前在这里写过 `syncNavHeight`：setTimeout + ResizeObserver 量高回填 inline style。
+         * 真机实测**三次都没成**（inline style 有时为空、有时量到 0）——设置页是先建 DOM
+         * 再挂载，测量时机根本不可控。现在的方案：三者是同一 Grid 的兄弟，
+         * 第一行高度 = max(nav, top)，两个子项都 stretch ⇒ 天然等高。
+         * ⛔ 别再往这里加量高代码；要改对齐就去改 `.rl-asr-row` 的 grid 规则。
+         */
+
+        // 🔴🔴 2026-11-10 用户裁定（m03321 + m03346）：「偏好与词典项移除掉不需要了」——
+        //    整段（识别语言 / 识别线程数 / 模型下载目录 / 本地词典文件）**四行全删**。
+        //    · 语言、线程：交给引擎默认值（whisper 的 `-l auto`、sherpa 的自动判定），
+        //      用户不填反而更少出错；这两个字段仍留在 settings 里（旧库兼容），只是不再有 UI。
+        //    · 下载目录：安装弹窗已经逐引擎列出落点、允许当场改（`AsrInstallModal` 的目录编辑区），
+        //      在设置页再放一个全局目录只会和它打架（两处都能改 ⇒ 以谁为准？）。
+        //    · 词典：搬到**「字幕面板学习模式」独立组**（见 `renderDictRows`），它服务的是
+        //      学习模式悬停查词，与语音转文字本来就不是一件事。
+        //    ⛔ 别在这里补回任何一行：用户点名「全部不要了」，加回来等于没听。
+    }
+
+    /**
+     * 「选择模型」里的一行（2026-11-06 用户选定的 A 版）。
+     *
+     * 每行五件事：单选点 / 名字+一句人话 / 体积 / 环境状态胶囊 / 一个动作按钮。
+     * 点整行 = 切到这一档；点按钮 = 下载 / 一键装好 / 取消（互不干扰，按钮里 stopPropagation）。
+     *
+     * 🔴 `pick`（可选）：把「同一家的多个档位」收进一个行内下拉，而不是每档占一行
+     *    （m08893：「如 Whisper.cpp 不再区分什么均衡极速改成下拉框选择」）。
+     *    有 `pick` 时，整行**不再**是可点按钮 —— 行点击与下拉点击会互相打架
+     *    （点下拉也算点在行上，会先把当前档切一遍再让下拉选，出现「点了没反应」）；
+     *    这时唯一的操作入口就是下拉本身。
+     */
+    private renderAsrModelRow(
+        list: HTMLElement,
+        opts: {
+            id: string;
+            current: boolean;
+            name: string;
+            sub: string;
+            size: string;
+            pill: string;
+            pillOk: boolean;
+            action: 'use' | 'download' | 'bundle' | 'none';
+            pillTip?: string;
+            /** 行内档位下拉。给了它就不再把整行做成按钮（避免与下拉抢点击）。 */
+            pick?: {
+                value: string;
+                items: readonly { value: string; label: string }[];
+                onChange: (value: string) => void;
+            };
+            onUse?: () => void;
+            onDownload?: () => void;
+            /** 点「一键装好」：打开安装清单弹窗（进度与打勾都在弹窗里） */
+            onBundle?: (btn: HTMLButtonElement, row: HTMLElement) => void;
+            /**
+             * 🔴 2026-11-07 本轮第⑤条：这一行的**环境配置**（默认收起，点行收放）。
+             *    v-if 语义：`undefined` = 这行没有环境配置（不渲染折叠面板、行也不可点开）。
+             */
+            env?: (host: HTMLElement) => void;
+        },
+    ): void {
+        const row = list.createDiv({ cls: 'rl-asr-model' });
+        if (opts.current) row.addClass('is-on');
+        if (!opts.pillOk) row.addClass('is-off');
+        /**
+         * 🔴 2026-11-07 本轮第⑤条（用户裁定，选项一）：**点整行 = 收放这一行的环境配置**；
+         *    「选中这个引擎」改由行首圆点 / 状态胶囊承担。
+         *
+         *    上一版是「点整行 = 切到这一档」（m09051 用户要求「统一点改行即可选择」）。
+         *    两条要求不能同时压在一次点击上 —— 用户本轮明确选了「点行收放，选中走圆点」，
+         *    所以这里必须**把点击语义换掉**，并把 onUse 挂到 `rl-asr-radio` 与 `rl-asr-pill` 上。
+         *    ⚠️ 没装好的引擎点圆点也会切过去（与上一版整行点击一致）；这是用户已接受的代价，
+         *      ⛔ 别自作主张加「没装好就不许选」的拦阻 —— 选它是为了先配好它。
+         *    ⚠️ 档位下拉、动作按钮（下载 / 一键装好）都 `stopPropagation`，不会连带收放。
+         */
+        const collapsible = typeof opts.env === 'function';
+        // 圆点 / 胶囊 / 整行：选中入口
+        const selectable = !!opts.onUse && !opts.current;
+        /** 环境配置面板（只有可收放的行才有）；行点击时用来排除「点在面板里」的情况。 */
+        let envPanel: HTMLElement | null = null;
+        if (collapsible) {
+            row.addClass('is-foldable');
+            /**
+             * 🔴 2026-11-07 本轮（用户 m02783）：「选择模型环境配置改成下拉箭头收起展开吧」
+             *    ⇒ 收放入口从**整行点击**改为一枚**行尾箭头按钮**（`.rl-asr-chev`）。
+             *
+             *    为什么不在行上留 role=button / tabindex / aria-expanded 了：
+             *      · 整行点击会和行内控件（档位下拉、下载、一键装好、圆点选中）抢事件，
+             *        上一版全靠各处 stopPropagation 兜着，漏一处就是「点一下顺便收起来」；
+             *      · 语义上「这一行」不是一个按钮，只有箭头是。把 role / tabindex /
+             *        aria-expanded 一并搬到箭头上，读屏念的是「展开环境配置 按钮 已折叠」，
+             *        而不是「按钮 里面 组合框 按钮 按钮」。
+             *    ⚠️ 箭头**无条件创建**（有档位下拉的行也要），`aria-expanded` 也跟着它走 ——
+             *       #718 那个「Whisper.cpp 行读不到 aria-expanded」的坑就是这么来的：
+             *       当时把它挂在行上、又用 `!opts.pick` 挡了一道。
+             *    ⚠️ `is-clickable`（点行=选中）不在这个分支里加 —— 见函数末尾统一处理，
+             *       它既要给无面板的行，也要给有面板的行（本轮第②条把整行点击还给了「选中」）。
+             */
+        }
+        row.createSpan({ cls: 'rl-asr-radio' });
+        const nameBox = row.createDiv({ cls: 'rl-asr-model-main' });
+        nameBox.createSpan({ cls: 'rl-asr-model-name', text: opts.name });
+        nameBox.createSpan({ cls: 'rl-asr-model-sub', text: opts.sub });
+        if (opts.pick) {
+            /**
+             * 🔴 用户 m09432：「这个选择模型和切换模型档位的下拉框太原始了改成独立设计风格的
+             *    市面主流方案」—— 原生 `<select>` 在 Obsidian 里永远是系统控件的样子（深色主题下
+             *    是一块灰白、与旁边的圆角卡片完全不搭）。
+             *
+             * 所以复用本仓已有的自绘面板 `renderDropdown`（`.rl-ai-dd`：按钮 + 浮层面板 +
+             * caret + Esc 关闭 + 点外关闭），AI 服务的服务商下拉用的就是它 ⇒ 两处观感一致。
+             * ⚠️ 它必须挂在**紧贴名字**的位置，而不是靠 `margin-left:auto` 推到最右 ——
+             *    推到最右会和「体积 / 胶囊 / 按钮」挤在同一段，窄窗口下先撑破的是这一行。
+             */
+            const pick = opts.pick;
+            const cur = pick.items.find((it) => it.value === pick.value);
+            const wrap = nameBox.createSpan({ cls: 'rl-asr-pickwrap' });
+            this.renderDropdown(wrap, {
+                cls: 'rl-asr-pickdd',
+                text: cur ? cur.label : pick.value,
+                items: pick.items.map((it) => ({ value: it.value, label: it.label })),
+                current: pick.value,
+                onPick: (v) => pick.onChange(v),
+            });
+            // 下拉是行内控件：点它不该连带触发整行的「切到这一档」
+            wrap.addEventListener('click', (ev: MouseEvent) => ev.stopPropagation());
+        }
+        if (opts.size) row.createSpan({ cls: 'rl-asr-model-size', text: opts.size });
+        const pill = row.createSpan({ cls: 'rl-asr-pill', text: opts.pill });
+        if (opts.pillOk) pill.addClass('is-ok');
+        if (opts.pillTip) pill.setAttribute('data-tip', opts.pillTip);
+
+        // 🔴 第⑤条之后「选中」不再由整行承担：圆点与状态胶囊是那两个入口（见上面注释）。
+        //    ⚠️ 当前选中的行点了也什么都不做（`selectable=false`）—— 重复点自己没意义，
+        //      但⛔ 别把 `selectable` 判反：那会让「已选中」变成不可点、未选中的变成可点，
+        //      与用户直觉正好相反。
+        if (selectable) {
+            for (const entry of [row.querySelector('.rl-asr-radio'), pill]) {
+                if (!(entry instanceof HTMLElement)) continue;
+                entry.addClass('rl-asr-select');
+                entry.setAttribute('data-tip', '切到这个引擎');
+                entry.addEventListener('click', (ev: MouseEvent) => {
+                    ev.stopPropagation();
+                    opts.onUse?.();
+                });
+            }
+        }
+
+        // 「下载 / 一键装好」是「装东西」，与「选哪个」不是一回事，
+        // 混进整行点击会变成「点一下就下载 228MB」，所以按钮各自 stopPropagation。
+        if (opts.action === 'download') {
+            const btn = row.createEl('button', { cls: 'rl-asr-model-act', text: '下载' });
+            btn.addEventListener('click', (ev: MouseEvent) => {
+                ev.stopPropagation();
+                opts.onDownload?.();
+            });
+        } else if (opts.action === 'bundle') {
+            // bundle：点开的是「安装清单」弹窗，进度与打勾都在弹窗里，
+            // 这里⛔ 不再自己把按钮切成「正在安装…」—— 那会让设置页和弹窗显示两份进度。
+            const btn = row.createEl('button', { cls: 'rl-asr-model-act', text: '一键装好' });
+            btn.addEventListener('click', (ev: MouseEvent) => {
+                ev.stopPropagation();
+                opts.onBundle?.(btn, row);
+            });
+        }
+
+        // ── 环境配置折叠（本轮第⑤条 → m02783 改成箭头收放 → 2026-11-07 本轮第②条）──
+        // 面板挂在**行之后**，默认 `hidden`；点行尾箭头切换 `is-open` + `aria-expanded`。
+        // ⛔ 不用 `display:none` 类手写：这里用 `hidden` 属性，主题的 `[hidden]` 规则能统一压住，
+        //    且读屏也认。
+        if (collapsible) {
+            /**
+             * 🔴 箭头必须在**面板之前**创建（本轮第②条「始终在模型家行不变动位置」）。
+             *
+             *    为什么：行的布局是 `display:flex` + `flex-wrap:wrap`，面板是 `flex-basis:100%`
+             *    的整行块。DOM 顺序决定换行位置 —— 先建面板再建箭头，箭头会被排到面板**下一行**，
+             *    展开时整枚箭头往下跳一截（实测就是这样）。先建箭头再建面板，箭头就永远跟在
+             *    「体积 / 胶囊 / 动作按钮」后面同一行，展开只是往下长出面板。
+             *    ⛔ 别把这两行的创建顺序调回来。
+             *
+             * 真 `<button>`（不是带 role 的 span）：键盘 Enter/Space、焦点环、`disabled` 全部白拿。
+             * `aria-expanded` 挂在它身上，读屏念「展开环境配置 按钮 已折叠」。
+             *
+             * 🔴 2026-11-12（用户 m00353 ①-9「部分按钮 hover 双提示重叠覆盖」）：
+             *    这里原本 `aria-label` 与 `data-tip` 同时挂 —— 同一颗箭头 hover 出**两层气泡**。
+             *    现在悬停提示只走 `setTip`（单一 `data-tip`），读屏名走 `srLabel`（`<span class="rl-sr">`），
+             *    `aria-expanded` 保持不动（它只报折叠状态，不触发气泡）。
+             *    ⚠️ `safeSetIcon` 会把按钮内容整个换掉，所以 `srLabel` 必须排在它**后面**。
+             */
+            const chev = row.createEl('button', { cls: 'rl-asr-chev' });
+            chev.setAttribute('aria-expanded', 'false');
+            safeSetIcon(chev, 'chevron-right');
+            setTip(chev, '展开环境配置');
+            srLabel(chev, '展开环境配置');
+
+            const panel = row.createDiv({ cls: 'rl-asr-env' });
+            panel.hidden = true;
+            envPanel = panel;
+            opts.env?.(panel);
+
+            const toggle = (): void => {
+                const open = panel.hidden;
+                panel.hidden = !open;
+                row.toggleClass('is-open', open);
+                chev.setAttribute('aria-expanded', open ? 'true' : 'false');
+                setTip(chev, open ? '收起环境配置' : '展开环境配置');
+                srLabel(chev, open ? '收起环境配置' : '展开环境配置');
+            };
+            chev.addEventListener('click', (ev: MouseEvent) => {
+                // 行现在是「点一下=选中」（见函数末尾），箭头只收放，两件事必须分开
+                ev.stopPropagation();
+                toggle();
+            });
+            /**
+             * 🔴 2026-11-07 本轮第②条：**不再给「当前选中那家」默认展开**。
+             *
+             *    上一轮（#719）写的是「当前选中的那家默认展开 —— 它是用户正在用的，配置状态最该被看见」。
+             *    本轮用户逐字要求「把语音服务的模型选择只勾选不展开环境配置」，而点整行选中之后
+             *    设置页会重渲染、那一行就成了 `opts.current` ⇒ 旧规则会**替用户把面板展开**，
+             *    真机实测就是这个现象（点 Qwen3-ASR 选中后 `panelHidden` 从 true 变 false）。
+             *    所以默认展开整条取消：三行一律收起，要看配置自己点箭头。
+             *    ⚠️ 这不是把 #719 的判断推翻了 —— #719 说的是「没有默认展开就不知道有配置」，
+             *      那种担心由**箭头本身常驻可见**承担（`.rl-asr-chev` 的 opacity 从不降到 0），
+             *      不需要靠自动展开。⛔ 别为了「体贴」把默认展开加回来。
+             */
+        }
+
+        /**
+         * 🔴 2026-11-07 本轮第②条（用户逐字：「把语音服务的模型选择只勾选不展开环境配置，
+         *    而且这个下拉箭头透明化无边框化并始终在模型家行不变动位置」）：
+         *    整行点击**只负责选中**，⛔ 不再收放环境配置 —— 收放归箭头，两件事彻底分开。
+         *
+         *    为什么这样分：
+         *      · 上一轮把整行点击挪给了收放，导致「想换引擎得去点那个小圆点」，
+         *        而用户对「点一行就该选它」的直觉更强（这是列表项，不是折叠区标题）；
+         *      · 收放是**次要动作**、选中是**主要动作** —— 主要动作铺满整行、次要动作缩到
+         *        22px 的箭头里，点击面积与动作重要性成正比。
+         *
+         *    ⚠️ 排除范围（点这些不该顺手切引擎）：
+         *      环境配置面板内（`envPanel.contains`）、档位下拉（自己已 stopPropagation）、
+         *      下载 / 一键装好按钮（同上）、圆点 / 胶囊（它们自己就是选中入口，已 stopPropagation）。
+         *    ⚠️ 已选中的行走不到这里（`selectable=false`）：重复点自己没意义。
+         */
+        if (selectable) {
+            row.addClass('is-clickable');
+            row.addEventListener('click', (ev: MouseEvent) => {
+                const t = ev.target as Node | null;
+                if (envPanel && t && envPanel.contains(t)) return;
+                opts.onUse?.();
+            });
+        }
+    }
+
 
     /** 「基本设置」页 · 第 3 组「数据与备份」（原「数据管理」页的前三段） */
     private renderDataBackupRows(parent: HTMLDivElement): void {
@@ -4973,10 +9593,17 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         desc: string,
         getCur: () => string | undefined,
         onCommit: (next: string) => Promise<void>,
-        slot: 'dl' | 'book',
+        slot: 'dl' | 'book' | 'game',
         kind: DownloadKind,
     ): void {
         const row = new Setting(parent).setName(name).setDesc(desc);
+        // 🔴 本轮：目录行是折叠项下的**从属项** ⇒ 挂 `.rl-dir-sub` 缩进（与 `createLocalDirRow` 同一口径，
+        //    缩进值统一写在 `styles.css`，⛔ 别内联）。
+        row.settingEl.addClass('rl-dir-sub');
+        // 🔴 m03052①：宽度类。根因/口径见方法末尾那段长注释（⛔ 别挪到这儿 ——
+        //    `assert-symbols` 的三条判据是「方法起点后 N 个字符内找 setPlaceholder / blur / Enter」，
+        //    在方法开头插长注释会把它们整体挤出窗口，实测一轮红 3 条）。
+        row.settingEl.addClass('rl-dir-row');
         const hint = row.descEl.createDiv({ cls: 'rl-hint-note' });
         const setHint = (msg: string, isError = false): void => {
             hint.setText(msg);
@@ -5016,30 +9643,94 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 void commit();
             };
             // 重渲染前先收掉上一次的浮层（同一个 slot 至多一个）
-            const prev = slot === 'dl' ? this.dlFolderSuggest : this.bookFolderSuggest;
+            const prev =
+                slot === 'dl' ? this.dlFolderSuggest : slot === 'book' ? this.bookFolderSuggest : this.gameFolderSuggest;
             prev?.close();
             const inst = attachFolderInputSuggest(this.app, text.inputEl, folders, fromPick);
             if (slot === 'dl') this.dlFolderSuggest = inst;
-            else this.bookFolderSuggest = inst;
-            if (!inst) {
-                row.addButton((b) =>
-                    b.setButtonText('浏览').onClick(() => {
-                        new VaultFolderSuggest(this.app, folders, fromPick).open();
-                    }),
-                );
-            }
+            else if (slot === 'book') this.bookFolderSuggest = inst;
+            else this.gameFolderSuggest = inst;
+            // 🔴🔴 本轮用户裁定（需求①）：浏览按钮**恒常出现**、桌面端**直接唤起系统文件选择器**。
+            //    与 `createLocalDirRow` 同一套口径（那边注释写全了理由），此处不再重复长篇：
+            //      · 首选 `plugin.pickSystemDirectory()` → 能选库外绝对路径；
+            //      · 只有 `!Platform.isDesktopApp` 才回退 `VaultFolderSuggest`（库内）；
+            //      · 用户取消回 undefined ⇒ 什么都不做，⛔ 别掉进补全框。
+            row.addButton((b) => {
+                b.setButtonText('浏览');
+                b.buttonEl.addClass('rl-dir-browse');
+                b.onClick(() => {
+                    if (Platform.isDesktopApp) {
+                        void this.plugin.pickSystemDirectory(normalizeDownloadRoot(getCur(), kind)).then((picked) => {
+                            if (!picked) return;
+                            text.setValue(picked);
+                            void commit();
+                        });
+                        return;
+                    }
+                    new VaultFolderSuggest(this.app, folders, fromPick).open();
+                });
+            });
         });
+        // 🔴🔴 用户 m03052（逐字）：「播放阅读设置页的音乐目录和游戏目录的框宽度和其他关联目录不统一啊」。
+        //    **根因**：输入框宽度收敛全靠 `.rl-dir-row`（`styles.css` 里
+        //    `.rl-dir-row .setting-item-control { flex: 1 1 auto; min-width: 0; margin-inline-end: 8px; }`
+        //    + `.rl-dir-row .setting-item-control input[type="text"] { flex: 1 1 auto; width: auto; }`）——
+        //    而本工厂原先**只挂了 `rl-dir-sub`（缩进）没挂 `rl-dir-row`（宽度）**，于是音乐 / 游戏这两行的
+        //    输入框退回 Obsidian 默认的 `width: auto` 靠内容撑，与文学 / 网文 / 电影…那几行对不齐。
+        //    ⚠️ 两个类各管一件事（`createLocalDirRow` 那边注释写全了）：`rl-dir-row` = 宽度，
+        //    `rl-dir-sub` = 缩进。⛔ 别把宽度规则直接写在这里（内联会盖掉主题与 CSS 收敛规则）。
+        //    ⚠️ 这段解释**必须留在方法末尾**：`assert-symbols` 对 `createLibraryDirRow` 的三条判据
+        //    是按「方法起点后 1200/2400/2700 个字符」开窗找 `setPlaceholder` / `blur` / `Enter` 的，
+        //    写进方法开头会把它们整体挤出窗口（实测一次红 3 条）。
     }
 
-    /** 「基本设置」页 · 第 4 组「封面与清理」（原「数据管理」页的后两段 + 迁移进度条） */
+    /**
+     * 「基本设置」页 · 第 4 组「管理与维护」。
+     *
+     * 🔴🔴 **2026-11-13 用户指令（现行定稿，七行的顺序 / 名称 / 描述 / 按钮文案逐字对齐）**：
+     *   1 从笔记导入条目「扫描并解析笔记，快速生成系统条目」按钮 导入 / 模板
+     *   2 下载封面到本地「抓取网络封面图片并保存至本地」按钮 下载
+     *   3 关联媒体重命名「按设定规则批量重命名关联的媒体文件」按钮 重命名
+     *   4 失效性链接检测「全面检测库内网络链接的有效性」按钮 检测
+     *   5 清理未引用附件「清理未引用的封面与阅读存档」按钮 清理
+     *   6 附件管理与浏览「浏览被清理或删除的历史附件文件」按钮 查看
+     *   7 条目记录还原「恢复近期删除的条目记录」按钮 还原
+     *   ⚠️ 顺序即契约：**「导入 → 下载 → 重命名 → 检测 → 清理 → 查看 → 还原」**，
+     *      由「把内容补进来」到「修好已有」再到「清理/回滚」的动线排列，⛔ 别按字母或旧顺序重排。
+     */
     private renderPosterCleanupRows(parent: HTMLDivElement): void {
-        // ③ 下载封面（一键迁移：网络封面下载到 封面/{标题}.jpg；开关已移除，字段保留兼容旧数据）
+        // ① 从笔记导入条目（🔴 2026-11-08 用户指令：「是手写的条目在海报墙上展示无法出现，
+        //      但笔记文件存在是怎么回事，有没有再加个检索库内笔记文件生成条目的项在基本设置下」）
+        // 🔴 根因：海报墙只读 `catalog.json`，插件没有任何反向扫描能力 ⇒ 手工写的笔记不落 catalog 就永不显示。
+        //   整条流程（扫 `{lib}/笔记/` → 弹窗勾选 → 落 catalog → 回写 id）收进 `main.openNoteImport()`，
+        //   设置页只负责点一下（与「下载封面到本地」同架构，⛔ 别在这里自己扫库）。
+        // 🔴 2026-11-08 用户指令：「给从笔记导入条目项加个『生成模板』按钮，可在仓库根目录生成笔记模板」
+        //   ⇒ 同一行挂第二个按钮（⛔ 不新开一 Setting 行：这两个动作是同一件事的「准备」与「执行」，
+        //     拆成两行会让用户以为模板是独立功能）。
+        //   落盘位置 `{lib}/条目模板.md`（与 `笔记/` 同级）：扫描器只扫 `笔记/` 子树 ⇒ 模板不可能被导进去。
         new Setting(parent)
-            .setName('下载封面')
-            // #477：统一标准动作词「下载 / 保存」（口径见 renderAppearanceRows）
-            .setDesc('将网络封面下载并保存到本地')
+            .setName('从笔记导入条目')
+            .setDesc('扫描并解析笔记，快速生成系统条目')
             .addButton((b) =>
-                b.setButtonText('一键迁移').onClick(() => {
+                b.setButtonText('导入').onClick(() => {
+                    void this.plugin.openNoteImport();
+                }),
+            )
+            .addButton((b) =>
+                b.setButtonText('模板')
+                    .setTooltip('在媒体库目录下生成「条目模板.md」：六种类型的可复制 frontmatter 区块')
+                    .onClick(() => {
+                        void this.plugin.writeNoteTemplate();
+                    }),
+            );
+
+        // ② 下载封面到本地（一键迁移：网络封面下载到 封面/{标题}.jpg；开关已移除，字段保留兼容旧数据）
+        new Setting(parent)
+            .setName('下载封面到本地')
+            // #477：统一标准动作词「下载 / 保存」（口径见 renderAppearanceRows）
+            .setDesc('抓取网络封面图片并保存至本地')
+            .addButton((b) =>
+                b.setButtonText('下载').onClick(() => {
                     // 🔴 2026-10-25 用户指令：「点击"一键迁移"先弹窗列出当前可以迁移的封面条目出来然后用户勾选再迁移，默认全选」
                     //    ⇒ 整条流程（扫候选 → 勾选弹窗 → 进度弹窗 → 迁移）收进 `main.openPosterMigrate()`，
                     //    设置页只负责点一下，⛔ 不再自己 new 进度弹窗（那会绕过勾选直接全量跑）。
@@ -5047,43 +9738,22 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                 }),
             );
 
-        // ③.5 附件清理（原「清理孤儿封面」）：未被引用的封面 + 条目已删除后遗留的阅读存档，逐项勾选后清理
+        // ③ 关联媒体重命名（🔴 m07854 ⑱ 起的「批量重命名」，2026-11-13 用户指令改名并前移到第三位）
+        //   规则模板改为**按类型分列**的七套（电影/剧集/动画/音乐/漫画/文学/网文），
+        //   真源在 `pure/batchRename.ts` 的 `RENAME_TEMPLATE_GROUPS`，弹窗直接渲染那份数据 ——
+        //   ⛔ 别在这里再抄一遍文案（抄两份必然漂移）。
+        //   ⚠️ 弹窗先列「旧 → 新」再执行 —— 改名是**不可撤销的破坏性操作**（Obsidian 回收站救不回来），
+        //      ⛔ 别做成「点一下直接跑」。
         new Setting(parent)
-            .setName('附件清理')
-            // 🔴 #477 按事实修正：用户建议写「缓存文件」，但**实际清的不是缓存** ——
-            //    两类 = 未被引用的**封面** + 条目删除后遗留的**阅读存档**（`{lib}/阅读进度/*.json`，
-            //    见 `pure/orphanAssets`），弹窗里逐项标的也是「封面 / 阅读存档」⇒ 必须与界面标签同词。
-            .setDesc('清理未引用的封面与阅读存档')
+            .setName('关联媒体重命名')
+            .setDesc('按设定规则批量重命名关联的媒体文件')
             .addButton((b) =>
-                b.setButtonText('扫描').onClick(() => {
-                    void this.plugin.openAssetCleanup();
+                b.setButtonText('重命名').onClick(() => {
+                    void this.plugin.openBatchRename();
                 }),
             );
 
-        // ③.5a 条目还原（用户 2026-10-06 指令：「条目还原：可选回撤删除的条目（5 个）」）
-        //   删除条目时（`main.deleteEntry` / `deleteEntries`）先把条目快照写进 `{lib}/trash.json`，
-        //   这里把最近 5 条列出来供勾选复活。⛔ 文件本身在 Obsidian 回收站，弹窗里已如实说明。
-        new Setting(parent)
-            .setName('条目还原')
-            .setDesc('恢复最近删除的 5 个条目')
-            .addButton((b) =>
-                b.setButtonText('还原').onClick(() => {
-                    void this.plugin.openEntryRestore();
-                }),
-            );
-
-        // ③.5b 附件管理（同一指令：「附件管理：支持浏览所有关联的条目 - 笔记 - 图片 - 附件，可选删除」）
-        //   ⚠️ 与上一行「附件清理」的区别：清理只认**孤儿**（没人引用的），管理浏览的是**全部**关联文件（含正在用的）。
-        new Setting(parent)
-            .setName('附件管理')
-            .setDesc('查看每次删除带走的文件')
-            .addButton((b) =>
-                b.setButtonText('浏览').onClick(() => {
-                    void this.plugin.openAssetManager();
-                }),
-            );
-
-        // ③.6 失效链接检测（🔴 #531，用户 2026-10-05 指令：「把检测已填网络地址是否失效按钮放在设置页-基本设置-
+        // ④ 失效性链接检测（🔴 #531，用户 2026-10-05 指令：「把检测已填网络地址是否失效按钮放在设置页-基本设置-
         //      封面与清理下面，功能为**全库**检索失效链接标红」）—— 原在**编辑表单**里的那枚按钮**已撤**，
         //      改成这里一键扫全库；结果只存内存，失效的集在**编辑表单 / 集数选择弹窗**里标红（用户裁定「仅表单/弹窗」）。
         // 🔴 2026-10-19 用户指令（设置页 UX 改版 ⑤-2）：结果**不再埋在设置页里**（原来那行 `.rl-hint` 在长设置页
@@ -5091,8 +9761,8 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         //    `scanLibraryLinks()` 因此扩了返回值：除四个计数外还带 `items`（失效明细，逐条 label + url）。
         let scanning = false;
         new Setting(parent)
-            .setName('失效链接检测')
-            .setDesc('检测全库网络链接是否失效')
+            .setName('失效性链接检测')
+            .setDesc('全面检测库内网络链接的有效性')
             .addButton((b) => {
                 b.setButtonText('检测').onClick(() => {
                     // 防重入：全库扫描是串行网络请求，连点会打出多份请求并把结果互相覆盖
@@ -5100,26 +9770,67 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     scanning = true;
                     b.setDisabled(true);
                     b.setButtonText('检测中…');
+                    // 🔴 2026-11-17 用户报障（⑥-A）修复：「按一下后误退出仍显示『检测中』、最终无结果弹窗」。
+                    //
+                    // 根因（已核实，⛔ 不是文案问题）：`services/nodeHttp` 的 `TIMEOUT_MS = 30_000`
+                    //   是 **socket 空闲超时**、不是整条请求的截止时间，重定向链每跳重算；
+                    //   加上全库成百条地址串行跑，整趟动辄几分钟且**没有任何中途出口**。
+                    //   用户唯一能做的是按 ✕ 关窗 —— 而关窗后 `finishScan()` 里
+                    //   `if (this.subEl)` / `if (wasScanning)` 全部静默 no-op，
+                    //   结果**彻底丢失**，按钮还停在「检测中…」，这就是「误退出」的完整真相。
+                    //
+                    // 三处修法（对应三条根因，⛔ 只改一处都不够）：
+                    //   ⑴ 服务层 `LINK_CHECK_TIMEOUT_MS` 单条硬截止 ⇒ 整趟一定能在有限时间内落定；
+                    //   ⑵ 弹窗给「停止检测」出口 + `LinkCheckSignal` ⇒ 用户想中断时有正路，不必关窗；
+                    //   ⑶ 关窗后宿主仍用 Notice 把结果说清楚 ⇒ 关窗不再等于「白跑」。
+                    //
                     // 🔴 2026-10-25 用户指令：**先弹窗再陆续显示**检测到的失效链接。
                     //    ⇒ 先用 progressive 工厂开一个空壳（标题 + 「正在检测…」），
                     //      再把 `onDead` 接上宿主，每抓到一条就往列表里追加一行。
                     //    ⛔ 别再退回「扫完才 new LinkCheckModal(...items)」—— 那等于用户盯着一个不动的按钮等全库。
+                    const signal = { stopped: false };
                     const modal = LinkCheckModal.progressive(
                         this.app,
                         { entries: 0, dead: 0, unknown: 0 },
                         // 执行体留在宿主（`plugin.clearDeadLinks`），弹窗只负责确认与反馈 ——
                         // ⛔ 别在弹窗里自己改 catalog：写盘要过 `service.update` 的唯一收口。
                         () => this.plugin.clearDeadLinks(),
+                        // 「停止检测」：只置标志，⛔ 不 close()、也不撤销在途请求 ——
+                        // 在途那条会跑完或被 12s 硬截止掐掉，已抓到的结果照常入列（用户要的是「别扫了」，不是「当没扫过」）。
+                        () => {
+                            signal.stopped = true;
+                        },
                     );
                     modal.markScanning();
                     modal.open();
                     void this.plugin
-                        .scanLibraryLinks((item) => modal.appendItem(item))
+                        .scanLibraryLinks((item) => modal.appendItem(item), {
+                            signal,
+                            onProgress: (done, total) => modal.setProgress(done, total),
+                        })
                         .then((r) => {
-                            modal.finishScan({ entries: r.entries, dead: r.dead, unknown: r.unknown });
+                            const stopped = r.stopped;
+                            modal.finishScan(
+                                { entries: r.entries, dead: r.dead, unknown: r.unknown },
+                                { stopped, done: r.done, total: r.total },
+                            );
+                            // 🔴 关窗兜底：用户中途按 ✕ 关掉弹窗后，`finishScan` 对界面是 no-op，
+                            //    必须用 Notice 告诉他「跑完了 / 被你停了 / 抓到几条」，否则就是白跑一趟。
+                            //    ⚠️ 判据用 `closedByUser` 而不是「有没有 listEl」：后者在 `clearDead()` 成功
+                            //       后也会是 null（它自己会 close），那条路不该再弹一条重复的汇总。
+                            if (modal.closedByUser) {
+                                new Notice(
+                                    stopped
+                                        ? `链接检测已停止：查了 ${r.done} / ${r.total} 条，发现 ${r.dead} 条可能已失效`
+                                        : `链接检测完成：${r.entries} 个条目、${r.total} 条地址，${r.dead} 条可能已失效`,
+                                    9000,
+                                );
+                            }
                         })
                         .catch(() => {
-                            modal.close();
+                            // ⚠️ 走到这里说明是**真异常**（服务层单条失败一律吞成 unknown，⛔ 不会抛）。
+                            //    关窗只在还开着时做，否则 Obsidian 会对着已销毁的 modal 再走一次 onClose。
+                            if (!modal.closedByUser) modal.close();
                             new Notice('检测失败，请稍后再试');
                         })
                         .finally(() => {
@@ -5129,6 +9840,45 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                         });
                 });
             });
+
+        // ⑤ 清理未引用附件（原「附件清理」「清理孤儿封面」）：未被引用的封面 + 条目已删除后遗留的阅读存档，
+        //   逐项勾选后清理。⚠️ 与下面「附件管理与浏览」的区别：清理只认**孤儿**（没人引用的），
+        //   管理浏览的是**全部**历史文件（含正在用的）。
+        new Setting(parent)
+            .setName('清理未引用附件')
+            // 🔴 #477 按事实修正：用户建议写「缓存文件」，但**实际清的不是缓存** ——
+            //    两类 = 未被引用的**封面** + 条目删除后遗留的**阅读存档**（`{lib}/阅读进度/*.json`，
+            //    见 `pure/orphanAssets`），弹窗里逐项标的也是「封面 / 阅读存档」⇒ 必须与界面标签同词。
+            // 🔴 2026-11-13 用户指令（m00002 表格第 5 行逐字）：desc 就是「清理未引用的封面与阅读存档」——
+            //    ⛔ 别再自作主张塞「本地」二字（我上一版塞过，既偏离用户原话，又让 #477 产物抽查翻红）。
+            .setDesc('清理未引用的封面与阅读存档')
+            .addButton((b) =>
+                b.setButtonText('清理').onClick(() => {
+                    void this.plugin.openAssetCleanup();
+                }),
+            );
+
+        // ⑥ 附件管理与浏览（用户 2026-10-06 原指令：「附件管理：支持浏览所有关联的条目 - 笔记 - 图片 - 附件，可选删除」）
+        new Setting(parent)
+            .setName('附件管理与浏览')
+            .setDesc('浏览被清理或删除的历史附件文件')
+            .addButton((b) =>
+                b.setButtonText('查看').onClick(() => {
+                    void this.plugin.openAssetManager();
+                }),
+            );
+
+        // ⑦ 条目记录还原（用户 2026-10-06 指令：「条目还原：可选回撤删除的条目（5 个）」）
+        //   删除条目时（`main.deleteEntry` / `deleteEntries`）先把条目快照写进 `{lib}/trash.json`，
+        //   这里把最近 5 条列出来供勾选复活。⛔ 文件本身在 Obsidian 回收站，弹窗里已如实说明。
+        new Setting(parent)
+            .setName('条目记录还原')
+            .setDesc('恢复近期删除的条目记录')
+            .addButton((b) =>
+                b.setButtonText('还原').onClick(() => {
+                    void this.plugin.openEntryRestore();
+                }),
+            );
     }
 
     /**
@@ -5175,7 +9925,45 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         // ⚠️ `PluginManifest` 类型里**没有** `license`（obsidian 的 manifest.json 有这个键）⇒ 读可选键 + 兜底。
         //    真源仍是 `package.json` / `LICENSE` / `manifest.json` 三处（本仓红线），这里只是显示。
         const license = (this.plugin.manifest as { license?: string }).license ?? 'GPL-3.0';
-        infoText.createDiv({ cls: 'rl-about-meta', text: `作者 ${this.plugin.manifest.author} · 许可证 ${license}` });
+        const metaRow = infoText.createDiv({ cls: 'rl-about-meta' });
+        // 🔴 2026-11-12 用户逐字（m00353 ①-11）：「设置-关于页 ReelLudic 信息栏『同作者 fhb263』
+        //    **前面加个 B 站 logo 可点击跳转 B 站主页**」。
+        //    ⚠️ 四条口径：
+        //    ⑴ **图标不新画**：直接复用 `NET_COOKIE_ICON.bilibili`（simple-icons v16 官方标，
+        //       CC0-1.0，与 `pure/searchIcons` 同源同值）→ 走全仓唯一的品牌标渲染器
+        //       `renderAiIcon`。⛔ 别在本页手写 `<svg><path d=…>`，那会造出第二份品牌路径。
+        //    ⑵ **是 `<a>` 不是 `<button>`**：它就是个外部链接，`href` 让「中键新标签 / 悬停看状态栏 /
+        //       右键复制地址」这些浏览器原生行为白拿；做成 button + `window.open` 反而少一圈能力。
+        //       ⚠️ Obsidian 编辑器里左键点 `<a>` 会被宿主接管（默认在当前窗打开），
+        //       故仍 `preventDefault` + `window.open(..., '_blank')` 显式开新页 —— 与同页 Github /
+        //       报 Bug 按钮的行为保持一致（那几枚也是新标签打开）。
+        //    ⑶ **读屏名走 `.rl-sr` 隐藏文本、悬停说明走 `data-tip`**：⛔ 两样都别用 `aria-label` ——
+        //       Obsidian 会对带 `aria-label` 的悬停元素自绘官方气泡，与本仓 `data-tip` 气泡叠成两层
+        //       （UI-GUIDE §3 并存禁令；本元素在设置页这个独立窗口里，`data-tip` 已由
+        //       `bindTooltipDocument` 绑好，见 `display()`）。
+        //    ⑷ 颜色**不写死**：默认继承 `.rl-about-meta` 的 `--text-faint`，hover 才升到 `--text-accent`
+        //       （与这一行「作者 · 许可证」的层级一致，不抢「爱发电」的行动召唤）。
+        // 🔴 2026-11-12 用户 `m05813` 改口径：「设置-关于页 ReelLudic 信息栏的 b 站图标
+        //    跟上 github 的图标，点击可跳转作者主页『https://github.com/fhb263』」
+        //    ⇒ 图标从 `NET_COOKIE_ICON.bilibili` 换成 `AUTHOR_GITHUB_ICON`，落点从 B 站空间
+        //      换成作者 GitHub 主页（`AUTHOR_GITHUB_URL`，⛔ 不是 `REPO_URL` —— 那是仓库地址）。
+        //    ⚠️ `BILI_SPACE_URL` / `BILI_SPACE_TIP` 两个常量**保留**（①-11 的交付物，
+        //      断言脚本锚了它们），只是本页不再消费；⛔ 别顺手删掉。
+        //    ⚠️ 四条口径沿用：⑴ 图标不新画，走全仓唯一品牌标渲染器 `renderAiIcon`；
+        //      ⑵ 是 `<a>` 不是 `<button>`（中键新标签 / 悬停看状态栏 / 右键复制地址白拿）；
+        //      ⑶ 读屏名走 `.rl-sr`、悬停说明走 `data-tip`，⛔ 两样都别用 `aria-label`（会叠两层气泡）；
+        //      ⑷ 颜色不写死，继承 `.rl-about-meta` 的 `--text-faint`，hover 才升 `--text-accent`。
+        const authorLink = metaRow.createEl('a', {
+            cls: 'rl-about-bili',
+            attr: { href: AUTHOR_GITHUB_URL, 'data-tip': AUTHOR_GITHUB_TIP, rel: 'noopener' },
+        });
+        authorLink.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            window.open(AUTHOR_GITHUB_URL, '_blank');
+        });
+        renderAiIcon(authorLink.createSpan({ cls: 'rl-ai-icon' }), AUTHOR_GITHUB_ICON);
+        authorLink.createSpan({ cls: 'rl-sr', text: AUTHOR_GITHUB_TIP });
+        metaRow.createSpan({ text: `作者 ${this.plugin.manifest.author} · 许可证 ${license}` });
 
         const infoBtns = info.createDiv({ cls: 'rl-about-buttons' });
         // 🔴🔴 #686（用户 2026-10-19）：「更新日志、爱发电按钮放在 ReelLudic 信息栏；报 Bug、提需求、Github

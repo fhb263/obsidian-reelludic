@@ -21,7 +21,10 @@
 
 import { Modal, Notice, type App } from 'obsidian';
 import { applyScrollPref } from 'services/scrollPref';
+import { steamHintSections } from 'pure/syncHint';
+import { renderSyncHint } from 'modals/syncHintView';
 import { minutesToHours, type SteamSyncCandidate } from 'pure/steamSync';
+import { steamCoverUrl } from 'pure/steamCover';
 
 /** 列表一行 = 一条候选 + 库内是否已有 */
 export interface SteamSyncRow extends SteamSyncCandidate {
@@ -74,15 +77,8 @@ export class SteamSyncModal extends Modal {
         contentEl.addClass('rl-wshelf-modal');
         this.titleEl.setText('从 Steam 同步游戏库与愿望单');
 
-        contentEl.createDiv({
-            cls: 'rl-wshelf-hint',
-            text:
-                '读取你 Steam 账号的游戏库（含游玩时长）与愿望单，勾选后导入本库（只读 Steam，不会改动那边的内容）。'
-                + '勾选 = 写入：库里没有的会新建；库里已有的（标「库里已有」）勾上就是覆盖 —— 只换 Steam 来源的字段'
-                + '（标题 / 封面 / 平台 / 开发商 / 发行年 / 题材 / 简介 / 游玩时长），你自己的评语 / 进度 / 摘抄 / 标签 / 个人评分不会被动。'
-                + '需要先在「设置 › 元数据源配置 › 元数据搜索源凭据 › Steam」里填 API Key（32 位十六进制）与 SteamID（17 位数字），'
-                + '并把「个人资料」与「愿望单」设为公开可见。',
-        });
+        // 🔴 2026-11-11 用户 m05717 ②：三段式（同步数据 / 冲突处理 / 前置条件），标签加粗 + 全角冒号
+        renderSyncHint(contentEl.createDiv({ cls: 'rl-wshelf-hint' }), steamHintSections());
 
         const status = contentEl.createDiv({ cls: 'rl-wshelf-status', text: '正在读取游戏库与愿望单…' });
         const bar = contentEl.createDiv({ cls: 'rl-wshelf-bar' });
@@ -148,7 +144,7 @@ export class SteamSyncModal extends Modal {
                     rowEl.createEl('img', {
                         cls: 'rl-wshelf-cv',
                         attr: {
-                            src: `https://cdn.cloudflare.steamstatic.com/steam/apps/${r.appid}/library_600x900.jpg`,
+                            src: steamCoverUrl(r.appid),
                             loading: 'lazy',
                             decoding: 'async',
                             alt: '',

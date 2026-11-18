@@ -62,6 +62,106 @@ export function normalizeShotRect(
 }
 
 /**
+ * 框选矩形的调整手柄方向（2026-11-13 用户指令：「批注模式下框选后可进行六向调整宽高」）。
+ *
+ * `n`/`s` 调高、`e`/`w` 调宽，四个角同时调两向 —— 合起来就是用户说的「六向」：
+ * 上、下、左、右、以及两个「斜向」（角点）。
+ */
+export type ShotHandle = 'n' | 's' | 'e' | 'w' | 'nw' | 'ne' | 'sw' | 'se';
+
+/** 全部手柄（工具条/浮层的渲染顺序，⛔ 别在面板里另写一份）。 */
+export const SHOT_HANDLES: readonly ShotHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+
+/** 手柄命中半径（CSS px）—— 太小手感差，太大挡住批注落笔。 */
+export const SHOT_HANDLE_HIT = 10;
+
+/**
+ * 从一次拖拽造矩形（框选起点 → 当前点），钳制进 `bounds`。
+ * 与 `normalizeShotRect` 的差别：这里**不判最小尺寸**（调整过程中允许暂时变很小，松手时才判）。
+ */
+export function rectFromDrag(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    bounds: { left: number; top: number; right: number; bottom: number },
+): ShotRect {
+    const left = Math.max(bounds.left, Math.min(Math.min(x1, x2), bounds.right));
+    const top = Math.max(bounds.top, Math.min(Math.min(y1, y2), bounds.bottom));
+    const right = Math.min(bounds.right, Math.max(Math.max(x1, x2), bounds.left));
+    const bottom = Math.min(bounds.bottom, Math.max(Math.max(y1, y2), bounds.top));
+    return {
+        x: Math.round(left),
+        y: Math.round(top),
+        width: Math.round(Math.max(0, right - left)),
+        height: Math.round(Math.max(0, bottom - top)),
+    };
+}
+
+/**
+ * 命中测试：落在哪个手柄上 / 落在框内 / 都没落。
+ *
+ * 手柄优先于框内 —— 边角处的「缩一点」比「开始画一笔」更符合直觉（pixpin 同款）。
+ * `tol` 是手柄命中半径；框内判定用矩形本身。
+ */
+export function hitShotHandle(
+    rect: ShotRect,
+    x: number,
+    y: number,
+    tol = SHOT_HANDLE_HIT,
+): ShotHandle | 'inside' | null {
+    const nearLeft = Math.abs(x - rect.x) <= tol;
+    const nearRight = Math.abs(x - (rect.x + rect.width)) <= tol;
+    const nearTop = Math.abs(y - rect.y) <= tol;
+    const nearBottom = Math.abs(y - (rect.y + rect.height)) <= tol;
+    const withinX = x >= rect.x - tol && x <= rect.x + rect.width + tol;
+    const withinY = y >= rect.y - tol && y <= rect.y + rect.height + tol;
+    if (nearLeft && nearTop) return 'nw';
+    if (nearRight && nearTop) return 'ne';
+    if (nearLeft && nearBottom) return 'sw';
+    if (nearRight && nearBottom) return 'se';
+    if (nearTop && withinX) return 'n';
+    if (nearBottom && withinX) return 's';
+    if (nearLeft && withinY) return 'w';
+    if (nearRight && withinY) return 'e';
+    if (x > rect.x && x < rect.x + rect.width && y > rect.y && y < rect.y + rect.height) return 'inside';
+    return null;
+}
+
+/**
+ * 六向调整：按手柄方向移动对应边，钳制进 `bounds`，并保证不小于 `min`。
+ *
+ * 🔴 钳制的方向要跟着手柄走：拖 `n` 时只有 `top` 能变，`bottom` 必须钉住 ——
+ *    否则用户往上拖，框会「整体上移」而不是「变高」，手感完全不同。
+ * 🔴 `min` 的作用是**不让框被拖没**：到下限时只钉住被拖的那条边，另一条边不动。
+ */
+export function resizeShotRect(
+    rect: ShotRect,
+    handle: ShotHandle,
+    dx: number,
+    dy: number,
+    bounds: { left: number; top: number; right: number; bottom: number },
+    min = SHOT_MIN_SIZE,
+): ShotRect {
+    let left = rect.x;
+    let top = rect.y;
+    let right = rect.x + rect.width;
+    let bottom = rect.y + rect.height;
+    if (handle.includes('w')) left = Math.min(left + dx, right - min);
+    if (handle.includes('e')) right = Math.max(right + dx, left + min);
+    if (handle.includes('n')) top = Math.min(top + dy, bottom - min);
+    if (handle.includes('s')) bottom = Math.max(bottom + dy, top + min);
+    left = Math.max(bounds.left, Math.min(left, bounds.right));
+    top = Math.max(bounds.top, Math.min(top, bounds.bottom));
+    right = Math.min(bounds.right, Math.max(right, bounds.left));
+    bottom = Math.min(bounds.bottom, Math.max(bottom, bounds.top));
+    // 越界钳制后可能又把宽度压到 min 以下（容器本来就窄）⇒ 至少保住 min 与容器的较小者
+    const w = Math.max(Math.min(min, bounds.right - bounds.left), right - left);
+    const h = Math.max(Math.min(min, bounds.bottom - bounds.top), bottom - top);
+    return { x: Math.round(left), y: Math.round(top), width: Math.round(w), height: Math.round(h) };
+}
+
+/**
  * 文件名主干：`<书名> <YYYYMMDD-HHmmss>`（例：`三体 20261023-153012`）。
  *
  * 🔴 2026-10-23 用户指令：「区域截图生成的图片文件名不要是 `书名 截图1` 这类，改成能适配

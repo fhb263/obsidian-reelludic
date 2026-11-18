@@ -1,6 +1,6 @@
 # DESIGN.md — ReelLudic 技术设计
 
-> 版本：**v1.4.0 期**（最近发布版 v1.3.0 / 2026-10-11；**当前开发版 1.4.0 / 2026-10-16**）| 最后更新：**2026-10-16** | 状态：已实现（本文件为当前实现的实现依据，随代码演进）
+> 版本：**v1.5.0 期**（上一发布版 1.4.0 / 2026-10-25；**当前开发版与待发布版均为 1.5.0 / 2026-11-07**）| 最后更新：**2026-11-07** | 状态：已实现（本文件为当前实现的实现依据，随代码演进）
 > 🔴 **真源口径**：schema 字段全集、视图 / 命令 ID、数据源清单、目录命名 —— 本文是**导读**，逐项以代码为准（`src/data/types.ts` / `src/views/*.ts` / `src/pure/sourceRegistry.ts` / `src/pure/dirs.ts`）。凡本文与代码冲突，**改本文**。
 
 
@@ -16,31 +16,38 @@
 │    ├─ TrackingBoard（追番表：更新检测 + 一键已更新）     │
 │    ├─ CalendarBoard（排期表：月历/周历 + 拖拽排期 + 到期横幅 + 日期点击弹详情）│
 │    └─ StatsBoard（统计页三层：核心指标 1 主 4 辅 → 动态 → 趋势 → 概览 Tab）│
-│  独立视图（各一个 leaf）：TXT / EPUB / PDF / **漫画** 阅读器 ＋ 视频播放器 ＋ **音频播放器**│
-│  Modals（26 个）：EntryModal（添加/编辑）+ ExcerptModal/GameSessionModal│
+│  独立视图（各一个 leaf）：TXT / EPUB / PDF / **漫画** 阅读器 ＋ 视频播放器 ＋ **音频播放器** ＋ **选集详情页（EpisodePageView，B 站风独立页：三卡 + 内嵌 + 字幕时间轴 + 学习模式）**│
+│  Modals（**36 个 Modal 类 / 44 个文件**）：EntryModal（添加/编辑）+ ExcerptModal/GameSessionModal│
 │          + CalendarDayModal/ConfirmModal/DeleteEntryModal/NoteConflictModal│
-│          + PosterMigrateModal/PosterCleanupModal/PosterSearchModal/AssetCleanupModal│
-│          + LinkPickerModal/EpisodePickerModal/SubtitlePickerModal/QuickAssociateModal│
-│          + SeriesPickerModal/AiPickerModal/ImportBangumiModal/ReleaseNotesModal│
-│          + **BookDownloadModal/MusicDownloadModal/SourceSubscribeModal**│
-│          + **TxtReaderModal/EpubReaderModal/PdfReaderModal/ComicReaderModal**│
+│          + PosterMigrateModal/PosterMigratePickModal/PosterMigrateProgressModal│
+│          + PosterSearchModal/AssetCleanupModal/AssetManagerModal│
+│          + LinkPickerModal/LinkCheckModal/SubtitlePickerModal/QuickAssociateModal│
+│          + SeriesPickerModal/SeriesAssociateModal/SeriesReorderModal/AiPickerModal│
+│          + ImportBangumiModal/ReleaseNotesModal/RoadmapModal│
+│          + **Book/Music 下载 + 各站同步**：DoubanSyncModal/BangumiSyncModal/SteamSyncModal│
+│          + TmdbSyncModal/WereadShelfSyncModal/SourceSubscribeModal│
+│          + **四阅读器 + 语音**：TxtReaderModal/EpubReaderModal/PdfReaderModal/ComicReaderModal│
+│          + AsrEngineModal/AsrInstallModal/NoteImportModal/EntryRestoreModal/EntryLogModal│
+│          + EntryTextModal/TextPromptModal（＋非 Modal 的 ReaderOverlays/ReaderPanelBase/ShotOverlay/VaultFileSuggest/VaultFolderSuggest）│
 └──────────────────────────┬───────────────────────────┘
 ┌─ 功能层 ─────────────────┼───────────────────────────┐
 │  EntryService（增删改查编排、状态流转、笔记生成/双写冲突）│
 │  services/douban.ts（全类型主力：反爬 + Cookie 失效提示）│
 │  services/tmdb.ts（影视）/ bangumi.ts（动画 **+ 漫画**）│
 │  services/nodeHttp.ts（Node 传输层：重定向/Cookie/PoW）│
-│  **12 源注册表**：另含 openLibrary / googleBooks / steam / musicbrainz /│
-│     itunes / omdb / anilist / igdb / mangadex（真源 `pure/sourceRegistry`）│
+│  **13 源注册表**：另含 weread / openLibrary / googleBooks / steam / musicbrainz /│
+│     itunes / omdb / anilist / igdb / mangadex（真源 `pure/sourceRegistry` 的 `PROVIDERS`）│
 │  **下载与源链**：novelSource（书源引擎）/ sourceFetch / sourceCheck /│
 │     downloader + musicDownload + ytdlp / epubWriter / linkCheck（失效链接）│
 │  **AI / 语音**：aiSummary / aiPrefill / aiIcon / translate / TtsService│
+│     + 字幕 AI（cueSummary）+ **本地 ASR**（asrQwen / ytStream / YouTube 字幕）│
+│  **网络集内嵌**：embedVideo（官方 iframe，B 站 `player.bilibili.com` / YouTube `/embed/`）│
 └──────────────────────────┬───────────────────────────┘
 ┌─ 数据层 ─────────────────┼───────────────────────────┐
 │  catalog.ts（catalog.json 读写 + normalizeEntry 归一） │
 │  noteGenerator.ts（.md 详情笔记生成，纯逻辑）           │
 │  types.ts（MediaEntry + entryType 六类型 + BookKind/MusicKind 子分类）│
-│  pure/（**148 个无 obsidian 依赖纯模块**，逐一配 tests/）│
+│  pure/（**212 个无 obsidian 依赖纯模块**，逐一配 tests/）│
 │     status/labels/rating/dirs/cardMeta/stats/report/│
 │     搜索链 search*+resultMerge+searchCache/子分类 bookKind+musicKind/│
 │     进度 bookProgress+readingProgress+pdfProgress+epubParse+txtParse+bookmark+highlight+readTimer/│
@@ -49,10 +56,17 @@
 │     系列 seriesGroup / 导航 navLayout+mergedPages+mergedScope+homeTabs /│
 │     设置 settingNav+appearance / 排序 sortOptions / 图标 searchIcons /│
 │     失效检测 linkStatus / 仿真辅助 menuPlacement+virtualWindow …│
+│     **1.5.0 新增**：选集 episodePage+episodeAssoc / 分类视图 mediaViews /│
+│       笔记导入 noteImport / 属性面板 entryFormFields+detailsState /│
+│       ASR asrEngine+asrEngines+asrModels+asrLayout+whisperRuntime+senseVoice /│
+│       学习 learnMode+wordDict+wordTiming+subtitleCues / 网络集 netInline+netCueCopy /│
+│       流式 typewriter+lineBuffer / 字幕 AI cueSummary / 进度球 progressBall /│
+│       YouTube youtube+biliEmbed / 文案 sourcePitch+sourceLink │
+│  （另有 services/ 50 个、views/ 8 个 TS、modals/ 44 文件）│
 └──────────────────────────┬───────────────────────────┘
 ┌─ 基础设施 ───────────────┼───────────────────────────┐
 │  Vault API（媒体库/ 中文目录读写，ensureParentFolder）  │
-│  Settings（**12 源注册表**凭据/6 组源链/翻译 Key/库目录/播放阅读开关/外观）│
+│  Settings（**13 源注册表**凭据/6 组源链/翻译 Key/库目录/播放阅读开关/外观）│
 │  main.ts（命令注册 + 视图注册 + 事件中枢 + 目录迁移编排）│
 └──────────────────────────────────────────────────────┘
 ```
@@ -196,7 +210,7 @@ type Rating = 0 | 1 | 2 | 3 | 4 | 5;
 
 ⚠️ 合法值集合以 `BOOK_KIND_LABELS` / `MUSIC_KINDS` 为准；归一函数用 `Object.keys` / `includes` 校验，**⛔ 禁用 `in`**（会沿原型链把 `toString` 判成合法）。新增子分类值时必须三件套同步：`MediaEntry` 字段注释 + `normalizeEntry` 白名单 + `catalog.test.ts` 回归。
 
-## 4. 抓取流程（12 源注册表 + 6 组源链；真源 `src/pure/sourceRegistry.ts`）
+## 4. 抓取流程（13 源注册表 + 6 组源链；真源 `src/pure/sourceRegistry.ts` 的 `PROVIDERS`）
 
 ```
 用户输入标题 → 按类型（书籍再按子分类）选源链（并行 + 步骤化进度条）
@@ -222,7 +236,7 @@ type Rating = 0 | 1 | 2 | 3 | 4 | 5;
 
 | 项       | 值                                                                                                                                                          |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 视图类型 ID | **共 7 个在册**（见下表）；其中 `reelludic-home` 是统一视图（页签**共 6 个**：计划 / 阅读 / 影视 / 游戏 / 音乐 / 统计 —— ⚠️ 第二个是「阅读」不是「书籍」，页签显示名见 `HomeView.svelte` 的 `tabLabel`）、`reelludic-tracking`（历史遗留 ID，**勿改**） |
+| 视图类型 ID | **共 8 个在册**（见下表；真源 `main.ts:681-691` 的 8 次 `registerView`）；其中 `reelludic-home` 是统一视图（页签**共 6 个**：计划 / 阅读 / 影视 / 游戏 / 音乐 / 统计 —— ⚠️ 第二个是「阅读」不是「书籍」，页签显示名见 `HomeView.svelte` 的 `tabLabel`）、`reelludic-tracking`（历史遗留 ID，**勿改**） |
 | 命令      | `open-media-library` / `open-tracking-board` / `add-media-entry` / `add-excerpt`（书籍摘抄）/ `novel-download-open` / `book-download-open` / `audio-player-open-tab` / `audio-player-open-sidebar` / `player-capture-frame` / `player-insert-timestamp` / `cleanup-orphan-assets` |
 | Ribbon  | 书架视图 + 快速添加                                                                                                                                                |
 
@@ -231,7 +245,8 @@ type Rating = 0 | 1 | 2 | 3 | 4 | 5;
 | 视图 | ID | 说明 |
 |---|---|---|
 | 书架 / 统一视图 | `reelludic-home` | 页签容器，**三种导航布局**（顶部胶囊 / 右上角文字菜单 / 合并视图） |
-| 视频播放器 | `reelludic-video-player` | 自绘控件，画面撑满内容区 |
+| 视频播放器 | `reelludic-video-player` | 自绘控件，画面撑满内容区；网络集走官方内嵌 iframe（`.rl-embed-frame`），本地文件走 `<video>` |
+| 选集详情页 | `reelludic-episode-page` | **#717 期新增**：B 站风独立页，三卡（播放器 / 选集 / 信息）同屏；每段 **50** 集分页（⛔ 与选集弹窗的 `EP_PAGE_SIZE = 100` 是两个场景的两个常量）；字幕时间轴面板 + AI 总结提问 + 学习模式（单句循环 / AB 复读 / 影子跟读 / 悬停查词） |
 | 音频播放器 | `reelludic-audio-player` | 独立标签页或侧边栏；侧边栏在播时**就地切歌** |
 | TXT 阅读器 | `reelludic-txt-reader` | 编码嗅探（BOM / UTF-8 / GB18030）；摘抄就地卡片 + 区域截图（`ShotOverlay`，框选区 `.rl-reader-scroll`） |
 | EPUB 阅读器 | `reelludic-epub-reader` | 正文在 `iframe`（`srcdoc`，`sandbox=allow-same-origin`）；摘抄 + 区域截图（框选区取 iframe 外层 `.rl-reader-frame`） |
@@ -247,5 +262,6 @@ type Rating = 0 | 1 | 2 | 3 | 4 | 5;
 - **1.2.0 期已交付**（2026-10-04 定级，见 `RELEASE-1.2.0.md`）：音乐下载（网易云 / QQ / 酷狗 / 酷我 + B站 音频流，走 `yt-dlp`）、书籍下载（🔴 **书源由用户自备，插件不内置任何内容源**；多源并行搜书 → 章节范围 → 抓成 TXT/EPUB → 自动写回 `bookFile`；并发 50、断点续传、取消真取消）、系列合集（同名 ≥2 条自动折叠 + 系列视图 + 封面挑选弹窗）、漫画子分类加回 + 漫画阅读器、书籍阅读时长（`readMinutes`）、手工条目 AI 预填字段、封面网络搜索。
 - **1.3.0 期（2026-10-11 定级为 minor；原 1.2.1 期**从未发布**，已整体改定 1.3.0）**：微信读书接入（Cookie 授权 / 测试连接 / 书架同步 / 书籍并排元数据源 / 搜索回填）、内置阅读器本地漫画（图片文件夹 / 压缩包 / EPUB 图册）、播放器时间戳·截图侧边栏抽屉、导航布局（顶部胶囊 / 文字菜单 / 合并视图）与「时间线」视图、全库失效链接检测（三态 ok/dead/unknown）、海报墙阅读进度与数字并排、基本设置页改回核心原生分组（`.setting-group` / `.setting-items`）、库概览、编辑浮层失焦自动保存、「电视剧」全局更名「剧集」。
 - **1.4.0 期（2026-10-16 用户点名定级）**：EPUB 文字阅读器正文资源加载（🔴 **新纯模块 `src/pure/epubResource.ts`** —— 把章节里的包内相对引用重写成 `blob:` URL；真因是 `iframe.srcdoc` **没有基准 URL**，`image/p001.jpg` 会被解析到应用根目录 ⇒ 全 404 且每张图一次注定失败的请求。宿主复用**既有** `main.unpackEpub` 的 `loadBinary`（此前只有 EPUB 漫画链在用），经 `EpubReaderOptions.loadEpubResource` 注入；整章并行预取 + blob URL 缓存 + `destroy` 逐个 revoke + 渲染 token 作废迟到的并发渲染）、EPUB 首屏提速（目录字数由「开局对全书每章同步算一遍」改为 `IntersectionObserver` 惰性补算，实测 500 章省 ~95% 同步时间；计数口径未变）、Steam 凭据行两处 UI 修正（副标题机制整体删除、提示并入 `steam.hint` 末尾；`resultEl` 移到两个按钮之后，间距 16px → 8px）。
+- **1.5.0 期（2026-11-07，用户向日志见 `RELEASE-1.5.0.md`）**：**选集详情页**（新视图 `reelludic-episode-page`）、**网络集官方内嵌播放**（`services/embedVideo.ts`：B 站 `player.bilibili.com/player.html?bvid=…` 支持 `?page=2`、YouTube `/embed/`；挂 iframe 前把 Cookie 同步进 Electron cookie jar；拼不出内嵌地址降级浏览器打开；换集只改 `src` 不重建节点防闪白。🔴 **开发期的插件自取流 DASH+MSE+本地回环代理已整体撤除**，`netInlinePlayer` 设置项随之下线，⛔ 别接回来）、**字幕时间轴面板**（`pure/subtitleCues`）、**字幕 AI 总结与提问**（`pure/cueSummary` + `services/cueSummary`，流式 `pure/typewriter` + `pure/lineBuffer`）、**学习模式**（`pure/learnMode` + `pure/wordDict` 稀疏索引本地词典 + `pure/wordTiming`）、**本地语音转文字**（`pure/asrEngine`/`asrEngines`/`asrModels`/`asrLayout`/`whisperRuntime`/`senseVoice` + `services/asrQwen`；全在本机，⛔ 不引入推理运行时）、**分类视图**（`pure/mediaViews`，视图定义存进 Catalog）、**条目属性面板**（`pure/entryFormFields` + `pure/detailsState`）、**从笔记导入条目**（`pure/noteImport`，白名单扫描）、**系列合集分**、**悬浮进度球**（`pure/progressBall`）、**设置页定型六页签**并新增「播放阅读」页（`媒体载体` + `语音服务`）、**AI 集成用途组改主从布局**（七条目唯一真源 `aiServiceDefs()` + `this.aiPick` 不落盘）。
 - **新增字段不破坏现有 schema**（只增不改），旧版本插件读新数据时忽略未知字段。
 - 性能缓存：`excerptCount` 摘抄计数落库（addExcerpt 维护 + 老数据惰性迁移），海报墙/列表封面 lazy + async 解码。

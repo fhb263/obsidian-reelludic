@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { safeFilename, entryFrontmatter, generateNoteMarkdown, entryNotePath, posterEmbed, hashNoteContent, episodeWatchLines } from 'data/noteGenerator';
+import { safeFilename, entryFrontmatter, generateNoteMarkdown, entryNotePath, hashNoteContent, episodeWatchLines } from 'data/noteGenerator';
 import type { MediaEntry } from 'data/types';
 
 function baseEntry(partial: Partial<MediaEntry> = {}): MediaEntry {
@@ -127,65 +127,54 @@ describe('#434 系列 / 系列序号', () => {
         expect(entryFrontmatter(baseEntry({ type: 'game', series: '某系列', seriesIndex: 1 }))).toContain('series_index: 1');
     });
 
-    it('🔴 属性表系列行：**所有类型都有**，且序号并进同一行（#435 二轮修掉「填了却更新不了笔记」的两个覆盖缺口）', () => {
-        // 非书籍：有 seriesIndex 时并进同一行
+    it('🔴 2026-11-14 m04138：系列行不再写进笔记正文（改由条目卡按字段投影），frontmatter 仍写 series_index', () => {
+        // 🔴 翻面：旧断言锚 `| 系列 | … |` 表格行；表格已被能力块取代 ⇒ 正文里不该再有这些行。
+        //    系列是否出现由 `pure/noteCard.buildNoteCardGroups` 的 `series` 行承载（见 noteCard.test.ts）。
         expect(generateNoteMarkdown(baseEntry({ type: 'movie', series: '某系列', seriesIndex: 3 }), 'ReelLudic', { table: true }))
-            .toContain('| 系列 | 某系列 · 第 3 部 |');
-        expect(generateNoteMarkdown(baseEntry({ type: 'game', series: '某系列' }), 'ReelLudic', { table: true }))
-            .toContain('| 系列 | 某系列 |');
-        // 书籍（文学）：沿用「丛书」这个已定稿的标签，**但现在带上序号**（原实现裸写 e.series ⇒ 序号在笔记里看不见）
-        const bk = generateNoteMarkdown(baseEntry({ type: 'book', bookKind: 'book', series: '某丛书', seriesIndex: 2 }), 'ReelLudic', { table: true });
-        expect(bk).toContain('| 丛书 | 某丛书 · 第 2 部 |');
-        expect(bk).not.toContain('| 系列 |');
-        // 🔴 网文：**必须有这一行**（原来一行都没有 —— 用户报「根本更新不了笔记条目」的真因之一）。
-        //    「丛书」那条 2026-09-13 裁定仍不渲染（出版侧字段），但 `series` 自 #434 起是**通用系列**，
-        //    斗罗大陆 / 龙族 这类网文恰恰最需要 ⇒ 走「系列」这个词。
-        const nv = generateNoteMarkdown(baseEntry({ type: 'book', bookKind: 'novel', series: '某网文系列', seriesIndex: 5 }), 'ReelLudic', { table: true });
-        expect(nv).toContain('| 系列 | 某网文系列 · 第 5 部 |');
-        expect(nv).not.toContain('| 丛书 |');
-        // 无序号 ⇒ 只有名字，⛔ 不许写出「· 第 undefined 部」
-        const noIdx = generateNoteMarkdown(baseEntry({ type: 'movie', series: '某系列' }), 'ReelLudic', { table: true });
-        expect(noIdx).toContain('| 系列 | 某系列 |');
-        expect(noIdx).not.toContain('第 undefined 部');
-        // 没填系列 ⇒ 一行都不出（⛔ 不出空行）
-        const none = generateNoteMarkdown(baseEntry({ type: 'movie' }), 'ReelLudic', { table: true });
-        expect(none).not.toContain('| 系列 |');
-        expect(none).not.toContain('| 丛书 |');
+            .not.toContain('| 系列 |');
+        // frontmatter 侧一个字都不能少（机器读的那份是 Dataview/海报墙的真源）
+        expect(entryFrontmatter(baseEntry({ type: 'movie', series: '某系列', seriesIndex: 3 }))).toContain('series_index: 3');
+        expect(entryFrontmatter(baseEntry({ type: 'movie', series: '某系列', seriesIndex: 3 }))).toContain('series: "某系列"');
     });
 });
 
-describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性表格 + 章节结构', () => {
+describe('generateNoteMarkdown', () => {    it('生成条目卡代码块 + 章节结构（🔴 m07593：顶部 callout 已删除）', () => {
         const md = generateNoteMarkdown(baseEntry());
-        expect(md).toContain('> [!bookinfo]+ **《进击的巨人 最终季》**');
-        expect(md).toContain('| 属性 | 内容 |');
+        // 🔴 2026-11-14 m07593：顶部 `> [!bookinfo]+` callout **整体删除**（封面改由条目卡组件内嵌显示）
+        expect(md).not.toContain('> [!bookinfo]+');
+        expect(md).not.toContain('**《进击的巨人 最终季》**');
+        // 🔴 2026-11-14 m04138：属性表格 → ` ```reelludic ` 条目卡（块里只有条目 id 一行）
+        expect(md).toContain('```reelludic');
+        expect(md).toContain('e1');
+        expect(md).not.toContain('| 属性 | 内容 |');
         expect(md).toContain('## 个人评语');
         expect(md).toContain('## 观看链接');
         // 🔴 #453 **翻面**：这条原先靠**评语占位行**里的「支持 [[双链]]」满足 —— 占位行去掉该短语后，
         //   改为断言新占位行本体，并反过来钉「笔记正文里不再出现『双链』」
         expect(md).toContain('（在这里写下你的感想）');
         expect(md).not.toContain('双链');
-        // 无封面时不输出封面行，callout 仅标题 + 结束符
+        // 正文里不再有任何封面嵌入（封面由条目卡组件内嵌显示）
         expect(md).not.toContain('![封面](');
     });
 
-    it('简介：有值输出「## 简介」章节（属性表格后、个人评语前），无值不输出', () => {
+    it('简介：有值输出「## 简介」章节（条目卡之后、个人评语前），无值不输出', () => {
         const withSummary = generateNoteMarkdown(baseEntry({ summary: '人类为了自由与巨人战斗。' }));
         expect(withSummary).toContain('## 简介');
         expect(withSummary).toContain('人类为了自由与巨人战斗。');
-        expect(withSummary.indexOf('## 简介')).toBeGreaterThan(withSummary.indexOf('| 属性 | 内容 |'));
+        expect(withSummary.indexOf('## 简介')).toBeGreaterThan(withSummary.indexOf('```reelludic'));
         expect(withSummary.indexOf('## 简介')).toBeLessThan(withSummary.indexOf('## 个人评语'));
         // 无简介不生成该章节
         expect(generateNoteMarkdown(baseEntry())).not.toContain('## 简介');
     });
 
-    it('🔴 #404 歌词小节：`## 歌词` + lrc 围栏放在**笔记开头**（属性表格之后、简介之前）', () => {
+    it('🔴 #404 歌词小节：`## 歌词` + lrc 围栏放在**笔记开头**（条目卡之后、简介之前）', () => {
         const music = baseEntry({ type: 'music', title: '夜曲', summary: '简介内容', progress: undefined, audioPath: '下载/音乐/周杰伦 - 夜曲.mp3' });
         const md = generateNoteMarkdown(music, 'ReelLudic', { table: true });
         expect(md).toContain('## 歌词');
         expect(md).toContain('```lrc');
         expect(md).toContain('source [[下载/音乐/周杰伦 - 夜曲.mp3]]');
-        // 顺序：callout → 属性表格 → ## 歌词 → ## 简介 → 个人评语
-        expect(md.indexOf('## 歌词')).toBeGreaterThan(md.indexOf('| 属性 | 内容 |'));
+        // 顺序：callout → 条目卡 → ## 歌词 → ## 简介 → 个人评语
+        expect(md.indexOf('## 歌词')).toBeGreaterThan(md.indexOf('```reelludic'));
         expect(md.indexOf('## 歌词')).toBeLessThan(md.indexOf('## 简介'));
         expect(md.indexOf('## 歌词')).toBeLessThan(md.indexOf('# 个人评语'));
         // 无 audioPath ⇒ 整节不生成（⛔ 不留一个空标题）
@@ -221,15 +210,16 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
         expect(movie).not.toContain('## 作者简介');
     });
 
-    it('笔记表格开关：opts.table=false → 不渲染属性表格，其余章节（简介/评语/链接）照旧', () => {
+    it('笔记表格开关：opts.table=false → 不渲染条目卡，其余章节（简介/评语/链接）照旧', () => {
         const on = generateNoteMarkdown(baseEntry({ summary: 'x' }), 'ReelLudic', { table: true });
-        expect(on).toContain('| 属性 | 内容 |');
+        expect(on).toContain('```reelludic');
         const off = generateNoteMarkdown(baseEntry({ summary: 'x' }), 'ReelLudic', { table: false });
+        expect(off).not.toContain('```reelludic');
         expect(off).not.toContain('| 属性 | 内容 |');
         expect(off).not.toContain('|:-----|:-----|');
         expect(off).not.toContain('| 类型 |'); // 表格行不得残留
-        // 1.1.1（用户 2026-09-27 ③）：关表后**顶部 callout 外壳也一并去掉**——旧实现只关了属性表格，
-        // 于是笔记里留一条「> [!bookinfo]+ 《标题》 + > 封面」的残留。
+        // 🔴 2026-11-14 m07593 翻面：顶部 callout **整体删除**（封面改由条目卡组件内嵌显示）
+        //    ⇒ 关表后正文里同样没有任何 `> ` 残留。
         expect(off).not.toContain('> [!bookinfo]+');
         // 🔴 #404 翻面：关表后**标题与封面嵌入都不再写进正文**（用户：「笔记内开头不写入《标题>图片嵌入，
         // 只在Yaml属性写入」）—— 旧口径「降级为普通加粗行 / 普通图片嵌入」已作废。
@@ -237,27 +227,31 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
         expect(off).toContain('## 简介');
         expect(off).toContain('## 个人评语');
         expect(off).toContain('## 观看链接');
-        // 关表后「来源」链接随表格一起消失（口径：表格 = 来源链接的载体）
+        // 🔴 2026-11-14 m04138 翻面：来源链接的载体从「表格来源行」迁到 **frontmatter**
+        //    （`source` / `source_url` 两键）—— 关表不再丢来源，也不再靠正文里的 markdown 链接。
         const withSource = baseEntry({ source: 'douban', sourceUrl: 'https://movie.douban.com/subject/1/' });
-        expect(generateNoteMarkdown(withSource)).toContain('https://movie.douban.com/subject/1/');
+        expect(generateNoteMarkdown(withSource)).toContain('```reelludic');
+        // 正文里已没有那张表 ⇒ 网址不再出现在**正文**（它现在只活在 YAML 里，由条目卡渲染）
         expect(generateNoteMarkdown(withSource, 'ReelLudic', { table: false })).not.toContain('https://movie.douban.com/subject/1/');
     });
 
-    it('笔记表格开关缺省 = 开（不传 opts 与传 {} 都出表格）；音乐对齐表格同受开关控制', () => {
-        expect(generateNoteMarkdown(baseEntry())).toContain('| 属性 | 内容 |');
-        expect(generateNoteMarkdown(baseEntry(), 'ReelLudic', {})).toContain('| 属性 | 内容 |');
+    it('笔记表格开关缺省 = 开（不传 opts 与传 {} 都出条目卡）；音乐条目卡同受开关控制', () => {
+        expect(generateNoteMarkdown(baseEntry())).toContain('```reelludic');
+        expect(generateNoteMarkdown(baseEntry(), 'ReelLudic', {})).toContain('```reelludic');
         const music = baseEntry({ type: 'music', author: '歌手', year: 2024, cast: [], progress: undefined });
-        expect(generateNoteMarkdown(music)).toContain('| 属性 | 内容 |');
+        expect(generateNoteMarkdown(music)).toContain('```reelludic');
         const musicOff = generateNoteMarkdown(music, 'ReelLudic', { table: false });
-        expect(musicOff).not.toContain('| 属性 | 内容 |');
+        expect(musicOff).not.toContain('```reelludic');
         expect(musicOff).toContain('# 个人评语'); // 音乐一级标题不受影响
     });
 
-    it('🔴 #404 笔记表格关闭：正文里**标题与封面都不写**（只在 YAML 属性里），且不留任何 `> ` 残留', () => {
+    it('🔴 m07593 笔记正文**不再有** bookinfo callout 与封面嵌入（封面由条目卡组件内嵌）', () => {
         const e = baseEntry({ poster: '封面/e_123.jpg' });
         const on = generateNoteMarkdown(e, 'ReelLudic', { table: true });
-        expect(on).toContain('> [!bookinfo]+ **《进击的巨人 最终季》**');
-        expect(on).toContain('> ![[ReelLudic/封面/e_123.jpg]]');
+        expect(on).not.toContain('> [!bookinfo]+');
+        expect(on).not.toContain('> ![[ReelLudic/封面/e_123.jpg]]');
+        expect(on).not.toContain('![[ReelLudic/封面/e_123.jpg]]');
+        expect(on).not.toContain('**《进击的巨人 最终季》**');
 
         const off = generateNoteMarkdown(e, 'ReelLudic', { table: false });
         // callout 块不得留下**任何** `> ` 行（引号块空行 `>` 也算残留）
@@ -286,17 +280,17 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
         expect(music).not.toContain('**《 夜曲 》**');
     });
 
-    it('封面 banner：frontmatter 输出 banner，正文标题前嵌入封面（URL 直用/本地 wikilink）', () => {
+    it('封面 banner：只进 frontmatter，正文不再嵌入封面（🔴 m07593：封面由条目卡组件内嵌）', () => {
         const urlEntry = baseEntry({ poster: 'https://img.example.com/poster.jpg' });
         expect(entryFrontmatter(urlEntry)).toContain('banner: "https://img.example.com/poster.jpg"');
-        expect(generateNoteMarkdown(urlEntry)).toContain('![封面](https://img.example.com/poster.jpg)');
+        expect(generateNoteMarkdown(urlEntry)).not.toContain('![封面](https://img.example.com/poster.jpg)');
 
         const localEntry = baseEntry({ poster: '封面/e_123.jpg' });
         expect(entryFrontmatter(localEntry)).toContain('banner: "ReelLudic/封面/e_123.jpg"');
         const md = generateNoteMarkdown(localEntry);
-        expect(md).toContain('![[ReelLudic/封面/e_123.jpg]]');
-        // 自定义库目录时按实际目录拼接
-        expect(generateNoteMarkdown(localEntry, 'MyLib')).toContain('![[MyLib/封面/e_123.jpg]]');
+        expect(md).not.toContain('![[ReelLudic/封面/e_123.jpg]]');
+        // 自定义库目录时按实际目录拼接（frontmatter 侧）
+        expect(entryFrontmatter(localEntry, 'MyLib')).toContain('banner: "MyLib/封面/e_123.jpg"');
 
         // 无 poster 不输出 banner 与嵌入
         const noPoster = generateNoteMarkdown(baseEntry({ poster: undefined }));
@@ -304,13 +298,14 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
         expect(entryFrontmatter(baseEntry({ poster: undefined }))).not.toContain('banner:');
     });
 
-    it('豆瓣图床封面：banner 用内联 HTML img 强制携带 Referer（防盗链 418）', () => {
+    it('🔴 m07593 豆瓣图床封面：正文里不再有任何封面嵌入（防盗链 418 的处理移到条目卡组件）', () => {
         const dbEntry = baseEntry({ poster: 'https://img9.doubanio.com/view/photo/s_ratio_poster/public/p2687443734.jpg' });
         const md = generateNoteMarkdown(dbEntry);
-        expect(md).toContain('<img src="https://img9.doubanio.com/view/photo/s_ratio_poster/public/p2687443734.jpg" alt="封面" referrerpolicy="unsafe-url">');
+        expect(md).not.toContain('<img src="https://img9.doubanio.com/');
         expect(md).not.toContain('![封面](');
-        // 非豆瓣 URL 仍用 markdown 图片
-        expect(posterEmbed(baseEntry({ poster: 'https://img.example.com/x.jpg' }))).toBe('![封面](https://img.example.com/x.jpg)');
+        expect(md).not.toContain('referrerpolicy');
+        // banner 仍在 frontmatter 里（信息不丢）
+        expect(entryFrontmatter(dbEntry)).toContain('banner: "https://img9.doubanio.com/');
     });
 
     it('个人评语写入正文：有值输出评语、无值保留占位符（表单提交的 notes 必须落笔）', () => {
@@ -324,12 +319,18 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
         expect(empty).not.toContain('双链');
     });
 
-    it('评分/进度渲染进表格', () => {
+    it('评分/进度渲染：正文不再拼「个人评分 / 进度」表格行，值走 frontmatter（卡片渲染）', () => {
         const md = generateNoteMarkdown(baseEntry());
-        expect(md).toContain('★★★★☆');
-        expect(md).toContain('S4E16');
-        expect(md).toContain('| 个人评分 | ★★★★☆（4/5） |');
-        expect(md).toContain('| 进度 | S4E16 |');
+        // 🔴 2026-11-14 m04138 翻面：`★★★★☆` 与 `S4E16` 原先由表格行 `| 个人评分 | ★★★★☆（4/5） |`
+        //    和 `| 进度 | S4E16 |` 拼出来；那两行已随表格删除，星串函数也从 noteGenerator 清走。
+        expect(md).not.toContain('| 个人评分 |');
+        expect(md).not.toContain('| 进度 |');
+        expect(md).not.toContain('★★★★☆');
+        // 值本身一字不少 —— 落在机器读的 frontmatter 里（条目卡从条目字段读，不依赖正文）
+        const fm = entryFrontmatter(baseEntry());
+        expect(fm).toContain('rating: 4');
+        expect(fm).toContain('progress_season: 4');
+        expect(fm).toContain('progress_episode: 16');
     });
 
     it('链接渲染：表格来源行 + 观看链接列表', () => {
@@ -395,52 +396,57 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
         });
     });
 
-    it('来源行跟随数据源自动链接：优先 sourceUrl，回退手动链接', () => {
-        // 豆瓣兜底：来源 = 豆瓣官方页
+    it('来源：数据源自动链接迁到 frontmatter（source / source_url），正文不再出「来源」表格行', () => {
+        // 🔴 2026-11-14 m04138：旧断言锚 `| 来源 | [豆瓣](…) |` 表格行 —— 表格已删。
+        //    来源的**回写通道**迁到 frontmatter 两键（`pure/noteEditable` 的 handlers 反解），
+        //    所以这里改钉 frontmatter，并把「正文里不再出现那张表的来源行」钉死。
         const douban = generateNoteMarkdown(
             baseEntry({ source: 'douban', sourceUrl: 'https://movie.douban.com/subject/3001114/' }),
         );
-        expect(douban).toContain('| 来源 | [豆瓣](https://movie.douban.com/subject/3001114/) |');
+        expect(douban).not.toContain('| 来源 |');
+        expect(entryFrontmatter(baseEntry({ source: 'douban', sourceUrl: 'https://movie.douban.com/subject/3001114/' })))
+            .toContain('source: "douban"');
+        expect(entryFrontmatter(baseEntry({ source: 'douban', sourceUrl: 'https://movie.douban.com/subject/3001114/' })))
+            .toContain('source_url: "https://movie.douban.com/subject/3001114/"');
 
-        // 主源：TMDB / Google Books
-        const tmdb = generateNoteMarkdown(
-            baseEntry({ type: 'movie', source: 'tmdb', sourceUrl: 'https://www.themoviedb.org/movie/438631' }),
-        );
-        expect(tmdb).toContain('| 来源 | [TMDB](https://www.themoviedb.org/movie/438631) |');
-        // 🔴 #449：夹具原来写的是**老键** `google`（真源是 `googleBooks`）—— 旧手抄表认它、注册表不认，
-        //    走真源后那种键会退化成原样吐 id；夹具改回真键（这条断言正是「来源行是真源翻出来的」的守卫）
-        const google = generateNoteMarkdown(
-            baseEntry({ type: 'book', source: 'googleBooks', sourceUrl: 'https://books.google.com/books?id=abc' }),
-        );
-        expect(google).toContain('| 来源 | [Google Books](https://books.google.com/books?id=abc) |');
+        // 主源：TMDB / Google Books（🔴 #449：夹具用**真键** `googleBooks`，旧手抄表认的 `google` 已废）
+        expect(entryFrontmatter(baseEntry({ source: 'tmdb', sourceUrl: 'https://www.themoviedb.org/movie/438631' })))
+            .toContain('source_url: "https://www.themoviedb.org/movie/438631"');
+        expect(entryFrontmatter(baseEntry({ type: 'book', source: 'googleBooks', sourceUrl: 'https://books.google.com/books?id=abc' })))
+            .toContain('source: "googleBooks"');
 
-        // 无 sourceUrl：回退手动观看链接
-        const fallback = generateNoteMarkdown(baseEntry());
-        expect(fallback).toContain('| 来源 | [B站](https://www.bilibili.com/bangumi/123) |');
-
-        // 都无：留空
-        const none = generateNoteMarkdown(baseEntry({ sourceUrl: undefined, links: [] }));
-        expect(none).toContain('| 来源 |  |');
+        // 无 sourceUrl：⛔ 不写空键（`source_url:` 只在有值时才出现，避免 frontmatter 里多一行空串）
+        expect(entryFrontmatter(baseEntry({ sourceUrl: undefined }))).not.toContain('source_url:');
     });
 
-    it('动画类型输出进度', () => {
+    it('动画类型进度落 frontmatter（正文不再拼进度表格行）', () => {
         const md = generateNoteMarkdown(baseEntry({ type: 'anime' }));
-        expect(md).toContain('S4E16');
+        expect(md).not.toContain('| 进度 |');
+        const fm = entryFrontmatter(baseEntry({ type: 'anime' }));
+        expect(fm).toContain('progress_season: 4');
+        expect(fm).toContain('progress_episode: 16');
     });
 
-    it('书籍类型渲染作者/出版社，无进度行，链接区用相关链接', () => {
+    it('书籍类型：作者/出版社落 frontmatter，正文无「作者/出版社」表格行、无进度行，链接区用相关链接', () => {
         const md = generateNoteMarkdown(baseEntry({ type: 'book', author: '刘慈欣', publisher: '重庆出版社', director: undefined, cast: [], progress: undefined }));
-        expect(md).toContain('| 作者 | 刘慈欣 |');
-        expect(md).toContain('| 出版社 | 重庆出版社 |');
+        // 🔴 2026-11-14 m04138 翻面：表格行 `| 作者 | … |` / `| 出版社 | … |` 已随表格删除
+        expect(md).not.toContain('| 作者 |');
+        expect(md).not.toContain('| 出版社 |');
+        const fm = entryFrontmatter(baseEntry({ type: 'book', author: '刘慈欣', publisher: '重庆出版社' }));
+        expect(fm).toContain('author: "刘慈欣"');
+        expect(fm).toContain('publisher: "重庆出版社"');
         expect(md).toContain('## 相关链接');
         expect(md).not.toContain('## 观看链接');
         expect(md).not.toContain('S4E16');
     });
 
-    it('游戏类型渲染平台/开发商（作者行=开发商）', () => {
+    it('游戏类型：平台/开发商落 frontmatter（正文不再出「作者=开发商」表格行）', () => {
         const md = generateNoteMarkdown(baseEntry({ type: 'game', platform: 'PC', developer: 'CD Projekt Red', director: undefined, cast: [], progress: undefined, status: 'watched' }));
-        expect(md).toContain('| 作者 | CD Projekt Red |');
-        expect(md).toContain('| 平台 | PC |');
+        expect(md).not.toContain('| 作者 |');
+        expect(md).not.toContain('| 平台 |');
+        const fm = entryFrontmatter(baseEntry({ type: 'game', platform: 'PC', developer: 'CD Projekt Red' }));
+        expect(fm).toContain('platform: "PC"');
+        expect(fm).toContain('developer: "CD Projekt Red"');
     });
 
     it('书籍/游戏 frontmatter 输出专属字段', () => {
@@ -502,7 +508,7 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
         expect(plain).not.toContain('isbn');
     });
 
-    it('笔记正文基本信息区输出新字段（编剧/国家/语言/片长/又名/译者/ISBN）', () => {
+    it('正文不再输出属性表格行（编剧/国家/语言/片长/又名/译者/ISBN 全落 frontmatter）', () => {
         const md = generateNoteMarkdown(
             baseEntry({
                 type: 'movie',
@@ -515,12 +521,28 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
                 cast: ['提莫西·查拉梅'],
             }),
         );
-        expect(md).toContain('| 作者 | 丹尼斯·维伦纽瓦 |');
-        expect(md).toContain('| 编剧 | 丹尼斯·维伦纽瓦 / 乔·斯派茨 |');
-        expect(md).toContain('| 制片国家/地区 | 美国 |');
-        expect(md).toContain('| 语言 | 英语 |');
-        expect(md).toContain('| 片长 | 156 分钟 |');
-        expect(md).toContain('| 又名 | 沙丘瀚战(港) |');
+        // 🔴 2026-11-14 m04138：这七行原先全是 `| 标签 | 值 |` 表格行，表格已换条目卡
+        for (const line of ['| 作者 |', '| 编剧 |', '| 制片国家/地区 |', '| 语言 |', '| 片长 |', '| 又名 |', '| 主演 |']) {
+            expect(md).not.toContain(line);
+        }
+        // 值一个不少地在 frontmatter 里（条目卡从条目字段读这些，不依赖正文）
+        const fm = entryFrontmatter(
+            baseEntry({
+                type: 'movie',
+                director: '丹尼斯·维伦纽瓦',
+                screenwriter: ['丹尼斯·维伦纽瓦', '乔·斯派茨'],
+                country: '美国',
+                language: '英语',
+                durationMin: 156,
+                aliases: ['沙丘瀚战(港)'],
+            }),
+        );
+        expect(fm).toContain('director: "丹尼斯·维伦纽瓦"');
+        expect(fm).toContain('screenwriter: ["丹尼斯·维伦纽瓦", "乔·斯派茨"]');
+        expect(fm).toContain('country: "美国"');
+        expect(fm).toContain('language: "英语"');
+        expect(fm).toContain('duration_min: 156');
+        expect(fm).toContain('aliases: ["沙丘瀚战(港)"]');
 
         const bmd = generateNoteMarkdown(
             baseEntry({
@@ -535,17 +557,32 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
                 readingProgress: { totalPage: 340 },
             }),
         );
-        expect(bmd).toContain('| 作者 | 渡边淳一 |');
-        expect(bmd).toContain('| 译者 | 之乎 |');
-        expect(bmd).toContain('| 出版社 | 青岛出版社 |');
-        expect(bmd).toContain('| ISBN | 9787555218296 |');
-        expect(bmd).toContain('| 装帧 | 平装 |');
-        expect(bmd).toContain('| 定价 | 39.00元 |');
-        expect(bmd).toContain('| 丛书 | 渡边淳一作品 |');
-        expect(bmd).toContain('| 页数 | 340 |');
+        for (const line of ['| 作者 |', '| 译者 |', '| 出版社 |', '| ISBN |', '| 装帧 |', '| 定价 |', '| 丛书 |', '| 页数 |']) {
+            expect(bmd).not.toContain(line);
+        }
+        const bfm = entryFrontmatter(
+            baseEntry({
+                type: 'book',
+                author: '渡边淳一',
+                translator: '之乎',
+                publisher: '青岛出版社',
+                isbn: '9787555218296',
+                binding: '平装',
+                price: '39.00元',
+                series: '渡边淳一作品',
+                readingProgress: { totalPage: 340 },
+            }),
+        );
+        expect(bfm).toContain('author: "渡边淳一"');
+        expect(bfm).toContain('translator: "之乎"');
+        expect(bfm).toContain('publisher: "青岛出版社"');
+        expect(bfm).toContain('isbn: "9787555218296"');
+        expect(bfm).toContain('binding: "平装"');
+        expect(bfm).toContain('price: "39.00元"');
+        expect(bfm).toContain('series: "渡边淳一作品"');
     });
 
-    it('音乐笔记：callout 四行表格（作者/发行年/来源/评分带人数）+ lrc 块 + # 个人评语', () => {
+    it('音乐笔记：条目卡 + lrc 块 + # 个人评语（🔴 m07593：顶部 callout 已删除，正文不再出四行属性表）', () => {
         const e: MediaEntry = {
             id: 'e_1', type: 'music', title: '不再犹豫', status: 'want', rating: 0,
             year: 1991, author: 'BEYOND', album: '犹豫',
@@ -555,20 +592,30 @@ describe('generateNoteMarkdown', () => {    it('生成 bookinfo callout + 属性
             genres: [], cast: [], links: [], notes: '', tags: [], createdAt: '', updatedAt: '',
         };
         const md = generateNoteMarkdown(e);
-        expect(md).toContain('> [!bookinfo]+ **《 不再犹豫 》**');
-        expect(md).toContain('| 作者   | BEYOND');
-        expect(md).toContain('| 发行年 | 1991');
-        expect(md).toContain('| 来源   | [豆瓣](https://music.douban.com/subject/4899751/)');
-        expect(md).toContain('| 评分   | 9.7 · 127,431 人评价');
+        expect(md).not.toContain('> [!bookinfo]+');
+        expect(md).not.toContain('**《 不再犹豫 》**');
+        expect(md).toContain('```reelludic');
+        // 🔴 2026-11-14 m04138 翻面：`| 作者 |` / `| 发行年 |` / `| 来源 |` / `| 评分 |` 四行全部作废
+        expect(md).not.toContain('| 作者   |');
+        expect(md).not.toContain('| 发行年 |');
+        expect(md).not.toContain('| 来源   |');
+        expect(md).not.toContain('| 评分   |');
+        // 值仍在 frontmatter（音乐歌手在 `author` 键 —— 见 pure/musicArtist 的 🔴 铁律）
+        // ⚠️ 大众评分（`communityScore`）**从来就不在 frontmatter 里**，也不在正文里 ——
+        //    它由条目卡从条目字段直接读（卡片拿的是 `MediaEntry`，不解析笔记文本），所以这里不钉它。
+        const fm = entryFrontmatter(e);
+        expect(fm).toContain('author: "BEYOND"');
+        expect(fm).toContain('year: 1991');
+        expect(fm).toContain('source_url: "https://music.douban.com/subject/4899751/"');
         expect(md).toContain('```lrc');
         expect(md).toContain('source [[ReelLudic/music/不再犹豫.mp3]]');
         expect(md).toContain('# 个人评语');
-        // 🔴 #404 翻面：lrc 块随「## 歌词」小节**移到笔记开头**（表格之后、简介之前）——
+        // 🔴 #404 翻面：lrc 块随「## 歌词」小节**移到笔记开头**（条目卡之后、简介之前）——
         //    旧口径是「置于简介 / 个人评语之后」。
-        expect(md.indexOf('## 歌词')).toBeGreaterThan(md.indexOf('| 评分   |'));
+        expect(md.indexOf('## 歌词')).toBeGreaterThan(md.indexOf('```reelludic'));
         expect(md.indexOf('```lrc')).toBeGreaterThan(md.indexOf('## 歌词'));
         expect(md.indexOf('```lrc')).toBeLessThan(md.indexOf('# 个人评语'));
-        expect(md.indexOf('# 个人评语')).toBeGreaterThan(md.indexOf('| 评分   |'));
+        expect(md.indexOf('# 个人评语')).toBeGreaterThan(md.indexOf('```reelludic'));
         expect(md).not.toContain('## 观看链接');
         expect(md).not.toContain('## 相关链接');
         // 无音频不生成 lrc 块（连带 `## 歌词` 标题也不生成）
@@ -615,15 +662,17 @@ describe('entryNotePath', () => {
         expect(entryNotePath(baseEntry({ type: 'movie' }))).toBe('ReelLudic/笔记/movie/进击的巨人 最终季.md');
         expect(entryNotePath(baseEntry({ type: 'book' }))).toBe('ReelLudic/笔记/book/进击的巨人 最终季.md');
     });
-    it('🔴 #444g 画师（漫画）：frontmatter 写独立 `artist` 键 + 属性表出「画师」行（与「作者」分开）', () => {
+    it('🔴 #444g 画师（漫画）：frontmatter 写独立 `artist` 键（画师行改由条目卡渲染）', () => {
         const comic = baseEntry({ type: 'book', bookKind: 'comic', author: '原作君', artist: '作画君' });
         // ⚠️ frontmatter 的字符串值都走 `q()` 加引号 ⇒ 断言要带引号
         expect(entryFrontmatter(comic)).toContain('artist: "作画君"');
         // ⛔ 不许把画师拼进 author（Dataview 查不出来，也丢人）
         expect(entryFrontmatter(comic)).not.toContain('author: 原作君 / 作画君');
+        // 🔴 2026-11-14 m04138 翻面：正文里的 `| 画师 | 作画君 |` 表格行已随表格删除；
+        //    画师这一行现在由 `pure/noteCard` 的 `book` 组（`artist` 键）承载，见 noteCard.test.ts。
         const md = generateNoteMarkdown(comic);
-        expect(md).toContain('画师');
-        expect(md).toContain('作画君');
+        expect(md).not.toContain('| 画师 |');
+        expect(md).toContain('```reelludic');
     });
 
     it('非漫画不写 `artist` 键（该字段只有漫画会落库）', () => {
@@ -747,19 +796,20 @@ describe('generateNoteMarkdown · 网文（novel）口径', () => {
             progress: undefined,
         });
 
-    it('网文：年份行按「上架年」呈现，不含「年份」行', () => {
+    it('网文：年份/章数不再写进正文（由条目卡按 bookKind 换名渲染）', () => {
         const md = generateNoteMarkdown(bookish('novel'));
-        expect(md).toContain('| 上架年 | 2008 |');
+        // 🔴 2026-11-14 m04138 翻面：`| 上架年 | 2008 |` / `| 章数 | 1200 |` 是表格行，表格已换条目卡。
+        //    换名逻辑迁到 `pure/noteCard` 的 `bookKindLabelOf`（year→上架年、page_count→章数、series→系列），
+        //    由 `tests/noteCard.test.ts` 钉住 —— 这里只钉「正文里不再有这些行」。
+        expect(md).not.toContain('| 上架年 |');
         expect(md).not.toContain('| 年份 |');
+        expect(md).not.toContain('| 章数 |');
+        // 机器读的 frontmatter 不变（year/page_count 键名对 Dataview 兼容，bookKind 只换显示名）
+        expect(entryFrontmatter(bookish('novel'))).toContain('year: 2008');
+        expect(entryFrontmatter(bookish('novel'))).toContain('page_count: 1200');
     });
 
-    it('网文：元数据按「章数」呈现，不含「页数」行', () => {
-        const md = generateNoteMarkdown(bookish('novel'));
-        expect(md).toContain('| 章数 | 1200 |');
-        expect(md).not.toContain('| 页数 |');
-    });
-
-    it('网文：出版侧字段不渲染（译者/出版社/出品方/ISBN/装帧/定价/丛书）', () => {
+    it('网文：出版侧字段本来就不渲染（正文现在统一无表格行）', () => {
         const md = generateNoteMarkdown(bookish('novel'));
         for (const label of ['| 译者 |', '| 出版社 |', '| 出品方 |', '| ISBN |', '| 装帧 |', '| 定价 |', '| 丛书 |']) {
             expect(md).not.toContain(label);
@@ -776,23 +826,29 @@ describe('generateNoteMarkdown · 网文（novel）口径', () => {
         expect(md).toContain('## 作者简介');
     });
 
-    it('文学回归锁定：年份/页数/出版侧字段/目录 全部照旧（网文分支不得误伤）', () => {
+    it('文学回归锁定：目录/出版侧字段照旧，正文无表格行（网文分支不得误伤）', () => {
         const md = generateNoteMarkdown(bookish('book'));
-        expect(md).toContain('| 年份 | 2008 |');
-        expect(md).toContain('| 页数 | 1200 |');
-        expect(md).toContain('| 译者 | 某译 |');
-        expect(md).toContain('| 出版社 | 某出版社 |');
-        expect(md).toContain('| ISBN | 9787555218296 |');
+        // 🔴 2026-11-14 m04138 翻面：`| 年份 |` / `| 页数 |` / `| 译者 |` / … 全是表格行，已随表格删除。
+        //    「文学 vs 网文」的显示差异现在由 `pure/noteCard.bookKindLabelOf` 承担（见 noteCard.test.ts）。
+        for (const line of ['| 年份 |', '| 页数 |', '| 译者 |', '| 出版社 |', '| ISBN |', '| 上架年 |', '| 章数 |']) {
+            expect(md).not.toContain(line);
+        }
+        // 正文侧真正该保留的：`## 目录` 章节（#431 翻面后文学与网文都渲染）
         expect(md).toContain('## 目录');
-        expect(md).not.toContain('| 上架年 |');
-        expect(md).not.toContain('| 章数 |');
+        // frontmatter 侧一字不少
+        expect(entryFrontmatter(bookish('book'))).toContain('year: 2008');
+        expect(entryFrontmatter(bookish('book'))).toContain('page_count: 1200');
+        expect(entryFrontmatter(bookish('book'))).toContain('translator: "某译"');
+        expect(entryFrontmatter(bookish('book'))).toContain('isbn: "9787555218296"');
     });
 
-    it('缺省 bookKind（老数据）按文学口径渲染', () => {
+    it('缺省 bookKind（老数据）按文学口径：正文无表格行，目录照出', () => {
         const md = generateNoteMarkdown(baseEntry({ type: 'book', year: 2010, pageCount: 340, toc: '第一章' }));
-        expect(md).toContain('| 年份 | 2010 |');
-        expect(md).toContain('| 页数 | 340 |');
+        expect(md).not.toContain('| 年份 |');
+        expect(md).not.toContain('| 页数 |');
         expect(md).toContain('## 目录');
+        // 老数据缺省 bookKind ⇒ `bookKindLabelOf` 回落「年份 / 页数」（文学口径），由 noteCard.test.ts 钉住
+        expect(entryFrontmatter(baseEntry({ type: 'book', year: 2010, pageCount: 340 }))).toContain('year: 2010');
     });
 
     it('frontmatter：page_count 键名不变（网文同字段 = 章数，Dataview 查询兼容）', () => {
@@ -800,9 +856,12 @@ describe('generateNoteMarkdown · 网文（novel）口径', () => {
         expect(entryFrontmatter(bookish('book'))).toContain('page_count: 1200');
     });
 
-    it('🔴 #445 漫画：元数据按「话数」呈现（不是「页数」也不是「章数」），frontmatter 键名仍是 page_count', () => {
+    it('🔴 #445 漫画：正文无「话数/页数/章数」表格行，frontmatter 键名仍是 page_count', () => {
         const md = generateNoteMarkdown(baseEntry({ type: 'book', bookKind: 'comic', pageCount: 139 }));
-        expect(md).toContain('| 话数 | 139 |');
+        // 🔴 2026-11-14 m04138 翻面：`| 话数 | 139 |` 这行本身没了（表格 → 条目卡）。
+        //    漫画侧「话数」这个换名由 `pure/noteCard.bookKindLabelOf` 承担（comic ⇒ 话数），
+        //    由 `tests/noteCard.test.ts` 钉住；这里同时钉死「⛔ 不许退化成页数/章数」。
+        expect(md).not.toContain('| 话数 |');
         expect(md).not.toContain('| 页数 |');
         expect(md).not.toContain('| 章数 |');
         expect(entryFrontmatter(baseEntry({ type: 'book', bookKind: 'comic', pageCount: 139 }))).toContain('page_count: 139');

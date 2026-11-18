@@ -1,7 +1,7 @@
 <script lang="ts">
     import { lrcTranslatableCount } from 'pure/lrcBilingual';
     import { buildPlatformCoverQuery, posterSourcesFor, type PosterSource } from 'pure/posterSources';
-    import { onMount, onDestroy, tick } from 'svelte';
+    import { onMount, onDestroy, tick, afterUpdate } from 'svelte';
     import { ENTRY_TYPE_LABELS, type EntryType } from 'data/types';
     import { statusLabel, statusVerb } from 'pure/labels';
     import { reconcileBookProgress, pageFromPercent, type BookProbeResult, type BookProgressFields } from 'pure/bookProgress';
@@ -32,6 +32,10 @@ import { toSearchTypeSel, applySearchTypeSel, type SearchTypeSel } from 'pure/se
     import { Notice } from 'obsidian';
     import { posterUrl } from 'services/tmdb';
 import { shouldAdoptCover } from 'pure/posterPolicy';
+    // 🔴 #772 心情（⑳）：六档真源在 pure/mood（⛔ 别在本文件再抄一份 emoji 数组）
+    import { MOODS, moodChipTip, normalizeMood, type MoodId } from 'pure/mood';
+    // ③ 单集评价：表单只**读**总评价数（用户 m01474「只在整季表单才显示总评价数」）。
+    import { reviewedCount } from 'pure/episodeReview';
     import type { TmdbDetail, TmdbSearchResult } from 'services/tmdb';
     import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
     import type { BangumiSearchResult } from 'services/bangumi';
@@ -82,6 +86,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
         normalizeEpRange,
         partCountLabel,
         pickedCandidate,
+        pickedFillUrl,
         pickedUrl,
         runBatchSearch,
         titleMatchesWork,
@@ -92,10 +97,18 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
         type BatchTarget,
     } from 'pure/biliBatch';
     import { formatDuration } from 'pure/dl/utils';
+    /** 🔴「网络集可搜索 YouTube」：判默认源 + 候选形状（`YtSearchItem` 与 B 站 `BiliVideo` 不通用） */
+    import { isYouTubeUrl, type YtSearchItem } from 'pure/youtube';
     import { pickLibraryAudio, type LibraryAudioFile } from 'pure/libraryAudio';
     import { audioExtOf, audioStemOf } from 'pure/renameAudio';
     import { buildPosterQuery } from 'pure/posterSearch';
     import { mediaInfoLine, type MediaInfo } from 'pure/mediaInfo';
+    /**
+     * 结果卡片上的**歌曲时长**（秒 → `mm:ss`）。
+     * ⚠️ 与上面 `pure/dl/utils` 那个 `formatDuration` **不是同一个实现**（那个分钟不补零、且 `0` 返回 `'0:00'`，
+     *    专给 B 站列表用）；卡片要的是「拿不到就不画」的口径 ⇒ 用 `mediaInfo` 这份。改名避免同名冲突。
+     */
+    import { formatDuration as formatTrackDuration } from 'pure/mediaInfo';
     import { pickLibraryBook, type LibraryBookFile } from 'pure/libraryBooks';
     /** #464 在线曲库：音乐态结果区的那一栏（id 从纯模块取，⛔ 别写字面量） */
     import { SONG_LIB_ID } from 'pure/songLibrary';
@@ -117,6 +130,23 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     //       与 `pure/relatedGraph.ts` + 它那套单测**全部原样保留** —— 重新上线时把入口接回来即可。
     import type { RelatedLink } from 'data/types';
     import type { MediaEntry, BookKind, MusicKind, EntryLogKind } from 'data/types';
+    import { buildEntryFormPlan, entryFormFieldHidden, entryFormFieldSpan, normalizeEntryFormFields, sortEntryFormKeys } from 'pure/entryFormFields';
+    /**
+     * 🔴 2026-11-15 用户 m04642 ②（逐字）：「这个所有输入框的占位字符应该引导用户填单个或多个的格式
+     *    不然用户不知道填什么」。
+     *
+     * 改造前不是"没有占位符"，而是**占位符与解析口径对不上**：
+     *   · `tags` 提交时 `split(/[,，]/)` 只认逗号，占位符却写「多个用逗号分隔」（这条是对的）；
+     *   · `genres`/`cast`/`aliases`/`directorWriters` 提交时 `split(/[\/、,，]/)` 斜杠顿号逗号全认；
+     *   · 最坑的是 `platform`（`types.ts:236` 单值字符串）占位符写 `PC / Switch / PS5`，
+     *     看着能填三个，实际 `platform.trim()` 整串存成**一个**平台名。
+     *
+     * ⇒ 文案一律由 `pure/formFields` 的 `placeholderOf(key)` **生成**，
+     *   格式真源与提示语同源；`tests/formPlaceholders.test.ts` 会反向核对提交侧的 `split(...)`
+     *   与本表 `sep` 一致，⛔ 别在模板里手写第二份格式说明。
+     */
+    import { placeholderOf } from 'pure/formFields';
+import type { EntryFormFieldEntry } from 'pure/entryFormFields';
 
     type SearchResult = TmdbSearchResult | OmdbSearchResult | BookSearchResult | GameSearchResult | BangumiSearchResult | MusicSearchResult;
 
@@ -169,6 +199,14 @@ export let initialBookKind: BookKind | undefined = undefined;
     export let onSearchAnime: (q: string, onProgress?: SearchProgressCb) => Promise<BangumiSearchResult[]> = async () => [];
     export let onSearchMusic: (q: string, onProgress?: SearchProgressCb) => Promise<MusicSearchResult[]> = async () => [];
     /**
+     * 🔴🔴 m04435 ②：`onSaveMusic` 这个 prop **已删除**（用户逐字：「添加条目展开的结果列表：
+     *    不显示"入库"和"AI 预填"按钮」）。
+     *    它原先只为曲库那枚「入库」服务 —— 按钮没了，prop 留着就是一条「有注入、没人用」的死线，
+     *    下次有人照着它挂回按钮。宿主 `src/modals/EntryModal.ts` 的对应注入同步删除。
+     * ⚠️ 宿主能力 `main.importMusicResult` **没删**：音乐同步弹窗（`MusicSyncModal`）那条线还在用它，
+     *    删的只是「搜索结果卡片上这颗按钮」这个 UI 入口。
+     */
+    /**
      * 🔴 ⑬ 搜索累积（用户 2026-10-22：「给搜索添加条目返回的如上限20条可再搜索突破，可存储持久化上次搜索已有的」）。
      *
      * 各源自己的截断（豆瓣 30 / TMDB 30 / Bangumi 30 / IGDB 30 / MangaDex 20 / AniList 20）是**单次请求**
@@ -212,7 +250,11 @@ export let initialBookKind: BookKind | undefined = undefined;
     /** 点击来源徽标直达数据源官方页（弹窗侧校验 http/https） */
     export let onOpenSource: (url: string) => void = () => {};
     /** 「集按钮」打开本地剧集视频（弹窗侧 Electron 系统播放器） */
-    export let onPlayEpisode: (path: string) => void = () => {};
+    /**
+     * 编辑表单「集按钮」左键 → 播放该集本地视频。
+     * ⚠️ 第二参 `index` = 集下标（m07854 ⑧）：宿主用它当播放位置的键，缺省 0 保持向后兼容。
+     */
+    export let onPlayEpisode: (path: string, index?: number) => void = () => {};
     /** 「浏览」系统文件选择器选本地视频（Electron remote.dialog 返回绝对路径；input file 的 File.path 在 Obsidian 不可用） */
     export let onPickLocalVideo: (ev?: MouseEvent) => Promise<string | undefined> = async () => undefined;
     /** 「总结摘要」小标题右侧 ✨：AI 生成一句话总结 + 核心看点（复用阅读器翻译的服务商与 Key；失败返回 null） */
@@ -233,6 +275,30 @@ export let initialBookKind: BookKind | undefined = undefined;
     export let onProbeAudioInfo: (path: string) => Promise<MediaInfo> = async () => ({});
     /** 「启动快捷方式」系统文件选择器选游戏 .lnk（返回 vault 相对路径，库外绝对路径） */
     export let onPickGameLaunch: (ev?: MouseEvent) => Promise<string | undefined> = async () => undefined;
+    /** 2026-11-16 系统文件选择器选**本地 Flash 影片**（.swf；插件内用 Ruffle 播，不交给系统） */
+    export let onPickGameSwf: (ev?: MouseEvent) => Promise<string | undefined> = async () => undefined;
+    /**
+     * 2026-11-16 用户：「我这个只有获取一个文件怎么办改成关联目录」——
+     * 选一个**游戏文件夹**，自动挑出里面的主影片（纯层 `pickMainSwf` 决定挑哪个）。
+     *
+     * 三态：`string` = 挑中了（回填输入框）；`null` = 目录里没有 .swf；`undefined` = 用户取消 / 无对话框。
+     * ⚠️ `null` 与 `undefined` 必须分开：前者要提示「这个目录里没有 .swf」，后者应**什么都不做**。
+     */
+    export let onPickGameSwfDir: (ev?: MouseEvent) => Promise<string | null | undefined> = async () => undefined;
+    /**
+     * 2026-11-16「获取」：从游戏详情页地址抓真实 swf、下载进库、回填 `gameSwf`。
+     * 返回 `{ ok, message, relPath? }`（`relPath` 用于回填输入框）。
+     * ⚠️ **地址由宿主弹窗收集**（`main.ts` 那边开 `TextPromptModal`），表单只管点一下与显示结果 ——
+     *    这样「去哪抓 / 怎么抓失败怎么解释」的规则只在服务层一处，⛔ 别在表单里再复制一套地址校验。
+     *
+     * 🔴 第一参必须是**条目 id**（2026-11-16 用户报障「还是没有根据关联的条目笔记重命名」）：
+     *    上一版这里是无参调用、`promptFetchGameSwf()` 也没往下传 ⇒ 服务层拿不到条目名，
+     *    只能退回 URL 末段（`04.swf` / `8.swf`）。文件名要靠条目标题算，这条链不能断。
+     */
+    export let onFetchGameSwf: (entryId?: string) => Promise<{ ok: boolean; message: string; relPath?: string }> = async () => ({
+        ok: false,
+        message: '未接线',
+    });
     /** 编辑模式删除条目（弹窗侧提供确认与刷新） */
     export let onDelete: () => Promise<void> = async () => {};
     /** 结果栏数上报（宿主据此动态调弹窗宽度：三栏并排需加宽，一/两栏与编辑态用常规宽度）；
@@ -309,6 +375,30 @@ export let initialBookKind: BookKind | undefined = undefined;
         parts: [],
         error: 'B 站分P 不可用',
     });
+
+    /**
+     * 🔴「网络集可搜索 YouTube」（用户 2026-10-31：「网络集可搜索油管」）。
+     *
+     * 把 `网络地址` 行那枚 globe 浮层从「只能搜 B 站」扩成「B站 / YouTube 两源切换」：
+     * · ⛔ **不新增第二枚按钮** —— #669「同一功能只留一个入口」，两枚同语义按钮会让人以为是两个功能；
+     * · 默认源由当前网络地址猜（见 `epBiliDefaultSource`）：空 / B 站链接 ⇒ B站，YouTube 链接 ⇒ YouTube；
+     * · ⚠️ **选中即直接填这一条链接**，⛔ 不做分P 勾选表 —— YouTube 播放列表的分集结构与 B 站分P
+     *   不是一回事（失效条目、顺序、`entries` 要额外多跑一次），硬做一张表容易错位；
+     * · 宿主那侧门控 / 代理 / Cookie 全在 `main.ytSearch`（与取流同一条链）。
+     */
+    export let onYtSearch: (keyword: string) => Promise<{ videos: YtSearchItem[]; error?: string }> = async () => ({
+        videos: [],
+        error: 'YouTube 搜索不可用',
+    });
+
+    /**
+     * 🔴 `b23.tv` 短链 → 落地页（宿主 `main.resolveBiliShortForPaste`）。
+     *
+     * 手机分享出来的短码形如 `b23.tv/AbCd123`，里面**不含** BV 号 —— 本组件是纯 UI，
+     *  ⛔ 不发网络请求，所以「粘贴链接」先问宿主跳一次再认号。
+     * ⚠️ 没注入 / 跳不动 ⇒ 默认实现原样返回（调用方照旧提示「请在浏览器打开」）。
+     */
+    export let onResolveBiliShort: (url: string) => Promise<string> = async (u: string) => u;
 
     /**
      * 🔴 #529（用户：「在书籍条目加检索在线书籍阅读小图标按钮（网络链接回填）」）：
@@ -504,6 +594,12 @@ export let initialBookKind: BookKind | undefined = undefined;
         // 逐源事件：收到即更新该源实时状态（先返回先亮，其余保持「搜索中…」）
         if (p.source) {
             srcLive = { ...srcLive, [p.source.id]: { state: p.source.state, count: p.source.count } };
+            // 🔴 2026-11-12（①-12）：把本源**拿到的条目**存下来，结果区就能立刻给这一栏出卡片，
+            //    ⛔ 不必等 `doSearch` 末尾的整轮合并（那要等最慢的源）。
+            //    ⚠️ 只认 ok/empty 两态：failed/timeout/blocked 没有 items，写空数组会掩盖「池子里还有旧结果」。
+            if (p.source.items) {
+                earlyBySource = { ...earlyBySource, [p.source.id]: p.source.items as SearchResult[] };
+            }
         }
     };
     function startSimProgress() {
@@ -702,6 +798,19 @@ export let initialBookKind: BookKind | undefined = undefined;
     }
 
     /**
+     * 🔴🔴 m04435 ②：`runAiPrefillForResult()` **已连根删除**。
+     *
+     * 它是 m02288 的产物（用户当时要求「AI预填图标按钮…移动到每个搜索条目结果页面信息标题旁」），
+     * 本轮用户改口：「添加条目展开的结果列表：**不显示"入库"和"AI 预填"按钮**。【"AI 预填"仅在
+     * **单卡编辑属性表单窗口**显示】」⇒ 结果列表里那颗按钮连同这个只为它服务的函数一起退场。
+     *
+     * ⚠️ **AI 预填能力本身没删**：`runAiPrefill()` 还在，入口是**单卡编辑属性表单**里
+     *    书名标签右侧那颗 ✨（`.rl-title-col > .rl-lbl-row`，条件 `{#if entry || manualFill}`）——
+     *    这正是用户说的「仅在单卡编辑属性表单窗口显示」。
+     * ⛔ 别再为「搜索结果」造第三条预填入口：两轮下来用户已经把它从表头挪到卡片、又从卡片删干净了。
+     */
+
+    /**
      * 确认回填 —— **用 AI 值覆盖**它给出了值的字段（用户 2026-10-03 裁定；旧值在预览里已用删除线标明）。
      * ⚠️ 「导演 / 编剧」合并框：写的是它的两个**来源变量**（`director` + `screenwriter`），
      *    不是那个 `$:` 派生出来的字符串 —— 直接赋给派生值会在下一次重算时被冲掉。
@@ -730,6 +839,24 @@ export let initialBookKind: BookKind | undefined = undefined;
         }
         clearPrefill();
         new Notice(`已回填 ${n} 个字段 — 可直接修改后再保存`, 3000);
+    }
+
+    /**
+     * 搜索结果区那颗 ✨ 的「回填这些字段」。
+     *
+     * 🔴 与字段区那份**只差一步**：这里回填完必须把用户**送进字段区**
+     *    （`picked = true`），否则写了十几个变量、屏幕上却什么都没变 —— 结果区还在原地，
+     *    用户只会以为按钮没生效。`manualFill = true` 是照「手动填写」那条路的既定口径：
+     *    这条路进字段区时标题行那颗 ✨ 仍在（#499B 的判据就是这个变量），
+     *    ⛔ 不要写成 `false`（那是「点选搜索结果」那条路，见 `pick()`）。
+     *
+     * ⚠️ 顺序：先 `applyPrefill()`（它内部会 `clearPrefill()` 并给回执），再切视图 ——
+     *    反过来的话 `applyPrefill` 里那句 `new Notice` 会盖在被切的这一步之后，看不出因果。
+     */
+    function applyPrefillFromResults(): void {
+        applyPrefill();
+        picked = true;
+        manualFill = true;
     }
 
     /** 简介类 textarea 引用（auto-grow：高度随文字多少自动伸缩） */
@@ -762,6 +889,135 @@ export let initialBookKind: BookKind | undefined = undefined;
         //    （⛔ 留着它会显示一个「当前分类根本不接」的检索结果，自相矛盾）。
         if (next.bookKind !== 'book') readUrlOpen = false;
     }
+
+    /* ── 属性块的显示 / 隐藏 / 先后（1.5.1）────────────────────────────────────────
+       用户（2026-11-27）：「高级设置里增加个自由删减各类型条目属性展示的面板，然后可以预览拖动
+       调整剩下的属性的编辑属性窗口」。
+       🔴 三条口径：
+       ⑴ **只动渲染，不动数据**：所有状态变量仍在声明处从 `entry` 取初值、`submit()` 仍无条件读它们
+          ⇒ 隐藏某块**不丢值、也不清值**（⛔ 别顺手把隐藏块在提交时置空）。
+       ⑵ **显隐走行内 style，先后走「位置互换」**：⛔ 不用 flex `order` —— `.rl-fields-col` 里另有
+          大量**不受管理**的子元素（标题行 / AI 预填表 / 各种浮层 / 个人状态区），flex 会把它们
+          统一落到 `order:0` 而全部塌到顶部。
+       ⑶ **没配置 = 一个字都不写** ⇒ 升级上来的用户观感与改版前逐像素一致。
+       配置由 `EntryModal` 按当前设置注入（见上面 `:375` 那条：⛔ 本组件不读 settings）。 */
+    /** 按类型的配置（键 = `EntryType`；缺席 ⇒ 该类型走缺省全显示）。
+     *  值兼容两种形态：第一版的 `string[]`（纯顺序、宽度取缺省）与本版的
+     *  `{ key, span }[]`（带宽度）—— `normalizeEntryFormFields` 统一收口。 */
+    export let entryFormFieldsByType: Record<string, EntryFormFieldEntry[]> = {};
+    /** 书籍三子类的配置（键 = `BookKind`；缺席 ⇒ 回落 `entryFormFieldsByType.book`，再缺席 ⇒ 缺省） */
+    export let entryFormFieldsByKind: Record<string, EntryFormFieldEntry[]> = {};
+
+    /** 当前类型 / 子类的**可见键与位次**；`type` / `bookKind` 一变就跟着变（类型下拉可切换） */
+    $: fldPlan = buildEntryFormPlan(
+        normalizeEntryFormFields(
+            (type === 'book' && bookKind && entryFormFieldsByKind[bookKind]) || entryFormFieldsByType[type],
+            type,
+            type === 'book' ? bookKind : undefined,
+        ),
+        type,
+        type === 'book' ? bookKind : undefined,
+    );
+    /** 某字段是否隐藏（模板里每个受管字段都读它） */
+    function fldHidden(key: string): boolean {
+        return entryFormFieldHidden(fldPlan, key);
+    }
+    /**
+     * 受管字段的行内样式：隐藏 ⇒ `display:none`；否则给出它在 6 列栅格里的跨度。
+     *
+     * 🔴 容器 `.rl-fields-col` **恒为 6 列栅格**，跨度只能行内写 ——
+     * 用户可给任意字段选 6 / 3 / 2（整行 / 两个并排 / 三个并排），
+     * 栅格列数是全局的、跨度是每个字段自己的 ⇒ 只能在行内表达（CSS 类无法穷举组合）。
+     * 缺省跨度见 `pure/entryFormFields` 的 `ENTRY_FORM_FIELDS[].span`（= 模板原本的宽度）。
+     *
+     * ⚠️ 本函数**只负责首屏那一笔**：模板里写的是 `fldStyle('<key>')`，参数只有常量 →
+     * Svelte 无从得知它依赖 `fldPlan`，配置变化**不会**重算（实测：`$set` 换宽度后样式不跟）。
+     * 后续每一次更新都由 `applyFieldOrder()` 在 `afterUpdate` 里逐块写回（见该函数注释）。
+     */
+    function fldStyle(key: string): string {
+        if (fldHidden(key)) return 'display:none';
+        return `grid-column: span ${entryFormFieldSpan(fldPlan, key)}`;
+    }
+    /** 字段区右列容器（先后复排的落点） */
+    let fieldsColEl: HTMLDivElement | null = null;
+
+    /**
+     * 按 `fldPlan` 把受管块**在它们原本占据的那几个位置之间**重排。
+     * 🔴 只交换「占着位置的受管块」—— 面板外的元素（标题行 / 预填 / 浮层 / 状态区）原地不动。
+     * 用注释节点占位再回填，避免 `replaceWith` 连环操作时节点已被搬走。
+     *
+     * 🔴 判据只能是「**当前 DOM 顺序**是否已等于目标顺序」，⛔ 不能加「上次算过的签名」缓存：
+     * `type` 一切换，Svelte 会把 `{#if}` 里的块**按模板原位重建**（顺序被打回缺省），
+     * 但目标顺序没变 ⇒ 缓存命中就会跳过复排，用户看到的是「排序只在第一次生效」。
+     * 顺序已对时本就一个字都不写，等价于那个缓存想省的 DOM 操作，且无焦点风险。
+     */
+    function applyFieldOrder(): void {
+        const col = fieldsColEl;
+        if (!col) return;
+        const els = Array.from(col.children).filter(
+            (el): el is HTMLElement => el instanceof HTMLElement && !!el.getAttribute('data-fld'),
+        );
+        if (!els.length) return;
+
+        // ① 显隐与跨度：**每次更新都逐块写回**。
+        //    模板里的 `style={fldStyle('<key>')}` 参数是常量，Svelte 不会把它算成 `fldPlan` 的依赖，
+        //    配置一变（`$set` / 设置页保存后重开）宽度就停在首屏那一笔上 —— 这里补上真正的响应。
+        for (const el of els) {
+            const key = el.getAttribute('data-fld') as string;
+            const hide = fldHidden(key);
+            // 🔴🔴 m07813①（2026-11-15 用户：「确保其他框并排时高度对齐，比如简介和总结1/2并排时不能对齐」）
+            // 并排的两块要**上下齐平** ⇒ 把受管块本身做成纵向 flex，块内 textarea 吃掉剩余高度。
+            // ⛔ 这段**必须**写在这里（inline style），不能写成 `.rl-fields-col > [data-fld] { display:flex }`：
+            //    Svelte 的 scoped 编译会给「被新子选择器命中的元素」的同组既有规则**再叠一层 `.svelte-xxx`**
+            //    产物实测 `.rl-meta-row.svelte-x.svelte-x` → **三段** hash，而 assert-symbols.cjs 里
+            //    十余条旧断言钉的是两段形态 ⇒ 当场 12 条红（本轮实测踩到并撤回）。
+            // ⚠️ `meta` 必须跳过：它自己就是 `.rl-meta-row`（四框横排 + flex-wrap），压成竖排全乱。
+            // 逐属性比对（⛔ 别比 `cssText`：浏览器会规范化成 `display: none;`，那样每帧都判不等）。
+            const isMeta = key === 'meta';
+            const wantDisplay = hide ? 'none' : isMeta ? '' : 'flex';
+            const wantDir = isMeta ? '' : 'column';
+            const wantCol = hide ? '' : `span ${entryFormFieldSpan(fldPlan, key)}`;
+            if (el.style.display !== wantDisplay) el.style.display = wantDisplay;
+            if (el.style.flexDirection !== wantDir) el.style.flexDirection = wantDir;
+            if (el.style.gridColumn !== wantCol) el.style.gridColumn = wantCol;
+            if (!isMeta) {
+                // 块内 textarea 撑满剩余高度（`min-height: 0` 必须有：flex 子项默认 min-height:auto 不肯收缩）
+                const tas = el.querySelectorAll<HTMLTextAreaElement>(':scope > textarea.rl-input');
+                tas.forEach((ta) => {
+                    if (ta.style.flex !== '1 1 auto') ta.style.flex = '1 1 auto';
+                    if (ta.style.minHeight !== '0') ta.style.minHeight = '0';
+                });
+                // 顶边还差 4px：裸 `.rl-lbl` 是 9+14+4=27px，`.rl-lbl-row` 里那颗 label 的
+                // margin-bottom 被清零、只有 23px ⇒ 给标签行补回同样的 4px。
+                const rows = el.querySelectorAll<HTMLElement>(':scope > .rl-lbl-row');
+                rows.forEach((row) => {
+                    if (row.style.marginBottom !== '4px') row.style.marginBottom = '4px';
+                });
+            }
+        }
+
+        // ② 先后：只在受管块原本占据的那几个位置之间换。
+        if (els.length < 2) return;
+        const keys = els.map((el) => el.getAttribute('data-fld') as string);
+        const sorted = sortEntryFormKeys(keys, fldPlan);
+        if (sorted.every((k, i) => k === keys[i])) return;
+        const byKey = new Map<string, HTMLElement>();
+        keys.forEach((k, i) => byKey.set(k, els[i]));
+        // 先把每个受管块换成一个占位注释（位置保留），再把排好序的块填回这些位置
+        const marks = els.map((el) => {
+            const mark = document.createComment('rl-fld');
+            el.parentNode?.replaceChild(mark, el);
+            return mark;
+        });
+        sorted.forEach((k, i) => {
+            const el = byKey.get(k);
+            const mark = marks[i];
+            if (el && mark.parentNode) mark.parentNode.replaceChild(el, mark);
+        });
+    }
+    /* 🔴 挂 `afterUpdate` 而不是 `onMount`：`{#if type === ...}` 那批块会随类型切换被 Svelte
+       重建、节点顺序被打回模板原位 ⇒ 每次更新后都要再对一次（顺序已对时本函数零 DOM 操作）。 */
+    afterUpdate(applyFieldOrder);
     /** 音乐分类（1.0.3.1 起不再分：用户 2026-09-13 裁定删除「其他」，表单选择行已下线）；字段保留恒归一为 music（pure/musicKind） */
     let musicKind: MusicKind = normalizeMusicKind(entry?.musicKind);
     let author = entry?.author ?? '';
@@ -784,6 +1040,20 @@ export let initialBookKind: BookKind | undefined = undefined;
      * 所以它没有检索按钮，只在「启动路径」浮层里手填 / 粘贴（与影视集编辑浮层那套「粘贴」同款）。
      */
     let gameUrl = entry?.gameUrl ?? '';
+    /**
+     * 🔴 2026-11-16 游戏**本地 Flash 影片**（`.swf`，存 `gameSwf`，append-only 新字段）。
+     * 语义 = 「点「▶ 启动」在插件内用 Ruffle 直接玩」；与 `gameLaunchPath`（.lnk 走系统）并列，
+     * 两者都填时 **swf 优先**（能内嵌玩就不把用户甩出 Obsidian）。
+     */
+    let gameSwf = entry?.gameSwf ?? '';
+    /**
+     * 🔴 2026-11-16 游戏**内嵌播放页**（存 `gameEmbed`，append-only 新字段）。
+     * 语义 = H5 / Unity 类游戏没有 swf 可下，改为在 Flash 游戏标签页里用 iframe 打开它的网页。
+     * ⚠️ 与 `gameUrl`（商店页，交给系统浏览器）**不是一回事**，⛔ 别合并：
+     *    `gameUrl` 是「我不在插件里跑，你去浏览器看」；`gameEmbed` 是「在插件里跑」。
+     * 优先级：`gameSwf`（本地 Ruffle） > `gameEmbed`（内嵌网页） > `gameLaunchPath`（.lnk） > `gameUrl`。
+     */
+    let gameEmbed = entry?.gameEmbed ?? '';
     /** 书籍文件路径（阅读器打开入口）：右键编辑浮层浏览/手动输入，存 bookFile */
     let bookFileVal = entry?.bookFile ?? '';
     /** 书籍文件右键编辑浮层开关 */
@@ -810,6 +1080,12 @@ export let initialBookKind: BookKind | undefined = undefined;
     let gameLaunchVal = '';
     /** #534 游戏网络路径的编辑缓冲值（与 `gameUrl` 分开：保存才写回 —— 同 gameLaunchVal 的模式） */
     let gameUrlVal = '';
+    /** 2026-11-16 游戏本地 swf 的编辑缓冲值（同上：保存才写回 `gameSwf`） */
+    let gameSwfVal = '';
+    /** 2026-11-16 游戏内嵌播放页的编辑缓冲值（同上：保存才写回 `gameEmbed`） */
+    let gameEmbedVal = '';
+    /** 2026-11-16「获取」进行中标记：防重复点击（下载可能要几十秒，无标记会并发下多份） */
+    let gameFetching = false;
     /** 本地音频右键编辑浮层开关 + 编辑缓冲值（保存才写回 audioPath） */
     let audioEditOpen = false;
     let audioPathVal = '';
@@ -956,6 +1232,21 @@ export let initialBookKind: BookKind | undefined = undefined;
      *    结果第七季 8.5 排在第八季 8 后面。语义由用户定（阅读序 / 上映序 / 季序都行），本插件不解释含义。
      */
     let seriesIndexVal = entry?.seriesIndex !== undefined ? String(entry.seriesIndex) : initialSeriesIndex;
+    /**
+     * **合集**（2026-11-24 用户裁定新增）。
+     * 🔴 用户原话：「在所有类型条目属性窗口上加个合集，**只有写了才能进合集视图**」
+     *    ⇒ 这个框是合集视图（`kind === 'collection'`）**唯一**的收录依据，⛔ 与上面的 `series` 无关：
+     *    `series` 管海报墙折叠分组，`collection` 管合集视图归属（见 `pure/mediaViews.ipKeyOf` 的注释）。
+     * ⚠️ 留空 = 不进任何合集视图（这是用户的显式意志，⛔ 别兜底回落 series）。
+     */
+    let collection = entry?.collection ?? '';
+    /**
+     * **标签**（自定义视图的收录依据）。
+     * 🔴 用户原话：「还有加个标签（自定义视图）」—— 自定义视图按标签收人（`viewMatchesEntry`），
+     *    而本表单**此前根本没有标签输入口**（`tags` 只能在 MediaList 的批量面板里改）⇒ 用户没法给单条配标签。
+     * ⚠️ 存储形态仍是 `MediaEntry.tags: string[]`；这里用**逗号分隔的文本**承载，提交时 split 成数组。
+     */
+    let tagsText = (entry?.tags ?? []).join(', ');
     let platform = entry?.platform ?? '';
     let developer = entry?.developer ?? '';
     let poster = entry?.poster ?? '';
@@ -978,6 +1269,18 @@ export let initialBookKind: BookKind | undefined = undefined;
     let communityScore = entry?.communityScore ? String(entry.communityScore) : '';
     /** 豆瓣评价人数（搜索/详情回填，展示「★ 8.5 · N人评价」；只读） */
     let ratingCount = entry?.ratingCount ? String(entry.ratingCount) : '';
+    /**
+     * 🔴 Steam 好评率百分比（0-100）的**表单本地状态**（2026-11-08 新增）。
+     *
+     * 为什么以前没有、现在必须有：`submit()` 过去写的是 `if (entry?.reviewPercent != null)`——
+     * 只从**已存在的条目**透传，于是「搜索点选 Steam 结果 → 新建」这条路上，
+     * 即使详情里明明带回了 97%，落库时也一定没有 ⇒ 用户报障「搜索获取评分不到」。
+     * 现在改为持有本地状态：详情回填写它、保存时读它（老条目仍由 `entry` 预置初值，透传语义不变）。
+     * ⚠️ 表单里**不渲染输入框**（用户裁定：Steam 百分比是客观数据，不给手改入口）——
+     *    它只做「详情 → 保存」的搬运，⛔ 别顺手加一个框出去。
+     * ⚠️ 用字符串存（与 `ratingCount` / `communityScore` 同一形态，便于判空与透传）。
+     */
+    let reviewPercent = entry?.reviewPercent != null ? String(entry.reviewPercent) : '';
     /** #386：这两个手填框是否被**用户亲手改过**。
      *  用户 2026-09-27 口径：「**仅新增条目时手动填写第一次显示这个样式，其余第二次修改和自动获取填写保持原样**」
      *  ⇒ 预览徽标只在「手填过」出现；**程序化回填不算手填**（搜索结果/详情补全写入前由 `pick()` 复位）。
@@ -1027,6 +1330,28 @@ export let initialBookKind: BookKind | undefined = undefined;
     let toc = entry?.toc ?? '';
     let status: MediaStatus = entry?.status ?? 'want';
     let rating = entry?.rating ?? 0;
+    /**
+     * 🔴 #772 心情（⑳）：六档 emoji，可选。⛔ 它不是评分 —— 不参与排序/均分，
+     * 与 `rating`（好不好，0~5）是两个维度。空串表示「没填」，
+     * 归一收口在 `normalizeMood`（保存时非法值会被丢成 undefined）。
+     */
+    let mood: MoodId | '' = entry?.mood ?? '';
+    /** 点已选中的档位 = 取消（与评分「再点清零」同一条交互纪律） */
+    function toggleMood(id: MoodId): void {
+        mood = mood === id ? '' : id;
+    }
+    /**
+     * 整季/整部层面「单集评价」的**总评价数**（用户 m01474：这个数只在这里显示，
+     * 播放器右侧那个单集面板的标题不许带它）。
+     *
+     * ⚠️ 只读 `entry.episodeReviews` 那个**打开表单时的快照**：表单不提交这个字段
+     *    （逐集评价的写入口在播放器详情页 `persistEpisodeReview`），
+     *    所以这里既不进脏检查键表、也不进提交对象 —— 加进去会把别处的改动
+     *    用旧快照覆盖回去。`reviewedCount` 是纯模块里的唯一判据。
+     */
+    function reviewedEpisodeCount(): number {
+        return reviewedCount(entry?.episodeReviews);
+    }
     /** #619：评分数值当前是不是「输入框」形态（点数值那一下切过去，失焦/回车切回来） */
     let ratingEditing = false;
     /** 切到输入框后要聚焦选中它（`{#if}` 新挂的节点得等一拍） */
@@ -1324,12 +1649,24 @@ export let initialBookKind: BookKind | undefined = undefined;
             }, 80);
         }
         // Bangumi 源条目：详情（评分/导演）由搜索前 3 条补全时写入；编辑打开不自动拉取
+        // 🔴 用户 2026-11-27（m04135）：「首页视图搜索框中搜索填入的文本如果这时点添加按钮
+        //    就直接填入搜索条目一步到位，省去打开添加条目窗口再搜索」。
+        //    ⇒ 首次打开且带进来一个词时，**立刻搜一次**（不只是预填输入框）。
+        //    ⚠️ 三条判据缺一不可：
+        //      ① `!entry` —— 编辑表单不摆搜索区；
+        //      ② `presetQuery.trim()` —— 没有词就别凭空发请求；
+        //      ③ `presetResults.length === 0` —— #632「保存并继续」重建表单时
+        //         `presetQuery` 同样是上一次的词，但候选列表已由 `presetResults` 带回来了
+        //         ⇒ 再搜一遍会把同一批结果重复并进池子、还会把页面切回「搜索中」。
+        if (!entry && presetQuery.trim() && presetResults.length === 0) {
+            void doSearch();
+        }
         return () => window.removeEventListener('click', onWinClick);
     });
 
     $: sourceReady = true; // 全部类型均可搜（Douban 单源/并存；影视/动画未配 Key 时仅 Douban 结果）
     $: sourceHint = (type === 'movie' || type === 'tv') && !canSearch
-        ? 'TMDB API Key 未配置 — 电影/剧集仅显示 Douban 结果（可在 设置 → 元数据源配置 › 元数据搜索源凭据 · TMDB 配置后叠加）'
+        ? 'TMDB API Key 未配置 — 电影/剧集仅显示 Douban 结果（可在 设置 → 搜索配置 › 元数据搜索源凭据 · TMDB 配置后叠加）'
         : '';
 
     /**
@@ -1375,6 +1712,16 @@ export let initialBookKind: BookKind | undefined = undefined;
     }
 
     /**
+     * 🔴🔴 m04435 ②：曲库结果的「直建条目」入口**已整体退场**（用户逐字：「添加条目展开的结果列表：
+     *    不显示"入库"和"AI 预填"按钮」）。
+     *    这里不是「暂时注释掉」—— `isSongLibResult` / `saveMusicResult` / `saveMusicResultOnKey` /
+     *    `savingKey` / `savedHits` / `onSaveMusic` 全部**连根删除**：留着不用的函数下次会被人顺手挂回按钮。
+     * ⚠️ 「已添加」角标（`.rl-res-added`）**保留** —— 那是用户当场裁定的（`savebtn` = 「按钮从结果列表删掉，
+     *    但保留『已添加』标记」），判据是 `addedHits`（宿主注入的、跨重建保持的那份），与本组件内的 `savedHits` 无关。
+     * ⚠️ 宿主侧能力 `plugin.importMusicResult` **没删**（音乐同步弹窗那条线还在用），只是这里不再摆按钮。
+     */
+
+    /**
      * 🔴 #632 连续添加：把「下一次还要用到的会话状态」交回宿主
      * （宿主重建本组件时，用 `presetResults` / `addedHits` / `initialSeries*` 再注回来）。
      *
@@ -1405,6 +1752,9 @@ export let initialBookKind: BookKind | undefined = undefined;
         'year', 'aliases', 'director', 'cast', 'screenwriter', 'country', 'language', 'durationMin',
         'author', 'artist', 'translator', 'publisher', 'producer', 'isbn', 'binding', 'price',
         'series', 'seriesIndexVal', 'platform', 'developer', 'album',
+        // 🔴 2026-11-24 新增两个「归属」栏（合集视图 / 自定义视图的收录依据）——
+        //    ⚠️ 必须同时进 `DIRTY_KEYS` 与 `dirtyNow()`，否则「只改这两栏就切条目」不会弹确认框、改动直接丢。
+        'collection', 'tagsText',
         'audioPath', 'audioUrl', 'gameLaunchPath', 'gameUrl', 'bookFileVal', 'readUrl',
         'summary', 'authorIntro', 'toc', 'aiText', 'communityScore', 'sourceName', 'sourceUrl',
         'watchedDate', 'plannedDate', 'lastWatchedDate', 'season', 'episode', 'totalEpisodes',
@@ -1436,6 +1786,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             year, aliases, director, cast, screenwriter, country, language, durationMin,
             author, artist, translator, publisher, producer, isbn, binding, price,
             series, seriesIndexVal, platform, developer, album,
+            collection, tagsText,
             audioPath, audioUrl, gameLaunchPath, gameUrl, bookFileVal, readUrl,
             summary, authorIntro, toc, aiText, communityScore, sourceName, sourceUrl,
             watchedDate, plannedDate, lastWatchedDate, season, episode, totalEpisodes,
@@ -1468,7 +1819,42 @@ export let initialBookKind: BookKind | undefined = undefined;
         items: SearchResult[];
         /** 该栏所代表的源是否在本次搜索中返回过结果（false → 显示「无匹配」占位） */
         empty: boolean;
+        /**
+         * 🔴 2026-11-12（m00353 ①-12）：本源**本轮还没返回**（仍在对岸等）⇒ 渲染骨架屏而不是空态。
+         *
+         * 用户原话：「多源搜索其中一源超时不返回时，要显示骨架屏展示另一个已返回的源（否则等待太长）」。
+         * 关键点：`empty`（无匹配）与 `pending`（还没回来）是**两种完全不同的状态**——
+         * 前者是「这个源答了，答的是空」，后者是「这个源还没答」。
+         * ⛔ 别把 pending 归进 empty：那会让用户以为「这个源没搜到」，实际它可能马上就回来了。
+         */
+        pending: boolean;
     }
+
+    /**
+     * 🔴 2026-11-12（①-12）：本轮**已返回源**的条目（键 = 源 id）。
+     *
+     * 为什么要单独存一份而不直接等 `results`：`results` 是**整轮合并后**才赋值的池子
+     * （`onMergeSearchPool` 在 `doSearch` 末尾才调），先回来的源在池子里根本还没有位置。
+     * 只靠它 ⇒ 界面永远是「所有源一起出」，某个源卡 5s 用户就干等 5s —— 这正是本条需求的病根。
+     * 这里由 `onSearchProgress` 的 `source.items` 实时填充，谁先回来谁先出卡片。
+     */
+    let earlyBySource: Record<string, SearchResult[]> = {};
+
+    /**
+     * 🔴 2026-11-12（①-12）：结果区**什么时候上屏**。
+     *
+     * 原来是 `results.length > 0` —— 但 `results` 是整轮合并后才赋值的池子，
+     * 搜索期间它还是上一轮的值（首轮就是空数组）⇒ 结果区压根不渲染，
+     * 先返回的源也没地方显示，骨架屏建了也看不见。
+     * 现在：池子有内容，或「正在搜且已有参与源」，两者任一成立就上屏。
+     * ⚠️ 搜完且一条都没有时仍然不显示整块（`searching` 转 false 且 results 空 ⇒ 条件不成立），
+     *    保持原来「没结果就别占一大片空白」的观感。
+     */
+    $: showResults = results.length > 0 || (searching && sourcePlan.length > 0);
+
+    /** 结果区标题里的条数：按**当前已渲染的栏**求和，而不是 `results.length`
+     *  —— 搜索中池子还没合并，用池子长度会把「已经出了 8 条」说成「共 0 条」。 */
+    $: shownCount = resultColumns.reduce((n, col) => n + col.items.length, 0);
 
     /**
      * 按来源把合并结果重分栏（子任务2 + 固定占栏修正）：每栏固定单一数据源，不再跨源交叉/全局相似度重排。
@@ -1485,16 +1871,30 @@ export let initialBookKind: BookKind | undefined = undefined;
                 const id = sourceIdOf(r);
                 const col = map.get(id);
                 if (col) col.items.push(r);
-                else map.set(id, { id, label: sourceLabel(id) || id, items: [r], empty: false });
+                else map.set(id, { id, label: sourceLabel(id) || id, items: [r], empty: false, pending: false });
             }
             return Array.from(map.values());
         }
         // 固定占栏：按参与源建栏，结果按 sourceIdOf 归入对应栏；无该源结果 → empty 占位
-        return sourcePlan.map((id) => {
-            const items = results.filter((r) => sourceIdOf(r) === id);
-            return { id, label: sourceLabel(id) || id, items, empty: items.length === 0 };
+        return sourcePlan.map((id): ResultColumn => {
+            const live = srcLive[id];
+            // 本轮已返回 ⇒ 用它带回来的那批（比 results 更早可用）；否则退回池子里该源的旧结果
+            const early = earlyBySource[id];
+            const items = early ?? results.filter((r) => sourceIdOf(r) === id);
+            const settled = live?.state !== undefined;
+            // pending 只在「正在搜 + 该源本轮还没任何回音」时成立；搜完仍未回报的源按 empty 收尾
+            const pending = searching && !settled;
+            return {
+                id,
+                label: sourceLabel(id) || id,
+                items,
+                // ⚠️ pending 也算「本栏暂不显示无匹配」——否则骨架屏和空态会同时出现
+                empty: items.length === 0 && !pending,
+                pending,
+            };
         });
     })();
+
 
     /** 结果栏数上报：未展示结果（搜索输入中/已选/手动）→ 0，否则按固定参与源栏数（含空栏）。
      *  宿主仅在栏数 ≥3（三源并排）时加宽弹窗，1~2 栏与编辑态保持常规宽度 */
@@ -1547,6 +1947,7 @@ export let initialBookKind: BookKind | undefined = undefined;
         const plan = onSourcesForType(type, sourcesKind);
         sourcePlan = songLibOn ? [...plan, SONG_LIB_ID] : plan;
         srcLive = {}; // 逐源进度清零（本次重新搜索）
+        earlyBySource = {}; // 逐源早到条目清零：⛔ 不清会把上一轮的卡片顶到这一轮先显示
         progDone = 0;
         progTotal = 0;
         progLabel = '';
@@ -1665,6 +2066,9 @@ export let initialBookKind: BookKind | undefined = undefined;
             sourceUrl = describeSearchResult(r).sourceUrl ?? '';
             communityScore = r.rating != null ? String(r.rating) : '';
             ratingCount = r.ratingCount ? String(r.ratingCount) : '';
+            // 🔴 复选换结果时百分比必须先清掉：新结果还没拉详情，留着上一条的 % 就是脏数据
+            //    （Steam 详情分支会在拉回来后重新填它）。
+            reviewPercent = '';
             if ('author' in r) {
                 // 书籍：Douban 一次返回全部信息（含豆瓣详情字段；Open Library 搜索级字段见下 works.json 补全）
                 originalTitle = '';
@@ -1773,6 +2177,13 @@ export let initialBookKind: BookKind | undefined = undefined;
                             // 🔴 2026-10-25：`applyDoubanDetail` 不读 `rating`（它读 `ratingCount`），
                             //    Steam 的评分（Metacritic ÷10）必须单独补 —— 与豆瓣/微信读书分支同一口径。
                             if (d.rating != null && !communityScore) communityScore = String(d.rating);
+                            if (d.ratingCount != null && !ratingCount) ratingCount = String(d.ratingCount);
+                            // 🔴🔴 2026-11-08 修障：Steam 的**好评率百分比**（`reviewPercent`）必须在这里接住。
+                            //    用户报障「steam 同步和搜索获取评分不到」的一半原因在这一支：
+                            //    详情拉回来了、`reviewPercent` 也在对象里，但这个函数只读了 rating/ratingCount，
+                            //    百分比被**当场丢掉** ⇒ 新条目落库永远没有 `%`（保存时只透传老条目的值）。
+                            //    ⚠️ 判空用 `!= null`（0 是有效结论：有人评、全差评），⛔ 别用 `!reviewPercent`。
+                            if (d.reviewPercent != null) reviewPercent = String(d.reviewPercent);
                             if (d.platform || d.developer) new Notice('已自动补全 Steam 详情', 2000);
                         }
                     } catch {
@@ -1963,13 +2374,19 @@ export let initialBookKind: BookKind | undefined = undefined;
             episodeTitles = Array.from({ length: n }, (_, i) => (i < episodeTitles.length ? episodeTitles[i] : undefined));
         }
     }
-    /** 左键点击集按钮：本地优先播放，否则打开网络，都无提示右键编辑 */
+    /**
+     * 左键点击集按钮：本地优先播放，否则打开网络，都无提示右键编辑。
+     *
+     * 🔴 m07854 ⑧（2026-11-13）：第二参把**集下标**一并交给宿主 —— 播放器按 `items[].index`
+     *    当播放位置的键（`VideoPlayerView.epKey()`），第 N 集必须用 N 作键，否则从编辑表单
+     *    点开第 3 集，位置会记到 `videoPositions['0']` 上、与选集页第 1 集的进度互相覆盖。
+     */
     function playOrOpenEpisode(i: number) {
         resizeEpisodeFiles();
         const p = episodeFiles[i];
         const u = episodeUrls[i];
         if (p) {
-            onPlayEpisode(p);
+            onPlayEpisode(p, i);
             return;
         }
         if (u) {
@@ -2244,6 +2661,18 @@ export let initialBookKind: BookKind | undefined = undefined;
     let epBiliPickBvid = '';
     /** 正在读分P（点候选后的一次往返；防连点） */
     let epBiliPartsBusy = false;
+    // ── 「网络集可搜索 YouTube」：同一个浮层的第二个搜索源 ──
+    /**
+     * 当前浮层用哪个源搜。`bili` = 原来的 B 站分P 链；`yt` = YouTube（选中直接填链接）。
+     * 🔴 默认值**不是硬编码 bili**，见 `epBiliDefaultSource()` —— 用户手上已有的链接形态才是最好的提示。
+     */
+    let epNetSrc: 'bili' | 'yt' = 'bili';
+    /** YouTube 候选（与 `epBiliVideos` 分开存：两个源的形状不同，混一个数组会互相污染） */
+    let epYtVideos: YtSearchItem[] = [];
+    let epYtBusy = false;
+    let epYtErr = '';
+    /** 正在填进去的那条 id（防连点 + 让被点的那行显示忙碌态） */
+    let epYtPicking = '';
     // ── #519 批量搜索未填集（确认表）／#520 改成独立卡片 + 集数区间 ──
     /** 确认表是否开着（🔴 #520：**独立一张卡**，不再寄生在集编辑浮层里） */
     let batchOpen = false;
@@ -2296,15 +2725,38 @@ export let initialBookKind: BookKind | undefined = undefined;
      * 🔴 #517：检索词**每次打开都按当前集重算**（⛔ 别退回 `if (!epBiliQuery.trim())` 那种「空才算」——
      *    它会让「编辑第 2 集」沿用「编辑第 1 集」时那份检索词；用户报障原话：
      *    「点第2集搜索不映射为第2集，还是这个：熊出没」）。
+     * 🔴 2026-10-31：同时按**当前这一集已有的链接**猜默认搜索源（见 `epBiliDefaultSource`）。
      */
     async function openEpBiliPicker() {
         epBiliOpen = true;
         epBiliView = 'search';
         epBiliQuery = epBiliDefaultQuery();
-        await runEpBiliSearch();
+        epNetSrc = epBiliDefaultSource();
+        if (epNetSrc === 'yt') await runEpYtSearch();
+        else await runEpBiliSearch();
     }
-    /** 搜一次（浮层里那颗「搜索」按钮；也供打开时自动跑） */
+    /**
+     * 默认搜哪个源 —— 由**这一集当前的网络地址**决定。
+     *
+     * 🔴 为什么不是硬编码 `bili`：用户点搜索的动机通常是「我手上这条是 YouTube 的，
+     *    换一个/补一个」。已经填了 YouTube 链接却默认搜 B 站，等于每次都要多切一次。
+     * ⚠️ 空 ⇒ B站（保持既有行为，⛔ 别把老用户的默认路径改掉）。
+     */
+    function epBiliDefaultSource(): 'bili' | 'yt' {
+        const cur = editEp === null ? '' : String(episodeUrls[editEp] ?? '').trim();
+        return isYouTubeUrl(cur) ? 'yt' : 'bili';
+    }
+    /** 切搜索源：切过去就顺手跑一次（不让用户切了还得再点一下） */
+    async function switchNetSource(next: 'bili' | 'yt') {
+        if (epNetSrc === next) return;
+        epNetSrc = next;
+        // ⚠️ 两个源的候选分开存，切换时**不清对方的**（切回来还能看到上次结果）
+        if (next === 'yt') await runEpYtSearch();
+        else await runEpBiliSearch();
+    }
+    /** 搜一次（浮层里那颗「搜索」按钮；也供打开时自动跑）—— 按当前源分发 */
     async function runEpBiliSearch() {
+        if (epNetSrc === 'yt') return runEpYtSearch();
         if (epBiliBusy) return;
         const kw = epBiliQuery.trim();
         epBiliVideos = [];
@@ -2322,6 +2774,54 @@ export let initialBookKind: BookKind | undefined = undefined;
             epBiliErr = `B 站搜索出错：${e instanceof Error ? e.message : String(e)}`;
         } finally {
             epBiliBusy = false;
+        }
+    }
+    /**
+     * YouTube 搜一次。
+     *
+     * ⚠️ 与 `runEpBiliSearch` **分开两个函数**（⛔ 别合并成一个带 if 的大函数）：
+     *    两者结果形状不同（`YtSearchItem` 没有分P 概念）、错误前缀不同、
+     *    合并后每条分支都要判 `epNetSrc`，读起来比两份更糟。
+     */
+    async function runEpYtSearch() {
+        if (epYtBusy) return;
+        const kw = epBiliQuery.trim();
+        epYtVideos = [];
+        epYtErr = '';
+        if (!kw) {
+            epYtErr = '先填检索词（默认取作品标题 + 集标题）';
+            return;
+        }
+        epYtBusy = true;
+        try {
+            const out = await onYtSearch(kw);
+            epYtVideos = out.videos;
+            epYtErr = out.error ?? '';
+        } catch (e) {
+            epYtErr = `YouTube 搜索出错：${e instanceof Error ? e.message : String(e)}`;
+        } finally {
+            epYtBusy = false;
+        }
+    }
+    /**
+     * 点一条 YouTube 候选 ⇒ **直接填进这一集的网络地址**并关掉浮层。
+     *
+     * 🔴 与 B 站那条（展开分P 勾选表）**刻意不同**：YouTube 播放列表的分集结构与 B 站分P
+     *    不是一回事（失效条目 / 顺序 / 要多跑一次取 entries），硬做勾选表容易错位；
+     *    用户已裁定「直接填这一条视频的链接」。
+     * ⚠️ 只写**表单状态**，仍要点表单的「保存」才落库（与「粘贴」同一条纪律）。
+     */
+    async function pickEpYtUrl(v: YtSearchItem) {
+        if (editEp === null) return;
+        epYtPicking = v.id;
+        try {
+            const note = epBiliDupNote(v.url);
+            episodeUrls = episodeUrls.map((x, idx) => (idx === editEp ? v.url : x));
+            editUrl = v.url;
+            epBiliOpen = false;
+            if (note) new Notice(`已填入这一集的网络地址${note}`, 5000);
+        } finally {
+            epYtPicking = '';
         }
     }
     /** 勾选表 → 回到候选列表（也用于「换一条候选」） */
@@ -2551,7 +3051,16 @@ export let initialBookKind: BookKind | undefined = undefined;
             new Notice('读不到剪贴板内容（请手动复制后重试）');
             return;
         }
-        const bvid = bvidFromPaste(text);
+        // 🔴 短链先让宿主跳一次拿落地页（`b23.tv/AbCd123` 里没有 BV 号，本层静态抠不出来）
+        let resolved = text;
+        if (/b23\.tv/i.test(text)) {
+            try {
+                resolved = (await onResolveBiliShort(text)) || text;
+            } catch {
+                resolved = text; // 宿主跳不动 ⇒ 保持原样，下面给「请在浏览器打开」那句
+            }
+        }
+        const bvid = bvidFromPaste(resolved);
         if (!bvid) {
             new Notice(/b23\.tv/i.test(text)
                 ? '这是 b23.tv 短链 —— 请在浏览器里打开后复制完整链接（带 BV 号）'
@@ -2690,7 +3199,9 @@ export let initialBookKind: BookKind | undefined = undefined;
         if (picked.length === 0) return;
         const byIndex = new Map<number, string>();
         for (const r of picked) {
-            const url = pickedUrl(r);
+            // 🔴 必须走 `pickedFillUrl`：`pickedUrl` 恒定是 P1，多P 合集会把每一集都写成第 1 集
+            //    （用户 2026-11-03 报障「点选集4还是重复为第一集」）。越界行返回空串 ⇒ 直接跳过。
+            const url = pickedFillUrl(r);
             if (url) byIndex.set(r.epIndex, url);
         }
         if (byIndex.size === 0) return;
@@ -2756,6 +3267,60 @@ export let initialBookKind: BookKind | undefined = undefined;
             new Notice('已选择启动快捷方式，点「保存」生效');
         } else {
             new Notice('未选择文件或系统对话框不可用，可手动输入路径');
+        }
+    }
+    /**
+     * 2026-11-16 游戏编辑浮层「浏览」：系统文件选择器选**本地 Flash 影片**（.swf），
+     * 回填 `gameSwfVal`（保存才写回 `gameSwf`）。与 `.lnk` 那条并列、互不覆盖。
+     */
+    async function browseGameSwf(ev?: MouseEvent) {
+        const p = await onPickGameSwf(ev);
+        if (p) {
+            gameSwfVal = p;
+            new Notice('已选择 Flash 影片，点「保存」生效');
+        } else {
+            new Notice('未选择文件或系统对话框不可用，可手动输入路径');
+        }
+    }
+    /**
+     * 2026-11-16 用户：「我这个只有获取一个文件怎么办改成关联目录」——
+     * 选一整个游戏文件夹，由宿主挑出主影片回填。
+     *
+     * ⚠️ 必须区分「目录里没有 .swf」与「用户取消」：后者静默（用户已经表达了不要），
+     *    前者要明确告诉他挑错了目录 —— 否则点了没反应，会以为又是个 bug。
+     */
+    async function browseGameSwfDir(ev?: MouseEvent) {
+        const p = await onPickGameSwfDir(ev);
+        if (p === undefined) return;
+        if (p === null) {
+            new Notice('这个目录里没有 .swf 文件', 5000);
+            return;
+        }
+        gameSwfVal = p;
+        new Notice(`已关联「${p}」，点「保存」生效`, 5000);
+    }
+    /**
+     * 2026-11-16 游戏编辑浮层「获取」：让宿主弹窗问「游戏详情页地址」，抓取并下载 swf，
+     * 成功后把返回的库内相对路径回填 `gameSwfVal`（与「浏览」并列的另一种来源）。
+     *
+     * ⚠️ 这里**不自己开弹窗**：地址校验 / 抓取 / 失败解释全在 `main.fetchGameSwf`，
+     *    表单只负责「点一下 + 把结果填回输入框 + 提示成败」（⛔ 别把规则复制到 UI 层）。
+     */
+    async function fetchGameSwfFromPage() {
+        if (gameFetching) return;
+        gameFetching = true;
+        try {
+            // 🔴 必须带条目 id 下去：文件名是「条目标题.swf」，没有 id 就只剩 URL 末段（`04.swf`）。
+            const r = await onFetchGameSwf(entry?.id);
+            if (r.ok && r.relPath) {
+                gameSwfVal = r.relPath;
+                // 🔴 立刻写回表单态（`force`）：用户点了「获取」就已表达「我要这个」，
+                //    不像手输路径那样需要再动一下输入框才触发自动保存 —— 否则关掉浮层就白下载了。
+                autoSaveGame('swf', true);
+            }
+            new Notice(r.message, r.ok ? 4000 : 7000);
+        } finally {
+            gameFetching = false;
         }
     }
     /** 书籍「▶ 阅读」左键：有关联文件 → 打开阅读器（关闭后同步进度）；无本地但**有网络地址** → 打开在线阅读页
@@ -3115,38 +3680,54 @@ export let initialBookKind: BookKind | undefined = undefined;
         readingTotalPage = '';
         progressReset = true;
     }
-    /** 游戏「▶ 启动」左键：有关联 → 启动游戏；无 → 提示右键编辑 */
+    /** 游戏「▶ 启动」左键：有本地 swf / 内嵌播放页 / .lnk → 启动；都没有 → 提示右键编辑 */
     function launchGameFromForm() {
-        if (gameLaunchPath.trim()) {
+        // 🔴 2026-11-16：本地 swf 与内嵌播放页也算能启动
+        //    （前者插件内 Ruffle 播、后者插件内 iframe 开网页），⛔ 别只看 .lnk 那条
+        if (gameSwf.trim() || gameEmbed.trim() || gameLaunchPath.trim()) {
             onLaunchGame();
         } else {
-            new Notice('未关联启动快捷方式 — 右键「启动」选择 .lnk 文件', 5000);
+            new Notice('未关联启动入口 — 右键「启动」选择 .lnk / .swf，或填内嵌地址', 5000);
         }
     }
     /** 游戏「▶ 启动」右键：弹编辑浮层（浏览/手动输入路径） */
     function openGameEditor() {
         gameLaunchVal = gameLaunchPath;
         gameUrlVal = gameUrl; // #534 网络路径与启动路径同一浮层（两条各自缓冲，保存一起写回）
+        gameSwfVal = gameSwf; // 2026-11-16 本地 swf 同浮层第三条（同一套缓冲/提交口径）
+        gameEmbedVal = gameEmbed; // 2026-11-16 内嵌播放页同浮层第四条（同上）
         gameEditOpen = true;
     }
-    /** 🔴 #563 游戏浮层提交：两条缓冲各自写回（`gameLaunchPath` 启动路径 / `gameUrl` 网络路径） */
+    /** 🔴 #563 游戏浮层提交：四条缓冲各自写回（启动路径 / 网络路径 / 本地 swf / 内嵌播放页） */
     function commitGameEditor(): void {
         gameLaunchPath = gameLaunchVal.trim();
         gameUrl = gameUrlVal.trim(); // #534：网络路径与启动路径同属「关联」，一起写回（⛔ 别只写一条）
+        gameSwf = gameSwfVal.trim(); // 2026-11-16：同上，⛔ 别漏这条（漏了 swf 填了不生效）
+        gameEmbed = gameEmbedVal.trim(); // 2026-11-16：内嵌播放页同理
     }
-    /** 游戏浮层两个字段 → 就地提示键 */
-    const GAME_SAVE_KEYS: Record<'launch' | 'url', AutoSaveKey> = {
+    /** 游戏浮层四个字段 → 就地提示键 */
+    const GAME_SAVE_KEYS: Record<'launch' | 'url' | 'swf' | 'embed', AutoSaveKey> = {
         launch: AUTOSAVE_KEYS.gameLaunch,
         url: AUTOSAVE_KEYS.gameUrl,
+        swf: AUTOSAVE_KEYS.gameSwf,
+        embed: AUTOSAVE_KEYS.gameEmbed,
     };
     /**
      * 🔴 #583 游戏浮层自动保存（与集浮层**同一判据 + 同一出口**）。
-     * `committed` = 表单态里的 `gameLaunchPath` / `gameUrl` —— 浮层期间**不会被改**
-     * （用户改的是两条缓冲），所以直接拿它比对即可，⛔ 不需要另存快照。
+     * `committed` = 表单态里的 `gameLaunchPath` / `gameUrl` / `gameSwf` —— 浮层期间**不会被改**
+     * （用户改的是三条缓冲），所以直接拿它比对即可，⛔ 不需要另存快照。
      */
-    function autoSaveGame(field: 'launch' | 'url', force = false): void {
-        const raw = field === 'launch' ? gameLaunchVal : gameUrlVal;
-        const committed = field === 'launch' ? gameLaunchPath : gameUrl;
+    function autoSaveGame(field: 'launch' | 'url' | 'swf' | 'embed', force = false): void {
+        const raw =
+            field === 'launch' ? gameLaunchVal
+            : field === 'url' ? gameUrlVal
+            : field === 'swf' ? gameSwfVal
+            : gameEmbedVal;
+        const committed =
+            field === 'launch' ? gameLaunchPath
+            : field === 'url' ? gameUrl
+            : field === 'swf' ? gameSwf
+            : gameEmbed;
         autoSaveField(GAME_SAVE_KEYS[field], raw, committed, commitGameEditor, force);
     }
     /** 游戏浮层关闭（点遮罩）—— 同集浮层：**先无条件提交缓冲再关**，否则「改完点外面」会丢改动。
@@ -3170,6 +3751,21 @@ export let initialBookKind: BookKind | undefined = undefined;
         }
         gameUrlVal = v;
         autoSaveGame('url', true);
+    }
+    /**
+     * 2026-11-16 游戏浮层「内嵌播放页」旁的**粘贴**（与上面 `pasteGameUrl` 同一套：
+     * 读剪贴板 → 清洗 → 填缓冲 → `force` 当场保存）。
+     * 用途：H5 / Unity 类游戏的播放页地址不在 HTML 里，用户可能从浏览器地址栏复制过来。
+     */
+    async function pasteGameEmbed(): Promise<void> {
+        const raw = await readClipboardText();
+        const v = raw ? cleanPastedText(raw) : '';
+        if (!v) {
+            new Notice('读取剪贴板失败或为空，请手动粘贴');
+            return;
+        }
+        gameEmbedVal = v;
+        autoSaveGame('embed', true);
     }
     // 🔴 #563：「游戏浮层清除」那枚按钮已随底部三枚按钮一并退场（用户：「移除底部的保存、清除、取消三个按钮」）
     //    ⇒ 那条只剩「一键清空」用途的路径**整体删除**（死码不留）。要清关联就把两个输入框清空、失焦即自动保存。
@@ -3426,6 +4022,10 @@ export let initialBookKind: BookKind | undefined = undefined;
         if (d.year && !year) year = String(d.year);
         if (d.summary && !summary) summary = String(d.summary);
         if (d.ratingCount && !ratingCount) ratingCount = String(d.ratingCount);
+        // 🔴 2026-11-08：Steam 好评率百分比也要接住（`applyDoubanDetail` 是 Steam 详情唯一入口 —— 见
+        //    `services/steam.ts` 顶部「键名与豆瓣详情同形」的口径）。豆瓣详情里没有这个键 ⇒ 对豆瓣无副作用。
+        //    ⚠️ 判空用 `!= null`：0 是「有人评、全差评」的真实结论。
+        if (d.reviewPercent != null && !reviewPercent) reviewPercent = String(d.reviewPercent);
         if (d.toc && !toc) toc = String(d.toc);
         if (d.cover && !poster) poster = String(d.cover);
         // 🔴 #444g 漫画：详情补全也**不补** ISBN / 作者简介（表单里没有这两个框 ——
@@ -3501,6 +4101,10 @@ export let initialBookKind: BookKind | undefined = undefined;
             aliases: type === 'game' ? undefined : aliases.split(/[\/、,，]/).map((s) => s.trim()).filter(Boolean),
             notes: notes.trim(),
         };
+        // 🔴 #772 心情（⑳）：走 `normalizeMood` 收口（非法值 → undefined，即清空）。
+        //    ⚠️ 必须显式带这个键 —— `EntryService.update` 是浅合并，不带 = 保留旧值；
+        //    但用户「取消心情」时要能真的清空，所以这里恒带（空 → undefined 覆盖）。
+        input.mood = normalizeMood(mood);
         // 影视类型（电影/剧集/动画）：观看链接双路径——旧「资源链接」(links) 已迁移到 episodeUrls，此处清空（url 不丢）
         if (type === 'movie' || type === 'tv' || type === 'anime') {
             input.links = [];
@@ -3557,6 +4161,10 @@ export let initialBookKind: BookKind | undefined = undefined;
             // 发行商/别名：对游戏条目废弃（豆瓣游戏页无此数据），不再读写
             input.gameLaunchPath = gameLaunchPath.trim() || undefined; // 启动快捷方式（.lnk）
             input.gameUrl = gameUrl.trim() || undefined; // #534 网络路径（浮层手填/粘贴；append-only 字段）
+            // 2026-11-16 本地 Flash 影片（append-only 新字段）—— 恒写（清空则落 undefined ⇒ 真正清掉旧值）
+            input.gameSwf = gameSwf.trim() || undefined;
+            // 2026-11-16 内嵌播放页（append-only 新字段，H5 / Unity 走 iframe）—— 同上恒写
+            input.gameEmbed = gameEmbed.trim() || undefined;
         }
         if (type === 'music') {
             input.musicKind = musicKind; // 恒写（normalize 后恒为 'music'；1.0.3.1 起无子分类，写入即把存量 other 归一）
@@ -3578,6 +4186,15 @@ export let initialBookKind: BookKind | undefined = undefined;
         // 🔴 序号一律走纯函数收口（那个框的运行时类型是 number|null|string 三态，见变量声明处的说明）——
         //    ⛔ 别在这里裸写 `.trim()`：那正是 #434 的静默死按钮
         input.seriesIndex = parseSeriesIndexInput(seriesIndexVal);
+        // 🔴 2026-11-24「合集」：合集视图**唯一**的收录依据（`pure/mediaViews.ipKeyOf` 只读它）。
+        //    空串 ⇒ 显式 `undefined`（**清得掉**旧值，用户把合集名删掉就该退出合集视图）。
+        input.collection = collection.trim() || undefined;
+        // 🔴 2026-11-24「标签」：自定义视图按标签收人（`viewMatchesEntry`）。
+        //    ⚠️ 逗号分隔（中英文逗号都收），去空去重；全空 ⇒ `[]`（不是 undefined —— tags 是必填数组字段）。
+        input.tags = tagsText
+            .split(/[,，]/)
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
         input.source = sourceFrom.trim() || undefined;
         // ② 来源 / 大众评分 / 评价人数 / 平台链接：**这一行真的被用户改过**才走「校验 + 归一」，否则原样落盘。
         // 🔴 #499E 改判据（用户：「改成可再次手动编辑」）：原来是 `!entry`（编辑态根本没有框），
@@ -3637,13 +4254,20 @@ export let initialBookKind: BookKind | undefined = undefined;
             : ratingCount
               ? Number(ratingCount.replace(/,/g, '')) || undefined
               : undefined;
-        // 🔴 2026-10-25 Steam 好评率百分比（`reviewPercent`）：表单里**没有对应的输入框**，
-        //    它只由 Steam 详情回填写入（`main.ts` 的落库路径）。
-        //    ⇒ 这里**原样透传**：编辑老条目时若不显式带上，`service.update` 的 patch 会把它抹掉，
-        //    用户就会看到「列表 97% → 打开编辑保存一次 → 百分比没了」。
-        // ⚠️ 用 `entry?.reviewPercent` 而不是本地状态：本组件不持有它，透传才是唯一正确来源。
-        // ⛔ 别顺手在这里加校验/换算：它是只读透传字段，任何"顺手归一"都会改用户的库数据。
-        if (entry?.reviewPercent != null) input.reviewPercent = entry.reviewPercent;
+        // 🔴 2026-11-08 Steam 好评率百分比（`reviewPercent`）：表单里**没有对应的输入框**，
+        //    它只由 Steam 详情回填写入本地状态（`pick()` 的 steam 分支 / `applyDoubanDetail`）。
+        //    ⚠️ 以前这里写的是 `if (entry?.reviewPercent != null) input.reviewPercent = entry.reviewPercent`——
+        //    那**只透传已存在条目**的值，新建条目永远拿不到（用户报障「搜索获取评分不到」的一半原因）。
+        //    现在读本地状态：编辑态初值就是 `entry.reviewPercent`（见 state 初始化）⇒ 透传语义不变，
+        //    新增态则能真正写入详情拉到的百分比。
+        //    ⛔ 别顺手在这里加校验/换算：它是客观只读字段，任何「顺手归一」都会改用户的库数据。
+        if (reviewPercent.trim()) {
+            const rp = Number(reviewPercent);
+            if (Number.isFinite(rp) && rp >= 0 && rp <= 100) input.reviewPercent = Math.round(rp);
+        } else if (entry?.reviewPercent != null) {
+            // 本地状态为空但老条目有值（理论上不会：初始化已同步）—— 兜底保留，⛔ 不静默清空用户数据
+            input.reviewPercent = entry.reviewPercent;
+        }
         input.summary = summary.trim() || undefined;
         // AI 摘要（单框拆回两字段）：空值 → undefined（清空即移除对应章节）
         const ai = textToAiFields(aiText);
@@ -3866,10 +4490,17 @@ export let initialBookKind: BookKind | undefined = undefined;
         <div class="rl-err">{searchError}</div>
     {/if}
 
-    {#if results.length > 0 && !picked}
+    {#if showResults && !picked}
         <div class="rl-res-head">
-            <span class="rl-res-head-cnt">共 {results.length} 条结果</span>
+            <span class="rl-res-head-cnt">共 {shownCount} 条结果</span>
             <span class="rl-res-head-hint">{repeatHint(entry === null)}</span>
+            <!-- 🔴 m02288（用户逐字：「AI预填图标按钮不是放在搜索表单列表上啊，移动到每个搜索条目结果页面
+                 信息标题旁（不是标题框旁）」）：
+                 表头这颗 ✨ **已删除**，改成**每条结果标题旁各一颗**（见下面 `.rl-res-row1` 里那颗）。
+                 理由（也解释了为什么不能只搬位置、得改语义）：表头那颗问的是「表单标题框的值，空则搜索词」
+                 = 一个**词**；而一个词背后可能躺着三部同名不同年的作品，AI 只能猜。
+                 每条结果旁那颗问的是**那一条自己的标题**，问的对象从「词」变成「这部作品」。
+                 ⛔ 别把这颗加回来：两颗并排存在时用户分不清该点哪个，而它们问出来的东西还不一样。 -->
         </div>
         <div class="rl-res" style={`--rl-cols:${Math.max(1, resultColumns.length)}`} on:click={onResClick}>
             {#each resultColumns as col}
@@ -3891,17 +4522,40 @@ export let initialBookKind: BookKind | undefined = undefined;
                                 <span class="rl-res-rows">
                                     <span class="rl-res-row1">
                                         <span class="rl-res-t">{d.title}</span>
+                                        <!-- 🔴🔴 m04435 ②（用户逐字）：「添加条目展开的结果列表：**不显示"入库"和"AI 预填"按钮**。
+                                             【"AI 预填"仅在**单卡编辑属性表单窗口**显示】」
+                                             ⇒ m02288 在这里放的那颗「每条结果标题旁 ✨」**整颗退场**（本轮再翻面）。
+                                             ⚠️ m03052 的裁定仍然有效、且与本条不冲突：那颗 ✨ 保留在
+                                                **单卡编辑属性表单**的书名标签右侧（`.rl-title-col > .rl-lbl-row`，
+                                                条件 `{#if entry || manualFill}`），⛔ 别把两处混为一谈。
+                                             ⛔ 别再往结果列表加回任何 ✨ —— 用户点名这里「不显示」，理由是不想让
+                                                「挑一条结果」和「让 AI 填这条」两个动作在同一屏抢注意力。 -->
                                     </span>
                                     <span class="rl-res-row2">
                                         {#if d.year}<span class="rl-res-yr">{d.year}</span>{/if}{#if d.year && d.rating != null}<span class="rl-res-dot">·</span>{/if}
                                         {#if d.rating != null}<span class="rl-res-score">★ {d.rating}</span>{/if}
                                         {#if d.sub}{#if d.year || d.rating != null}<span class="rl-res-dot">·</span>{/if}<span class="rl-res-o">{d.sub}</span>{/if}
+                                        <!-- 🔴 第 15 轮：歌曲时长（曲库结果才有）。分隔符跟着它自己的位置走 ——
+                                             前面那一簇为空时不能留下悬空的 `·`（`d.sub` 上面那段同款写法）。 -->
+                                        {#if d.duration}{#if d.year || d.rating != null || d.sub}<span class="rl-res-dot">·</span>{/if}<span class="rl-res-dur">{d.duration}</span>{/if}
                                     </span>
                                 </span>
                                 <!-- 🔴 #633：角标**不再挂在标题行里**（那样它跟着标题那一行走、落在条目上部），
                                      改成与 `.rl-res-source` **平级** —— 靠 `.rl-res-inf` 的 `align-items: center`
                                      垂直居中于整条，且水平位置固定成一列（用户：「已添加怎么不居中对齐条目的」）。 -->
                                 {#if added}<span class="rl-res-added">已添加</span>{/if}
+                                <!-- 🔴🔴 m04435 ②：「添加条目展开的结果列表：**不显示"入库"和"AI 预填"按钮**」
+                                     ⇒ 曲库那枚「入库」整块退场（它曾是曲库结果专用：点了直接建成 music 条目、不进表单）。
+                                     🔴 用户当场裁定（ask_user_question `savebtn`）：
+                                        **按钮从结果列表删掉，但保留「已添加」标记** —— 所以上面那行 `.rl-res-added`
+                                        照旧渲染（已入库的条目仍然看得出「这条建过了」）。
+                                     ⚠️ 连带清掉的东西（⛔ 别留死代码，`noUnusedLocals` 会报）：
+                                        `isSongLibResult()` / `savingKey` / `savedHits` / `saveMusicResult()` /
+                                        `saveMusicResultOnKey()` / `onSaveMusic` 这个 export + 宿主注入
+                                        （`src/modals/EntryModal.ts` 的 `onSaveMusic`）。
+                                     ⚠️ `onSaveMusic` 背后的宿主能力（`plugin.importMusicResult`）**没有删**：
+                                        它还有别的入口（音乐同步弹窗那条线），只是这里不再摆按钮。
+                                     ⛔ 别再往结果列表加回任何入库/预填按钮。 -->
                                 {#if d.sourceUrl}
                                     <span
                                         class="rl-res-source"
@@ -3921,9 +4575,57 @@ export let initialBookKind: BookKind | undefined = undefined;
                             该源暂无匹配结果
                         </div>
                     {/if}
+                    {#if col.pending}
+                        <!-- 🔴 2026-11-12（①-12）：本源还没返回 ⇒ 出三行骨架占位。
+                             用户原话：「另一源超时不返回时，要显示骨架屏展示另一个已返回的源（否则等待太长）」
+                             —— 先回来的源上面已经出卡片了，这里占住它自己的位置，
+                             让「还在等」和「已经没了」在视觉上分得开（⛔ 别和 empty 空态混用一套样式）。 -->
+                        <div class="rl-res-col-skel" aria-hidden="true">
+                            <span class="rl-res-skel-row"><span class="rl-res-skel-cv"></span><span class="rl-res-skel-lines"><span class="rl-res-skel-bar is-long"></span><span class="rl-res-skel-bar is-short"></span></span></span>
+                            <span class="rl-res-skel-row"><span class="rl-res-skel-cv"></span><span class="rl-res-skel-lines"><span class="rl-res-skel-bar is-long"></span><span class="rl-res-skel-bar is-short"></span></span></span>
+                            <span class="rl-res-skel-row"><span class="rl-res-skel-cv"></span><span class="rl-res-skel-lines"><span class="rl-res-skel-bar is-long"></span><span class="rl-res-skel-bar is-short"></span></span></span>
+                        </div>
+                        <span class="rl-sr">该源正在搜索</span>
+                    {/if}
                 </div>
             {/each}
         </div>
+        <!-- 🔴 2026-11-10 第 17 轮：搜索结果区那颗 ✨ 的**等待 / 预览面板**。
+             ⚠️ 这里必须有一份，不能只靠字段区那份 —— 字段区整块在 `{#if picked}` 里，
+             而本区条件是 `!picked`：AI 回来了、预览行也赋上了，用户在屏幕上却什么都看不到
+             （面板被渲染进一块没上屏的区域）。两份共用同一批状态与同一个 `applyPrefill`，
+             差别只在「回填完要不要跳去字段区」。
+             ⛔ 别把这份挪进 `{#if picked}`，也别删掉字段区那份（标题行那颗 ✨ 在那条路上用）。 -->
+        {#if prefillBusy && prefillStep}
+            <div class="rl-prefill rl-prefill-wait" aria-live="polite">
+                <span class="rl-spinner" aria-hidden="true"></span>
+                <span class="rl-prefill-step">{prefillStep}…</span>
+            </div>
+        {/if}
+        {#if prefillRows.length > 0}
+            <div class="rl-prefill" role="group" aria-label="AI 预填预览">
+                <div class="rl-prefill-head">
+                    AI 建议填写下列字段（灰色为将写入的值）
+                    <span class="rl-prefill-src">{prefillSources.length ? `依据：${prefillSources.join(' · ')}` : '凭模型记忆，新作品可能查不到'}</span>
+                </div>
+                <ul class="rl-prefill-list">
+                    {#each prefillRows as row (row.key)}
+                        <li class="rl-prefill-row">
+                            <span class="rl-prefill-lbl">{row.label}</span>
+                            <span class="rl-prefill-vals">
+                                {#if row.old}<span class="rl-prefill-old">{row.old}</span>{:else}<span class="rl-prefill-none">（空）</span>{/if}
+                                <span class="rl-prefill-arrow" aria-hidden="true">→</span>
+                                <span class="rl-prefill-new">{row.next}</span>
+                            </span>
+                        </li>
+                    {/each}
+                </ul>
+                <div class="rl-prefill-ops">
+                    <button class="rl-btn rl-btn-primary" on:click={applyPrefillFromResults}>回填这些字段</button>
+                    <button class="rl-btn" on:click={clearPrefill}>取消</button>
+                </div>
+            </div>
+        {/if}
     {/if}
 
     {#if picked}
@@ -3977,12 +4679,60 @@ export let initialBookKind: BookKind | undefined = undefined;
                     {/if}
                 </div>
                 <!-- 右：字段区 -->
-                <div class="rl-fields-col">
+                <div class="rl-fields-col" bind:this={fieldsColEl}>
+                    <!-- 🔴🔴 2026-11-15 用户 m05562（逐字）：「表单的标题框太长了，把上映年（首播年、
+                         发行年）和标题并排在中【顺序为：标题、上映年、评分来源等】」。
+                         ⇒ 标题这一整块外包一层 `.rl-title-col`，由 CSS 给 **span 4**（约 2/3 行）；
+                           紧随其后的年份块是 span 2 ⇒ 4+2 正好拼满一行，标题明显长于年份。
+                         🔴 2026-11-15 第二轮（用户 m06052：「我要的是第一行的标题框占长、上映年占
+                            短」）：上一版两边都给 span 3（各占一半），标题行里的只读评分簇与 AI 按钮
+                            挤占 `flex: 1` 的 input，实测标题 245px 反而比年份 271px 更短 —— 与用户
+                            诉求完全相反。现在标题壳 4 栅格（实测 364px、input 338px）、年份 2 栅格
+                            （实测 177px），比例 1.9 倍。⛔ 别退回两边各 3。
+                         ⚠️ ⛔ 别把 `data-fld` 加在这层壳上 —— `title` 属 `ENTRY_FORM_LOCKED_KEYS`，
+                            进了受管集合就会被 `applyFieldOrder` 重排、还会撞 `tests/entryFormFields`
+                            那条「锁定键一律不在可管理字段里」的守卫。这里只靠 CSS 定位。
+                         ⚠️ 也 ⛔ 别直接给 `.rl-title-row` 加属性 / 加 class：`assert-symbols.cjs` 的
+                            #499E 用「`rl-title-row` 那个 div 开标签」的字面量做 `indexOf` 锚点，
+                            开标签多一个字面就取不到锚点（实测会直接 FAIL）。
+                         🔴 顺带一条坑：注释里也 ⛔ 别把那个开标签**逐字**写出来 —— `indexOf` 不认注释，
+                            会先命中注释里的那一份、把整段往后错（本轮实测正是它把守卫断言带偏）。 -->
+                    <div class="rl-title-col">
+                    <!-- 🔴 用户 m03052（逐字）：「给所有类型编辑属性表单都加AI预填图标按钮，
+                         位置放在书名标题的右旁边不是框旁边」。
+                         ⇒ 标签行包一层 `.rl-lbl-row`，✨ 紧跟 label —— 与「总结摘要 / 重新解析 /
+                           检索本地音频」那几枚**同款同槽**（该范式见本文件「重新解析」那段的注释）。
+                         ⛔ 别再放回下面那行标题输入行（那是「框旁边」＝输入框右侧，用户明确否掉了）。
+                         🔴 出现条件从 `manualFill` 放宽成 `entry || manualFill`：
+                            · 编辑已有条目（`entry` 非空）⇒ **要**有 —— 用户要的正是「所有类型编辑属性表单」；
+                            · 添加条目「手动填写」⇒ 保留（用户裁定「手动填写表单里的 ✨ 保留」）；
+                            · 添加条目「点选搜索结果」⇒ `entry === null && manualFill === false` ⇒ **不出现**
+                              （那条路客观字段已由数据源填好，再摆一枚「让 AI 猜」会覆盖好数据）。 -->
+                    <div class="rl-lbl-row">
                     {#if type === 'book'}
                         <label class="rl-lbl">书名</label>
                     {:else}
                         <label class="rl-lbl">标题</label>
                     {/if}
+                    {#if entry || manualFill}
+                    <!-- 🔴 #499 AI 预填 —— 点它**只列预览、不落库**，确认后才写回（口径见 `applyPrefill`）。
+                         🔴 m03052：图标必须与「总结摘要」的 sparkle 双星**明显不同** ——
+                            用户：「AI预填图标按钮和总结摘要按钮图标样式重复了，把AI预填图标按钮样式改了」。
+                            这里画「三条待填的行 + 一条回填箭头」（lucide 没有现成的，内联画；
+                            ⛔ 别为省事再借 sparkles / wand 那类星形，会立刻撞回「重复」）。 -->
+                    <button
+                        class="rl-ai-btn"
+                        disabled={prefillBusy}
+                        on:click={() => void runAiPrefill()}
+                        data-tip={'AI 按标题填写下方字段\n需要时会先查数据源 / 联网搜索，再把结果列出来\n确认后才写入'}>
+                        <span class="rl-sr">AI 预填字段</span>
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M4 6h8" /><path d="M4 12h5" /><path d="M4 18h8" />
+                            <path d="M16 8.5l3.5 3.5-3.5 3.5" /><path d="M19.5 12H14" />
+                        </svg>
+                    </button>
+                    {/if}
+                    </div>
                     <div class="rl-title-row">
                         <input class="rl-input" bind:value={title} bind:this={titleInput} placeholder="作品名称" />
                         <!-- 🔴 #499E：标题旁那两处只读展示（「★ 8.4 · 500人评价」徽标 与 「来源名 ↗」按钮）**整块撤除** ——
@@ -4027,26 +4777,28 @@ export let initialBookKind: BookKind | undefined = undefined;
                             {/if}
                         </span>
                         {/if}
-                        {#if manualFill}
-                        <!-- #499 AI 预填（用户 2026-10-03：「手动填写界面加个 AI 预填功能」）——
-                             与「总结摘要」「重新解析」同款同位的小图标按钮。🔴 点它**只列预览、不落库**，
-                             确认后才写回（口径见 `applyPrefill`）。
-                             🔴 #499B 收窄（用户：「预填功能只在手动填写界面出现」）：判据是 `manualFill`，
-                             ⛔ 不是 `!entry` —— 新增条目**点选搜索结果**那条路上客观字段已由数据源填好，
-                             这里再摆一枚「让 AI 猜」既不必要、又可能把刚拉到的好数据覆盖掉。 -->
-                        <button
-                            class="rl-ai-btn"
-                            disabled={prefillBusy}
-                            on:click={() => void runAiPrefill()}
-                            data-tip={'AI 按标题填写下方字段\n需要时会先查数据源 / 联网搜索，再把结果列出来\n确认后才写入'}>
-                            <span class="rl-sr">AI 预填字段</span>
-                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
-                                <path d="M5 3v4" /><path d="M19 17v4" /><path d="M3 5h4" /><path d="M17 19h4" />
-                            </svg>
-                        </button>
-                        {/if}
                     </div>
+                    </div><!-- /rl-title-col -->
+                    <!-- 年份：紧贴标题右侧（m05562「把上映年（首播年、发行年）和标题并排」）——
+                         五类年份各自一把 key、同一时刻只生效一个，全部 span 3 ⇒ 永远占标题右边那半行。 -->
+                    {#if type !== 'book' && type !== 'music'}
+                    <div data-fld="year" style={fldStyle('year')}>
+                        <label class="rl-lbl">{type === 'movie' ? '上映年' : type === 'game' ? '发行年' : '首播年'}</label>
+                        <input class="rl-input" bind:value={year} placeholder="如 2024" />
+                    </div>
+                    {/if}
+                    {#if type === 'book'}
+                        {#if bookKind === 'novel'}
+                        <div data-fld="novel-year" style={fldStyle('novel-year')}><label class="rl-lbl">上架年</label><input class="rl-input" bind:value={year} placeholder="如 2024" /></div>
+                        {:else if bookKind === 'comic'}
+                        <div data-fld="comic-year" style={fldStyle('comic-year')}><label class="rl-lbl" for="rl-f-comic-year">出版年</label><input id="rl-f-comic-year" class="rl-input" bind:value={year} placeholder="如 2024" /></div>
+                        {:else}
+                        <div data-fld="book-year" style={fldStyle('book-year')}><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} placeholder="如 2024" /></div>
+                        {/if}
+                    {/if}
+                    {#if type === 'music'}
+                    <div data-fld="music-year" style={fldStyle('music-year')}><label class="rl-lbl">发行年</label><input class="rl-input" bind:value={year} placeholder="如 2024" /></div>
+                    {/if}
                     {#if prefillBusy && prefillStep}
                     <!-- #499D：工具回路里的**每一站**都露出来（「它真的去搜了」这件事必须看得见，
                          ⛔ 别做成一个转圈转到底 —— 用户没法判断是在搜还是卡住了） -->
@@ -4096,7 +4848,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                          ⛔ 别把只读簇与输入行**同时**渲染（同一信息两处出现）；⛔ 也别改成 `disabled` 输入框
                             （灰框让人以为是「临时不可用」，而这两态的语义是「先看清楚、要改就解锁」）。 -->
                     {#if metaEditable}
-                        <div class="rl-meta-row">
+                        <div class="rl-meta-row" data-fld="meta" style={fldStyle('meta')}>
                             <!-- #430：**来源**框在最前（用户：「在大众评分前面并排个来源框」）。
                                  用途：手工新建的条目没有数据源 ⇒ 封面角标只有「8.4★」；
                                  填了它就能显示「番茄8.4★」。⛔ 它**不是**数据源键（那个由搜索回填决定走哪条链）。 -->
@@ -4129,122 +4881,116 @@ export let initialBookKind: BookKind | undefined = undefined;
                         </div>
                     {/if}
                     {#if type !== 'book' && type !== 'music'}
-                    <div class="rl-2col">
-                        <div>
-                            <label class="rl-lbl">题材</label>
-                            <input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" />
-                        </div>
-                        <div>
-                            <label class="rl-lbl">{type === 'movie' ? '上映年' : type === 'game' ? '发行年' : '首播年'}</label>
-                            <input class="rl-input" bind:value={year} placeholder="如 2024" />
-                        </div>
+                    <div data-fld="genres" style={fldStyle('genres')}>
+                        <label class="rl-lbl">题材</label>
+                        <input class="rl-input" bind:value={genres} placeholder={placeholderOf('genres')} />
                     </div>
                     {/if}
+            <!-- ══ 题材 + 标签（m05562「上映年原来位置由标签替代【顺序为：题材、标签】」）══
+                 五组题材键各自 span 3、同一时刻只生效一组，紧跟其后的标签也是 span 3
+                 ⇒ 永远是「题材、标签」并排，且正好落在原来「题材、年份」那一行。 -->
             {#if type === 'book'}
                 {#if bookKind === 'novel'}
-                <!-- 网文（1.0.3，用户 2026-09-13 裁定）：上架年 / 作者 / 题材 / 元数据章数。
+                <div data-fld="novel-genres" style={fldStyle('novel-genres')}><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder={placeholderOf('genres')} /></div>
+                {:else if bookKind === 'comic'}
+                <div data-fld="comic-genres" style={fldStyle('comic-genres')}><label class="rl-lbl" for="rl-f-comic-genres">题材</label><input id="rl-f-comic-genres" class="rl-input" bind:value={genres} placeholder={placeholderOf('genres')} /></div>
+                {:else}
+                <div data-fld="book-genres" style={fldStyle('book-genres')}><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder={placeholderOf('genres')} /></div>
+                {/if}
+            {/if}
+            {#if type === 'music'}
+                <div data-fld="music-genres" style={fldStyle('music-genres')}><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder={placeholderOf('genres')} /></div>
+            {/if}
+            <!-- 🔴🔴 标签（原在「合集」右边，m05562 上移到这里紧跟题材）：自定义视图按标签收人，
+                 见 `pure/mediaViews.viewMatchesEntry`。⚠️ 只改位置与显示名，`data-fld` / `id` /
+                 `bind:value` 的字段名一个不动（落盘字段仍是 tags）。label 带 `for`/`id` ——
+                 裸 label 会多报一条 A11y 告警、破 89 基线（同系列两框那条口径）。 -->
+            <div data-fld="tags" style={fldStyle('tags')}>
+                <label class="rl-lbl" for="rl-f-tags">标签</label>
+                <input id="rl-f-tags" class="rl-input" bind:value={tagsText} placeholder={placeholderOf('tags')} />
+            </div>
+
+            <!-- ══ 书籍其余字段（年份与题材已上移，这里只剩作者 / 章数 / 出版社 / 画师）══ -->
+            {#if type === 'book'}
+                {#if bookKind === 'novel'}
+                <!-- 网文（1.0.3，用户 2026-09-13 裁定）：上架年 / 作者 / 元数据章数。
                      出版侧字段（出版社 / ISBN / 目录）对网文不适用，表单不展示；保存时清空存量（见 submit） -->
-                <div class="rl-2col">
-                    <div><label class="rl-lbl">上架年</label><input class="rl-input" bind:value={year} placeholder="如 2024" /></div>
-                    <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder="作者名，多个用 / 分隔" /></div>
-                </div>
-                <div class="rl-2col">
-                    <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
-                    <div>
-                        <label class="rl-lbl">元数据章数</label>
-                        <input class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="如 1200 章" />
-                    </div>
+                <div data-fld="novel-author" style={fldStyle('novel-author')}><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder={placeholderOf('novel-author')} /></div>
+                <div data-fld="novel-chapters" style={fldStyle('novel-chapters')}>
+                    <label class="rl-lbl">元数据章数</label>
+                    <input class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="如 1200 章" />
                 </div>
                 {:else if bookKind === 'comic'}
                 <!-- 漫画（🔴 #444g，用户 2026-09-30：「漫画的自动拉取和手动填写表单界面把 ISBN、元数据页数、
-                     作者简介框删除掉，加个画师框」）：出版年 / 出版社 / 作者（原作） / **画师** / 题材。
+                     作者简介框删除掉，加个画师框」）：出版社 / 作者（原作） / **画师** / 总话数。
                      ⚠️ 与文学分支的差别只有「画师」多一格 —— 下面 ISBN / 元数据页数 / 作者简介三处的
                         `{#if}` 已按 `bookKind` 把漫画排掉（⛔ 别用 `!== 'novel'` 那种粗条件，那会把漫画一起放进来）。 -->
-                <div class="rl-2col">
-                    <div><label class="rl-lbl" for="rl-f-comic-year">出版年</label><input id="rl-f-comic-year" class="rl-input" bind:value={year} placeholder="如 2024" /></div>
-                    <div><label class="rl-lbl" for="rl-f-comic-pub">出版社</label><input id="rl-f-comic-pub" class="rl-input" bind:value={publisher} placeholder="出版社名" /></div>
-                </div>
-                <div class="rl-2col">
-                    <div><label class="rl-lbl" for="rl-f-comic-author">作者</label><input id="rl-f-comic-author" class="rl-input" bind:value={author} placeholder="原作 / 编剧，多个用 / 分隔" /></div>
-                    <div><label class="rl-lbl" for="rl-f-comic-artist">画师</label><input id="rl-f-comic-artist" class="rl-input" bind:value={artist} placeholder="作画，多个用 / 分隔" /></div>
-                </div>
-                <div class="rl-2col">
-                    <div><label class="rl-lbl" for="rl-f-comic-genres">题材</label><input id="rl-f-comic-genres" class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
+                <div data-fld="comic-publisher" style={fldStyle('comic-publisher')}><label class="rl-lbl" for="rl-f-comic-pub">出版社</label><input id="rl-f-comic-pub" class="rl-input" bind:value={publisher} placeholder={placeholderOf('publisher')} /></div>
+                <div data-fld="comic-author" style={fldStyle('comic-author')}><label class="rl-lbl" for="rl-f-comic-author">作者</label><input id="rl-f-comic-author" class="rl-input" bind:value={author} placeholder={placeholderOf('comic-author')} /></div>
+                <div data-fld="comic-artist" style={fldStyle('comic-artist')}><label class="rl-lbl" for="rl-f-comic-artist">画师</label><input id="rl-f-comic-artist" class="rl-input" bind:value={artist} placeholder={placeholderOf('comic-artist')} /></div>
+                <div data-fld="comic-chapters" style={fldStyle('comic-chapters')}>
                     <!-- 🔴 #445 总话数（用户：「漫画源界面加一个总话数框，与题材框并排在右」）：
                          漫画的「页数」没有意义，**总话数**才是它的等价值 ⇒ 与网文的「元数据章数」同样落
                          `pageCount` 这一个字段（键名不变，见 data/noteGenerator 的口径注释）。
                          ⚠️ 它**不在**下面的 `bookKind !== 'comic'` 排除之列 —— 那个排除只管 ISBN / 作者简介。 -->
-                    <div><label class="rl-lbl" for="rl-f-comic-chapters">总话数</label><input id="rl-f-comic-chapters" class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="如 139" /></div>
+                    <label class="rl-lbl" for="rl-f-comic-chapters">总话数</label><input id="rl-f-comic-chapters" class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="如 139" />
                 </div>
-                <!-- ⚠️ 上面 6 个 label **必须写 `for`/`id`**：本表单其余 label 都是历史裸写法（那批告警已计入 89 基线），
+                <!-- ⚠️ 上面 4 个 label **必须写 `for`/`id`**：本表单其余 label 都是历史裸写法（那批告警已计入 89 基线），
                      而门禁是「构建告警**不高于**基线」⇒ 新加的裸 label 会一条 +1 当场破线（本轮实测 89 → 94）。
-                     ⛔ 别把 `for`/`id` 删掉，也别让 6 个 id 重名。 -->
+                     ⛔ 别把 `for`/`id` 删掉，也别让这几个 id 重名。 -->
                 {:else}
-                <!-- 文学：出版年 / 出版社 / 作者 / 题材（文学口径不变） -->
-                <div class="rl-2col">
-                    <div><label class="rl-lbl">出版年</label><input class="rl-input" bind:value={year} placeholder="如 2024" /></div>
-                    <div><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} placeholder="出版社名" /></div>
-                </div>
-                <div class="rl-2col">
-                    <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder="作者名，多个用 / 分隔" /></div>
-                    <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
-                </div>
+                <!-- 文学：出版社 / 作者（文学口径不变） -->
+                <div data-fld="book-publisher" style={fldStyle('book-publisher')}><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} placeholder={placeholderOf('publisher')} /></div>
+                <div data-fld="book-author" style={fldStyle('book-author')}><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder={placeholderOf('book-author')} /></div>
                 {/if}
             {/if}
             {#if type === 'music'}
-                <div class="rl-2col">
-                    <div><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder="歌手 / 艺术家" /></div>
-                    <div><label class="rl-lbl">专辑</label><input class="rl-input" bind:value={album} placeholder="专辑名" /></div>
-                </div>
-                <div class="rl-2col">
-                    <div><label class="rl-lbl">题材</label><input class="rl-input" bind:value={genres} placeholder="多个题材用 / 分隔" /></div>
-                    <div><label class="rl-lbl">发行年</label><input class="rl-input" bind:value={year} placeholder="如 2024" /></div>
-                </div>
+                <!-- 🔴 2026-11-09（第 16 轮）：题材排在专辑之前 —— 与 `pure/entryFormFields` 的注册顺序保持一致，
+                     否则首屏（模板序）与 `applyFieldOrder` 的重排结果（配置序）不一致，会看到内容跳一下。
+                     ⚠️ m05562 之后题材已上移到「题材 + 标签」那一组，这里只剩作者与专辑。 -->
+                <div data-fld="music-author" style={fldStyle('music-author')}><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder={placeholderOf('music-author')} /></div>
+                <div data-fld="music-album" style={fldStyle('music-album')}><label class="rl-lbl">专辑</label><input class="rl-input" bind:value={album} placeholder={placeholderOf('album')} /></div>
             {/if}
             {#if type === 'movie' || type === 'tv' || type === 'anime'}
-                <div class="rl-2col">
-                    <div>
-                        <label class="rl-lbl">导演</label>
-                        <!-- 🔴 #502②（用户：「导演框也改成多行框」）：与 #500② 的「主演」**同款同口径** ——
-                             一行 input 改 textarea + `.rl-multi`（`resize: vertical`，只能拖高、拖不宽）。
-                             ⛔ 不钉 `height` / `min-height`（钉了会把 28px 顶成 30px ⇒ 同列字段的行位错开 2px）；
-                             ⛔ 不接 autosize（自动增高与「手动拖拽调高」打架，拖到多高、一输入就被改回去）。
-                             ⚠️ 它 `bind:value` 的是**派生变量** `directorWriters`（= `director` + `screenwriter` 的拼串）——
-                             换成 textarea **不改这条数据流**（原来那个 input 就是这么绑的），提交侧照旧拆。 -->
+                <div data-fld="director" style={fldStyle('director')}>
+                    <label class="rl-lbl">导演</label>
+                    <!-- 🔴 #502②（用户：「导演框也改成多行框」）：与 #500② 的「主演」**同款同口径** ——
+                         一行 input 改 textarea + `.rl-multi`（`resize: vertical`，只能拖高、拖不宽）。
+                         ⛔ 不钉 `height` / `min-height`（钉了会把 28px 顶成 30px ⇒ 同列字段的行位错开 2px）；
+                         ⛔ 不接 autosize（自动增高与「手动拖拽调高」打架，拖到多高、一输入就被改回去）。
+                         ⚠️ 它 `bind:value` 的是**派生变量** `directorWriters`（= `director` + `screenwriter` 的拼串）——
+                         换成 textarea **不改这条数据流**（原来那个 input 就是这么绑的），提交侧照旧拆。 -->
+                    <textarea
+                        class="rl-input rl-multi"
+                        rows="1"
+                        bind:value={directorWriters}
+                        placeholder={placeholderOf('director')}></textarea>
+                </div>
+                {#if formMode !== 'bangumi'}
+                    <div data-fld="cast" style={fldStyle('cast')}>
+                        <label class="rl-lbl">{type === 'anime' ? '主演（声优）' : '主演'}</label>
+                        <!-- 🔴 #500②（用户：「将海报墙中的主演框改为多行输入框，默认高度与长度保持现状，
+                             同时支持手动拖拽调整高度」）：一行 input 改 textarea。
+                             · 默认高 / 宽 = 原来那个 input 的高度（`--input-height` 那档 30px）与整行宽度；
+                             · `resize: vertical` —— 只能拖高、拖不宽（宽度是布局给的，拖宽会破同列对齐）；
+                             · ⛔ **不接 autosize 自动增高**：自动增高与「手动拖拽调高」会打架
+                             （拖到多高，一输入就被改回去，用户调的高度留不住）。 -->
                         <textarea
                             class="rl-input rl-multi"
                             rows="1"
-                            bind:value={directorWriters}
-                            placeholder="导演 / 编剧 用 / 分隔"></textarea>
+                            bind:value={cast}
+                            placeholder={placeholderOf('cast')}></textarea>
                     </div>
-                    {#if formMode !== 'bangumi'}
-                        <div>
-                            <label class="rl-lbl">{type === 'anime' ? '主演（声优）' : '主演'}</label>
-                            <!-- 🔴 #500②（用户：「将海报墙中的主演框改为多行输入框，默认高度与长度保持现状，
-                                 同时支持手动拖拽调整高度」）：一行 input 改 textarea。
-                                 · 默认高 / 宽 = 原来那个 input 的高度（`--input-height` 那档 30px）与整行宽度；
-                                 · `resize: vertical` —— 只能拖高、拖不宽（宽度是布局给的，拖宽会破同列对齐）；
-                                 · ⛔ **不接 autosize 自动增高**：自动增高与「手动拖拽调高」会打架
-                                 （拖到多高，一输入就被改回去，用户调的高度留不住）。 -->
-                            <textarea
-                                class="rl-input rl-multi"
-                                rows="1"
-                                bind:value={cast}
-                                placeholder="多个主演用 / 分隔"></textarea>
-                        </div>
-                    {:else if type === 'tv' || type === 'anime'}
-                        <div>
-                            <label class="rl-lbl">总集数</label>
-                            <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="如 12" />
-                        </div>
-                    {/if}
-                </div>
+                {:else if type === 'tv' || type === 'anime'}
+                    <div data-fld="total-episodes" style={fldStyle('total-episodes')}>
+                        <label class="rl-lbl">总集数</label>
+                        <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="如 12" />
+                    </div>
+                {/if}
             {/if}
             {#if type === 'game'}
-                <div class="rl-2col">
-                    <div><label class="rl-lbl">平台</label><input class="rl-input" bind:value={platform} placeholder="PC / Switch / PS5" /></div>
-                    <div><label class="rl-lbl">开发商</label><input class="rl-input" bind:value={developer} placeholder="开发商名" /></div>
-                </div>
+                <div data-fld="game-platform" style={fldStyle('game-platform')}><label class="rl-lbl">平台</label><input class="rl-input" bind:value={platform} placeholder={placeholderOf('platform')} /></div>
+                <div data-fld="game-developer" style={fldStyle('game-developer')}><label class="rl-lbl">开发商</label><input class="rl-input" bind:value={developer} placeholder={placeholderOf('developer')} /></div>
             {/if}
 
             {#if (type === 'tv' || type === 'anime') && formMode !== 'bangumi'}
@@ -4258,26 +5004,22 @@ export let initialBookKind: BookKind | undefined = undefined;
                         ⛔ 别顺手把它从下面的提交对象里删掉：那会把老数据里的季号**静默抹成默认值**。
                      ⚠️ 集数是 **1 基**（`progress.episode` = 已看到第几集，与「百分比 = episode / totalEpisodes」
                         同一口径），⛔ 别改成 0 基、也别把 `clampWatch` 的 `min` 调成 1（0 = 还没开始看）。 -->
-                <div class="rl-2col">
-                    <div>
-                        <label class="rl-lbl">总集数</label>
-                        <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="如 12" />
-                    </div>
-                    <div>
-                        <label class="rl-lbl" data-tip="填第几集（决定进度显示）">当前进度</label>
-                        <input class="rl-input" type="number" min="0" value={episode} on:input={(ev) => (episode = clampWatch(Number(ev.currentTarget.value), 0, entry?.progress?.episode ?? 1))} placeholder="如 5" />
-                    </div>
+                <div data-fld="total-episodes" style={fldStyle('total-episodes')}>
+                    <label class="rl-lbl">总集数</label>
+                    <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="如 12" />
+                </div>
+                <div data-fld="episode" style={fldStyle('episode')}>
+                    <label class="rl-lbl" data-tip="填第几集（决定进度显示）">当前进度</label>
+                    <input class="rl-input" type="number" min="0" value={episode} on:input={(ev) => (episode = clampWatch(Number(ev.currentTarget.value), 0, entry?.progress?.episode ?? 1))} placeholder="如 5" />
                 </div>
             {/if}
             {#if type === 'book' && bookKind === 'book'}
                 <!-- ISBN + 元数据页数：**仅文学**（网文是「元数据章数」、已在书籍区首两行；
                      🔴 #444g 漫画明确不要这两项 —— 原来条件写的是 `!== 'novel'`，把漫画一起放进来了） -->
-                <div class="rl-2col">
-                    <div><label class="rl-lbl">ISBN</label><input class="rl-input" bind:value={isbn} placeholder="如 9787536692930" /></div>
-                    <div>
-                        <label class="rl-lbl">元数据页数</label>
-                        <input class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder="如 320" />
-                    </div>
+                <div data-fld="isbn" style={fldStyle('isbn')}><label class="rl-lbl">ISBN</label><input class="rl-input" bind:value={isbn} placeholder={placeholderOf('isbn')} /></div>
+                <div data-fld="pages" style={fldStyle('pages')}>
+                    <label class="rl-lbl">元数据页数</label>
+                    <input class="rl-input" type="number" min="0" bind:value={pageCountVal} placeholder={placeholderOf('pageCount')} />
                 </div>
             {/if}
 
@@ -4290,19 +5032,51 @@ export let initialBookKind: BookKind | undefined = undefined;
                     「这个系列怎么是下拉项……下拉选择毛用没有改成手动填写」）——
                     建议清单必然跨类型（动画表单里冒出书籍的系列名 = 「不对应类型」的观感来源），
                     ⇒ ⛔ 别再挂 `list=` / `<datalist>`；形态就与「来源 / 大众评分 / 平台链接」那几个手填框一致。 -->
-            <div class="rl-2col">
-                <div>
-                    <!-- ⚠️ 本表单其余 label 都没写 `for`（历史写法，Svelte 会为此报「label 未关联控件」的 A11y 告警）。
-                         这两个框**故意补上** `for`/`id`：本批的门禁要求「构建告警数不高于基线 89」，
-                         新加两个裸 label 会各带一条告警 ⇒ 顺手写成规范形态，⛔ 别把 `for`/`id` 删掉。 -->
-                    <label class="rl-lbl" for="rl-f-series">系列</label>
-                    <input id="rl-f-series" class="rl-input" bind:value={series} placeholder="同一系列的名称（留空不成组）" />
-                </div>
-                <div>
-                    <label class="rl-lbl" for="rl-f-series-index">系列序号</label>
-                    <input id="rl-f-series-index" class="rl-input" type="number" step="1" min="1" bind:value={seriesIndexVal} placeholder="可留空，填整数（第几部/季）" />
+            <div data-fld="series" style={fldStyle('series')}>
+                <!-- ⚠️ 本表单其余 label 都没写 `for`（历史写法，Svelte 会为此报「label 未关联控件」的 A11y 告警）。
+                     这两个框**故意补上** `for`/`id`：本批的门禁要求「构建告警数不高于基线 89」，
+                     新加两个裸 label 会各带一条告警 ⇒ 顺手写成规范形态，⛔ 别把 `for`/`id` 删掉。
+                     🔴🔴 m05562（用户逐字：「把系列和系列序号框合并为一个宽度行不行，然后和合集并排
+                     【顺序为：系列&系列序号、合集】」）：
+                     ⇒ 两框**并进这一个受管块**（span 3 = 半行），内部 2:1 分宽；右侧接合集（也是 span 3）
+                       ⇒ 两者合起来正好一整行。⛔ 不是并成一个输入框：`series` / `seriesIndex` 两个字段照旧。
+                     ⚠️ 两个 input 的开标签字面与属性顺序**一字不许动** —— `assert-symbols.cjs` 的
+                        #434 / #443 是逐字钉死的（`rl-f-series` 那条、以及 `rl-f-series-index` 的
+                        `type="number" step="1" min="1"`）。
+                        🔴 注释里 ⛔ 别把这两个开标签**逐字**抄一遍 —— 那两条守卫用的是正则，
+                        会把注释这一份也命中，于是「真标签被删」也照样绿（假绿）。
+                     ⚠️ `series-index` 因此从 `pure/entryFormFields` 的注册表里退场（它不再是独立受管块，
+                        否则会出现「设置页能单独收起系列序号、表单里却收不掉」的口径分裂）。 -->
+                <div class="rl-series-pair">
+                    <div class="rl-series-cell">
+                        <label class="rl-lbl" for="rl-f-series">系列</label>
+                        <input id="rl-f-series" class="rl-input" bind:value={series} placeholder={placeholderOf('series')} />
+                    </div>
+                    <div class="rl-series-cell rl-series-cell-idx">
+                        <label class="rl-lbl" for="rl-f-series-index">系列序号</label>
+                        <input id="rl-f-series-index" class="rl-input" type="number" step="1" min="1" bind:value={seriesIndexVal} placeholder={placeholderOf('series-index')} />
+                    </div>
                 </div>
             </div>
+            <!-- 🔴🔴 2026-11-24 用户裁定（逐字）：「在所有类型条目属性窗口上加个合集，只有写了才能进合集视图，
+                 还有加个标签（自定义视图）」。
+                 🔴 2026-11-15 用户 m04293 改口径（逐字）：「表单那栏直接改名『标签』，合集也改名为『合集』」——
+                    ⇒ 显示名去掉「归属」前缀。理由：统计页词云空态写「在编辑表单的『标签』里填几个词」，
+                      表单却叫「标签」，**同一件东西两个名字会让人以为没有标签可填**
+                      （`pure/metaFields.ts:140` 与 `pure/wordCloud.ts` 本来就叫「标签」）。
+                 ⇒ 这两栏是**视图收录依据**，与上面那两栏（系列 / 系列序号 = 海报墙折叠分组）**职责分开**：
+                    · 合集 ⇒ 合集视图（`kind === 'collection'`）只认它，见 `pure/mediaViews.ipKeyOf`；
+                    · 标签 ⇒ 自定义视图按标签收人，见 `pure/mediaViews.viewMatchesEntry`；
+                      （本表单此前**根本没有标签输入口** —— `tags` 只能在 MediaList 批量面板里改，单条没处配。）
+                 ⚠️ 「合集」**故意不接豆瓣「丛书」自动回填**：它是纯人工声明，
+                    自动填就等于回到「有 series 就自动进合集」那个被用户否掉的口径。
+                 ⚠️ 只改显示名，`data-fld` / `id` / `bind:value` 的字段名一个不动（落盘字段仍是 collection / tags）。
+                 ⚠️ label 带 `for`/`id` —— 裸 label 会多报一条 A11y 告警、破 89 基线（同系列两框那条口径）。 -->
+            <div data-fld="collection" style={fldStyle('collection')}>
+                <label class="rl-lbl" for="rl-f-collection">合集</label>
+                <input id="rl-f-collection" class="rl-input" bind:value={collection} placeholder={placeholderOf('collection')} />
+            </div>
+            <!-- ⚠️ 标签块已上移到「题材」之后（m05562），本处不再重复渲染。 -->
             <!-- 🔴 #668 关联功能区已按用户裁定**整体下线归档**（「全部给我移除掉吧归档下未来实现」）。
                  数据层与笔记侧**未删除**：`MediaEntry.related` / `normalizeEntry` 白名单 / 笔记 `## 关联` 章节
                  与 `pure/relatedGraph.ts` 及单测都还在，既有数据原样保留。重新上线 = 把组件挂回这里。 -->
@@ -4312,20 +5086,22 @@ export let initialBookKind: BookKind | undefined = undefined;
                  ② 本框手填 = **覆盖**总数。海报墙封面左下角显示「已读 2h」（复用游戏 `.rl-cov-playtime` 那枚角标）。
                  ⚠️ label 带 `for`/`id` —— 裸 label 会多报一条 A11y 告警、破 89 基线（同系列两框那条口径）。 -->
             {#if type === 'book'}
-                <div>
+                <div data-fld="read-hours" style={fldStyle('read-hours')}>
                     <label class="rl-lbl" for="rl-f-readhours">阅读时长（小时）</label>
                     <input id="rl-f-readhours" class="rl-input" type="number" min="0" step="0.1" bind:value={readHours} placeholder="如 2.5" />
                 </div>
             {/if}
-            <label class="rl-lbl">{type === 'book' ? '内容简介' : '简介'}</label>
-            <textarea class="rl-input rl-summary" rows="6" bind:this={summaryEl} placeholder={type === 'book' ? '填写图书内容简介…' : '填写作品剧情简介…'} bind:value={summary}></textarea>
+            <div data-fld="summary" style={fldStyle('summary')}>
+                <label class="rl-lbl">{type === 'book' ? '内容简介' : '简介'}</label>
+                <textarea class="rl-input rl-summary" rows="6" bind:this={summaryEl} placeholder={type === 'book' ? '填写图书内容简介…' : '填写作品剧情简介…'} bind:value={summary}></textarea>
+            </div>
 
             {#if type === 'music'}
                 <!-- LRC 歌词（#396）：正文住在笔记的 ` ```lrc ` 块里（⛔ 不落 catalog），保存时写回笔记；
                      播放器读的就是这一段（四路歌词源的第 2 档「块内正文」），所以两边天然联动。
                      🔴 位置（2026-09-27 用户指示）：**在「总结摘要」之上** —— 歌词是音乐条目的核心内容之一，
                      原先落在表单最底部（本地音频之后），要看它得滚过整张表单。 -->
-                <div>
+                <div data-fld="lrc" style={fldStyle('lrc')}>
                     <div class="rl-lbl-row">
                         <label class="rl-lbl" for="rl-lrc">LRC歌词</label>
                         <button
@@ -4356,8 +5132,12 @@ export let initialBookKind: BookKind | undefined = undefined;
                              全局 `.rl-spinner`（styles.css）已有「小尺寸 + 跟随主题 + 尊重减少动效」三件事，⛔ 别另写一份。 -->
                         {#if lrcBusy || lrcAiBusy}<span class="rl-spinner" aria-hidden="true"></span>{/if}
                     </div>
+                    <!-- 🔴 m04435 ③：占位提示补一行 `[Gold]` 用法（用户：「编辑处提供占位提示，
+                         不自动判断/插入，由用户手动标记；提示不写入歌词」）。
+                         ⚠️ 只是 `placeholder`，⛔ 别改成「一次性把 `[Gold]` 塞进 value」——
+                           那会把标记写进用户歌词。 -->
                     <textarea id="rl-lrc" class="rl-input rl-lrc" rows="6" bind:value={lrc}
-                        placeholder={'逐行粘贴 LRC 歌词，或点右上角按钮在线获取\n[00:01.00]第一句歌词'}></textarea>
+                        placeholder={'逐行粘贴 LRC 歌词，或点右上角按钮在线获取\n[00:01.00]第一句歌词\n高光句在时间标签后加 [Gold]：[00:10.00][Gold]这一句会显金色（不写入歌词，仅标记）'}></textarea>
                     {#if lrcOpen}
                         <!-- 候选浮层（#401 照 `obsidian-lyricflux/TagEditorModal` 的候选框搬）：
                              标题行（左标题 + 右 ✕）→ 一个带边框的滚动框，**每行一枚来源胶囊 + 一行候选**。
@@ -4396,6 +5176,7 @@ export let initialBookKind: BookKind | undefined = undefined;
 
             {#if type !== 'book'}
             <!-- AI 摘要（单框合并：第 1 行一句话总结，其余每行一条看点）：可手填 / 可点「总结摘要」右侧 ✨ 生成 -->
+            <div data-fld="ai-summary" style={fldStyle('ai-summary')}>
             <div class="rl-lbl-row">
                 <label class="rl-lbl">总结摘要</label>
                 <button
@@ -4414,10 +5195,12 @@ export let initialBookKind: BookKind | undefined = undefined;
             </div>
             <textarea class="rl-input rl-ai-hl" rows="4" bind:value={aiText}
                 placeholder={'一句话总结：\n1. 要点1\n2. 要点2\n3. 要点3'}></textarea>
+            </div>
             {/if}
             {#if type === 'game'}
-                <div class="rl-2col">
-                    <div><label class="rl-lbl">游玩时长（小时）</label><input class="rl-input" type="number" min="0" step="0.1" bind:value={playtimeHours} placeholder="如 12" /></div>
+                <div data-fld="playtime" style={fldStyle('playtime')}>
+                    <label class="rl-lbl">游玩时长（小时）</label>
+                    <input class="rl-input" type="number" min="0" step="0.1" bind:value={playtimeHours} placeholder="如 12" />
                 </div>
                 <div>
                     <!-- 🔴 #523：标签统一「路径」（原「启动快捷方式」）；当时裁定「游戏类**不配**小图标按钮」。
@@ -4438,12 +5221,12 @@ export let initialBookKind: BookKind | undefined = undefined;
                         </button>
                     </div>
                     <div class="rl-ep-row">
-                        <span class="rl-ep-wrap" class:linked={!!gameLaunchPath.trim() || !!gameUrl.trim()}>
+                        <span class="rl-ep-wrap" class:linked={!!gameSwf.trim() || !!gameEmbed.trim() || !!gameLaunchPath.trim() || !!gameUrl.trim()}>
                             <button
                                 class="rl-ep-btn rl-ep-btn-book"
                                 on:click={launchGameFromForm}
                                 on:contextmenu={(ev) => { ev.preventDefault(); openGameEditor(); }}
-                                data-tip={gameLaunchPath.trim() ? `启动：${gameLaunchPath}\n右键编辑/浏览更换` : (gameUrl.trim() ? `网络路径：${gameUrl}\n右键编辑/粘贴更换` : '未关联 — 右键选 .lnk')}>
+                                data-tip={gameSwf.trim() ? `Flash 影片：${gameSwf}\n点击在插件内开始玩\n右键编辑/更换` : (gameEmbed.trim() ? `内嵌播放页：${gameEmbed}\n点击在插件内开始玩（H5 / Unity）\n右键编辑/粘贴更换` : (gameLaunchPath.trim() ? `启动：${gameLaunchPath}\n右键编辑/浏览更换` : (gameUrl.trim() ? `网络路径：${gameUrl}\n右键编辑/粘贴更换` : '未关联 — 右键选 .lnk / .swf，或填内嵌地址')))}>
                                 <Icon icon="play" size={11} /> 启动
                             </button>
                         </span>
@@ -4482,6 +5265,48 @@ export let initialBookKind: BookKind | undefined = undefined;
                                     <input id="rl-f-gameurl" class="rl-input rl-ep-edit-input" value={gameUrlVal} on:input={(ev) => (gameUrlVal = inputVal(ev))} on:blur={() => autoSaveGame('url')} placeholder="https://…（商店页 / 官网 / 攻略）" />
                                     <button class="rl-btn rl-link-act" on:click={() => void pasteGameUrl()} data-tip="粘贴网络路径">粘贴</button>
                                 </div>
+                                <!-- 🔴 2026-11-16 第三条：**本地 Flash 影片**（.swf）—— 挂上就能在插件内用
+                                     Ruffle 直接玩（4399 那类在线抓取留待后续）。与上面两条 .lnk / 网络路径
+                                     **并列**，三条互不覆盖；都填时启动按 swf → .lnk → 网络 的顺序分流。
+                                     ⚠️ label 必须带 `for`/`id`（同网络路径那行，裸写会多报 A11y 告警破基线）。 -->
+                                <div class="rl-edit-lblrow">
+                                    <label class="rl-lbl-inline" for="rl-f-gameswf">Flash 影片</label>
+                                    {#if savedKey === AUTOSAVE_KEYS.gameSwf}
+                                        {#key savedSeq}
+                                            <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                        {/key}
+                                    {/if}
+                                </div>
+                                <div class="rl-ep-edit-row">
+                                    <input id="rl-f-gameswf" class="rl-input rl-ep-edit-input" value={gameSwfVal} on:input={(ev) => (gameSwfVal = inputVal(ev))} on:blur={() => autoSaveGame('swf')} placeholder="本地 .swf 文件（.swf 结尾）" />
+                                    <button class="rl-btn rl-link-act" on:click={(ev) => browseGameSwf(ev)} data-tip="选择 .swf 影片">浏览</button>
+                                    <!-- 2026-11-16 用户：「怎么办改成关联目录」—— 选整个游戏文件夹，自动挑主影片。
+                                         ⚠️ 与「浏览」并列：一个挑单个文件，一个挑一整个目录（内含主影片 + 关联资源）。 -->
+                                    <button class="rl-btn rl-link-act" on:click={(ev) => void browseGameSwfDir(ev)} data-tip="选择一个游戏文件夹（自动挑出里面的主影片）">目录</button>
+                                    <!-- 2026-11-16「获取」：从游戏详情页地址里挖出真实 swf 并下载进库
+                                         （4399 / 7k7k / 17yy 的页面结构各自不同，规则全在 pure/flashFetch）。
+                                         ⚠️ 与「浏览」并列：一个从本地文件挑，一个从网页抓，归宿都是 gameSwf。 -->
+                                    <button class="rl-btn rl-link-act" on:click={() => void fetchGameSwfFromPage()} disabled={gameFetching} data-tip={gameFetching ? '正在获取…' : '从游戏网页获取 swf（4399 / 7k7k / 17yy）'}>{gameFetching ? '获取中…' : '获取'}</button>
+                                </div>
+                                <!-- 🔴 2026-11-16 第四条：**内嵌播放页**（H5 / Unity 类）
+                                     为什么要有：那类游戏没有 swf 可下（`_strGamePath` 指向 index.html），
+                                     但它的详情页没有 X-Frame-Options / CSP，塞进 iframe 能整页跑。
+                                     「获取」解析到这类页面时会自动写这个字段；这行是给手动填写留的口子
+                                     （比如别的站点、或自动解析不出来时自己粘浏览器地址栏）。
+                                     ⚠️ 与上面「网络路径」不是一回事：那条交出浏览器，这条在插件内跑。
+                                     ⚠️ label 必须带 `for`/`id`（同上两行，裸写会多报 A11y 告警破基线）。 -->
+                                <div class="rl-edit-lblrow">
+                                    <label class="rl-lbl-inline" for="rl-f-gameembed">内嵌播放页</label>
+                                    {#if savedKey === AUTOSAVE_KEYS.gameEmbed}
+                                        {#key savedSeq}
+                                            <span class="rl-saved-hint" class:rl-saved-hint-bad={savedBad} role="status" aria-live="polite">{savedBad ? TOAST_FAILED : TOAST_SAVED}</span>
+                                        {/key}
+                                    {/if}
+                                </div>
+                                <div class="rl-ep-edit-row">
+                                    <input id="rl-f-gameembed" class="rl-input rl-ep-edit-input" value={gameEmbedVal} on:input={(ev) => (gameEmbedVal = inputVal(ev))} on:blur={() => autoSaveGame('embed')} placeholder="H5 / Unity 游戏的播放页（https://…）" />
+                                    <button class="rl-btn rl-link-act" on:click={() => void pasteGameEmbed()} data-tip="粘贴内嵌播放页地址">粘贴</button>
+                                </div>
                                 <!-- 🔴 #563：底部三枚按钮退场（同集浮层），改失焦自动保存 + 点遮罩关闭 -->
                             </div>
                         {/if}
@@ -4491,15 +5316,20 @@ export let initialBookKind: BookKind | undefined = undefined;
             {#if type === 'book' && bookKind !== 'comic'}
                 <!-- 🔴 #444g：漫画**不展示**作者简介（用户：「把 ISBN、元数据页数、作者简介框删除掉」）——
                      漫画的作者与画师是两个人，一个「作者简介」框语义不清；简介仍走上面的「简介」区块。 -->
+                <div data-fld="author-intro" style={fldStyle('author-intro')}>
                 <label class="rl-lbl">作者简介</label>
                 <textarea class="rl-input rl-summary" rows="3" bind:this={authorIntroEl} placeholder="填写作者介绍…" bind:value={authorIntro}></textarea>
+                </div>
                 <!-- 目录：**文学与网文都渲染**（🔴 #431 翻面 —— 2026-09-13 曾按「网文无出版目录」撤掉该框；
                      用户 2026-09-29「文学类和网文的 toc 目录回填只显示前 10 章加个 `....`」之后，
                      写回来的是 10 行预览，不再是那份吓人的 2000 章出版目录）。 -->
+                <div data-fld="toc" style={fldStyle('toc')}>
                 <label class="rl-lbl">目录</label>
                 <textarea class="rl-input rl-summary" rows="4" bind:this={tocEl} placeholder="填写目录，每行一项…" bind:value={toc}></textarea>
+                </div>
                 {#if type === 'book'}
             <!-- AI 摘要（单框合并：第 1 行一句话总结，其余每行一条看点）：可手填 / 可点「总结摘要」右侧 ✨ 生成 -->
+            <div data-fld="ai-summary" style={fldStyle('ai-summary')}>
             <div class="rl-lbl-row">
                 <label class="rl-lbl">总结摘要</label>
                 <button
@@ -4519,6 +5349,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             </div>
             <textarea class="rl-input rl-ai-hl" rows="4" bind:value={aiText}
                 placeholder={'一句话总结：\n1. 要点1\n2. 要点2\n3. 要点3'}></textarea>
+            </div>
                 {/if}
             {/if}
             <!-- 🔴 #549（用户 2026-10-07：「网文/漫画也加上阅读进度框」）：**三个书籍子类都要有**这一组
@@ -4533,6 +5364,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                      那几枚**同款同位**（`.rl-lbl-row` + `.rl-ai-btn`）—— 用户：「把阅读器进度页数同款的小按钮
                      也移到旁边，统一摆放以便查看」＋「修正这些小按钮颜色不一致的问题」。
                      ⛔ 别再用 `.rl-prog-refresh` 那套（带描边 / 22×22 / hover 灰字 —— 与旁边几枚两套配色）。 -->
+                <div data-fld="book-progress" style={fldStyle('book-progress')}>
                 <div class="rl-lbl-row">
                     <label class="rl-lbl">{bookUnitLabel}</label>
                     <button
@@ -4555,6 +5387,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                         <div class="rl-hint rl-hint-warn">⚠ 已有阅读进度 {readPct}%，建议切到「在读」</div>
                     {/if}
                 {/if}
+                </div>
             {/if}
             {#if type === 'music'}
                 <div>
@@ -5131,11 +5964,29 @@ export let initialBookKind: BookKind | undefined = undefined;
                             <div class="rl-ep-edit rl-bili-pop" role="dialog" aria-labelledby="rl-bili-pop-title">
                                 <div class="rl-lrc-pop-head">
                                     <span class="rl-ep-edit-title" id="rl-bili-pop-title">
-                                        {epBiliView === 'parts' ? '选择分P' : '搜索 B 站'}
+                                        {epBiliView === 'parts' ? '选择分P' : epNetSrc === 'yt' ? '搜索 YouTube' : '搜索 B 站'}
                                     </span>
                                     <button class="rl-lrc-pop-close" on:click={() => (epBiliOpen = false)} data-tip="关闭">✕</button>
                                 </div>
                                 {#if epBiliView === 'search'}
+                                    <!-- 🔴「网络集可搜索 YouTube」（用户 2026-10-31）：同一枚 globe 按钮里的**搜索源切换**。
+                                         ⛔ 不新增第二枚按钮（#669 同一功能只留一个入口）——两枚同语义按钮会让人以为是两个功能。
+                                         默认源由这一集已填的地址猜（见 `epBiliDefaultSource`），不是硬编码 B 站。 -->
+                                    <!-- ⚠️ 复用 `.rl-ep-edit-row`（横排 + 6px 间距）即可，⛔ 不为这一行另起样式类 ——
+                                         它和下面那行检索词框是**同一栏的两行**，几何必须一致。
+                                         选中态走全局 `.rl-bili-srcbtn.is-on`（⛔ 别用 `.mod-cta`：会盖掉 `.rl-link-act` 的小尺寸）。 -->
+                                    <div class="rl-ep-edit-row">
+                                        <button
+                                            class="rl-btn rl-link-act rl-bili-srcbtn"
+                                            class:is-on={epNetSrc === 'bili'}
+                                            on:click={() => void switchNetSource('bili')}
+                                            data-tip="在 B 站里搜（选中后可展开分P 勾选多集）">B站</button>
+                                        <button
+                                            class="rl-btn rl-link-act rl-bili-srcbtn"
+                                            class:is-on={epNetSrc === 'yt'}
+                                            on:click={() => void switchNetSource('yt')}
+                                            data-tip="在 YouTube 里搜（选中直接填这一条链接）">YouTube</button>
+                                    </div>
                                     <div class="rl-ep-edit-row">
                                         <input
                                             class="rl-input rl-ep-edit-input"
@@ -5143,10 +5994,46 @@ export let initialBookKind: BookKind | undefined = undefined;
                                             on:input={(ev) => (epBiliQuery = inputVal(ev))}
                                             on:keydown={(ev) => { if (ev.key === 'Enter') void runEpBiliSearch(); }}
                                             placeholder="检索词（作品标题 + 集标题，缺则补第N集）" />
-                                        <button class="rl-btn rl-link-act" disabled={epBiliBusy || epBiliPartsBusy} on:click={() => void runEpBiliSearch()}>
-                                            {epBiliBusy ? '搜索中…' : '搜索'}
+                                        <button
+                                            class="rl-btn rl-link-act"
+                                            disabled={epBiliBusy || epBiliPartsBusy || epYtBusy}
+                                            on:click={() => void runEpBiliSearch()}>
+                                            {epBiliBusy || epYtBusy ? '搜索中…' : '搜索'}
                                         </button>
                                     </div>
+                                    {#if epNetSrc === 'yt'}
+                                        {#if epYtErr}<div class="rl-hint rl-hint-warn">{epYtErr}</div>{/if}
+                                        <!-- 🔴 这里**只列候选、点中直接填**，⛔ 不做分P 勾选表：
+                                             YouTube 播放列表的分集结构与 B 站分P 不是一回事
+                                             （失效条目 / 顺序 / 要多跑一次取 entries），硬做表容易错位。 -->
+                                        <div class="rl-bili-list">
+                                            {#each epYtVideos as v (v.id)}
+                                                <button
+                                                    class="rl-bili-row"
+                                                    disabled={!!epYtPicking}
+                                                    on:click={() => void pickEpYtUrl(v)}
+                                                    data-tip={`填入这一条：${v.title}`}>
+                                                    <!-- ⚠️ `referrerpolicy="no-referrer"`：YouTube 图床同样按 Referer 判。
+                                                         `i.ytimg.com` 对 `mqdefault` 几乎不会 404（`maxresdefault` 老视频常缺）。 -->
+                                                    {#if v.thumbnail}
+                                                        <img class="rl-bili-cover" src={v.thumbnail} alt="" loading="lazy" referrerpolicy="no-referrer" />
+                                                    {:else}
+                                                        <span class="rl-bili-cover rl-bili-cover-ph"><Icon icon="video" size={14} /></span>
+                                                    {/if}
+                                                    <span class="rl-bili-main">
+                                                        <span class="rl-bili-name">{v.title}</span>
+                                                        <span class="rl-bili-artist">{v.channel || '未知频道'}</span>
+                                                    </span>
+                                                    <!-- ⚠️ `formatDuration(0)` 返回 `'0:00'`（那道函数不判 0）⇒ 必须自己判
+                                                         `> 0`，否则每条未知时长都显示成「0:00」，会被读成零秒视频。 -->
+                                                    <span class="rl-bili-pill">{v.duration > 0 ? formatDuration(v.duration) : '—'}</span>
+                                                </button>
+                                            {/each}
+                                        </div>
+                                        {#if !epYtBusy && !epYtErr && epYtVideos.length === 0 && epBiliQuery.trim()}
+                                            <div class="rl-hint">没搜到，换个检索词试试（YouTube 上试英文原名命中率更高）</div>
+                                        {/if}
+                                    {:else}
                                     {#if epBiliErr}<div class="rl-hint rl-hint-warn">{epBiliErr}</div>{/if}
                                     {#if epBiliPartsBusy}<div class="rl-hint">正在读取分P…</div>{/if}
                                     <div class="rl-bili-list">
@@ -5176,6 +6063,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                                     </div>
                                     {#if !epBiliBusy && !epBiliPartsBusy && !epBiliErr && epBiliVideos.length === 0 && epBiliQuery.trim()}
                                         <div class="rl-hint">没搜到，换个检索词试试</div>
+                                    {/if}
                                     {/if}
                                 {:else}
                                     <!-- ── 分P 勾选表（入口 C 的正题）──────────────────────────
@@ -5250,7 +6138,20 @@ export let initialBookKind: BookKind | undefined = undefined;
                 <div class="rl-ep-edit rl-bili-pop" role="dialog" aria-labelledby="rl-bili-batch-title">
                     <div class="rl-lrc-pop-head">
                         <span class="rl-ep-edit-title" id="rl-bili-batch-title">批量搜索未填集</span>
-                        <button class="rl-lrc-pop-close" on:click={closeBiliBatch} data-tip="关闭">✕</button>
+                        <!-- 🔴 用户 2026-11-22 逐字：「这个关联入口批量集Ui这个关闭按钮改成
+                             Obsidian原生的关闭按钮无边框式」⇒ 与弹窗侧同款：换成宿主的图标钮
+                             （`clickable-icon` 让宿主豁免 `button:not(.clickable-icon)` 的灰底规则，
+                             文字 `✕` 换成 `x` 图标，尺寸由样式表统一成 20×20 正方）。
+                             ⚠️ 只改**批量这张卡**：同页面另外四颗 `.rl-lrc-pop-close` 是歌词/歌曲/阅读
+                             那几个浮层的，不在本次需求里，⛔ 别一起动。 -->
+                        <button class="clickable-icon rl-bili-close" on:click={closeBiliBatch} data-tip="关闭">
+                            <Icon icon="x" size={14} />
+                            <!-- 🔴 2026-11-08 修双提示：原来这枚按钮同时挂 `aria-label="关闭"` 与
+                                 `data-tip="关闭"` ⇒ Obsidian 对带 `aria-label` 的悬停目标自绘官方气泡，
+                                 与插件 `data-tip` 气泡叠成两层（UI-GUIDE §3 v3）。
+                                 读屏名改走 `.rl-sr` 隐藏 span（本文件已有该类，见 :6181-6182）。 -->
+                            <span class="rl-sr">关闭</span>
+                        </button>
                     </div>
                     <!-- 集数区间：默认 = 未填集的第一个 ~ 最后一个；⛔ 不自动开跑。
                          🔴 #522：两个框挂 `rl-bili-batch-num`（那颗类名是宽度裁判的必需件 ——
@@ -5260,6 +6161,16 @@ export let initialBookKind: BookKind | undefined = undefined;
                         <input class="rl-input rl-bili-batch-num" type="number" min="1" bind:value={batchFrom} />
                         <span class="rl-bili-batch-range-sep">–</span>
                         <input class="rl-input rl-bili-batch-num" type="number" min="1" bind:value={batchTo} />
+                        <!-- 🔴 用户 2026-11-23（①a）：「粘贴链接」移到「搜索」**左侧** ——
+                             两枚都是「怎么拿到链接」的入口，并排才能一眼看出二选一：
+                             左＝我手里已有链接（省掉整轮搜索）｜右＝替我按区间搜。
+                             ⚠️ 它**常驻**（不随下面三态切换）：「我已经知道是哪一条」与搜到哪一步无关 (#542)。
+                             ⚠️ 与 `QuickAssociateModal.renderBiliBatch` 必须同构（见下方 batch-bar 注释）。 -->
+                        <button
+                            class="rl-bili-batch-btn is-ghost"
+                            disabled={batchRunning}
+                            on:click={() => void pasteBiliBatchLink()}
+                            data-tip="粘贴一条 B 站链接，按它的分P 顺序填未填的集">粘贴链接</button>
                         <button
                             class="rl-bili-batch-btn is-primary"
                             disabled={batchRunning}
@@ -5268,11 +6179,13 @@ export let initialBookKind: BookKind | undefined = undefined;
                     </div>
                     <div class="rl-bili-batch-bar">
                         {#if batchRunning}
+                            <!-- ⑩ 搜索中的 loading（用户：「搜索中时给顶部状态栏加 loading 动画」）。
+                                 ⚠️ spinner 与文案是**兄弟**：圈 `flex:none`、文案 `flex:1` 负责省略 ——
+                                     ⛔ 别塞进文案节点里，会被 `text-overflow: ellipsis` 一起嚼掉。 -->
+                            <span class="rl-bili-batch-spin rl-bili-batch-spin-anim">
+                                <Icon icon="loader" size={13} />
+                            </span>
                             <div class="rl-bili-batch-note">{batchProgressText(batchDone, batchTotal, batchEpNo)}</div>
-                            <button
-                                class="rl-bili-batch-btn is-ghost"
-                                data-tip="停下（已搜到的保留，可再点「继续」）"
-                                on:click={() => (batchCancel = true)}>停止</button>
                         {:else if batchFinished}
                             <div class="rl-bili-batch-note">已搜完 {batchTotal} 集 · 勾选 {batchPickedCount} 集</div>
                         {:else if batchRows.length > 0}
@@ -5284,17 +6197,14 @@ export let initialBookKind: BookKind | undefined = undefined;
                                 data-tip={`从第 ${batchLastEpNo + 1} 集接着搜`}
                                 on:click={() => void continueBiliBatch()}>继续</button>
                         {:else}
-                            <div class="rl-bili-batch-note">
-                                选好区间后点「搜索」——只会搜**还没关联**的集（共 {batchAllTargets.length} 个）
-                            </div>
+                            <!-- 🔴 用户 2026-11-23（①d）逐字指定，⛔ 别改写别精简：
+                                 「选定集数区间后点击搜索。 / 如果已有现成链接，可直接点击右侧『粘贴链接』即可一键搜索关联。」
+                                 ⚠️ 两句话用 `\n` 分行、靠 `.is-hint { white-space: pre-line }` 落地 ——
+                                 父级 `.rl-bili-batch-note` 是 `nowrap`（进度条那侧要单行省略），
+                                 故这里必须走 `.is-hint` 变体，⛔ 不能直接裸放两行文字。 -->
+                            <div class="rl-bili-batch-note is-hint">选定集数区间后点击搜索。
+如果已有现成链接，可直接点击右侧『粘贴链接』即可一键搜索关联。</div>
                         {/if}
-                        <!-- 🔴 #542 与「搜索」互补的一枚：手里已经有合集链接时不必再替我搜一轮。
-                             ⚠️ 它**常驻**（不随上面三态切换）—— 「我已经知道是哪一条」这件事与搜到哪一步无关。 -->
-                        <button
-                            class="rl-bili-batch-btn is-ghost"
-                            disabled={batchRunning}
-                            on:click={() => void pasteBiliBatchLink()}
-                            data-tip="粘贴一条 B 站链接，按它的分P 顺序填未填的集">粘贴链接</button>
                     </div>
                     <div class="rl-bili-batch-list">
                         {#each batchRows as r, idx (r.epIndex)}
@@ -5312,72 +6222,85 @@ export let initialBookKind: BookKind | undefined = undefined;
                                                 : '参与「填入」')
                                             : '这一集没有可填的链接'}
                                         on:change={(ev) => toggleEpBiliBatchRow(idx, ev.currentTarget.checked)} />
-                                    <span class="rl-bili-batch-ep">第 {r.epNo} 集</span>
+                                    <!-- 🔴 2026-11-20 三列栅格（用户：「列表项分为三列：左侧 Checkbox + 缩略图（80x45），
+                                         中间是标题和标签，右侧是操作区」「Checkbox、图片和文字必须垂直居中对齐」）。
+                                         ⚠️ checkbox / 缩略图 / 中间正文 / 右操作区是**四个平级 flex 子项**，靠行的
+                                            `align-items:center` 对齐；⛔ 别再套「左列包一层」（会让两者各自错位）。
+                                         ⚠️ 这里与 `QuickAssociateModal.renderBiliBatch` 必须同构 —— 两处入口
+                                            共用同一套 `.rl-bili-batch-*` 样式，结构一分叉就有一边会崩。 -->
+                                    {#if v}
+                                        {#if v.coverUrl}
+                                            <img
+                                                class="rl-bili-batch-thumb"
+                                                src={v.coverUrl}
+                                                alt=""
+                                                loading="lazy"
+                                                referrerpolicy="no-referrer" />
+                                        {:else}
+                                            <span class="rl-bili-batch-thumb rl-bili-cover-ph">
+                                                <Icon icon="video" size={16} />
+                                            </span>
+                                        {/if}
+                                    {/if}
                                     <div class="rl-bili-batch-hit">
                                         {#if v}
-                                            {#if v.coverUrl}
-                                                <img
-                                                    class="rl-bili-cover"
-                                                    src={v.coverUrl}
-                                                    alt=""
-                                                    loading="lazy"
-                                                    referrerpolicy="no-referrer" />
-                                            {:else}
-                                                <span class="rl-bili-cover rl-bili-cover-ph">
-                                                    <Icon icon="video" size={14} />
-                                                </span>
-                                            {/if}
-                                            <span class="rl-bili-main">
-                                                <span class="rl-bili-batch-name">{v.title}</span>
-                                                <span class="rl-bili-artist">{v.author || '未知 UP 主'}</span>
-                                            </span>
-                                            {#if partCountLabel(r.partCounts[v.bvid] ?? 0)}
-                                                <span
-                                                    class="rl-bili-batch-parts"
-                                                    data-tip={(r.partCounts[v.bvid] ?? 0) === 1
-                                                        ? '单集投稿（只有 1 个分P）'
-                                                        : `整季合集（${r.partCounts[v.bvid]} 个分P）`}>
-                                                    {partCountLabel(r.partCounts[v.bvid] ?? 0)}
-                                                </span>
-                                            {/if}
-                                            <!-- 🔴 #520：标题不含作品名 ⇒ 不自动勾，并明说为什么 -->
-                                            {#if !r.matched}
-                                                <span class="rl-bili-batch-warn" data-tip="标题里没有本条目作品名，所以没替你勾上">
-                                                    标题不含作品名
-                                                </span>
-                                            {/if}
-                                        {:else}
-                                            <div class="rl-bili-batch-note">
-                                                {r.error || (batchRunning ? '…' : '未搜到')}
+                                            <!-- 标题 14px/600/单行溢出隐藏（用户：「标题单行溢出隐藏」）；
+                                                 作者与标签 12px 灰，压在第二行。 -->
+                                            <span class="rl-bili-batch-name" data-tip={url}>{v.title}</span>
+                                            <div class="rl-bili-batch-tags">
+                                                <span class="rl-bili-batch-ep">第 {r.epNo} 集</span>
+                                                {#if partCountLabel(r.partCounts[v.bvid] ?? 0)}
+                                                    <span
+                                                        class="rl-bili-batch-parts"
+                                                        data-tip={(r.partCounts[v.bvid] ?? 0) === 1
+                                                            ? '单集投稿（只有 1 个分P）'
+                                                            : `整季合集（${r.partCounts[v.bvid]} 个分P）`}>
+                                                        {partCountLabel(r.partCounts[v.bvid] ?? 0)}
+                                                    </span>
+                                                {/if}
+                                                <!-- 🔴 #520：标题不含作品名 ⇒ 不自动勾，并明说为什么 -->
+                                                {#if !r.matched}
+                                                    <span class="rl-bili-batch-warn" data-tip="标题里没有本条目作品名，所以没替你勾上">
+                                                        标题不含作品名
+                                                    </span>
+                                                {/if}
+                                                <span class="rl-bili-batch-sub">{v.author || '未知 UP 主'}</span>
                                             </div>
+                                        {:else}
+                                            <span class="rl-bili-batch-sub">
+                                                {r.error || (batchRunning ? '…' : '未搜到')}
+                                            </span>
                                         {/if}
                                     </div>
-                                    {#if v}
-                                        <!-- 🔴 #523：**单集检索**入口 —— 原「集编辑浮层 · 网络地址旁」那枚
-                                             B站 图标按用户裁定撤除后，功能合并到这里（打开这一集的编辑浮层并直接开搜，
-                                             在那里还能展开分P 勾选表一次填多集）。 -->
-                                        <button
-                                            class="rl-bili-batch-toggle"
-                                            data-tip="打开这一集的编辑浮层并搜 B站（可选分P 一次填多集）"
-                                            on:click={() => void openEpBiliFromBatch(idx)}>单集</button>
-                                    {/if}
-                                    {#if canExpandParts(r)}
-                                        <!-- 🔴 #526：**整季合集专用** —— 直接把这条候选的分P 勾选表开出来
-                                             （锚 = 第 1 集）。批量「填入」对多P 候选只会写 P1（= 第 1 集），
-                                             所以多P 行**默认不勾**，要走这枚入口一次填整季。 -->
-                                        <button
-                                            class="rl-bili-batch-toggle is-parts"
-                                            data-tip="这条是整季合集：展开分P 勾选表，一次填多集（分P i ↔ 第 i 集）"
-                                            on:click={() => void expandBatchCandParts(idx)}>展开分P</button>
-                                    {/if}
-                                    {#if r.videos.length > 1}
-                                        <button
-                                            class="rl-bili-batch-toggle"
-                                            data-tip={`这一集搜到 ${r.videos.length} 条候选`}
-                                            on:click={() => void toggleEpBiliBatchCands(idx)}>
-                                            {batchOpenRow === idx ? '收起' : '换一条'}
-                                        </button>
-                                    {/if}
+                                    <!-- 右侧操作区：**文字按钮**（用户：「去除列表里丑陋的灰色圆角按钮，改为文字按钮」） -->
+                                    <div class="rl-bili-batch-acts">
+                                        {#if v}
+                                            <!-- 🔴 #523：**单集检索**入口 —— 原「集编辑浮层 · 网络地址旁」那枚
+                                                 B站 图标按用户裁定撤除后，功能合并到这里（打开这一集的编辑浮层并直接开搜，
+                                                 在那里还能展开分P 勾选表一次填多集）。 -->
+                                            <button
+                                                class="rl-bili-batch-toggle"
+                                                data-tip="打开这一集的编辑浮层并搜 B站（可选分P 一次填多集）"
+                                                on:click={() => void openEpBiliFromBatch(idx)}>单集</button>
+                                        {/if}
+                                        {#if canExpandParts(r)}
+                                            <!-- 🔴 #526：**整季合集专用** —— 直接把这条候选的分P 勾选表开出来
+                                                 （锚 = 第 1 集）。批量「填入」对多P 候选只会写 P1（= 第 1 集），
+                                                 所以多P 行**默认不勾**，要走这枚入口一次填整季。 -->
+                                            <button
+                                                class="rl-bili-batch-toggle is-parts"
+                                                data-tip="这条是整季合集：展开分P 勾选表，一次填多集（分P i ↔ 第 i 集）"
+                                                on:click={() => void expandBatchCandParts(idx)}>展开分P</button>
+                                        {/if}
+                                        {#if r.videos.length > 1}
+                                            <button
+                                                class="rl-bili-batch-toggle"
+                                                data-tip={`这一集搜到 ${r.videos.length} 条候选`}
+                                                on:click={() => void toggleEpBiliBatchCands(idx)}>
+                                                {batchOpenRow === idx ? '收起' : '换一条'}
+                                            </button>
+                                        {/if}
+                                    </div>
                                 </div>
                                 {#if batchOpenRow === idx}
                                     <div class="rl-bili-batch-cands">
@@ -5389,35 +6312,37 @@ export let initialBookKind: BookKind | undefined = undefined;
                                                 on:click={() => void pickEpBiliBatchCand(idx, ci)}>
                                                 {#if cv.coverUrl}
                                                     <img
-                                                        class="rl-bili-cover"
+                                                        class="rl-bili-batch-thumb"
                                                         src={cv.coverUrl}
                                                         alt=""
                                                         loading="lazy"
                                                         referrerpolicy="no-referrer" />
                                                 {:else}
-                                                    <span class="rl-bili-cover rl-bili-cover-ph">
+                                                    <span class="rl-bili-batch-thumb rl-bili-cover-ph">
                                                         <Icon icon="video" size={14} />
                                                     </span>
                                                 {/if}
-                                                <span class="rl-bili-main">
+                                                <span class="rl-bili-batch-hit">
                                                     <span class="rl-bili-batch-name">{cv.title}</span>
-                                                    <span class="rl-bili-artist">{cv.author || '未知 UP 主'}</span>
+                                                    <span class="rl-bili-batch-tags">
+                                                        {#if partCountLabel(r.partCounts[cv.bvid] ?? 0)}
+                                                            <span class="rl-bili-batch-parts">
+                                                                {partCountLabel(r.partCounts[cv.bvid] ?? 0)}
+                                                            </span>
+                                                        {/if}
+                                                        <span class="rl-bili-batch-sub">{cv.author || '未知 UP 主'}</span>
+                                                        <!-- 🔴 #589：「换一条」列表里**每一条**都标出「标题是否含作品名」——
+                                                             原来只有「当前选中」那条标（`.rl-bili-batch-warn`），
+                                                             用户在候选里挑的时候看不见别的条到底匹不匹配。 -->
+                                                        {#if !titleMatchesWork(cv.title, r.workTitle)}
+                                                            <span
+                                                                class="rl-bili-batch-warn"
+                                                                data-tip="标题里没有本条目作品名，勾上它多半不是这一集">
+                                                                不含作品名
+                                                            </span>
+                                                        {/if}
+                                                    </span>
                                                 </span>
-                                                {#if partCountLabel(r.partCounts[cv.bvid] ?? 0)}
-                                                    <span class="rl-bili-batch-parts">
-                                                        {partCountLabel(r.partCounts[cv.bvid] ?? 0)}
-                                                    </span>
-                                                {/if}
-                                                <!-- 🔴 #589：「换一条」列表里**每一条**都标出「标题是否含作品名」——
-                                                     原来只有「当前选中」那条标（`.rl-bili-batch-warn`），
-                                                     用户在候选里挑的时候看不见别的条到底匹不匹配。 -->
-                                                {#if !titleMatchesWork(cv.title, r.workTitle)}
-                                                    <span
-                                                        class="rl-bili-batch-warn"
-                                                        data-tip="标题里没有本条目作品名，勾上它多半不是这一集">
-                                                        不含作品名
-                                                    </span>
-                                                {/if}
                                             </button>
                                         {/each}
                                     </div>
@@ -5426,6 +6351,18 @@ export let initialBookKind: BookKind | undefined = undefined;
                         {/each}
                     </div>
                     <div class="rl-ep-edit-ops rl-bili-batch-ops">
+                        <!-- 🔴 用户 2026-11-23（①b）：「停止」移到「填入勾中的 N 集」**左侧** ——
+                             停止是「这一次搜索到此为止」，填入是「把结果收进表单」，
+                             同属一次批量操作的收尾动作，放一起才符合「先停、再收」的顺序。
+                             ⚠️ 只在 `batchRunning` 时出现（无搜索在跑就没有可停的东西）；
+                                 ⛔ 别挪回顶部进度条那侧 —— 那是 2026-11-23 之前的旧位置。
+                             ⚠️ 与 `QuickAssociateModal.renderBiliBatch` 必须同构。 -->
+                        {#if batchRunning}
+                            <button
+                                class="rl-bili-batch-btn is-ghost"
+                                data-tip="停下（已搜到的保留，可再点「继续」）"
+                                on:click={() => (batchCancel = true)}>停止</button>
+                        {/if}
                         <button
                             class="rl-bili-batch-btn is-primary"
                             disabled={!batchCanFill}
@@ -5500,6 +6437,42 @@ export let initialBookKind: BookKind | undefined = undefined;
                     <button class="rl-stars-val" on:click={startRatingEdit}>{rating ? `${ratingToTenths(rating)}/10` : '未评分'}</button>
                 {/if}
             </div>
+            <!-- 🔴 1.5.0 期 ③（用户 2026-11-17）：**心情只在「已看」时出现**。
+                 用户原话：「所有类型条目编辑属性表单里『个人心情』只在观看状态为『已看』时出现」。
+                 语义：心情 = 「看完之后的感受」，未看 / 在看时还没资格填 —— 露出来只会是空壳。
+                 ⚠️ 只是**不渲染**，`mood` 这个 state 与提交（`input.mood = normalizeMood(mood)`）都**照旧保留**：
+                   把状态从「已看」改回「在看」再保存时，⛔ 不能顺手把已存的心情清掉 ——
+                   用户切回「已看」时它得原样回来。所以这里用 `{#if}` 藏 UI，不是清变量。
+                 ⚠️ 用 `<div class="rl-lbl">` 而不是 `<label>`：心情是一排按钮（不是一个控件），
+                   裸 `<label>` 没有 `for` 可指，svelte 的 a11y `label-has-associated-control` 会报一条 warning
+                   （基线 89 条是冻结的，⛔ 别为了写法好看去抬基线）。语义改用 aria-labelledby 给到 group。 -->
+            {#if status === 'watched'}
+                <div class="rl-lbl" id="rl-mood-lbl">个人心情</div>
+                <!-- 🔴 #772 心情（⑳）：六档 emoji，可选。点已选中的那档 = 取消。
+                     ⚠️ 与评分是**两个维度**（评分 = 好不好，心情 = 什么感觉），⛔ 别合并成一个控件。
+                     提示语走 `moodChipTip`（选中态额外说明「再点一次取消」），⛔ 别在模板里手拼文案。 -->
+                <div class="rl-mood-row" role="group" aria-labelledby="rl-mood-lbl">
+                    {#each MOODS as m}
+                        <button
+                            type="button"
+                            class="rl-mood-chip"
+                            class:on={mood === m.id}
+                            data-tip={moodChipTip(m.id, mood === m.id)}
+                            aria-pressed={mood === m.id}
+                            on:click={() => toggleMood(m.id)}>
+                            <span class="rl-mood-emoji" aria-hidden="true">{m.emoji}</span>
+                            <span class="rl-mood-label">{m.label}</span>
+                        </button>
+                    {/each}
+                </div>
+            {/if}
+            {#if reviewedEpisodeCount() > 0}
+                <!-- 🔴 用户 m01474 逐字：「只在整季表单才显示总评价数」——
+                     单集面板的标题不再带「已评 N」，那个数挪到这里（整季/整部的编辑表单）。
+                     ⚠️ 只**读** `entry.episodeReviews` 快照：单集评价的编辑入口在播放器详情页，
+                        表单这边不提供逐集修改（两处都能改必然漂移，且表单没有「当前集」概念）。 -->
+                <div class="rl-hint">单集评价：已评 {reviewedEpisodeCount()} 集（逐集修改在播放器详情页右侧「单集评价」面板）</div>
+            {/if}
             <label class="rl-lbl">个人评语</label>
             <!-- #452：占位符改成一句**全类型统一**的引导语（用户给的字面形态，三个半角点，⛔ 别改成 `…`）——
                  旧口径是按类型拼「写下你的观后感/读后感/游玩体验/收听感受…」（`reviewLabel`），已随之退场。 -->
@@ -5614,6 +6587,14 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-res-head-cnt { font-size: 12px; font-weight: 700; color: var(--text-normal); }
     .rl-res-head-cnt::before { content: ''; display: inline-block; width: 3px; height: 12px; border-radius: 2px; background: var(--interactive-accent); margin-right: 7px; vertical-align: -2px; }
     .rl-res-head-hint { font-size: 10px; color: var(--text-faint); }
+    /* 🔴 2026-11-17（m02288）：这颗 ✨ 从**表头**搬到了**每一条结果的标题行**（`.rl-res-row1`）里，
+       所以那两个表头期的属性都不再需要：
+         · `margin-left: auto` —— 那是给「计数 / 提示 / 按钮」三段式撑右端用的；
+           现在同一行里只有「标题（`flex: 1`）+ 按钮」，标题自己就把剩余宽度吃满了。
+         · 也不用再 `align-self: center` —— `.rl-res-row1` 本身就是 `align-items: center`。
+       ⚠️ 尺寸/配色仍全走全局 `.rl-ai-btn`（`styles.css`），这里**只留**「不许被挤压」这一条，
+          ⛔ 不复制一份外观（否则改一处忘一处，两颗 ✨ 会长得不一样）。 */
+    .rl-res-aibtn { flex: none; }
     /* 单列横排卡片：左侧小封面 + 右侧信息列（标题 + 年份/评分/原名紧凑排布 + 来源徽标右上角） */
     /* 结果多栏 grid：列数 = 当前栏数（固定占栏），1~3 栏显式排布不再 auto-fit 猜——避免窄窗下栏位换行堆叠 */
     .rl-res { margin-top: 4px; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 4px 4px 0; max-height: 52vh; display: grid; grid-template-columns: repeat(var(--rl-cols, 1), minmax(0, 1fr)); gap: 10px 12px; align-items: start; }
@@ -5623,6 +6604,25 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-res-col-name::before { content: ''; display: inline-block; width: 3px; height: 12px; border-radius: 2px; background: var(--interactive-accent); flex: none; }
     .rl-res-col-cnt { font-size: 10px; color: var(--text-muted); background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); padding: 0 6px; line-height: 16px; flex: none; margin-left: auto; }
     .rl-res-col-empty { font-size: 11px; color: var(--text-faint); border: 1px dashed var(--background-modifier-border); border-radius: var(--rl-t-radius-lg, 8px); padding: 12px 8px; text-align: center; line-height: 1.5; user-select: none; }
+    /* 🔴 2026-11-12（①-12）：逐源骨架占位 —— 本源还没返回时占住它自己的栏位。
+       尺寸严格对齐真实卡片（`.rl-res-item` 的 padding 6px 10px + 封面 48×72），
+       否则骨架三行比真卡片矮一截，数据一到会「整栏往上跳一下」。
+       配色只用原生变量（`--background-modifier-border` / `--background-secondary`），⛔ 不写死颜色；
+       px 只是布局尺寸，与上面十几条 `.rl-res-*` 同口径。 */
+    .rl-res-col-skel { display: flex; flex-direction: column; gap: 6px; padding: 0; }
+    .rl-res-skel-row { display: flex; gap: 12px; align-items: center; padding: 6px 10px; border: 1px solid transparent; border-radius: var(--rl-t-radius-lg, 8px); background: var(--background-primary); }
+    .rl-res-skel-cv { width: 48px; height: 72px; border-radius: 4px; flex: none; background: var(--background-modifier-border); }
+    .rl-res-skel-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+    .rl-res-skel-bar { display: block; height: 10px; border-radius: 4px; background: var(--background-modifier-border); }
+    .rl-res-skel-bar.is-long { width: 72%; }
+    .rl-res-skel-bar.is-short { width: 40%; }
+    /* 呼吸动效：与字幕面板骨架同款节奏，一眼能看出「在等」而不是「空的」 */
+    .rl-res-col-skel { animation: rl-res-skel-pulse 1.4s ease-in-out infinite; }
+    @keyframes rl-res-skel-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+    /* 用户开了「减少动效」就静态化（骨架照样在，只是不呼吸） */
+    @media (prefers-reduced-motion: reduce) {
+        .rl-res-col-skel { animation: none; }
+    }
     .rl-res-item { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; font-family: inherit; font-size: 12px; border: 1px solid transparent; background: var(--background-primary); border-radius: var(--rl-t-radius-lg, 8px); padding: 6px 10px; cursor: pointer; color: var(--text-normal); line-height: 1.4; transition: background-color .12s, border-color .12s; }
     .rl-res-item:hover { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover, var(--background-modifier-border)); }
     .rl-res-item:focus-visible { outline: none; border-color: var(--interactive-accent); }
@@ -5637,11 +6637,16 @@ export let initialBookKind: BookKind | undefined = undefined;
        点它仍可再建一条（同名不同版本是合法需求，⛔ 这里只做提示不做拦截）。 */
     .rl-res-item.is-added { opacity: .55; }
     .rl-res-added { flex: none; font-size: 10px; line-height: 15px; padding: 0 5px; color: var(--interactive-accent); border: 1px solid currentColor; border-radius: var(--rl-t-radius-sm, 4px); }
+    /* 🔴🔴 m04435 ②：`.rl-res-save`（曲库「入库」按钮）的整套样式**已随按钮一起删除**。
+       ⛔ 别留着「以后可能还用」—— 死规则会让后来人以为按钮还在、只是没渲染。
+       ⚠️ 「已添加」角标 `.rl-res-added`（上一行）**保留**：用户当场裁定按钮删掉、标记留下。 */
     .rl-res-t { font-weight: 600; font-size: 14px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
     .rl-res-row2 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--text-normal); min-width: 0; }
     .rl-res-yr { color: var(--text-muted); flex: none; }
     .rl-res-score { color: var(--rl-score); font-weight: 700; flex: none; }
     .rl-res-o { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+    /* 歌曲时长（曲库结果才有）：等宽数字，避免 3:07 / 11:52 切换时整行左右抖 */
+    .rl-res-dur { color: var(--text-muted); flex: none; font-variant-numeric: tabular-nums; }
     .rl-res-dot { color: var(--text-faint); flex: none; }
     .rl-res-source { font-size: 10px; color: var(--text-faint); flex: none; cursor: pointer; white-space: nowrap; font-weight: 500; user-select: none; padding: 2px 6px; border: 1px solid var(--background-modifier-border); border-radius: 4px; line-height: 1.5; }
     .rl-res-source:hover, .rl-res-source:focus-visible { color: var(--interactive-accent); outline: none; }
@@ -5675,7 +6680,82 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-section-left { margin-left: -112px; }
     /* 基础信息两列布局：左封面边栏 + 右字段区 */
     .rl-basic-grid { display: grid; grid-template-columns: 100px 1fr; gap: 12px; align-items: stretch; margin-bottom: 4px; }
-    .rl-fields-col { min-width: 0; }
+    /* 🔴 属性块容器 = **6 列栅格**（不是普通块级流）：每个受管块的跨度写在行内
+       `grid-column: span N`（N ∈ {6,3,2} ⇒ 整行 / 两个并排 / 三个并排，见 pure/entryFormFields）。
+       6 列是能同时表达这三种宽度的最小公倍数（6/3/2 都整除它）。
+       · ⛔ 纵向 gap 必须为 0：行距由每个字段自己的 `.rl-lbl { margin: 9px 0 4px }` 提供，
+         父级再加 gap 会让「无配置」时的排版与改版前不逐像素一致。
+       · `minmax(0, 1fr)` 而非 `1fr`：防内部长内容（textarea / 长占位文案）把列撑破。
+       · `align-content: start`：块数少时不被拉伸到整列高。 */
+    .rl-fields-col {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 0 10px;
+        align-content: start;
+        /* 🔴 m06404：只读评分簇要用 `position: absolute` 贴到整行最右端 ⇒ 定位锚点必须是
+           **整个字段栅格**，不能是标题那一格（否则它只会贴到标题框右边缘 = 用户说的「占中间」）。
+           ⚠️ 这里只是定位上下文，不影响栅格布局本身；⛔ 别改成 `overflow: hidden`（会裁掉浮层）。 */
+        position: relative;
+    }
+    /* 面板管不到的直接子元素（书名标题行 / 预填提示 / 启动路径 / 各浮层占位 / 个人状态与评价区）
+       **一律整行铺满**，否则会掉进 6 栅格被切成窄条。浮层本身是 position:fixed 不受影响，
+       但它们的占位行仍需兜住，故用 `:not([data-fld])` 通吃 —— ⛔ 别改成逐个加 class。 */
+    .rl-fields-col > :not([data-fld]) { grid-column: 1 / -1; }
+    /* 🔴🔴 m07813①（2026-11-15 用户逐字：「确保其他框并排时高度对齐，比如简介和总结1/2并排时不能对齐」）
+       —— **并排的两个字段块要上下齐平**。实现**必须**走 JS（见 `applyFieldOrder()` 里那一段），
+       ⛔ 不能在这里写 `.rl-fields-col > [data-fld] { display: flex; … }`：
+       Svelte 的 scoped 编译会为「被新子选择器命中的元素」给**同组既有规则**再叠一层 `.svelte-xxx`
+       （产物实测：`.rl-meta-row.svelte-x.svelte-x` 变成 **三段** hash），而 `assert-symbols.cjs`
+       里十余条旧断言钉的是**两段**形态 ⇒ 当场 12 条红（本轮实测踩到）。
+       坏掉的是**块内部**（栅格行高本来就由 stretch 统一了）：
+         · 「简介」textarea 被 `autosizeTextarea()` 按内容撑到 104px；
+         · 「总结摘要」textarea 只有 `rows="4"` 的固定 84px ⇒ 底边差 **24px**；
+         · 裸 `.rl-lbl` 是 9+14+4=27px，`.rl-lbl-row` 里那颗 label 的 margin-bottom 被清零
+           ⇒ 只有 23px ⇒ 顶边再差 **4px**。
+       修后真机实测 taTop 399=399、taBottom 503=503（完全对齐）。
+       🔴 `meta` 必须跳过：它本身就是 `.rl-meta-row`（四框横排 + flex-wrap），压成竖排就全乱了。 */
+    /* 🔴 m05562 / m06052 / **m06404**：标题这一块要能与「年份」并排 ⇒ 标题 **3/6**、年份 **1/6**，
+       剩下 **2/6 留给绝对定位的只读评分簇**（用户：「标题|上映年|评分来源贴最右」）。
+       ⚠️ 必须写在上面那条 `:not([data-fld])` 之后 —— 两者特异性相同（都是 0,2,0），靠先后顺序决胜。
+       ⚠️ 若把这条挪到前面，标题行会被上一条判成整行铺满，年份又掉到下一行（本轮实测过）。
+       🔴🔴 2026-11-15 用户两轮反馈的演进，⛔ 别再走回头路：
+           · 第 1 轮（m06052）「标题框占长、上映年占短」—— 当时两边都给 span 3（各一半），
+             而标题行内还有只读评分簇与 AI 按钮，`flex:1` 的 input 只能吃剩下的
+             ⇒ 实测标题框 245px **比上映年 271px 还短**，与诉求正好相反。
+           · 第 2 轮（m06404）「这还是来源评分占中间啊不是绝对定位放在最右边啊」——
+             把标题改 span 4 + 年份 span 2（4+2 正好满行）后，评分簇 202px 无处可去，
+             只能挤在标题框与年份框之间，右缘距整行右界差 187px，观感仍是「占中间」。
+           ⇒ 正解：标题 3 栅格（≈271px）+ 年份 1 栅格（≈84px）+ 右侧 2 栅格（≈187px）
+             给绝对定位的评分簇（`.rl-ro-meta` / `.rl-ai-btn`，见下面的定位规则）。
+             实测：标题 271 vs 年份 84 ⇒ 标题仍是 3.2 倍长，用户要的「占长/占短」同时成立。
+       ⛔ 别给这层壳加 `data-fld`：`title` 属锁定键，进了受管集合会被 `applyFieldOrder` 重排。
+       ⚠️ 年份块的 1 栅格在 `pure/entryFormFields` 的 span 里（五个年份键各 span 1），不在这里写死。 */
+    .rl-fields-col > .rl-title-col { grid-column: 1 / span 3; min-width: 0; }
+    /* 🔴 m06404：标题行里的**只读评分簇**与 **AI 预填按钮**整体脱离文档流、贴到整行最右端。
+       ⚠️ 这两条的样式真源在 **全局 `styles.css`**（`.rl-title-row > .rl-ro-meta, …`），不在这里。
+          为什么必须放在全局：`assert-symbols.cjs:6605` 与 `:6754` 钉死产物里
+          `"rl-btn rl-btn-src"` **恰好 1 处** —— 一旦本组件的 scoped 样式里出现 `.rl-btn-src` 选择器，
+          Svelte 会给那枚按钮追加 `svelte-xxxx` 哈希类，字面串就变成
+          `"rl-btn rl-btn-src svelte-1pz2g1l"` ⇒ 计数归零、门禁当场红（本轮实测踩到）。
+          `.rl-ai-btn` 同理（它 #406 起就已全局化，`assert-symbols.cjs:8954-8957` 双向锁着）。
+       ⛔ 别为了「就近管理」把这两条挪回 scoped 样式 —— 那样会同时打红那三条断言。
+       ⛔ 也别给 `.rl-title-row` 加 `position: relative`（见 styles.css 里的长注释）。 */
+    /* 系列 + 系列序号合成一个半行宽的组（m05562）：内部 2:1 分宽，外边再与合集并排。
+       🔴🔴 2026-11-15 用户真机反馈「系列和系列序号不对齐」——根因就在这里：
+           `.rl-series-pair` 里的两个 `.rl-lbl` 若被抹掉 `margin-top`，整组会比右边「合集」**高 9px**
+           （实测系列 label y=417 vs 合集 y=426、两个 input y=436 vs y=445）。
+           ⛔ 别再加 `.rl-series-pair .rl-lbl { margin-top: 0 }` —— 那正是上一轮的错。
+           行距真源是 `.rl-lbl { margin: 9px 0 4px }`，组内两个 label 必须原样继承，才能与合集同基线。
+       🔴 序号框曾比别的框高 5px（实测 32 vs 27）——真实根因不是微调按钮，而是**宿主核心 css**
+          有一条 `input[type="text|number|..."] { height: var(--input-height) }`（=32px）；
+          本插件的文本框大多不写 `type` 属性 ⇒ 匹配不上 ⇒ 落回 auto（27px）；带 `type="number"`
+          的框被命中 ⇒ 32px。统一修法在 `styles.css` 的 `body .rl-input[type='number']`（height:auto
+          + 隐藏微调按钮），⛔ 别在这里给 seq 单独降高、也别给 `body .rl-input` 加 height
+          （`assert-symbols.cjs:11558` 禁）。 */
+    .rl-series-pair { display: flex; gap: 6px; align-items: flex-start; }
+    .rl-series-pair > .rl-series-cell { flex: 2; min-width: 0; }
+    .rl-series-pair > .rl-series-cell-idx { flex: 1; min-width: 0; }
     /* 封面区：拖放上传 / 右键菜单更换（默认小尺寸，紧凑不占头部；虚线边框 = 拖拽视觉引导） */
     .rl-poster-col { position: relative; display: flex; flex-direction: column; }
     /* 章节标题绝对定位在 cover 列底部（不依赖 grid stretch/flex auto）——与"作品基础信息"同列对齐 cover 列最左 */
@@ -5838,6 +6918,31 @@ export let initialBookKind: BookKind | undefined = undefined;
     .rl-tag-input { flex: 1; min-width: 90px; border: none; background: transparent; color: var(--text-normal); font-size: 12px; font-family: inherit; padding: 2px 4px; }
     .rl-tag-input:focus { outline: none; }
     .rl-tag-input::placeholder { color: var(--text-faint); }
+    /* 🔴 #772 心情（⑳）：六档 emoji 胶囊。
+       ① 复用 `.rl-chip` 的皮肤语言（同色系胶囊），但**不复用类名** —— 心情的选中态要
+          多一层 emoji 撑开的高度和内边距，混进 `.rl-chip.on` 会把状态 chips 一起改宽。
+       ② ⚠️ 它是 <button> ⇒ 必须显式压掉核心的 `button:not(.clickable-icon)` 灰底边框
+          （特异度 (0,1,1)），所以下面把 background/border/box-shadow 三件都写全。
+       ③ emoji 单独一层 `.rl-mood-emoji`（比文字大一号），文字层 `.rl-mood-label`
+          在窄屏可换行 —— 两档并排时不会挤成乱码。 */
+    .rl-mood-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .rl-mood-chip {
+        display: inline-flex; align-items: center; gap: 5px;
+        font-family: inherit; font-size: 12px; line-height: 1;
+        padding: 5px 11px; border-radius: var(--rl-t-radius-pill, 999px);
+        border: 1px solid var(--background-modifier-border);
+        background: var(--background-primary); color: var(--text-muted);
+        box-shadow: none; cursor: pointer;
+    }
+    .rl-mood-chip:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+    .rl-mood-chip.on {
+        background: var(--interactive-accent); border-color: var(--interactive-accent);
+        color: var(--text-on-accent); font-weight: 600;
+    }
+    .rl-mood-chip.on:hover { background: var(--interactive-accent-hover); }
+    .rl-mood-chip:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+    .rl-mood-emoji { font-size: 14px; line-height: 1; }
+    .rl-mood-label { white-space: nowrap; }
     /* #619 半星：容器用 flex + gap（⛔ 不用 letter-spacing —— 星宽必须精确，
        否则 `::before` 的 50% 裁切会有偏差）。 */
     .rl-stars-input { display: flex; align-items: center; gap: 2px; font-size: 20px; color: var(--rl-score-input); }
@@ -5899,6 +7004,18 @@ export let initialBookKind: BookKind | undefined = undefined;
        两套必然漂 ⇒ 删掉。⛔ 别再复制一份出来。 */
     .rl-lbl-row { display: flex; align-items: center; gap: 4px; }
     .rl-lbl-row .rl-lbl { margin-bottom: 0; }
+    /* 🔴 m03052：标题标签行也包进了 `.rl-lbl-row`（为了让 ✨ 挨着 label），但**它没有 4px 补偿** ——
+       其它字段块的补偿是 `applyFieldOrder` 用 `:scope > .rl-lbl-row` 只给 **data-fld 受管块** 打的
+       marginBottom，而 `.rl-title-col` 不是受管块（`title` 属锁定键，⛔ 不能带 data-fld）。
+       ⇒ 这里必须显式补回 4px，否则标题输入框会比右边年份框**上移 4px**、整行错位。
+       ⛔ 别靠「把 `.rl-lbl-row .rl-lbl` 的 margin-bottom 改回 4px」来修 —— 那是全局口径，
+         会让所有标签行的顶边整体下移（`applyFieldOrder` 的补偿值也会跟着错）。 */
+    .rl-title-col > .rl-lbl-row { margin-bottom: 4px; }
+    /* 🔴 m03052 ③：标题标签行里那枚 ✨ 的 4.5px 垂直微移**真源在全局** `styles.css`
+       的 `.rl-title-col > .rl-lbl-row .rl-ai-btn`（与 `.rl-ai-btn` 本体同处，自 #406 起全局化）。
+       ⛔ 别把那条挪回这里：Svelte 会给「被新增子选择器命中的元素」的同组既有规则**再叠一层
+       `.svelte-xxxx`** ⇒ 产物里同组件那些规则从双 hash 变三段，`assert-symbols.cjs` 里十余条
+       钉双 hash 形态的旧断言会当场全红（本轮实测踩到 12 条，已撤回）。 */
     /* 关联按钮单行（书籍文件/游戏启动/本地音频）：小按钮 + 右键编辑浮层 */
     .rl-ep-row { display: flex; gap: 6px; align-items: center; }
     .rl-ep-wrap { position: relative; }
@@ -5919,7 +7036,8 @@ export let initialBookKind: BookKind | undefined = undefined;
        判据 = 当前进度（`episode`，1 基；0 = 还没开始看 ⇒ 不标）。
        🔴 本批**翻面 #447**：原先画的是「1px 黄边 + 2px 黄外环」（旧令牌值 `#b8860b`）。用户
           2026-10-09：「修复当前编辑条目进度的显示问题，**正确以橙色小圆点显示在数字右下角**」
-          —— 与 #576 选集弹窗里那粒 `.rl-eps-dot` 是**同一件事的两种画法**，留着两套必然分叉。
+          —— 与选集页右栏那粒进度点是**同一件事的两种画法**，留着两套必然分叉。
+          ⚠️ 2026-11-07：旧选集弹窗已整体删除，它那粒（`.rl-eps-dot`）随之退场。
        🔴 显隐**只由 `.cur-ep` 这一个类驱动**（那一行按钮上方已挂好 `class:cur-ep`）：圆点每一格都渲染、
           默认 `display: none` —— ⛔ 别退回「模板里再写一遍 `episode >= 1 && i + 1 === episode`」，
           同一个判据两处 = 迟早漂（填了进度却只有一处重画）。

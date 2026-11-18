@@ -467,4 +467,30 @@
     .rl-cal-wcard-tag { font-size: 9.5px; color: var(--text-muted); }
     .rl-cal-wcard-prog { font-size: 9.5px; color: var(--text-faint); font-family: ui-monospace, Consolas, monospace; }
     .rl-cal-wempty { font-size: 11px; color: var(--text-faint); opacity: .6; text-align: center; padding: 12px 0; }
+
+    /* ── 🔴 2026-11-14（用户 m05195 / m05299，手机平板窄屏适配） ─────────────────────────
+       窄屏下原来的「210px 待排侧栏 + 7 列月历」并排会同时挤坏两边：
+         · 侧栏死死占掉 210px，剩下的宽度摊给 7 列 ⇒ 每列不到 45px，日期数字都放不下；
+         · `.rl-cal-main` 还写死 `height: var(--cal-h)`（532px），手机竖屏下把页面顶出一屏。
+       修法 = **侧栏下移**（flex-direction: column）+ 高度交给内容（`--cal-h: auto`）：
+         待排卡片本来就少（通常 0–5 张），横向铺满一行、限高 40vh 滚动，比挤在左窄栏里好读得多。
+       ⚠️ 阈值 719px 复用设置页页签那一档（`styles.css` 的 `.rl-set-tabs` 媒体块），⛔ 别新开阈值。 */
+    @media (max-width: 719px) {
+        .rl-cal { --cal-h: auto; }
+        .rl-cal-main { flex-direction: column; height: auto; }
+        /* 侧栏：从「左侧 210px 竖栏」变成「主区上方一整条」—— 宽自动、限高、可滚 */
+        .rl-cal-side { width: auto; height: auto; max-height: 40vh; padding-right: 0; }
+        .rl-cal-body { height: auto; overflow: visible; }
+        /* 月历：格子压矮（84px → 62px），内距收紧，日期数字与标题都还看得见 */
+        .rl-cal-cell { min-height: 62px; padding: 3px 4px; }
+        /* 周视图：7 等分列在手机上每列约 45px，条目卡会被压成一条竖线
+           ⇒ 改成 7 行堆叠（每天一整行，日期 + 条目横向排开），整体纵向滚动。 */
+        .rl-cal-week {
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: none;
+            height: auto;
+        }
+        .rl-cal-wday { min-height: 0; }
+        .rl-cal-witems { overflow-y: visible; }
+    }
 </style>

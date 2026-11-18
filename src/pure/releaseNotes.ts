@@ -12,6 +12,8 @@
 //
 // ⚠️ 数据来源 = 上面那个 releases 页的各版说明 + 本仓根目录的 `RELEASE-NOTES-<版本>.md`（用户向）。
 // ⚠️ 一律**最新在前**（`RELEASE_NOTES[0]` = 当前版本）；⛔ 不要为了「按版本号排序」在渲染端再 sort。
+// ⚠️ 本模块只出**数据**：弹窗按条建 `<details>`（见 `modals/ReleaseNotesModal`），
+//    ⛔ 别再写一个「拼整段 markdown 列表」的产出函数 —— 那样折叠粒度就没了（本轮已删除 `releaseNotesMd`）。
 //
 // 🔴🔴 **改本文件前先读**（#491 实测踩出来的）：这里的正文是**中文散文**，而 esbuild 默认把非 ASCII
 //    转义成 `\uXXXX`、断言脚本又会 decode 回中文 ⇒ 正文里的每个短语都会出现在「产物」里。
@@ -33,14 +35,14 @@ export interface ReleaseNote {
  * ⚠️ 顺序即展示顺序；`RELEASE_NOTES[0]` = 当前版本（弹窗第一行）。
  */
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
-    // 🔴 1.4.1 的 summary 是**用户 2026-10-25 裁定的归档口径**（「修复 TMDB 同步问题的列入 1.4.1 版本更新规划，
-    //    以后的修改都列入 1.4.1」）⇒ 本版主题 = TMDB 同步修复链 + 紧随的界面收口。
+    // 🔴 1.5.0 = 原 1.4.1 期（2026-10-25 起，**从未单独发布**）与之后累积改动的合并发布。
+    //    用户 2026-11-01 裁定：「把 1.4.1 及后的更新内容并为 1.5.0，近说明新增功能」。
     //    ⚠️ 注释**不许插在 `version`/`date`/`summary` 三行之间** —— 断言脚本用
     //    /version: '…',\s*date: '…',\s*summary: '…'/ 抽这张表，插一行注释就会漏掉本条（1.4.0 那批实测过）。
     {
-        version: '1.4.1',
-        date: '2026-10-25',
-        summary: '修复 TMDB 清单同步（清单地址单复数、v4 令牌认证、access_token 换 session_id）；TMDB 凭据两格各归各位；精简其说明文案；微信读书状态标签改「未配置」。',
+        version: '1.5.0',
+        date: '2026-11-01',
+        summary: '选集详情页（三卡独立、50集分段）；网络集官方内嵌与YouTube接入；字幕时间轴、AI总结与提问；学习模式（单句循环/AB复读/影子跟读）；本地语音转文字；分类视图与系列合集分；从笔记导入条目；条目属性面板。',
     },
     {
         version: '1.4.0',
@@ -86,11 +88,3 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
 
 /** 完整发布记录（弹窗底部那枚链接；⚠️ 用户主动点才离开 Obsidian） */
 export const RELEASES_URL = 'https://github.com/fhb263/obsidian-reelludic/releases';
-
-/**
- * 弹窗正文（markdown：一条一行的无序列表 —— 版本号 + 日期 + 一句话）。
- * ⚠️ 只产出**正文**：标题与页脚由弹窗自己渲染（见 `modals/ReleaseNotesModal`）。
- */
-export function releaseNotesMd(): string {
-    return RELEASE_NOTES.map((n) => `- **v${n.version}**（${n.date}）：${n.summary}`).join('\n');
-}

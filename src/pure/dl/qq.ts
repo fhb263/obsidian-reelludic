@@ -424,3 +424,117 @@ export function parseQqDissDetailV2(raw: string): QqSong[] {
     }
     return out
 }
+
+// ───────────────────────── 阶段 C1：我的清单（需 Cookie 登录态）─────────────────────────
+//
+// 🔴 2026-11-09 第 15 轮阶段 C。两个端点都是**网页私有接口**（无官方保证），
+//    用户已裁定接受，但要求「每家独立降级」—— 解析失败一律回空 + code，⛔ 不抛错。
+//
+// 端点选型（对着参考实现 NodeJS 版 QQMusicApi 的 routes/user.js 与 routes/songlist.js 核过）：
+//  · 自建歌单：`c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss`（hostuin=QQ号）
+//  · 我喜欢  ：`c.y.qq.com/splcloud/fcgi-bin/fcg_musiclist_getmyfav`（dirid=201）
+//  ⛔ 不用 `/user/detail`（fcg_get_profile_homepage）：那份响应里「我喜欢」的 id 字段叫 `id`、
+//     自建歌单叫 `dissid`，两套字段名混在一个数组里，是这套接口最容易写错的地方；
+//     `fcg_user_created_diss` 的 `disslist[]` 统一用 `dirid`，好写也不会混。
+
+/** QQ 用户清单一项 */
+export interface QqUserPlaylist {
+    /** 歌单 id（`dirid`；「我喜欢」固定为 201） */
+    id: string
+    name: string
+    coverUrl?: string
+    /** 曲目数（平台没给 ⇒ undefined，⛔ 不写 0） */
+    trackCount?: number
+    /** 是否「我喜欢」 */
+    liked: boolean
+}
+
+/** 「我喜欢」的固定 dirid —— QQ 一直用这个魔数，没有别名 */
+export const QQ_LIKED_DIRID = '201'
+
+/** 构造「用户自建歌单」URL（fcg_user_created_diss） */
+export function buildQqOwnedPlaylistsUrl(uin: string): string {
+    const params: Record<string, string> = {
+        hostUin: '0', hostuin: uin, sin: '0', size: '200',
+        g_tk: '5381', loginUin: '0', format: 'json',
+        inCharset: 'utf8', outCharset: 'utf-8',
+        notice: '0', platform: 'yqq.json', needNewCode: '0',
+    }
+    const qs = Object.entries(params).map(([k, v]) => `${k}=${v}`).join('&')
+    return `https://c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss?${qs}`
+}
+
+/**
+ * 解析「用户自建歌单」响应：`data.disslist[]` 含 dirid / diss_name / diss_cover / song_cnt。
+ *
+ * ⛔ 返回 `{ code, playlists }` 而不是裸数组 —— 调用方要能分辨：
+ *  · `code === 1000` ⇒ Cookie 过期 / 没登录（要提示重贴）
+ *  · `code === 4000` ⇒ 该用户主页不公开歌单（不是登录问题，别喊重新登录）
+ *  · `code === 0`    ⇒ 正常
+ */
+export function parseQqOwnedPlaylists(raw: string): { code: number; playlists: QqUserPlaylist[] } {
+    let json = raw.trim().replace(/^\/\*[\s\S]*?\*\//, '')
+    const m = json.match(/^[^(]*\(([\s\S]*)\)\s*;?\s*$/)
+    if (m) json = m[1]
+    let data: any
+    try {
+        data = JSON.parse(json)
+    } catch {
+        return { code: 0, playlists: [] }
+    }
+    const code = Number(data?.code ?? 0)
+    if (code !== 0) return { code, playlists: [] }
+    const list = data?.data?.disslist
+    if (!Array.isArray(list)) return { code, playlists: [] }
+    const playlists = list
+        .map((it: any): QqUserPlaylist | null => {
+            const id = String(it?.dirid ?? '')
+            const name = String(it?.diss_name ?? '')
+            if (!id || !name) return null
+            const cnt = Number(it?.song_cnt)
+            return {
+                id,
+                name,
+                coverUrl: it?.diss_cover || undefined,
+                // ⚠️ `Number(undefined)` 是 NaN ⇒ 必须显式判有限非负，⛔ 不能 `?? 0`
+                trackCount: Number.isFinite(cnt) && cnt >= 0 ? cnt : undefined,
+                liked: id === QQ_LIKED_DIRID,
+            }
+        })
+        .filter((x: QqUserPlaylist | null): x is QqUserPlaylist => x !== null)
+    return { code, playlists }
+}
+
+/**
+ * 构造「我喜欢」歌曲 id/mid 表 URL（fcg_musiclist_getmyfav，dirid=201）。
+ * ⚠️ 这个端点只返回 `{ map: [歌曲 id], mapmid: [songmid] }` 两个平行数组，
+ *    **不含歌名/歌手/封面** —— 必须再走一次歌单详情（`buildQqDissDetailV2Body`）
+ *    或逐条补，⛔ 别指望它自带元数据。
+ */
+export function buildQqFavoritesUrl(dirid = QQ_LIKED_DIRID): string {
+    const params: Record<string, string> = { dirid, dirinfo: '1', g_tk: '5381', format: 'json' }
+    const qs = Object.entries(params).map(([k, v]) => `${k}=${v}`).join('&')
+    return `https://c.y.qq.com/splcloud/fcgi-bin/fcg_musiclist_getmyfav.fcg?${qs}`
+}
+
+/** 解析「我喜欢」响应：`mapmid` 是 songmid 平行数组（空 ⇒ 没登录或真的没收藏） */
+export function parseQqFavorites(raw: string): { code: number; songmids: string[] } {
+    let json = raw.trim().replace(/^\/\*[\s\S]*?\*\//, '')
+    const m = json.match(/^[^(]*\(([\s\S]*)\)\s*;?\s*$/)
+    if (m) json = m[1]
+    let data: any
+    try {
+        data = JSON.parse(json)
+    } catch {
+        return { code: 0, songmids: [] }
+    }
+    const code = Number(data?.code ?? 0)
+    if (code !== 0) return { code, songmids: [] }
+    // 优先 songmid：详情/下载都按 songmid 走，`map` 里的数字 id 在本仓三处都用不到
+    const mids = Array.isArray(data?.mapmid) ? data.mapmid : []
+    const songmids = mids
+        .map((x: any) => String(x ?? '').trim())
+        .filter((x: string) => !!x)
+    return { code, songmids }
+}
+

@@ -151,23 +151,70 @@ export function lrcBlockLyrics(markdown: string): string {
 }
 
 /**
+ * 把一段「歌词小节」插进笔记：**紧跟在 frontmatter 之后**（`## 歌词` 是正文第一段）。
+ *
+ * 位置口径来自 `data/noteGenerator.generateNoteMarkdown` —— 它把 `## 歌词` 排在
+ * 「头部块 / 属性表格」之后、简介之前（#404 用户裁定「把笔记内 lrc 歌词代码块放在笔记开头」）。
+ * 这里补块是**同一个位置**，否则用户补完歌词、下次 `writeNote` 重写时块会被搬到别处。
+ *
+ * 没有 frontmatter（笔记不是本插件生成的）⇒ 插到最前面。
+ */
+function insertLyricsSection(markdown: string, block: readonly string[]): string {
+    const lines = lrcLines(markdown);
+    let at = 0;
+    if (lines[0]?.trim() === '---') {
+        for (let i = 1; i < lines.length; i++) {
+            if (lines[i].trim() === '---') {
+                at = i + 1;
+                break;
+            }
+        }
+    }
+    // 吃掉紧跟在插入点后面的空行，避免连着两个空行（`## 歌词` 自己带回一个尾部空行）
+    while (at < lines.length && lines[at].trim() === '') at++;
+    const head = lines.slice(0, at);
+    const tail = lines.slice(at);
+    const glue = head.length ? [''] : [];
+    return [...head, ...glue, ...block, ...tail].join('\n');
+}
+
+/**
  * 把**歌词正文**写回 ` ```lrc ` 块（生成侧的写端，与 `lrcBlockLyrics` 成对）。
  *
  * 🔴 为什么必须有它：`EntryService.writeNote` 是**整篇模板重写**，而模板只会按 `audioPath` 写出
  *    `source` 指令行 —— 用户填过 / 在线获取的歌词**若不搬回，保存一次就没了**（静默丢数据）。
  *    所以模板重写前先 `lrcBlockLyrics(旧笔记)`、重写后 `withLrcLyrics(新笔记, 旧歌词)`。
  *
- * 语义（三条都要记住，否则会出「清不掉」或「多写盘」）：
+ * 语义（四条都要记住，否则会出「清不掉」「多写盘」或「歌词静默丢失」）：
  *  - 块体 = **指令行 + 空行 + 歌词正文**；指令行原样保留，**正文整段替换**（不是追加 ——
  *    歌词的主人只有一个，就是调用方给的这个字符串）。
- *  - `lyrics` 为空 / 全空白 ⇒ 只留指令行（**这就是「清空歌词框」能生效的实现**，⛔ 别改成 no-op）。
- *  - 找不到块 / 块未闭合 / 结果与输入相同 ⇒ **原样返回**（调用方据此跳过写盘）。
+ *  - `lyrics` 为空 / 全空白 ⇒ 有块时只留指令行（**这就是「清空歌词框」能生效的实现**，
+ *    ⛔ 别改成 no-op）。
+ *  - 🔴 **没有块**（或块未闭合）而 `lyrics` 非空 ⇒ 按 `noteGenerator` 的位置**补一个 `## 歌词` 小节**。
+ *    2026-11-09 第 16 轮前这里是「原样返回」，导致条目还没 `audioPath`（模板不生成该块）时
+ *    用户填的歌词被静默丢弃 —— 调用方靠返回值判是否写盘，短路即等于丢输入且无提示。
+ *  - 结果与输入相同 ⇒ **原样返回同一串**（调用方据此跳过写盘）。
  */
 export function withLrcLyrics(markdown: string, lyrics: string): string {
     const src = String(markdown ?? '');
     const lines = lrcLines(src);
     const f = findLrcFence(lines);
-    if (!f) return src; // 无块 / 未闭合 ⇒ 不动（⛔ 不许凭空造一个块出来）
+    /**
+     * 🔴 2026-11-09 第 16 轮翻面（用户：「编辑属性的 LRC 歌词手动填入更新笔记还是无法保存」）：
+     *    这里原本是 `if (!f) return src` —— 笔记里**没有** lrc 块时静默原样返回。
+     *    后果是双向丢数据，且两边都不报错：
+     *      ⑴ `setNoteLrc` 拿到的 `final === old` ⇒ 返回 false ⇒ 用户填的歌词**一声不吭丢掉**；
+     *      ⑵ `writeNote` 重写笔记后搬不回歌词（模板里没有块 ⇒ 没有块可填）。
+     *    什么时候会「没有块」：条目建的时候还没有 `audioPath`（模板只对
+     *    `type === 'music' && audioPath` 生成这块）、或用户手删了那段围栏。
+     *    ⇒ 现在改成**有歌词就补一个块**；`lyrics` 为空时仍原样返回（⛔ 不给普通条目凭空塞空块）。
+     */
+    if (!f) {
+        const body = String(lyrics ?? '').trim();
+        if (!body) return src;
+        const block = ['## 歌词', '', '```lrc', ...body.split('\n'), '```', ''];
+        return insertLyricsSection(src, block);
+    }
     // 指令区 = 块体开头连续的指令行（与 `parseLrcBlock` 的 break 口径一致）
     const dirs: string[] = [];
     for (let k = f.open + 1; k < f.close; k++) {

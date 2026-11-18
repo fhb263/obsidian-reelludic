@@ -27,6 +27,7 @@ import {
     normalizeEpRange,
     partCountLabel,
     pickedCandidate,
+    pickedFillUrl,
     pickedUrl,
     probePartsUntilCollection,
     runBatchSearch,
@@ -338,7 +339,50 @@ describe('选中与勾选', () => {
     });
 });
 
-// 🔴 #607：批量这条链原先**只写链接、从不写标题**（用户报障「关联网络的 52 集一集标题都没显示」）
+// 🔴 用户 2026-11-03 报障：「点选集4还是重复为第一集」。
+//    病根 = 「填入」写的是 `pickedUrl()`，而它恒为 P1 ⇒ 第 1/4 集落库成逐字相同的链接。
+//    `#526` 只拦住了自动路径，手动勾仍然会写错 ⇒ 这里把「落库用哪个链接」的判据钉死。
+describe('pickedFillUrl（多P 合集按集号算真实分P —— 「点4播1」的病根）', () => {
+    it('🔴 已知多P ⇒ 按 epNo 算 `?p=`（第 4 集就是 ?p=4，⛔ 不是 P1）', () => {
+        const r = row({ epNo: 4, videos: [vid('BV1')], picked: 0, checked: true, partCounts: { BV1: 52 } });
+        expect(pickedUrl(r)).toBe('https://www.bilibili.com/video/BV1'); // 旧口径：恒 P1
+        expect(pickedFillUrl(r)).toBe('https://www.bilibili.com/video/BV1?p=4'); // 新口径
+    });
+
+    it('🔴 第 1 集：多P 的 P1 不带 `?p=`（与 `buildBiliPartUrl` 的既有形态一致）', () => {
+        const r = row({ epNo: 1, videos: [vid('BV1')], picked: 0, partCounts: { BV1: 52 } });
+        expect(pickedFillUrl(r)).toBe('https://www.bilibili.com/video/BV1');
+    });
+
+    it('🔴 两集算出来的链接**必须不同**（这正是「点4播1」的验收判据）', () => {
+        const mk = (epNo: number) => row({ epNo, videos: [vid('BV1')], picked: 0, partCounts: { BV1: 52 } });
+        expect(pickedFillUrl(mk(1))).not.toBe(pickedFillUrl(mk(4)));
+        expect(pickedFillUrl(mk(4))).toContain('?p=4');
+    });
+
+    it('🔴 超出分P 数 ⇒ 空串（⛔ 绝不回落 P1：那会把空集静默填成第 1 集内容）', () => {
+        const r = row({ epNo: 9, videos: [vid('BV1')], picked: 0, partCounts: { BV1: 3 } });
+        expect(pickedFillUrl(r)).toBe('');
+    });
+
+    it('单P / 未知分P数 ⇒ 回落 `webUrl`（此时 P1 就是全部内容）', () => {
+        const single = row({ epNo: 4, videos: [vid('BV1')], picked: 0, partCounts: { BV1: 1 } });
+        expect(pickedFillUrl(single)).toBe('https://www.bilibili.com/video/BV1');
+        const unknown = row({ epNo: 4, videos: [vid('BV1')], picked: 0 });
+        expect(pickedFillUrl(unknown)).toBe('https://www.bilibili.com/video/BV1');
+    });
+
+    it('无候选 / 无链接 ⇒ 空串；非有限数分P 也算未知', () => {
+        expect(pickedFillUrl(undefined)).toBe('');
+        expect(pickedFillUrl(row())).toBe('');
+        const noUrl = row({ epNo: 2, videos: [{ ...vid('BV1'), webUrl: '' }], picked: 0, partCounts: { BV1: 52 } });
+        expect(pickedFillUrl(noUrl)).toBe('');
+        const dirty = row({ epNo: 2, videos: [vid('BV1')], picked: 0, partCounts: { BV1: Number.NaN } });
+        expect(pickedFillUrl(dirty)).toBe('https://www.bilibili.com/video/BV1');
+    });
+});
+
+
 describe('#607 batchFillTitles（批量填入 → 集标题「只填空位」）', () => {
     it('🔴 只取**已勾中且有链接**的行（与写链接那批同一批行），标题取选中候选的', () => {
         const ok = row({ epIndex: 0, videos: [vid('BV1', '熊出没 第1集')], picked: 0, checked: true });

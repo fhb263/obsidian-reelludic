@@ -18,6 +18,57 @@ export function isChapterLine(line: string): boolean {
     return t.length >= 2 && t.length <= 40 && CHAPTER_RE.test(t);
 }
 
+/** 卷标题正则：第X卷 / 卷X（支持全角数字）。
+ *
+ * 用户 m03052（逐字）：「阅读器关联txt目录显示的没有区分卷做文件夹啊」
+ * ⇒ 目录树上把「卷」做成可折叠分组、章回挂在卷下面（用户当场裁定，未改磁盘目录模型）。
+ * ⚠️ 「第X卷」本身**也是**一个章节行（`CHAPTER_RE` 的字符类已含「卷」），所以卷这一章
+ *    在正文里照常渲染 —— 本项目只是把它**额外**当成目录树的一级分组。 */
+const VOLUME_RE = /^\s*(第[一二三四五六七八九十百千万零〇0-9０-９]+卷|卷[一二三四五六七八九十百千万零〇0-9０-９]+)\s*[：:．.、]?\s*.*$/;
+
+/** 卷行判定（长度口径与 `isChapterLine` 一致，避免正文里「第一卷」这类短句误判） */
+export function isVolumeLine(line: string): boolean {
+    const t = line.trim();
+    return t.length >= 2 && t.length <= 40 && VOLUME_RE.test(t);
+}
+
+/** 目录树的一级分组。`title` 为 `''` 表示「卷之前的散章」，渲染层据此**不画卷头**、直接平铺 */
+export interface TxtVolumeGroup {
+    title: string;
+    /** 起始章下标（含），对应 `TxtBook.chapters` 的下标 */
+    from: number;
+    /** 结束章下标（不含） */
+    to: number;
+}
+
+/**
+ * 把扁平的 `chapters` 投影成「卷 → 章区间」两层结构（**纯投影，不改 chapters 本身**）。
+ *
+ * 🔴 为什么坚持「只加投影、不动 `chapters`」：
+ *   `chapterIndex` 是全阅读器的唯一章标识 —— 进度落库、书签/高亮/摘抄锚点、`switchChapter`、
+ *   `chapterParagraphs`、`txtChapterUnits` 全部按**扁平下标**算。若把 `chapters` 改成嵌套结构，
+ *   这些地方会集体错位（书签指向别的章、进度跳章）。⇒ 目录树只是**视图层**多一层折叠。
+ *
+ * 卷头包含卷标题那一章（它同时是正文内容），所以 `from` 就是该卷标题所在章的下标。
+ */
+export function txtVolumeGroups(chapters: { title: string }[]): TxtVolumeGroup[] {
+    const total = chapters.length;
+    if (total === 0) return [];
+    const starts: number[] = [];
+    for (let i = 0; i < total; i++) {
+        if (isVolumeLine(chapters[i]?.title ?? '')) starts.push(i);
+    }
+    // 全书无卷标记 ⇒ 单一「散章」组，渲染层平铺（等价于改造前的观感）
+    if (starts.length === 0) return [{ title: '', from: 0, to: total }];
+    const out: TxtVolumeGroup[] = [];
+    // 卷之前的散章（常见：书名/作者/简介之后才开始「第一卷」）
+    if (starts[0] > 0) out.push({ title: '', from: 0, to: starts[0] });
+    starts.forEach((from, k) => {
+        out.push({ title: chapters[from]?.title ?? '', from, to: k + 1 < starts.length ? starts[k + 1] : total });
+    });
+    return out;
+}
+
 /** 解析 TXT：按行拆段 → 找章节行 → 生成章节列表与段落数组（段落=非空行 trim） */
 export interface TxtBook {
     /** 全部段落（trim 后，空行保留为分隔由渲染层处理——本结构只存非空段） */

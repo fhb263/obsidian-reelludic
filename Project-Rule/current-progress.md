@@ -1,8 +1,2559 @@
 # current-progress.md — ReelLudic 当前进度
 
-> ⚠️ **本文件在 #693–#697 期间未逐批登记**（那五批的技术细节只写在 `Project-Rule/CHANGELOG.md`）。**#699–#715 未在本文件逐批登记**（技术细节见 `Project-Rule/CHANGELOG.md` 对应节）；下表补的是**最新一批 #715**；要回看 #693–#696（侧栏渐隐 / 侧栏宽度独立 / 四阅读器 Push 布局 / 四阅读器 hover 说明统一），直接读 `Project-Rule/CHANGELOG.md` 对应小节，⛔ 不要以为本文件没写就等于没做。
+> ✅ **#750 / #751 / #752 / #753 / #754 / #755 / #756 / #757 / #758 / #759 / #760 / #761 / #762 / #763 / #764 / #765 / #766 / #767 / #768 / #769 / #770 / #771 / #772 / #773 / #774 / #775 / #776 已逐批登记**（2026-11-12 至 2026-11-13，用户 `m00353` 的 ①②③ 清单全部收口：①-9…①-14 归 #750、②-1…②-4 归 #751、③-1 与 ③-5 归 #752、③-2/③-3/③-4 归 #753、**#753 方案被用户 m05505 推翻后按新口径重做为 #754**；**#755 = 用户 m05813 当场提的三条观感修正**；**#756 = 用户 m06077 报的两条真机缺陷（微信读书扫码不取 Cookie / B 站扫码后测试连接失败）**；**#757 = 用户 m07156 报的「微信读书子窗口登录了但设置页没反应」**；**#758 = 用户 m07505 提的「统一周期管理面板不实时刷新 + 删微信读书续期提示」**；**#759 = 用户 m07854（20 项清单）的 ① ② ③ 三项**；**#760 = 用户 m07854 的 ④ ⑤ ⑥ ⑦ 四项**；**#761 = ⑧ 倍速 3× + 记住播放位置**；**#762 = ⑨ 悬浮球球心百分比 + 下载统一镜像优先**；**#763 = ⑩ 统计页各模块对齐**；**#764 = ⑪ 继续观看/阅读队列 + 搜索框自适应 + 关键词高亮**；**#765 = ⑫ 智能搜索穿透（搜索时强制摊平系列/维度分组）**；**#766 = ⑬ 视图切换左旁的「系列堆叠 / 全部单卡平铺」循环按钮**；**#767 = ⑭ 「今天看什么」骰子**；**#768 = ⑮ 搜索框旁的「待补」漏斗**；**#769 = ⑯ 仅卡片网格下点信息栏原地编辑**；**#770 = ⑰ 截图右键即时批注（画圈 / 箭头 / 马赛克）**；**#771 = ⑱ 一键批量重命名**；**#772 = ⑳ 心情系统（六档 emoji）**；**#773 = 用户 m12298 的三条观感修正（① 待补进搜索框+骰子换内置图标 / ② 库概览窄窗自适应 / ③ 抽卡页改版）**；**#774 = 用户 m12719 的三条观感修正（① 删「视图」标签 / ② 统计页模块高度对齐 / ③ 评分看板系列卡名称省略号）**
 >
-> **#716（2026-10-25，最新）**：**默认值收紧 —— 元数据源「仅豆瓣」+ AI 用途「不启用」**（用户原话：「默认配置下设置-启用元数据凭据源默认全部为仅豆瓣勾选启用，其他不勾选」「默认配置下设置-AI集成-用途默认全部为不启用」）
+> **#775 = 用户 m13127 的三条（① 评分看板合集卡名称归位到封面下方 / ② 分类视图只勾一个时下拉退化为静态名 / ③ 搜索框待补漏斗随搜索态显隐）**
+>
+> **#776 = 用户 m15513 的两条（① AI 总结取消打字机、一次输出完毕 / ② 字幕问答不再把页面弹回顶部 AI 摘要处）**；**#777 = 用户 2026-11-13 的五项清单（① 随机看一部按当前页签抽 / ② 重命名关联媒体 + 只显示关联文件 + 七类规则模板 / ③ 管理与维护七行的排序·描述·按钮 / ④ 区域截图默认回填 + 右键进批注（pixpin 式七工具 + 六向调整）/ ⑤ ASR 模型页给出官网下载路径）**；**#778 = 用户 m03072 的六处（① 重命名弹窗不显示规则模板 + 底部按钮不许被裁 / ② 作者名方括号保留 + 已合规音频不强制改名 / ③ 批注工具条纯图标 + 拖动类工具真 bug + 阅读器框选后无提交按钮 / ④ ASR 区分「一键下载」与「手动下载后指定本地文件」）**；**#779 = 用户 m03626 的三处（① 音乐重命名读对字段：歌手在 `author` 不是 `artist` / ② 布局编辑区改成一整个无缝网格 / ③ 设置页两套建表法收进组件库 `splitTable()`）**；**#780 = 用户 m04138 的一处（笔记内渲染插件专属条目卡：整张 `| 属性 | 内容 |` 表格换成 ` ```reelludic ` 可交互代码块，点字段就地改并回写）**；**#781 = 用户 m05195 / m05299 的窄屏适配（① P0：`asrHardwareProbe` 顶层 `require("child_process")` 会让移动端插件**加载期崩溃**，已改惰性取模块 / ② 设置页：字段映射表 + 条目属性面板 + 卡片字段面板窄屏堆叠 / ③ 首页 + 统计看板 + 月历窄屏 / ④ 守卫 `tests/narrowScreenAdapt.test.ts` 断点白名单 `[900,760,719,700,560,420]`）**；**#783 = 用户 m06057 / m06113 的「c+a」（① C：`tests/mobileRuntime.test.ts` 把「移动端没有 `process`」做成 5 条单测，用 `delete globalThis.process` + `Object.defineProperty` 还原 / ② A：`tools/rd.cjs mobile` + `tools/realdevice/cdp.cjs` 移动档（`mobile:true` + DPR3 + touch + iPhone UA + 切 `window.app.isMobile`），实测 6/6 设置页正常）**）。**#785 = 用户 m00002 的两条（① 高级设置组序改「分类视图 → 条目属性 → 字段映射 → 笔记属性顺序 → 卡片信息栏」+ 条目属性的「来源 / 评分 / 评价人数 / 平台链接」行转为固定不再显示 + 分类视图出厂只勾默认视图 + 首页视图下拉 ≥2 条才出 / ② 元数据搜索源默认链六组一律只剩豆瓣，免登录源不再默认勾选）**；**#786 = 用户 m00983 的三条（① 播放器详情页简介封面加左键单击进笔记 + 相关推荐按题材优先匹配、不够再放宽 / ② 笔记内 ```reelludic 条目卡改「左封面 + 右详情」两栏 + 主演与编剧等长名单收紧为「前 6 项 等 N 人」/ ③ manifest 的 authorUrl / fundingUrl 已齐备，无需改动）**；**#788 = 用户 m02321 / m02366 / m02377 / m02498 的四条（评分看板合集卡从「占两格」回到一格、标题收在封面正下方 + `.rl-board-title` 加 `min-height: 2.6em` 让同排底部齐平 + 看板标题旁加「系列卡堆叠 / 单卡平铺」切换按钮，与首页共用 `settings.unfoldSeries`）**；**#789 = 用户 m04253 / m04293（① 真 bug：`cloudLevels` 文档说「排名百分位」实现却是线性归一，真实库实测 40 个词只剩 3 档、第 3 名与第 40 名同档，已改成真排名百分位 + 并列同档 / ② 标签栏改名统一：表单「归属标签 → 标签」、`归属合集 → 合集`，词云空态指引逐字对齐 / ③ 按用户选中把 genres 并集灌进 153 条 catalog 的 tags，只写 catalog 不碰笔记，已备份且完整性核验 0 损坏）**。下面 #749 及更早的块照旧。
+>
+> ⚠️ **本文件在 #693–#697 期间未逐批登记**（那五批的技术细节只写在 `Project-Rule/CHANGELOG.md`）。**#699–#716 未在本文件逐批登记**（技术细节见 `Project-Rule/CHANGELOG.md` 对应节）；下表补的是 **1.5.0 收口 + #717 + #718 + #719 + #720 + #720b + #721 + #722 + #723 + #724 + #725 + #726 + #727 + #728 + #729 + #730 + #731 + #732 + #733 + #734 + #735 + #736 + #737**；要回看 #693–#696（侧栏渐隐 / 侧栏宽度独立 / 四阅读器 Push 布局 / 四阅读器 hover 说明统一），直接读 `Project-Rule/CHANGELOG.md` 对应小节，⛔ 不要以为本文件没写就等于没做。+ #736 + #737 + #738 + #739**；要回看 #693–#696（侧栏渐隐 / 侧栏宽度独立 / 四阅读器 Push 布局 / 四阅读器 hover 说明统一），直接读 `Project-Rule/CHANGELOG.md` 对应小节，⛔ 不要以为本文件没写就等于没做。
+>
+> **#791（2026-11-15 第 61 轮）：m05266 —— 词云按词分配色相 + 删掉丢词提示改为 Ctrl+滚轮缩放**
+>
+> 用户原话：`m05266`「标签词云加更多的颜色，还有不要显示"另有6个标签没塞进这块空间（拉宽统计页或换整行布局可显示更多）"改成ctrl+鼠标滚轮放大和缩小以展示更多」
+>
+> 🔴 **本节推翻 #790 的一条结论**：#790 承诺「仍塞不下才丢词，并在下面明说『另有 N 个没塞进来』—— ⛔ 不静默吞词」。用户看到实物后否掉了这行提示。⛔ 别再按 #790 加回来。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 「颜色不够」的根因 | 五档颜色全是灰阶（`--text-faint` / `--text-muted` / `--text-normal`），只有明暗没有色相 |
+> | 色相怎么分配 | 按**词文本**哈希（FNV-1a → 8 桶），⛔ 不按数组下标：下标会让重新排序后所有词换色 |
+> | 颜色能不能编码频次 | ⛔ 不能。8 个桶装 40 个词本就不精确，且字号已在编码频次，两套编码会打架 |
+> | 颜色从哪来 | 主题令牌 `var(--color-*)`（仓内 36 处先例），⛔ 不写 hex / `rgb()` / `hsl()` |
+> | 低频词太花怎么办 | `.lv-1/.lv-2` 用 `color-mix` 把色相往正文色收淡到 62% |
+> | 缩放开关 | 复用评分看板同一个 `ctrlWheelZoom`，⛔ 不新增设置字段（`assert-symbols` 有 6 处钉着它） |
+>
+> 改动：`src/pure/wordCloud.ts` 新增 `CLOUD_HUE_COUNT = 8` + `cloudHueIndexOf(text)`；`src/views/components/StatsBoard.svelte` 新增 `CLOUD_ZOOM_MIN/MAX/STEP` 与 `onCloudWheel`、`basePx: cloudBasePx * cloudZoom`、`.rl-cloud-body` 挂 `on:wheel`、两处模板加 `hue-{cloudHueIndexOf(w.text)}`、删掉 `rl-cloud-drop` 整块、CSS 新增 8 个 `.hue-N` 令牌类与 `color: var(--rl-cloud-hue)`、档位只留字号。
+>
+> 守卫净增 **+5**（7219 → 7224）：`wordCloud.test.ts` 新增「cloudHueIndexOf」4 条；`statsCloudWiring.test.ts` 把「颜色只用三档灰」改写为「按文本分配色相」并新增「删掉丢词提示改为 Ctrl+滚轮缩放」；`wordCloudLayout.test.ts` 把「丢词必须明说」改写为「不再靠灰字抱怨」。
+>
+> 🔴 两条脆断言踩坑：①`toContain('class="rl-cloud-w lv-{w.level}"')` 是全等字符串，加 `hue-*` 必红 ⇒ 改正则；②否定断言不能裸匹配类名/原话（注释里逐字保留了用户原话与「⛔ 别把 `.rl-cloud-drop` 加回来」）⇒ 改钉渲染形态。
+>
+> 门禁：`tsc` 0 ｜ vitest 328 files / 7224 passed ｜ esbuild 87 warnings ｜ svelte-check 0 errors / 89 warnings ｜ `_deploy` ALL_MATCH=1（main.js `e385c5b1d456` size=2590385 · styles.css `6e0c4c1ee179` size=784985）｜ `assert-symbols` EXIT=0（313 条 / 基线 318，无新增失败）。
+>
+> 突变 **7/7 全红**（`ALL_RED_OK=1`）。🔴 两个假绿教训：①突变器改模板却让纯函数测试文件去跑 ⇒ 永远抓不到，先问「改的是哪一层、哪个测试读这一层」；②守卫正则 `\{\s*--rl-cloud-hue` 太紧，末尾追加一行的突变得不到捕获 ⇒ 改 `\{[^}]*`。
+>
+> 真机（`.testvault` 1440×900）：34 词用到 **7 个色相桶、11 种实际颜色**（`喜剧 hue-4` / `奇幻 hue-1` / `动作 hue-7` / `古装 hue-2`）；Ctrl+滚轮缩到下限 `placed 35 → 40`（**全显示**）、最小字号 13→10px、画布高度恒 200；放到上限 `40 → 11`、字号 25px；不按 Ctrl 时字数与字号均不变；`innerText` 里已无「没塞进这块空间」。截图 `_shot/rd/cloud-hue-view.png`。
+>
+> **#792（2026-11-15 第 62 轮）：m05562 —— 表单排版四条（标题收半行 + 年份并排 + 标签顶替年份位 + 系列组合计半行）**
+>
+> 用户原话：`m05562`「表单的标题框太长了，把上映年（首播年、发行年）和标题并排在中【顺序为：标题、上映年、评分来源等】、上映年原来位置由标签替代【顺序为：题材、标签】，然后把系列和系列序号框合并为一个宽度行不行，然后和合集并排【顺序为：系列&系列序号、合集】」
+>
+> 用户当场裁定：①年份上移对**所有类型**生效（含书籍上架年/出版年、音乐发行年），不按类型分叉；②标签紧跟**各自**题材（影视/游戏→`genres` 后、书籍三子类→各自 `*-genres` 后、音乐→`music-genres` 后）；③系列不是并成一个输入框，而是「两个框加起来总宽度为一个半行宽」⇒ **组整体占 3 栅格、内部 2:1 分宽**，`series` / `seriesIndex` 两个字段照旧。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 标题为什么一直整行 | `.rl-fields-col > :not([data-fld]) { grid-column: 1 / -1; }` 兜住了所有无 `data-fld` 的子项 |
+> | 能不能直接给 `.rl-title-row` 加属性 | ⛔ 不能。`assert-symbols.cjs:6839` 用 `indexOf` 取这个开标签的字面量做锚点，加属性即 FAIL；且 `:6840` 用**第一个** `</div>` 截断 ⇒ 行内不许嵌套 div |
+> | 能不能把 title 注册进 `ENTRY_FORM_FIELDS` | ⛔ 不能。`title` 属 `ENTRY_FORM_LOCKED_KEYS`，进面板等于允许用户收起标题；`tests/entryFormFields.test.ts` 有守卫钉死 |
+> | 那就外包一层壳 | 新增 `.rl-title-col`（**不带** `data-fld`），CSS 单独给 `grid-column: 1 / span 3` |
+> | 壳的规则写在哪 | 必须写在 `:not([data-fld])` **之后** —— 两者特异性同为 (0,2,0)，靠先后决胜 |
+> | 年份为什么必须排注册表第一位 | 排在 span6 的 `meta` 之后会被挤到下一行，标题右边就空半行 |
+> | `series-index` 怎么办 | 从注册表**整条移除**（⛔ 不降级保留）：留着会出现「设置页能单独收起系列序号、表单里却收不掉」的口径分裂 |
+> | 注册表改了模板不改行不行 | ⛔ 不行。`applyFieldOrder` 会把 DOM 挪到 plan 顺序，首屏会跳一下（同 `music-genres` 那条注释的口径） |
+>
+> 改动：`src/pure/entryFormFields.ts` 重排 `ENTRY_FORM_FIELDS`（五个年份键 → `meta` → 五组题材 → `tags` → 其余 → `series`/`collection` → 长文本），`series-index` 删除、`series` 的 label 改 `'系列 / 系列序号'`；`src/views/components/EntryForm.svelte` 七处改写（标题外包 `.rl-title-col` / 五个年份块紧跟其后 / 删原 `year` 块 / 书籍与音乐分支重排成「题材+标签」段与「其余字段」段 / `series` 内部改 `.rl-series-pair` 2:1 分宽 / 删原 `collection` 后的 tags 块 / 新增 CSS 五条）。
+>
+> 守卫净增 **+6**（7224 → 7230）：`tests/entryFormFields.test.ts` 新增 `describe('🔴 m05562 表单排版（读模板守卫）')` 六条，**读真实模板与样式**（不是读纯函数）——①标题壳存在且不带 data-fld ②CSS span 3 且在 `:not([data-fld])` 之后 ③五个年份块都在壳之后、`meta` 之前 ④tags 在 genres 之后、collection 之前且全模板只一处 ⑤`series-index` 无 data-fld 且 `entryFormFieldByKey` 为 undefined ⑥组内 2:1 且 series/collection 均 span 3。同文件 `TEMPLATE_ORDER` 八行按新序重写、`:543` 的 `full[0]` 改成按 `indexOf('meta')` 判位。
+>
+> 🔴 本轮真坑：注释里**逐字抄开标签会污染 `indexOf` 锚点** —— R1 的注释里写了一遍标题行开标签，导致新守卫 ① 先命中注释（210044 < 210165）判红；同一风险也威胁 `assert-symbols.cjs:6839`。R5 注释里抄的两个 input 开标签更糟：那两条守卫是**正则**，注释也命中 ⇒ 「真标签被删」也照样绿（假绿）。两处注释已改成描述性说法。
+>
+> 门禁：`tsc` 0 ｜ vitest 328 files / 7230 passed ｜ esbuild 87 warnings ｜ svelte-check 0 errors / 89 warnings ｜ `_deploy` ALL_MATCH=1（main.js `6f98497f4e31` size=2593987 · styles.css `6e0c4c1ee179` size=784985）｜ `assert-symbols` EXIT=0（313 条 / 基线 318，无新增失败）。
+>
+> 突变 **6/6 全红**（`_mut_formlayout.cjs`，`ALL_RED_OK=1`）：①撤标题壳 span 3 ②标题壳加 data-fld ③`year` 真搬回 meta 之后 ④`tags` 真搬回 collection 之后 ⑤`series-index` 加回注册表 ⑥组内分宽改 1:1。
+>
+> 真机（`.testvault` 1440×900）：表单宽 552、标题壳 `w=271` = **0.49 行**、`gridColumn: 1 / span 3`；年份块 `x=439 / y=188` 与标题**同一行**；meta 在 `y=248` 下一行；标签 `x=439` 与题材同排（`y=308`）；系列 `span 3` 在 `x=158`、合集 `span 3` 在 `x=439` **同一行**；组内两框 **177:88 = 2.00**。截图 `_shot/rd/form-layout.png`。
+>
+> **#793（2026-11-15 第 63 轮）：m06050 / m06052 —— #792 被真机打回后的三处再修（标题 4:2、系列对齐、数字框同高）**
+>
+> 用户原话：`m06052`「这怎么回事，我要的是第一行的标题框占长、上映年占短、评分来源正常【顺序为：标题、上映年、评分来源】；系列和系列序号不对齐啊」
+>
+> 🔴 **本节是 #792 的返工**：#792 把标题壳与年份块**都**给了 `span 3`（各占一半），真机实测标题框 245px **反而比年份 271px 更短** —— 与用户诉求正好相反。根因不是「一半行不够」，而是标题行内 `flex: 1` 的 input 还要让位给只读评分簇与 AI 按钮。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 标题框为什么比年份还短 | 两边都 span 3，但标题行内还有 `.rl-ro-meta`（评分簇）与 `.rl-ai-btn`，`flex:1` 的 input 只能吃剩下的 26px |
+> | 怎么改才对 | 标题壳 **span 4**、五个年份键 **span 2** ⇒ 4+2=6 正好满行，标题实测 1.9 倍宽 |
+> | 用户要「评分来源也挤进第一行」能不能做 | ⛔ 做不到。552px 宽下 meta 四个框 + 4 个 label + gap 最少 528px，与「标题 361 + 年份 180」无法共存；平台链接框实测需 552 整行。已向用户说明该硬冲突，按 4:2 落地 |
+> | 系列为什么比合集高 9px | 上一轮我加的 `.rl-series-pair .rl-lbl { margin-top: 0 }` 抹掉了两个 label 的顶边距，整组上浮 |
+> | 数字框为什么高 5px | **不是**微调按钮撑的（第一版猜错了）。宿主核心 css 有 `input[type="text|number|…"] { height: var(--input-height) }`=32px；插件文本框大多不写 `type` ⇒ 匹配不上 ⇒ auto(27px)；数字框被命中 ⇒ 32px |
+> | 数字框怎么修 | `body .rl-input[type='number'] { height: auto; appearance: textfield; }` + 隐藏 `::-webkit-inner/outer-spin-button`。⛔ 不写 `27px` 定值、⛔ 不给 `body .rl-input` 加 height（`assert-symbols.cjs:11558` 禁） |
+>
+> 改动：`src/views/components/EntryForm.svelte` 标题壳 CSS `span 3 → span 4`、删掉 `.rl-series-pair .rl-lbl { margin-top: 0 }`、两处注释按真实根因重写；`src/pure/entryFormFields.ts` 五个年份键 `span: 3 → span: 2`；`styles.css` 新增数字框两条规则（`:13772-13782`）。
+>
+> 守卫净增 **+3**（7230 → 7233）：新增 ⑦「数字框与文本框同高」（钉 `height:auto` + 反向守卫不许 27px 定值 / 不许 `var(--input-height)` + 主规则不许有 height）、⑧「系列组内 label 必须原样继承 `.rl-lbl` 的 margin-top」（反向守卫 + 正向钉 `margin: 9px 0 4px`）、② 标题壳改判 `span 4` 并加反向守卫不许退回 `span 3`、新增 ②b「4+2=6 数量守恒」。
+>
+> 🔴 本轮新坑（务必复用）：**CSS 注释里逐字引用被禁规则，会让否定断言恒假红** —— ⑧ 的 `⛔ 别再加 .rl-series-pair .rl-lbl { margin-top: 0 }` 这句警示文案本身命中了 `not.toMatch`。修法：先 `CSS.replace(/\/\*[\s\S]*?\*\//g, '')` 剥注释再断言。这已是第三次栽在「注释污染断言」（前两次是 `indexOf` 锚点、正则守卫）。
+>
+> 门禁：`tsc` 0 ｜ vitest **328 files / 7233 passed / 0 failed** ｜ esbuild 0 错 / 87 warnings ｜ svelte-check 0 errors / 89 warnings ｜ `_deploy` ALL_MATCH=1（main.js `dd45925ed840` · styles.css `1380642b0c89` size=787044）｜ `assert-symbols` EXIT=0（313 条 / 基线 318，无新增失败）。
+>
+> 突变 **5/5 全红**（`_mut_row1.cjs`，`ALL_RED_OK=1`）：①标题壳退回 span 3 ②年份键退回 span 3 ③数字框删掉 height:auto ④数字框改定值 27px ⑤把 `.rl-series-pair .rl-lbl { margin-top: 0 }` 加回来。
+>
+> 真机（`.testvault`，1440×900，pid 15264）：表单宽 552；标题壳 `w=364 / gridColumn: 1 / span 4`、**标题 input 338px**；年份块 `w=177`、input 177 ⇒ **同排且标题 1.9 倍**；meta 在 `y=248` 独占下一行；题材/标签同排 `y=308`；系列与合集同排 `y=417`、**高度均 54**；`#rl-f-series-index` 高 **32 → 27** 与文本框一致。截图 `_shot/rd/form-row1b.png`。
+>
+> **#795（2026-11-15 第 65 轮）：m06462 —— 条目属性面板：固定项回到画布、灰显、不可拖、按各自位次占位**
+>
+> 用户原话：`m06462`「还有高级设置下的条目属性自定义要改成每一行严格执行对应位置，固定的不可改变也要显示预览变灰（不可拖动）按各自调序占位」。
+>
+> 🔴 **病灶**：`renderEntryFormPanel` 开头 `const allDefs = allDefsAll.filter((d) => !entryFormFieldIsFixed(d.key))` 把固定键（`meta` = 来源 / 评分 / 评价人数 / 平台链接）**整体剔除** —— 画布里根本不画它，用户看不到这一行排在哪儿、占多宽，只能凭记忆猜。这是 2026-11-14 「不再显示」那一条的遗留口径。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 固定项要不要进 `cur` | ⛔ **不进**。`cur` 只装可管理项，拖动 / ↑↓ / 删除的下标才和屏幕对得上 |
+> | 那它的位次谁来定 | `buildEntryFormPlan(cur, type, kind).order` —— 与真弹窗 `applyFieldOrder` **同一份计划** |
+> | 混进 `cur` 一起 `moveItem` 会怎样 | `withFixedEntryFormFields` 落库时又按模板位次就近插回 ⇒ **屏上位置与存下来的不一致** |
+> | 灰显怎么做 | `.rl-ef-blk.is-fixed`：常驻 `--background-modifier-hover` 底 + `opacity: .55` + `cursor: default` |
+> | hover 要不要跟着提亮 | ⛔ 不。主块的 hover 高亮是「可操作」的暗示，对锁定块是误导 ⇒ 显式写回同一底色 |
+> | 加不加边框以示「锁定」 | ⛔ 不加。块首注释定过「无缝网格」，加描边会让块宽 +1px、整行错位 |
+> | 功能上砍什么 | `role` / `tabindex` / `draggable` / 把手 / 宽度菜单 / ✕ / 全套 `drag*` 与 `keydown` 一律不给 |
+> | 计数怎么算 | 「显示 9 / 9」只数可管理项；固定项不进分母（它根本收不起来） |
+>
+> 改动两处：
+> 1. `src/Settings.ts` 的 `renderEntryFormPanel()` —— ①`allDefs` 去掉过滤；②`sync()` 里建 `plan = buildEntryFormPlan(...)` + `rankOf()` + `fixedDefs` + `renderList`（`kind: 'managed' | 'fixed'`，统一按 `plan.order` 升序再 `.sort((a, b) => rankOf(a.key) - rankOf(b.key))`）；③固定项走 `cls: 'rl-ef-blk is-fixed'`、attr 只给 `data-span` / `data-fixed` / `aria-label`；④把手、工具行、`dragstart/end/over/leave/drop`、`keydown` 全部包进 `if (!isFixed) { ... }`；⑤计数分母与隐藏池候选都排除固定键；⑥空态文案改为「可管理的属性已全部收起（灰色块是固定项，收不起来）」；⑦新增 import `buildEntryFormPlan`。
+> 2. `styles.css` —— 新增 `.rl-ef-blk.is-fixed { background: var(--background-modifier-hover); cursor: default; opacity: .55; }` + `.rl-ef-blk.is-fixed:hover { background: var(--background-modifier-hover); }`。
+>
+> 守卫净增 **+6**（7234 → 7240，`tests/entryFormSpanControl.test.ts` 新增 describe「条目属性 · 固定项灰显占位（m06462）」）：①固定键必须回到画布（**反向守卫**：`allDefs` 赋值里不许再出现 `entryFormFieldIsFixed` 过滤）②位次来自 `buildEntryFormPlan` + 必须 `.sort(rankOf)`（反向：⛔ 随手 append）③灰显且不可拖（`is-fixed` 类 + 固定分支 attr 里不许有 `draggable` / `role: 'button'` / `tabindex`）④无宽度菜单 / 无 ✕ / 无把手 / 无 `drag*` 与 `keydown` ⑤不进隐藏池、不入计数分母 ⑥CSS `.is-fixed` 有 `cursor: default` + `opacity` + 灰底且 ⛔ 不加 `border: 1px`。
+>
+> 门禁：`tsc` 0 ｜ vitest **328 files / 7240 passed / 0 failed** ｜ esbuild **87 warnings**（= 基线）｜ svelte-check **0 errors / 89 warnings**（= 基线）｜ `_deploy` ALL_MATCH=1（main.js `b0652f349f36` size=2594764 · styles.css `66385568a238` size=790986）｜ `assert-symbols` EXIT=0（313 条 / 基线 318，「✅ 无新增失败」）。
+>
+> 突变 **7/7 全红**（`_mut_effixed.cjs`，`ALL_RED_OK=1`）：①把固定键从 `allDefs` 再滤掉 ②固定项不给 `is-fixed` ③给固定项挂 `draggable: 'true'` ④去掉 `.sort(rankOf)` 随手 append ⑤计数分母带上固定键 ⑥固定项也画把手 ⑦CSS 去掉 `cursor: default`。
+>
+> 真机（`.testvault` 1440×900，pid 11252）—— 设置窗口是**独立 page**（`window.app` 为 undefined），必须连标题含「设置」的那个 target，且要**两步点**：先点一级页签「ReelLudic」，再点插件内二级页签「高级设置」。实测画布 `x=232 y=486 w=524 h=548`、`--rl-ef-cols=6`、共 **10** 块（9 可管理 + 1 固定）、计数「显示 9 / 9」。固定块（来源 / 评分 / 评价人数 / 平台链接）：`span="6"`、`draggable=null`、`role=null`、无 `.rl-ef-tools`、无 `.rl-cf-grip`、`cursor: default`、`opacity: 0.55`、`bg: rgba(117,117,117,0.12)`、`x=241 y=567 w=506`，**位于年份块（y=495）之后、题材块（y=627）之前** —— 与 `plan.order` 一致。9 个可管理块全部 `draggable="true"` / `role="button"` / 有工具行与把手。截图 `_shot/rd/ef-fixed.png` / `_shot/rd/ef-fixed2.png`（目视：一整行灰底、无把手无图标的块夹在年份与题材之间）。
+>
+> **#810（2026-11-18 第 81 轮）：m05415 —— 跑真机 + 修复技术债（m04435 四条全部真机通过，抓出并修掉 3 处真缺陷）**
+>
+> 用户原话：「跑真机，修复技术债」。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 真机怎么起实例 | `node tools/rd.cjs stop` + `launch`，等 6–7 秒 `status` 见「插件 1.5.0 已启用 主视图 1」；⛔ 别靠插件热重载（disable+enable 会清空全部工作区视图，之后详情页只剩 view-header） |
+> | ④ 角标单位 | **真机全过**。改 `playtimeMinutes` 逐档读 `.rl-cov-playtime`：1→`已玩 1min`、29→`已玩 29min`（旧实现是 `已玩 0h`）、59→`已玩 59min`、60→`已玩 1h`、61→`已玩 1h1min`、119→`已玩 1h59min`、120→`已玩 2h`、1439→`已玩 23h59min`、1440→`已玩 24h`；书籍页实测 `已读 15min/6min/2min/12min`。验后已把 `playtimeMinutes` 恢复 600 |
+> | ① 浮层结构 | 真机**全过**：6 枚心情 chip、笑脸展开、`aria-expanded`、note 自动聚焦、预览 `第1集·0:31` + 提示行；选档→`第1集·0:31 🤩 震撼`、点同档取消 |
+> | ① 落盘 | 真机端到端过：右键→Esc 不选 ⇒ 笔记长度 727→727（**delta 0**，不生成记录）；选 🤩 + 备注 + 写入 ⇒ 笔记尾部写入 `[第1集·5:11](obsidian://…&t=311) 🤩 震撼 真机探针备注`，727→824（+97），浮层自动关闭 |
+> | ②-1 结果列表 | 真机**通过**：搜「七里香」得 15 条，`aiBtnInRows=0`、`saveBtn=0`，`.rl-res-row1` 只剩 `<span class="rl-res-t">七里香</span>` |
+> | ② 表单 ✨ | 真机**通过**：`hasLblRow=true`、`hasAiBtn=true`、`aiInTitleRow=false`，DOM 是 `.rl-lbl-row > label + button.rl-ai-btn` |
+> | ②-3 色子 | 真机**通过**：新判据候选 **46** 条 vs 旧判据 **13** 条；抽到「海绵宝宝历险记」状态「在看」5 星，直接证明旧门槛已撤；连换 4 次不重复、跨类型 |
+> | ③ Gold 渲染 | 真机**通过**：写 5 行 LRC 后 `.rl-ap-lyr-line` 6 行、`.is-gold` 3 行（多时间戳两条都带）、`goldHasBracket=false` |
+> | ③ 缩放 | 真机**抓出真 bug**（下限到不了），已修，重验下滚 `1.7→…→0.9→0.8` 后连 3 次纹丝不动 |
+> | ① Esc | 真机**抓出真 bug**（关不掉），已修，重验 Esc ⇒ 浮层计数 0、页面存活 |
+>
+> **真缺陷 1：Esc 关不掉浮层（Obsidian 在 window 捕获阶段截断）**
+> 四层埋点铁证：真实 Esc 后 `{winCap:1, winBub:0, docCap:0, docBub:0, hostCap:0, hostBub:0, noteCap:0}` ⇒ 事件**进不到 document 和浮层**，合成 `KeyboardEvent` 同样到不了。
+> 修法：`src/views/StampNotePopover.ts` 新增 `winKeyHandler` 挂 **`window.addEventListener('keydown', …, true)`（捕获阶段）**，先判 `activeDocument.activeElement` 是否在浮层内（⛔ 不许无条件吞全窗口 Esc），`destroy()` 用同一引用 + 同一 capture 位摘掉；保留 host 那条。
+>
+> **真缺陷 2：歌词缩放下限永远到不了（奇偶振荡）**
+> 真机慢速复测（间隔 500ms）：`0.8` 连续 13 次纹丝不动，上限 1.8 却精确达到。根因 `LYRIC_SCALE_MIN = 0.75` **不在 `LYRIC_SCALE_STEP = 0.1` 的网格上** —— `clampLyricScale` 先吸附 0.75→0.8 再 `Math.max(0.75, …)` 夹回 0.75，下次又吸附成 0.8 ⇒ 振荡；`applyLyricScale` 再夹一次还会让「内部状态 0.75 / 渲染 0.8」分叉。
+> 修法：`LYRIC_SCALE_MIN = 0.8`；`clampLyricScale` 把**两个端点也吸到网格**再夹，doc 写明幂等契约。
+>
+> **真缺陷 3：`applyUiTheme` 让整个插件加载失败（技术债）**
+> 真机 `Runtime.consoleAPICalled`：`Plugin failure: obsidian-reelludic TypeError: i.view.setUiTheme is not a function at dS.applyUiTheme … at dS.onload`。
+> 根因：`(leaf.view as HomeView).setUiTheme(theme)` 的 `as` 是编译期断言、擦除后不设防；插件重载/视图卸载时 leaf 上是旧实例或空壳，而它在 `onload` 里被调 ⇒ **整个插件加载失败**（不是单功能坏）。
+> 修法：`const view = leaf.view as unknown as Partial<HomeView> | null; if (view && typeof view.setUiTheme === 'function') view.setUiTheme(theme);`（⛔ 直接 `as Partial<HomeView>` 报 TS2352 —— `onOpen` 在 `View` 里是 protected）。
+>
+> **新增测试 +12 条（7849 → 7861）**
+> - `tests/stampNoteDom.test.ts`（新建，jsdom 7 条）：模拟「document 捕获阶段截断」后 Esc/Enter 仍可用、焦点在外不许吞、destroy 用同一引用同一 capture 位摘监听、Esc 必须 `defaultPrevented`、提交后浮层先摘不可重复写。⇒ 纯源码文本守卫对「挂错层」完全无感，这是唯一能抓到它的形态。
+> - `tests/applyUiThemeGuard.test.ts`（新建，4 条）：判型在调用前、反向守卫不许退回裸 `as HomeView`/`leaf.view!`、必须防 null、`.setUiTheme(` 全文件 ≤1 次。
+> - `tests/lyricZoom.test.ts` 25 → 26：端点必须落在步长网格上 + `clamp` 幂等 + 连续下滚 **41** 次（奇数，能暴露奇偶振荡）。
+>
+> **🔴 本轮真坑**
+> 1. **`window` 捕获阶段是本仓浮层的唯一可靠键路** —— Obsidian 在 `window` 捕获就 `stopPropagation`，`host`/`document` 上的监听一律收不到。⛔ 别改成 `document.addEventListener`（真机实测计数 0）。
+> 2. **步长吸附 + 端点夹紧会奇偶振荡** —— 区间端点必须落在 step 网格上；单测如果只用偶数次滚动，恰好把振荡掩盖掉（41 次才暴露）。
+> 3. **`as X` 在 `onload` 里裸调 = 整个插件加载失败** —— 重载时序下 leaf.view 是旧实例/空壳，必须运行时判型。
+> 4. **探针侧 5 处错误都被我误判成产品 bug**：`openAddModal` 初态没有结果区（真实类名 `.rl-search-input`）、Svelte `bind:value` 必须用原生 setter + 等最多 24s 轮询、`openEditModal(id)` 收 **id 字符串**、歌词在笔记 ` ```lrc ` 块（`service.setNoteLrc/readNoteLrc`）、`openWhatToWatchModal('')` 会被当范围过滤筛空。⇒ 探针红先验证探针自身。
+> 5. **`vi.spyOn(window,'addEventListener')` 的 calls 被推断成 Worker 事件表** ⇒ 与 `'keydown'` 比较报 `TS2367`，需 `as unknown as [unknown,unknown,unknown][]`。
+> 6. **清临时脚本时把 `_deploy.cjs` 一起删了** —— 它 `_` 开头但**是项目部署脚本**（未被 git 跟踪）。已从 `E:\备份0621\…` 镜像拷回并复跑 `ALL_MATCH=1`。⛔ 清 `_*` 前先确认不是项目文件。
+>
+> 门禁：`tsc` 0 errors ｜ `esbuild production` 87 warnings（= 基线）｜ `npm run check` **0 errors / 89 warnings in 6 files** ｜ vitest **364 files / 7861 passed** ｜ `assert-symbols` EXIT=0（324/324，「✅ 无新增失败」）｜ `_deploy` **ALL_MATCH=1**（main.js `02373b2ba73d` size=2708036 · styles.css `47cce96887d0` size=835317）｜ robocopy 镜像 **RC=3**。
+>
+> 突变 **9/9 全红**（`_mut_m05415.cjs`，`ALL_RED_OK=1`、`RESTORE_BAD=0`，跑完已删）：①Esc 只留 host ②改挂 document ③destroy 不摘 ③b 去焦点判据 ④下限退回 0.75 ⑤clamp 不吸端点 ⑥applyUiTheme 裸调 ⑦commit 不先 destroy ⑧Esc 不 preventDefault。**首轮只 1/7**，靠补两个 jsdom/源码守卫测试 + 把 ⑥ 的检查器从 assert 换成 vitest 才打齐。
+>
+> 技术债现状：本轮修 3 处（Esc 键路 / 缩放下限 / applyUiTheme 判型）；**已知未修** —— ① 浮层预览时间与落盘时间在播放中会差 1–2 秒（preview 取打开时刻、写入取点击时刻），属设计取舍；仓库根仍留有 17 个 2026-11-16 的历史 `_*.log`（非本轮产物，未动）。
+>
+> **#809（2026-11-18 第 80 轮）：m04435 —— 四条混装（时间戳右键浮层 / 结果列表去按钮+下载自动关联+色子全状态 / LRC [Gold]+歌词缩放 / 封面角标单位）**
+>
+> 用户原话：`m04435`「① 本地播放器时间戳 - **左键**：保持原逻辑，一键插入当前时间戳 / 截图时间戳，不弹窗。- **右键**：弹出"时间戳笔记"浮层（鼠标自动聚焦），附有一个笑脸表情图标（点击后展开六档心情emoji图标）,附预览窗 - 选择心情后生成记录并展示为：`20:15 震撼emoji` （右键未选择直接关闭，不生成记录）② 添加条目展开的结果列表：**不显示"入库"和"AI 预填"按钮**。【"AI 预填"仅在**单卡编辑属性表单窗口**显示】/ 从B站下载音乐：后台下载完成后自动关联已有音乐条目，不要求用户再手动搜索。/ 筛选功能项随机"读/看/听/玩一部"色子逻辑：单类型候选为**全状态、评分不限**的全部可观看条目（未关联入口条目不为候选）；等概率抽取一部，候选为空时提示。③ LRC歌词框支持 `[时间戳][Gold]歌词`…Gold 未高亮行：**暗金**；Gold 当前高亮行：**亮金**…歌词区域内 **Ctrl+鼠标滚轮**缩放歌词字号/比例：阻止页面默认缩放/滚动；仅作用于歌词容器。④ 封面角标-已读/已听/已玩时长单位显示：先向下取整到分钟；`<60min` 显示 `Xmin`；`>=60min` 显示 `YhZmin`，`Z=0` 时省略 `min`」
+>
+> 用户当场裁定（`ask_user_question`，三轮）：
+> · `stamp_commit` = 「选心情只是选中，再点「写入笔记」才落」；`stamp_text` = 「要有备注输入框，文字接在心情后面」；
+> · `aibtn_scope` = 「保留手动填写那条 ✨，只删搜索结果里每条结果旁边那颗」；`savebtn` = 「按钮从结果列表删掉，但保留「已添加」标记」；
+> · `badge_scope`（前一轮遗留）= 「和游戏/书籍保持在底部原位」。
+>
+> | 判断 | 结论 |
+> |---|---|
+> | ④ 为什么不能直接改 `formatPlaytime` | 它还有三个消费者要「可汇总的小数小时」：`src/data/noteGenerator.ts:4/375` 笔记正文、`src/pure/activityFeed.ts:9/176` 动态流、`src/modals/EntryLogModal.ts:8/113/196` 时长明细。改成 `12h25min` 会翻掉笔记历史排版 ⇒ 只新增 `formatBadgeTime`，老函数一字未动 |
+> | ④ 游戏角标旧实现有多错 | `cardPlaytimeBadge` 是 `已玩 ${Math.round(playtimeMinutes/60)}h` ⇒ 29 分钟显示「已玩 0h」。改走 `formatBadgeTime` 后是「已玩 29min」 |
+> | ④ 列表进度列要不要一起改 | 不改。用户说的是**封面角标**；`listProgress` 是列表里的进度列，另一件事 |
+> | ②-3 旧门槛是什么 | m07854 ⑭ 是 `status === 'want' && normalizeRating(rating) >= 4` —— 用户这次明确要「全状态、评分不限」，等于**反转**那两条，但保留「必须有入口」 |
+> | ②-3 入口判据还可靠吗 | 不可靠：`hasActionEntry` 默认分支只判 `.length > 0`，与它自己 doc 明写的「一律按 trim 后非空判断」相反；`catalog isLinkLike` 只校验 `typeof url === 'string'` ⇒ `url: '   '` 也算有入口。已改为 `.some(... String(...).trim())` |
+> | ②-1 与 m03052 的裁定冲突吗 | 不冲突：m03052 是「把 ✨ 挪进标题标签行」，m04435 是「结果列表里那条也删掉」。AI 预填的唯一入口收敛成 `.rl-title-col > .rl-lbl-row` 那颗（`{#if entry || manualFill}`） |
+> | ②-2 为什么不用 `pickLibraryAudio` | 那个是「用户点按钮时挑一个候选」；下载完的场景要求**纯反查**：只在 music 且 `audioPath` 为空时命中，⛔ 不覆盖用户手工挑好的关联 |
+> | ③ 为什么只做字号比例不做 transform | `transform: scale()` / `zoom` 会把行几何盒一起放大，`centerCurLine` 的 `getBoundingClientRect` 全偏移 ⇒ 越缩滚动越歪 |
+> | ③ `[Gold]` 该在哪一层剥离 | 必须在 `parseLrcDocument` 的时间标签判定之后、`kv` 判定之前。放到最后那条 break 之后会掉进「未知方括号当正文」，`[Gold]` 就留在歌词里了 |
+> | ③ 一行多时间戳要不要特殊处理 | 不用：解析器本来就按每个时间产出多行，`[Gold]` 在 `text` 上剥离一次天然对全部时间点生效 |
+> | ① 左键口径怎么保 | `insertStamp(caption?)` 只在 `caption` 非空时才塞进 payload；左键仍是 `() => void this.insertStamp()` 不传参 ⇒ 落盘形态与 #587 一字不差 |
+> | ① 浮层为什么不用 `position: fixed` | 本仓有 transform 祖先会偏移（同 #610），改用 `absolute` + 相对 `.rl-vp-root` 量位 |
+> | ① 预览时间文字谁说了算 | 宿主。视图只知 `items`（纯网络条目为空），自己判多集会把「第 3 集」显示成「第 1 集」⇒ 宁可退回不带集号 |
+>
+> 改动（11 个源文件 + 1 个新纯模块 + 2 个新视图/常量模块 + 7 个测试文件 + 断言脚本 7 条翻面）：
+> 1. `src/pure/playtime.ts` 新增 `formatBadgeTime(minutes)`：`<60` ⇒ `Xmin`；否则 `Yh` / `YhZmin`；非法/≤0 ⇒ `''`。doc 写明「⛔ 别把 `formatPlaytime` 一起改」及三个老消费者的理由。
+> 2. `src/pure/mediaProgress.ts`：import 换 `formatBadgeTime`；`cardPlaytimeBadge` / `cardReadBadge` / `cardListenBadge` 三枚统一走它。`listProgress` 有意未动。
+> 3. `src/pure/whatToWatch.ts`：`isWatchCandidate` 改为「有 id + `hasActionEntry(e)`」；`WATCH_PICK_MIN_RATING` 保留导出但不参与筛选（doc 写「⛔ 别再接回去」）。`src/modals/WhatToWatchModal.ts` 空态文案换成新门槛。
+> 4. `src/pure/actionLabel.ts`：`hasActionEntry` 默认分支改为 `.some((l) => !!String(l?.url ?? '').trim())` 三条同构 —— 修掉「实现与 doc 相反」的真 bug。
+> 5. `src/pure/libraryAudio.ts` 新增 `matchAudioFileToEntry(entries, fileName)`：只用最后一个 ` - ` 之后的歌名比，只认 music 且 `audioPath` 空的，排序 `exact → score → id.localeCompare`（与 `pickLibraryAudio` 同款）。
+> 6. `main.ts`：`dlBiliDownload` 写完二进制后 `const auto = await this.autoAssociateDownloadedAudio(relPath);` 回执拼接；新增 `autoAssociateDownloadedAudio`（list → 匹配 → `update(hit.id, { audioPath: relPath })` → `noteWasExternallyModified` 才 `writeNote` → `refreshViews` → 返回「（已自动关联到《…》）」；整体 try/catch 返回 `''`，⛔ 绝不抛 —— 否则「已经下好了」会变成「下载失败」）。
+> 7. `src/views/components/EntryForm.svelte`：结果列表里的 ✨ 与「入库」按钮**连根删除**（含 `isSongLibResult` / `savingKey` / `savedHits` / `saveMusicResult` / `saveMusicResultOnKey` / `runAiPrefillForResult` / `export let onSaveMusic` / 四条 `.rl-res-save*` 样式 / 模板里 `|| savedHits.has(...)`）；保留 `{#if added}<span class="rl-res-added">已添加</span>{/if}`。`src/modals/EntryModal.ts` 同步删 `onSaveMusic` 注入（宿主 `importMusicResult` 保留，音乐同步弹窗仍用）。
+> 8. `src/pure/lrc.ts`：`LrcLine` 加 `gold?: boolean`；新增 `LRC_GOLD_TAG = /^gold$/i`；解析循环里在**时间标签之后、kv 之前**加 `if (LRC_GOLD_TAG.test(tag)) { gold = true; rest = rest.slice(m[0].length); continue; }`；组装时 `if (r.gold) line.gold = true;`（未标记的行该字段**不存在**，⛔ 不写 `false`）。
+> 9. 新建 `src/pure/lyricZoom.ts`：`LYRIC_SCALE_MIN 0.75` / `MAX 1.8` / `STEP 0.1` / `DEFAULT 1` / `KEY` / `VAR`、`clampLyricScale`（按 step 吸附 + 消浮点尾巴）、`lyricScaleAfterWheel`（上滚放大，与 `comicScroll.zoomAfterWheel` 同向）、`lyricScaleLabel`、`loadLyricScale` / `saveLyricScale`（localStorage + try/catch）、`applyLyricScale`（只写 CSS 变量）。
+> 10. `src/views/audioPlayerMount.ts`：`renderLyrics()` 加 `is-gold` 类；`host.appendChild(root)` 之后接 `wheel` 监听（只认 ctrl/meta、`preventDefault` + `stopPropagation`、`{ passive: false }`、改完 `centerCurLine()`）；`destroy()` 摘监听。`styles.css` 三处：`.rl-ap-lyrics` 定义 `--rl-ap-lyric-scale: 1`、主规则与 compact 档都改 `calc(Npx * var(...))`（⛔ 不改 compact 会让紧档里 Ctrl+滚轮全然无效）、金色四规则（`.is-gold` 必须在 `.is-cur` **之后**，深色两档另行提亮）。
+> 11. 新建 `src/pure/stampNote.ts`（`STAMP_NOTE_TITLE` / `STAMP_NOTE_COMMIT` / `stampNoteCaption` / `stampNoteLine` / `stampNotePreview`）+ 新建 `src/views/StampNotePopover.ts`（六档心情取自 `pure/mood`、笑脸按钮展开、打开即聚焦、Esc/Enter、点已选=取消、`commit()` 先 destroy 再 await）。
+> 12. `src/views/VideoPlayerView.ts`：`stampBtn` 加 `contextmenu`（`preventDefault` + `stopPropagation` + `openStampNotePopover`），tip 追加「· 右键写时间戳笔记」；`insertStamp(caption?)`；`openStampNotePopover` / `closeStampNotePopover`（幂等）；`onDocPointerDown` 加「点浮层外面关」；`onClose` 摘浮层；module 级 `stampTimeText()` 优先用宿主钩子。
+> 13. `main.ts`：`insertVideoStamp` 用 `stampNoteLine(link, info.caption ?? '')` 并改 `const written = …` + `written.line`；新增 `stampPreviewTextOf`（与 `videoTimeLink` 同一套集数口径）；两处播放器选项注入 `stampPreviewText`。`styles.css` 新增 19 条 `.rl-vp-stampnote*` / `.rl-stampnote*` 规则（`absolute` 不用 `fixed`、`.hidden` / `.is-measuring` / 默认收起的 moodrow / 选中态唯一有底色）。
+>
+> 守卫净增 **+99**（7747 → 7846；357 → 362 files）：`playtime` +6、`mediaProgress` 18→22、`whatToWatch` / `actionLabel` 48、`entryFormPrefillSeed` 10、`libraryAudio` 14→23、`biliAutoAssociate` 5、`lrcGold` 14、`lyricZoom` 22、`stampNote` 15、`stampNoteWiring` 27。
+>
+> 🔴 本轮真坑 7 条：
+> ① **模块级 `let last` 撞产物断言**：与 `main.ts` 里局部 `let last` 重名 ⇒ esbuild 避让改名成 `last2` ⇒ 锚 `const last = normalizeLibraryDirInput(...)` 的判据变红（**我引入的，不是基线漂移**）。改名 `lastOutcomeRef`，⛔ 别为好看改回去。
+> ② **`createLibraryDirRow` 的三条断言按字符数开窗**（`{0,1200}` / `{0,2400}` / `{0,2700}`）：在方法开头插长注释后 offset 变 1570/2567/2697 ⇒ 前两条出窗、**一次红 3 条**。解释性注释必须放方法**末尾**。
+> ③ **`is-collapsed` 撞 #351b 历史反向守卫**（阅读器设置菜单「删除收起功能」时期留下的 `!includes('is-collapsed')`）⇒ 目录卷折叠换名 **`is-folded`**，⛔ 不为它去改那条守卫。
+> ④ **`window.setTimeout` 在 node 单测里 `ReferenceError`**（`vitest.config.ts` 是 `environment: 'node'`）⇒ 服务层用裸 `setTimeout`。
+> ⑤ **注释里写被计数的字面量会撞红产物断言**：`#602①` 只剥 `/* */`、**不剥 `//`**，在 `WhatToWatchModal` 注释里写了「关联入口」四字 ⇒ 计数 9/12 变 10/13，红两条。
+> ⑥ **新符号命名撞全局反向守卫**：`stampPreviewLabel` 里的 `…reviewLabel` 是 `#452` 那条 `!js.includes('reviewLabel')` 的子串 ⇒ 门禁假红。改名 `stampPreviewText`，**连注释里的字面量也要清**（块注释同样进产物）。
+> ⑦ **`split(prefixA) + split(prefixB)` 会重复计数**：`'stampPreviewText: (info)'` 的前缀就是 `'stampPreviewText: (i'` ⇒ 同一行被数两遍、期望 2 实得 3。改用一条精确正则。
+>
+> 门禁（本轮实跑，全部 EXIT=0）：`tsc -noEmit -skipLibCheck` **0 errors**｜`esbuild production` **BUILD_EXIT=0 / 87 warnings**（= 基线）｜`svelte-check` **0 errors / 89 warnings in 6 files**（= 基线）｜vitest **`Test Files 362 passed (362)` / `Tests 7846 passed (7846)`**｜`assert-symbols` **EXIT=0**（`本次失败：324 条（基线 324 条）`、`✅ 无新增失败`）｜`_deploy` **ALL_MATCH=1**（main.js `8102634b797d` size=2707566 · manifest `3ae51778878c` size=490 · styles.css `47cce96887d0` size=835317）｜robocopy 镜像 **RC=1**（按约定成功）。
+>
+> 突变 **12/12 全红**（`_mut_stampnote.cjs`，`ALL_RED_OK=1`、`RESTORE_BAD=0`，跑完已删）：①左键也带 caption ②右键不 preventDefault ③右键直接落盘 ④关播放器不摘浮层 ⑤点外面不关 ⑥文案拼接双空格 ⑦无补充文字也加尾随空格 ⑧不自动聚焦 ⑨硬编码六档 emoji ⑩心情 chip 直接 commit ⑪宿主不用 `stampNoteLine` ⑫预览集数判据改 `total > 0`。首轮 10/12，②（缩进锚点写错）与 ④（`savePosition(true)` 命中 7 次）不合格 ⇒ 锚点改成「从文件抄整块」后才红。
+>
+> 断言脚本 7 条翻面（⛔ 一条都没删，全部按新形态收紧 + 加反向守卫）：`#585③`（`const { line }` → `stampNoteLine` + `const written` + `written.line`，并反向守旧「直接写 link」必须缺席）、`#587③`、`#585` 图标提示两条改「以…开头」正则、`插入后滚到插入处` + `三条路径都接上了滚动`（2 条解构 + 1 条 `written.line` + ≥3 处 `scrollNoteToLine`）、`写笔记走 appendNoteSection`（`link` → `line`）。
+>
+> ⚠️ **真机未跑**：① 浮层定位/Esc/点外关闭、③ 歌词区 Ctrl+滚轮、④ 角标单位、② 色子与下载自动关联，均只有源码级 + 单测 + 产物级证据。建议在 `.testvault` 里各点一遍。
+>
+> **#808（2026-11-17 第 79 轮）：m04135 —— 首页搜索词一步带入添加窗口 / 关联改网络链接后播放器切内嵌**
+>
+> 用户原话：`m04135`「优化交互体验：在首页视图搜索框中搜索填入的文本如果这时点添加按钮就直接填入搜索条目一步到位，省去打开添加条目窗口再搜索②播放器详情页的右键关联入口为网络链接，但视频播放器还是本地播放器不刷新，而不是内嵌网络播放器」
+>
+> | 判断 | 结论 |
+> |---|---|
+> | ① 搜索词为何带不进去 | 它只活在 `MediaList` 的 `searchText` 里；`onAdd(t, kind)` 只传型别/子分类，`openAddModal` / `EntryModal` 构造都没有词位 ⇒ 全链无处承接 |
+> | ① 组件早有承接位吗 | 有：`EntryForm.presetQuery`（`export let presetQuery = ''` → `let query = presetQuery`），但唯一来源是 #632「保存并继续」的 `this.repeat.query`，**没有任何外部入口能传** |
+> | ① 为什么「预填了还要再搜一次」 | `presetQuery` 只赋值给输入框；`onMount` 里对新建态只做**聚焦**（多轮重试 ~640ms），**没有**发请求 ⇒ 用户看到的是空列表 |
+> | ① 「预填 + 立即搜」的现成范式 | `startRefetch()`：`refetchOpen = true; query = entry.title; void doSearch();` —— 照它抄即可，⛔ 不另写搜索链路 |
+> | ② 关联后为何还是本地播放器 | `refreshEntrySnapshot` → `syncEpisodeSources` 只做三件事：就地换 `ctx.files/urls/titles`、`replaceItems(reload(entry))`、`syncCells()` |
+> | ② 关键断点 | `replaceItems` 吃的是 `buildEmbedItems()`，它**只收本地文件**（纯网络集压根不在 `items` 里）⇒ 某集从本地改成网络链接后基类走 `found < 0`：`cur = 0` + 重画，**永远进不了 `enterNetEmbed()`** |
+> | ② 网络集进播放器的出口有几处 | 全页仅三处：`openCell()` 的 `canPlayNetInline` 分支、`afterRender()` 消费 `pendingNetStart`、`retargetNetEpisode()`。`syncEpisodeSources` 里一次都没调 |
+> | ② 优先级该听谁的 | `openCell()`：**本地文件优先**，`if (cell.local)` 先 return 才轮到 url ⇒ 关联后的重判必须逐条照抄，否则一集两源时点格子播本地、关联完却切内嵌 |
+>
+> 改动（5 处源码 + 1 个测试文件 + 1 个断言脚本 + 3 条断言翻面）：
+> 1. `src/views/components/MediaList.svelte`：`onAdd` 签名加第三参 `q?: string`；添加按钮传 `searchText.trim() || undefined`。
+> 2. `src/views/HomeView.ts:267`：透传 `(t, kind, q) => this.plugin.openAddModal(t, kind, q)`。
+> 3. `main.ts` `openAddModal(initialType?, initialBookKind?, initialQuery?)` → `new EntryModal(app, this, undefined, initialType, initialBookKind, initialQuery)`，方法上补长注释记 m04135 原话与「命令面板/功能区那两处入口不传、行为与改前逐字一致」。
+> 4. `src/modals/EntryModal.ts`：构造加第六参 `private initialQuery?: string`，构造体内 `if (initialQuery && initialQuery.trim()) this.repeat = { ...this.repeat, query: initialQuery.trim() };` —— **只写 state、⛔ 不在这里发搜索**（那时组件还没挂载）。
+> 5. `src/views/components/EntryForm.svelte` `onMount` 末尾：`if (!entry && presetQuery.trim() && presetResults.length === 0) { void doSearch(); }`。三条判据缺一不可：`!entry`（编辑表单不摆搜索区）、`presetQuery.trim()`（没词别凭空发请求）、`presetResults.length === 0`（#632 重建时词还在但候选已带回，再搜会把同一批结果重复并进池子）。⚠️ 必须放在 `onMount` 里 `return () => window.removeEventListener(...)` **之前**，否则那段 cleanup 会被顶掉。
+> 6. `src/views/EpisodePageView.ts`：`syncEpisodeSources` 末尾补 `this.syncNetAfterAssociate();`（在 `syncCells()` 之后——顺序契约：先重画格子再判形态）；新增 `private syncNetAfterAssociate(): void`：
+>    · `const idx = this.activeCellIndex();`（全页唯一口径）→ `idx < 0` 直接 return
+>    · **本地优先**：`if (localPath) { if (inNet) this.exitNetEmbed(true); return; }`（`restoreLocal=true` 让它自己 `rerenderCurrent()`，外面不再补）
+>    · 无本地、无可内嵌网络地址且还在网络态 ⇒ `exitNetEmbed(false)` + `rerenderCurrent()` 画空态
+>    · 可内嵌 ⇒ 幂等守卫 `if (inNet && this.netIndex === idx && this.netSrcUrl === url) return;`（别把正在播的 iframe 重建）→ `enterNetEmbed(idx, url)` → 翻 `cellsPage` 到那一格 → `syncCells()`
+> 7. 新建 `tests/interactionWiring.test.ts`（8 条，源码文本守卫）：`bodyBraceAt()` 先按括号配平**跳过参数列表**再定位函数体大括号；`paramsText()` 读参数列表；`methodBody()` 取函数体。两条链各四组断言，含 6 条反向守卫。
+> 8. `assert-symbols.cjs` 三条按新形态翻面（⛔ 不是删判据）：`openAddModal(initialType, initialBookKind, initialQuery)` / `new EntryModal(..., initialBookKind, initialQuery)` / `onAdd` 三参语义判据（`resolveAddType` + `kindFilter` + `searchText.trim() || void 0` 同时在场）；另加两条 `absent` 守旧形态（旧双参、旧五参）必须缺席。
+>
+> 守卫净增 **+10**（7737 → 7747；356 → 357 files）。
+>
+> 🔴 本轮真坑 5 条：
+> ① **`methodBody` 的 signature 自带 `{` 时会跳过大括号**：`src.indexOf('{', at + signature.length)` 从 `{` 之后开始找，命中体内嵌套块 ⇒ 取到半截方法体，`toContain('this.syncNetAfterAssociate();')` 假红。改为先按 `(` `)` 配平跳过参数列表再取 `{`。
+> ② **参数列表在大括号之前**：`methodBody` 永远拿不到 `private initialQuery?: string,` ⇒ 断言构造参数必须另走 `paramsText()`。
+> ③ **反向守卫里写 `\n` 是死的**：源文件是 CRLF，`'...\n        const inNet'` 匹配不上 `\r\n`。改成单行锚点 `if (wantNet) {`。
+> ④ **突变 ⑫ 首轮仍绿**：只断言 `enterNetEmbed(idx, url);` 在场，把后面「翻页 + `syncCells()`」两行整段删掉依然全绿 ⇒ 必须断言 `after` 片段里 `cellsPage` 与 `syncCells()` 都在、且顺序正确（翻页在前）。
+> ⑤ **改签名会一次性撞红 3 条产物断言**（`assert-symbols.cjs:625/626/650`）：它们钉的是**旧形态字面量**（`openAddModal(initialType, initialBookKind)`、五参 `new EntryModal`、单行 `onAdd(...)`）。⛔ 别为了让门禁变绿去删判据 —— 要按新形态加长锚点，并**补 `absent` 守旧形态**；`onAdd` 那条还被 esbuild 拆成了多行，单行锚点直接失效，只能改成「三参齐全 + 顺序正确」的语义判据。
+>
+> 门禁（本轮实跑）：`tsc` **0 errors**｜`esbuild production` **BUILD_EXIT=0 / 87 warnings**（= 基线）｜`svelte-check` **0 errors / 89 warnings in 6 files**（= 基线）｜vitest **`Test Files 357 passed (357)` / `Tests 7747 passed (7747)`**｜`assert-symbols` **EXIT=0**（`本次失败：324 条（基线 324 条）`、`✅ 无新增失败`）｜`_deploy` **ALL_MATCH=1**（main.js `e3ff640b7836` size=2702526 · manifest `3ae51778878c` size=490 · styles.css `2096e7caee82` size=829282）｜robocopy 镜像 **RC=3**（按约定成功，756.59 MB / 728.20 MB 已复制）。
+>
+> 突变 **12/12 全红**（`ALL_RED_OK=1`、`RESTORE_BAD=0`，脚本跑完已删）：①onAdd 退回两参 ②添加按钮不传词 ③HomeView 不透传 ④openAddModal 不收词 ⑤EntryModal 不写 `repeat.query` ⑥首次打开不自动搜 ⑦判据漏掉 `presetResults.length === 0` ⑧不调 `syncNetAfterAssociate` ⑨本地优先退回「先判 url」⑩删幂等守卫 ⑪退出不补 `rerenderCurrent` ⑫进入网络态不翻页。
+>
+> ⚠️ **真机未跑**：两条改动只有源码级 + 单测 + 产物级证据。①② 的「点一下就看到效果」属交互路径，建议在 `.testvault` 里各点一遍（首页搜一个词 → 点添加 → 看候选是否已列出；播放器右键把某集从本地改成 B 站链接 → 看是否直接切到内嵌）。
+>
+> **#807（2026-11-17 第 78 轮）：m03052 —— 五条混装（目录框宽度 / TXT 目录分卷 / 编辑表单 ✨ 移位换图标 / B站后台下载复用悬浮球）**
+>
+> 用户原话：`m03052`「播放阅读设置页的音乐目录和游戏目录的框宽度和其他关联目录不统一啊，阅读器关联txt目录显示的没有区分卷做文件夹啊，还有给所有类型编辑属性表单都加AI预填图标按钮，位置放在书名标题的右旁边不是框旁边（添加条目的那个窗口UI删除掉AI预填图标按钮（无意义），还有手动填写表单位置也要改，AI预填图标按钮和总结摘要按钮图标样式重复了，把AI预填图标按钮样式改了）②给音乐从B站下载并转录的加个后台下载退出弹窗也能继续下载，样式复用下载模型的那个悬浮球和进度框」
+>
+> 用户当场裁定（ask_user_question）：`dir_root` = 保留游戏目录设置项、只约定内部结构；`txt_volumes` = **「阅读器左侧目录（TOC）：把『第X卷』做成可折叠分组，章回挂在卷下面」**（不改磁盘目录模型）；`ai_button` = **「只删『点选搜索结果』那条，手动填写表单里的 ✨ 保留（只把它挪到书名标签右侧）」**。
+>
+> | 判断 | 结论 |
+> |---|---|
+> | 目录框宽度为何不齐 | 宽度收敛全靠 `.rl-dir-row`；`createLocalDirRow` 两个类都挂，`createLibraryDirRow` **只挂 `rl-dir-sub`（缩进）漏了 `rl-dir-row`（宽度）** ⇒ 音乐/游戏两行退回核心默认宽度 |
+> | 「txt 没区分卷」的真含义 | **不是磁盘目录**（`localDirs` 只有文学/网文/漫画一级），而是解析层 `CHAPTER_RE` 虽认「第X卷」却把它当普通章节**平铺**进 `chapters` |
+> | 为什么卷不能嵌套进 `chapters` | `chapters` 的**扁平下标是全阅读器唯一章标识**（进度/书签/高亮/摘抄/`switchChapter` 全按它）⇒ 只在渲染层做分组投影，数据结构不动 |
+> | 加卷头后必须同步修的隐藏 bug | 原高亮按 `querySelectorAll('.rl-reader-toc-item')` 的**查询下标**对齐 `chapterIndex`；插入卷头后两者不再相等 ⇒ 高亮整体错位。改按 `data-ch` 属性对齐 |
+> | 编辑态为何原本没有 ✨ | 标题行那颗的包裹条件是 `{#if manualFill}`，而编辑态 `manualFill` 恒 false（`picked = entry !== null` 直接进结果态）⇒ 编辑表单从来没有 AI 预填 |
+> | 放宽条件的边界 | 改成 `{#if entry \|\| manualFill}`：编辑态有、手动填写有、**点选搜索结果那条路（`entry===null && manualFill===false`）仍然没有** |
+> | 图标为何必须换 | AI 预填与「总结摘要」（两处分支）用的是**完全相同**的 sparkle 双 path SVG，用户看不出两颗按钮是两件事 |
+> | 为什么搬进标签行要补 4px | 其它字段块的下边距由 `applyFieldOrder` 用 `:scope > .rl-lbl-row` 只给 **data-fld 受管块**补；`.rl-title-col` 属锁定键块（`title` ⛔ 不能带 data-fld）⇒ 不显式补 4px 会让标题输入框比右侧年份框**上移 4px** |
+> | B站下载为何关窗就丢 | `pickBili()` 把 `downloadingId/stage/stagePct` 全存**组件状态**，`await` 的续体随组件销毁一起失去意义 ⇒ 进度没人画 |
+> | 修法为何是「所有权上移」 | 任务挪到 `services/biliDownloadService`，弹窗只是**订阅者之一**：关窗 = 少一个订阅者，任务照跑、进度改走悬浮球（用户点名复用下载模型那颗球） |
+>
+> 改动：
+> 1. `src/Settings.ts` · `createLibraryDirRow` 补 `row.settingEl.addClass('rl-dir-row')`（宽度）+ 方法末尾长注释（⚠️ 解释写在**末尾**：该函数的三条断言按「方法起点后 1200/2400/2700 字符」开窗，写进开头会被挤出窗口）
+> 2. `src/pure/txtParse.ts` 新增唯一判据 `VOLUME_RE` / `isVolumeLine` / `TxtVolumeGroup` / `txtVolumeGroups`（组区间覆盖全部章、卷头章留在组内、卷前散章单出一组）
+> 3. `src/modals/TxtReaderModal.ts` · TOC 改两层：`buildTocVolumeHead`（卷头按钮 + 章数 + 折叠，⛔ 不调 `switchChapter`）+ `.rl-reader-toc-volbody` 包章按钮（带 `data-ch`）+ `expandTocVolumeOf`；`renderContent` 的高亮改按 `data-ch` 数值对齐并按需展开所在卷
+> 4. `src/views/components/EntryForm.svelte` · 标题列包进 `.rl-lbl-row`，✨ 从输入行搬到标签右侧，条件 `manualFill` → `entry || manualFill`，图标换成「三条待填行 + 回填箭头」；scoped 补 `.rl-title-col > .rl-lbl-row { margin-bottom: 4px; }`
+> 5. `styles.css` · 新增 `.rl-epp-rvbar` 之外的 `.rl-reader-toc-volhead/-volcaret/-voltitle/-volcnt` 与 `.rl-reader-toc-volbody`（折叠类名 **`is-folded`**）；撤掉 `.rl-title-row > .rl-ai-btn` 那条已无子节点的死规则
+> 6. `src/services/biliDownloadService.ts`（新建）· `startBiliDownload` / `isBiliDownloading` / `runningBiliDownloads` / `lastBiliOutcome` / `onBiliProgress` / `onBiliOutcome` / `disposeBiliDownloads`；幂等按 bvid、球在**任务开始**就起、结局留 5 分钟、两处订阅回调用 try/catch 包住
+> 7. `src/views/components/MusicDownload.svelte` · `pickBili` 去掉 `await`/`.then` 只转发服务层；`onMount` 挂进度+结局两条订阅并恢复「正在下载」；`onDestroy` 只摘订阅⛔ 不取消任务；结局回显按 `bvid@at` 去重（`onPicked` 会写库）
+> 8. `main.ts` · `this.register(disposeBiliDownloads)` 紧挨既有 `destroyProgressBall`（球挂 body，不会被自动回收）
+> 9. `assert-symbols.cjs` · 三处锚点改新规格（#500/#501 的切片终点 `{#if manualFill}` → 年份块守卫；check499 ⑫ 改判「`{#if entry || manualFill}` + 位置契约 `.rl-lbl-row` < 按钮 < `.rl-title-row`」）—— **判据更严，未放宽任何期望值**
+>
+> 守卫净增 **+44**（7694 → 7738；352 → 356 files）：`tests/txtVolume.test.ts`(12) + `tests/txtTocVolumeGuard.test.ts`(13) + `tests/biliDownloadService.test.ts`(8) + `tests/biliBackgroundGuard.test.ts`(11)，其余为既有文件内追加。
+>
+> 🔴 本轮真坑（7 条）：
+> 1. **`{#if manualFill}` 是三处断言的切片终点**（#500① / #501① 用 `indexOf` 当块边界、check499 ⑫ 用正则要求它紧跟 button）。搬走 ✨ 后该字面量消失 ⇒ `indexOf` 返回 -1 ⇒ 切片变空 ⇒ 四条断言**集体静默假绿**。⇒ 换稳定终点（年份块守卫）并同步正则。
+> 2. **反向守卫第二次命中解释性注释**：`styles.css` 里「为什么撤掉 `.rl-title-row > .rl-ai-btn`」的注释逐字写着该选择器；`biliDownloadService` 里「为什么不用 `window.setTimeout`」的注释同理。⇒ 反向断言前必须 `stripComments`（三档不跨行版，`/\/\*[\s\S]*?\*\//` 会被 `<input accept="image/*">` 吞掉十几万字符）。
+> 3. **模块级 `let last` 撞产物断言**：与 `main.ts` 里 `libraryDisplayName` 的局部 `last` 重名 ⇒ esbuild 为避让把它改名 `last2` ⇒「`const last = normalizeLibraryDirInput(...)`」那条产物判据当场变红。⇒ 改名 `lastOutcomeRef`（⛔ 别为好看改回去）。
+> 4. **`createLibraryDirRow` 的断言按字符数开窗**：在方法开头插解释性长注释，把 `setPlaceholder`(1570) / `blur`(2567) / `Enter`(2697) 整体推到 1200/2400 窗口外 ⇒ 一次红 3 条。⇒ 注释写方法末尾。
+> 5. **`is-collapsed` 撞 #351b 历史反向守卫**（「折叠机制在 CSS 与 JS 两侧都已退场」，那是针对设置菜单的）⇒ 目录卷折叠换名 `is-folded`，⛔ 不为此改动那条守卫（它会误伤真正的回退）。
+> 6. **`window.setTimeout` 在 node 单测里 `ReferenceError`**：服务层被 vitest 直接跑在 `environment: 'node'` 下。⇒ 用裸 `setTimeout`（Electron 行为一致）。
+> 7. **测试锚点会随自己的重命名过时**：`last = outcome` → `lastOutcomeRef = outcome`；`return lastOutcomeRef` 在 `lastBiliOutcome()` 里而不在 `startBiliDownload` 体内（断言放错方法体）。
+>
+> 8. **scoped 子选择器会让同组既有规则升级成三段 hash**（本轮第二次踩，代价 12 条断言）：为了让标题标签行里那枚 ✨ 下移 4.5px，我先把 `.rl-title-col > .rl-lbl-row .rl-ai-btn { position: relative; top: 4.5px; }` 写进 `EntryForm.svelte` 的 scoped 样式 —— Svelte 会给「被新增子选择器命中的元素」的**同组既有规则再叠一层 `.svelte-xxxx`**，产物实测 `.rl-prefill-old.svelte-17ft46c.svelte-17ft46c.svelte-17ft46c{`、`.rl-saved-hint.…` 同样三段；而 `assert-symbols.cjs` 里十余条旧断言（#499 ⑳ / [447] / [522] / #563① 等）钉的是**双 hash** 形态 ⇒ `assert-symbols` 从 EXIT=0 直接变 `本次失败：336 条（基线 324 条）`、新增失败 12 条。⇒ 该规则**必须落全局 `styles.css`**（`.rl-ai-btn` 自 #406 起就是全局类），组件里只留一句「真源在全局」的指路注释；并补一条反向守卫「这条选择器⛔ 不许出现在 scoped 里」。⛔ 别再为「就近管理」挪回组件。
+>
+> 门禁：`tsc` **0 errors** ｜ `esbuild production` **BUILD_EXIT=0**（87 warnings = 基线）｜ `svelte-check` **0 errors / 89 warnings in 6 files** ｜ vitest **356 files / 7739 passed**（EXIT=0）｜ `assert-symbols` **EXIT=0**（324 条 / 基线 324，「✅ 无新增失败」）｜ `_deploy` **ALL_MATCH=1**（main.js `4bccbdf6b3d6` size=2701863 · manifest `3ae51778878c` size=490 · styles.css `2096e7caee82` size=829282）｜ 镜像 robocopy **RC=3**。
+>
+> 突变 **10/10 全红**（`_mut_bili.cjs`，`ALL_RED_OK=1`、`RESTORE_BAD=0`，跑完已删；首轮 8/10，②「签名退回 async」与 ⑧「过期判断改 false」两条没拦住 ⇒ 补「签名字面量」与「整句过期比较」判据后才红）。
+> 对齐守卫另有 **5/5 全红**（`_mut_align.cjs`，跑完已删）：①删掉全局 4.5px ②`top` 改 0 ③改用 `margin-top` 顶替 ④在 scoped 里复制一份（触发 hash 升级）⑤把 `.rl-lbl` 的 `margin: 9px 0 4px` 基准改成 0。首轮 ⑤ 锚点按记忆写（`.rl-lbl { margin: 9px 0 4px; }`）命中 0 次 —— 真实是单行 `.rl-lbl { display: block; … margin: 9px 0 4px; font-weight: 600; }`，⛔ 锚点必须从文件里抄。突变后**重跑过整套门禁**（不假定旧产物仍有效）。
+>
+> 视觉取证（TXT 目录卷折叠）：新建 `_shot/src/tocvolume-protos.html`（3 用例：展开态+当前章高亮 / 第二卷折叠 / 深色主题），DOM 照抄 `TxtReaderModal` 的类名与嵌套（`.rl-reader` 根类 + `volhead`/`volbody`/`item[data-ch]`）；`node tools/mk-sim.mjs` → 841240B、`link标签=0`；`node tools/shot-notecard.cjs` → **SHOT_EXIT=0，18/18 探针全过**，产物 `_shot/tocvolume-protos.png`（1420×2304）。实测值：卷头 2 个 / 卷体 3 个 / 章按钮 8 个；卷头 `flex` 且 `head=220.0 = list=220.0`；卷体 `border-left 1px` + `margin-left 10px`、章按钮比卷头右移 **15px**（head=24.0 / chap=39.0）；「4 章」计数正确；高亮恰 1 条且 `data-ch=2`；折叠后**可见章数 4（8−4）**、`display:none` 无空白占位、`aria-expanded=false` 且箭头朝右；深色卷头底色透明、卷标题 `rgb(154,161,171)`。
+>
+> 🔴 **视觉核对抓到我自己的一个缺陷**：卷头原用 `color: var(--text-faint)`，深色主题下叠 `--background-primary` 对比度只有 ~3.5:1（AA 要 4.5:1），「第几卷」在深色皮肤里几乎看不清。卷头是**分组标题**不是次要说明 ⇒ 改 `--text-muted`，实测 **6.12:1** 过 AA，并补 `tests/txtTocVolumeGuard.test.ts` 一条正向断言（`color: var(--text-muted)` 在、`var(--text-faint)` 不在）锁死。
+> ⚠️ 探针自身也踩了两个坑并已修：⑴ 复现页初版没写 `.rl-reader` 祖先类 ⇒ 全部 `.rl-reader .rl-reader-toc-*` 规则不匹配，一次 7 红（**是页面的错，不是插件的错**）；⑵ `getComputedStyle().width` 永远返回像素值、变量值可能是 `#202225` 十六进制 ⇒ 判「100%」与算对比度都会 NaN/假红，改成跟容器实际宽度比 + 支持 hex。
+>
+> ⚠️ 真机未跑：TOC 卷折叠的展开/折叠、编辑表单 ✨ 的 4px 对齐、B站关窗后悬浮球是否接管，三项都只有源码级与行为级证据（TOC 已有无头 Chrome 视觉核对，另两项没有 1440×900 实物截图）。
+>
+> **#806（2026-11-17 第 77 轮）：m02759 —— 简介栏四项改造（去封面评分角标 / 来源评分右上横排 / 题材那排整排删 / 加大标题）**
+>
+> 用户原话：`m02759`「还有这封面上的评分角标去掉，把来源评分放到简介栏右上角横排，题材和标签两种只留标签，还有加个大标题在简介栏」
+>
+> 用户当场裁定（ask_user_question）：`chips_keep` = **「只留标签那一排，第一排整排去掉（含『类型』胶囊）」**；`title_dup` = **「简介栏加，页头那个也保留」**。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 角标为什么能删干净 | `.rl-epp-cov-score` 是 `scoreTextOf` / `scoreIsPercentOf` / `entrySourceLabel` 三个符号在本文件**唯一**的消费者 ⇒ 角标删掉后三个 import 一起清（否则 `noUnusedLocals` 报错）。⚠️ 它们的真源地位不变，卡片网格 / 表格 / 笔记照旧用 |
+> | 来源评分怎么「右上横排」 | 不改 `buildSourceLine` 的返回值语义（仍是 `HTMLElement \| null`，无来源名就整行不画），只把**挂载点**从 `txt.appendChild(srcline)` 改成 `topRow.appendChild(srcline)`，靠 CSS `margin-left: auto` 顶到第一行最右。⛔ 别另建一行 —— 那样右上角就是空的，横排语义也没了 |
+> | 大标题为什么不能靠 `showName` | 改前签名是 `buildInfoCard(parent, showName = true)`，但**两处调用点都传 `false`**（`:1311` / `:1471`）⇒ 简介栏从来就没有标题。本方法改成单参、**无条件**画标题行，并把两处调用点同步收成单参 |
+> | 页头标题为什么保留 | 用户裁定「简介栏加，页头那个也保留」。两者不是重复渲染：页头是整页首行、简介栏在**下排**，用户往下滚到简介时页头已出视口 |
+> | 删 chips 为什么还要清 CSS | `.rl-epp-info-chips` 容器与 `.rl-epp-info-chip:first-child`（「首枚=类型，高亮一档」）都只服务那排。留着的话**第一个标签胶囊**会被误当成类型加粗 —— 这是删 JS 不删 CSS 的典型漏 |
+> | 「只留标签」标签行怎么排版 | 题材那排没了，`.rl-epp-info-tags` 自己带 `margin-top: 5px` 与元信息行拉开段间距；`.rl-epp-info-chip` 骨架保留（`.is-tag` 仍用它） |
+>
+> **改动**
+>
+> 1. `src/views/EpisodePageView.ts`：`buildInfoCard(parent: HTMLElement): void`（删 `showName` 参数 + 重写文档注释记四条改动）；封面块 `cov` 建好后只留 `img.src/alt`，`const scoreTxt = scoreTextOf(...)` 整块删除（含 `rl-epp-cov-score` 角标、`setTip`、`aria-hidden`）；
+> 2. `src/views/EpisodePageView.ts`：`txt` 区域重排为 `const topRow = txt.createDiv({ cls: 'rl-epp-info-top' });` → `topRow.createSpan({ cls: 'rl-epp-info-name', text: ctx.entry.title })` → `if (srcline) topRow.appendChild(srcline)`；「类型 + 题材」chips 整块（`chips` 数组 / 去重 / `rl-epp-info-chips` 容器）删除；
+> 3. `src/views/EpisodePageView.ts`：两处调用点 `this.buildInfoCard(box, false)` → `this.buildInfoCard(box)`、`this.buildInfoCard(this.infoBoxEl, false)` → `this.buildInfoCard(this.infoBoxEl)`；清掉 `ENTRY_TYPE_LABELS` / `BOOK_KIND_LABELS` / `normalizeBookKind` / `scoreIsPercentOf` / `scoreTextOf` / `entrySourceLabel` 六个 import（每处都留注释说明「真源地位没变，⛔ 别当废弃」）；
+> 4. `styles.css`：新增 `.rl-epp-info-top`（flex + `align-items: baseline` + gap 10px）与大标题档 `.rl-epp-info-name { font-size: 17px; font-weight: 700; line-height: 1.3; }`（原 15px/650）；新增 `.rl-epp-info-top .rl-epp-info-src { flex: 0 0 auto; margin-left: auto; margin-top: 0; }`；`.rl-epp-info-src` 本体去掉 `margin-top: 5px`（它不再另起一段）；
+> 5. `styles.css`：删除 `.rl-epp-cov-score` 整条规则、`.rl-epp-info-chips` 容器、`.rl-epp-info-chip:first-child` 高亮、残留的 `.rl-epp-info-rating` / `.rl-epp-info-rating-stars` 与重复的 `.rl-epp-info-meta`；`.rl-epp-info-cov` 的注释从「角标定位基准」改为「裁切/提亮自成一层」。
+>
+> 守卫净增 **+5**（`tests/episodeInfoBar.test.ts` 17 → 22 条；全局 352 files / 7689 → 7694：`episodeInfoBar` +5，其余文件条数不变）。
+>
+> 🔴 本轮真坑
+>
+> 1. **只断言「这行文字在」会漏掉 `if (false) ...` 假绿**：突变把 `topRow.createSpan(...)` 包进 `if (false)` 后测试仍绿。修法 = 断言该语句**行首缩进后直接是 `topRow.createSpan`**（`body.slice(lineStart, idx).trim() === ''`）且**上一行不得是 `if (`**；
+> 2. **删 import 时多留了一个 `import {`**：`entrySourceLabel` 那行原本后面紧跟另一个 `import {` 的开头，替换时留下重复 ⇒ `TS1003 Identifier expected` / `TS1005 ',' expected` 三连。删 import 要连带看清后一行是不是同形状；
+> 3. **删 JS 不删 CSS = 首枚标签被误当类型**：`.rl-epp-info-chip:first-child` 留着会把第一个 `.is-tag` 胶囊加粗高亮。删功能必须同一轮清样式；
+> 4. **`.rl-epp-info-meta` 原来有两条重复规则**（`:11697` 与 `:11706`），改这块时要先数一遍，否则改一条、另一条悄悄覆盖；
+> 5. **退出码不能看被截断的管道**：`... \| Select-Object -First 6` 会让 `$LASTEXITCODE` 变 1，构建本身是 0 ⇒ 判定看 `BUILD_EXIT`。
+>
+> 门禁：`tsc` **0 errors** ｜ `esbuild production` **87 warnings**（= 基线）｜ `svelte-check` **0 errors / 89 warnings in 6 files**（= 基线）｜ vitest **352 files / 7694 passed**（EXIT=0）｜ `assert-symbols` **EXIT=0**（324 条 / 基线 324，「✅ 无新增失败」）｜ `_deploy` **ALL_MATCH=1**（main.js `c6dd7ed47a21` size=2698047 · manifest `3ae51778878c` size=490 · styles.css `bbdf55d7decd` size=824658）｜ robocopy 镜像 **RC=1**（按约定成功）。
+>
+> 突变 **10/10 全红**（`_mut_m02759.cjs`，`ALL_RED_OK=1`，跑完已删）：①封面角标加回来 ②CSS `.rl-epp-cov-score` 加回来 ③来源行退回 `txt.appendChild` ④CSS 去掉 `margin-left: auto` ⑤chips 整排加回来 ⑥CSS chips + `:first-child` 加回来 ⑦标题包进 `if (false)` ⑧签名把 `showName` 加回来 ⑨CSS 大标题退回 15px ⑩页头标题改名。
+>
+> ⚠️ 真机未跑（应看：简介栏第一行标题与右侧来源评分是否同基线、长标题时来源行是否折行而不是被挤压、标签行与元信息行的段间距）。
+>
+> **#805（2026-11-17 第 76 轮）：m02288 —— 音乐收听时长播放器自动累计 + 卡片「已听 Nh」/ 搜索结果 ✨ 从表头搬到每条结果标题旁**
+>
+> 用户原话：`m02288`「还有用音乐播放器播放每首音乐要统计总时长列在卡片网格封面左上角上统一，而不是让用户手动记录，②AI预填图标按钮不是放在搜索表单列表上啊，移动到每个搜索条目结果页面信息标题旁（不是标题框旁）」
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 「统计总时长」落哪个字段 | 落 `listenMinutes`（累计收听），⛔ 不是 `durationMin`。`src/pure/musicSync.ts:10-15` 文件头早就钉死：`durationMin` 是**片长**、`listenMinutes` 是**收听时长**，本仓没有「这首歌 4 分 29 秒」那种字段 |
+> | ⛔ 不复用 `addTimeSession` | 那个方法（`src/services/EntryService.ts:673`）会往 `playSessions` 里堆「听了一分钟」的垃圾明细，且每次重写笔记 ⇒ 新增 `bumpListenMinutes`，只动 `listenMinutes` |
+> | 计时口径 | 累计**真实播放秒数**（`Date.now()` 起止），⛔ 不用 `currentTime` 差值 —— 拖进度条会被算成收听。不足 1 分钟不落库，零头留在内存跨段累 |
+> | 角标放哪个角 | 用户当场否掉「搬左上角」，裁定**「和游戏/书籍保持在底部原位」**⇒ 复用 `.rl-cov-playtime` + `.rl-cov-foot-top`，⛔ 没新造左上角标。「统一」= 统一自动化，不是统一同一个角 |
+> | 音乐用 `formatPlaytime` 不用游戏那套 `Math.round` | 25 分钟游戏显示「已玩 0h」（`cardPlaytimeBadge` 写死 `Math.round`），音乐必须显示「已听 0.4h」 |
+> | ✨ 为什么⛔ 不能只搬位置 | 表头那颗问的是一个**词**（`title.trim() || query.trim()`），一个词背后可能躺着三部同名不同年的作品；每条结果旁那颗问的是**那部作品**。语义变了，不只是位置变了 |
+> | `on:click\|stopPropagation` 必须留 | 外层 `<button class="rl-res-item">` 整条可点（点了就 `pick(r)` 回填字段），点 ✨ 不能顺带把整条也回填了 |
+>
+> **改动**
+>
+> 1. 新建 `src/pure/listenTime.ts`（78 行，A 的唯一判据真源）：`LISTEN_MS_PER_SECOND` / `LISTEN_SECONDS_PER_MINUTE` / `LISTEN_MIN_SEGMENT_MS`、`isCountableSegment()`、`msToWholeMinutes()`（`Math.floor`，⛔ 不四舍五入）、`class ListenAccumulator`（`addSegment()` 只扣掉换成分钟的部分、零头保留；`pending()`；`reset()`）；
+> 2. `src/views/audioPlayerMount.ts`：`AudioPlayerMountOptions` 加 `onListen?: (track, minutes) => void`；账本 `listenSince` + `flushListen()`（幂等）+ `resetListenFor(track)`；`onPlay` 末尾 `if (listenSince === null) listenSince = Date.now();`（⛔ 无条件覆盖 = 只记最后几秒）、`onPause` / `onEnded` / `destroy()` 各结算一次、`switchTo` 里 `resetListenFor`；
+> 3. `src/services/EntryService.ts`：新增 `bumpListenMinutes(id, minutes)` —— 非正数/找不到/`type !== 'music'` 都 `return null`（⛔ 不抛，调用方是播放器回调）、`Math.max(1, Math.floor(minutes))`、`normalizeEntry` + `save` + `writeNote`；
+> 4. `main.ts` **两处**注入 `onListen`：`buildAudioPlayerOptions`（标签页/侧边栏/命令面板三路共用）与 `private async audioOptionsForNote`（内联块那条，容易漏）；
+> 5. `src/pure/mediaProgress.ts` 新增 `cardListenBadge()`；`src/views/components/MediaList.svelte` 内外两层条件 + `{:else if cardListenBadge(e)}` 分支；
+> 6. `src/views/components/EntryForm.svelte`：表头那颗 ✨ **整块删除**（留 🔴 注释说明⛔ 别加回来）；`.rl-res-row1` 里 `.rl-res-t` 之后插一颗，点 `runAiPrefillForResult(d.title)`；新增该函数（拿**这条自己的标题**当种子、空标题给回执、⛔ 不回落 `query.trim()`）；**旧入口连根删除** `runAiPrefillFromResults()` 与 `$: prefillSeedTitle`；`.rl-res-aibtn` 样式去掉表头期的 `margin-left: auto` / `align-self: center`；
+> 7. 产物断言 `assert-symbols.cjs` 两处按新形态重写（判据**更紧**，⛔ 没放宽）：`check499` ⑳ 改判「`.rl-res-row1` 内按钮在标题之后 + 表头切片内无 `rl-ai-btn` + 全文无 `runAiPrefillFromResults`/`prefillSeedTitle`」，`check558` ③ 两层条件的正则各补 `cardListenBadge\(e\) \|\| `。
+>
+> 守卫净增 **+15**（7674 → 7689；351 → 352 files）：新建 `tests/listenTime.test.ts`（16 条：碎片不计 / 59999↔60000 / 119000 仍 1 分钟 / 零头跨段保留 / 90s→1 剩 30s / 60 段 1 秒第 60 段才吐 1 / 实例互不干扰）、新建 `tests/listenBadgeWiring.test.ts`（16 条：装配层 / 服务层 / 宿主两处 / 卡片四角）、`tests/mediaProgress.test.ts` +4（`已听 0.4h` 对照 `已玩 0h`、三枚互不串味）、`tests/entryFormPrefillSeed.test.ts` 79 → 10 条整体重写（表头清空 / 顺序契约 / 读屏名可区分 / 不回落搜索词 / 旧入口反向守卫）。
+>
+> 🔴 **本轮真坑**
+>
+> - **测试锚点写宽 = 假绿**。突变验证首轮 5/13 没守住，全是守卫太宽：`indexOf('listenSince === null')` 会命中 `flushListen` 里那句 `if (listenSince === null) return;`（应为钉**整句带守卫的赋值**）；`indexOf('audioOptionsForNote')` 先命中调用点 `new AudioInlineBlock(el, () => this.audioOptionsForNote(...))`（必须锚 `private async audioOptionsForNote(`）；`indexOf('{#if !wallView && (cardPlaytimeBadge(e)')` 在外层被改坏后会落到**内层**那条上（必须钉整条条件串）；`indexOf` + 定长切片会跨过函数边界读进下一个方法的 `playSessions`（切片边界必须用**下一个已知符号** `async removeTimeSession(` 定）。
+> - **突变锚点必须唯一**：`await this.writeNote(merged.id);` 在 `EntryService.ts` 里出现 **7 次**（乐观锁那批方法各一次），单独拿它当锚点 `hits=7` ⇒ 直接判不合格。改成带上函数内唯一那句注释才唯一。
+> - **突变形态必须真的改变行为**：⑫ 第一版只插了个空 marker `<span class="rl-res-aibtn-marker">`，顺序契约只比 `rl-res-t` 与按钮的 index ⇒ marker 不触发、测不出东西。改成**真的把按钮搬到标题前面**才红。
+> - **`[exit code: 1]` 可能是管道截断**：`... | Select-Object -First 6` 会让 `$LASTEXITCODE` 变 1，但构建本身是 0。判定构建结果要读 `BUILD_EXIT`，⛔ 不看被截断管道的退出码。
+> - **esbuild warning 数要按汇总行读**：`▲ [WARNING]` 匹配到 175 行（两遍打包 × 87 + 一行详情），`87 warnings` 是两条官方汇总行（`main.js` / `main.assert.js` 各 87），基线口径看这个。
+>
+> 门禁：`tsc` **0 errors** ｜ `esbuild production` **87 warnings**（= 基线）｜ `svelte-check` **0 errors / 89 warnings in 6 files**（= 基线）｜ vitest **352 files / 7689 passed**（EXIT=0）｜ `assert-symbols` **EXIT=0**（324 条 / 基线 324，「✅ 无新增失败」）｜ `_deploy` **ALL_MATCH=1**（main.js `3cd328f9be8f` size=2698783 · manifest `3ae51778878c` size=490 · styles.css `34a97974355c` size=823845）｜ robocopy 镜像 **RC=3**（按约定成功）。
+>
+> 突变 **13/13 全红**（`_mut_m02288.cjs`，`ALL_RED_OK=1`，跑完已删）：①分钟改回四舍五入 ②累计器清零 ③段门槛降到 0 ④服务层去掉 `!== 'music'` ⑤服务层不写笔记 ⑥play 时无条件重置起点 ⑦标签页那条不接 `onListen` ⑧内联块那条不接 ⑨音乐角标不进第一行 ⑩外层条件漏 `cardListenBadge` ⑪✨ 退回表头 ⑫✨ 挪回标题左侧 ⑬每条改回「用搜索词」。
+>
+> ⚠️ 真机未跑（`.testvault` 播放一首歌看「已听 Nh」是否分钟级涨、结果区 ✨ 在窄栏里是否挤出省略号）。
+>
+> **#804（2026-11-17 第 75 轮）：m01782 —— 个人心情改名 / 六类型卡片真源复现页 / 音乐卡冒「书籍」组 / 单集评价改成播放器下方快捷条 + 胶囊重做 + 标签互斥**
+>
+> 用户原话：`m01782`「编辑属性表单的心情改成"个人心情"，还有真机测验一下所有类型笔记渲染条目卡，因为音乐类型笔记怎么渲染卡里有书籍的字段的？②要把将"单集评价"做成一个悬浮快捷条，放在播放器正下方，标签状态选择胶囊UI重做，还有标签不能三个都选中」
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 音乐卡为什么冒出「书籍」 | **不是漏筛 `fieldAppliesTo`**。`author` 的 `appliesTo` 是 `['book','music']`（`src/pure/metaFields.ts:187`，音乐侧靠 `labelFor:{music:'艺术家'}` 改名），却**静态写在 `GROUP_DEFS` 的 book 组**里 ⇒ 音乐卡渲染出「标题写书籍、内容是艺术家」的整块。其余九个书籍专属字段都被正确挡掉 |
+> | 怎么修 ⛔ 别删 book 组的 author | 删了会让**书籍卡也丢作者**。正确做法是按类型**挪组**：新增 `TYPE_GROUP_MOVE = { music: { author: 'music' } }`，且必须同时实现「移出侧 `continue`」+「移入侧 `incoming`」—— 只做移出会把字段从卡上整个删掉 |
+> | 「真机测验所有类型」怎么落地 | `tests/` 347 个文件没有一个编译 Svelte，也起不了 Obsidian ⇒ 双轨：① 行为级 `tests/noteCardAllTypes.test.ts` 用**六类字段全塞满**的 entry 跑真 `buildNoteCardGroups`；② 视觉级 `_shot/src/notecard-all-types.html` + `tools/dump-notecard.mjs` 从**真源函数**导数据，无头 Chrome 截图 |
+> | 复现页⛔ 不能用手写假数据 | 老的 `notecard-two-col.html` 里 `TV_GROUPS`/`MOVIE_GROUPS` 是照着想象写死的，**根本验不出音乐卡的 bug**（假数据里没有 book 组）。新页数据来自 `buildNoteCardGroups` 实跑导出 |
+> | 评价条放哪 | 用户裁定「播放器下方独立一行、跟播放器同宽」⇒ 塞进 `.rl-epp-main`（flex 列）成为 stage 的兄弟节点。⛔ 不放 `.rl-epp-side`（那栏 `absolute inset:0 + overflow-y:auto`，塞进去逼出滚动条、破「右栏高=播放器高」）；⛔ 不 absolute 压画面 |
+> | 标签为什么能三个全选 | 旧实现是 `const next = on ? tags.filter(...) : [...tags, t]` —— 纯多选。改成「选中即替换、再点取消」：`if (on) delete draft.tags; else draft.tags = [t];` |
+> | 已评 N 去哪 | ⛔ 面板标题不留（#803 已迁到表单）。本轮**面板标题也去掉了「第 N 集」**，只剩 `单集评价` |
+>
+> **改动**
+>
+> 1. `src/views/components/EntryForm.svelte`：`<div class="rl-lbl" id="rl-mood-lbl">心情</div>` → `个人心情`（守卫 / chips / 提交一行未动）；
+> 2. `src/pure/noteCard.ts`：新增 `TYPE_GROUP_MOVE` / `TYPE_GROUP_LABEL` 两张表（都带长注释记 m01782 原话与「⛔ 别删 book 组 author」的理由）；`buildNoteCardGroups` 改为 `for (const key of [...g.keys, ...incoming])`，`incoming` 由 `Object.keys(move).filter(k => move[k] === g.key && !g.keys.includes(k))` 算出；`label` 走 `labelOverride?.[g.key] ?? g.label`；
+> 3. `src/views/EpisodePageView.ts`：`playerHost()` 里 stage 之后新增 `this.reviewBarEl = this.mainEl.createDiv({ cls: 'rl-epp-rvbar' });`；新增字段 `reviewBarEl`；`buildSide()` 里整段折叠节（`buildSection(pair, REVIEW_PANEL_TITLE, …)`）删除、替换为 `this.mountReviewBar(isMovie)`；新增 `private mountReviewBar(isMovie)`（清空 → 电影打 `is-empty` 隐藏 → 否则建标题行 + body → `syncReviewPanel()`）；`syncReviewPanel()` 的 DOM 从四行 `.rl-epp-rv-row` 重排成一行 `.rl-epp-rvbar-inner` 里四个 `.rl-epp-rv-group`；标签点击改互斥单选；
+> 4. `styles.css`：原 `.rl-epp-rv-row` 整块替换为 `.rl-epp-rvbar`（`background: var(--background-primary)` + 1px 描边 + 轻阴影 ⇒ 才能从 `.rl-epp-main` 的 secondary 底上「浮」出来，⚠️ 用 secondary 会完全融合）+ `.rl-epp-rvbar-head` / `-title` / `-inner` / `.rl-epp-rv-group(.is-note)`；chip 透明底 999px 胶囊体系原样保留；
+> 5. 新建 `tools/dump-notecard.mjs`（真源导出）+ `tools/shot-notecard.cjs`（无头 Chrome + CDP 截图并读页面自报的 probe 结论）+ `_shot/src/notecard-all-types.html`（六类型 × 明暗双主题复现页，probe 自证六条判据）。
+>
+> 守卫净增 **+23**（7627 → 7650；349 → 350 files）：新建 `tests/noteCardAllTypes.test.ts`（9 条穷举守卫）、`tests/noteCard.test.ts` +3（音乐无 book 组 / 书籍仍有作者 / 键不重复）、`tests/mood.test.ts` +1（`个人心情` 正向 + 反向不退回裸「心情」）、`tests/episodeReviewPanel.test.ts` +10（⑷ 四条 / ⑹ 三条 / ⑸ 三条）。
+>
+> 🔴 **本轮真坑**
+>
+> - **esbuild `onResolve` 插件返回的路径被当成最终路径**，不会再补 `.ts` ⇒ `Could not read from file: src\pure\noteCard`。必须改用 esbuild 内置 `alias` + `resolveExtensions`。
+> - **`getBoundingClientRect().width` 是 border-box**：封面 `width:84px` 加左右各 1px 边框 = **86px**，拿 rect 判 84 会**假红**。要读 `getComputedStyle().width`。
+> - **复现页必须复刻 `displayValueOf`**：枚举行落库存 `watched`/`wow`，真渲染层按 `row.options` 换中文；复现页直接印 raw value 会显示英文 id —— 那是**页面的错**，不是插件的 bug。已补映射并加 probe 兜底。
+> - **`screenwriter` 是 `string[]` 不是 string**（`src/data/types.ts:177`），塞字符串会让 `listClampText` 抛 `TypeError: (v ?? []).filter is not a function`。
+>
+> 门禁：`tsc` **0 errors** ｜ `esbuild production` **87 warnings**（= 基线）｜ `svelte-check` **0 errors / 89 warnings**（= 基线）｜ vitest **350 files / 7650 passed**（EXIT=0）｜ `assert-symbols` **EXIT=0**（324 条 / 基线 324，「✅ 无新增失败」）｜ `_deploy` **ALL_MATCH=1**（main.js `b526e1a4ef85` size=2696013 · manifest `3ae51778878c` size=490 · styles.css `34a97974355c` size=823845）｜ robocopy 镜像 **RC=3**（按约定成功）。
+>
+> 突变 **10/10 全红**（`_mut_804.cjs`，`ALL_RED_OK=1`，跑完已删，还原复核 `RESTORE_BAD=0`）：①移入侧 incoming 删掉（音乐丢艺术家）②`TYPE_GROUP_MOVE` 退回空表（音乐冒出书籍组）③标签退回多选 ④评价条退回右栏折叠节 ⑤电影页不隐藏（空壳占高）⑥标题拼回集号与已评数 ⑦表单标签退回裸「心情」⑧心情组去掉「已看」守卫 ⑨影视把出品方加回来 ⑩评价条底色退回 secondary。⚠️ ③⑩ 第一次锚点按记忆写 `hits=0`，读真源码改成实际缩进/结构后才命中 —— 锚点必须从文件里抄，不能凭记忆。
+>
+> 视觉证据：`_shot/notecard-all-types.png`（1420×3383，12 张卡）＋ 页面 probe **EXIT=0**：`music 组=基本信息/日期/音乐`（无书籍组）、`movie/tv 无出品方`、`game 有出品方`、单集评价块只在 tv/anime、封面内容宽 84px、枚举行全部中文（`状态=已看`、`心情=🤩 震撼`）。
+>
+> ⚠️ **真机未跑**：评价快捷条在 `.rl-epp-main` 里作为新的一行，窄屏折行与「右栏等高」只在 CSS 层面推演过；chip 新视觉与互斥单选也只见源码 + 复现页，未在 Obsidian 里点过。
+>
+> **#803（2026-11-17 第 74 轮）：m01474 —— 单集评价面板三处真 bug（第 0 集 / 点不动 / 标题带已评数）+ chip 视觉重做**
+>
+> 用户原话：`m01474`「单集评价已看后就出现{单集评价·第0集·已评1}啥也不能点击修改了，还有这个选择标签太丑，改成现代化统一的【单集面板不要出现什么第0集等已评数，只在整季表单才显示总评价数】」
+>
+> 🔴 **本节是 #802 的补丁**：#802 我把单集评价面板交付出去，但面板在纯网络条目上整块失活。不是环境问题、不是用户操作问题 —— 「第 0 集」不是文案笔误，是 `activeCellIndex()` 取不到当前集返回 -1 的确证。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 「第 0 集」怎么来的 | 标题拼 `第 ${idx + 1} 集`，而 `activeCellIndex()` = `netIndex ?? currentEpisodeIndex()`，`currentEpisodeIndex()` = `opts?.items[cur]?.index ?? -1` ⇒ **纯网络条目 `episodeFiles` 为空 ⇒ `items` 空 ⇒ 恒 -1**；`exitNetEmbed`/`afterRender` 又把 `netIndex` 清 null ⇒ -1 + 1 = 「第 0 集」 |
+> | 「啥也不能点击修改」的根因 | `commitReview` 第一行 `if (!Number.isFinite(idx) \|\| idx < 0) return;` ⇒ **静默 return**，不写盘、不重画、无提示。chip 画得出来，点了没反应 |
+> | 能不能改 `activeCellIndex()` | ⛔ 不能。它是换集/翻页/高亮的唯一口径（选集格 `is-cur`、时间戳标记都吃它）。只加**评价支路**的两级回退 `reviewIndex()` |
+> | 回退到哪 | `pageCtx.currentIndex`，宿主侧 `main.ts:5081-5083` 恒为 `Math.max(0, (entry.progress?.episode ?? startIdx + 1) - 1)` ⇒ **永远是 ≥0 整数**，纯网络条目照样有值 |
+> | 两级都拿不到怎么办 | 面板画**禁用态 + 说明行**（`.rl-epp-rv-warn`），⛔ 不许再走「画得出来但点击静默失效」那条老路 |
+> | 「已评 N」搬去哪 | ⛔ 不许留在面板标题。迁到编辑表单 `个人评语` 上方，且**只读** `entry.episodeReviews` 快照、**不进脏检查键表、不进提交对象**（进了就会用旧快照覆盖播放器那边的改动） |
+> | chip 为什么「丑」 | 旧版是 `--background-secondary` 实底 + 硬边框，三行 chip（状态/标签/心情）颜色各说各话，像三套拼贴 |
+>
+> **改动**
+>
+> 1. `src/views/EpisodePageView.ts` 新增 `private reviewIndex(): number`（两级回退，注释逐字记录 m01474 根因）；
+> 2. `syncReviewPanel()` 头部重写：`const idx = this.reviewIndex(); const locked = idx < 0;`，标题 `setText(REVIEW_PANEL_TITLE)`（**只留面板名**），`locked` 时画 `.rl-epp-rv-warn`；
+> 3. 四处可交互元素（状态 / 标签 / 心情 / 短评 textarea）全部 `if (locked) …disabled = true;`，`data-tip` 与 placeholder 改「还没定位到当前集」；
+> 4. 移除视图侧已不用的 `reviewedCount` 导入（`noUnusedLocals` 会报）；
+> 5. `src/views/components/EntryForm.svelte` 新增 `import { reviewedCount } from 'pure/episodeReview';` + `function reviewedEpisodeCount(): number` + 表单里 `{#if reviewedEpisodeCount() > 0}` 的 `.rl-hint`（文案带「逐集修改在播放器详情页右侧「单集评价」面板」）；
+> 6. `styles.css` chip 体系重做：三行统一成**透明底 + 细描边**胶囊、只有选中才上色（状态=accent / 高光=green / 槽点=orange / 平庸走默认 accent，⛔ 不设专属色）、`:hover` / `:focus-visible` / `:disabled`（灰化 + `not-allowed`）、新增 `.rl-epp-rv-warn`（橙底 3px 左边）、`prefers-reduced-motion` 收过渡。
+>
+> 守卫净增 **+15**（7612 → 7627；348 → 349 files）：新建 `tests/episodeReviewPanel.test.ts`（15 条，四个 describe：① 第 0 集 / ② 真禁用 / ③ 已评数迁移 / ④ chip 视觉）。
+>
+> 🔴 **三条脆断言踩坑（本轮真金）**
+>
+> - **`stripComments` 把目标字面量自己删了**：抄来的 `/\/\*[\s\S]*?\*\//g` 在 `EntryForm.svelte` 上会命中 `<input type="file" accept="image/*" ...>` 里的 `image/`+`*`，一路吞到**十几万字符之后**的下一个星号斜杠 ⇒ 断言假红。改成三档不跨行（整行块注释 / 行内单行块注释 / 整行行注释）。
+> - **注释里写斜杠星号会把块注释提前闭合**，编译直接报 `Expected ";" but found "单集评价"`。⛔ 别在注释里复述那个字符序列。
+> - **源文件是 CRLF，突变脚本锚点按 `\n` 写 ⇒ 4/8 假 `hits=0`**。突变器必须先按文件真实换行归一。
+>
+> 门禁：`tsc` **0 errors** ｜ `esbuild production` **87 warnings**（= 基线）｜ `svelte-check` **0 errors / 89 warnings**（= 基线）｜ vitest **349 files / 7627 passed**（EXIT=0）｜ `assert-symbols` **EXIT=0**（324 条 / 基线 324，「✅ 无新增失败」）｜ `_deploy` **ALL_MATCH=1**（main.js `fa689a537909` size=2695447 · manifest `3ae51778878c` size=490 · styles.css `7ca554762e97` size=822195）｜ robocopy 镜像 **RC=1**（按约定成功）。
+>
+> 突变 **8/8 全红**（`_mut_review_panel.cjs`，`ALL_RED_OK=1`，跑完已删）：①评价支路退回 `activeCellIndex()` ②标题把集号拼回去 ③locked 时不禁用 ④表单删「已评 N」⑤chip 退回实心 secondary 底 ⑥禁用态样式删掉 ⑦`.rl-epp-rv-warn` 样式删掉 ⑧表单把 `episodeReviews` 也提交上去。还原复核 `RESTORE_BAD=0`。
+>
+> ⚠️ **真机未跑**：`activeCellIndex()` 恒 -1 的那条路（纯网络条目、退出内嵌后）只能在真机确认修复生效；chip 新视觉也只见源码未见实物。这条写在这里，不当作已验证。
+>
+> **#802（2026-11-17 第 73 轮）：m00002 —— 六条需求（SWF 载体目录约定 / 时间戳右键笔记 / 心情守卫与单集评价 / 删影视出品方 / 占位符全量审计 / 检测与导入两处报障）**
+>
+> **用户原话（六条，逐条要点）**：① SWF/H5 载体目录约定（单文件无存档直接放统一目录、单文件有存档做独立目录、多文件做独立目录其下 `saves/`、H5 用网页嵌入 + OAuth 2.0 PKCE）② 本地播放器右键浮出时间戳笔记记录（含六档心情小图标，例「20:15 震撼」）、左键一键插入时间戳或截图时间戳 ③ 「个人心情」只在观看状态「已看」时出现；动画/剧集把「个人状态与评价」拆宏观（季/整部）与微观（单集）两层；播放器详情页有选集时在字幕面板上方加单集评价面板（未看/在看/已看默认未看 + 高光/平庸/槽点标签 + 有高光/槽点的选集在网格上流光/崩坏 + 六档心情 + 一句话短评），各集数据写入该季 md 的 yaml，笔记渲染条目卡也显示 ④ 编辑渲染条目卡删掉影视下的「出品方」（搜索添加的条目都没有该字段回填）⑤ 列出所有文本输入框占位符，讲清单标签与多标签怎么区分（逗号还是斜杠）⑥「失效性链接检测」按一下后误退出仍显示「检测中」、最终无结果弹窗；「从笔记导入条目」要弹引导弹窗说明笔记需满足什么条件，不能只提示「没有可导入的笔记」。
+>
+> **四条当场裁定（ask_user_question）**：① `dir_root` = **保留「游戏目录」设置项，只约定其内部结构**（不做迁移、不破坏存量库）；② `saves_place` = **只加「导出/导入存档」能力，不动现有落点**（存档仍落 `pluginDir()/saves/<entryId>.json`）；③ `h5_oauth` = **本轮不做 H5 登录**，① 收敛为纯 SWF 载体目录约定；④ `assert_baseline` = **重冻基线**，把既有漂移入档（⛔ 不改断言判据、不放宽期望值）。
+>
+> **判断 / 结论**
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | ④ 的「出品方」到底在哪 | ⛔ 不在编辑表单里 —— `EntryForm.svelte` 只有 `let producer`（`:1240`）与 `input.producer`（`:4179`）两处 state/提交，**模板没有输入框**；唯一写入源是 `services/douban.ts:568` 的 `pick('出品方')`（书籍回填）⇒ 影视那行永远是「—」。用户指的「编辑渲染条目卡」= 笔记里的 `pure/noteCard.ts` 投影 |
+> | ④ 能不能改 `metaFields.ts` 的 `appliesTo` | ⛔ 不能。它被 `pure/tableColumns.ts:75` / `pure/fieldOrder.ts:133` / `pure/fieldOrderCompare.ts:136` / `Settings.ts:5606` / `pure/noteCard.ts:360` 五处共用，删了会连带删掉表格列与字段排序。改用 `TYPE_EXCLUDED_KEYS = { movie: ['producer'], tv: ['producer'] }` **只摘投影**，`game` 保留（用户只说「影视下的」） |
+> | ④ 只写单向断言会怎样 | 会假绿。「所有人都不显示」也满足「影视不显示」⇒ 必须同时钉 `game` 仍 `value === '某出品方'`，外加一条 `applyNoteCardEdit` 回写测试证明摘的是投影不是字段 |
+> | ③ 心情为什么不该一直显示 | 心情 = 「看完之后的感受」，未看/在看露出来只是空壳。但**只能不渲染、⛔ 不能清变量** —— 状态从「已看」改回「在看」再存时把已存心情清掉，用户切回来就没了 |
+> | ③ 单集评价的落盘形状 | 必须与 `videoPositions` / `subtitlePaths` 同构的 `Record<集下标字符串, …>`（共用键空间才能「换集即换评价」）。⛔ 不能改数组 —— 三个集数组已因压缩空位踩过「第 2 集标题跑到第 1 集」 |
+> | ③ yaml 为什么必须是**单行** JSON | `pure/noteEditable.extractFrontmatterFromNote` 是**逐行**解析（`split('\n')` + 首个冒号切键值）⇒ 嵌套块里 `  0:` 子行会被当成顶层键、父键值为空串，**读不回来**。单行 JSON 同时被 Obsidian/Dataview（flow mapping）与本插件（整串 `JSON.parse`）读成对象 |
+> | ③ 流光/崩坏怎么加 | 只用 `::after` 伪元素叠层，⛔ 不动格子本体 background/color —— 否则与 `.is-cur`（当前集 accent 实心）、`.is-dead`（失效压暗）打架 |
+> | ⑥ 检测「一直检测中」的真因 | ⛔ 不是文案。三条叠加：㈠ `nodeHttp.TIMEOUT_MS = 30_000` 是 **socket 空闲超时**（`req.setTimeout`），不是整条请求截止、重定向每跳重计；㈡ `linkCheck.checkOne` 的 `await t.get(...)` **完全没有超时**，全库在 `LINK_CHECK_CONCURRENCY = 6` 下串行 ⇒ 整趟几分钟不落定；㈢ 弹窗**没有中途出口**（`canClear` 要求 `!scanning`），用户只能按 ✕，而 `onClose()` 把 `listEl/subEl/footEl/opsEl` 全置 null ⇒ `finishScan` 全静默 no-op ⇒ 结果丢失、按钮永久「检测中…」 |
+> | ⑥ 检测失败为什么弹不出来 | `checkOne` 的 `catch { return 'unknown' }` **不抛** ⇒ 设置页 `.catch(() => modal.close())` 几乎走不到，「弹窗被关」只能是用户自己按的 |
+> | ① 多文件为什么必须「先搬后补」 | 多文件判据要等主影片字节下来扫出资源名才知道。若先补资源再搬，资源留在平铺区，两个游戏都引用 `sounds/bgm.mp3` 时后一个被 `existing` 挡下 ⇒ 两边资源全错位 |
+> | ① 空游戏名为什么不能退回 `baseDir/swf` | 那时文件名只能取 URL 末段（`04.swf`），多条会互相顶掉 ⇒ 退回 `baseDir` 本身 |
+>
+> **改动**
+>
+> 1. **①** 新建 `src/pure/gameLayout.ts`（`GAME_SWF_SUBDIR` / `GAME_SAVES_SUBDIR` / `gameCarrierLayout` / `gameCarrierDir` / `gameBundleSavesDir` / `dirOfSwf` / `isInSwfFlatDir` / `isInBundleDir` / `shouldUpgradeToBundle`）；新建 `src/pure/gameSave.ts`（`buildSaveBundle` / `parseSaveBundle` 永不抛 / `cleanGameSaves` / `saveBundleFileName` 洗 Windows 非法字符）；`main.ts` 下载落点改 `gameCarrierDir(baseDir, gameFolder, layout)`、新增 `flashAssetRefs` 与 `moveFlashToBundleDir`（`fileManager.renameFile`，⛔ 不用 `adapter.rename`）、新增 `exportGameSaves` / `importGameSaves`（覆盖式 `ConfirmModal` 二次确认 + 回读校验）/ `gameBundleDirOf` / `refreshFlashGame`；`src/views/FlashGameView.ts` 工具栏加「导出存档 / 导入存档」两枚 + 新增 `reloadStage()`（必须重挂 srcdoc —— 存档在影片载入**前**灌 localStorage，活着的 iframe 再塞只等下一局）；`Settings.ts` 把游戏启动器那行抽成 `renderGameLauncherRow` 并改「游戏目录」desc。
+> 2. **③** 新建 `src/pure/episodeReview.ts`（状态/标签/特效判据 + `normalizeEpisodeReview(s)` + `reviewAt`/`setReviewAt` + yaml 单行序列化 `EPISODE_REVIEWS_FM_KEY = 'episode_reviews'` + 卡片投影 `episodeReviewLines` 数值升序）；`data/types.ts` 加 `episodeReviews?`、`data/catalog.ts` 加白名单（漏了会静默丢弃）；`noteGenerator.ts` / `noteEditable.ts` 接读写两侧；`EntryForm.svelte` 心情块包 `{#if status === 'watched'}`；`EpisodePageView.ts` 在字幕节**之前**插「单集评价」节（面板四行：状态三档 / 标签三档多选 / 心情六档仅已看时建 / 短评 `change` 才写盘）+ `buildCell` 挂 `is-fx-highlight` / `is-fx-flaw`；`main.ts` 加 `persistEpisodeReview`（JSON 比对相同就不写盘，避免改 mtime 撞 G 双写冲突）；`noteCardMount.ts` 加 `renderReviews`（最多 10 行 + 「还有 N 集」）。
+> 3. **④** `pure/noteCard.ts` 加 `TYPE_EXCLUDED_KEYS` 与 `if (excluded?.includes(key)) continue;`（media 组 keys **原样未动**，`valueOf` / `applyNoteCardEdit` 的 producer 读写分支照旧保留）。
+> 4. **⑤** 交付审计报告 `Project-Rule/placeholder-audit-1.5.0.md`（419 行）：全仓 **160 处**输入框占位符（`EntryForm.svelte` 66 / `Settings.ts` 31 / `modals/` 51 / `views/` 12），不一致 **8 条**，其中 **3 条会静默吞用户输入**（tags 两套口径：表单 `split(/[,，]/)` vs 列表 `split(/[、,，]/)`；genres/cast 表单认斜杠 `split(/[\/、,，]/)` 而 `tableCell.ts:177` 只认逗号且无条件 `ok: true`；`hintOf()` 全仓零调用 ⇒ 28 条约束永不渲染）。
+> 5. **⑥** `services/linkCheck.ts` 加 `LINK_CHECK_TIMEOUT_MS = 12_000` + `LinkCheckStopSignal` + `withDeadline`（两处 `t.get` 都套）；`main.ts scanLibraryLinks` 加 `opts.signal` / `onProgress`，返回 `stopped`/`done`/`total`；`LinkCheckModal` 加进度条 + 三态横幅 + 「停止检测」+ `closedByUser` 兜底 Notice；新建 `modals/NoteImportGuideModal.ts`（`noteImportRequirements` 恰四条 + 上次扫描的跳过明细前 12 条）；`main.ts` 拆 `showNoteImportGuide` / `runNoteImport`。
+>
+> **守卫净增 +77**（vitest 7535 → **7612**；342 → **348** files）。新增 6 个守卫文件：`episodeReview.test.ts` 20 条 ／ `gameSave.test.ts` 15 条 ／ `gameLayout.test.ts` 13 条 ／ `linkCheckStop.test.ts` 6 条 ／ `moodGate.test.ts` 6 条 ／ `noteImportGuide.test.ts` 4 条；既有文件增改：`noteCard.test.ts` +2（④ 双向断言）、`flashProgressAndLauncher.test.ts` +2（① 游戏目录 desc 与抽方法）、`flashGameShell.test.ts` 改写 2 条（原「一个游戏一个目录」→「平铺区 / 独立目录」）。
+>
+> **🔴 本轮真坑**
+>
+> 1. **产物断言初始 17 条红，逐条归因后判定全是「1.5.0 既有漂移」**：`updateHeader` 期望 6 实得 9（`FlashGameView` 那族是后加的）、`this.opened = true` 期望 2 实得 3、`AUTOSAVE_KEYS` 期望 9 枚实得 11（`gameSwf`/`gameEmbed` 是 2026-11-16 新增）、`renderExperimentalRows` 组内 `setName` 期望 3 实得 4。证据：`git show HEAD:` 里这些符号**全是 0**，且相关文件 mtime 全早于本轮。按裁定 `--write-baseline` 重冻为 324 条，复跑 EXIT=0（⛔ 全程未改判据）。
+> 2. **`_mut` 突变器不校验锚点会假绿**：第一版 8/14 条锚点没命中（我凭记忆写的 `tags.includes('flaw')`，真实是 `review.tags.includes('flaw')`；`saveBundleFileName` 的清洗是多行链式；导入引导第四条是**字符串字面量**而非常量）。若静默 SKIP，输出会显示「全部通过」。修法：锚点必须**恰好命中 1 次**，否则直接判失败。
+> 3. **`class="rl-mood-row"` 在整份文件里只有 2 处命中**（模板 1 + 样式 `.rl-mood-row {` 1）⇒ 断言写 `== 1` 会红。这条只能靠实跑发现。
+> 4. **esbuild 产物 md5 跨构建不稳定**（同为 2694397 B 却 `7a9eb86b4bc4` → `7a4c6d5ee06a`）⇒ ⛔ 不能用跨构建 md5 比对判断「源文件没还原」，只能靠 `_deploy.cjs` 的**当轮**三方一致。
+> 5. **`Get-Content` 读中文源码乱码**，且 PowerShell 双引号里的反引号会被当转义 ⇒ 读源码一律用 `read`/`grep`；校验脚本写成 `.cjs` 文件再 `node` 跑，⛔ 不塞进 `node -e`。
+>
+> **门禁**：`tsc` **TSC_EXIT=0** ｜ vitest **348 files / 7612 passed / 0 failed**（53.93s）｜ `esbuild production` **87 warnings**（=基线）｜ `npm run check` **0 errors / 89 warnings in 6 files**（=基线）｜ `node _deploy.cjs` **ALL_MATCH=1**（main.js size=2694397 · styles.css `383a367f8ae9` size=819472）｜ `assert-symbols` **ASSERT_EXIT=0**「本次失败 324 条（基线 324 条）」+「✅ 无新增失败」｜ robocopy 镜像 **RC=3**（按约定 0/1/2/3 均成功）。
+>
+> **突变 14/14 全红**（`_mut_1_5_0_batch.cjs`，`ALL_RED_OK=1`，跑完已删）：①影视把 producer 加回来 ②排除判据短路 ③心情块退回无条件渲染（4 failed）④特效判据退回「永不特效」⑤yaml 序列化退回多行 ⑥卡片投影退回字符串排序 ⑦投影退回「铺满所有集」⑧检测超时退回 600s ⑨停止信号被忽略 ⑩导入引导删掉「路径占用」那条 ⑪布局判据退回「永远平铺」⑫空游戏名退回 `baseDir/swf` ⑬存档解析改成会抛 ⑭导出文件名不洗非法字符。**14/14 后复核 10 个源文件已逐字还原（`RESTORE_BAD=0`）**。
+>
+> **⚠️ 真机未跑（本轮遗留）**：`.testvault` 真机验证（`tools/rd.cjs`）本轮**未执行**，以下需真机确认：① 游戏目录下 `swf/` 与 `<游戏名>/` 两级是否真按预期落盘、存档导出/导入按钮位置与图标是否与既有四枚协调；③ 单集评价面板在 `.rl-epp-side`（absolute inset:0 + overflow-y:auto）里会不会把「总高严格等于播放器高」破掉（新增了一整节，风险最高）、流光/崩坏在真实主题下的观感；⑥ 停止检测按钮与进度条的真机布局。⛔ 不要把这些当成已验证。
+>
+> **#801（2026-11-15 第 71 轮）：m07813③ —— 播放器详情页简介栏加来源行 / 标签胶囊 / 省略号展开**
+>
+> **用户原话（逐字）**：「给播放器详情页的简介栏优化一下如加评分来源、标签、简介可通过省略号展开完整」
+>
+> **两条裁定**（ask_user_question）：① 评分来源写法 = 「豆瓣 8.3 · 232425 人评价 ↗」② 标签 = 「只展示，不可点」。
+>
+> **判断 / 结论**
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 简介卡在哪 | **不在 .svelte 里** —— `EpisodePageView.ts` 的 `buildInfoCard()` 命令式画 DOM |
+> | 简介正文数据源 | `entry.summary`（`main.ts:5018` → `overview: entry.summary ?? ''`）—— ⚠️ 不是 `overview` 字段 |
+> | 裁切已有吗 | 已有 `-webkit-line-clamp: 4` 的省略号，**缺的是展开出口** |
+> | 标签能否复用题材胶囊 | ⛔ 不能 —— 会破坏 `.rl-epp-info-chip:first-child`「首枚恒为类型」的高亮规则 |
+> | 老口径（禁评分行）还算不算 | 算，但只禁**个人评分**与**裸大众分**；本轮加的是**带出处的来源行** |
+> | 按钮底色发灰 | 🔴 真机实测：单类选择器压不过核心 `button:not(.clickable-icon)`（0,1,1）⇒ 必须两级 |
+>
+> **改动**
+>
+> 1. `src/views/EpisodePageView.ts` 新增三个私有方法：`buildSourceLine(ctx)`（有 `sourceName` 才画，分 > 0 才画分、人数 > 0 才画人数、`/^https?:\/\//i` 才出 ↗ 并可点可键盘）、`appendTagChips(txt, entry)`（空则整组不画、`Set` 去重保序、⛔ 无 click 无 hover）、`buildDesc(txt, overview)`（`raf` 里量 `scrollHeight > clientHeight + 2` 才挂「展开全文」按钮，`aria-expanded` 双向同步，`insertAdjacentElement('afterend')` 紧贴简介）。
+> 2. `buildInfoCard()` 尾部接线顺序：来源行 → 标签胶囊 → 简介。
+> 3. `styles.css` 新增 `.rl-epp-info-src*` / `.rl-epp-info-tags` / `.rl-epp-info-chip.is-tag` / `.rl-epp-info-desc.is-open` / `.rl-epp-info-txt .rl-epp-info-desc-toggle`。
+> 4. `tests/episodeInfoBar.test.ts` 新建 **17 条**守卫。
+>
+> **守卫净增 +17**（vitest 7274 → 7291）。
+>
+> **🔴 两个真坑**
+>
+> 1. **`aria-label` + `data-tip` 双份提示**：原写法 `row.setAttribute('aria-label', …)` 与 `setTip(row, …)` 并存 ⇒ 既有守卫 `tests/tooltipSingleSource.test.ts` 当场红。修法：改 `srLabel(row, …)`（插 `.rl-sr` 隐藏文本，`setTip` 自己会 removeAttribute）。
+> 2. **按钮底色是主题按钮灰 `rgb(230,230,230)`**（真机实测，只在真机才看得见）：单类 `.rl-epp-info-desc-toggle { background: none }` 压不过核心 `button:not(.clickable-icon)`。修法：升两级 `.rl-epp-info-txt .rl-epp-info-desc-toggle`，真机复测 `toggleBg: rgba(0,0,0,0)`。
+>
+> **门禁**：`tsc` **TSC_EXIT=0** ｜ vitest **331 files / 7291 passed / 0 failed**（38.84s）｜ `esbuild production` **87 warnings**（=基线）｜ `npm run check` **0 errors / 89 warnings in 6 files**（=基线）｜ `node _deploy.cjs` **ALL_MATCH=1** ｜ `assert-symbols` **ASSERT_EXIT=0**「本次失败 311 条（基线 318）」+「✅ 无新增失败」。
+>
+> **突变 12/12 全红**（`_mut_infobar.cjs` 10 + `_mut_toggle.cjs` 2，`ALL_RED_OK=1`）：①来源行不要求 sourceName ②用 `rating` 冒充 `communityScore` ③`srLabel` 退回 `aria-label` ④标签合进 `chips` 数组 ⑤去掉「超出才出按钮」判断 ⑥展开态只改 clamp 不退回 block ⑦按钮 `width: 100%` ⑧标签加 hover ⑨来源行无条件 pointer ⑩裁切退回 `max-height: 80px` ⑪按钮退回单类选择器 ⑫单类只留 hover。
+>
+> **真机实测**（`.testvault` 1440×900，宿主 **Obsidian 1.15.1**，pid=20388）
+>
+> | 项 | 实测值 |
+> | --- | --- |
+> | 简介正文 | `descLen 248` / `lineClamp "4"` / `scrollH 119` vs `clientH 79`（裁到 4 行） |
+> | 展开按钮 | 只在超出时出现：`toggleText "展开全文"` / `aria "false"` / `w 46` / `alignSelf flex-start` / `bg rgba(0,0,0,0)` |
+> | 点展开 | `text "收起"` / `aria "true"` / `clamp "none"` / `display block` / `h 79 → 119` |
+> | 再点收起 | `text "展开全文"` / `aria "false"` / `clamp "4"` / `h 119 → 79` |
+> | 来源行 | `srcText "豆瓣 9.2 1732168 人评价 ↗"` / `isLink true` / `role link` / `tabIndex 0` / `cursor pointer` |
+> | 标签胶囊 | 4 枚 `is-tag`：喜剧 / 爱情 / 奇幻 / 古装（与题材同名的那 4 枚属题材组，各成一组） |
+>
+> **截图**：`_shot/rd/ep-info-m07813c.png`（756×600，193636 B）目视：来源行「豆瓣 9.2 1732168 人评价 ↗」、标签胶囊第二排、完整简介 + 蓝色「收起」（透明底）。
+>
+> ⚠️ 探针侧记：`.testvault` 里 **0 条有 summary**（`maxOvLen: 0`）⇒ 简介卡整块不渲染，初次探针 `hasDesc:false` 不是代码问题。修法：先 `service.update(id, { summary })` 灌一条 248 字长简介再验。
+
+> **#800（2026-11-15 第 70 轮）：m08506 —— 系列卡四件事收进「编辑系列属性」窗口，右键菜单只留批量关联**
+>
+> **用户原话（逐字）**：「还是将改系列名、排序号、批量填合集、批量填标签放进编辑系列属性页面窗口里较好，删除右键菜单和其单独改的入口和页面，然后继续开始播放器详情页简介栏」
+>
+> **两轮裁定（ask_user_question）**：`assoc`「批量关联怎么办」→ 「右键菜单保留，只留这一条」；`hover`「悬停那颗 ⋯ 怎么办」→ 「保留条目菜单」。⇒ 右键菜单**不清空**、只留「批量关联」一条；悬停 ⋯ 继续开这个菜单。
+>
+> **判断 / 结论**：
+>
+> | 问题 | 结论 |
+> | --- | --- |
+> | 「收进去」是否等于删右键菜单？ | 用户后一轮明确「保留，只留这一条」⇒ 只留批量关联，其余四条搬窗口 |
+> | 搬进去的四件事谁来落库？ | 全部由 `SeriesPropsModal` 自己落库；原来那三个 `TextPromptModal` 入口与 `SeriesReorderModal` **整文件删除** |
+> | 排序号的交互放哪？ | 窗口内成员清单**就地拖拽**（复用 `moveItem`）+ ↑↓ 键盘 + 「保存排序」脏标记按钮，不用再开第二个弹窗 |
+> | 合集分（系列分）怎么存？ | 直接 `service.setSeriesRating`（原本就没有独立弹窗，唯一例外） |
+> | 改名时合集分会丢吗？ | 不会：`doRename` 里把旧键的分搬到 `${type}\u0001${normalizeSeriesName(next)}` 再清零旧键 |
+> | 覆盖合集要不要二次确认？ | 要（`ConfirmModal`，文案含「原有值会被覆盖」）；追加标签不需要（纯并集） |
+>
+> **改动**：
+>
+> 1. `src/views/components/SeriesProps.svelte` 重写（约 396 行）：新增 `moveItem` 拖拽排序（`order` / `dragId` / `overId` / `orderDirty` / `onKeydown` ↑↓ + `queueMicrotask` 还焦点 / `saveOrder`），`onReorder` 改签名 `(ids: string[]) => void`，新增 `onAssociate`。
+> 2. `src/modals/SeriesPropsModal.ts` 重写（223 行）：`doRename` / `doRate` / `doSetCollection`（静态 `import { ConfirmModal }`）/ `doAddTags` / `doReorder`（`planSeriesReindexAll` → `bulkSetSeriesIndex` → Notice）全在自己这边落库。
+> 3. `main.ts`：删 `openSeriesReorder` / `openSeriesRenamePrompt` / `openGroupCollectionPrompt` / `openGroupTagsPrompt` 四方法 + 两个随之无用的 import。
+> 4. **删文件** `src/modals/SeriesReorderModal.ts`、`src/views/components/SeriesReorder.svelte`。
+> 5. `MediaList.svelte`：右键菜单只剩「批量关联」一条（连 `.rl-ctx-sep` 一起删），五个随之无用的 prop 删除；系列卡信息栏单击/Enter 入口保留。
+> 6. `HomeView.ts` / `HomeView.svelte`：四条接线 + 四个 `export let` + 四处透传一并删除。
+>
+> **守卫**：`tests/seriesProps.test.ts` 全量重写（18 条）；`assert-symbols.cjs` 五处改写（`check608` 计数 6 → 1、回执改指 `SeriesPropsModal`、三处产物锁 `SeriesReorderModal` → `SeriesPropsModal`、`check573 ②`、`check9 #609①`）。
+>
+> **两个探针/断言坑**：
+>
+> 1. `js608` / `js9` 原先硬编码读**压缩后**的 `main.js` ⇒ minify 改标识符 ⇒ 所有符号 0 处，制造 5 条假红。改成 `const js608 = js;`（`js` 优先读未压缩的 `main.assert.js`）。
+> 2. 未压缩产物带 JSDoc ⇒ 反向守卫 `split(name).length - 1 === 0` 会把注释里提到的旧名数成 1 处（`SeriesReorderModal` 裸数 3 / 剥注释 0）。反向项一律先 `noc608(js608)` 剥注释。
+>
+> **门禁**：`tsc` 0 ｜ vitest **330 files / 7274 passed** ｜ esbuild **87 warnings**（=基线）｜ svelte-check **0 errors / 89 warnings**（=基线）｜ `_deploy` **ALL_MATCH=1** ｜ `assert-symbols` **EXIT=0**「本次失败 311 条（基线 318）」+「✅ 无新增失败」+「✅ 比基线更好 7 条」。
+>
+> **突变**：`_mut_m08506.cjs` **10/10 全红**（不调 `moveItem` / `draggable=false` / 清单 role 换成 list / 排序入参被复制 / 排序落库换错原语 / 接回 `openSeriesReorder` / 右键加回编辑系列属性 / `data-tip` 退回单卡那句 / `isConnected` 改 `if (false)` / `onAssociate` 不 export），`ALL_RED_OK=1`。
+>
+> ⚠️ 突变 ③ 首跑 `[GREEN!!]` —— 组件 HTML 注释里先出现了 `role="listbox"`（那句「⛔ 别用 role="list"」）⇒ 突变替换命中注释、真属性没改。修法：断言钉真实标记 `/<div class="rl-sp-list" role="listbox" aria-label=/`，突变锚点也带 div 前缀。这是本项目第五次「注释污染断言」。
+>
+> **真机（`.testvault` 1440×900）**：右键系列卡 ⇒ 菜单只有 `["批量关联"]`；单击信息栏 ⇒ 窗口开（`min(560px, 92vw)`、宿主标题已清空、5 颗星、15 行成员、`draggable=true`、`saveDisabled=true`）；拖第 1 行到第 3 行 ⇒ 脏标记亮、点「保存排序」⇒ Notice「已按顺序重排「熊出没 动画系列」15 部的序号」、重开后顺序持久（原第 1 名「熊出没」挪到第 3 位、序号 1..5 连续）。截图 `_shot/rd/series-props-m08506.png`（756×600，132183 B）。
+>
+> **#799（2026-11-15 第 69 轮）：m07813② —— 系列卡也能打开「编辑系列属性」窗口**
+>
+> **用户 m07813 原话（逐字）**：「②给系列卡也做一个编辑属性窗口（同时右键菜单的改系列名、批量填合集、批量填标签收进编辑系列属性页面内。同单击单卡卡片网格信息栏逻辑一样，单击系列卡信息栏也打开编辑属性窗口）」
+>
+> **用户三条裁定（ask_user_question 已答）**：① 右键菜单 —— **保留右键三条 + 新增编辑窗口里也有**（不想破坏既有肌肉记忆）② 出口 —— **单击信息栏 + 右键菜单首项 + 悬停 ⋯ 菜单**③ 窗口字段 —— 系列名 / 合集评分（系列分）/ 组内成员清单（只读）/ 排序号入口（跳现有拖拽弹窗）
+>
+> **判断与结论**
+>
+> | 疑点 | 结论 |
+> | --- | --- |
+> | 用户说「收进去」，能不能真删右键三条？ | ❌ 不能。`assert-symbols.cjs:21085-21108` 钉死「改系列名」必须排**第一顺位**、且五条齐全 ⇒ 裁定①走「保留 + 窗口里也给一份」 |
+> | 窗口自己落库还是转交宿主？ | ✅ **全部转交**（改名 / 填合集 / 加标签 / 排序号都走宿主既有入口），唯一例外是合集评分——它没有既有弹窗，直接 `service.setSeriesRating` |
+> | 悬停 ⋯ 要再加一枚按钮吗？ | ❌ 不用。`⋯` 开的就是 `openGroupCtx`，菜单首项自动带出「编辑系列属性」 |
+> | 为什么组件里按钮要两级选择器？ | 核心 `button:not(.clickable-icon)` 是 (0,1,1)，单类 `.rl-sp-btn` (0,1,0) 压不过 |
+> | 读评分期间用户关窗怎么办？ | `if (!this.contentEl.isConnected) return;` —— 否则会往已卸载的容器挂组件 |
+>
+> **改动五处**
+>
+> 1. 新建 `src/views/components/SeriesProps.svelte`（约 320 行）—— 只画内容、不落库；五段 UI：系列名 / 合集评分 5 星 / 归属合集 / 追加标签 / 组成员只读清单（成员 > 8 收起）。
+> 2. 新建 `src/modals/SeriesPropsModal.ts` —— `extends Modal`，`onOpen()` 清宿主标题 + `min(560px, 92vw)`；`mount()` 先 await 读本组分再挂组件。
+> 3. `src/views/components/MediaList.svelte` 三处：新 prop `onOpenSeriesProps`；系列卡信息栏照抄单卡那套三件套（`class:rl-meta-edit` / `role` / `tabindex` / `data-tip` = 点击编辑系列属性 / Enter+Space / `releaseCardFocus`）；右键菜单**最前**插「编辑系列属性」。
+> 4. `src/views/HomeView.ts` + `HomeView.svelte` 接线 `onOpenSeriesProps`；`main.ts` 新增 `openSeriesProps(group)`。
+> 5. `assert-symbols.cjs:21078-21125` —— 右键菜单计数 **5 → 6**，新增「总入口排最前」断言（`编辑系列属性 < 改系列名 < 排序号`）。
+>
+> 守卫净增 **+14**（7256 → **7270**，`tests/seriesProps.test.ts` 四个 describe）：①组件五条（四类字段 / **不落库** / 只读清单无输入控件 / 按钮两级选择器 / 五回调）②Modal 三条（批量转交宿主 + 评分例外 / `isConnected` 守卫 / 三件套壳）③三入口三条（信息栏三件套 / 右键 6 条且总入口最前 / 悬停浮层**恰好 2 枚按钮**且不直连）④接线三条。
+>
+> 🔴 **定位坑（两处，务必复用）**：①`<div class="rl-cov-hover">` 在 `MediaList.svelte` 有 **3 处**（分组头 / 普通卡 / 系列卡），`openGroupCtx` 有 2 处 ⇒ `indexOf`/`lastIndexOf` 必然定位错；正解是**遍历三处切片、挑含 `openGroupCtx(g, ev)` 的那一处**。②`rl-sp-btn` 的 CSS 真实形态是**两行 + 4 空格缩进**，按单行字面量锚定会恒空。
+>
+> 门禁：`tsc` **0** ｜ 全量 vitest **330 files / 7270 passed / 0 failed** ｜ esbuild **87 warnings**（= 基线）｜ svelte-check **0 errors / 89 warnings**（= 基线）｜ `_deploy` **ALL_MATCH=1**（main.js `6557e73cc914` size=2612501）｜ `assert-symbols` **EXIT=0**「本次失败 313 条（基线 318）」+「✅ 无新增失败」。
+>
+> **突变 9/9 全红**（`_mut_sp2.cjs`，RED=9 SKIP=0 GREEN=0，ALL_RED_OK=1）：①删右键首项 ②拆信息栏三件套 ③窗口自己落库 ④`isConnected` 守卫失效 ⑤只读清单塞输入框 ⑥按钮退回单类 ⑦悬停按钮直连 `onOpenSeriesProps` ⑧HomeView 不透传 ⑨宿主不挂 Modal。
+>
+> **真机**（`.testvault` 1440×900，pid 13296）：4 张系列卡信息栏 **4/4 可点**（`role="button"` + `data-tip="点击编辑系列属性"`）；单击「熊出没 动画系列」⇒ 窗口宽 **560px**、宿主标题已清空、五个字段齐全、成员 **15 行**、清单内 **0 个输入控件**、`排序号…` 在；右键菜单 6 条 `["编辑系列属性","改系列名","排序号","批量关联","批量填合集","批量填标签"]`；悬停 `⋯` 打开的是**同一个菜单**。
+> 截图 `_shot/rd/series-props.png`（756×600，119433 B）。
+>> ### 🔴 #798 · 条目属性并排块高度对齐（m07813①）
+>
+> **用户 m07813 原话（逐字）**：「高级设置调整的条目属性顺序要确保其他框并排时高度对齐，比如简介和总结1/2并排时不能对齐」
+>
+> **判断与结论（8 条）**
+>
+> | 疑点 | 结论 |
+> | --- | --- |
+> | 栅格行高不齐？ | ❌ 外层本来就齐（实测两块都是 h=131，align-items 默认 stretch 已统一行高） |
+> | 那到底哪里不齐？ | ✅ **块内部**：两个 textarea 的顶边与底边都不齐 |
+> | 底边差多少？ | 「简介」taH=104（被 autosizeTextarea() 按内容撑高）vs「总结摘要」taH=84（只有 rows="4"）⇒ **差 24px** |
+> | 顶边差多少？ | 裸 .rl-lbl 是 9+14+4=**27px**；.rl-lbl-row 里那颗 label 的 margin-bottom 被清零 ⇒ **23px** ⇒ **差 4px** |
+> | 修法为何不走 CSS？ | 🔴 第一版正是写 .rl-fields-col > [data-fld] { display: flex } —— 效果达标，但 **Svelte scoped 编译**给同组既有规则**再叠一层 .svelte-xxx**，产物从 .rl-meta-row.svelte-x.svelte-x 变成**三段** hash，assert-symbols.cjs 十余条钉「两段」的旧断言**当场 12 条红** |
+> | 最终走哪条路？ | ✅ 在 applyFieldOrder() 里写 **inline style**（不新增任何 CSS 选择器）⇒ 产物零变化 |
+> | meta 为何必须跳过？ | 它自己就是 .rl-meta-row（四框横排 + flex-wrap: wrap），压成竖排全乱。实测新增态仍是 display:flex / flex-direction:row / flex-wrap:wrap、四框 x=188/332/488/158 |
+> | 修后真机数字 | 编辑态 taTop 399=399、taBottom 503=503；新增态亦同 |
+>
+> **改动三处（src/views/components/EntryForm.svelte）**
+> 1. applyFieldOrder() 内逐个受管块写 inline：display = isMeta ? '' : 'flex'、flexDirection = isMeta ? '' : 'column'（meta 完全跳过）。
+> 2. 块内 :scope > textarea.rl-input 写 flex: 1 1 auto + min-height: 0（后者是 flex 子项能收缩的必要条件）。
+> 3. 块内 :scope > .rl-lbl-row 写 margin-bottom: 4px（补回裸 label 的 4px，顶边才对齐）。
+>
+> **守卫**：tests/entryFormFields.test.ts 新增 ⑨「并排的两个字段块必须上下齐平（m07813① 简介 / 总结 1/2 并排）」，读模板 + 脚本段（⛔ 不是 <style>），断言上述三条内联写法的**精确形态**，外加两条**反向守卫**：.rl-fields-col > [data-fld]:not([data-fld='meta']) 与 .rl-fields-col > [data-fld] > .rl-lbl-row **不许**重新出现在 <style> 里（防三段 hash 回归）；再钉全局 .rl-lbl-row .rl-lbl 的 margin-bottom: 0 未被改（启动路径 / 进度页数在用）。
+>
+> **门禁**：tsc TSC_EXIT=0 ｜ vitest **329 files / 7256 passed** ｜ esbuild BUILD_EXIT=0 / 87 warnings ｜ npm run check **0 errors / 89 warnings** ｜ _deploy **ALL_MATCH=1**（main.js 6ad16b53e017 size=2594161）｜ assert-symbols **EXIT=0**「本次失败 313 条（基线 318）」+「✅ 无新增失败」。
+>
+> **突变 5/5 全红**（_mut_align2.cjs，RED=5 SKIP=0 GREEN=0，ALL_RED_OK=1）：①受管块退回 block ②去掉 textarea flex ③标签行不补 4px ④不排除 meta ⑤去掉 min-height: 0。
+>
+> **真机**：1440×900 / .testvault，编辑「蝴蝶效应」；截图 _shot/rd/align-after.png（756×600，175409 B，简介/总结并排且顶底齐平）、_shot/rd/align-add-after.png（756×600，119357 B，新增态 meta 仍横排）。
+>
+> **#797（2026-11-15 第 67 轮）：m07364 —— 导航三档改名 + 横向页签改 iOS 分段控制器 + 纵向页签改幽灵风**
+>
+> 用户原话：`m07364`「基本设置导航布局的顶部胶囊、文字菜单、合并视图名称改成"横向页签、纵向页签、聚合下拉"视图，然后 针对横向页签样式的改造为改造方案：采用"iOS 分段控制器 (Segmented)"风格 去边框：把内部所有小按钮的边框（border）全删掉。做底槽：给最外层的大容器加一个极浅的灰色背景（例如 #F1F3F5），圆角调大（如 8px 或 10px），去掉大外框的边框线。选中态重构：选中的"电影"，背景色变成纯白色。文字和图标保持蓝色，加粗。未选中态：背景透明，文字变深灰色（不要用纯黑，用 #4B5563 之类的灰），图标也跟着变灰。间距：减少按钮之间的间距（仅留 2-4px），让它们看起来是一个整体控件。针对纵向页签的改造采用"幽灵风 (Ghost) 去掉外框和所有内框…选中项左边出现一条 3px 宽的蓝色竖条，背景变浅灰。」
+>
+> 用户两条裁定：① 纵向选中态 = 「两者合并：左 3px 蓝竖条 + 浅灰底 + 文字图标主题色」② 深色底槽 = 「浅色用 #F1F3F5，深色自动换成同明度的深灰」。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 三档 id 要不要跟着改 | ⛔ 不改。`NAV_LAYOUTS` 是**存量数据值**（`navLayout.ts:10-11` append-only），只改 `NAV_LAYOUT_LABELS` 文案 |
+> | 底槽真写 `#F1F3F5`？ | ⛔ 不写。`assert-symbols.cjs:6298` 钉 `background: var(--background-secondary)`；该令牌浅色实测 `rgb(245,245,245)`，观感已达 |
+> | 深色混色比例调不调 | ⛔ 不动。`assert-symbols.cjs:6289/:6292` 正则钉死 `6%` |
+> | 容器圆角用哪档 | `--rl-t-radius-lg`(8px)。⛔ 别在 `.rl-theme-modern` 里覆盖 `--rl-t-radius-md`（`:317-318` 反向禁） |
+> | 改容器 padding 还要动什么 | 必须同步 `HomeView.svelte:732` 的 `TAB_PAD`（5→4）与 `.tab-ind` 的 `top/left/height`；三者脱节 = 滑块错位 |
+> | 页签那圈方框是什么 | 🔴 **不是 border**。核心 `button` 的 `box-shadow: var(--input-shadow)` 第一段 `0 0 0 1px inset` 就是描边；只删 border 永远消不掉 |
+> | 纵向竖条怎么实现 | `border-left: 3px solid transparent` 常态占位 + `.on` 换 `border-left-color`。⛔ 别用 `padding-left` 制造（切换时文字会跳） |
+> | 纵向悬停铺不铺底 | ⛔ 不铺。全仓口径「并排切换只变色、悬停不铺底」（2026-09-14 立） |
+>
+> 改动五处：① `src/pure/navLayout.ts` 三档文案 + 注释整段重写（id 未动）；② `HomeView.svelte` —— 容器 `gap 0→3px` / `padding 5→4px` / 边框→`none` / 圆角 `md→lg`；`.tab-ind` `top/left 5→4px` / `height calc(-10px)→calc(-8px)` / `background →#ffffff` / `border 1.5px→none`；新增深色覆盖 `color-mix(… 18%)`；按钮 `padding 17→14px` + `color: var(--text-muted)` + **`border: none; box-shadow: none;`**；`TAB_PAD 5→4`。③ `NavMenu.svelte` —— `.rl-nav` 去边框 / 底色改 `color-mix(… primary 93%, text-normal 7%)` / `padding 10→8px` / `gap 4→2px`；按钮去 `height: 36px` / `padding: 10px 16px 10px 13px` / `border-left: 3px solid transparent`；`.on` + `background: var(--background-modifier-hover)` + `border-left-color` + 600；悬停保持只变色。④ `assert-symbols.cjs` 四处守卫改写（`#543 ③` 锚 `height: 36px`→`padding: 10px 16px`、`#543 ④` 单条 color→三件套、`#543 ⑥` 产物级反向转正向三件套、`#544 ④` 同步）。⑤ `tests/navLayout.test.ts` 三条文案 + `src/Settings.ts:7145` desc 同步。
+>
+> 守卫净增 **+7**（7239 → 7255）：新增 `tests/navAppearance.test.ts` 16 条。横向 10 条：①边框全删 ②底槽 `--background-secondary` 且反向禁 `#F1F3F5` ③容器 lg / 按钮 md ④gap ∈[2,4] ⑤指示器 inset 与 padding 同步（含 `TAB_PAD`）⑥滑块纯白零描边 ⑦深色覆盖且浅色仍纯白 ⑧按钮 `--text-muted` ⑨`.on` 主题色+600 ⑩**必须同时 `border: none` 与 `box-shadow: none`**（反向禁 `border-bottom: none` 与 `box-shadow: var(--input-shadow`）。纵向 6 条：面板无边框靠阴影 / 底走 `color-mix` / 按钮透明+大内距+反向禁 `height: 36px` / 竖条用 border-left-color 且反向禁 `padding-left` / `.on` 三件套 / 悬停无 background。
+>
+> 🔴 两个真坑：① **`ruleBody()` 必须行首锚定** —— 裸 `indexOf('.rl-tabs.rl-tabs-modern .tab-ind {')` 会先命中深色覆盖那条（排在基础规则之前），把「浅色底必须纯白」判红；修法 `new RegExp(\`^[ \\t]*${esc}([^}]*)\\}\`, 'm')`。② **「删了 border 还有框」的真凶是 box-shadow** —— 真机 `border` 是 `none 0px` 但屏幕每格一个框，核心 `--input-shadow` 的 `0 0 0 1px inset` 冒充描边；守卫必须 border + box-shadow 两条都钉，只钉 border 会漏掉假绿。
+>
+> 门禁：`tsc` 0 ｜ vitest **329 files / 7255 passed / 0 failed** ｜ esbuild **87 warnings**（= 基线）｜ svelte-check **0 errors / 89 warnings**（= 基线）｜ `_deploy` ALL_MATCH=1（main.js `b398ec3d31b5` size=2594771 · styles.css `bbc367dcf762` size=790528）｜ `assert-symbols` EXIT=0（313 条 / 基线 318，「✅ 无新增失败」）。
+>
+> 突变 **11/11 全红**：`_mut_nav.cjs` 8 条（①容器边框加回 ②底槽写死 #F1F3F5 ③容器圆角退回 md ④gap 改回 0 ⑤指示器 top/left 与 padding 脱节 ⑥TAB_PAD 与 padding 脱节 ⑦滑块描边加回 ⑧纵向竖条改成 padding-left）+ `_mut_btnborder.cjs` 3 条（⑨删掉 `box-shadow: none` ⑩退回只杀底边 ⑪box-shadow 交回 `var(--input-shadow)`）。
+>
+> 真机（`.testvault` 1440×900，pid 23532）—— 横向：容器 `border none/0px`/`radius 8px`/`gap 3px`/`padding 4px`/`bg rgb(245,245,245)`/`justify flex-start`；滑块 `bg rgb(255,255,255)`/`border none`/`top,left 4px`/`h 32px`/`shadow 0 2px 6px`；对齐 `dLeft=dW=dH=0`；选中 `rgb(31,176,255)`/600、未选中 `rgb(117,117,117)`；按钮 `border 0px none` + **`boxShadow none`**。纵向：面板 `border none`/`bg 0.9342`/`radius 8px`/阴影在；选中「影视」主题蓝 + `rgba(117,117,117,0.12)` 底 + `border-left 3px solid` + `padding 10px 16px 10px 13px` + 600；未选中透明底、竖条透明、同 padding。截图 `_shot/rd/tabs-07364.png`（756×600，306146 B）/ `_shot/rd/nav-07364.png`（756×600，350206 B）。
+>
+> **#796（2026-11-15 第 66 轮）：m07047 —— 条目属性面板不再显示第一行（标题 / 年份 / 评分来源都是固定项）**
+>
+> 用户原话：`m07047`「高级设置-条目属性排序不要显示第一行了，如标题、年份、评分来源都不要显示，都是固定的不能改换顺序，最后全面更新project-rule，根目录git的README先不要更新」。
+>
+> 🔴 **本节推翻 #795**：上一轮把固定项画成灰块（`.rl-ef-blk.is-fixed`）想让用户「看得见位次」，用户认为**既然改不了顺序，画出来只会让人以为能拖**。⇒ 固定项在面板里**一个都不画**。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 固定项要不要画 | ⛔ 不画。连灰块也不要 —— 画布上只留可管理项 |
+> | 固定项还留在注册表里吗 | ✅ 必须留。`buildEntryFormPlan` 靠 `ENTRY_FORM_FIELDS` 算位次与宽度，删掉会让真弹窗丢字段 |
+> | 落库时会丢吗 | 不会。`withFixedEntryFormFields` 在提交时把固定键按模板位次补回 |
+> | 旧配置里存过的固定键怎么办 | 静默丢弃（`cur` 的 filter 剔掉）。真机实测该测试库隐藏池里还留着「年份」，但画布上不出现 |
+> | 固定键与锁定键什么区别 | 固定键**在**注册表里（有位次/宽度，只是不许用户收起或拖动）；锁定键（`title`/`poster`/`status`/`rating`/`notes`/`launch`）根本不在注册表 |
+>
+> 改动三处：
+> 1. `src/pure/entryFormFields.ts` —— `ENTRY_FORM_FIXED_KEYS` 由 `['meta']` 扩为六项 `['year', 'novel-year', 'comic-year', 'book-year', 'music-year', 'meta']`；注释整段重写为「口径演进」两段式。
+> 2. `src/Settings.ts` 的 `renderEntryFormPanel()` —— ①`allDefs` 恢复过滤固定键；②删掉 `plan` / `rankOf` / `fixedDefs` / `renderList`，改回 `cur.forEach((entry, i) => {`；③块属性改回无条件单分支（`role` / `tabindex` / `draggable` 直接给）；④把手、工具行、全套 `drag*` 与 `keydown` 拆掉 `if (!isFixed)` 守卫改无条件挂载；⑤计数分母与隐藏池恢复只看可管理项；⑥空态文案改为「可管理的属性已全部收起（第一行的标题 / 年份 / 评分来源是固定项，不在此列）」；⑦撤掉 `buildEntryFormPlan` import。
+> 3. `styles.css` —— 删掉 `.rl-ef-blk.is-fixed` 与 `:hover` 两条，原位留注释警示（⛔ 别加回来）。
+>
+> 🔴 **本轮自己踩的坑**：拆 `if (!isFixed) {` 时只删了开括号、忘了删成对的闭括号 ⇒ `tsc` 报 **200+ 个** `TS1005: ',' expected` / `TS1128`（从 `src/Settings.ts(6757,17)` 一路错到 `(9864,1)`）。修法＝删掉 `safeSetIcon(grip, 'grip-vertical');` 后面那个孤立 `}`，立刻 TSC_EXIT=0。**教训：`tsc` 一次报几百个语法错时先怀疑「多/少了一个花括号」，别去逐个读报错行。**
+>
+> 守卫净增 **−1**（7240 → 7239，m06462 那 6 条替换为 m07047 的 5 条）：`tests/entryFormSpanControl.test.ts` 整段换成 describe「条目属性 · 固定项一律不画（m07047）」——①固定键必须在 `allDefs` 上就被滤掉（反向：面板代码不含 `kind: 'fixed'` / `isFixed` / `is-fixed` / `data-fixed` / `buildEntryFormPlan(`）②画布只遍历可管理项（含 `cur.forEach((entry, i) =>`，不含 `renderList` / `.sort(rankOf`）③工具行与拖拽/键盘无条件挂载（反向 `not.toContain('if (!isFixed)')`）④计数分母与隐藏池只看可管理项 ⑤CSS 里不许有 `.is-fixed` 残留且 `.rl-ef-blk` 仍有 `cursor: grab`。`tests/entryFormFields.test.ts` 同步六处（`ENTRY_FORM_FIXED_KEYS` 六项、`withFixedEntryFormFields` 期望 `['year', 'meta', 'genres']`、`plan.order.get('year')===0` / `('meta')===1`、`plan.hidden.size === applicable.length - 2`）。
+>
+> 门禁：`tsc` 0 ｜ vitest **328 files / 7239 passed / 0 failed** ｜ esbuild **87 warnings**（= 基线）｜ svelte-check **0 errors / 89 warnings**（= 基线）｜ `_deploy` ALL_MATCH=1（styles.css `bbc367dcf762` size=790528）｜ `assert-symbols` EXIT=0（313 条 / 基线 318，「✅ 无新增失败」）。
+>
+> 突变 **6/6 全红**（`_mut_07047.cjs`，`RED=6 SKIP=0`，`ALL_RED_OK=1`）：①`allDefs` 不再过滤固定键 ②`ENTRY_FORM_FIXED_KEYS` 退回 `['meta']` ③计数分母用 `allDefsAll` ④画布重新拼 `renderList` ⑤CSS 加回 `.rl-ef-blk.is-fixed` ⑥工具行套回 `if (!isFixed)`。
+>
+> 真机（`.testvault` 1440×900，pid 22936）—— ⚠️ **设置窗口不会自己出现**，必须先连主窗口 eval `window.app.setting.open()`（返回 `OPENED_VIA_APP`）→ `cdp.sleep(2500)` → 再列 target 才有「设置 - .testvault」。两步点：`.vertical-tab-nav-item` 文本 `ReelLudic` → 睡 1500ms → 文本 `高级设置`。实测 `.rl-ef-canvas` `x=232 y=486 w=524 h=415` / `data-cols="6"` / **blockCount=8**，labels 依次 `['题材','标签','导演','主演（声优）','系列 / 系列序号','合集','简介','总结摘要']`，计数 `显示 8 / 8`，**`fixedClassCount=0` / `dataFixedCount=0`**（第一行零块）。截图 `_shot/rd/ef-07047-top3.png`（第一块就是「题材」、右边「标签」、右上角「显示 8 / 8」）。
+>
+> 🔴 **滚动截图坑**：设置页真正的滚动容器是 `.vertical-tab-content`（`scrollHeight=2498 / clientHeight=570`），且它对 `canvas.scrollIntoView({block:'start'})` **无效**（`canvasTop` 仍是 486）⇒ 必须按 `scrollHeight > clientHeight` 找祖先再 `scrollTop = 0`。
+>
+> **#794（2026-11-15 第 64 轮）：m06404 —— 只读评分簇绝对定位，贴到第一行最右端**
+>
+> 用户原话：`m06404`「这还是来源评分占中间啊不是绝对定位放在最右边啊」；口径澄清 `m06482`「标题|上映年|评分来源贴最右，评分来源编辑正常是放在第二行的啊，但直接预览显示在第一行最右啊」。
+>
+> 🔴 **本节是 #793 的返工**：#793 只把标题壳调到 4 栅格、年份调到 2 栅格（4+2 正好占满整行），评分簇**仍在 flex 流里** ⇒ 202px 的簇被挤在标题输入框与年份框之间，簇右缘 523 距整行右界 710 还差 187px，正是用户说的「占中间」。⛔ 别再只调栅格比例、不动定位。
+>
+> | 判断 | 结论 |
+> | --- | --- |
+> | 簇「占中间」的根因 | 不是宽度不够，是**还在文档流里**。4+2 已占满整行、零余量，簇只能挤在 input 与年份之间 |
+> | 怎么才算「最右」 | `position: absolute; right: 0`，定位锚点必须是 **`.rl-fields-col` 整个 6 栅格** |
+> | 锚点能不能放 `.rl-title-row` | ⛔ 不能。锚在标题行时 `right: 0` 只贴到标题那格（271px）的右缘 = 换个位置的「占中间」 |
+> | `top/bottom` 要不要给值 | 一律 `auto`：静态位置 + 父级 `align-items: center` ⇒ Y 轴自动与输入框齐平；写 `top: 50%` 会以 845px 高的整列栅格为参照 |
+> | 要腾多少宽度给簇 | 簇自然宽 202px（文字 112 + 来源按钮 84 + gap 6），右侧 2 栅格 ≈ 187px ⇒ 年份必须压到 1 栅格（84px） |
+> | 标题会不会变短 | 不会。标题 3 栅格后 input 拿到完整 271px（之前被簇挤到 156px），实测是年份框的 **3.24 倍** |
+> | 这组样式能不能写在组件的 scoped 样式里 | ⛔ **绝对不能**。见下方「哈希污染」一节 |
+>
+> 改动四处：
+> 1. `src/pure/entryFormFields.ts` —— `ENTRY_FORM_SPAN_PRESETS` 新增第 4 档 `{ span: 1, label: '1/6', hint: '一行六个并排' }`；五个年份键 `year` / `novel-year` / `comic-year` / `book-year` / `music-year` 的 span 由 2 改为 **1**。
+> 2. `src/views/components/EntryForm.svelte` —— `.rl-fields-col` 加 `position: relative`；`.rl-fields-col > .rl-title-col` 由 `1 / span 4` 改为 **`1 / span 3`**；评分簇那组规则**不在此处**（只留警示注释）。
+> 3. `styles.css` —— 新增 `.rl-title-row > .rl-ro-meta, .rl-title-row > .rl-ai-btn { position: absolute; right: 0; left/top/bottom: auto; max-width: 187px; }`，配套 `gap: 4px`、`.rl-title-score` 可收缩省略、`.rl-btn-src` 内边距由 `4px 14px` 收到 `2px 9px`；预览画布补 `.rl-ef-canvas > [data-span="1"] { grid-column: span 1; }`。
+> 4. `src/Settings.ts` —— 条目属性面板提示文案补上「1⁄6 = 六个并排」。
+>
+> 🔴 **哈希污染（本轮踩到并已修，务必复用）**：第一版把这组规则写进了 `EntryForm.svelte` 的 `<style>`，`assert-symbols` 当场红两条 —— `"rl-btn rl-btn-src"` 计数由 1 变 **0**。根因：Svelte scoped 编译会给按钮 class 追加 `svelte-xxxx` 哈希类，字面串变成 `"rl-btn rl-btn-src svelte-1pz2g1l"`，而 `assert-symbols.cjs:6605` / `:6754` 钉的是带收尾引号的完整字面。修法 = 整体搬到全局 `styles.css`（`.rl-ai-btn` 在 #406 就是这么处理的，`:8954-8957` 双向锁着同一口径）。
+>
+> 守卫净增 **+1**（7233 → 7234）：新增 ②c「只读评分簇绝对定位贴整行最右」—— 断 `.rl-fields-col` 有 `position: relative`、全局样式里 `.rl-title-row > .rl-ro-meta,` 块含 `absolute` + `right: 0` + `top/bottom: auto` + `max-width: 18xpx`；**三条反向守卫**：组件 scoped 样式里不许再出现 `.rl-btn-src` 选择器、`.rl-title-row` 在两份样式表里都不得变成 `position: relative`。另同步 ②/②b/span 断言五处（`[6,3,2]` → `[6,3,2,1]`、年份 2 → 1、标题 4 → 3、`used` 由 6 改为必须 **小于** 6）。
+>
+> 门禁：`tsc` 0 ｜ vitest **328 files / 7234 passed / 0 failed** ｜ esbuild 87 warnings ｜ svelte-check 0 errors / 89 warnings ｜ `_deploy` ALL_MATCH=1（main.js `178e26f77c51` · styles.css `0b01ede1d4fc` size=789918）｜ `assert-symbols` EXIT=0（313 条 / 基线 318，无新增失败）。
+>
+> 突变 **7/7 全红**（`_mut_titlecluster.cjs`，`ALL_RED_OK=1`）：①撤掉 `position: absolute` ②`right: 0` 改 `auto` ③给 `.rl-title-row` 加 `position: relative` ④删掉 `max-width: 187px` ⑤把 `.rl-btn-src` 规则挪回组件 scoped 样式 ⑥标题壳退回 `span 4` ⑦年份键退回 `span 2`。
+>
+> 真机（`.testvault` 1440×900，pid 14664）—— 编辑已有条目（`[data-tip="点击编辑属性"]` 第一张）：字段栅格 `w=552 / right=710`；标题壳 `w=271`、标题 input **271px**；年份块 `x=439 w=84 right=523`；评分簇 `x=523 w=187 right=710`、`position: absolute`、`right: 0px`、**距整行右界 0**、仍在 `.rl-title-row` 内；标题 / 年份宽比 **3.24**。新增态（添加 → 手动填写）：AI 按钮 `x=690 w=20 right=710`、`absolute`、距右界 0，且与标题框（右缘 429）**不重叠**。截图 `_shot/rd/meta-after.png` / `_shot/rd/meta-add.png`。
+>
+> **#790（2026-11-15 第 60 轮）：m04642 —— 词云「见缝插针」螺旋摆放 + 输入框占位符格式口径统一**
+>
+> 用户原话：`m04642`「这个词云统计应该按参考@isoterik/react-word-cloud、araea-wordcloud实现词云效果在有限空间内"见缝插针"，还有这个所有输入框的占位字符应该引导用户填单个或多个的格式不然用户不知道填什么列个表格出来对比一下」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 改前完全没有碰撞检测 | `.rl-cloud-body` 是 `display:flex; flex-wrap:wrap` 行内流式 —— 行尾必留空档、大小词之间全是白洞。⛔ 只改 CSS 解决不了，必须换成坐标摆放 |
+> | 布局与渲染是两套口径，风险点在此 | `layoutWordCloud` 按 `estimateTextWidth`（纯字符宽度）估算，模板按 `left/top/font-size` 绝对定位 ⇒ 渲染宽 ≠ 估宽就会重叠。真机实测正是如此 |
+> | 真机 13 处重叠的根因是**角标**，不是坐标系 | `.rl-cloud-n` 频次角标 `opacity: 0` 但仍占布局宽度（`gap:3px` + 9px 数字）⇒ DOM 实测宽 57.8px，估宽约 44px，差 ~14px。重叠 `oy≈22`（整个字高）与之吻合 |
+> | 纯逻辑单测**抓不到**这类错位 | 几何不变量用布局自己算出的 `width/height` 复算，永远自洽。只有真机 `getBoundingClientRect()` 或源码守卫能钉住 |
+> | 占位符的问题不是文案好坏，是**口径对不上** | `tags` 只认 `split(/[,，]/)`，`genres`/`cast` 认 `/[\/、,，]/`；`platform` 是**单值**却提示 `PC / Switch / PS5`。用户按错那句填就静默丢数据 |
+> | 文案必须由解析口径**生成**，不能手写 | 否则改一处两边分叉。`FORM_FIELD_SPECS` 是唯一真源，`placeholderOf()` 从它产出，测试反向核对提交侧 `split` |
+> | 书籍子类必须拆 key | `author` 与 `music-author` 共用 key 会让音乐条目提示「如 刘慈欣」 |
+>
+> 改动清单：
+> 1. 新建 `src/pure/wordCloudLayout.ts`（约 300 行）：`layoutWordCloud` 阿基米德螺旋 + 矩形碰撞、`autoFit` 降档、`estimateTextWidth`、`cloudHeightFor`、`CLOUD_LEVEL_EM`。
+> 2. `src/views/components/StatsBoard.svelte`：`cloudMeasure` action（`ResizeObserver` 量宽与基准字号）、`$: cloudLayout`、模板 `class:is-spiral` + 绝对定位逐词、`.rl-cloud-drop` 丢词提示。
+> 3. 同文件 CSS：`.rl-cloud-body.is-spiral` / `.rl-cloud-w.is-abs`，以及 **`.rl-cloud-n` 在螺旋态绝对定位到词尾**（本轮真 bug 修复）。
+> 4. 新建 `src/pure/formFields.ts`：`FORM_FIELD_SPECS`（28 条）+ `placeholderOf` / `hintOf` / `separatorWord` / `separatorSample`。
+> 5. `src/views/components/EntryForm.svelte` 17 处占位符改 `placeholderOf(...)`；文件头加注释记录 m04642 ② 与三处错位。
+> 6. `assert-symbols.cjs` 同步 `:10245`（series）与 `:10755`（series-index）两条 —— 改为同时钉模板 `placeholder={placeholderOf('<key>')}` 与规格表里的字面文案，语义一字节未变。
+>
+> 守卫净增 **+35**（7184 → 7219）：`tests/wordCloudLayout.test.ts` 18 条（含「角标必须脱离文档流」）、`tests/formPlaceholders.test.ts` 14 条、其余承接 #789。
+>
+> 门禁：`tsc` EXIT=0 ｜ vitest **328 files / 7219 passed / 0 failed**（41.49s）｜ esbuild EXIT=0 / 87 warnings ｜ `npm run check` 0 errors / 89 warnings ｜ `_deploy.cjs` ALL_MATCH=1（main.js `4bad103eb2d4` size=2589422）｜ `assert-symbols.cjs` EXIT=0「本次失败 313 条（基线 318）」+「✅ 无新增失败」。
+>
+> 突变 **9/9 全红**（`ALL_RED_OK=1`）：`_mut_placeholder.cjs` 6 条 + `_mut_cloud2.cjs` 3 条（角标退回 static / `left: auto` / 整条规则删掉）。
+>
+> 真机（隔离 harness `.testvault`，1440×900）：词云修后 `boardW=320 boardH=200 count=34 **overlaps=0 outside=0**`，截图 `_shot/rd/cloud-spiral.png`（756×600，82193 B）目视 40 词错落填满无压字；占位符八类型实测 —— `game-platform`「如 PC（单个）」、`tags`「多个用逗号分隔，如 工作, 日常」、单值一律带「（单个）」。
+>
+> 踩坑：① 纯逻辑单测证明不了「渲染宽 == 估宽」，凡「估尺寸 + 模板渲染」的配对必须补真机或源码守卫；② `iterateAllLeaves` 回调的 `l` 是 **leaf** 不是 view，要 `l.view.getViewType()`；③ 点「统计」页签后不能立刻量，先 `sleep(2500)` 否则恒 `NO_CLOUD`；④ `formB.replace(/\s+/g,' ')` 折行后匹配 `\}\/>` 会失败（新增红灯 1 条）；⑤ 「旧文案必须消失」不能扫全文（注释里引述反面教材会假红），只扫 `/placeholder="[^"]*"/g` 拼接串。
+>
+> **#789（2026-11-15 第 59 轮）：m04253 / m04293 —— 词云分档塌成两档（真 bug）+ 标签栏改名统一 + genres 灌进 tags**
+>
+> 用户原话：`m04253`「表单只有归属标签，没有标签能被词云统计啊」；`m04293`（ask_user_question 自定义）「表单那栏直接改名「标签」，归属合集也改名为「合集」」，并同时选中「帮我把 genres 灌进 tags 作为初始值」。数据写入范围由用户二次选定：**只写 `catalog.json`、不碰笔记** + **并集**（已有 tags 保留）。
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 词云统计的是 `tags`，不是 genres | `src/pure/wordCloud.ts` 只读 `MediaEntry.tags`，不解析正文、不分词。用户库里 153 条**只有 1 条**打过标签 ⇒ 词云当然空 |
+> | 空态指引与表单名字**对不上**才是真因 | 指引写「在表单的**标签**里填几个词」，表单那栏却叫「**归属**标签」⇒ 用户照字面找不到。全仓 `metaFields.ts` / `wordCloud.ts` 早叫「标签」，**只有这个表单加前缀，它才是少数派** |
+> | `cloudLevels` 注释与实现**互相矛盾** | 注释写「用排名百分位而不是 `weight/max`」，`:112` 却是 `(w-min)/(max-min)` = 线性归一。一条 57 的极值把 [min,max] 拉宽，20 与 1 压成同档 ⇒ 40 个词只剩 3 档可用 |
+> | 并列频次必须同档 | 用 `sorted.indexOf(w)`（按值取首次位置），⛔ 不用循环下标，否则同频词因数组顺序不同而字号不一 |
+> | 单个词⛔ 别补特判 | 必然 `min === max`，早被「全同频 ⇒ 中档」接走，补了就是死代码（本轮写了又被测试打出来） |
+>
+> 改动清单：
+> 1. `src/pure/wordCloud.ts` `cloudLevels` 改真排名百分位（`rank = sorted.indexOf(w)`、`p = 1 - rank/(n-1)`）。
+> 2. `src/pure/entryFormFields.ts` 两处 label → 「合集」/「标签」（`key` 不动）。
+> 3. `src/views/components/EntryForm.svelte:4864-4871` 两处 `label` 文案改短；`id`/`data-fld`/`bind:value` 不动。
+> 4. `src/views/components/MediaList.svelte:4245-4246` 右键菜单 → 「批量填合集 / 批量填标签」。
+> 5. `src/views/components/StatsBoard.svelte:759` 空态指引补「（逗号分隔）」。
+> 6. `assert-symbols.cjs:21064` 描述串同步（真身只查数量=5 与顺序，不查文字）。
+>
+> 守卫净增 **+7**（7180 → 7187）：`tests/wordCloud.test.ts` 3 条（真实分布形状不许塌档 / 并列同档 / 单词走中档）、`tests/statsCloudWiring.test.ts` 4 条（表单与词云必须叫同一个名字，含**逐字**匹配）。
+>
+> 门禁：`tsc` EXIT=0 ｜ vitest **326 files / 7187 passed** ｜ esbuild EXIT=0 / 87 warnings ｜ `npm run check` 0 errors / 89 warnings ｜ `_deploy.cjs` ALL_MATCH=1 ｜ `assert-symbols` EXIT=0「313 条（基线 318）」+「✅ 无新增失败」。突变 **8/8 全红**（`ALL_RED_OK=1`）。
+>
+> 真机（隔离 harness `.testvault`）：词云 40 词渲染，字号 **lv5=31px / lv4=26px / lv2=19px**，头部「喜剧57/动画55/奇幻21」全 lv5。
+>
+> 数据写入：备份 `C:\Users\kest\Desktop\临时测试库\媒体库\catalog.json.bak`（272109 B）；`touched=145 / addedLabels=374 / noGenres=8`；完整性 `fieldsBroken=0 / tagsLost=0 / allGenresPresent=153/153`（除 `tags` 外逐字未变、旧标签顺序保留、`activityLog`/`seriesRatings`/`views` 未动）。
+>
+> 踩坑：① `EntryForm.svelte`（6895 行）**不能用 `stripComments`** —— 块注释正则会吃掉整段模板，`indexOf('data-fld="tags"')` 变 -1 造成恒假红，改用原文 + 精确 `>归属标签<` 模式；② `data-fld` → `label` → `input` 约 200 字符，正则窗口给 160 会假红。
+>
+> **#788（2026-11-14 第 58 轮）：m02498 —— 评分看板合集卡回到一格 + 「系列卡堆叠 / 单卡平铺」切换按钮**
+>
+> 用户原话：`m02321`「算了这个目前改不了，还是把改成单卡平铺吧」；`m02366`「我已确认产物已更新到库中，但评分看板还是无法将系列卡合理显示目前仍为因为名称过长占两个格子」；`m02377`「还是评分看板的系列卡显示大一点，导致不对齐的问题？给我改好啊」；`m02498`「也给评分看板加个系列卡堆叠和单卡平铺的循环切换图标按钮同首页的按钮放在评分看板导航栏上」。用户经 ask_user_question 选中**方案 A「系列卡只占一格，其余不变」**，明确否掉方案 B（看板改用 `buildBoard`，合集分会消失）。
+>
+> ⚠️ **本节推翻 #787 的一条结论**：#787 写「合集卡 `span 2` 保持不变」。三次打回后确认只收标题宽度治不了根 —— 卡片本身仍宽一倍、右半边空着。
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 真因是**卡片占位**，不是标题宽度 | `grid-column: span 2` 让合集卡比同行单条卡宽一倍、右半边空着 = 用户说的「不对齐」。只收标题宽度治不了根 |
+> | `span 2` 与 `max-width: none` 必须**一起删** | `max-width: none` 是给占两格用的解禁。占一格后要回落到基类 `.rl-board-card` 的 `max-width: var(--rl-board-card-max, 104px)`，否则稀疏行（整行只 1 件）会把合集卡拉成巨图 |
+> | 同排卡片**底部差 13px** | 合集卡标题折两行（h≈27px）、单条卡单行（h≈14px）⇒ 单条卡 h=103 / 合集卡 h=116。标题区加 `min-height: 2.6em`（= 2 × `line-height: 1.3`）对齐；用 `em` 不用 px，字号随主题缩放变 |
+> | 「堆叠/平铺」与首页**共用同一字段** | `settings.unfoldSeries`（`main.ts` `setUnfoldSeries`）。用户要的是「同首页的按钮」，⛔ 别为看板另开字段 |
+> | 平铺时**绝不清合集分** | `Catalog.seriesRatings` 一个字不动，平铺只是「看不见」。清掉是不可逆数据丢失，已有断言钉住 `JSON.stringify(map)` 前后一致 |
+> | `seriesUnratedRatio` 必须同传 unfold | 否则「未评分 N / M」的分母与实际格数对不上 |
+>
+> **改动清单**
+> 1. `src/pure/seriesRating.ts`：`seriesBoardItems` / `buildSeriesBoard` / `seriesUnratedRatio` 三个函数尾部加第 4 参 `unfold = false` 并全部透传；`if (unfold)` 分支逐条出 `kind:'single'` 并直接 return（顺序沿用传入流，⛔ 不按标题重排）。
+> 2. `src/views/components/RatingBoard.svelte`：`.rl-board-card-coll` 删 `grid-column: span 2;` 与 `max-width: none;`；`.rl-board-title` 基类加 `min-height: 2.6em;`；新增 `unfoldSeries` / `onToggleUnfoldSeries` 两 prop + `.rl-board-head` 里的 `.rl-board-unfold` 按钮（`<Icon icon={unfoldSeries ? 'layout-grid' : 'layers'}>`、`aria-pressed`、`class:is-on`）；样式选择器写成 `.rl-board .rl-board-unfold {`（带前缀防宿主主题压过来）。
+> 3. `src/views/components/StatsBoard.svelte`：加两 prop 纯透传给 `<RatingBoard>`。
+> 4. `src/views/components/HomeView.svelte:1031`：`<StatsBoard … {unfoldSeries} {onToggleUnfoldSeries} />`（HomeView 自身早有这两个 prop，`HomeView.ts` 零改动）。
+> 5. `tests/seriesRating.test.ts`：新增 describe 6 条（平铺每格 single / 顺序沿用 / 合集分表不变 / 页签过滤 / 总格数 / 分母跟着变）。该文件 32 passed。
+> 6. 新建 `tests/boardUnfold.test.ts` 7 条（源码文本守卫）。`tests/toolbarBoardPolish.test.ts` 补 4 条占位守卫 + 第 5 条「标题区两行下限」（补掉 `min-height` 原先零断言的假绿）。该文件 26 passed。
+>
+> **守卫净增**：+14 条（6 + 7 + 1），全量 7166 → **7180**。
+>
+> **突变**：8/8 全红（`ALL_RED_OK=1`，exit 0）—— 不给 `buildSeriesBoard` 传 / 不给 `seriesUnratedRatio` 传 / 去掉 `{#if}` 守卫 / 图标不翻面 / StatsBoard 漏传 / HomeView 漏传 / `if (unfold)` → `if (false)` / `buildSeriesBoard` 不透传。
+>
+> **门禁**：tsc `EXIT=0` ｜ vitest **326 files / 7180 passed / 0 failed**（基线 7166 ⇒ 净 +14）｜ esbuild `EXIT=0 / 87 warnings`（基线）｜ svelte-check **0 errors / 89 warnings**（基线）｜ `_deploy.cjs` **ALL_MATCH=1**（main.js `9d1b6cf4d32f` size=2578679 · manifest.json `3ae51778878c` size=490 · styles.css `da241b941e21` size=784426）｜ assert-symbols `EXIT=0`（313 条，基线 318，「✅ 无新增失败」）。
+>
+> **真机复核（重启后，媒体库窗口 1536×863 CSS px / DPR 1.25）**：堆叠态 `aria-pressed=false` / `lucide-layers` / `rgb(153,153,153)` / 合集卡 **8** / 总卡 83 / 未评分 49-83；平铺态 `aria-pressed=true` / `lucide-layout-grid` / `rgb(0,149,230)` / 合集卡 **0** / 总卡 153 / 未评分 **83-153**；切回完全复原。合集卡与单条卡实测 **宽 `[57]`/`[57]`、高 `[116]`/`[116]`**、`gridColumn` 都是 `auto`。按钮 `24×24`、`borderRadius:6px`、`deltaTop=-3`、`gapFromTitle=6`。截图 `_shot/rd/board-view-stacked.png`（5.0 行「25 部作品」）与 `board-view-flat.png`（同一行「50 部作品」）。
+>
+> **踩坑（已固化）**：① 库里存在**两个 `reelludic-home` 叶**，隐藏那个是 `display:none` ⇒ `document.querySelector('.rl-board')` 会命中隐藏叶、**所有 `getBoundingClientRect()` 全 0**；必须先 `iterateAllLeaves` 挑 `getViewType()==='reelludic-home'` 且 `containerEl.getBoundingClientRect().width > 200` 的叶。② `cdp.screenshot(c, outPath)` 是**模块级函数**，不是 `conn.screenshot()`。③ 按钮在页面下缘时整窗截图拍不到 ⇒ 先 `board.scrollIntoView({ block: 'start' })`。
+>
+> **文档**：`CHANGELOG.md` 的 `## [未发布]` → `### ✨新增功能` 已加两条（合集卡一格化 / 切换按钮）；`RELEASE-NOTES-1.5.0.md` 的 `### 🎨界面美化` 原「不再横跨两格溢进邻格」已改写为「和单条卡一样大的格子」，并在 `### ✨新增功能` 补了切换按钮一条。
+>
+> **#787（2026-11-14 第 57 轮）：m01627 ① —— 评分看板系列卡名称不再横跨两格 + 拆穿「部署了 ≠ 已载入」**
+>
+> 用户原话（`m01627`）：「评分看板的系列卡显示名称还是占了两个格子修复它，这什么回事把名称省略掉行不行」。用户二次复核（`m02010`）：「还是这样，评分看板一点没变」。
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 真因是**宽度口径**，不是方向 | 第 45 轮（`#775`）已把合集卡从横排改回竖排，名称回了封面下方。但封面有 `max-width: var(--rl-board-card-max, 104px)`、标题只有 `width: 100%` —— 合集卡是 `grid-column: span 2`，`100%` = **整两格**，再叠 `text-align: center` ⇒ 文字盒横跨两格居中溢出。真机量测：标题 `130px`、`max-width: none`、`titleX=162` 而 `coverX=195`（左偏 33px，正好溢进左邻格） |
+> | 标题宽度**必须与封面同一个 CSS 变量** | 卡宽由 `slotStyleStr` 的 `--rl-board-card-max` 驱动（手感缩放）。写死 px 一缩放就脱节 ⇒ 断言里加反向守卫 `not.toMatch(/max-width:\s*\d+px/)` |
+> | 钳制 3 行 → 2 行 | 宽度收成一格后 3 行头重脚轻；2 行刚好容下「111 书籍系列」「周杰伦 音乐系列」这类典型长度，更长走省略号 |
+> | 合集卡 `span 2` **保持不变** | 显眼靠的是「卡片宽度 + 右下角叠角部数」，不是标题横跨两格。收窄标题不削弱层级 |
+> | 「一点没变」= 进程没重启，不是代码没生效 | 磁盘 `main.js` 与部署目标 SHA256 前 12 位一致（`E5C630D6EDDD`，2575200 B，22:35:59），产物里确实带 `max-width:var(--rl-board-card-max, 104px)`。但 `Get-Process` 显示 PID 6312 窗口 `媒体库 - 临时测试库 - Obsidian 1.14.5` **启动于 12:28:46** ⇒ Electron 只在启动时读一次 main.js，磁盘新、内存旧 11 小时 |
+> | 样式覆盖已排除 | `临时测试库` 三个 snippet（`bookinfo-layout.css` / `ReelLudic Bases 样式.css` / `[AI]小标题颜色更改.css`）与 themes（Blue Topaz / Minimal）grep `rl-board` **零命中** |
+>
+> **改动清单**
+> 1. `src/views/components/RatingBoard.svelte`：`.rl-board-title-coll` 加 `max-width: var(--rl-board-card-max, 104px);`，`line-clamp` / `-webkit-line-clamp` 3 → 2；注释逐字记录用户原话 + 真机数字 + 「span 2 保留」的理由。
+> 2. `tests/toolbarBoardPolish.test.ts`：`:178` 钳制链改 2 行；新增 `:189`「合集标题宽度上限必须与封面同一口径」（正向断 `var(--rl-board-card-max` + 反向断不许写死 px）；`:208` 文案「3 行钳制」→「行钳制」。该文件 21 passed。
+>
+> **守卫净增**：+1 条（`tests/toolbarBoardPolish.test.ts:189`），全量 7161 → **7162**。
+>
+> **突变**：3/3 全红（`ALL_RED_OK=1`，exit 0）—— 撤 `max-width` / 写死 `130px` / 钳制退回 3 行。⚠️ 突变器必须 CRLF 兼容：`.svelte` 是 CRLF，`const nl = orig.includes('\r\n') ? '\r\n' : '\n';` 再 `m.from.split('\n').join(nl)`，否则锚点永远 `[SKIP]`。
+>
+> **门禁**：tsc `EXIT=0` ｜ vitest **325 files / 7162 passed / 0 failed** ｜ esbuild `EXIT=0 / 87 warnings`（基线）｜ svelte-check **0 errors / 89 warnings**（基线）｜ `_deploy.cjs` **ALL_MATCH=1**（main.js `8cff1bace514` size=2575200 · manifest.json `3ae51778878c` size=490 · styles.css `da241b941e21` size=784426）｜ assert-symbols `EXIT=0`（313 条，基线 318，「✅ 无新增失败」）。
+>
+> **真机复核**：重启后合集卡 `cardW=122`（仍两格）、`coverW=64`、**`titleW=64`**、`maxWidth=64px`、`clamp=2`；六张系列卡 `titleX` 与 `coverX` **逐张完全相等**（480/480、804/804、480/480、610/610、804/804、934/934），`alignedWithCover:true`、`titleInsideCard:true`。截图 `_shot\rd\series-verify.png` / `series-verify2.png`。
+>
+> **踩坑（已固化）**：① 重启 Obsidian 必须带 `--remote-allow-origins=*`，否则 CDP 报 `Error: Unexpected server response: 403`；② `tools/realdevice/cdp.cjs` **没有 `listTargets`**，取页面列表用 `fetch('http://127.0.0.1:9333/json/list')` 再 `cdp.connect(page.webSocketDebuggerUrl)`；③ `Page.captureScreenshot` 带 `clip` 会**静默失败**（不建文件）；④ 评分看板在**首页「统计」页签**内，不是独立视图；⑤ 判定「UI 改了没生效」先比「文件写入时间 vs 进程启动时间」，再怀疑代码。
+>
+> **文档**：`RELEASE-NOTES-1.5.0.md` 的 `### 🎨界面美化` 已记该条；`CHANGELOG.md` 的 `## [未发布]` 节口径是「只列新增功能」，界面修复不在该节罗列，故未写入。
+>
+> **#785（2026-11-14 第 55 轮）：m00002 两条 —— 条目属性组换位 + meta 行转固定 + 分类视图出厂只勾默认 + 默认源链收成仅豆瓣**
+>
+> 用户原话（`m00002`）：①「高级设置-条目属性分组**移到『字段映射』组上面**」；「来源/评分/评价人数/平台链接」**不再显示**（转为固定不可修改）；「高级设置-分类视图：用户初始**仅勾选默认视图**，不再勾选合集视图」；「首页**只在勾选 ≥2 个视图时才显示**默认视图切换下拉框」。②「元数据搜索源启用的免登录源**不再默认勾选**，新用户默认全勾选**仅为豆瓣一个**，其他需用户自己勾选」。
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | ①b meta 行**不能**从 `ENTRY_FORM_FIELDS` 删 | 面板上「不显示」有两条路：删注册表 vs 面板侧过滤。⛔ 不能删 —— `buildEntryFormPlan` 靠注册表算位次与宽度，删了它变未登记键 ⇒ `sortEntryFormKeys` 按 rank=MAX 垫到最后，编辑窗口里这一行会跑到最底。正确做法 = 注册表保留 + 面板侧 `filter(d => !entryFormFieldIsFixed(d.key))` |
+> | ①b 为什么还要 `withFixedEntryFormFields` | `isDefaultEntryFormFields` 是**整份比对**（长度 + 逐项 key/span）。用户在面板里删一个普通键再放回来，落库形态若不含 meta ⇒ 恒判「非缺省」⇒ 每个用户都被写一份自定义配置进 JSON，破坏「没改就不写」的口径 |
+> | ①c 出厂态**不能**靠 `viewsForStorage` 写存根实现 | 判据若沿用「`hidden === true` 就写」，则存量库每次读都会被告知「合集视图是隐藏的」⇒ 给每个老 catalog **凭空添一条 `views` 键**。必须改成「与出厂缺省比较」（`nowHidden !== factoryHidden`），出厂态不落盘 |
+> | ①c 读到 `hidden: false` 必须**赋值**而非 `delete` | 🔴 本轮实测踩到：写 `delete builtin.hidden` 会让「用户勾回合集视图」与「从来没人动过」在内存里**长得一模一样**（都是 `undefined`）⇒ 下次 `viewsForStorage` 判「与出厂相同」⇒ **静默丢偏好**，重开插件又变回不勾 |
+> | ①d 首页下拉框**零 .svelte 改动** | `ViewChips.svelte` 早有 `{#if views.length > 1}`（MiniSelect）/ `{:else if views.length === 1}`（`.rl-viewpick-single` 静态名）。出厂只勾一条 ⇒ `shownViews` 只剩默认视图 ⇒ 自动退化；勾上第二条 ⇒ 下拉自动出现。⛔ 别去改 `HomeView.svelte:344-348`（当前选中那条破例保留，防「脚下抽地毯」） |
+> | ② 只改**默认值**，不改已播种配置 | `seedSourceChains` 的「用户已配则跳过」逻辑不动 ⇒ 已播种进用户设置的链不被回头改写，符合「不回头篡改用户」既有口径 |
+> | ② 推翻的是 2026-11-12 裁定 | 那条口径是「开箱即用（免登录源兜底）」，代价是**把用户没点过的源一起开出去**。本轮用户明确要求默认只勾豆瓣；更早的 2026-10-25（#716）本来就是「六组一律 douban」 |
+>
+> **改动清单**
+> 1. `src/Settings.ts`：`renderAdvancedPage` 组序改为 分类视图 → **条目属性** → 字段映射 → 笔记属性顺序 → 卡片信息栏（「条目属性」块物理搬到「字段映射」`createGroupSection` 之前，原末尾块删除；文档注释 3 组 → 5 组；删「entryFormGroupEl 保持原位不动」那句）。`renderEntryFormPanel` 的 `allDefs` 滤固定键；`sync()` 的 `cur` 滤固定键；`commitEntryFormFields` 用 `withFixedEntryFormFields(entries, type, kind ?? undefined)`。import 加 `entryFormFieldIsFixed` / `withFixedEntryFormFields`（别名路径 `pure/entryFormFields`）。
+> 2. `src/pure/entryFormFields.ts`：新增 `ENTRY_FORM_FIXED_KEYS = ['meta']` + `entryFormFieldIsFixed` + `withFixedEntryFormFields`；`buildEntryFormPlan` 三处补丁（补位 / 按模板位次插入 / hidden 跳过固定键）。
+> 3. `src/pure/mediaViews.ts`：新增 `BUILTIN_VIEW_HIDDEN_BY_DEFAULT` + `builtinViewHiddenByDefault`；`normalizeViews` 给合集视图带 `hidden: true`；读存根 `hidden === false` 时**赋值 false**（⛔ 非 delete）；`viewsForStorage` 判据改「与出厂不同才写」。
+> 4. `src/pure/sourceRegistry.ts`：`DEFAULT_CHAINS` 六组全改 `['douban']`；上方长注释重写并记录沿革。
+> 5. `assert-symbols.cjs` L21893-21898 `check580` ⑨：正则改 `book: ['douban'],` / `["douban"]`，保留 weread 反向守卫。
+> 6. `tests/mediaViews.test.ts` / `tests/catalogViews.test.ts` / `tests/entryFormFields.test.ts` / `tests/sourceRegistry.test.ts` 全部同步新口径。
+>
+> **守卫净增**：`tests/entryFormFields.test.ts` 新增 describe「固定键（meta）」6 条；`tests/mediaViews.test.ts` 新增 3 条（含「勾回的偏好要活过再存一次」三轮幂等）。
+>
+> **门禁**：tsc **0** / 全量 vitest **324 files / 7144 tests 全绿**（基线 7138，净 +6）/ svelte-check **0 errors · 89 warnings** / build **87 warnings** / 产物断言 **无新增失败**（313 < 基线 318）/ `_deploy.cjs` **ALL_MATCH=1**。
+> **突变 5/5 全红**（①a 撤 `hidden: true` / ①b 判据退回 `if (nowHidden)` / ①c 固定键不再补位 / ①d 清空 `ENTRY_FORM_FIXED_KEYS` / ② book 改回双源）。
+> **真机复核**：组序、勾选态、面板 10 项 `显示 10 / 10`、meta 零命中、`.rl-viewpick` 单条 → 静态名 / 两条 → `button.rl-sel-btn[aria-haspopup=listbox]`、全新安装播种六组全 `["douban"]`。
+>
+> **踩到的坑**
+> 1. 🔴 **突变写成「插注释」= 假绿** —— ①a 最初只插一行 `// MUTATED`，行为没变测试当然全绿。判据必须是 `[RED ok]`。
+> 2. 🔴 **①d 原突变打不中** —— 删 `hidden` 循环里的 `continue` 后仍全绿，因为固定键已被补位逻辑放进 `order`。那条突变没换行为，换成「清空常量」才生效。
+> 3. 🔴 **自证式断言** —— 原「全收起」用 `applicable.length - ENTRY_FORM_FIXED_KEYS.length` 算期望，常量清空时跟着变；改为写死 `- 1`。
+> 4. ⚠️ `.rl-cf-chip` 跨组共用（条目属性 / 卡片信息栏），探针须限定 `.rl-ef-wrap`，否则把卡片字段误判成 meta 泄漏。
+> 5. ⚠️ `.rl-vb-view` 是「系列卡堆叠」按钮，**不是**视图切换器（那个是 `.rl-viewpick`）。
+> 6. ⚠️ Obsidian 1.14.x 设置页在独立文档（`app.setting.modalEl.ownerDocument !== document`）。
+> 7. ⚠️ `sourceChainsSeeded === true` 时不再播种（`main.ts:779`）⇒ 测新用户路径必须两个键一起删 + `await saveSettings()`。
+
+> **#786（2026-11-14 第 56 轮）：m00983 三条 —— 详情页封面左键进笔记 + 相关推荐题材优先 + 笔记条目卡改两栏并收紧长名单**
+>
+> 用户原话（`m00983`）：①「播放器详情页简介封面加左键单击进笔记」；「相关推荐改为『按当前条目题材匹配，同题材不够再放宽』」。②「笔记里 ```reelludic 条目卡改成『左封面 + 右详情』两栏布局，且详情不要太多（演员等长字段要收紧）」。③「`manifest.json` 填 authorUrl/fundingUrl」。
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | ③ 无需改动 | `manifest.json` 实读已含 `"authorUrl": "https://github.com/fhb263"` 与 `"fundingUrl": "https://ifdian.net/a/fhb263"`（12 行完整版，v1.5.0）。⛔ 别为「满足需求」再改一遍造成无谓 diff |
+> | ①a 打开笔记**不塞进** `entryMenu` | `EntryMenuActions` 那七条是**动作类**，由 `EntryContextMenu` 统一渲染成菜单项；「打开笔记」不是菜单项。⇒ 新增独立可选回调 `onOpenNote?: (id: string) => void`，没注入就**不挂左键**（⛔ 不挂假监听） |
+> | ①a 必须挂外层 `cov` 不是 `<img>` | 图有 `object-fit: cover`，裁切留白区也该响应。与既有右键同一条理由 |
+> | ①a 左键与右键**共存** | `click` 只管左键/合成点击，中键走 `auxclick`、右键走 `contextmenu` ⇒ 不判 `btn === 0`，也不动原有 contextmenu 监听 |
+> | ①a 走 `openEntryNote` 同一条出口 | 与标题行/阅读器顶栏一致；它自带 #593 自愈分支（没有笔记就当场生成）。⛔ 另写一套打开逻辑会漂 |
+> | ①b 候选池**不变**（仍只 movie/anime） | 用户 2026-11-10 明确只点名这两类，混进 tv/book 是自作主张。本轮只改**排序**不改**范围** |
+> | ①b 题材匹配必须**完全相同** | `wanted.has(String(g).trim())` 精确命中，「科幻」≠「科幻片」。⛔ 不做模糊包含 —— 误命中比不命中更糟（推荐错题材等于没推荐） |
+> | ①b 两层内部仍各自洗牌 | 要的是「**优先**同题材」不是「**永远**同几部」；同题材组内若不洗牌，用户每次看到的都是同样 7 条 |
+> | ② `listText` 与 `listClampText` 必须**并存** | `listText` 给 tags/genres/aliases 这类短列表（截断它们没道理）；`listClampText` 只给 `cast`/`screenwriter`。⛔ 误把 `listText` 整体替换会让 tags/genres/aliases 三处消费者报 `TS2304` |
+> | ② 截断只是**展示投影** | `applyNoteCardEdit` 回写仍按整串；卡片显示「等 78 人」不代表数据被砍。已有断言钉住 `entry.cast` 读后仍 `toHaveLength(8)` |
+> | ② 窄屏必须回落 | 窄窗下两栏会挤成一条缝。复用既有 **560px** 档（`styles.css` 已有该断点，⛔ 别新增阈值）：`flex-direction: column` + 封面 `96px` |
+> | ② 旧 `head` 类要删干净 | 改两栏后 `.rl-notecard-head` 成死代码，CSS 与源码同时清零（已 grep 确认零残留） |
+>
+> **改动清单**
+> 1. `src/views/EpisodePageView.ts`：`EpisodePageExtras` 加 `onOpenNote?: (id: string) => void`；`buildInfoCard` 内 `if (ctx.entryMenu)` 块**之后**新增 `if (ctx.onOpenNote)` 块（`is-clickable` + `role=link` + `tabIndex=0` + click + keydown(Enter/preventDefault) + `setTip`/`srLabel` 合并提示语）。
+> 2. `main.ts`：`openEpisodePageFor` 的 `page: EpisodePageExtras` 加 `onOpenNote: (id) => void this.openEntryNote(id)`。
+> 3. `styles.css`：`.rl-epp-info-cov.is-clickable` / `:hover { filter: brightness(1.08) }` / `:focus-visible { outline: 2px solid var(--interactive-accent) }` 三条（基础类仍 `cursor: context-menu`）。
+> 4. `src/pure/episodePage.ts`：`pickRecommendations` 签名放宽为 `Pick<MediaEntry,'id'> & Partial<Pick<MediaEntry,'genres'>>`，内部抽 `shuffle()`，新增 `hit`/`miss` 分层后 `[...shuffle(hit), ...shuffle(miss)].slice(0, n)`。
+> 5. `src/pure/noteCard.ts`：新增 `LIST_CLAMP = 6` + `listClampText()`；`valueOf` 的 `case 'cast'` / `case 'screenwriter'` 改走它，tags/genres/aliases 保持 `listText`。
+> 6. `src/views/noteCardMount.ts`：`render()` 改 `split > [cover, main]` 两栏结构，标题行与 body 全挂 `main`，旧 `head` 删除。
+> 7. `styles.css`：`.rl-notecard-split` / `-cover`（84px）/ `-poster`（2:3）/ `-main` 四条 + 560px 块内 `flex-direction: column` + 封面 96px。
+> 8. 测试：`tests/noteCard.test.ts` 新增「长名单收紧」5 条；`tests/episodePage.test.ts` 新增「题材优先」4 条；**新建** `tests/episodePageCoverLink.test.ts` 8 条（源码文本守卫）。
+>
+> **守卫净增**：全量 vitest 从 **7144 → 7161**（净 +17：5 + 4 + 8）。
+>
+> **门禁**：tsc **0** / 全量 vitest **325 files / 7161 tests 全绿** / svelte-check **0 errors · 89 warnings** / build **87 warnings** / 产物断言**无新增失败**（313 < 基线 318）/ `_deploy.cjs` **ALL_MATCH=1**（main.js 2575274 · styles.css 784426）。
+> **突变 4/4 全红**（①b 退回纯洗牌 / ② cast 退回 listText / ② tags 误走 clamp / ①a 去掉 click 监听），末行 `ALL_RED_OK=1`。
+> **真机复核**（`node tools/rd.cjs`，`.testvault`）：1440px 下 `.rl-notecard-split` `flex-direction:row`、宽 1286 / 高 644、封面 **84×123**（2:3 正确）、详情 1190；500px 下变 `column` + `align-items:stretch` + 封面 **96px** + 封面 top 188 / 详情 top 343（确认上下堆叠）；主演实测渲染为「吴京 Jing Wu、刘德华 Andy Lau、李雪健 Xuejian Li、沙溢 Yi Sha、宁理 Li Ning、王智 Zhi Wang **等 78 人**」。
+>
+> **踩到的坑**
+> 1. 🔴 **`genres` 不在 `GROUP_DEFS` 里** —— 条目卡本来就不显示题材（既有行为，非本轮引入），`basic` 组 keys 为 `['type','year','status','rating','mood','tags','series','series_index','aliases']`。给 `valueOf('genres')` 写断言会以 `TypeError: Cannot read properties of undefined (reading 'value')` 崩掉。
+> 2. 🔴 **误删 `listText` 导致三处 TS2304** —— 编辑时把 `listText` 整体换成 `listClampText`，`tags`/`genres`/`aliases` 三个消费者立刻编译失败。两者是**分工**不是替代。
+> 3. 🔴 **笔记可能开在独立弹出窗口**（`ownerDocument !== document`，`docUrl: about:blank`）—— 主 document 里查 `.rl-notecard-*` 恒为 0。探针必须走 `leaf.view.containerEl.ownerDocument`。
+> 4. 🔴 **popout 文档不排版** —— 所有 `getBoundingClientRect().width` 为 0，量尺寸必须在主窗口的叶里（`ownerDocument === document` 且宽 > 500），且只有 `closest('.markdown-preview-view')` 那一份是真的（source 视图副本宽恒 0）。
+> 5. 🔴 **`rd.cjs setup --size` 会重置叶布局** —— 缩窗后必须**重新 open 笔记**才有 DOM；且元素级 `style.width` 改不动 `@media` 断点（媒体查询看**视口**），必须真改窗口尺寸。
+> 6. ⚠️ **PowerShell 反引号是转义符** —— 含 ``` 的 JS 表达式会被吞成换行。造带围栏的笔记用 `write` 工具写文件，别用 shell 字符串。
+> 7. ⚠️ `.testvault` **原本没有任何带 ```reelludic 围栏的笔记** —— 真机验证前须自己造一篇（用后即删）。
+
+> **#776（2026-11-13 第 46 轮）：m15513 两条 —— AI 总结取消打字机（一次输出完毕）+ 字幕问答不再把页面弹回顶部**
+>
+> 用户原话（`m15513`）：「继续，还有字幕面板-AI总结输出动效不要打字机动效了一次输出完毕就行，但我每次基于字幕问答时位置会返回顶部AI摘要处，修复一下」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | ① 打字机有**两套**通道 | ⑴ 流式阶段 rAF 节奏器（`onPartial` 只更新 `liveTarget`，`cuePaceStep` 匀速推进 `liveShownCount`，再用 `typewriterSplit(...).shown` 写节点）；⑵ 收尾整段 `buildCueTypewriter()`（`.rl-tw` + 透明占位 `.rl-tw-rest` 撑高，`typewriterVisibleCount` 逐帧吐字）。用户说「一次输出完毕」⇒ **两条都要拆**，只删一条仍会逐字 |
+> | ① 为什么不改成「收到就刷 textContent」以外的东西 | 用户要的就是「一次输出完毕」。历史注释里记着 m09565 曾要「固定节奏逐段追加」，本轮**明确推翻**：到达节奏不可控、显示节奏自造已无意义 ⇒ 直接整段落 |
+> | ① 仍**不能**重建面板 | 重建会丢输入焦点、清空用户正在打的提问（本仓多处踩过）。所以只改 `.rl-epp-cueai-live` 这一行文本，其余节点不动 |
+> | ① 死码要一起清 | 删了方法后 `pure/typewriter.ts`、`pure/cuePacer.ts` **只服务这一处**（全仓 grep 确证）⇒ 模块 + 两个测试文件 + `styles.css` 的 `.rl-tw*` 三条规则一并退场。⛔ 留孤儿 import 会让 tsc 报未使用 |
+> | ② 真因 = 无条件的 `scrollIntoView` | `buildCueAskBox()` 末尾原本每次重画都调 `panel.scrollIntoView({ block: 'nearest' })`；面板比视口高时 `nearest` 会把面板**顶边**对齐视口顶边 ⇒ 每次提交提问/回答回来/重新生成都弹回 AI 摘要开头 |
+> | ② 修法 = 一次性闸门 | 新增字段 `private cuePanelReveal = false;`，只在 `toggleCueAiPanel()` 的「从无到有」分支置 `true`；`buildCueAskBox()` 里 `scrollIntoView` 整段包进 `if (this.cuePanelReveal) { this.cuePanelReveal = false; ... }` |
+> | ② ⛔ 不改 `block: 'center'` | 那会在每次重新生成时把右栏跳一下，比不滚更烦；`nearest` 在面板已完整可见时是 no-op，保留原语义 |
+> | ② 首次滚一次不能省 | 窄屏两列下字幕节高 `var(--rl-epp-listh, 50vh)`=500px，节底到 1068px 而视口仅 1000 ⇒ 输入框在屏外，不滚用户找不到打字处 |
+>
+> **改动清单**
+> 1. `src/views/EpisodePageView.ts`：流式段重写为 `liveTarget = summary; liveShown.textContent = liveTarget;`（删 `liveShownCount` / `paceTimer` / `paceLast` / `stopPace` / `paceFrame` / `finally` 补字）；`showCueAiPanel()` 里 `this.buildCueTypewriter(body, result.summary)` → `body.createDiv({ cls: 'rl-epp-cueai-sum', text: result.summary })`；**整删** `buildCueTypewriter()` / `destroyCueTypewriter()`；删 `resetCueAi()` 与 `onClose()` 里的两处 `this.destroyCueTypewriter();`；两行 import 换成一段历史注释。
+> 2. 字段：删 `private cueTypeTimer: number | null = null;`，新增 `private cuePanelReveal = false;`。
+> 3. 删文件：`src/pure/typewriter.ts`、`src/pure/cuePacer.ts`、`tests/typewriter.test.ts`、`tests/cuePacer.test.ts`。
+> 4. `styles.css`：`.rl-tw` / `.rl-tw-shown` / `.rl-tw-rest` 三条规则 + 7 行注释 → 一条「打字机（已下线）」说明。
+> 5. `tests/cueStreamWiring.test.ts`（22 tests）：`onPartial` 契约断言翻转（现在**必须**含 `liveShown.textContent = liveTarget;`），新增反向守卫 `not.toContain('requestAnimationFrame')` / `'typewriter'` / `'cuePace'` / `'.textContent = liveTarget.slice'`；新增整条「打字机通道整体下线」（方法/字段/两个 import/`.rl-tw*` 死样式）。
+> 6. `tests/cuePanelMotion.test.ts`（21 tests）：新增 describe「AI 面板每次重画都把页面弹回顶部」4 条 —— 闸门正则、`scrollIntoView` 必须在闸门之后且**全文只 1 处**、`cuePanelReveal = true` 必须在 `destroyCueAiPanel()` 之后且 `showCueAiPanel` 前 800 字符内不得出现、字段默认 `false`、仍用 `block: 'nearest'` 且 ⛔ 非 `center`。
+>
+> **守卫净增**：新建 6 条（2 改 + 1 新增 + 4 新增）；全量 **320 files / 6993 → 318 files / 6973 tests**（净 −2 文件 −20 用例，来自两个纯模块测试的删除）。
+>
+> **踩到的坑**
+> 1. 🔴 `edit` 的 `old_string` 必须以**完整规则块**收尾：第一次想用「注释块 + 三条规则」一次替换，锚点没含 `}` 后的换行 ⇒ 报 not found；第二次只替 `.rl-tw` 一条时把 `/* ── 打字机 ──` 旧注释留了下来（变成两段注释叠着）⇒ 分两次精确替换才对上。
+> 2. ⚠️ PowerShell `Get-Content` 读中文源码显示乱码（`鎵撳瓧鏈猴細`），按行号切片确认删除范围时**不能用它核对文字**，只能用于数行数；文字一律用 read 工具。
+> 3. ⚠️ 删模块前必须先 `grep` 全仓引用：`pure/typewriter` 在 `Project-Rule/DESIGN.md:265` 与两份 CHANGELOG 里是**历史记录**（描述 1.5.0 期实现），⛔ 不能当活引用去改。
+>
+> **门禁**
+> - `tsc -noEmit -skipLibCheck` → **0**
+> - 全量 vitest → **318 files / 6973 tests passed**
+> - `svelte-check` → **0 errors / 89 warnings in 6 files**（基线）
+> - `esbuild.config.mjs production` → **0，87 warnings**
+> - `assert-symbols.cjs`（仓库根）→ **318 条 = 基线，✅ 无新增失败**
+> - `node _deploy.cjs` → **ALL_MATCH=1**：main.js `939c7f842359` **2551311 B** / manifest `2a4cab8f821f` 438 B / styles.css `c9f646d2a74a` **760685 B**（styles.css 变小 452 B 即 `.rl-tw*` 三条规则的体积）
+>
+> **未覆盖的验收**：① 的「一次输出完毕」只做了源码级守卫 + 逻辑推演，**未在真机上录屏确认流式阶段不再逐字**；② 的闸门只在源码层验证，**未在真机上连续问答三次确认页面不动**。
+>
+> **真机复核（2026-11-13 第 46 轮收尾补做）**：重启 Electron 后核对部署产物 —— `main.js` 里 `typewriterVisibleCount` / `typewriterDuration` / `typewriterSplit` / `cuePaceStep` / `cuePacePending` / `CUE_PACE_FRAME_MS` / `cueTypeTimer` / `buildCueTypewriter` / `destroyCueTypewriter` **九个符号全部为 0 命中**，`cuePanelReveal` 命中（main.js 2551311 B / styles.css 760685 B）；`styles.css` 里 `rl-tw` 只剩 `:11854-11855` 两行历史注释，三条规则本身已删。⚠️ ①② 的**运行时行为**（逐字是否真的一次性输出、连续问答页面是否不动）仍未录屏/连问实测 —— 上面两条仍未覆盖的口径不变。
+>
+> **#777（2026-11-13 第 47 轮）：五项清单 —— 随机看一部按页签抽 / 重命名关联媒体（七类规则）/ 管理与维护七行 / 区域截图默认回填 + 右键批注 / ASR 模型页官网路径**
+>
+> 用户原话（`m00002`）：「① 在对应的页签下的随机看一部应该是当前类型的随机出来而不是全部类型混在一起（只有当导航布局为合并视图时随机看一部才是全库中挑）……② 设置-管理与维护组下的批量重命名标题改成「重命名关联媒体」；重命名这个页面不要显示什么有多少个文件被跳过了只显示关联的文件，还有规则模板改成这样（电影 / 剧集 / 动画 / 音乐 / 漫画 / 文学 / 网文 七类逐字模板）……③（七行「排序 / 模块名称 / 描述 / 按钮文字」表格）……④ 阅读器的区域截图按钮默认为区域截图批注模式，点击即进行框选写入笔记区域，但对截图按钮单击右键时，可切换为区域截图批注模式，批注模式下框选后可进行六向调整宽高、像 pixpin 一样列出批注（几何图形、铅笔、箭头、文本打字、马赛克、标序号）播放器的区域截图按钮也为 pixpin 一样列出批注……⑤ 给语音转文字的模型页加下载模型官网路径，可让用户自己手动下载并配置对应的路径」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | ① 池的作用域判据**只准一处** | 原来 `main.ts` 的 `openWhatToWatchModal()` 用 `this.service.list()` 全库喂弹窗，注释还写着「⛔ 不是首页当前页签筛过的那份」；但页签筛选真源只在 `HomeView.svelte`（`$: listEntries = mergedOn ? viewEntries : viewEntries.filter((e) => tabMatchesEntry(activeTab, e))`）。若让宿主再筛一次 = 两处判据必然漂移 ⇒ 改成**组件把筛好的池传出去**：`$: watchDiceOpen = onOpenWhatToWatch ? () => onOpenWhatToWatch?.(mergedOn ? null : listEntries) : null;`，`mergedOn` 为真传 `null`（宿主回退全库）。组件层 `onOpenWhatToWatch` 签名**保持无参**（曾改成收池随后回滚：子组件不知道页签，也不该知道） |
+> | ② 「不要显示被跳过」≠ 只删文案 | 只删界面文字，`RenamePlan.skipped` 仍会被 `planBatchRename` 收进列表 ⇒ 弹窗里会剩下「只显示标题、没有任何可改行」的空壳条目。正解是**入口就过滤**：`planBatchRename` 只 `if (plan.renames.length > 0) out.push(plan)`，跳过项只在 `planEntryRename` 内部留作原因记录，界面零展示 |
+> | ② 七类模板必须**单一真源** | 模板同时被弹窗（展示规则）与纯层（按类型生成文件名）需要。若各写一份，改文案就得改两处且必然漂。⇒ `pure/batchRename.ts` 出 `RENAME_TEMPLATE_GROUPS`（七组 `{kind,label,templates,examples}`），弹窗**只渲染**、⛔ 不抄字面量；守卫断言弹窗源码里**不含** `{电影名}` / `{剧名} - S` |
+> | ② 分辨率只能从文件名认 | `MediaEntry` 上没有 resolution 字段（`year` 有、`season` 只在 `progress.season`）。用户模板 `{电影名} ({年份}) [{分辨率}].{ext}` 里的分辨率 ⇒ `resolutionOf(fileName)` 从原文件名认 `8K/4K/2K/1080P/720P/480P`，认不到就不加这一段（⛔ 不凭空补 `1080P`） |
+> | ② 文件名清洗**不能禁圆括号** | 旧 `cleanStem` 的禁用集含 `()`？实测不含，但用户模板 `(2023)` 要求圆括号必须能出现在文件名里 ⇒ 保持禁 `[\\/:*?"<>|#^[\]]`（含方括号、不含圆括号），与用户给的 `[4K]` 用法一致 |
+> | ② 无规则 / 无文件两条跳过**顺序要对调** | 游戏既无规则也无关联文件。原顺序先报「这条没有关联本地文件」会把用户引去补文件、补完仍改不了 ⇒ 现在先判 `!kind` →「这个类型没有命名规则（游戏等不改名）」，再判无文件 |
+> | ③ 顺序即契约 | 「导入 → 下载 → 重命名 → 检测 → 清理 → 查看 → 还原」是按动线排的（先补内容、再修已有、最后清理/回滚），⛔ 别按字母或旧顺序重排；方法头注释里把这七行逐字钉住 |
+> | ③ 两条 desc 超 15 字 | 「扫描并解析笔记，快速生成系统条目」（16）、「按设定规则批量重命名关联的媒体文件」（17）都是**用户逐字给定**。按 #640 的先例走**具名白名单**放行（`DESC_OVER15_ALLOWED`），⛔ 不放宽整体上限 |
+> | ④ 左键 vs 右键必须**不靠 mousedown 分流** | 用 `mousedown` 判 `button === 2` 会吞掉左键 click（本仓踩过，见 `VideoPlayerView` 注释）。⇒ 左键走 `click` → `startShot()`（默认回填），右键走 `contextmenu` → `startShot(true)`（先框选、再抓图、再进批注） |
+> | ④ 抓图时机是**全部难点** | `saveReaderShot` 原本自己 `captureViewRect(rect)`，但那是在框选层摘掉之后。批注链路必须先抓图（否则批注弹窗盖上去，抓到的是弹窗自己）⇒ 给 `saveReaderShot` 加可选 `png` 参数：`const png = info.png ?? (await this.captureViewRect(info.rect));`，批注链路把修饰后的图回传，复用同一落盘链路（附件命名 / 笔记块 / 定位一并复用，⛔ 不复制第二套） |
+> | ④ 六向调整只做**纯函数** | `rectFromDrag` / `hitShotHandle` / `resizeShotRect` 放 `pure/readerShot.ts`（无 DOM），`ShotOverlay` 只负责画笔与手柄渲染。⚠️ 拖 `n` 只能改 `top`、`bottom` 钉住 —— 用「拖边即整框平移」的写法会在真机上表现为「拖上边整框往上跑」 |
+> | ④ 手柄定位必须 `absolute` | 第一版写成 `position: fixed` 且没写 `left/top`，而手柄是 `.rl-shot-box` 的子元素 ⇒ 八个手柄全堆左上角。改成 `absolute` + `transform: translate(-50%,-50%)` + 八方向各自 `left/top` + 各自 cursor |
+> | ④ 七工具要分**拖动类 / 点放类** | rect/ellipse/pen/arrow/mosaic 靠拖，text/number 靠点（text 还要就地输入）。`makeShape` 只接拖动类，pen 走 `makePenShape(points)`、text 走 `makeTextShape`、number 走 `makeNumberShape`（编号 `nextSeq` 自增）—— 混在一个签名里会让联合类型收窄失效（实测 TS2322） |
+> | ⑤ 给的是**仓库页**不是直链 | `preset.url` 是 `/resolve/` 直链，点开即下载、看不出是哪个仓库。用户要「下载模型官网路径」⇒ 新增 `ASR_MODEL_SITE = 'https://huggingface.co/ggerganov/whisper.cpp/tree/main'` + 镜像 `https://hf-mirror.com/ggerganov/whisper.cpp/tree/main`，并逐档列出 `p.title —— p.fileName（约 体积）` |
+> | ⑤ 打开链接走**宿主白名单** | 弹窗里自己 `window.open` 会绕过 `openExternalUrl` 的 http/https 限制，且移动端行为不一致 ⇒ `AsrEngineModalOptions.onOpenExternal?` 由宿主注入 `(url) => this.openExternalUrl(url)`，弹窗侧保留 `else window.open` 兜底 |
+>
+> **改动清单**
+> 1. `src/pure/whatToWatch.ts`：`buildWatchPool` JSDoc 改为「调用方传该页签筛过的条目，合并视图由宿主传 `null` 回退全库，⛔ 纯层不判导航布局」（函数体不动）。
+> 2. `main.ts`：`openWhatToWatchModal(scoped?: readonly MediaEntry[] | null)`（`const pick = (all) => scoped ?? all;`）+ 新增 `annotateReaderShot(entry, {rect, loc, at})`（两帧 rAF + 60ms → 抓图 → `ShotAnnotateModal` → 回传 `saveReaderShot({..., png: annotated})`）+ `const onShotAnnotate = (rect, loc) => void this.annotateReaderShot(entry, { rect, loc });` 并接到**五处** `openWith` 实参；`saveReaderShot` 签名加 `png?: ArrayBuffer`，内部 `const png = info.png ?? (await this.captureViewRect(info.rect));`；`runBatchRename` 补 `bookFile` 回写（`let book = entry.bookFile;` + `if (book && book === item.path) book = nextPath;`，回写改成按需 `patch`，避免「改第 2 集」也重写 `audioPath`）；`new AsrEngineModal` 补 `onOpenExternal`。
+> 3. `src/views/components/HomeView.svelte`：`onOpenWhatToWatch` 签名改收池；新增 `$: watchDiceOpen`（唯一判据）；两处透传改 `onOpenWhatToWatch={watchDiceOpen}`。`src/views/HomeView.ts`：`onOpenWhatToWatch: (entries) => this.plugin.openWhatToWatchModal(entries)`。
+> 4. `src/pure/batchRename.ts` 重写：`RenameKind` / `RenameTemplateGroup` / `RENAME_TEMPLATE_GROUPS`（七组）/ `renameTemplateOf` / `renameKindOf` / `resolutionOf` / `buildRenameStem`（按类型分派）/ `planEntryRename`（`RenamePlan.kind`；无规则先于无文件）/ `planBatchRename`（只收有 `renames` 的）/ `summarizeRenamePlans` / `renamePlanTip`。
+> 5. `src/modals/BatchRenameModal.ts` 重写：`h2` = `关联媒体重命名`；`renderTemplates()` 渲染七组「规则模板 + 示例」；**删** `renderSkips` 与全部「被跳过」文案。
+> 6. `src/Settings.ts`：`renderPosterCleanupRows` 七行按用户表格重排改名换文案（导入/模板 → 下载 → 重命名 → 检测 → 清理 → 查看 → 还原）。
+> 7. `src/pure/shotAnnotate.ts` 重写：`AnnotateTool` 扩到七种（rect/ellipse/pen/arrow/text/mosaic/number）+ `ANNOTATE_TOOL_ICONS` + `isDragTool` + `makePenShape`/`makeTextShape`/`makeNumberShape` + `nextSeq` + `textSizeFor`/`seqRadiusFor`；`src/pure/shotAnnotateDraw.ts` 重写：`Ctx2D` 补 `font/textAlign/textBaseline/fillText`，`drawShape` 七路分派。
+> 8. `src/modals/ShotOverlay.ts` 重写：`start(hint, { adjust })`；`adjust` 下松手不提交、露 8 个 `.rl-shot-handle-*` 手柄可拖改尺寸、Enter/dblclick 提交；默认模式行为不变。
+> 9. `src/modals/ShotAnnotateModal.ts` 重写：工具条 pixpin 式（图标 + 文字）、`openTextInput` 就地输入、拖动类累积 `penPoints`。
+> 10. 五个 `onShotSave?` 声明点（`ReaderPanelBase` / 四阅读器）各补 `onShotAnnotate?`；四个阅读器 `startShot(annotate = false)` + `contextmenu` 分流 + `data-tip` 改「区域截图：左键框选回填笔记 · 右键框选后批注」。
+> 11. `src/pure/asrModels.ts`：`ASR_MODEL_SITE` / `ASR_MODEL_SITE_MIRROR` / `manualDownloadTip(preset?)`；`src/modals/AsrEngineModal.ts`：`onOpenExternal?` + `renderManualDownload()`。
+> 12. `styles.css`：`.rl-rename-templates*` 六条（替掉 `.rl-rename-skips/.rl-rename-skip`）、`.rl-anno-tool-icon/-label`、`.rl-anno-textinput`、`.rl-shot-handle` 八方向 + cursor、`.rl-asr-manual*` 九条。全部主题变量，⛔ 无 hex。
+>
+> **守卫净增**：`tests/whatToWatch.test.ts` 25（+3 翻转）、`tests/batchRename.test.ts` 44（整体重写）、`tests/batchRenameWiring.test.ts` 24（整体重写）、`tests/shotAnnotate.test.ts` 36、`tests/readerShot.test.ts` 47（+19）、`tests/asrModels.test.ts` 46（+9）；全量 **318 files / 7029 tests**。
+>
+> **踩到的坑（本轮最严重的一条放在最前）**
+> 1. 🔴🔴 **`main.ts` 被 PowerShell 回写毁掉，且不可逆**：我用 `Get-Content -Raw | -replace | Set-Content -Encoding UTF8` 批改 `main.ts`。本机 PowerShell 是 **5.1（.NET Framework）**，`Get-Content` 不带 `-Encoding` 时按**本地代码页 GBK/936** 解码 UTF-8 字节 ⇒ 全文件中文变 mojibake + 7381 个字被吞成 U+FFFD，文件 801219 → 938604 B，`tsc` 从 0 错误变 **4173 个**（首错 `main.ts(898,29): error TS1002: Unterminated string literal.`）。用无损文件跑同一条路径模拟，反向解码直接抛「无法将字节由指定的代码页转换为 Unicode」⇒ **该路径本质上不可逆**。抢救过程：`.dsh/undo-snapshots`（只有配置快照）、`storages/cache/sessions`（会话不存文件正文）、VS Code 本地历史（不存在）、卷影副本（不可用）、`git fsck`（main.ts 从未进暂存区，无 blob）全部落空；`参考插件/main.ts` 是被折叠+乱码污染的另一个分支（缺 1600+ 行、含 337 处「N 行…点击展开」）。最终靠**仓库根 `main.assert.js`**（esbuild production 的未压缩副产物，5590468 B、含全部源注释）里 `\uXXXX` 转义解码出的文本做语料，写还原器 v1→v28 迭代：v22 修掉「U+FFFD 紧跟 `?` 被判成非洞」的决定性 bug（`2697/3282`），v28 再按「左 12 字 + 右 12 字」局部窗口补掉最后的代码行（89 → 39 → 0）。⛔ **教训：本仓任何含中文的文件只能用 read / edit / write 改，永远不要用 PowerShell 读写回写。**
+> 2. ⚠️ `tools/` 下的临时 `.ts` 会被 `tsconfig.json`（`include: ["**/*.ts"]`）一并编译，制造上万条假错误 ⇒ 6 个临时 `.ts` 已移到 `%TEMP%\rl_scratch_ts\`。
+> 3. ⚠️ 语料里本身存在 `X${X}` 双份模板串（是那次构建时的工作区真实内容），照抄进源码造成两处真 bug（`已截图并写入《…》笔记${entry.title}》笔记`、`在线曲库没搜到「${q}」，换个歌名试试${q}」，换个歌名试试`）⇒ 已按 HEAD 原文修正，`_dbg46.js`（相邻重复 ≥8 字中文）复测 `adjacentDup=0`。
+> 4. ⚠️ 反解出的 `${` 会被吃成 `{`（`main.ts:10416` 的 `` `连接失败：{list.message…` ``），反引号计数变奇、整段崩 ⇒ 除 U+FFFD 外还要扫「反引号奇数行」。
+> 5. ⚠️ 断言脚本读的是 **`main.assert.js`**，里面中文是 `\uXXXX` 转义；直接 `js.includes('中文')` 恒为假 ⇒ 必须像脚本自己那样先 `decode()` 再判。我第一版的 `#477` 归因就因此误报了 11 条。
+> 6. ⚠️ 断言归因不能只看总数：`319 FAIL` 里有 316 条是历史既有红。用「旧产物 + 同一份断言」做对照（把 `.testvault` 里 11-11 那份 `main.assert.js` 临时换进去跑，再换回来）后，**归一化签名**（剥 `@L<数字>` 与「实得 …」数字）比对 ⇒ 本批真实新增只有 3 条，修完归零（329 → 315，其中 14 条是产物更新带来的历史翻绿）。
+>
+> **门禁（全部实测）**
+> - `tsc -noEmit -skipLibCheck` → **0**
+> - 全量 vitest → **318 files / 7029 tests passed**
+> - `svelte-check` → **0 errors / 89 warnings in 6 files**（基线）
+> - `esbuild.config.mjs production` → **0，87 warnings**（⚠️ 与 `Select-Object` 同管道时会显示 exit 1，是管道截断的假信号）
+> - `assert-symbols.cjs` → **PASS 3747 / FAIL 315**，⚠️ **相对 11-11 旧产物的基线 329 条，本轮新增失败 = 0**
+> - `node _deploy.cjs` → **ALL_MATCH=1**：main.js `b8639368ea6e` **2566457 B** / manifest `2a4cab8f821f` 438 B / styles.css `dfaacc2972de` **765682 B**
+> - 注释收口后**全门禁复跑**：`tsc` 0 / 全量 vitest **318 files / 7029 tests** / `svelte-check` 0e89w / build **87 warnings** / `ALL_MATCH=1` / 断言 **PASS 3747 FAIL 315（新增 0）** / 镜像校验全绿
+>
+> **未覆盖的验收**
+> - ④ 的**真机交互**未实测：左键框选直接回填、右键框选后手柄拖动改宽高、七个批注工具的落笔效果、文本就地输入——均只做了源码级 + 纯函数级守卫，**未在 Obsidian 里点过**。
+> - ① 只做源码级守卫（`scoped ?? all` + `watchDiceOpen` 唯一判据），**未真机切页签验证候选池确实换了**。
+> - ✅ `main.ts` 的 **490 行 U+FFFD 注释已全部收口**（第 47 轮续做）：逐字还原被证不可能（这批注释写于 `main.assert.js` 那次构建之后，四份语料 + 三元组索引 + 全盘搜索全部零命中，`_repair29.js` 复测 `fixed=0`，三元组「严格补字」也是 0 处），改为**按上下文清洗成通顺中文**：479 行删洞（964 处，含行尾补标点）+ 11 行 `/** */` 手工定稿，写回后 `fffd=0`、行数不变（13166）。清洗器自己踩的两个真 bug 也已修净 —— ① 把 markdown `**粗体**` 误判成块注释闭合 `*/`，导致 3 处块注释提前闭合（`:586` / `:10925` / `:12062`，`tsc` 因此报 `TS1109`），已逐行改回；② 4 行 GBK mojibake（`鈥?`/`鈬?璇?`）已还原成正文。最终复核：`fffd=0`、`mojibake=0`、块注释提前闭合 **0 处**、markdown 粗体残缺仅剩 2 行（`ggml-*.bin` 与 `vault.create*` 里的合法单星号，非残缺）。
+> - ✅ 公开镜像同步**已执行**（robocopy `/MIR`，`ROBO_EXIT=1`）：15 个根文件 MD5 全 OK，`src` 392=392 / `tests` 320=320 / `.github` 4=4，`onlySrc=onlyDst=sizeDiff=0`；镜像只同步文件，⛔ 未代 commit / push。
+>
+
+>
+> 用户原话（`m13127`）：「评分看板的系列卡封面下面名称移到第二张卡片的位置上了修复它，还有在高级设置分类视图只勾选一个视图时首页不显示视图下拉切换菜单②首页搜索框的待补按钮在输入文字搜索时要隐藏，没有文字时显示」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | ① 真因不是间距而是**横排布局** | 旧 `.rl-board-card-coll` 是 `flex-direction: row; align-items: stretch; gap: 6px` + `grid-column: span 2`，封面钉 `width: 62px; flex: 0 0 62px` ⇒ 标题作为横排第二个 flex 子项落在**第二个格子**的横向位置。真机 CDP 量测：行 `grid-template-columns` = 8×`61px`，卡片 `w:130`、封面 `w:62`、标题 `x = 卡片x + 68` 且 `w:62 / h:93` |
+> | ① 修法 = 改回竖排 | `flex-direction: column; align-items: center; gap: 4px`；标题 `width: 100%; text-align: center`；删掉横排时代的 `flex: 1 1 auto` 与 `width: auto` 补丁 |
+> | ① 封面**必须留一格宽上限** | `max-width: var(--rl-board-card-max, 104px)`。占两格宽 + `aspect-ratio: 2/3` 会把封面拉到约 195px 高、整行被撑爆（旧版改 row 正是为躲这条，代价就是标题串格） |
+> | ① 3 行钳制链一个都不能少 | 竖排 + `white-space: normal` 下 `text-overflow: ellipsis` 不画点，`-webkit-line-clamp: 3` 是唯一截断信号（#774 ③ 的要求仍成立） |
+> | ② 意图 = 砍操作不砍信息 | 只剩一个视图时下拉没有可选项 ⇒ 退化为静态名字 `<span class="rl-viewpick-single">`，**不是整条不渲染**（名字是「我在哪」的信息） |
+> | ② `views[0]?.name` 的 `?.` 不能省 | `noUncheckedIndexedAccess` 开着，`views[0].name` 会 TS2532 |
+> | ③ 判据复用 `shouldShowWatchDice` | 骰子与漏斗同槽，⛔ 不能一个用 `trim()` 一个用 `length === 0` —— 判据分叉就会错位。`pure/whatToWatch.ts:89` 已是 trim 语义 |
+> | ③ 只藏按钮会留空洞 | 必须同时 `.rl-search-wrap.tools-hidden .rl-search { padding-right: 12px }`，否则长关键词被白吃宽度 |
+>
+> **改动清单**
+> 1. `src/views/components/RatingBoard.svelte`：`.rl-board-card-coll` 改竖排；`.rl-board-cov-coll` 改 `width: 100%; max-width: var(--rl-board-card-max, 104px); flex: 0 0 auto`；`.rl-board-title-coll` 改 `width: 100%; min-width: 0; text-align: center`（保留 clamp 链）。
+> 2. `src/views/components/ViewChips.svelte`：新增 `$: singleName = views.length === 1 ? (views[0]?.name ?? '') : '';`；模板三分支（`> 1` → `MiniSelect`、`=== 1` → `.rl-viewpick-single`、`else` → `.rl-viewpick-none` + `{fallback}`）；新增 `.rl-viewpick-single` 样式。
+> 3. `src/views/components/MediaList.svelte` + `CollectionBoard.svelte`：漏斗包进 `{#if shouldShowWatchDice(searchText)}`；`.rl-search-wrap` 加 `class:tools-hidden={!shouldShowWatchDice(searchText)}`；各加一条 `.tools-hidden` 右内距规则。
+> 4. `tests/toolbarBoardPolish.test.ts`（20 tests）：③ 组第 1 条改「必须 `width: 100%` 且 ⛔ 无 `width: auto`」、钳制链去掉 `flex: 1 1 auto`；新增 describe「m13127 ① 名称必须落在封面下面」3 条。
+> 5. `tests/incomplete.test.ts`（25 tests）：「始终渲染：不许条件隐藏」整条作废 → 两条新守卫（不置灰 + 前 260 字符内必须 `{#if shouldShowWatchDice(searchText)}` + 反向无 `searchText.length === 0`；两视图都要 `.tools-hidden … padding-right: 12px` + `class:tools-hidden`）。
+>
+> **守卫净增**：改 2 条 + 新增 5 条；全量 **320 files / 6989 → 320 files / 6993 tests**。
+>
+> **踩到的坑**
+> 1. 🔴 真机探针两次自伤：`_probe_v775.cjs` 量到 `dir: "row"` 是**部署前的旧插件仍在内存里**（必须先重载）；`_probe_reload2.cjs` 写成 `const SCRIPT = (async function(){...})()` —— IIFE **立刻执行**，`.toString()` 得到 `[object Promise]`，node 直接 `ReferenceError: window is not defined`。正确写法是 `(async function f(){...}).toString()`（⛔ 不调用）。
+> 2. ⚠️ Obsidian 1.14.4 **没有 `reloadPlugin`**，重载姿势只能 `leaf.detach()` → `pm.unloadPlugin` → `pm.loadPlugin` → `setViewState`；判断「哪个窗口挂着插件」的可靠信号是 `document.querySelectorAll('.rl-home').length`。
+> 3. ⚠️ `MiniSelect` 在单选项下无异常（已排除「单选项渲染失败」这条假设），所以 ② 是真需求而不是 bug。
+>
+> **门禁**
+> - `tsc -noEmit -skipLibCheck` → **0**
+> - 全量 vitest → **320 files / 6993 tests passed**
+> - `svelte-check` → **0 errors / 89 warnings in 6 files**
+> - `esbuild.config.mjs production` → **0，87 warnings**
+> - `assert-symbols.cjs`（仓库根）→ **318 条 = 基线，✅ 无新增失败**
+> - `node _deploy.cjs` → **ALL_MATCH=1**：main.js `78b48510ce5b` **2553280 B** / manifest `2a4cab8f821f` 438 B / styles.css `9b1c32e363b0` 761137 B
+>
+> **未覆盖的验收**：①②③ 全部只有源码守卫，**真机目视未完成**（两次探针自伤后未再重跑）；① 的两格宽封面在窄窗下的实际观感、② 切视图时左端是否跳粗、③ 输入长关键词时右内距收回效果，均未截图确认。
+>
+> **真机复核（2026-11-13 第 46 轮收尾补做，三条已量到）**：重启 Electron 后连真正挂着 `.rl-home` 的窗口（⚠️ `cdp.launch` 返回的是 `index.html` 那个 target，主视图可能在别的窗口 ⇒ 必须枚举 `/json/list` 全部 page target 挑 `.rl-home` 数 > 0 的那个）。
+> ① 合集卡实测 `dir: "column"` / `align: "center"` / `gap: "4px"`；典型样本「熊出没 电影系列」卡片 `{x:162, y:1909, w:130, h:114}`、封面 `{x:195, y:1909, w:64, h:96}`、标题 `{x:162, y:2009, w:130, h:14}` —— **标题 x 与卡片 x 相同（162=162）、宽 130 = 整张卡、y = 卡片 y + 100 落在封面下方**，封面水平居中（195 = 162 + 33）。错位已修好。
+> ② 用 `service.setViews` 把非默认视图全部 `hidden: true` 后：`single: true`、`singleText: "默认视图"`、`selectBtn: false`，DOM 实测 `<span class="rl-viewpick-single">默认视图</span>`；还原前两条视图都在时是 `single: false` + `selectBtn: true`。退化分支成立。
+> ③ 影视页搜索框实测三态：无文字 `hasIncomplete:true / hasDice:true / padRight:"52px"`、`wrapCls:"rl-search-wrap has-dice"`；输入 `test` 后 `hasIncomplete:false / hasDice:false / padRight:"12px"`、`wrapCls:"rl-search-wrap tools-hidden"`；清空后全部还原。显隐与内距收回都对。
+> ⚠️ 仍未覆盖：① 的两格宽封面在**更窄窗口**下的观感、② 切视图时左端是否跳粗（肉眼级）、③ 长关键词实际排版未截图。
+>
+> **#784（2026-11-14 第 54 轮）：用户 m07593 六项 —— 笔记条目卡纯详情化 + 列表单卡平铺生效 + 瀑布流隐藏切换钮 + 卡片 hover 遮罩修复**
+>
+> 用户原话（`m07593`）：「这个属性表格有残留，把改成封面嵌入组件显示而不是用表格[!bookinfo]来显示，还有这个占地面太大了，改成显示详情为主，另一个加个编辑按钮在组件标题旁为打开编辑属性窗口②首页列表视图下点击单卡平铺没效果，而且这个瀑布流视图下隐藏切换循环按钮（本身已是单卡平铺）卡片视图单击信息栏后弹出编辑属性窗口后返回，这个卡片封面持续鼠标hover状态不消失，修复它」。口径（用户拍板）：**纯详情视图 + 标题旁编辑按钮**（卡内不再有输入框）。
+>
+> | 六项 | 落点 | 关键判据 |
+> | --- | --- | --- |
+> | ① 删 `> [!bookinfo]+` 残留 + 封面改条目卡内嵌 | `src/data/noteGenerator.ts`（473→464 行）：删 `posterEmbed()`/callout/`headTitle`/`embed`；保 `libraryDir`（`void libraryDir;`）+ `withTable` | 断言 ③ 段翻面 `> [!bookinfo]+` = **0** 处；`tests/noteGenerator.test.ts` **64 tests 绿** |
+> | ②③ 纯详情视图 + 封面 + 标题旁编辑按钮 | `src/views/noteCardMount.ts`（231 行重写）：`NoteCardMountOptions` 加 `editEntry?`/`posterUrl?`、删 `saveEntry`；`renderRow` 只读「键：值」；`styles.css` `rl-notecard-*` 整块重写 | `main.ts` `registerNoteCardBlockProcessor` 补 `editEntry:(id)=>void this.openEditModal(id)` + `posterUrl:(e)=>this.resolvePoster(e)`；按钮 `iconButton('rl-notecard-edit','pencil',…)` ⛔ 只 `data-tip` |
+> | ④ 列表视图单卡平铺生效 | `MediaList.svelte` `rowSource` 列表分支并入 `unfoldSeries`（`? listFlatRows`） | ⛔ 不合并两字段；⛔ 保 `listGrouping && !searching` + 换行 + `? listTreeRows(`（`searchPenetration.test.ts:66` 钉） |
+> | ⑤ 瀑布流隐藏切换钮 | 状态挂**按钮自身** `class:rl-vb-masonry` + CSS `.rl-vb-view .rl-vb-unfold.rl-vb-masonry { display:none }` | ⛔ 不挪外层 `.rl-vb-view`（断言 #547 钉开标签）；⛔ 不改 `{#if onToggleUnfoldSeries}`（`unfoldSeries.test.ts` 钉最近 `{#if `） |
+> | ⑥ 卡片 hover 遮罩不消失 | 新 `releaseCardFocus(ev: Event)`（`setTimeout(() => el.blur(), 0)`，blur = 卡片根 `.rl-card`）+ 列表铅笔补 `blur()` | ⛔ 别改 `:focus-within`（`MediaList`/`CollectionBoard` 两处共用）；根因 = 焦点滞留卡片 |
+>
+> **门禁**：tsc **0** / 全量 vitest **324 files / 7133 tests 全绿**（新增 4 文件 46 tests，含新守卫 `tests/m07593ListUnfold.test.ts` 5 条）/ svelte-check **0 errors·89 warnings** / build **87 warnings** / 产物断言**零新增 FAIL**（313 < 基线 318）/ `_deploy.cjs` **ALL_MATCH=1**。
+> **🔴 断言两条修复**：#547（`.rl-vb-view` 开标签被我加 class 撞过窄字面守卫 ⇒ masonry 类挪回按钮自身）；#560（`.rl-rename-skips`/`.rl-rename-templates` 是 #777/#778 有意删的死类 ⇒ 计数 10→9、删 `.rl-rename-skips` 点名，安全属性不放宽）。
+> ⚠️ **未覆盖验收**：真机上「笔记里条目卡纯详情 + 标题旁编辑按钮能开属性窗」「列表视图点单卡平铺真摊开、瀑布流下切换钮真消失」「卡片点信息栏进编辑弹窗返回后 hover 遮罩真消散」尚未逐项截图核对 —— 本轮只做源码级守卫 + 全量门禁。
+>
+> **#783（2026-11-14 第 53 轮）：m06113「c+a」—— 把「移动端没有 process」做成单测，并给真机 harness 加移动模拟档**
+>
+> 用户原话（`m06057`）：「有什么方案能真机测试移动端插件」；用户拍板（`m06113` 逐字）：「c+a」。
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 🔴 手机版不是 Electron，是 Capacitor WebView | 那里**没有 `process` 全局**、`Platform.isMobileApp === true`。桌面 Obsidian 把窗口拖到 400px 宽**只验 CSS**，不会让 `Platform.isMobileApp` 变 true ⇒ 桌面端**永远**测不出 #782 那条 `ReferenceError` |
+> | 所以必须显式「删掉 process」再跑 | 实测 `Object.getOwnPropertyDescriptor(globalThis,'process')` = `{configurable:true, enumerable:false, hasGetter:true}` ⇒ `delete` 可行、`Object.defineProperty` 能原样还原。这是 C 方案的技术前提 |
+> | 但 **UI 级**模拟不能删 process | 删掉后 Obsidian 宿主自己的 `app.setting.open()` 立刻抛 `TypeError: Cannot read properties of undefined (reading 'platform')`（栈顶 `new e` @ `app://obsidian.md/app.js`）⇒ 桌面宿主本身就依赖 `process`。**同一件事必须拆两处验**：无 `process` 由单测覆盖，UI 由不删 `process` 的模拟覆盖 |
+> | `obsidian` 模块从页面外部拿不到 | `window.require('obsidian')` 抛 `Cannot find module 'obsidian'`；`window.require.cache` 只有 12 项（`electron` / `@electron/remote` / `btime` …），**没有 `obsidian`** —— 它只在插件 bundle 作用域内被注入（esbuild 的 external 由 Obsidian 加载插件时解析）⇒ **`Platform.isMobileApp` 改不动**，别假装能改 |
+> | 可用的替代通道是 `window.app.isMobile` | 实测 own-property、`{writable:true, configurable:true}`、当前值 `false`，可直接赋 `true`。这也是 Obsidian 计算 `Platform.isMobileApp` 的上游 |
+> | 设置页实例字段是 `settingTab` 不是 `setting` | `Object.getOwnPropertyNames(plugin)` 只含 `settingTab`；`plugin.settingTab` 的 keys 含 `containerEl` / `activePage` / `pageEls` / `tabItems`。早先按 `plugin.setting` 取 ⇒ `扫描失败: 设置页实例不存在` |
+>
+> **C 方案（单测兜底，已完成）**
+> - 新建 `tests/mobileRuntime.test.ts`（**5 tests 全绿**，12ms）。核心 helper `withMobileRuntime(fn)`：存 `Object.getOwnPropertyDescriptor(globalThis,'process')` → `delete globalThis.process` → `try { fn() } finally { Object.defineProperty(globalThis,'process',desc) }`。
+> - 五条：① 环境自检（里面 `typeof process === 'undefined'` 且 `'process' in globalThis === false`，出来后 `process.pid` 是 number）；② `currentPlatform()` 在移动端不抛且返 `''`；③ `systemVoiceIcon()` 无参不抛且 `toEqual({ kind:'builtin', id:'monitor' })`（锁死 #782 的改法）；④ 桌面端行为不变（`win32`/`darwin` 都是 `kind:'brand'`、`linux` 回退 builtin）；⑤ `installSupported('')` 为 false 且 `installUnsupportedMessage('')` 含「电脑版 Obsidian」「手机」、**不含**「包管理器」「Homebrew」。
+> - 文件头写明「只覆盖逻辑不覆盖视觉」—— jsdom 不算布局，`getBoundingClientRect` 恒 0。
+>
+> **A 方案（桌面 CDP + 移动模拟，已完成）**
+> - `tools/realdevice/cdp.cjs`：新增 `MOBILE_DEVICE = { width:390, height:844, deviceScaleFactor:3, ua: iPhone UA }`、`MOBILE_PATCH_SCRIPT`（切 `window.app.isMobile`，逐字段 try 并如实返回成功/失败）、`applyViewport(c,w,h,opt)` 支持 `mobile:true`（追加 `Emulation.setTouchEmulationEnabled({enabled:true,maxTouchPoints:5})` 与 `Network.setUserAgentOverride`，各包 try/catch —— 某些 Electron 版本没这两个域，不阻断视口但要留痕）、`enterMobileMode(c,opt)`。
+> - `tools/rd.cjs`：新增 `mobile` 子命令（`--size 390x844` / `--shot` / `--out`）。流程 = 切移动档 → 打印 `app.isMobile` 与两条限制提示 → 重载插件 → 补切 `app.isMobile` → 逐个 `.rl-set-tab` click 并量 `.rl-set-page-body` 高度 / `.setting-item` 数 / `.rl-set-pagefail` 文本 → 逐页打 `OK / 空白 / 报错页 / 未激活`。
+> - 文件头注释写明「这是**模拟**不是真机：能证移动端运行时路径不崩，不能证像素与真机一致，⛔ 别把本命令的结果当成真机验收」。
+>
+> **A 方案实证（逐字输出）**
+> ```
+> 视口 390×844  mobile=true  DPR=3
+> 已切的判定: [app.isMobile]  app.isMobile=true
+> 重载后: process 缺失=false  app.isMobile=true
+> 环境确认: app.isMobile=true  process 缺失=false  vw=390  页签数=6
+>   OK  基本设置  h=1643  items=19
+>   OK  搜索配置  h=1488  items=0
+>   OK  播放阅读  h=1307  items=14
+>   OK   AI集成  h=579   items=0
+>   OK  高级设置  h=2457  items=0
+>   OK  关于  h=254   items=0
+> 设置页 6/6 页正常
+> ```
+> ⇒ **#782 的修复在移动模拟下成立**：六页全部拿到 `.rl-set-page.is-active`、高度全 > 0、无 `.rl-set-pagefail`、期间控制台零错误。
+>
+> **⚠️ A 方案测不到的两件事（如实登记）**
+> 1. `Platform.isMobileApp` 仍是桌面值 ⇒ `platformGates` 的「仅桌面端」徽标在模拟里**不会出现**，那一条只能真机（方案 B）或临时改入参验。
+> 2. 无 `process` 的真实运行路径 ⇒ 由 C 方案单测覆盖，模拟里删 `process` 会把宿主搞崩。
+>
+> **门禁（实测）**
+> | 项 | 结果 |
+> | --- | --- |
+> | `npx tsc -noEmit -skipLibCheck` | 0 错误 |
+> | `npx vitest run` | **323 files / 7128 tests 全通过**（48.55s） |
+> | `npx svelte-check` | 0 errors / 89 warnings（基线） |
+> | `node esbuild.config.mjs production` | 0 错误 / 87 warnings（基线） |
+> | 产物顶层 node require | **0 处**（严格零缩进判据：63 个 require 全是 `obsidian`，`startsWith('var ') && includes('child_process')` = 0） |
+> | 产物断言 `assert-symbols.cjs` | PASS 3751 / FAIL 314，与上一版基线逐字相同 ⇒ **新增 0**（相关关键词只命中 `#551` / `#560` 两条历史红） |
+> | `node _deploy.cjs` | `ALL_MATCH=1`（main.js `47427c28f285` 2577430 B / styles.css `e8da6d10232b` 781126 B） |
+> | `node tools/verify-artifact.cjs` | `VERIFY=0` |
+>
+> **未覆盖**：① 真机（iOS/Android）像素级观感仍未验；② `Platform.isMobileApp` 分支的 UI 表现（徽标）未验；③ 触摸手势（拖拽排序 / 右键菜单替身）未验。
+>
+> **#782（2026-11-14 第 52 轮）：m05673 手机实测三条 —— 设置页内容区全空白 / 窄屏行不齐且留白 / 桌面专属项要显式说不支持 / 手机默认合并视图**
+>
+> 用户原话（`m05673` 逐字）：「在手机端验证了，有在设置点一下只显示顶部页签而不是基本设置也签内容设置高级集成，播放阅读，ai显示，搜索配置的原数据源配置启用有的分两行有的一行显示空白一片应该给个提示不支持还有默认导航布局应该为合并视图以适应手机端竖屏显示」。
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 🔴 **整页空白的根因不是 CSS，是建页顺序 + 无围栏** | `Settings.ts` 的 `display()` 先遍历 `SETTING_NAV_TABS` 建 6 个页签（`:4667`），**之后**才遍历 `SETTING_NAV_PAGES` 调 `renderPage`（`:4694`）。`renderPage` 没有任何 try/catch ⇒ 任一页抛异常，`display()` 整体中断，`.rl-set-page.is-active` 一个都没挂上（`.rl-set-page { display:none }`）⇒ 页签全在、内容区全空。这解释了「所有页签点了都是空白」—— 它们是在同一次 `display()` 里一起没建完的，不是各页各自的问题 |
+> | 🔴 **手机端真正的抛错点是裸用 `process`** | `src/pure/osIcons.ts:61` 原签名 `systemVoiceIcon(platform: string = process.platform)` —— **默认参数每次调用求值**，移动端 WebView 没有 `process` 全局 ⇒ `ReferenceError`。被 `Settings.ts` 的 AI 页 TTS 音源图标无参调用（`:2752` / `:2790`）。另有 `Settings.ts` 原 `:8358` / `:8368` 直传 `process.platform` 给 `installSupported`（高级设置页）。三处都在桌面跑得好、在手机上是**第一处被调用就炸** |
+> | 只改 `normalizeNavLayout` 会伤老用户 | 它的兜底是 `'top'`，注释明写「缺省值必须与旧版观感一致，⛔ 不能回退成文字菜单/合并视图（升级即换脸）」。所以手机默认合并视图必须走**新装播种**，不改归一函数 |
+> | 桌面专属项「留白」比「报错」更糟 | 这些组在移动端**整组控件根本没建**（`main.ts` 里 81 处 `Platform.isDesktopApp` 门面提前 return，按钮压根不渲染）⇒ 用户看到一片空白，分不清「不支持」和「插件坏了」。用户要的是**显式提示** |
+> | 「仅桌面端」名单必须与 `main.ts` 门控同源 | 名单只准住 `src/pure/platformGates.ts` 一份；`Settings.ts` 只负责在组标题行渲染徽标。⛔ 别在 `Settings.ts` 里硬编码组名（守卫会查「名单里每组都真的被 `createGroupSection` 建出来」） |
+> | 窄屏行不齐是「有的分两行、有的一行」 | Obsidian 原生 `.setting-item` 是 `flex-direction: row`（名称左、控件右）。窄屏下名称一长就把控件挤到下一行，短名称仍在一行 ⇒ 同一页两三种行高。修法 = 719px 档统一改成「名称在上、控件在下」 |
+>
+> **① 设置页不再整页空白**
+> - `src/pure/osIcons.ts` 新增 `currentPlatform(): string`（`typeof process === 'undefined'` 时返空串），`systemVoiceIcon` 默认参数改成 `currentPlatform()`。
+> - `Settings.ts` 的 `installSupported(platform)` / `installUnsupportedMessage(platform)` 改传 `const platform = currentPlatform();`。
+> - `src/pure/whisperRuntime.ts` 的 `installUnsupportedMessage` 首行加 `if (!platform) return '本地转写需要在电脑版 Obsidian 里使用（手机 / 平板暂不支持）。';` —— 空平台必须**先**被拦下，不能落到「用你的包管理器安装」。
+> - 建页循环里给 `this.renderPage(page.id, body)` 包 try/catch：失败时 `console.error` + `body.empty()` + 渲染 `.rl-set-pagefail`（标题 / 说明 / 可复制的原始报错）。**`pageEls.set(page.id, el)` 在 try/catch 之外**，保证失败页也能切过去 —— 否则点它还是空白。
+>
+> **② 窄屏行统一 + 桌面专属显式标注**
+> - `styles.css` 719px 档新增：`.rl-set-page .setting-item:not(.setting-item-heading)` 改 `flex-direction: column`，名称区与控件区都 `width: 100%`，控件区 `justify-content: flex-start`；`input[type='text'|'number'|'search']` / `select` / `.dropdown` `width: 100%`。⛔ 排除 `.setting-item-heading`（分组标题套纵向会多出一段无意义高度）。
+> - 新建 `src/pure/platformGates.ts`：`DESKTOP_ONLY_GROUPS`（7 组：语音转文字 / 元数据搜索源凭据 / 网络播放源凭据 / 音乐下载源凭据 / 统一周期管理 / 数据与备份 / 管理与维护）、`isDesktopOnlyGroup`、`shouldMarkDesktopOnly(title, isDesktopApp)`、`DESKTOP_ONLY_LABEL = '仅桌面端'`。
+> - `Settings.ts` 的 `createGroupSection` 在标题行右侧挂 `.rl-svc-group-badge-desktop`（一处改动覆盖全部组）。样式全走主题变量（`var(--text-faint)` / `var(--radius-s)` / `--background-modifier-border`），无 hex，px 仅 1px 发丝边框。
+>
+> **③ 手机端新装默认合并视图**
+> - `src/pure/navLayout.ts` 新增 `defaultNavLayoutFor(isMobile: boolean): NavLayout`（移动端 `'merged'`、桌面 `'top'`）。**不动** `normalizeNavLayout` 的兜底。
+> - `main.ts` 在 `Object.assign({}, DEFAULT_SETTINGS, rawSettings)` 之后按「磁盘上从未写过 `navLayout`」播种：`if (!rawSettings || typeof rawSettings !== 'object' || !('navLayout' in rawSettings)) this.settings.navLayout = defaultNavLayoutFor(Platform.isMobileApp);`。⚠️ 判据必须是 `'navLayout' in rawSettings`，⛔ 不能写 `if (!navLayout)` —— 那会把用户主动选的 `top` 也改掉。
+>
+> **④ 守卫**
+> - `tests/mobileSettings.test.ts` 新建 17 条：建页围栏（try/catch 位置、`pageEls.set` 在 catch 之外）、窄屏行三件（纵向 / 双 100% / 排除 heading）、`Settings.ts` 不含 `process.platform`、`whisperRuntime` 的空平台判断在 `darwin` 之前、失败页四类样式齐全且报错可选中、平台名单与 `Settings.ts` 组名对得上、徽标挂在标题行、徽标样式无 hex 且 px 只允许 1px。
+>   🔴 守卫自身踩了两个坑：① `css` 变量定义在 `describe` 外层块里，第二个 `describe` 拿不到 ⇒ `ReferenceError`；② 徽标样式里有 `border: 1px solid …`，一刀切「不许出现 px」会误杀 ⇒ 改成「px 只能是 1px」。
+>   🔴 另一个坑：同一档宽度 `719px` 在 `styles.css` 有**多块**（既有 ASR 那块、也有本轮设置行那块）⇒ 必须写 `mediaBlock(width, mustContain)` 按内容挑，⛔ 不能用 `indexOf` 取第一处（已踩：读到无关旧块导致 3 条假红）。
+> - `tests/navLayout.test.ts` 加三条（`defaultNavLayoutFor(true/false)`、`normalizeNavLayout(undefined)` 仍是 `'top'`、`main.ts` 源码守卫含 `'navLayout' in rawSettings` 且**不含** `normalizeNavLayout(`）；`tests/osIcons.test.ts` 加两条（`systemVoiceIcon('')` 不抛且回退 `monitor`、`currentPlatform()` 不抛）。
+>
+> **门禁（实测）**
+> | 项 | 结果 |
+> | --- | --- |
+> | `npx tsc -noEmit -skipLibCheck` | 0 错误 |
+> | `npx vitest run` | **322 files / 7123 tests 全通过**（52.07s） |
+> | `npx svelte-check` | 0 errors / 89 warnings（基线） |
+> | `node esbuild.config.mjs production` | 0 错误 / 87 warnings（基线） |
+> | 产物顶层 node require | **0 处**（零缩进 63 个 require 全是 `obsidian`） |
+> | 产物断言 `assert-symbols.cjs` | PASS 3751 / FAIL 314，相对上一版基线 **新增 0**（相关关键词只命中 `#551` / `#560` 两条历史红） |
+> | `node _deploy.cjs` | `ALL_MATCH=1`（main.js `b2b86a74240d` 2577430 B / styles.css `e8da6d10232b` 781126 B） |
+> | `node tools/verify-artifact.cjs` | `VERIFY=0` |
+> | 镜像 robocopy + MD5 | `ROBO_EXIT=1`（成功）；15 个根文件 MD5 全 OK（`build.bat` 按 AGENTS 不进镜像）；`src` 396=396 / `tests` 324=324 / `.github` 4=4，`onlySrc=onlyDst=sizeDiff=0` |
+>
+> **未覆盖**：① 真机（iOS/Android）观感未验证 —— 本轮是「按渲染链推断 + 源码守卫」，不是实机截图；② 平板中间宽度（720–900）仍无实测；③ `DESKTOP_ONLY_GROUPS` 的 7 组名单是按 `main.ts` 门控推断的，个别组里可能有**部分**功能其实移动端可用。
+>
+> **#781（2026-11-14 第 51 轮）：m05195 / m05299 —— 手机平板窄屏适配（P0 加载期崩溃 + 设置页 + 首页）**
+>
+> 用户原话（`m05195`）：「全面规划移动端手机平板UI适配仅展示、功能上适配的成本（是否可用 Platform.isDesktopApp 隔离掉桌面专属的重型功能）」；
+> 拍板（`m05299`）：「是，要在做手机平板窄屏设置和首页上的适配展示」。
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 移动端**原本就加载不起来**，不是"体验差" | `src/services/asrHardwareProbe.ts:16-17` 是顶层 `import { spawn } from 'child_process'; import * as os from 'os';` ⇒ esbuild 编译成产物**顶层** `var import_child_process = require("child_process")`（实测 `main.assert.js` 顶层第 40270 行）。Obsidian 移动端 iOS/Android WebView **没有 Node 运行时**，顶层 require 在插件加载期就抛错 ⇒ 整个插件起不来。全仓只有这 1 处是顶层静态，其余 11 处 `child_process` 全在函数体内惰性 require |
+> | 重型功能隔离**架构已经对了** | `Platform.isDesktopApp` 81 处 / 8 文件（`main.ts` 64、`Settings.ts` 6、`EntryForm.svelte` 4、`EntryModal.ts` 3、其余各 1），**全是入口方法提前 return**，不是散落的 if。所以第 3 层「隔离」几乎零成本，只需保证按钮不出现 |
+> | ASR / 下载 / B站解析**不可能**搬移动端 | 它们要 `fs` / `child_process` / `https` 直连，移动端 WebView 没有这些。结论写进评估报告：移动端只保证「入口不显示」，不做移植 |
+> | 窄屏断点**只准复用既有档位** | 本仓已有 8 条 `@media (max-width:)`，档位 900 / 760 / 719 / 700 / 560 / 420。再来一个 `812px` 就是第 7 个阈值 ⇒ 每多一档就多一处不同步的漂移点。守卫把白名单写死 |
+> | 设置页页签窄屏**早就做了** | `styles.css:4863` 的 `@media (max-width:719px) { .rl-set-tab-icon { display: none; } … }`（#557 那批）。本轮不再碰页签，⛔ 别重复造 |
+> | 首页页签窄屏**也早就做了** | `HomeView.svelte` 的 `syncTabFit()` 按 `scrollWidth` 判溢出，加 `is-narrow` / `is-tight`；`ResizeObserver` 也在（`:648`）。本轮只补外框留白，⛔ 不动那套 JS |
+> | 统计看板列数**由 JS 决定，不由 CSS** | `src/pure/statsLayout.ts` 的 `statsBlockSpan(key, width)` + `STATS_NARROW_MAX = 719`。⛔ 组件里不许再写一份阈值 —— 本轮只补 `.rl-s-mid`（月度趋势 + 分类概览那个 1fr/1fr），它原本不在任何媒体块里 |
+> | 列表视图表格**不需要动** | `MediaList.svelte:3826` 有 `bind:clientWidth={wrapW}` ⇒ `$: tableAvailPx = wrapW > 0 ? wrapW : 1244;`（`:2152`）⇒ `buildColViews(…, tableAvailPx)`。列宽预算已按实际可用宽自适应 |
+>
+> **① P0：`src/services/asrHardwareProbe.ts` 去顶层静态 import**
+> - 删 `import { spawn } from 'child_process';` 与 `import * as os from 'os';`。
+> - 新增 `getNodeModule<T>(id)`：`window.require` → 模块作用域 `require` → `null`，两层各 try/catch（范式照抄 `src/pure/dl/neteaseCrypto.ts` 的 `getNodeCrypto()`）。
+> - 加最小面接口 `OsLike { totalmem(): number }` / `ChildProcessLike { spawn(...) }`。⚠️ `spawn` 回调参数必须写 `Buffer`，写 `{ toString(): string }` 会 TS2345（逆变）。
+> - `runQuiet()` / `probeTotalMemMb()` 开头取模块，取不到就静默返回（探测失败本来就允许）。
+> - **复核实测**：重建后产物顶层 63 个 `require` **全部是 `"obsidian"`**，`child_process` 12 处全在函数体内。
+>
+> **② 设置页窄屏（`styles.css` 末尾新增一段）**
+> - 字段映射表（719px）：格内距 12px → `var(--size-4-1)`；`.rl-fm-key code` 加 `overflow-wrap: anywhere` + `word-break: break-all`（`progress_total_episodes` 这类长标识符在 `break-word` 下几乎不断，仍会溢出）。
+> - 条目属性面板（560px）：`.rl-ef-preview` `min-width: 280px` → `0` 且 `flex: 1 1 100%`；`.rl-ef-picker` `max-width: 340px` → `none`。原来要 620px 才并排。
+> - 卡片字段面板（560px）：`.rl-cf-picker` `min-width: 260px` → `0`。
+> - 表单与预览（700px）：`.rl-fo-cmp-scroll` 允许横向滚动（对比表列多，硬折行读不出对应关系）。
+> - ⛔ 不改 `COL_WIDTHS`（`Settings.ts` 里 `['30%','24%','46%']`）：那是 `<colgroup>` 的**内联样式**，CSS 类盖不掉。
+>
+> **③ 首页 + 统计看板 + 月历**
+> - `HomeView.svelte`（560px）：`.rl-home` 内距 10px → 6px；页签内距 8px；`.rl-navbar` / `.rl-more-bar` 允许换行。
+> - `StatsBoard.svelte`（复用既有 900px 块）：`.rl-s-mid` 从 `1fr/1fr` 退成 `minmax(0,1fr)` 单列 —— 窄屏下两列各不到 180px，趋势柱子与概览图例会挤成一条。
+> - `CalendarBoard.svelte`（719px）：`.rl-cal-main` 从左右并排改 `flex-direction: column` + `height: auto`；`.rl-cal-side` 从「左侧 210px 竖栏」变「上方一整条 + `max-height: 40vh` 可滚」；`.rl-cal-cell` `min-height` 84 → 62px；**周视图** 7 等分列退成单列堆叠（手机上每列约 45px，条目卡会压成一条竖线）。
+>
+> **④ 守卫 `tests/narrowScreenAdapt.test.ts`（新建，14 条）**
+> - 断点白名单 `[900, 760, 719, 700, 560, 420]`，`styles.css` 与三个组件各查一遍，出现白名单外的值即红。
+> - 设置页 / 统计 / 月历 / 首页四组，逐条钉「该放开的固定宽度真的放开了」。
+> - 反向断言：窄屏段里 ⛔ 不许再出现 `min-width: 260px|280px` / `max-width: 340px`。
+> - 🔴 守卫自身踩了两个坑，都记进文件注释：① 锚点文字只在注释里 ⇒ 必须先在**未剥注释**的 `css` 上定位；② 锚点位于注释**正文中间** ⇒ 必须 `lastIndexOf('/*', 锚点)` 回到注释起点再切，否则开头的 `/*` 被切掉、整段注释不被剥离，里面的 `min-width: 280px` 字面量让反向断言假红。
+>
+> **门禁（实测）**
+> | 项 | 结果 |
+> | --- | --- |
+> | `npx tsc -noEmit -skipLibCheck` | 0 错误 |
+> | `npx vitest run` | **321 files / 7101 tests 全通过**（41.66s） |
+> | `npx svelte-check` | 0 errors / 89 warnings（基线） |
+> | `node esbuild.config.mjs production` | 0 错误 / 87 warnings（基线） |
+> | 产物顶层 node require | **0 处**（63 个 require 全是 `obsidian`） |
+> | 产物断言 `assert-symbols.cjs` | PASS 3751 / FAIL 314，相对上一版基线 **新增 0** |
+> | `node _deploy.cjs` | `ALL_MATCH=1`（main.js `0dcaf7f3e41c` 2575857 B / styles.css `fb1d6558f19a` 775978 B） |
+> | `node tools/verify-artifact.cjs` | `VERIFY=0` |
+>
+> **未覆盖**：① 真机（iOS/Android）加载与观感未验证，本机无移动端运行时；② 平板中间宽度（720–900）的观感是推算不是实测；③ 月历周视图改单列后，一天条目很多时的滚动体验未跑。
+>
+> **#780（2026-11-14 第 50 轮）：m04138 一处 —— 笔记内渲染插件专属条目卡，整张属性表换成可交互代码块**
+>
+> 用户原话（`m04138`）：「在笔记规划渲染出插件专属组件，因为笔记属性和表单两个可视化不对等的」。
+> 拍板口径（`ask_user_question` 三问）：**代码块显式挂载**（` ```reelludic `）/ **可交互，点字段直接改并回写** / **替换掉那张 Markdown 表格**。
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 用户说的「不对等」是**字段投影不对等**，不是「笔记不好看」 | 笔记侧原来是 YAML frontmatter + 一张纯文本 `| 属性 | 内容 |` 表（`noteGenerator` 的 `rows: [string,string][]`），表单侧是约 40 字段的真 GUI。同一份 `MediaEntry`，两边列出来的东西不一样（表格只挑 8~12 行，且类型文案写死） |
+> | 属性表其实是**数据源**，不只是展示 | `src/pure/noteEditable.ts:137` 的 `/^\|\s*来源\s*\|\s*\[([^\]]*)\]\(([^)]+)\)\s*\|/` 从「来源」行反解 `source` / `sourceUrl`，唯一调用点 `src/modals/EntryModal.ts:137`。整张表删掉前必须把这条通道迁到 frontmatter |
+> | 为什么语言名用 `reelludic` 不用 `lrc` | `lrc` 已被内置播放器占用（`main.ts` 的 `registerLrcBlockProcessor`）。Obsidian 的语言表是**全局静态**的，同语言重复注册会抛错并带崩 `onload`（#390 教训） |
+> | 为什么必须 `ctx.addChild(new NoteCardBlock(...))` | 组件持有异步加载后的 DOM 与事件；不挂卸载链会出现「关掉笔记后旧的补丁还在改数据」。范式与 `views/audioPlayerMount.AudioInlineBlock` 一致（await 后必须再判 `disposed`） |
+> | 为什么保存走 `update` + `writeNote` 两环 | 保留区合并（摘抄/截图/相关）、指纹刷新、活动流推送全在 `EntryService` 里；绕过它直接改文本等于把数据写坏 |
+> | 🔴 顶层函数名会污染全局符号 | esbuild 把全仓打成一个文件后，`src/views/noteCardMount.ts` 的顶层 `async function commit` 把 `src/Settings.ts` 里库目录输入框的局部 `const commit` 挤成了 `commit2` ⇒ 产物断言 `void commit()` 直接判红。改名 `commitRow` 后产物恢复。**源码没错、是命名污染的真回归** |
+>
+> **① 纯层 `src/pure/noteCard.ts`（新建，零 obsidian 依赖）**
+> - `NOTE_CARD_LANG = 'reelludic'`；`NoteCardKind = 'text'|'number'|'list'|'date'|'enum'|'rating'|'readonly'`；`NoteCardRow` / `NoteCardGroup` / `NoteCardOption`。
+> - `GROUP_DEFS` 七组：`basic` 基本信息 / `dates` 日期 / `media` 演职与规格 / `progress` 进度 / `game` 游戏 / `book` 书籍 / `music` 音乐。
+> - `buildNoteCardGroups(entry)`：逐键 `fieldAppliesTo(key, entry.type)` 过滤，整组无行不出组；`label = bookKindLabelOf(key, entry) ?? labelOf(key, entry.type)`。
+> - `applyNoteCardEdit(entry, key, raw)`：与投影**成对**的写映射，返回 `null` = 不可写。`type` / `progress_percent` / `created` / `updated` 只读；数字键非法输入返回 `null`（⛔ 不静默清空）；`rating` 走 `normalizeRating` 保 0.5 档；`progress_*` 合成同一 `Progress` 且必须原样带 `history`；`reading_page` / `reading_total_page` 重算 `percent`；`author` 一律写 `author`（⛔ 绝不写 `artist`）。
+> - `noteCardSourceOf` / `parseNoteCardSource` / `noteCardFenceOf`：代码块里**只存条目 id 一行**，属性一律从 catalog 现取，避免「代码块一份 + frontmatter 一份」两份真源。
+>
+> **② 渲染层 `src/views/noteCardMount.ts`（新建）**
+> - `NoteCardBlock extends MarkdownRenderChild`，`onload()` 解析 id → `getEntry` → 判 `disposed` → 渲染；`onunload()` 置 `disposed` + `empty()`。
+> - 行控件**一律** Obsidian 官方 `new Setting(parent)`：`enum` → `addDropdown`（首项「（未设置）」）、`rating` → `dropdown` 11 档、`readonly` → `controlEl.createDiv`（`Setting` 没有 `addEl`，那是别的插件扩展）、其余 `addText`（number 设 `inputEl.type`，Enter 失焦触发提交）。
+> - `class` 前缀用 `rl-notecard-*` 而非 `rl-nc-*`：`styles.css:5558` 已有 `.rl-nc-title`（截图/确认弹窗的居中标题），复用会整块跑偏。
+>
+> **③ 接线 `main.ts`**
+> - `import { NoteCardBlock } from 'views/noteCardMount';` + `import { NOTE_CARD_LANG } from 'pure/noteCard';`
+> - `registerNoteCardBlockProcessor()`：`registerMarkdownCodeBlockProcessor(NOTE_CARD_LANG, (source, el, ctx) => ctx.addChild(new NoteCardBlock(el, source, { getEntry, saveEntry: update+writeNote, openEntry })))`，`try/catch` 让位不打崩 `onload`。
+>
+> **④ `src/data/noteGenerator.ts`：表格 → 围栏**
+> - `if (withTable) { s.push(noteCardFenceOf(e.id)); s.push(''); }`（保住 `opts.table === false` 的 #404 语义）。
+> - 整块删除原 90 行 `rows: [string,string][]` 拼装 + 三个随即变成死码的函数（`displayWidth` / `creatorOf` / `sourceLinkText`）+ 五个随之无用的 import（`ENTRY_TYPE_LABELS` / `normalizeBookKind` / `starString` / `moodText` / `entrySourceLabel`）。
+> - 🔴 迁移「来源」通道：`entryFrontmatter` 新增 `source:` / `source_url:` 两行，`src/pure/noteEditable.ts` 的 `handlers` 补同名两条解析。不迁这张表一删来源就永远读不回来。
+>
+> **⑤ 守卫**
+> - 新增 `tests/noteCard.test.ts`（33 条）。它抓到 5 个**真实缺陷**（全部修在 `noteCard.ts`，⛔ 不是改断言）：`progress_percent` 错放「游戏」组（`appliesTo` 含 tv/anime ⇒ 影视条目会长出「游戏」组）/ `status` 投影给中文标签但回写只认机器 id / 数字键非法输入静默清空 / `rating` 用 `Math.round` 吃掉 0.5 档 / `created`·`updated` 有输入框却写不回（改用 `isReadonlyKey` 在投影阶段标只读）。
+> - `tests/noteGenerator.test.ts` 从 811 行翻面（64 条）：10 处 `| 属性 | 内容 |` 锚改为 ` ```reelludic ` 围栏锚，值改钉 frontmatter；`tests/mood.test.ts` 一条翻面（心情行没了，改钉选项标签）。
+>
+> **门禁（实测）**
+> | 项 | 结果 |
+> | --- | --- |
+> | `npx tsc -noEmit -skipLibCheck` | 0 错误 |
+> | `npx vitest run` | **320 files / 7087 tests 全通过**（49.82s） |
+> | `npx svelte-check` | 0 errors / 89 warnings（基线） |
+> | `node esbuild.config.mjs production` | 0 错误 / 87 warnings（基线） |
+> | 产物断言 `assert-symbols.cjs` | PASS 3751 / FAIL 314，相对上一版基线 **新增 0** |
+> | `node _deploy.cjs` | `ALL_MATCH=1`（main.js `0f83e7fc2b18` 2574950 B / styles.css `7427919fed44` 771704 B） |
+>
+> **门禁脚本自身修了 3 处**（都是「断言锚在已变化的落点上」，意图不变）：
+> - `笔记页数行`：原锚 `kind === "novel" ? "章数" : "页数"` **从来不可能出现**（`bookKindLabelOf` 是三分支 `if`，漫画要先短路成「话数」）。改为钉 `return "章数";` / `return "话数";` / `return "页数";` 三条，比原来更严。
+> - `会加 hidden 的组件`：`\bhidden\b` 把**类名里含 hidden 的标识符**（`rl-pick-hidden` / `rl-pick-hidden-text`）误判成 `hidden` 类，长期误报成红。改为要求 `hidden` 是独立类名 token。
+> - `lrc 语言只注册一次`：判据从「总调用点数 === 1」改为**按语言分组每种 === 1**（新增 `reelludic` 是合理新语言；旧判据守不住真正要防的「同语言重复注册」）。
+>
+> **未覆盖**：① 条目卡在真机 Obsidian 里的观感（无运行时）；② 就地编辑 → `writeNote` 重写笔记后，代码块本身是否原样保留（代码块在 `generateNoteMarkdown` 输出里是固定内容，理论上幂等，但未做端到端跑）。
+>
+> **#779（2026-11-14 第 49 轮）：m03626 三处 —— 音乐重命名读对字段 / 布局编辑区无缝网格 / 建表收进组件库**
+>
+> 用户原话（`m03626`）：「怎么音乐关联的音频文件没有重命名为：{歌手} - {歌曲名}.{ext}【比如骑在银龙的背上.mp3】」「建立一个全局 UI 组件库 (`src/ui/components.ts`)，并据此重构我的设置页代码。**绝对禁用写死的颜色和像素**：所有颜色必须使用 Obsidian 原生变量，**强制使用原生 API**，不要手搓 `<input>` 或 `<select>`……彻底消灭视觉上的东拼西凑。」「去掉每一个输入框下面那一排紫色的胶囊按钮。改为在输入框的右上角放一个极小的图标（比如 `layout-template`），点击这个图标才弹出一个下拉菜单让用户选择 1/1、1/2、1/3。另外，去掉所有多余的边框，让它们看起来像一整个无缝的网格。」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | ① 音乐没改名**不是规则写错，是字段错位** | 歌手在 `author`，`artist` 是**漫画画师**。五处证据：`src/data/types.ts:189-196`（`artist` 注释「只有漫画会写，其余 bookKind 保存时显式清空」）、`src/pure/metaFields.ts:176`（`author` 的 `labelFor.music = '艺术家'`）、`src/pure/musicGroup.ts:32`（按 `e.author` 分组）、`src/views/components/EntryForm.svelte:2147`（`author = r.artist`）、`src/pure/cardMeta.ts:37-51`（`audioSubtitle`/`cardCreator` 都读 `author`）。旧 `music` 分支读 `entry.artist` ⇒ 恒空 ⇒ 每首退化成只有歌名 |
+> | ① 为什么抽 `musicArtistOf()` 而不是就地改一行 | 读侧有五处，各改一遍必然漂移；且要兼容 2026-11-14 之前 `musicSync` 把歌手写进 `artist` 的老数据 ⇒ 一处函数收口 + 回落链，任何读侧都只能走它 |
+> | ① `stemAlreadyCompliant` 为何收紧 | 原来只要「两段式」就算合规 ⇒ `别人 - 七里香.mp3` 会被免检放走。现规则：条目**有**歌手则 `A` 必须等于该歌手；**没**歌手才退回两段式 |
+> | ③ 两套建表法在哪 | 凭据表走 `statusTable()`（grid + `role=table`），字段映射表在 `renderFieldMapRows()` 里手写 `createDiv('rl-fieldmap-headwrap')` + `createEl('table')` + `innerHTML='<colgroup>…'`，表体再写一遍 —— 同一页两种建法 |
+> | ③ 为什么不把字段映射也换成 `statusTable()` | 那是 `grid` 只读表（为窄屏折叠设计）；字段映射 42 行每行都有可编辑 `<input>`，必须 `table-layout: fixed` 才能让输入框宽度不随内容抖动。两者语义不同 |
+> | ② 用户要的「去胶囊 + 右上角 `layout-template` + 原生 `Menu`」 | **2026-11-12 就已实现**（`ghostIconButton('rl-ef-span','layout-template',…)` + `new Menu()` + 当前档 `setDisabled(true)` + `menu.showAtPosition`），本轮核实无残留胶囊，只补无缝网格 |
+>
+> **① 音乐重命名（`src/pure/musicArtist.ts` 新建）**
+> - `musicArtistOf(entry)`：取 `author`；为空且带 `bookKind`（书籍/漫画）返回空；否则回落 `artist`（兼容老数据）。JSDoc 记录上述五处交叉证据，明文「⛔ 别直接读 `entry.artist`」。
+> - `src/pure/batchRename.ts`：`music` 分支改走 `musicArtistOf` 并 `cleanStem` 清洗；`stemAlreadyCompliant` 收紧（有歌手须比对、无歌手退回两段式）。
+> - `src/pure/musicSync.ts`：`MusicEntrySeed.artist` → `author`（⛔ 双写即脏数据）；`adoptableMusicEntryId` 改用 `musicArtistOf`；`main.ts` 两处 `seed.artist` → `seed.author`。
+> - 守卫：`tests/batchRename.test.ts` 新增用户原始场景（`中岛美雪` + `骑在银龙的背上` ⇒ `中岛美雪 - 骑在银龙的背上.mp3`）+ 反例「漫画画师不能当歌手」；`tests/musicSync.test.ts` 新增「老数据写在 `artist` 也要能认」。
+>
+> **② 无缝网格（`styles.css`）**
+> - `.rl-ef-blk`：`background: transparent` / `border: none` / `border-radius: 0`，hover 只换 `var(--background-modifier-hover)`；拖拽落点用 `inset box-shadow`（⛔ 不用 `border`，1px 会位移）。
+> - `.rl-ef-canvas`：`1px dashed` → **`1px solid`**。
+> - 守卫：`tests/entryFormSpanControl.test.ts` 新增 1 条（7 通过）。
+>
+> **③ 建表收进组件库（`src/ui/components.ts` + `src/Settings.ts`）**
+> - 新增 `splitTable(parent, opts)` + `SplitTableHandle` + `SplitTableOptions`：表头 `<table>` 在滚动容器外、表体 `<table>` 在内、两张表共用同一份 `<colgroup>`（列宽真源只 `opts.widths` 一处），返回 `{ headWrap, headTable, headRow, wrap, bodyTable }`。JSDoc 写明「为什么必须两张表」（#640 的两条根因）与「为什么不与 `statusTable` 合并」。
+> - `renderFieldMapRows()` 改调它，只传 `COL_WIDTHS` 与七个类名；**DOM 结构与类名逐字不变**（视觉零变化，既有 23 处断言原样通过）。
+> - 守卫：新增 `tests/uiSplitTable.test.ts`（8 条）—— `splitTable` 导出与返回形状、两份 `colgroup` 同源、建出来是真 `<table>`（⛔ 不许 `role=table` div 冒名）、字段映射组确实调用、组内不再出现 `<colgroup>` / `createEl('table'`、`COL_WIDTHS` 仍留在方法体内。
+>
+> **门禁（实测）**
+> | 项 | 结果 |
+> | --- | --- |
+> | `npx tsc -noEmit -skipLibCheck` | 0 错误 |
+> | `npx vitest run` | **319 files / 7054 tests 全通过**（41.84s） |
+> | `npx svelte-check` | 0 errors / 89 warnings（基线） |
+> | `node esbuild.config.mjs production` | 0 错误 / 87 warnings（基线） |
+> | 产物断言 `assert-symbols.cjs` | PASS 3747 / FAIL 315（与上一版基线逐字相同，新增 0） |
+> | `node _deploy.cjs` | `ALL_MATCH=1`（main.js `3eb8005e047a` 2566574 B / styles.css `40d94bb94a4d` 767961 B） |
+>
+> **未覆盖**：① 「无缝网格」「纯图标 `layout-template` 下拉」的真机观感未目视验收（无 Obsidian 运行时）；② 音乐重命名只在纯逻辑层验证，带真实 `episodeFiles` 的端到端改名未在真库跑。
+>
+> **#778（2026-11-14 第 48 轮）：m03072 六处 —— 重命名弹窗去模板/按钮被裁 + 方括号保留 + 已合规音频不改名 + 批注两条真 bug + ASR 两种下载方式**
+>
+> 用户原话（`m03072`，四条编号但实际六处修复）：「① 这个重命名规则模板不要显示，还有这两个主次按钮都被截断了。② 还有这个怎么完整输出中括号的如「[哥伦比亚] 加西亚·马尔克斯」没有中括号就会变成整个人名了，还有一些符合规则关联的音频文件如：「周杰伦 - 七里香.mp3」被强制改为「七里香.mp3」了。③ 播放器的截图批注模式下的，不要标注文字，直接图标显示横排就行了，还有这个除了铅笔、标序号外所有批注都无法用，阅读器的截图批注模式下根本没有显示对应的批注图标按钮，也无法点击截图。④ 给语音转文字的模型页加下载模型官网路径，（可让用户自己手动下载并配置对应的路径）区分一键下载和用户手动点链接下载并配置」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | ③ 方括号是 `cleanStem` 吃掉的，不是模板问题 | 旧正则是 `/[\\/:*?"<>|#^[\]]/g` —— 字符类里含 `[` 与 `]`，`[哥伦比亚] 加西亚·马尔克斯` 被塌成「哥伦比亚 加西亚·马尔克斯」⇒ 看起来「整个人名了」。改成 `/[\\/:*?"<>|#^]/g`（**只留方括号**，其余禁用字符照旧）。括号是 Windows 合法文件名字符，且 `()` 早就不禁（用户模板要写 `(2023)`）⇒ 方括号同理 |
+> | ④ 音频被改名是**两处叠加** | ① `buildRenameStem` 的 `music` 分支在 `artist` 为空时退化成只有歌名（`artist ? \`${artist} - ${song}\` : song`）；② `planEntryRename` 的「已合规」判据只认 `next === name` **逐字符相等** ⇒ 原文件名已经是 `歌手 - 歌名` 也照样重算。新增 `stemAlreadyCompliant(kind, originalStem, entry, episode)`：仅 `music` 生效，正则 `^(.+?)\s+-\s+(.+)$` 拆出后半段与 `episodeTitleOf(entry, episode) \|\| cleanStem(entry.title)` 比对；**必须在 `buildRenameStem` 之前**判，命中就进 `unchanged` 并 `continue` |
+> | ③ 拖动类工具画不出来 = `draft` 从同点起手 | `pointerdown` 里原来 `this.draft = makeShape(this.tool, p, p);` ⇒ 起终点同点 ⇒ `span=0 < ANNOTATE_MIN_SIZE(0.004)` ⇒ `makeShape` 恒 `null`；`pointermove` 里 `const first = this.draft && 'from' in this.draft ? this.draft.from : p;` ⇒ draft 恒 null ⇒ first 回落成当前点 ⇒ 跨度永远 0。铅笔靠累积 `penPoints`、序号靠按下即落子 ⇒ **只有这两个能用**，与用户观察完全吻合。修法：独立字段 `private dragFrom` 记起点，`makeShape(this.tool, this.dragFrom ?? p, p)`；`pointerup`/`pointercancel` 一并清 |
+> | ③ 阅读器「没有批注图标按钮」不是图标丢了，是**没有提交入口** | `ShotOverlay` 的 adjust 模式松手后只画手柄**不提交**，提交只有 Enter / 双击两条隐形路径 ⇒ 用户框完点哪里都没反应。修法：选框落定就浮出 `.rl-shot-ops`（「批注」= 同一 `commit()` + 「取消」），回车/双击保留为快捷方式 |
+> | ③ 按钮容器⛔ 不能挂在 `.rl-shot-box` 上 | 那是 `pointer-events: none`（避免挡框选），挂上去按钮点不到 ⇒ 挂 `el`；且 `onPointerDown` 开头必须 `if (this.opsEl?.contains(ev.target)) return;` —— capture 阶段 + `setPointerCapture` 会吞掉按钮 click |
+> | ⚠️ 工具条去文字 **不能改成 `aria-label`** | 本仓有「悬停提示单一真源」硬门禁（`tests/tooltipSingleSource.test.ts`）：同一元素既挂 `data-tip` 又挂 `aria-label` 会叠出两层气泡。纯图标后语义只能由 `data-tip` 承担，`ANNOTATE_TOOL_LABELS` 也从 modal 的 import 里删掉 |
+> | ② 按钮被裁的机制是**总高溢出** | 内容高度 = `desc` + `list(max 320px)` + `templates(max 260px)` + `ops`，超出 Modal 视口而 `ops` 不在滚动区 ⇒ 底部被切。删 templates 缓解 + `.rl-rename-list` 降到 260px + `.rl-rename-ops` 改 `flex: none; position: sticky; bottom: 0` 双保险 |
+> | ⑥ 两种下载方式必须**并列**，不是上下堆 | 旧实现把手动下载塞在卡片上方，语义上仍是「一键下载的补充」。改成显式两段：`方式一：一键下载并启用（插件联网下载）` → 卡片；`方式二：自己下载后指定本地文件（不联网）` → 官网/镜像 + 逐档文件清单 + 「选择本地模型文件…」。配置按钮从 `<details>展开高级配置</details>` 里**移进方式二**（用户下完文件正好接着点，零跳转） |
+> | 🔴 `require('@electron/remote')` 会**炸构建** | esbuild 对 `require` 字面量做**打包期静态解析**，而该包不在 `package.json`（只由 Obsidian 运行时提供）⇒ `Could not resolve "@electron/remote"`。必须把模块名放进变量再传给 `require`（间接引用），让解析退回运行期 |
+>
+> **改动清单**
+> 1. `src/modals/BatchRenameModal.ts`：删 `renderTemplates()` 方法体 + 空态/正常态两处调用；删构造函数第 4 参 `groups: readonly RenameTemplateGroup[] = RENAME_TEMPLATE_GROUPS`；import 精简为 `RenamePlan` + `renamePlanTip`。
+> 2. `styles.css`：删 `.rl-rename-templates` / `-templates-head` / `.rl-rename-template` / `-template-kind` / `-template-rule` / `-template-eg`（死码不留）；`.rl-rename-list` `max-height` 320px → 260px；`.rl-rename-ops` 加 `flex: none; position: sticky; bottom: 0; z-index: 1; padding: 10px 0 2px; background: var(--background-primary); border-top: 1px solid var(--background-modifier-border)`。
+> 3. `src/pure/batchRename.ts`：`cleanStem` 字符类去掉 `[` `]`；新增导出 `stemAlreadyCompliant()`；`planEntryRename` 在 `const ext = extOf(name);` 之后插入前置判断（早于 `buildRenameStem`）。
+> 4. `src/modals/ShotAnnotateModal.ts`：新增 `dragFrom` 字段；`pointerdown` / `pointermove` / `finish` / `pointercancel` 全部改用它；工具条删 `rl-anno-tool-label` span 与 `ANNOTATE_TOOL_LABELS` import。
+> 5. `src/modals/ShotOverlay.ts`：新增 `opsEl` / `okText` / `paintOps()`；`start()` 的 `opts` 加 `okText?`；adjust 分支建 `.rl-shot-ops`（「批注」+「取消」）；`paintRect` / `showHandles` 调 `paintOps()`，`hideHandles` 隐藏它；`onPointerDown` 加按钮区早退；`destroy()` 清 `opsEl`。
+> 6. `styles.css`：删 `.rl-anno-modal .rl-anno-tool-label`；`.rl-anno-modal .rl-anno-tool` 改 `justify-content: center; min-width: 26px`；新增 `.rl-shot-ops` + `.rl-shot-ops.hidden`；新增 `.rl-asr-way` / `.rl-asr-manual-ops`。
+> 7. 四阅读器提示文案统一改成 `点「批注」确认`（`PdfReaderModal.ts:1592` / `EpubReaderModal.ts:2549` / `TxtReaderModal.ts:1513` / `ComicReaderModal.ts:1485`）。
+> 8. `main.ts` 的 `captureViewRect`：改成按序试 `electron` → `@electron/remote` 两条通道（模块名走变量，绕开 esbuild 静态解析），任一拿到 `webContents.capturePage` 即可。
+> 9. `src/modals/AsrEngineModal.ts`：`onOpen()` 加「方式一」段落标题，卡片之后调 `renderManualDownload`；后者开头加「方式二」标题，末尾加 `rl-asr-manual-ops` + 「选择本地模型文件…」；删 `<details>` 里那颗重复按钮。
+> 10. `src/pure/asrModels.ts`：`manualDownloadTip()` 文案改「点上面的「选择本地模型文件…」」，不再提「展开高级配置」。
+> 11. 测试：`tests/batchRename.test.ts`（47 tests，`cleanStem` 期望值 + 3 条新守卫）、`tests/batchRenameWiring.test.ts`（25 tests，「弹窗不显示模板区」整条翻面 + 「底部按钮完整可见」新守卫）、`tests/shotAnnotate.test.ts`（41 tests，新增 5 条 bug 守卫）、`tests/asrModels.test.ts`（50 tests，新增 4 条两方式守卫）。
+>
+> **守卫净增**：改 2 条 + 翻面 1 条 + 新增 13 条；全量 **318 files / 7029 → 318 files / 7042 tests**。
+>
+> **踩到的坑**
+> 1. 🔴 我先把工具条文字换成 `aria-label`，当场被 `tests/tooltipSingleSource.test.ts` 判红（「同一变量上 setAttribute 的双挂为零」）。**这不是测试过严，而是仓库既有铁律**：`data-tip` 与 `aria-label` 同时挂会叠两层气泡。连我为此写的新守卫也得一起翻面（原来断言「必须含 `aria-label`」→ 改「必须⛔ 不含」）。
+> 2. 🔴 `require('@electron/remote')` 让 `node esbuild.config.mjs production` 直接 `Could not resolve` 失败（`BUILD_EXIT=1`，`main.js` 根本没产出）。`external` 列表里只有 `obsidian` / `electron` / codemirror 系，不含 `@electron/remote` ⇒ 不许往 `external` 里加这个不存在的包，只能改成间接引用。
+> 3. ⚠️ 构建告警计数别用「数 `▲ [WARNING]` 行」：一次输出里同一 warning 会出现**两遍**（命令行摘要 + 代码帧）⇒ 我数出 175 而实际基线是 **87**。以 esbuild 自己打印的末行 `87 warnings` 为准。
+> 4. ⚠️ 断言比对必须**归一化签名**（剥 `@L<行号>` 与尾部「实得 …」）再比集合；否则行号一漂全是「新增」。本轮归一化后 `added=0 / gone=16`，未归一化会误报 4 条。
+> 5. ⚠️ 有一条 FAIL 的**标签里带计数**（`会加 hidden 的组件都有 .hidden 规则（共 N 处）`）⇒ 我新增 `rl-shot-ops hidden` 后标签从 21 变 22，归一化后仍算「新增」。核到 `bad` 列表两轮都是同一条历史红（`rl-pick-hidden` / `rl-pick-hidden-text` 有 `.is-empty` 但无 `.hidden`），**计数变而缺陷不变**，属标签漂移不是新缺陷。
+>
+> **门禁**
+> - `tsc -noEmit -skipLibCheck` → **0**
+> - 全量 vitest → **318 files / 7042 tests passed**
+> - `svelte-check` → **0 errors / 89 warnings in 6 files**
+> - `esbuild.config.mjs production` → **0 错误 / 87 warnings**（= 基线）
+> - `assert-symbols.cjs` → **PASS 3747 / FAIL 315**；对照上一版产物（330 FAIL）归一化后 **新增 0**
+> - `node _deploy.cjs` → **ALL_MATCH=1**：main.js `9b35723c203f` **2566155 B** / manifest `2a4cab8f821f` 438 B / styles.css `fedf39fac21c` 766816 B
+> - `node tools/verify-artifact.cjs` → **VERIFY=0**
+>
+> **未覆盖的验收**：①②③④ 全部只有源码守卫与构建产物证据，**真机目视未完成** —— 重命名弹窗底部按钮是否真的不再被裁、批注工具条纯图标横排的观感、阅读器框选后「批注」按钮是否落在选框下方可见位置、`captureViewRect` 三条通道在本机 Obsidian 1.14.4 上究竟走通哪一条，均需重启 Electron 后实测。
+>
+> **#773（2026-11-13 第 43 轮）：m12298 三条观感修正 —— 待补进搜索框 / 库概览窄窗自适应 / 抽卡页改版**
+>
+> 用户原话（`m12298`，三条一次给）：「这个待补图标放在首页搜索框内，而且这个随机看一部图标按钮不要emoji图标，改成Ob对应的图标，②首页右上角如N 部电影这悬停的在页面窗口变窄时也要跟着调整，③这个随机看一部页面要调整一下把右下角的改属性按钮删除，把"换一个/就它了"按钮放在右下角，优化布局样式添加更多的信息（简介要有、个人状态与评价也要放上去）同时封面右下角加个播放按钮如有（如没有给加个未关联封面右下角标）」
+>
+> | 判断点 | 结论与理由 |
+> | --- | --- |
+> | 漏斗怎么进搜索框 | 不是两枚各自绝对定位，而是同一个 **`.rl-search-tools` 工具槽**（`right: 4px` + `gap: 2px`）。理由：骰子按 `shouldShowWatchDice` 时隐时现，各钉 `right` 会让漏斗「要么被压住、要么骰子消失后留个空位」 |
+> | 搜索框内距怎么给 | 保留 `padding: 5px 30px 5px 27px`（**单枚**口径）+ 新增 `.rl-search-wrap.has-dice .rl-search { padding-right: 52px }`。⛔ 不写死 52px：骰子隐藏时会白留一条 |
+> | 骰子换什么图标 | `shuffle`。全仓**没有 dice 类**（`dices` 实测不存在，`setIcon` 对未知名静默 no-op ⇒ 按钮变空白），`shuffle` 已在 `StatsBoard.svelte:552` 实名用过且语义即「随机」 |
+> | ② 的真因是什么 | 工具栏两端都是 `position: absolute`（左 `.rl-libstats{left:0}`、右 `NavMenu` 的 `.rl-nav-wrap.is-toolbar{right:0}`），**两个绝对定位端头不参与居中那组的让位计算** ⇒ 窄窗与居中搜索框顶在一起 |
+> | ② 怎么修 | `@media (max-width: 760px)` 改**两行流式**：库概览 `position: static; order: -1; flex: 1 0 100%` 独占第一行，居中那组 + 导航入口回流行内。⛔ 不用 `overflow: hidden` 切内容（切掉才是真的「没跟着调整」）。基础规则的 `position: absolute; left: 0` **保留**（assert `:19622` 要求它） |
+> | ③ 删改属性 | 删按钮 + 删 `onEditEntry` 注入位 + 删 `.rl-wtw-edit` 样式，**三处一起退场**。⛔ 只删模板会留死接口与 Unused CSS selector（顶破 89 warnings 基线） |
+> | ③ 按钮为何能贴右下 | `.rl-wtw-ops { justify-content: flex-end }`；顺序仍是 `.rl-wtw-again{order:1}` < `.rl-wtw-take.mod-cta{order:2}`（原来「改属性」用 `order:3; margin-left:auto` 占右下，删掉后整组接管） |
+> | ③ 播放钮判据 | 走 `pure/actionLabel` 的 **`hasActionEntry`（唯一真源）**，⛔ 不自己写 `episodeFiles?.length` 那一串 —— 那正是 #534 / #535 / #601 三次「判可用但点不动」的同源漏判。提示文案同样走 `actionReadyHint` / `actionUnavailableHint` |
+> | ③ 简介取哪个字段 | `summary`（本仓既有「简介」，搜索回填就有）。⛔ 不用 `aiSummary`（那是 AI 生成另一份） |
+> | ③ 心情怎么显示 | `moodText(e.mood)` 已拼成「🤩 震撼」，⛔ 不再手拼 emoji（#772 立的唯一真源） |
+>
+> **改动清单**
+> 1. `src/views/components/MediaList.svelte`：`.rl-search-wrap` 加 `class:has-dice`、内嵌 `<span class="rl-search-tools">`（骰子 `shuffle` + 漏斗搬入）；样式新增 `.rl-search-tools` / `.rl-search-wrap.has-dice .rl-search{padding-right:52px}`，`.rl-search-dice` 去定位改槽内，`.rl-incomplete` 改 22×22；新增 `@media (max-width:760px)` 窄窗重排（含 `:global(.rl-toolbar .rl-nav-wrap.is-toolbar)` 回流行内）。
+> 2. `src/views/components/CollectionBoard.svelte`：模板与样式**逐字同款**同步（parity 口径），另加同款 `@media (max-width:760px)`（无导航入口那条）。
+> 3. `src/modals/WhatToWatchModal.ts`：**重写** —— 删 `onEditEntry`/改属性；新增 `onPlayEntry`；拆 `paintCover` / `paintInfo`；封面右下角 `hasActionEntry` 分叉（`.rl-wtw-cover-play` 圆钮 / `.rl-wtw-cover-none`「未关联」角标）；补「简介」「个人状态与评价」两块（`summary` / 状态 / 评分 / `moodText` / `notes`，**有值才渲染**）。
+> 4. `main.ts`：`openWhatToWatchModal()` 注入位 `onEditEntry` → `onPlayEntry: (e) => this.runEntryAction(e)`（复用 #444c 已收口的统一主操作入口）。
+> 5. `styles.css`：`.rl-wtw-ops` 加 `justify-content: flex-end`；新增 `.rl-wtw-block` / `-label` / `-text` / `.rl-wtw-summary`（三行 clamp）/ `.rl-wtw-chips` / `.rl-wtw-chip` / `.rl-wtw-cover-play` / `.rl-wtw-cover-none`；**删除** `.rl-wtw-modal .rl-wtw-edit`；窄窗补 `justify-content: flex-end` + 简介四行 clamp。
+> 6. `tests/whatToWatch.test.ts`：宿主守卫 `onEditEntry` 断言**改写**为新口径（`onPlayEntry` + 反向 `not.toMatch(/onEditEntry/)`），新增 4 条守卫（删改属性无残留 / 按钮右下角 / 简介与个人状态 / 封面两种形态）。
+> 7. `tests/incomplete.test.ts`：`height: var(--input-height)` 旧断言**改写**（口径随搬家失效），新增 `funnelInsideSearchTools` 结构判定（wrap 收尾与 slot 收尾都在漏斗之后）。
+>
+> **守卫净增**：`whatToWatch.test.ts` 19 → **23 条**；`incomplete.test.ts` 23 → **24 条**；全量 6971 → **6972**。
+>
+> **踩到的坑（三条）**
+> 1. 🔴 **旧断言会「守着一个已失效的口径」**：`tests/incomplete.test.ts:186` 的 `height: var(--input-height)` 是 ⑮ 时代「漏斗与＋添加同一把尺」的产物；① 把它搬进槽后该口径整体失效。修法是**按新口径改写并写清失效理由**，⛔ 不是删断言，也⛔ 不是放宽成 `toMatch(/height:/)`。
+> 2. 🔴 **我第一版自造了两个重复实现**：本地 `setIconSafe`（应直接用 `services/safeIcon` 的 `safeSetIcon`）和 `actionReadyHintSafe`（应直接用 `pure/actionLabel` 的 `actionReadyHint`）。已删净——「别在 UI 侧手抄一份」这条纪律在本仓反复立过。
+> 3. 🔴 **我第一版测试引用了不存在的辅助函数** `resolveFunnelInsideWrap`，且反向正则 `/}\s*\n\s*<button.../` 噪音极大。已改成 `funnelInsideSearchTools` 的三处 `indexOf` 位置比较（⛔ 不切固定字符窗口 —— 本仓已在窗口切片上翻车多次）。
+>
+> **门禁**
+> - `tsc -noEmit -skipLibCheck` → **0**
+> - 全量 vitest → **319 files / 6972 tests passed**
+> - `svelte-check` → **0 errors / 89 warnings in 6 files**（基线，⛔ 未抬高）
+> - `esbuild.config.mjs production` → **0，87 warnings**
+> - `assert-symbols.cjs`（仓库根）→ **318 条 = 基线，✅ 无新增失败**
+> - `node _deploy.cjs` → **ALL_MATCH=1**：main.js `a30a1395adbb` **2548141 B** / manifest `2a4cab8f821f` 438 B / styles.css `9b1c32e363b0` **761137 B**
+>
+> **未覆盖的验收**：本轮全部为源码级与门禁级验证，**未做真机截图对照**。三条改动里 ② 的「窄窗重排后是否真的不重叠」和 ③ 的「封面右下角播放钮点击是否真的能播」建议在真机 `tools/rd.cjs` 里各点一次确认（尤其 ② 的 760px 阈值是按布局推算的，不是量出来的）。
+>
+> **#774（2026-11-13 第 44 轮）：m12719 三条观感修正 —— 删「视图」标签 / 统计页模块高度对齐 / 评分看板系列卡省略号**
+>
+> 用户原话（`m12719`，三条一次给）：「首页视图切换下拉项旁边的"视图"删除掉，统计页各个模块（除评分看板外的）要高度对齐，统计看板系列卡展示的名称要加截断的要加省略号」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | ① 两处标签都删 | `ViewChips.svelte` 的模板**两个分支各写一份** `<span class="rl-sel-label">视图</span>`（正常分支 `:54` + 脏数据兜底分支 `:64`）。只删一处 ⇒ 兜底分支时标签会「复活」 |
+> | ① `.rl-sel-label` 规则必须同步删 | 留着就是 **Unused CSS selector**，会让 svelte-check 的 89 warnings 基线被顶破。⛔ 不能「先留着免得以后用」 |
+> | ① `.rl-viewpick` 的 `gap: 6px` 也去掉 | 标签走了只剩 `MiniSelect` 一个子元素，间距没有第二个元素可分隔。留着是无害但无意义的死声明 |
+> | ① ⛔ 别顺手删「状态 / 排序」标签 | 用户只点了「视图」这一枚。那两枚的语义是「值不含自身名称」（`全部` / `评分高→低`），删了用户分不清在选什么 |
+> | ② 真因不是间距不统一 | `.rl-sb-blocks` 早有 `align-items: stretch`，但那是把**`.rl-sb-block` 外框**拉到行高；框里的 `.rl-s-panel` / `.rl-hero` 是普通块级子项、高度仍是 `auto` ⇒ 内容少的块**顶在上方**，白卡片底边自然一高一低（真机量测：改前右「动态」比左「核心指标」矮 100+ px） |
+> | ② 修法 = 两层都要拉 | `.rl-sb-block` 改 `display: flex; flex-direction: column`，再用**子选择器** `.rl-sb-block > .rl-s-panel / > .rl-hero / > .rl-s-block { flex: 1 1 auto; min-height: 0 }` 让内容吃掉剩余高度。`min-height: 0` 是配套的：块内若有滚动区（今日动态列表）不给它会撑破整块 |
+> | ② ⛔ 必须是子选择器 `>` | `.rl-s-panel` 在别处也有嵌套用法，后代选择器会误伤（本仓 #534 族同类事故） |
+> | ② hero 要额外一层 | `.rl-hero` 自身是 grid：它吃满高度后两列子项（`.rl-hero-main` / `.rl-hero-side`）仍按内容排 ⇒ 半栏下又露下半截空白，故补 `height: 100%` |
+> | ② 「除评分看板外」怎么落 | 外框本身无背景无描边，`board` 块被一起拉高**看不出来** ⇒ 视觉上自然满足，⛔ 不必为它写例外规则（写例外反而多一处要维护的口径） |
+> | ③ 真因是宽度冲突 | 基类 `.rl-board-title` 带 `width: 100%`，而合集里这枚是 `flex: 1 1 auto` 的**横排 flex 子项**：`flex-basis: auto` 读那个 100%（= 整卡宽）⇒ 文字盒先按整卡宽排版再靠 `flex-shrink` 往回缩，缩到 `min-width: 0` 之下时内容**已排到盒外**，`-webkit-line-clamp` 的省略号落在看不见的位置 |
+> | ③ 修法 = `width: auto` | 显式顶掉基类。⛔ 不用 `!important`（堵死后续覆盖），⛔ 不删基类 `width: 100%`（竖排单条卡正需要它撑满封面宽，`assert-symbols.cjs:13254` 也钉着 `white-space: nowrap`） |
+> | ③ 落点为什么在评分看板 | 顺手核了媒体库系列折叠卡：标题走 `.rl-ttl`（`MediaList.svelte:5056`）**本来就带 `text-overflow: ellipsis`** ⇒ 那边不缺省略号，用户截图指的是评分看板合集卡 |
+>
+> **改动清单**
+> 1. `src/views/components/ViewChips.svelte`：模板两分支各删 `<span class="rl-sel-label">视图</span>`；样式删 `.rl-sel-label` 整条规则、`.rl-viewpick` 去 `gap: 6px`；头部注释补记录三条理由与「⛔ 别删状态/排序标签」的边界。
+> 2. `src/views/components/StatsBoard.svelte`：`.rl-sb-block` 加 `display: flex; flex-direction: column`；新增 `.rl-sb-block > .rl-s-panel, > .rl-hero, > .rl-s-block { flex: 1 1 auto; min-height: 0 }`；新增 `.rl-sb-block > .rl-hero > .rl-hero-main, > .rl-hero-side { height: 100% }`。
+> 3. `src/views/components/RatingBoard.svelte`：`.rl-board-title-coll` 新增 `width: auto`（含真因注释）。
+> 4. 新建 `tests/toolbarBoardPolish.test.ts`（**17 条**）：① 5 条（两分支无标签 / 两分支都还在 / 规则已删 / 无 gap / 反向守卫）、② 7 条（flex 纵排 / 三支同组 flex / 子选择器 / hero 两列吃满 / 反向禁新增 container-type / 反向 `.rl-sb-blocks` gap 变量仍在 / 反向禁 absolute 拉满）、③ 5 条（`width: auto` / 基类两属性保留 / 3 行钳制链完整 / 反向禁 `!important` / 反向 `white-space` 必须 normal）。
+>
+> **守卫净增**：新建 17 条；全量 319 files / 6972 → **320 files / 6989 tests**。
+>
+> **踩到的坑（三条，全部出在我自己写的测试辅助函数上）**
+> 1. 🔴 `ruleOf()` 只取**第一条**同名规则 ⇒ `.rl-sb-block` 在文件里有两条（第一条只写 `min-width`/`container-type`，第二条才是我加的 flex）⇒ 断言读到第一条、`display: flex` 假红。修法 = 改 `rulesOf()` 收集全部同名规则并拼起来。
+> 2. 🔴 我按「类名 + `{`」找三支选择器，但三支写在**同一个选择器列表**里、只有一个 `{` ⇒ 后两支永远匹配不到。修法 = 抓「以 `.rl-sb-block > .rl-s-panel` 开头到下一个 `}`」的整组再逐项断言。
+> 3. 🔴 **真机探针连错窗口**：`list.find(t => t.type === 'page')` 命中的是 popout（`url=about:blank`，DOM 里没有统计页）⇒ 量测返回空数组。修法 = 先按 `url` 含 `obsidian.md/index.html` 选主窗口；但插件重载后会挂到 popout ⇒ **最终判据改成「扫所有 page target，谁有 `.rl-home` 就连谁」**。
+>
+> **真机验证（本轮补做了，②③ 都有量化证据）**
+> - 用 CDP 量 `.rl-sb-block`：全部 `display: flex` / `flex-direction: column`，内层 `kidH === h`、`kidGapBottom === 0`。
+> - **并排两行实测等高**：`hero` 247px == `overview` 247px；`feed` 230px == `trend` 230px。（改前 `kidCls` 是 `rl-sb-grip` 且 `kidBottomGap` 达 1929px，即内容全顶在上方）
+> - 截图 `_shot/rd/align-blocks.png` 目视确认：第一行两卡底边齐平、第二行两卡底边齐平。
+> - ③ 量合集标题：`width: 62px`（不再是整卡宽）、`whiteSpace: normal`、`clamp: 3`；单条卡仍是 `nowrap` + `clamp: none`（基类口径未被误伤）。
+>
+> **门禁**
+> - `tsc -noEmit -skipLibCheck` → **0**
+> - 全量 vitest → **320 files / 6989 tests passed**
+> - `svelte-check` → **0 errors / 89 warnings in 6 files**（基线，⛔ 未抬高）
+> - `esbuild.config.mjs production` → **0，87 warnings**
+> - `assert-symbols.cjs`（仓库根）→ **318 条 = 基线，✅ 无新增失败**
+> - `node _deploy.cjs` → **ALL_MATCH=1**：main.js `f19a3c490228` **2551075 B** / manifest `2a4cab8f821f` 438 B / styles.css `9b1c32e363b0` 761137 B
+>
+> ⚠️ **`styles.css` 哈希未变是正常的**：本轮 ①②③ 全是 **Svelte 组件内的 scoped 样式**，编译进 `main.js` 而非 `styles.css`（`styles.css` 只收全局类）。`main.js` 从 `a30a1395adbb`/2548141 B 变为 `f19a3c490228`/2551075 B 即证据。
+>
+> **未覆盖的验收**：② 的「块内若有滚动区不被撑破」只有 `min-height: 0` 的源码守卫 + 今日动态当前为空态的实机状态，**未构造长列表实测**；③ 的省略号在真机上合集名都短（最长「转生史莱姆日记 : 全5」量得 `over: false`），**未构造超长合集名实测截断**。
+>
+> **#772（2026-11-13 第 42 轮）：m07854 ⑳ —— 心情系统（六档 emoji）**
+>
+> 用户原话（`m07854` ⑳）：「所有类型「编辑属性 - 个人状态与评价」加 **6 档 emoji**（🤩 震撼/神作、🥰 治愈/开心、🤔 烧脑/思考、😭 致郁/破防、😴 无聊/犯困、🤬 受罪/愤怒）」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 心情 ⛔ 不折算进 `rating` | 评分是「好不好」（0~5 数值，参与系列均分 / 统计页 / `rating >= 4` 的 Dataview），心情是「什么感觉」（枚举）。折算会**静默污染既有统计**，且两种语义再也拆不开 |
+> | 落盘存**英文 id**（`mood: wow`）⛔ 不存 emoji | emoji 是裸字符，不同字体渲染宽度不一；用户哪天想改档位文案，历史笔记里的 emoji 就成了无主数据。id 是稳定键，Dataview 也能直接筛 |
+> | `normalizeMood` 非法值 → `undefined`，⛔ 不回退第一档 | 心情是**可选**字段。「没填」与「填了震撼」是两回事 —— 回退会把所有没填过的条目染成「震撼」，用户永远发现不了这个默认值 |
+> | 登记为 `writable + readable` ⇒ **必须**补表格单元格绑定 | `pure/tableColumns.tableColumnPoolFor`（`src/pure/tableColumns.ts:62`）判据是 `writable && readable && !EXCLUDED && fieldAppliesTo` ⇒ **登记即入池**，无法只靠 `types` 排除。缺绑定 = 那一列点开就写不回去（`tests/tableColumns.test.ts:42` 有守卫） |
+> | `tableCell` 的 `enum` 分支必须**按 key 分叉** | `src/pure/tableCell.ts:229` 原先把所有 enum 都交给 `statusFromText`，报错文案写死「状态只认 想看/在看/已看/搁置」。心情落进去会得到一句**指向它根本没有的约束**的报错 |
+> | 心情显示 `🤩 震撼`、解析收四种写法 | 存 id 但显示人话：`moodText` 出、`moodFromText` 收（id / 主名 / `🤩 震撼` / 纯 emoji）。「显示什么就能填回什么」是表格往返不变式（`tests/tableCell.test.ts:166`）成立的前提 |
+> | chips 用 `<div class="rl-lbl">` 而非 `<label>` | 心情是一排按钮不是一个控件，裸 `<label>` 无 `for` 可指 ⇒ svelte a11y `label-has-associated-control` 报警（实测把 warnings 从 89 顶到 90）。改用 `aria-labelledby` 给到 group，⛔ 不抬警告基线 |
+>
+> **改动清单**
+> - 新建 `src/pure/mood.ts`：`MoodId` / `MOODS`（六档，顺序即用户给定序）/ `MOOD_IDS` / `isMoodId` / `normalizeMood` / `moodDefOf` / `moodEmoji` / `moodLabel` / `moodTip` / `moodText` / `moodFromText` / `moodChipTip`
+> - `src/data/types.ts`：`MediaEntry.mood?: MoodId`（放在 `communityScore` 之前）
+> - `src/data/catalog.ts`：`normalizeEntry` 白名单加 `mood: normalizeMood(raw.mood)`（漏白名单 = 保存即静默丢弃）
+> - `src/pure/metaFields.ts`：登记 `{ key: 'mood', label: '心情', kind: 'enum', writable: true, readable: true }`，紧跟 `rating`
+> - `src/data/noteGenerator.ts`：frontmatter `if (e.mood) lines.push(...)`（无值不写空行）+ 正文属性表 `['心情', moodText(e.mood)]`
+> - `src/pure/noteEditable.ts`：读侧 `mood` handler 走 `normalizeMood` 白名单
+> - `src/pure/tableCell.ts`：`TABLE_CELL_BINDINGS.mood = flat('mood')`、`tableCellText` 对 mood 走 `moodText`、`enum` 分支按 key 分叉、非法值给心情专属原因
+> - `src/views/components/EntryForm.svelte`：`.rl-lbl` + `.rl-mood-row`（`role="group" aria-labelledby`）+ `{#each MOODS as m}` chips（`aria-pressed`、再点取消）+ `input.mood = normalizeMood(mood)` + scoped 样式（三件显式压掉核心 `button:not(.clickable-icon)` 灰底，⛔ 无 hex）
+>
+> **守卫**：新建 `tests/mood.test.ts`（**38 条**：六档定义 4 / 归一与取文案 7 / `moodFromText` 5 / 数据层三处 4 / 写侧 3 / 读侧 2 / 表单接线 7 / 表格单元格 6）；连带修**既有守卫的样本数据**（⛔ 不是放宽断言）：`tests/metaFields.test.ts` 的 `fullEntry` 补 `mood: 'wow'`、`sampleFor` 的 enum 分支按 key 给样本；`tests/fieldOrder.test.ts` 的用户表 `global` 行补 `mood`；`tests/tableCell.test.ts` 的 fixture 补 `mood: 'wow'`。
+>
+> **踩到的坑（两条，都改成了纪律）**
+> 1. 🔴 **`strip` 不能再用电交替正则**：`src/views/components/EntryForm.svelte` 里的 `accept="image/*"` 会让正则把 `/*` 当块注释起始，**一次吞掉 123508 字符**（raw 374743 → stripped 161678），所有模板断言集体假红。改成逐字符**状态机**（HTML 注释 / 行注释 / 块注释 / 三引号字符串 / 其余），把「这套是字符串还是注释」的判断交回给扫描器。⚠️ 取舍：英文孤立撇号会被当字符串起始，最坏是「注释没剥 ⇒ 假红」，不会假绿。
+> 2. 🔴 **断言切片起点必须是「锚点之后」**：`t.slice(ratingAt, moodAt)` 从 `key: 'rating'` 本身开始切，必然匹配到 `/key: '/` ⇒ 改成 `t.slice(ratingAt + "key: 'rating'".length, moodAt)`。
+>
+> **门禁**：tsc `0` / 全量 vitest **319 files 6955 tests** / svelte-check **0 errors 89 warnings** / build `0`（87 warnings）/ assert-symbols **318 条 = 基线** / `_deploy.cjs` **ALL_MATCH=1**（main.js `0b59170d34e7` 2545594 B、manifest `2a4cab8f821f`、styles.css `e46e00c02f2d` 755478 B）
+>
+> **未覆盖验收**：真机上「点 chip → 保存 → 重开确认选中态」与「表格里改心情列」两条交互路径未做真机验证（门禁只覆盖静态接线与纯逻辑往返）。
+>
+> **📌 m07854 二十项清单收官状态（2026-11-13）**：①–⑱ 已交付（`#759`–`#771`），⑳ 已交付（`#772`），合计 **19/20**。**⑲（自定义媒体类型：可新建「新闻」「播客」「剪藏」）用户明确暂缓**（原话「以后再说规划」，2026-11-13 再次确认「先记账、关掉这个目标」）—— ⛔ 不是漏做。若日后要做，影响面已摸清：`EntryType` 在 **59 个文件 502 处**被引用（头部件 `src/Settings.ts` 46 / `src/pure/mediaViews.ts` 33 / `src/views/components/MediaList.svelte` 30 / `src/pure/cardMeta.ts` 22），核心定义在 `src/data/types.ts:7`（`EntryType` 联合）、`:18`（`ENTRY_TYPES`）、`:27`（`ENTRY_TYPE_LABELS`）、`:39`（`ENTRY_TYPE_DIRS`）、`:49`（`TYPE_COLORS`），属**类型体系大改造**，需单独立项而⛔ 不是顺手能塞进某一批的活。
+>
+> **#771（2026-11-13 第 41 轮）：m07854 ⑱ —— 一键批量重命名（物理视频 / 音频文件）**
+>
+> 用户原话（`m07854` ⑱）：「设置页「管理与维护」加一项：**一键批量重命名**（按 `[年份] 片名 - 导演、季/集` 规则，批量重命名库里关联的物理视频、音频文件，防文件排序混乱）」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 为什么⛔ 不按 `libraryDir` 前缀判库内/库外 | `episodeFiles` 存的是 **vault 相对路径或系统绝对路径**（`main.ts:10814` 用 `getAbstractFileByPath` 直接查、`main.ts:7915` 由 `scanEpisodeDir` 回填绝对路径）⇒ 按库目录前缀猜会漏判，用户改过库目录名还会误判。改为只按最后一个 `/` 拆目录与文件名，「能不能改」交给宿主 `TFile` 判定 |
+> | 为什么季号取 `entry.progress?.season` | `MediaEntry` 上**没有** `season` 字段（`src/data/types.ts:65`/`:71` 的 `season` 属于 `ProgressPoint` / `Progress`）⇒ 直接写 `entry.season` 是 TS2339 |
+> | 为什么同目录改名要整批算冲突 | 逐条算漏「A→B、B→A」互换这类碰撞；冲突键 = `${dir}\u0000${next.toLowerCase()}`，同键 ≥2 则整组 splice 掉 |
+> | 为什么目标名相同就整条跳过 | ⛔ 不加 `(1)` 后缀 —— 用户要的是排序整齐，不是制造新噪音 |
+> | 为什么缺字段不写占位符 | ⛔ 不写 `[未知]` / `N/A`：占位符会进物理文件名，比缺字段更难清理 |
+> | 为什么走 `fileManager.renameFile` | 它会同步更新所有指向该文件的链接；`adapter.rename` 只动磁盘 |
+>
+> **改动清单**：新建 `src/pure/batchRename.ts`（`buildRenameStem` / `planEntryRename` / `planBatchRename` / `summarizeRenamePlans` / `renamePlanTip`，零文件系统依赖）、新建 `src/modals/BatchRenameModal.ts`（逐条预览 + 跳过项逐条列出 + 默认全选可改的 + busy 防重入）、`main.ts` 新增 `openBatchRename()` / `runBatchRename(plans)`（唯一碰文件系统处，成功后回写 `episodes[at]` / `audio` 再 `service.update`）、`src/Settings.ts` 在「条目还原」之前插入「批量重命名 / 预览并执行」（⛔ 不做成点一下直接跑 —— 改名不可撤销）、`styles.css` 新增 `.rl-rename-*` 一整段（⛔ 不复用 `rl-pc-*`）。
+>
+> **守卫 39 条**：`tests/batchRename.test.ts`（21 条，纯逻辑：年份/导演/季集拼接、缺字段不写占位符、目标名相同跳过、同目录撞名整组 splice、`splitPath` 认反斜杠、长名截断）+ `tests/batchRenameWiring.test.ts`（18 条，接线：pure 层无 fs/vault/renameFile、宿主走 `fileManager.renameFile`、库外计入 failed、回写两个字段后 `service.update`、弹窗不碰 vault、逐文件 `旧 → 新`、结果必 Notice、设置行 `setName('批量重命名')` + `setButtonText('预览并执行')`、两处列表有 `overflow-y: auto` + `scrollbar-gutter: stable`、⛔ 无 hex）。
+>
+> **踩到的坑（三条）**：⑴ `MediaEntry` 无 `season` ⇒ 改 `entry.progress?.season`；⑵ `Progress` 没有 `date` 字段 ⇒ 测试夹具里的 `date: ''` 触发 TS2322，去掉；⑶ 🔴 `methodBody` 辅助函数按第一个 `{` 切函数体时会抓到**返回类型对象字面量**（`Promise<{ renamed: number; failed: number }>`）⇒ 必须按尖括号深度跳过泛型，首跑就这么红了 3 条。
+>
+> **门禁**：`tsc` **TSC_EXIT=0**；全量 `vitest` **318 files / 6928 tests passed**（#770 为 316/6889，净增 2 文件 39 用例）；`svelte-check` **0 errors / 89 warnings in 6 files**；`esbuild production` **BUILD_EXIT=0，87 warnings**；`assert-symbols.cjs` **ASSERT_EXIT=0，318 条（基线 318），✅ 无新增失败**；`_deploy.cjs` **ALL_MATCH=1**：main.js `98673dfd84d9` **2541897 B** / manifest `2a4cab8f821f` 438 B / styles.css `e46e00c02f2d` **755478 B**。
+>
+> **🔴 assert 曾红一次**：新增的 `.rl-rename-list` 与 `.rl-rename-skips` 各带一条 `scrollbar-gutter: stable` ⇒ `styles.css` 该声明由 8 处变 10 处，撞 `[#560]` 的 `=== 8` 计数。已把计数改 `=== 10` 并补两条逐处点名正则（守卫职责不变：⛔ 仍不许全局，`字段映射` 反向守卫原样保留）。⚠️ 定位时两次自写 diff 脚本都误报，**最终靠 `_assert_raw.txt` 末尾的「🔴 新增失败 N 条」块** —— 以后直接看那里。
+>
+> ⚠️ **未覆盖验收**：真机跑一次「预览并执行」，确认物理文件名真的变了、Obsidian 链接没断、`catalog` 回写正确。建议在测试库里挑一个有 3~5 个本地文件的条目实操。
+
+> **#770（2026-11-13 第 40 轮）：m07854 ⑰ —— 截图右键即时批注（画圈 / 箭头 / 马赛克）**
+>
+> 用户原话（`m07854` ⑰）：「阅读器/播放器区域截图按钮**右键可即时批注**（直接在画面上画圈、标箭头、打马赛克，然后保存为图片插入笔记），左键正常一键截图」
+>
+> | 关键判断 | 事实 |
+> | --- | --- |
+> | 为什么走宿主 Modal | 本仓 `position: fixed` 会被视图 transform 祖先整体偏移（`MediaList.svelte:2228`/`:4053`/`:5121` 三处注释，#610）⇒ ⛔ 不自己画遮罩 |
+> | 为什么坐标存 `0..1` | 截图按视频原始分辨率抓（1920×1080），预览被缩到 880 宽 ⇒ 存像素会「画在预览 400px、落盘时错位」 |
+> | 为什么两层画布 | 马赛克必须从 `base`（原图）采样；从 `over` 采样会**越打越糊** |
+> | 为什么撤销要整帧重放 | 直接往画布上盖 → 盖了就回不去，撤销只能堆快照吃内存 |
+> | 为什么右键只挂 `contextmenu` | `mousedown` 里 `preventDefault()` 会吞掉左键 `click` 派发链（实测左键截图偶发失效） |
+>
+> **改动清单**：新建 `src/pure/shotAnnotate.ts`（归一化坐标 / 误触丢弃 / 马赛克块布局 / 撤销 / 文案真源）、新建 `src/pure/shotAnnotateDraw.ts`（纯绘制 + 假上下文可测，⛔ 不用 `filter: blur()`）、新建 `src/modals/ShotAnnotateModal.ts`（两层画布 + 三工具 + 撤销 + 导出前合成底图）、`src/views/VideoPlayerView.ts` 挂 `contextmenu` + `annotateShot()`（复用同一个 `onCaptureShot` 出口，宿主落盘链路一字未改）、`styles.css` 新增 `.rl-anno-*` 一整段。
+>
+> **守卫 35 条**（`tests/shotAnnotate.test.ts`）：归一化 4 / 形状与误触 4 / 撤销与深拷贝 4 / 马赛克块布局 3 / 绘制层 8（含「马赛克从原图采样」「固定高对比描边色」「块均值上色」）/ 文案 2 / 接线 10（含左键 `takeShot` 一字未改、⛔ 不挂 `mousedown`、导出先合成底图、⛔ 不碰 vault、样式无 hex）。
+>
+> **踩到的坑（两条，都记进注释）**：⑴ `render/` 新顶层目录不在 vitest alias 白名单里 ⇒ 绘制层直接放 `pure/`（它只接收上下文、不碰 DOM 全局，符合 pure 纪律），⛔ 不为一个文件改 alias；⑵ 守卫里按固定字符数切 `styles.css` 会越界吃到 `.rl-btn-danger` 的 `#fff` ⇒ 改成按 `.modal-content button.rl-nc-danger` 定位边界。顺带发现批注工具按钮**真的没有 hover 规则**（不是断言写错），已补 `.rl-anno-tool:hover`。
+>
+> **🔴 一次真实事故**：给 `ShotAnnotateModal.ts` 换 import 路径时用了 PowerShell `Set-Content -Encoding UTF8`，文件被写成乱码 + BOM（`截图批注` 变成 `鎾斁鍣?`）。已用 write 工具整文件重写恢复，实测 `BOM=False`、中文正常。**教训（本仓铁律）：改仓库文本一律用 write/edit，⛔ 永不用 `Set-Content`。**
+>
+> **门禁**：`tsc` **TSC_EXIT=0**；全量 `vitest` **316 files / 6889 tests passed**（#769 为 315/6854，净增 1 文件 35 用例）；`svelte-check` **0 errors / 89 warnings in 6 files**；`esbuild production` **BUILD_EXIT=0，87 warnings**；`assert-symbols.cjs` **ASSERT_EXIT=0，318 条（基线 318），✅ 无新增失败**；`_deploy.cjs` **ALL_MATCH=1**：main.js `44ce12d08f4d` **2534639 B** / manifest `2a4cab8f821f` 438 B / styles.css `72dc3eb958ba` **753493 B**。
+>
+> ⚠️ **未覆盖验收**：真机右键 → 画三笔 → 撤销 → 保存 → 检查附件图与笔记区块未点过；马赛克在真实视频帧上的观感（块大小 1/120 短边）也未目视确认。建议 `node tools/rd.cjs launch` 后开一个有条目的视频实操一遍。
+
+
+> **用户 m07854 ⑯ 逐字**：
+> 「仅在**卡片网格**视图下，点击信息栏即可**原地编辑**（直接进入编辑属性窗口）」
+
+> **关键判断 / 真因**（4 行）：
+> | 项 | 事实 |
+> | --- | --- |
+> | 信息栏在哪 | `src/views/components/MediaList.svelte` 的 `.rl-card-meta`（封面之后那一块：标题 + 元信息行 + 状态徽标/我的星） |
+> | 判据为什么必须是 `viewMode === 'grid'` 严格相等 | 分组视图（`viewMode === 'grouped'`）与卡片网格**共用同一个 `.rl-grid` 容器**，但组卡的信息栏是**组名**、没有可编辑的条目 ⇒ 写 `!wallView` 会把分组视图一起打开，点组名弹出编辑一个不存在的对象 |
+> | 海报墙为何不受影响 | #624 起 `.rl-card-meta` 整块被 `{#if !wallView}` 门控，墙根本不渲染信息栏 |
+> | 不做会怎样 | 卡片根节点（`MediaList.svelte:3200`）的 click 是「打开笔记」⇒ 不 `stopPropagation()` 的话一次点击会**同时**开笔记 + 开编辑弹窗 |
+
+> **改动要点**（5 条）：
+> - `$: cardGridView = viewMode === 'grid';`（放在 `$: wallView = viewMode === 'wall';` 之后，注释写死「⛔ 别改成 `viewMode !== 'wall'`」）。
+> - `.rl-card-meta` 加 `class:rl-meta-edit={cardGridView}` + `role={cardGridView ? 'button' : undefined}` + `tabindex={cardGridView ? 0 : undefined}` + `data-tip={cardGridView ? '点击编辑属性' : undefined}`。
+> - `on:click`：非网格直接 `return`，否则 `stopPropagation()` 后 `onEditEntry(e.id)`。
+> - `on:keydown`：只认 `Enter` 与 `Space`，`preventDefault()` + `stopPropagation()` 后同样开编辑（Space 不 `preventDefault` 会顺手把页面往下滚）。
+> - 样式：新增 `.rl-card-meta.rl-meta-edit { cursor: pointer; border-radius; transition }` + `:hover { background: var(--background-modifier-hover) }` + `:active`；⛔ **不给 `.rl-card-meta` 本体加 `cursor: pointer`** —— 海报墙/分组视图下它不可点，那样是撒谎。
+
+> **一处必须记录的取舍（a11y 基线）**：`role` 与 `tabindex` 由**同一个** `cardGridView` 支配、永远同真同假，但 svelte-check 静态看不出动态 `role`，会把 `tabindex={0}` 判成「非交互元素带了非负 tabindex」（`A11y: noninteractive element cannot have nonnegative tabIndex value`），把 89 条告警基线顶成 90。已就地 `<!-- svelte-ignore a11y-no-noninteractive-tabindex -->` 并写明理由（先例：同文件 `:4148`、`EntryForm.svelte`）。⛔ **不许用删 `tabindex` 的方式消警告**（键盘就进不去了），也⛔ 不许改成无条件 `role="button"`（非网格视图下它不可点，标成按钮会误导读屏）。
+
+> **守卫**：新建 `tests/cardMetaEdit.test.ts`（**10 tests 全绿**）。自带 `strip = src.replace(/<!--[\s\S]*?-->|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')`（**Svelte 的 HTML 注释也必须剥**，⑪⑫⑬⑮ 同款铁律）。三组：判据（严格相等 / 反向不许 `!wallView` / 海报墙门控仍在）／交互（click 与 keydown 同元素 / `stopPropagation` 在 `onEditEntry` 之前 / Enter+Space+preventDefault / `role`+`tabindex` 同条件化且反向不许无条件 `role="button"` / `svelte-ignore` 在位）／可点态（`cursor` 只在 `rl-meta-edit`、hover 走 `--background-modifier-hover` 且无 hex）。
+> ⚠️ 守卫首跑 5 红，全是**我的守卫写错**，两条教训：⑴ `class="rl-card-meta"` 在文件里**不止一处**（组卡也有同名 class），`indexOf` 会先撞上组卡 ⇒ 改用唯一锚 `class:rl-meta-edit={cardGridView}`；⑵ `svelte-ignore` 本身是 HTML 注释，strip 之后它就没了 ⇒ 那条断言必须读**原文** `mediaRaw`；⑶ 开标签里的第一个 `>` 会落在 `on:click` 的箭头函数 `=>` 上，按 `>` 截断会把 `on:keydown` 切到窗口外 ⇒ 处理器内容改用块切片。
+
+> **门禁（全绿）**：`tsc` **TSC_EXIT=0**；全量 `vitest` **315 files / 6854 tests passed**（⑮ 为 314/6844，净增 1 文件 10 用例）；`svelte-check` **0 errors / 89 warnings in 6 files**（与基线一致）；`esbuild production` **BUILD_EXIT=0，87 warnings**；`assert-symbols.cjs`（从仓库根跑）**ASSERT_EXIT=0，318 条（基线 318），✅ 无新增失败**；`_deploy.cjs` **ALL_MATCH=1**：main.js `7bb2077811fd` **2526407 B** / manifest `2a4cab8f821f` 438 B / styles.css `fbc63f99db69` 750300 B。
+
+> ⚠️ **未覆盖验收**：真机上「卡片网格里点信息栏 → 编辑弹窗打开、而笔记没被同时打开」这一条尚未点过；同理「列表 / 海报墙 / 分组视图下点信息栏**不**开编辑」也只在源码层钉住。建议下次真机 `node tools/rd.cjs launch` 后逐视图点一遍。
+
+> **#768（2026-11-13 第 38 轮）：m07854 ⑮ —— 搜索框「添加」旁的漏斗，一键筛「待补」半成品**
+
+> **用户 m07854 ⑮ 逐字**：
+> 「搜索框「添加」按钮旁加一个小**漏斗图标**，悬停显示 `[待补]`（缺少关联 / 缺少个人评分），一键筛出没补全元数据的「半成品」」
+
+> **真因 / 关键判断**（4 行）：
+>
+> | 事实 | 依据 | 结论 |
+> | --- | --- | --- |
+> | 改前 `filterAndSort` 只有 status/type/query/sortBy/bookKind/genres 六个维度 | `src/pure/search.ts:111-135` | 没有「待补」这一档，必须新增维度 |
+> | 「缺关联」判据早就有、且是唯一真源 | `src/pure/seriesAssoc.ts:62-102` `assocFlagsOf(e).linked`，与 `pure/actionLabel.hasActionEntry` 逐字同口径（一律「trim 后非空」） | ⛔ 视图里自己写 switch 必然与它分叉 |
+> | 「缺个人评分」= `normalizeRating(e.rating) <= 0` | `src/pure/rating.ts`（0~5 步长 0.5，脏值/缺失归 0） | 直接复用，⛔ 不另写判空 |
+> | 两个视图都有「＋ 添加」 | `MediaList.svelte:2687`、`CollectionBoard.svelte:387`，且旁边有 #632/#633「工具栏只有一枚 CTA」禁令 | 漏斗是**筛选开关**（带 `aria-pressed`），不是 CTA，两视图都要挂（⑥ parity） |
+
+> **改动要点**：
+> 1. 新建 `src/pure/incomplete.ts`：`isIncomplete(e)`（缺关联 **OR** 缺评分 —— 用户原话的斜杠是并列枚举）、`incompleteReasonsOf`（一次读 `assocFlagsOf` 拆两项，⛔ 不让调用方各判一遍）、`countIncomplete`、`incompleteTip(count, active)`（`[待补]` 逐字开头是用户要求；计数为 0 时说「库里没有…」而不是「筛出 0 条」）。
+> 2. `src/pure/search.ts` 的 `filterAndSort` 新增 append-only 可选维度 `incompleteOnly?: boolean`，内部走 `.filter((e) => (opts.incompleteOnly ? isIncomplete(e) : true))`；判据仍只来自 `pure/incomplete`。
+> 3. `MediaList.svelte`：`let incompleteOnly = false;`（**视图内临时态、不落盘**）→ 传进 `filterAndSort`；另派生 `incompleteCount` = 「当前页签/状态/题材/搜索已筛过、尚未套待补」那批的待补数（提示数字与点下去剩下的条数必须对得上）；按钮插在「添加」**之前**，`class:is-on` + `aria-pressed` + `data-tip={incompleteTip(...)}`，图标 `filter`。
+> 4. `CollectionBoard.svelte`：同样一套（`shownGroups` 的行内 filter 里加一道 `if (incompleteOnly && !isIncomplete(e)) return false;`；另起 `incompleteCount` 走同样的两级搜索语义，但**不套** `incompleteOnly`）。两视图的筛选态**各自独立**（在这边筛、切过去不继承）。
+> 5. 样式（两个组件的 scoped `<style>` 各一份，逐字同款）：`.rl-toolbar .rl-incomplete` **两级选择器**（压过宿主 `button:not(.clickable-icon)` 的 (0,1,1) 灰底，本仓老坑 `src/modals/ReaderPanelBase.ts:1633`）+ `background: transparent` / `border: 0` / `box-shadow: none` / `height: var(--input-height)`（与「＋ 添加」同一把尺）+ `is-on` 只换 `color: accent` 不加底色。
+
+> **守卫 `tests/incomplete.test.ts`（新建，23 tests 全绿）**：判据 10 条（两条都缺 / 只缺一样 / 都不缺 / 老字段 `links` 算关联 / 纯空格不算关联 / 书籍看 `bookFile` / 游戏看 `gameUrl` / 音乐看 `audioPath` / 子项与总判据自洽）；文案 4 条；接线 9 条（判据不内联、`filterAndSort` 走 `isIncomplete`、两视图结构与主视图逐字同款、必须两级选择器、透明无边框、⛔ 不带 `mod-cta`、⛔ 不 disabled 不条件隐藏、不落盘不进 `Settings`）。
+> ⚠️ 首跑 1 红：`mod-cta` 那条用 400 字符窗口扫，把紧邻的「＋ 添加 mod-cta」圈了进来 ⇒ **探针自身划错范围**（不是实现问题）。改成 `openTagOf()` 只取该按钮**自身开标签**（到最近 `>` 为止）后转绿。
+
+> **门禁**：`tsc` **TSC_EXIT=0** / 全量 `vitest` **314 files / 6844 tests passed**（⑭ 为 313/6821，净增 1 文件 23 用例）/ `svelte-check` **0 errors / 89 warnings in 6 files**（与基线一致）/ `esbuild production` **BUILD_EXIT=0，87 warnings** / `assert-symbols.cjs`（仓库根跑）**ASSERT_EXIT=0，318 条（基线 318），✅ 无新增失败** / `_deploy.cjs` **ALL_MATCH=1**：main.js `986bfd78e670` **2525039 B**、manifest `2a4cab8f821f` 438 B、styles.css `fbc63f99db69` **750300 B**。
+
+> ⚠️ **未覆盖验收**：「点漏斗后卡片/列表真的只剩半成品」这条只在纯函数 + 源码级守卫上钉住，**未在真机点一遍**（`.testvault` 里条目关联状态不齐，构造不出稳定样本）；真机上按 `data-tip` 里的条数核对一次即可闭环。
+
+> **#767（2026-11-13 第 37 轮）：m07854 ⑭ —— 「今天看什么」骰子（搜索框内随机抽卡，全屏 Modal）**
+>
+> **用户 m07854 ⑭ 逐字**：
+> 「搜索框内部加「今天看什么」随机抽卡的**骰子 🎲 图标**（无边框透明化），点击从所有「想看」且评分较高的条目中随机全屏弹出一张卡片，带「换一个 / 就它了」按钮，「就它了」为主按钮。**交互：不用搜索框时显示，输入文字搜索时隐藏**」
+>
+> **为什么走 Modal 而不是自绘遮罩**（真因表）：
+>
+> | 约束 | 出处 | 后果 |
+> | --- | --- | --- |
+> | `position: fixed` 在本仓会被 transform 祖先整体偏移 | `MediaList.svelte:2228` / `:4053` / `:5121` 三处注释（#610 同源） | 自绘全屏遮罩会错位 ⇒ 必须用宿主 `Modal`（挂 body 下、自带遮罩/Esc/焦点管理） |
+> | 仓库已有 47 个 Modal，模板统一 | `src/modals/ConfirmModal.ts`（47 行，`onOpen` 建 DOM、`onClose` 清空） | 照抄即可，⛔ 别新造一套弹窗基础设施 |
+> | 评分是 0~5 步长 0.5 的字面量联合 | `src/pure/rating.ts` 的 `Rating` / `normalizeRating` / `starString` / `starClass`（`>= 4` 金色档） | 「评分较高」直接取 `>= 4`，与金色星档同一条线 |
+>
+> **改动清单**：
+> 1. 新建 `src/pure/whatToWatch.ts`：`WATCH_PICK_MIN_RATING = 4` / `WATCH_PICK_POOL_MAX = 240` / `isWatchCandidate(e)`（id 非空 + `status === 'want'` + `normalizeRating(rating) >= 4`）/ `buildWatchPool(entries)`（保序）/ `pickWatchCandidate(pool, excludeId?, rand?)` / `shouldShowWatchDice(searchText)`（trim 后为空 ⇒ 显示）。
+> 2. 新建 `src/modals/WhatToWatchModal.ts`：`extends Modal`，网格卡（封面 `aspect-ratio: 2/3` + 标题 + 原名 + 星级/状态/年份/题材/导演），三颗按钮 `换一个`（重抽，排除当前 id）/ `就它了`（`mod-cta` 主按钮，先 `close()` 再 `setTimeout(…, 0)` 打开条目，避免 Modal 遮罩与随后弹窗抢焦点）/ `改属性`；空池有说明空态。
+> 3. 两处搜索框各加骰子（⑥ parity 要求逐字一致）：`MediaList.svelte` + `CollectionBoard.svelte` —— import `shouldShowWatchDice`、prop `onOpenWhatToWatch`、`.rl-search-wrap` 内插 `.rl-search-dice`（`{#if onOpenWhatToWatch && shouldShowWatchDice(searchText)}`，🎲 文案、`data-tip` 说明候选口径）、`.rl-search` 右侧内距 10px→**30px** 给骰子留位、新增透明化样式（两级选择器压宿主 `button:not(.clickable-icon)` 的灰底）。
+> 4. 宿主接线：`HomeView.svelte` 加 prop 并透传给两个子视图；`HomeView.ts` 初始 props 加 `onOpenWhatToWatch: () => this.plugin.openWhatToWatchModal()`（**动作不是状态** ⇒ 无需 `$set`，也不存在「漏传」坑）；`main.ts` 新增 `openWhatToWatchModal()`，候选池用 **全库** `this.service.list()`（⛔ 不是当前页签筛过的那份），封面走 `resolvePoster`。
+> 5. `styles.css` 新增 `rl-wtw-*` 一整段（`width: min(760px, 92vw)`、2 列网格、`@media (max-width: 560px)` 上下堆叠、全部主题变量无 hex），头注释写明「为什么没有遮罩层」。
+>
+> **三条硬口径**（写进代码注释）：
+> - 池空 ⇒ `null`（⛔ 不造假条目）；池只有 1 条且正是 `excludeId` ⇒ **返回它**（否则「换一个」永远空手，看起来像坏了）；池 ≥2 ⇒ 一定换掉。
+> - `rand()` 越界（1 / 负数 / NaN）钳到合法下标，⛔ 别返回 `undefined`。
+> - `shouldShowWatchDice` 按 **trim 后非空**判「在用搜索框」，⛔ 别用 `searchText.length === 0`（敲个空格就把骰子藏起来会被当 bug）。
+>
+> **守卫**：`tests/whatToWatch.test.ts`（新建，**20 条**：候选筛选 6 / 抽卡 5 / 显隐 3 / 接线 6）+ `tests/collectionToolbarParity.test.ts` 改口径（padding 10px→30px，**职责不变**：仍钉两视图逐字一致）并新增「两视图都有骰子」1 条。
+> **踩到的坑（第三次同一个）**：测试文件头块注释里写了 `*/` 字面量 ⇒ 注释提前结束、后面的正则与反引号全被吞，报 `Expected ";" but found "searchText"`。**必须把块注释里出现的收尾符换成文字描述**（#760、⑧ 都栽过）。
+> **门禁**：`tsc` exit 0 / 全量 `vitest` **313 files · 6821 tests 全通过**（⑬ 为 312/6801，净增 1 文件 20 用例）/ `svelte-check` **0 errors · 89 warnings in 6 files** / `esbuild production` exit 0 · **87 warnings** / `assert-symbols.cjs` **ASSERT_EXIT=0，318 条（基线 318），无新增失败** / `_deploy.cjs` **`ALL_MATCH=1`**：main.js `835d505335ab` **2522245 B**、manifest `2a4cab8f821f` 438 B、styles.css `fbc63f99db69` **750300 B**。
+> ⚠️ **未覆盖验收**：真机上点骰子抽卡 → 「换一个」不重复 → 「就它了」真的打开条目笔记这一整条链路没走。
+>
+> **#766（2026-11-13 第 36 轮）：m07854 ⑬ —— 视图切换左旁的「系列堆叠 / 全部单卡平铺」循环按钮**
+> 用户原话（`m07854` ⑬）：「在「视图切换下拉菜单（如 `卡片网格`）」左旁加一个**单击循环图标按钮**（无边框透明化，高度与下拉对齐，「文件夹堆叠」图标 / 「独立卡片」图标），默认系列卡堆叠，点击切换后首页变成全部单卡平铺（拆系列卡）」
+>
+> | 真因 / 关键判断 | 证据 |
+> | --- | --- |
+> | 拆系列卡**不是** `listGrouping` 的活 | `listGrouping` 只作用于列表视图的行形态（`rowSource` 的 list 分支：`listTreeRows` ⇄ `listFlatRows`）；⑬ 要拆的是卡片网格 / 海报墙的**系列折叠卡**（`seriesRows` 那一支，`foldSeries`）。合并会让「列表里切了不并组 → 切到网格发现系列也没了」连带发生且无法回退 |
+> | 判据只能有**一份** | `seriesRows` 的消费者有四层（`activeGroup` / `drawList` / `loneSeriesIds` / 系列视图池），所以判据提成 `unfoldRows` 收口在一处，⛔ 不许在 `drawList` 里再判一次 |
+> | 图标名不能猜 | asar 里**没有图标库**（`ICON_FILE_COUNT 2`，只有 `icon.png` 与 pdfjs 一张 svg）；CDP `Runtime.evaluate` 上下文里 `window.setIcon` 与 `window.require` 都不可用 ⇒ 只能清点仓库已在用的名字（实测 69 个），取 `layers`（`MediaList.svelte:3771` 合集卡在用）与 `layout-grid`（`pure/viewModes.ts:49` 等六处在用）；`film` / `clapperboard` 实测不存在 |
+> | 按钮必须放在 `.rl-vb-view` **容器内部首位** | 外层 `.rl-vb-view` 靠 `margin-left: auto` 定位右侧簇；插在 `<span>` 之前会被甩到左侧簇末尾，与「下拉左旁」不符。放进容器内即天然紧贴下拉左缘，且 `.rl-vb-pop` 浮层仍锚在同一个 `position: relative` 上 |
+>
+> **改法（六处）**：⑴ `src/Settings.ts` 新增 `unfoldSeries?: boolean;`（`undefined`/`false` = 堆叠，与 1.5.0 之前一致；⛔ 不写进 `DEFAULT_SETTINGS`，缺省语义靠消费侧 `=== true` 归一，与 `listGrouping` 同款）；⑵ `main.ts` 新增唯一写入出口 `async setUnfoldSeries(next: boolean)`（`next === true` 归一 → `saveSettings` → `refreshViews`）；⑶ `MediaList.svelte` 两个 prop（`unfoldSeries = false` / `onToggleUnfoldSeries`，未接线时整枚按钮不渲染）；⑷ 派生量提级 `$: unfoldRows = searching || unfoldSeries;` + `$: seriesRows = unfoldRows ? listFlatRows(groupPoolEntries) : foldSeries(groupPoolEntries);`；⑸ 按钮插在 `.rl-vb-view` 内部首位，`class:is-on` + `aria-pressed` + `data-tip`（⛔ 不挂 `aria-label`，#670 双层气泡）+ 图标 `{unfoldSeries ? 'layout-grid' : 'layers'}` + 点击回推 `!unfoldSeries`；⑹ 样式 `.rl-vb-view .rl-vb-unfold` **必须两级选择器**（压过宿主 `button:not(.clickable-icon)` 的 (0,1,1) 灰底，本仓老坑 `src/modals/ReaderPanelBase.ts:1633` 同款），`height: var(--input-height)` 与下拉同一把尺，`border: 0` + `background: transparent` + `box-shadow: none`，激活态**只改颜色不加底色**。
+>
+> **透传两处都不能漏**：`src/views/HomeView.ts` 的**初始 props**（`unfoldSeries: this.plugin.settings.unfoldSeries === true`）与增量 `$set`（`:173` 那一长行）—— 漏 `$set` = 点了按钮要重开视图才生效；漏初始 props = 存档读不回来（本仓栽过五次）。
+>
+> **守卫 `tests/unfoldSeries.test.ts` 17 条**：设置字段与宿主出口（3）／组件 props 与派生口径（4，含反向「不许绕过 `unfoldRows` 自己比条件」）／按钮位置与形态（4，`indexOf` 证明按钮在下拉之前且同容器内）／样式（3，含反向「不许存在单类 `.rl-vb-unfold`」）／宿主透传（3）。
+> ⚠️ 编写期两个自伤已修：① 反向断言用了**原文**（注释里写了「⛔ 别猜 folder-stack / gallery-vertical」，原文当然命中）⇒ 改断言 strip 后文本；② 反向 `not.toMatch(/unfoldSeries \?/)` 误伤展示层 `<Icon icon={unfoldSeries ? … }>` ⇒ 改成只禁「绕过 `unfoldRows` 的判据重复」。同 #379 / #730 / #731。
+> ⚠️ 另有 1 个零宽空格（U+200B）误插进样式，已用 `s.split('\u200b').join('')` 清除并回读确认中文与 CRLF 完好。
+>
+> **门禁**：tsc 0 ／ 全量 vitest **312 files 6801 tests**（⑫ 为 311/6784，净增 1 文件 17 用例）／ svelte-check 0 errors 89 warnings ／ build 0 errors 87 warnings ／ assert-symbols **318 条持平**（**两条旧断言已按新口径改写**：`⑫` 的 `seriesRows` 锚从裸 `searching ?` 改为 `unfoldRows = searching || unfoldSeries` + `unfoldRows ? … : foldSeries(…)`，`check592` 同步）／ `_deploy.cjs` **ALL_MATCH=1**（main.js `619eee4f762d` 2514869 B ／ manifest `2a4cab8f821f` 438 B ／ styles.css `14f6905e4886` 746985 B）。
+>
+> ⚠️ **未覆盖验收**：真机上点这颗按钮后「系列卡是否真的摊成单卡、刷新/重开 Obsidian 后是否记住」尚未截图核对 —— 本轮只做了源码级守卫与全量门禁。
+>
+> **#765（2026-11-13 第 35 轮）：m07854 ⑫ —— 智能搜索穿透（搜索时强制忽略系列折叠与维度分组）**
+> 用户原话（`m07854` ⑫）：「首页搜索加**智能搜索穿透**（搜「熊出没」不要只显示并组的系列，而要摊开：强制忽略系列分组，把系列里命中的单部电影直接展示）」
+>
+> | 真因 | 证据 |
+> | --- | --- |
+> | `seriesRows = foldSeries(groupPoolEntries)` 无条件折叠 | `src/views/components/MediaList.svelte` 原第 1003 行；命中 2 条以上就折成一张系列卡 |
+> | **列表视图**另有一条藏法 | `rowSource` 的 `listGrouping ? listTreeRows(...) : listFlatRows(...)` —— 合集父级行 + 子行 |
+> | **维度分组**还会再藏一层 | `groupCards = groupDim !== 'none' && !activeGroupKey ? buildGroupCards(...) : []`；进组后 `entriesInBucket` 只取桶内 |
+> | 三者叠加 ⇒「搜到了但看不见」 | 搜「熊出没」只看到一张系列卡，得再点一次才见到单部 |
+>
+> **改法（一处派生量 + 四处让位）**
+> 1. 新增 `$: searching = debouncedSearch.trim().length > 0;`（紧跟 `filtered` 之后）。**必须用 `debouncedSearch`**：判据要与 `filtered` 同源，否则输入瞬间会出现「已按新词筛完、却还在折叠」的一帧错位。
+> 2. `groupPoolEntries` 加 `&& !searching`（搜索时不按桶取样，直接用整个 `filtered`）。
+> 3. `groupCards` 加 `&& !searching`（搜索时不产出维度组卡）。
+> 4. `activeGroupBucket` 同样加 `&& !searching`（搜索时不显示组名条）。
+> 5. `seriesRows` 改成 `searching ? listFlatRows(groupPoolEntries) : foldSeries(groupPoolEntries)`。
+> 6. 列表视图 `listGrouping && !searching ? listTreeRows(...) : listFlatRows(...)`。
+>
+> **三条口径要点**
+> - ⛔ **不在搜索时清 `activeSeriesKey` / `activeGroupKey`**：那是用户的浏览位置，清空搜索后要能原地回到他刚才进的组。
+> - 摊平复用既有的 `pure/seriesGroup.listFlatRows`（「不并组展示」那条纯逻辑），⛔ 不在视图层另写一份 `groupPoolEntries.map(...)`。
+> - 一次摊平**三种藏法**（系列折叠 / 列表合集树形 / 维度分组卡），不是只放宽系列折叠 —— 搜索是「找那一条」的动作，任何「还要再点一次」的壳都该让位。
+> - 合集视图 `CollectionBoard.svelte` 无系列折叠（只按类型聚合），⑫ 不涉及。
+>
+> **守卫 `tests/searchPenetration.test.ts` 8 条**：`searching` 取自 `debouncedSearch` 且不取 `searchText` ／ 分组桶退化 ／ 组卡不产出 ／ `seriesRows` 三元摊平（含反向不许回单一 `foldSeries`）／ 列表树形让位（含反向）／ 顶栏桶信息跟随 ／ `searching` 那条派生语句不许碰 `activeSeriesKey|activeGroupKey` 且无 `closeSeries/closeBucket` ／ 走 `listFlatRows` 且反向不许自写 map。
+> 🔴 strip 铁律：Svelte 的 `<!-- -->` 也要剥（与 ⑪ 同款），本例中「⛔ 别漏 `!searching`」这类注释若留在"源码"里会让反向守卫假红。
+>
+> **门禁**：tsc 0 ／ 全量 vitest **311 files 6784 tests** ／ svelte-check 0 errors 89 warnings ／ build 0 errors 87 warnings ／ assert-symbols 318 条持平（**两条旧断言已按新口径改写**：`seriesRows` 那条从「恒走 foldSeries」改为「非搜索态恒走」，`check592` 的「海报墙一字未改」同步加 `!searching`）／ deploy `ALL_MATCH=1`（main.js `3cd7e1d5a310` 2513318 B）。
+>
+> ⚠️ **未覆盖验收**：真机上输入搜索词后「系列卡是否真的摊成逐条目、清空后是否回到原组」尚未截图核对 —— 本轮只做了源码级守卫与全量门禁。
+>
+> **#764（2026-11-13 第 34 轮）：m07854 ⑪ —— 计划页「继续观看 / 阅读」队列 + 搜索框宽度自适应 + 搜索结果关键词高亮**
+> 用户原话（`m07854` ⑪）：「首页页签计划页新增 tab「继续观看/阅读」队列（自动聚合所有状态为「在看」且 `last_position` 不为空的媒体，按最近活跃时间排序，可切卡片/列表视图）；搜索框长度随窗口变窄自适应；搜索结果里高亮搜索词（卡片标题匹配关键词做**黄色高亮**）」
+>
+> | # | 真因 / 关键判断 | 改在哪 |
+> | --- | --- | --- |
+> | 1 | **本仓没有 `last_position` 字段**（那是别处的叫法）：视频进度真实落在 `videoPositions`（`Record<集下标, 秒>`）、书籍落 `readingProgress`。⛔ 若按用户措辞新造 `lastPosition`，播放器写的是 `videoPositions` ⇒ 必然变成第二份真源 | 新建 `src/pure/resumeQueue.ts`：`resumeSpotOf(entry)` 只认 `status === 'watching'` + 上述两条字段，`buildResumeQueue(entries)` 排序 |
+> | 2 | **「最近活跃时间」也没有专门字段**：借 `updatedAt`（播放进度写回走 `service.update` ⇒ 会带动它）。⛔ 刻意不混 `progress.lastWatchedDate`——那只覆盖追番类，混进同一队列会让排序语义无法解释 | 同上，`buildResumeQueue` 用 `updatedAt` 倒序 + `id` 兜底（保证顺序稳定） |
+> | 3 | **「新增 tab」不一定要加一级页签**：一级页签走 `pure/homeTabs.HOME_TAB_ORDER`，加一枚会连带改分类轴、导航记忆、`isNavTab` 白名单、设置页起始页下拉。计划页本来就有「追番表 / 排期表」二级切换档 ⇒ 加第三档代价小得多 | `HomeView.svelte`：`trackingMode` 联合加 `'resume'`，切换器加第三颗按钮，分支渲染新组件 |
+> | 4 | **搜索框不收缩的真因是 `flex: none` + `min-width: 240px`**（不是 padding/box-sizing）：无论窗口多窄都死死占 280px ⇒ 工具栏挤出横向滚动条 | `MediaList.svelte` 与 `CollectionBoard.svelte` **两侧逐字同步**改成 `flex: 0 1 280px; width: 280px; max-width: 320px; min-width: 160px;` |
+> | 5 | **高亮不能走 `{@html}`**：标题是用户输入（条目名可以叫 `<img onerror=…>`），拼 HTML 就是注入面 | 新建 `src/pure/titleHighlight.ts`：`splitTitleByQuery` 只做**切片**返回 `{text,hit}[]`，模板 `{#each}` 渲染 `<mark class="rl-hl">` |
+>
+> **⑥ 口径 × ⑪ 口径的冲突（本批必须两处一起改）**：`tests/collectionToolbarParity.test.ts` 里那条「搜索框外框三档宽度逐字相同」原来钉的是 `width: 280px; max-width: 320px; min-width: 240px;`。⑪ ② 把口径改成可收缩后它必然红 —— 已按新口径更新，**守卫职责没变**（仍是钉「两视图逐字一致」，⛔ 不是删掉）。
+>
+> **实测取舍两处**：
+> - `film` / `clapperboard` 这两个 lucide 名字**不在** Obsidian 图标集里（探针实测 `false`），用了只会渲染空 span、不报错但视觉缺图标 ⇒ 占位图标改用 `gallery-horizontal`（实测存在）。`layout-grid` / `list` / `rows-3` / `layout-list` 实测都存在。
+> - 视频进度条**只在知道 `durationMin` 时**才算比例，算不出给 0（⛔ 不猜 50%）；位置**超出**片长钳到 100%（超额只说明片长信息过期，「看满了」比「没看过」诚实）。这条是守卫里唯一先写红再修实现的地方 —— 原实现 `best <= totalSec` 会让超长落回 0%，等价于「没播过」。
+>
+> **守卫（27 条全绿）**：
+> - `tests/resumeQueue.test.ts` 13 条：只认「在看」/ 位置全 0 与负数不进 / 多集取最大秒数 / percent 优先于页码 / 页码换算 / 进度条只在有片长时算 / 超长钳 100% / `updatedAt` 倒序 / 同值按 id 兜底 / 空输入不抛。
+> - `tests/resumeAndHighlightWiring.test.ts` 14 条：① `trackingMode` 联合含 `resume`、切换器第三颗、`{:else if …}` 分支渲染 `ResumeBoard`（⚠️ 真实形态是 `{:else if}`，第一版正则锚 `\{#if` 假红）、只传四个 prop、卡片/列表两视图、组件内⛔ 不出现 `videoPositions`/`readingProgress`；② 两视图 `flex: 0 1 280px` + `min-width: 160px` + 反向不许回 `flex: none`/`240px`；③ 走高亮纯函数、`<mark class="rl-hl">`、反向不许 `{@html}`、`.rl-hl` 用 `var(--text-highlight-bg)` 且⛔ 无 hex。
+> - 🔴 **strip 铁律扩了一条**：Svelte 组件的 **HTML 注释 `<!-- -->` 也要剥**。本批实测：`ResumeBoard.svelte` 头部注释里写了「别在这里再写一遍 `videoPositions` / `readingProgress` 的判定」，只剥块注释+行注释时那句仍在"源码"里 ⇒ 反向守卫立刻假红（#379 同款，被自己的注释打穿）。正确写法是**单次交替**：`/<!--[\s\S]*?-->|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g`。
+>
+> **门禁（全绿）**：`tsc` **TSC_EXIT=0**；全量 `vitest` **310 files / 6776 tests passed**（#760 为 306/6720，净增 4 文件 56 用例）；`svelte-check` **0 errors / 89 warnings in 6 files**；`esbuild production` **BUILD_EXIT=0，87 warnings**；`assert-symbols.cjs`（仓库根跑）**ASSERT_EXIT=0，318 条（基线 318），✅ 无新增失败**；`_deploy.cjs` **`ALL_MATCH=1`**：main.js `6a8b3a4ba5df` **2513165 B**、manifest `2a4cab8f821f` 438 B、styles.css `14f6905e4886` 746985 B。
+>
+> ⚠️ **未覆盖验收**：真机上「卡片 / 列表」两视图的排版（尤其窄窗口下搜索框收缩后的工具栏换行）尚未截图核对 —— 本轮只做了源码级与纯逻辑级验证。
+>
+> **#763（2026-11-13 第 33 轮）：m07854 ⑩ —— 统计页各模块对齐（间距变量化 + 趋势图 viewBox 跟实测宽度 + Tab 基线 + 标题换行）**
+> 用户原话（`m07854` ⑩）：「统计页各模块排序对齐（UI 样式不改，仅统一全局卡片横纵间距以保证自适应缩放；各区块内部严格规整对齐线：左上及左中数据区绝对垂直/水平居中；左下图表标题两端对齐且图表自适应撑满、刻度与网格对齐；右上按钮组换行时左侧对齐且时间控件靠右；右下 Tab 及下方 2x2 卡片左侧基线与内部间隙完全对齐。重点排查修复 Flex 布局错位属性）」
+>
+> | # | 真因 / 关键判断 | 改在哪 |
+> | --- | --- | --- |
+> | 1 | **间距五处各写各的**：`.rl-sb` 12px、`.rl-sb-blocks` 12px、`.rl-hero` 10px、`.rl-hero-side` 10px、`.rl-part-metrics` **8px** ⇒ 同一张页里三套间距，缩放时不同步 | `StatsBoard.svelte`：`.rl-sb` 声明 `--rl-sb-gap: 12px; --rl-sb-inner-gap: 10px;`，四处 gap 全改 `var(...)` |
+> | 2 | **趋势图刻度被横向压扁**：`viewBox="0 0 620 130"` + `preserveAspectRatio="none"` + CSS `width:100%`，半栏里 SVG 实际只有 320px ⇒ 压缩比 **320/620 = 0.516**，9px 的 `<text>` 刻度被压成约 4.6px 宽 | 同上：`let trendW = 620` + Svelte action `trendWidth(el)`（`ResizeObserver` + `getBoundingClientRect`）把实测宽度写回 `trendW`；模板 `viewBox={`0 0 ${trendW} ${TREND_H}`}` |
+> | 3 | 🔴 **Svelte 4 依赖收集陷阱（本批最隐蔽）**：`trendW` 变了以后，模板里直接写 `trendW` 的网格线/热区/viewBox 都会更新，但 `x={trendTickX(i)}`、`points={trendPts(s.arr)}` **原地不动** —— 编译器只看得到函数名，看不进函数体里的闭包变量。实测 viewBox 已从 620 改成 470，刻度 x 仍停在旧宽度算出的 **594**，跑到 viewBox 外被裁掉 | `trendTickX(i, width)` / `trendPts(arr, width)` 改成**显式传参**，五个调用点全部 `trendTickX(i, trendW)` / `trendPts(s.arr, trendW)` |
+> | 4 | **Tab 与卡片左基线差 5px**：`.rl-part-tabs` x=443、`.rl-part-tab` padding `6px 10px` ⇒ 文字左缘 453；`.rl-part-metrics` x=**458**（`.rl-part-body` 的 `border-left:3px` + `padding-left:12px` = 15px） | `.rl-part-body` 的 `padding-left: 12px → 7px`（3+7=10，与 tab 左内距同行）；⛔ 别反过来把 tab 内距改成 15（点击热区会胖 5px） |
+> | 5 | **标题行换行后悬空**：`.rl-s-panel-title` 的 `justify-content: space-between` 让换行后的按钮组被 `margin-left:auto` 推着走，行高 76px | `.rl-s-today .rl-s-panel-title` 只留 `align-items: center`；`.rl-s-title-right` 加 `justify-content: flex-end`（保留 `margin-left:auto`）。⛔ 别给全局 `.rl-s-panel-title` 加 `space-between`：会把趋势图的 chips 甩到左边 |
+>
+> 守卫：新建 `tests/statsAlign.test.ts`（**13 tests**，全部源码级，自带单次交替正则 strip）—— 间距只认两个变量（声明 + 四处 `var()` + 反向不许回到 8/10/12px 写死）/ 趋势图 viewBox 是 `trendW` 且反向不许出现 `${TREND_W}` / **刻度与折线必须传参**（`trendTickX(i: number, width: number)` + `trendPts(arr: number[], width: number)` + 反向 `not.toMatch(/function trendTickX\(i: number, width: number\)[^}]*trendW/)` + 五个调用点逐个 `toMatch` + 反向不许留单参调用）/ action 必须 `ResizeObserver` + `ro.observe(el)` + `destroy` + 模板 `use:trendWidth` + `preserveAspectRatio="none"` 仍在 / Tab 左基线（body 3px+7px、tab `6px 10px`）/ 标题换行（right 的 `flex-end`、today 的 `align-items:center`、反向全局 `.rl-s-panel-title` 不许 `space-between`）。
+>
+> 真机复测（CDP，冷启动后）：`viewBox` 从 `0 0 620 130` → **`0 0 320 130`**，`ratio: 1`；视口拉宽到 1100 后 viewBox 变 `0 0 470 130`，**刻度最大 x 同步 294 → 444**（改前恒停 594）；`.rl-part-metrics` x 从 458 → **453**，与 `.rl-part-tab` 文字左缘完全一致；四处 gap 变 `12/10/10/10`。
+>
+> 门禁：`tsc` **0** / 全量 vitest **308 files 6749 tests**（#760 为 306/6720，净增 2 文件 29 用例）/ `svelte-check` **0 errors 89 warnings** / `esbuild production` **87 warnings** / `assert-symbols` **318 条持平无新增** / `_deploy.cjs` **`ALL_MATCH=1`**：main.js `5c43dd59274f` **2494522 B**、manifest `2a4cab8f821f` 438 B、styles.css `14f6905e4886` 746985 B。
+>
+> ⚠️ **未覆盖验收**：真机只在 `.testvault` 的 800×599 / 1100×800 两个视口量过，用户真实库里的超宽屏（≥1600px）与窄屏（≤420px）未验；`fillsWidth` 探针差 2px 是探针未扣 `.rl-s-panel` 的 1px 边框（350−14×2−2 = 320，与 SVG 实宽一致），**非缺陷**。
+>
+> **#762（2026-11-13 第 32 轮）：m07854 ⑨ —— 悬浮球球心百分比 + 模型下载统一镜像优先**
+> 用户原话（`m07854` ⑨）：「优化「下载模型与转录中」的悬浮球样式：球内显示**百分比波动**；下载模型统一启用**国内镜像源**下载」
+>
+> | # | 真因 / 关键判断 | 改在哪 |
+> | --- | --- | --- |
+> | 1 | **球心本来是空的**：收起态小球只有环形进度 + 阶段名 `.rl-pball-lbl`，百分比只出现在展开卡片的 `.rl-pball-pct` ⇒ 收起后看不出进度数字 | `services/progressBall.ts`：新增 `ringPctEl`，`ring.createSpan({ cls: 'rl-pball-ringpct' })` **必须建在 svg 之后**（环是 `place-items:center` 的 grid，svg 是 `position:absolute` 不占格）；`paint()` 与 `finish()` 同步写 `pct === null ? '…' : \`${pct}%\``、收尾换 `✓ / !` |
+> | 2 | `tabular-nums` 是必需品：不加则 `1→8` 宽度跳动，每 200ms 变一次就让整颗球发抖；`100%` 三位数不许换行 | `styles.css` 新增 `.rl-pball-ringpct`（`font-size: var(--font-ui-smallest,10px)`、`font-variant-numeric: tabular-nums`、`white-space: nowrap`、`pointer-events: none`、无 hex 颜色） |
+> | 3 | **下载链是「官方优先、失败才回落镜像」** —— 国内官方源实测 12 秒 `socket hang up`，用户看到的是进度条卡住不动 | `services/asrModelDownload.ts` 的 `downloadModel` 第 5 参语义反转：从「回落镜像」改为「**首选地址**，失败后回落到 `preset.url`」（`begin(firstUrl)` / `chunkUrl = firstUrl`）；`InstallBundleDeps.download` 第三参 `fallbackUrl → primaryUrl` |
+> | 4 | Whisper 运行时压缩包同样是官方优先 | `services/whisperRuntime.ts`：`[...WHISPER_RUNTIME_ZIP_MIRRORS, WHISPER_RUNTIME_ZIP_URL]`（官方留末尾兜底，海外用户镜像全挂时它是唯一通路） |
+>
+> 守卫：`tests/progressBall.test.ts` 23 → **28 tests**（新增 5 条：节点建在环里且排在 svg 之后 / 球心与卡片同文案口径 / 收尾换 `✓ !` / 销毁置空 / 样式含三项关键属性且无 hex）；三个下载测试文件按新语义翻面（`whisperRuntimeInstall` 20 条改「镜像失败⇒换下一个镜像，官方排最后」+ 新增官方在末尾；`asrModelDownload` 21 条改「镜像首选，网络层失败⇒回落官方」+ 新增「不传第 5 参⇒单源退化」；`asrModelDownloadChunk` 12 条把「服务器错误不换镜像」改成「失败后没有后续请求改投另一源」），合计 **94 tests**。
+>
+> 门禁（全绿、已部署）：`tsc` 0 / 全量 vitest **307 files 6736 tests** / `svelte-check` 0 errors 89 warnings / `esbuild` 87 warnings / `assert-symbols` 318 条持平 / `_deploy.cjs` `ALL_MATCH=1`（main.js `b428e0c27630` 2493691 B、styles.css `14f6905e4886` 746985 B）。
+>
+> ⚠️ **未覆盖验收**：真机未实测「悬浮球球心数字随下载跳动」与「国内镜像实际下载提速」——镜像可达性靠探针实测（`hf-mirror.com` 4 路 426 KB/s vs 单连接 131 KB/s），球心渲染只由单测与样式守卫覆盖。
+>
+> **#761（2026-11-13 第 31 轮）：m07854 ⑧ —— 倍速加 3× + 记住每个媒体上次播放位置**
+> 用户原话（`m07854` ⑧）：「视频播放器倍速档位增加（2x 上面加 3x）；记住每个媒体上次播放位置，重新打开时恢复」
+>
+> | # | 真因 / 关键判断 | 改在哪 |
+> | --- | --- | --- |
+> | 1 | 倍速档位只有六档，最高 2× | `pure/player.ts:14` `SPEED_STEPS` 末尾加 `3`（七档），档位表全仓只此一份（视频/音频共用） |
+> | 2 | **续播机制本来就有**（`initialPositions` / `onSavePosition` / `consumePendingResume` / `shouldResume` / `persistVideoPosition` 全在），真缺口只有一条入口 | `main.ts` 的 `playLocalEpisode`（编辑表单集按钮）改前**既不给 `entryId` 也不给 `initialPositions`/`onSavePosition`** ⇒ 从该入口打开永远从 0 开始、播完不留位置 |
+> | 3 | 集下标必须透传，否则第 3 集的位置会记到 0 上 | `EntryForm.svelte` 的 `onPlayEpisode` 加可选 `index`：`onPlayEpisode(p, i)`；`EntryModal.ts` 转 `playLocalEpisode(path, index ?? 0, this.entry ?? undefined)`；`main.ts` 里 `index: Math.max(0, Math.floor(index))` |
+> | 4 | `entry` 可选是因为存在「尚未落库的新条目」 | 记忆三件套挂在 `...(entry ? {...} : {})` 条件展开里；⛔ 不造假 id 写库 |
+>
+> 守卫：新建 `tests/resumePosition.test.ts`（**6 tests**，源码级，自带单次交替正则 strip + 花括号配对 `methodBody`）—— SPEED_STEPS 含 3 且在 2 之后 / 表单 `onPlayEpisode(p, i)` 与签名带 `index?: number` / EntryModal 三参调用 / `playLocalEpisode` 体内四要素齐全 / 记忆三件套必须挂在 `...(entry` 条件展开里 / `persistVideoPosition` 仍在且写 `videoPositions`。另有 `tests/player.test.ts` 32 条、`tests/playerMenu.test.ts` 49 条同步补 3×。
+>
+> 门禁（全绿、已部署）：`tsc` 0 / 全量 vitest **307 files 6729 tests** / `svelte-check` 0 errors 89 warnings / `esbuild` 87 warnings / `assert-symbols` 318 条持平（中途因 `SPEED_STEPS` 字面量守卫过时红 1 条，已按七档改写锚点）/ `_deploy.cjs` `ALL_MATCH=1`（main.js `0d41ac80cec8` 2493404 B、styles.css `a28e40d622ed` 746253 B）。
+>
+> ⚠️ **未覆盖验收**：真机未实测「编辑表单点集按钮 → 播到一半关掉 → 重开从原处继续」这条完整链路（需 `.testvault` 里有多集本地视频条目）；`shouldResume` 的 5s/10s 阈值决定了「播太短或不记得也不续」，属既有口径未改。
+>
+> **#760（2026-11-13 第 30 轮）：m07854 的 ④⑤⑥⑦ —— 语音组限高 + 品牌图标 + 合集工具栏统一 + 弹出窗口 hover 提示**
+> 用户原话（`m07854`）：④「将**语音与识别**组的高度限制一下」⑤「将**文字转语音**组下的「系统语音」和「硅基流动」标题前的小图标改成对应品牌图标」⑥「合集视图的搜索栏和默认视图的筛选工具栏 UI 不统一 ⇒ 统一（状态下拉项统一为「全部」而不是「全部状态」；排序下拉不要倒三角标）」⑦「**字幕面板、选集面板的小图标按钮没有鼠标 hover 轻提示**（必须查出怎么回事）」
+>
+> | # | 真因 / 关键判断 | 改在哪 |
+> | --- | --- | --- |
+> | ④ 限高 | 组名澄清：「语音与识别」在 `SETTING_GROUP_ICONS` 里**不存在**，实际是 **语音转文字**（`mic`）。高度来自 `renderEngineEnv` 的「环境体检」区 `.rl-asr-tiles`（X-ASR 最多 7 项全铺开，完全不限高 ⇒ 整组破千像素） | `styles.css` `.rl-asr-tiles` 加 `max-height: 240px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;`；`src/Settings.ts` 的 `renderEngineEnv` 注释改写。🔴 当场问过用户（`m08211`），用户选「max-height + 内部滚动」⇒ **覆盖 m03035 与 m05717 的「不要滚动条」旧口径**；⚠️ 用 `max-height` 不用 `height`（1~2 项时不该撑空白）；⛔ 折叠不许回来（滚动能看到全部 7 项，折叠会把缺失项藏起来） |
+> | ⑤ 品牌标 | 用户裁定（`m08301`）「用当前操作系统的品牌标」。探针实测：simple-icons 的 `windows` 标 **v13/v14/v15/v16 全 404**，只有 v12 有（203 B / 单路径 92 字符，四格方块）；`apple` v16 有（650 B）；`linux` 是 Tux 5354 字符超长路径 ⇒ **刻意不引入**，回退内置 `monitor` | 新建 `src/pure/osIcons.ts`（`OsKey` / `OS_ICON` / `systemVoiceIcon(platform = process.platform)`）；`src/Settings.ts` 两处 `safeSetIcon(…'house')` / `…'volume-2'` 改 `renderAiIcon(…, systemVoiceIcon())`，硅基流动复用 `AI_PROVIDER_ICON.siliconflow`（⛔ 不抄第二份路径）；`styles.css` 新增 `.rl-asr-navi-icon.rl-ai-icon, .rl-asr-top-icon.rl-ai-icon { color: inherit; opacity: inherit; }`（否则未选中的灰行上会亮一颗蓝标，看着像已选中） |
+> | ⑥ 工具栏统一 | 两视图真正不一致的只有两处：合集的状态项写「全部状态」而主视图写「全部」；合集的排序下拉画了 ▾ 而主视图 `chevron={false}`（排序值自带 ↑/↓，再画箭头叠两枚 = #572）。尺寸口径（`.rl-search-wrap` 三档宽、`.rl-search` padding/圆角、`.rl-viewbar` gap）实测**两文件逐字相同**，无需改 | `src/views/components/CollectionBoard.svelte`：`{ value: 'all', label: '全部状态' }` → `'全部'`；排序 `<MiniSelect>` 补 `chevron={false}`。新建 `tests/collectionToolbarParity.test.ts`（9 tests） |
+> | ⑦ 弹窗无提示 | 🔴 **真因不是那 8 颗按钮缺 `data-tip`**（真机实测 6 颗字幕 + 2 颗选集全齐、主窗口 hover 全出气泡），而是**弹出窗口里根本没有提示器**：`initGlobalTooltip()` 只绑 `activeDocument ?? document`（主窗口一份），`bindTooltipDocument` 全仓只有设置页与发布说明弹窗手工调过 ⇒ 视图一律没绑。用户把选集页/播放器页拖成独立窗口后，`data-tip` 收不到任何监听 | `main.ts`：import 加 `bindTooltipDocument`；`this.registerEvent(this.app.workspace.on('window-open', (_win, popoutWin) => bindTooltipDocument(popoutWin?.document ?? null)))`；新增 `private bindTooltipToOpenWindows()`（用 `iterateAllLeaves` 收每个 leaf 的 `ownerDocument` 并逐个绑 —— 兜住「插件加载前就开着的弹窗不会再补发 `window-open`」）。新建 `tests/tooltipPopout.test.ts`（4 tests） |
+>
+> **⑦ 的取证链（值得记住）**：静态排除了 data-tip 缺失 / mouseover 被祖先拦 / CSS 无 `pointer-events` / 无 `-webkit-app-region: drag` / `.rl-tip` 样式缺失；真机排除了子节点重建触发 `mouseout`（Chromium 实测气泡照出）、命中测试被遮挡（`elementFromPoint` 落在按钮自己的 `path` 上）、CSS 层（真实类名量到全正常）。最后由「主窗口 `hasTipNode: true` / 弹窗 `hasTipNode: false`，而两边按钮数量完全一样」定位到 document 绑定缺失，并用 **A/B 冷启动对照**闭环（撤掉绑定 ⇒ 两个弹窗 target 全部 `no-node`，主窗口仍 `block`；恢复后 ⇒ 三个 target 全部 `block`）。
+> **配套教训**：`main.ts` 里有一条行注释含 `下载/音乐/**`，其中的 `/*` 会让「先块后行」的两段式 strip 一路吞到几 K 字符之后 ⇒ **注释剥离必须用单次交替正则** `/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g`（分两步两种顺序都有反例）。
+>
+> **门禁**：`tsc` 0 / 全量 vitest **306 files 6720 tests** / `svelte-check` **0 errors 89 warnings** / `esbuild production` **87 warnings** / `assert-symbols` **318 条（基线 318）无新增**（本次同时按新口径改写了三条过时断言：外观子项顺序、音源标、`scrollbar-gutter` 计数 7→8）/ `_deploy.cjs` **`ALL_MATCH=1`**（main.js `b097e2236327` 2493189 B、manifest `2a4cab8f821f` 438 B、styles.css `a28e40d622ed` 746253 B）。
+> ⚠️ **未覆盖验收**：④ 的 240px 高度是按「6~8 个 tile 行」估的（真机当时 `${PORT_DOWN}`，未量到实测高度）；⑥⑦ 已在真机验证，④⑤ 未做真机目视确认。
+>
+> **#759（2026-11-13 第 29 轮）：m07854 的 ①②③ —— 默认源链一次性播种 + 检测结论反向同步 + 分页签挪位**
+> 用户原话（`m07854`）：①「初始化配置默认启用免登录搜索源，**不要强制覆盖用户已修改过**，仅在第一次启用插件时启用」②「统一周期检测的怎么不同步到对应的搜索配置项里」③「把「基本设置-外观与体验」的按全类型分页签开关项移动到**海报密度**项下面」
+>
+> | # | 真因 | 改在哪 |
+> | --- | --- | --- |
+> | ① 播种 | `DEFAULT_CHAINS` 值本身早就对（豆瓣 + 各组免登录源），坏在**生效方式**：靠 `resolveSourceChain` 对 `undefined` 动态回退 ⇒ 默认值是「随代码演进的活值」，将来一改就追溯性篡改用户配置。写入侧更狠：`commit(draft)` 里「等于默认链逐位相同 ⇒ `delete next[group]`」⇒ 用户**显式勾成默认值**也被写回 `undefined` | `src/pure/sourceRegistry.ts` 新增 `seedSourceChains(cfg)`（只补「未配置 / 空 / 整链非法」的组，已配的一个字节不动，返回 `{ chains, changed }`）；`src/Settings.ts` 的 `commit` 改为一律 `next[group] = norm`（删掉删键分支）；新增 append-only 字段 `sourceChainsSeeded?: boolean`；`main.ts` onload 在**基线赋值之后**做一次性播种（⛔ 顺序不能倒：先播种再设基线会被 `chainChanged` 判成用户改链而白清一遍缓存） |
+> | ② 反向同步 | #758 只打通「搜索配置 → 面板」；反方向断的 —— 面板「一键检测」只 `paintRow` 面板自己那行，下面「搜索配置」同名行的徽标是**另一个闭包**（各 builder 自己捕获 `badge`），没人通知 | `src/Settings.ts` 新增 `credentialBadgeRefresh: Map<string, () => void>` + `registerCredentialBadge(key, refresh)` / `refreshCredentialBadge(key?)`；五族（`sourceCheckKey` / `musicCheckKey` / `netCheckKey` / `aiCheckKey` ×2）各自登记；一键检测循环里 `setCredentialStatus` 之后调 `refreshCredentialBadge(row.key)`；`display()` 里 `clear()`。🔴 key 必须**带族前缀**（三族 id 有重名） |
+> | ③ 挪位 | 用户要求把「按全类型分页签」从「导航布局」之后挪到「海报密度」之后 | `src/Settings.ts` 的 `renderAppearanceRows` 整段剪切重排；同步改方法与方法体内两处行序注释（8 行 → 9 行）。新建 `tests/appearanceRowOrder.test.ts`（4 tests） |
+>
+> **守卫**：`tests/sourceRegistry.test.ts` 59 → **63**（6 条 `seedSourceChains` 纯逻辑 + 4 条源码级写入侧守卫，含 `not.toMatch(/delete next\[group\]/)` 与「播种必须在基线赋值之后」）；`tests/credentialPanelWiring.test.ts` 14 → **24**（5 条反向同步守卫，含 11 个写入点的逐个向后 400 字符检查，⛔ 全文 `toMatch` 是假绿）。
+> ⚠️ **未覆盖验收**：①「老用户升级后首次启动只播一次」未做真机验证（单测钉了幂等）；②「面板点检测、下面那行徽标立刻变」未做真机目视。
+
+> **#758（2026-11-12 第 28 轮）：统一周期管理面板实时刷新 + 删掉微信读书「登录超时可续期」**
+> 用户原话（`m07505`）：「怎么我在搜索配置里配置了项和测试了连接但统一管理周期的不实时显示我的新增项，还有微信读书这个把上次检测的提示描述"登录超时可续期"删除掉，接下来还有什么任务没完成列出来」
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | 🔴 面板不实时 | `paintRow` / `summaryEl` **只活在 `renderCredentialTable` 的闭包里**，全仓唯一会触发重绘的是它自己那颗「一键检测」的 click。用户填凭据（`onInput` / `onPicked` / `onLogout`）、点行内「测试连接」、开机自检，三条路径都只 `clearCredentialStatus` / `setCredentialStatus` + `refreshBadge()`（只刷那一行自己的徽标），**从不通知上面那张表** ⇒ 表上「是否配置 / 是否失效 / 上次检测」三列全停在 `display()` 那一刻的快照 | 新增成员字段 `credentialTableRefresh: (() => void) \| null`；`renderCredentialTable` 里建 `const paintAll = (): void => {...}`（重算 `summaryEl` + 遍历 `[data-cred-row]` 逐行 `paintRow`），**建完 13 行之后**赋给该字段；新增 `private refreshCredentialTable(): void { this.credentialTableRefresh?.(); }` |
+> | 🔴 续期提示 | 文案真源在 `pure/credentialMeta.ts` 的 `makeRow` 第 7 个实参 `renewHint`（`id === 'weread' ? '登录超时可续期' : null`），经 `credentialExpiryHint(row)` 渲染成 `.rl-cred-hint` | **整条通道退场**：`CredentialMeta.renewHint` 字段、`makeRow` 第 7 形参、`credentialExpiryHint` 函数、`src/Settings.ts` 的 `whenCell` 两句、`styles.css` 的 `.rl-cred-hint` 规则全部删除 |
+>
+> 口径要点（⛔ 别再退回旧形态）：
+> 1. **为什么不做整页重建**：`setActivePage` 刻意不重建 DOM，整页重建会把用户滚动位置 + 各折叠组展开态全部重置 —— 为刷一张表付这个代价不划算。
+> 2. **为什么不用事件总线**：本仓没有既存的设置页事件通道，为一张表新造全局事件的注册/注销生命周期，比一个回调字段更容易漏、更容易悬空。设置页 DOM 由 `display()` 一次性建好（`renderPage` 逐页渲染），回调字段存活期与它天然对齐。
+> 3. **`display()` 开头必须 `this.credentialTableRefresh = null`**：旧 DOM 已 `containerEl.empty()`，⛔ 别让迟到的刷新打到已卸载节点上。
+> 4. **赋值点必须在建行之后**：`paintAll` 靠 `[data-cred-row]` 找行，早于建行时一行都找不到。
+> 5. **行集合恒定 13 条**（`buildCredentialMeta` 恒产 13 行，`CREDENTIAL_TOTAL = 13`）⇒ 用户说的「新增项」实际是**同一行从「未配置」变「已配置」**，不是多出一行 DOM。`paintAll` 里找不到行时**跳过而不是补建**（补建会 append 到末尾，与固定顺序错位）。
+> 6. **开机自检那条路径刻意不接**：它发生在 `onload`，那时设置页可能没打开（`credentialTableRefresh === null` ⇒ 自然空转）；用户下次打开设置页时 `display()` 拿最新 `credentialStatus` 重算，快照天生是新的。
+> 7. `credentialExpiryHint` 是**删**不是**清空**：留一个恒返回空串的函数就是死代码，本仓纪律是死码不留。
+>
+> 已接上的 11 个写入点（守卫逐个断言）：音乐源 `onInput`（`clearCredentialStatus(musicCheckKey(p.id))`）、音乐源测试连接（`setCredentialStatus(musicCheckKey(p.id), r.ok)`）、元数据源微信读书 `persist()`（扫码/粘贴/登出共用）、元数据源主字段 `onInput`、副字段 `onInput`、元数据源测试连接（`setCredentialStatus(sourceCheckKey(meta.id), res.ok)`）、B 站 `persistBili()`、B 站测试连接、YouTube 代理 `input`、YouTube Cookie `onInput`、YouTube 测试连接。
+>
+> 新增守卫 5 条（`tests/credentialPanelWiring.test.ts` 的 `describe('#758 · 面板要有外部刷新通道')`，14 → **19 条**）：① 建完就把闭包交出去 + `paintAll` 本体含 `summarizeCredentialMeta(fresh)` 与 `paintRow(host, row)`；② 赋值点在建行之后（`indexOf` 比位次）；③ `display()` 开头 `credentialTableRefresh = null` 在 `containerEl.empty()` 之后（⚠️ 不能用 `methodBody` —— `display()` 是覆写公开方法，源码里没有 `private` 前缀）；④ `refreshCredentialTable()` 走空守卫 `?.()`；⑤ **11 个写入点逐个**用 `indexOf` 定位后往**后**看 400 字符内有没有 `refreshCredentialTable()`（⛔ 全文 `toMatch` 是假绿：别处出现一次就过）。
+> 另 `tests/credentialMeta.test.ts` 的「续期提示」三组正向用例 → 改为 2 条**反向守卫**（13 行都没有 `renewHint` 属性 / 模块不再导出 `credentialExpiryHint`）。
+>
+> 门禁（全绿）：`tsc -noEmit -skipLibCheck` **0**；全量 `vitest` **302 files / 6672 tests passed**（#757 为 302/6668，净增 4）；`svelte-check` **0 errors / 89 warnings in 6 files**；`node esbuild.config.mjs production` **0，87 warnings**；`assert-symbols.cjs`（**从仓库根**跑）**ASSERT_EXIT=0，本次失败 318 条 = 基线 318 条，✅ 无新增失败**；`node _deploy.cjs` **`ALL_MATCH=1`**：main.js `3f6b04bd94c1` **2490976 B** / manifest.json `2a4cab8f821f` 438 B / styles.css `a149a9a530bd` **744326 B**（主目标 `C:\Users\kest\Desktop\临时测试库` + 镜像 `.testvault` 全一致）。
+>
+> ⚠️ 未覆盖验收：面板实时刷新只在代码与单测层面钉住，**尚未在真机走一遍**「填一条 Cookie → 看上面表面色变、点行内测试连接 → 看『是否失效/上次检测』跟着变」。
+>
+> **#757（2026-11-12 第 27 轮）：微信读书「子窗口登录了但设置页没反应」—— 判据换成复合式 + 两个域都问 + 权威复核 + 进度可见**
+> 用户原话（`m07156`）：「微信读书扫码后子窗口登录了，但设置页啥也没反应」
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | 🔴 判据错 | `isWereadLoggedIn` 只认 `wr_name` 非空。实测把微信读书前端 4 个 bundle（`D5nOnlJZ-legacy` / `C0dUUX0x-legacy` / `9oq92R5p` / `8c04ZuYa`，共 ~1.5MB）全量扫过：**`wr_name` / `wr_skey` / `wr_vid` 字面量 0 命中**，登录态根本不是靠这几个名字在前端判的。权威对照 `zhaohongxuan/obsidian-weread-plugin` 的判据是「`wr_vid` 必须有 + `wr_name`/`wr_skey` 至少一个非空」 | `src/pure/qrLogin.ts` 新增 `WEREAD_ID_COOKIE = 'wr_vid'` 与 `WEREAD_LOGIN_COOKIES = ['wr_skey','wr_name']`；`isWereadLoggedIn` 重写为「`wr_vid` 必须 **且** 身份键 `some`」；`WEREAD_LOGIN_COOKIE` 降级为**只用于显示「当前账号」** |
+> | 🔴 半份 Cookie | Electron 的 `cookies.get({ domain })` 是**按 domain 字段精确匹配**，不认父域。CDP `Network.getAllCookies` 实测：`wr_gid` 挂 `weread.qq.com`，`wr_fp` 挂 **`.weread.qq.com`** —— 一半在带点的父域下 | `readJarPairs` 改 `[...await tryGet({ domain: host }), ...await tryGet({ domain: \`.${host}\` })]`，两域都问；原 `url` 兜底保留 |
+> | 名字是残渣也没验 | 只看 Cookie 名字 ⇒ 上一次的残渣或「扫码刚完成、服务端还没认」都会被判成功 | 新增私有 `probeWereadShelf(cookie)`：`nodeHttpGet(buildWereadShelfUrl(), …)` + 复用 `parseWereadShelfAuth`（与「测试连接」**同一份文案真源**，⛔ 没另写 `errCode` 判断）；**没过就继续等（`stage:'pending'`），⛔ 不是 `error`** —— 报错会让用户连等待机会都没有 |
+> | 「啥也没反应」 | `pending` 恒返回同一句「等待扫码」，弹窗又没有手动重读入口 ⇒ 用户完全看不出在动 | 文案改 `等待扫码（已读到 N 条 Cookie）` / `已看到登录信息，等待微信读书确认（…）`；微信读书多一颗「我已在窗口里登录，立即读取」（`this.tick(feedback)`） |
+> | 账号名显示不出 | `accountNameOf` 只认昵称 ⇒ 没有 `wr_name` 时「当前账号」整块消失、退化成输入框 | 昵称优先，取不到退回 `微信读书用户 ${wr_vid}` |
+>
+> · **判据改动只在「是否登录」这一层**：`WEREAD_LOGIN_COOKIE = 'wr_name'` 常量**没有删**（`Settings.ts` 的账号名渲染还在用），只是把它从「登录判据」降级成「显示名」，注释里写明「⛔ 别拿它判登录」。
+> · **`wr_skey` 排在 `wr_name` 前面**：前者是会话票、后者是昵称，票更硬 —— 顺序写在数组里，`some()` 的短路也因此优先命中更可信的那个。
+> · **复核失败不判 error 是刻意的**：微信读书登录是「开首页 → 用户自己点登录 → 弹码 → 扫码」，服务端认账有延迟；判 error 等于把「再等两秒就好」变成「请重来」。
+> · **两个域都问的顺序有意义**：先问不带点的（`get({domain})` 精确匹配，命中便宜），再问带点的父域，最后才退回 `url` 兜底（旧 Electron 行为差异）。
+>
+> 守卫：`tests/qrLoginWiring.test.ts` 从 35 → **42 条**（新增三组共 7 条：复合判据 2 条含「`WEREAD_LOGIN_COOKIE` 不再出现在 `isWereadLoggedIn` 里」的反向守卫 / 双域名 1 条必含 `` domain: `.${host}` `` / 权威复核 2 条含「没过必须 `stage:'pending'`」与「⛔ 别另写 `errCode === -2010`」/ 进度可见 2 条）。`tests/qrLogin.test.ts` 从 36 → **40 条**（`微信读书登录判据` 改 5 条，其中「**只有 `wr_name` → false**」正是老实现的误判反证）。辅助函数 `asyncFnBody` 从 `describe` 内部**提升到模块级**（`#756` 与 `#757` 两组都要用它，留在 `describe` 里第二个组调不到 —— 首跑就是这样红了 2 条）。
+>
+> 门禁：tsc exit 0 / svelte-check **0 errors 89 warnings** / 全量 `vitest` **302 files 6668 tests**（#756 为 6657，净增 11）/ esbuild **87 warnings** / `assert-symbols.cjs` **318 条（基线 318）无新增** exit 0 / `_deploy.cjs` **`ALL_MATCH=1`**（main.js `4db624a4a57e` **2490378 B**、manifest `2a4cab8f821f` 438 B、styles.css `884457660bb2` 744041 B）。
+>
+> 🔴 **取证通道的教训（下次别重走）**：Obsidian 对 cookie 库 `C:\Users\kest\AppData\Roaming\obsidian\Network\Cookies` 持**排他锁**，文件复制 / `immutable=1` 只读打开 / `FILE_SHARE_ALL` 全部失败（`PermissionError` / `unable to open database file` / `文件正由另一进程使用`）。唯一可用通道是 **CDP**（`Network.getCookies` / `Network.getAllCookies`）。⚠️ 且 `tools/realdevice/cdp.cjs` 的 `session.eval()` **直接返回 `r.result.value`**，⛔ 别再取一次 `.result.value`。
+>
+> ⚠️ **仍未真机走完「手机扫码 → 落盘 → 重开仍登录」全链路**：本轮实证只到「jar 里到底有哪些 cookie / 页面自己怎么判」这一层。下次真机若微信读书仍空，第一件事仍是打印 `sess.cookies.get({ domain: '.weread.qq.com' })` 与 `{ domain: 'weread.qq.com' }` 两份完整列表对比。
+>
+> **#756（2026-11-12 第 26 轮）：扫码登录两条真机缺陷修复 —— B 站票据换凭据 + 微信读书能取到 Cookie**
+> 用户原话（`m06077`，一句话两条）：「微信读书扫码后不自动获取cookie，b站扫码能获取但测试连接失败」
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | B 站「能获取」是假象 | `data.url` 现在是 **crossDomain 票据地址**（`?ticket=…&gourl=…&first_domain=.bilibili.com`），凭据由它 **302 的 `Set-Cookie`** 下发。旧的 `cookieFromBiliCallbackUrl` 把 query 全当 Cookie 存 ⇒ 存进去的是三个票据参数，`SESSDATA` 一个也没有 | `cookieFromBiliCallbackUrl` 改**白名单**（只收 `BILI_CREDENTIAL_COOKIES`）；新增 `isBiliTicketUrl` / `biliCredentialCookieOf` |
+> | 🔴 最关键的漏 | `src/services/nodeHttp.ts` 的 `requestOnce` **只在「3xx 且有 location」那条分支**才 `mergeCookies`。「**200 + `Set-Cookie`**」这种最正常的下发形态被整段丢掉 —— B 站 poll 成功那轮正是 200 ⇒ 扫码成功、`refresh_token` 拿到、凭据永远为空 | `requestOnce` 末尾补末跳 `set-cookie` 合并；`NodeHttpResponse` 新增 `cookies?: string`；`nodeHttpGet` 透传 `cookies` |
+> | B 站要真兑换 | 票据必须换一次才有 `SESSDATA`/`bili_jct`/`DedeUserID` | 新增 `exchangeBiliTicket(ticketUrl, seedCookies)`，五级来源按序：poll 轮自身 Cookie → 重定向链累积 → **302 Location query**（Node 不执行 JS，落地页写 cookie 那步永不发生）→ 末跳头 → jar |
+> | 微信读书取不到 | ⑴ `readJarPairs` 只 `get({ url: 'https://weread.qq.com/' })`，登录态有一部分挂 `path=/web`，根路径问不到；⑵ 所有平台同用 180s TTL，而微信读书要「开首页→自己点登录→弹码→扫码」，180s 常先判过期 | `readJarPairs` 改「先按 `domain` 问、空则退回 `url`」，同名 cookie **深 path 优先**；新增 `sessionTtlOf(platform)`，微信读书 `WEREAD_SESSION_TTL_MS = 600_000` |
+> | 一次失败就锁死 | `QrLoginModal` 的 done 分支先 `settled = true; stopPolling()` 再校验 ⇒ 兑换失败一次就永久停在「已确认」 | done 分支重排：**先 `if (!r.cookie)` 报一句「已确认登录，但这次没拿到登录凭据，正在重试…」并 `return`（不 stopPolling）**，拿到凭据才 `settled = true` |
+>
+> · **存量脏数据自愈**：`main.ts` 的 `onload`（紧跟 `downloadDirMigrated` 迁移块之后）新增幂等清理 —— `const dirtyBili = String(this.settings.biliCookie ?? '').trim(); if (dirtyBili && !/(^|;\s*)SESSDATA=/.test(dirtyBili)) { this.settings.biliCookie = ''; await this.saveSettings(); }`。不清的话，用户升到修好的版本后打开设置看到的仍是 `ticket=…`、测连接继续红，会以为没修。
+> · **`biliCredentialCookieOf` 故意不解码**：jar 里的值已是原文，再 `decodeURIComponent` 一次会把含 `%` 的 `SESSDATA` 弄坏（专门写了单测钉这条）。
+> · **`cookieFromBiliCallbackUrl` 连空值也丢**：`SESSDATA=` 空串进 Cookie 头等于没登录，留着只会让「是否已登录」的判断骗人。
+> · **兑换失败必须报错、不许吞成「扫码成功」**：文案「扫码成功，但没能换到登录凭据（票据已失效或接口改版），请重新生成二维码」。
+>
+> 守卫：`tests/qrLogin.test.ts` **36 条**（新增 `#756 · B 站票据兑换（纯逻辑侧）` 一组 4 条 + 微信读书 10 分钟 TTL；改写「空值也丢」「`SESSDATA=%E0%A4%A` 解码失败不整条作废」）+ `tests/qrLoginWiring.test.ts` **35 条**（新增 `asyncFnBody` 辅助锚 `async function xxx(`，因为 `readJarPairs` 不是 `export`；守卫块改花括号配对精确取块，固定窗口 `+260` 会吞到后面的 `stopPolling`）+ `tests/nodeHttp.test.ts` **11 条**（新增「**200 响应的 `Set-Cookie` 也要回报到 `cookies`**」与「302 与末跳 200 串成一条链」—— 这两条直接钉住上面那个最关键漏，改回只在 3xx 合并立刻红）。
+>
+> 门禁：tsc exit 0 / `npm run check` **0 errors 89 warnings** / 全量 `vitest` **302 files 6657 tests** / esbuild **87 warnings** / `assert-symbols.cjs` **318 条（基线 318）无新增** exit 0 / `_deploy.cjs` **`ALL_MATCH=1`**（main.js `6de691081e17` **2489465 B**、manifest `2a4cab8f821f`、styles.css `884457660bb2` 744041 B）。
+>
+> ⚠️ **仍未真机走完「手机扫码 → 落盘 → 重开仍登录」全链路**：B 站侧证据是接口形状实测（generate/poll/cookie-info + 假 ticket 打 crossDomain 实测 302 且 `set-cookie: null`）与单测；微信读书侧 `readJarPairs` 的 `path=/web` 假设**尚未在真机 jar 上直接验过**（CDP 求值上下文里 `window.require` 不可用，读不到 jar）。下次真机扫码若微信读书仍空，第一件事是打印 `sess.cookies.get({ domain: 'weread.qq.com' })` 的完整列表看 `wr_name` 到底挂在哪个 path。
+>
+> **#755（2026-11-12 第 25 轮）：统一周期管理面板精简 + 关于页改作者 GitHub 入口 + 扫码图标挪到 Cookie 框最左旁**
+> 用户原话（`m05813`，附截图一次给三件事）：「去掉单独检测，一键检测改成纯小图标（无边框透明化），名称旁的描述（元数据源、音乐平台等）删除掉，名称列项把边框去掉②设置-关于页ReelLudic信息栏的b站图标跟上github的图标，点击可跳转作者主页"https://github.com/fhb263"③扫码登录的不获取cookie码登录态保存在哪里？把二维码小图标按钮放在cookie框的最左旁」
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | ① 边框去不掉 | 🔴 **不是 CSS 写错**：Obsidian 的 `button:not(.clickable-icon)`（特异度 **0,1,1**）给所有按钮铺整行灰底 + 内阴影 + 边框，单类选择器（0,1,0）**压不过**。`clickable-icon` 正是宿主豁免这条规则的那个类 —— 本仓 `src/modals/ReaderPanelBase.ts:1633` 早有记载 | `src/Settings.ts` 的 `renderCredentialTable`：名称钮与一键检测钮都补 `clickable-icon` |
+> | ① 表格太吵 | 13 行各挂一枚刷新图标，做的事与顶上「一键检测」**完全重复**；族名一列里「豆瓣 元数据源 / 网易云音乐 音乐平台」重复了表头已说清的事，还把名称列宽挤掉一半 | 删第五列「检测」+ `runOne` 整个函数 + `.rl-cred-testone` / `.rl-cred-family` / `.rl-cred-cell-ops` 全部样式 |
+> | ② 图标与落点 | 原先是 B 站空间（①-11 的交付物），用户改要作者 GitHub 主页 | `src/pure/supportLinks.ts` 新增 `AUTHOR_GITHUB_URL` / `AUTHOR_GITHUB_TIP` / `AUTHOR_GITHUB_ICON`；关于页那枚 `bili` 变量改名 `authorLink` |
+> | ③ 图标位置 | m05505 定的是「输入框右侧、显示左边」（`beforeEye` 插槽），m05813 改要「最左旁」 | `fillSecretRow` 新增 `beforeInput` 插槽（建在 `createEl('input')` **之前**），`beforeEye` 标 `@deprecated` |
+>
+> · **① 的关键教训**：判断「按钮边框去不掉」时，先查本仓是否已有 `clickable-icon` 的记载，别急着调 CSS 特异度。仓库既有同款处理：`src/modals/QuickAssociateModal.ts:838`（`cls: 'clickable-icon rl-bili-close'`）、`src/services/progressBall.ts:112` 与 `:128`（`rl-pball-btn rl-pball-min clickable-icon`）。
+> · **① 一键检测改成纯图标**：`head.createEl('button', { cls: 'rl-cred-testall clickable-icon' })` + `safeSetIcon(testAllBtn, 'refresh-cw')` + `setTip(...)` + `srLabel(...)`，去掉 `.rl-cred-testall-icon` 包裹与「一键检测」文字。CSS 改成 `display:inline-flex; padding: var(--size-2-1, 2px); border:0; background:transparent; box-shadow:none; color: var(--text-faint); --icon-size: var(--icon-s)`，hover 才 `--background-modifier-hover`。
+> · **① 窄屏收列**：`@media (max-width: 420px)` 从四列改三列 `minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) !important`，`.rl-cred-cell-when { display: none !important }`。
+> · **② 图标来历（⛔ 不许手抄）**：由探针从 `https://cdn.jsdelivr.net/npm/simple-icons@16/icons/github.svg` 取回，实测 **822 字节 / viewBox 24×24 / 单路径 712 字符**（CC0-1.0）。放在 `supportLinks` 而不是 `sourceIcons`：后者是「搜索源」语义（`Record<KeySourceId, …>` 由类型强制齐全），GitHub 不是搜索源，塞进去会污染那张表。
+> · **② 落点易错点**：`AUTHOR_GITHUB_URL = 'https://github.com/fhb263'` 是**作者个人主页**，`REPO_URL = 'https://github.com/fhb263/obsidian-reelludic'` 是仓库地址 —— 两者同属 fhb263 但落点不同，⛔ 别合并成一个常量。守卫测试专测这条关系（`not.toBe(REPO_URL)` + `REPO_URL.startsWith(AUTHOR_GITHUB_URL + '/')`）。
+> · **③ 建序铁律**：`beforeInput` → `createEl('input')` → `beforeEye` → `.rl-secret-eye`。⛔ 别用 `order`/`flex-direction` 事后挪 —— DOM 顺序与视觉顺序不一致，键盘 Tab 次序与看到的次序就分家。守卫测试不只断言「调了 `beforeInput`」，还真读 `fillSecretRow` 的**建序**（`atBeforeInput < atInput < atEye`），否则把它挪到 input 之后测试还是绿。
+> · **③ 用户提问的答案（写进文档备查）**：扫码拿到的 Cookie 存 **`data.json` 的 settings 字段** —— 微信读书 → `wereadCookie`，B 站 → `biliCookie`，B 站续期凭据 → `biliRefreshToken`，全部经 `plugin.saveSettings()` 落盘；检测结论另存 `credentialStatus`（boolean 表）+ `credentialCheckedAt`（时间戳）。三者都不进 `credentialStatus` 那个 boolean 表。
+>
+> 守卫：`tests/supportLinks.test.ts` 新增 3 条（落点关系 / 品牌标形状 / 提示文案）+ `tests/qrLoginWiring.test.ts` 改写 2 条（`beforeInput` 正反向 + 建序），共 **26 + 8 条**。
+>
+> 门禁：tsc exit 0 / `npm run check` **0 errors 89 warnings** / 全量 `vitest` **302 files 6639 tests** / esbuild **87 warnings**。main.js **2487074 B** / `assert-symbols.cjs` **318 条（基线 318）无新增** exit 0 / `_deploy.cjs` **`ALL_MATCH=1`**（main.js `05cb49d7da89`、manifest `2a4cab8f821f`、styles.css `884457660bb2`）。
+>
+> **#754（2026-11-12 第 24 轮）：扫码登录推翻重做 —— 豆瓣删除、B 站改插件内自绘二维码、图标进输入框行、登录后换「当前账号」形态**
+> 用户原话（`m05505`，一次给四件事）：「删除豆瓣的扫码登录，还有这个b站扫码登录怎么是跳转到浏览器登录还会触发下载iBiliPlayer的行为什么鬼（但我浏览器有账号登录了就一直登录不了cookie也不能获取回填）扫码登录按钮改成二维码小图标按钮放在输入框的右侧旁边（紧挨着"显示"按钮的左侧）同时用扫码登录的UI要变化成原来的输入框区域替换为"当前账号: 微信读书用户"」。追问微信读书怎么办，用户裁定逐字：**「保留：弹窗打开微信读书首页，你点『登录』用微信扫（推荐）」**；追问登录后按钮怎么办，裁定：**「保留图标按钮 + 加一个『退出登录』（推荐）」**。
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | 跳浏览器 + 下载 iBiliPlayer | #753 为保住 `qrcode_key` 给子窗口设了 `BILI_MOBILE_UA`，B 站 H5 页（`account.bilibili.com/h5/account-h5/auth/scan-web`）认出移动端 UA 就渲染「下载 App」引导页（`iBiliPlayer` 是它安卓包名） | `src/pure/qrLogin.ts`（删 `BILI_MOBILE_UA` / `needsMobileUa`）/ `src/services/qrLogin.ts` |
+> | 浏览器已登录却拿不到 Cookie | Electron 子窗口是**独立 session**，与用户系统浏览器的登录态完全隔离 ⇒ 他浏览器登着，插件侧照样是空的 | 同上（B 站整条改为不开窗口） |
+> | 豆瓣扫码 | 用户明确要求删除 | `src/pure/qrLogin.ts`（`QrPlatform` 只剩 `'bilibili' \| 'weread'`，删 `normalizeDoubanStatus`）/ `src/services/qrLogin.ts`（删两个豆瓣端点）/ `src/modals/QrLoginModal.ts` |
+> | 按钮位置 | #753 把扫码按钮塞进了 `.rl-key-actions` 动作行（与「立即同步」「测试连接」同行），用户要的是**输入框行内、「显示」左侧** | `src/Settings.ts` 的 `fillSecretRow` 新增 `beforeEye` 插槽 |
+> | 登录后的 UI | #753 的做法是「把 Cookie 回填进输入框」；用户要的是**输入框整块消失，换成「当前账号: xxx」** | `src/Settings.ts` 新增 `renderQrAccountField` |
+>
+> · **B 站改为插件内自绘二维码**：新增 `src/pure/qrcode.ts`（自研编码器，**零新依赖** —— 运行时依赖仍只有 `jszip`）。能力边界写进文件头：只有 byte 模式（UTF-8）、只有版本 1–10、四档纠错全支持、默认 `'M'`。导出 `encodeQr(text, opts)` 返回 `QrMatrix { size; modules; version; ec; mask }`、`qrSvgPath(matrix)`（每深色模块一条 `M{c} {r}h1v1h-1z` 子路径，单条 path 避免版本 8 的两千个 DOM 节点）。
+> · 🔴 **编码器真 bug（关键教训）**：首版逐格比对 15 条测试 **5 红**，但 10 条结构自检全绿 ⇒ 框架对、矩阵内容错。差异分析显示 `L|HELLO` v1 mask0 与参照仅 **17 格**不同且**全部落在第 8 行与第 8 列** ⇒ 问题在**格式信息坐标**：我把「bit0–5 沿**列 8** 竖排」写成了「沿**行 8** 横排」（规范与所有参考实现都是 `setFunctionModule(x=8, y=i)`）。修好后 15 条全绿。**「数据区全对、只有第 8 行与第 8 列错」这种码人眼完全正常、手机扫不出** ⇒ ⛔「能画出黑白方块」这类断言毫无约束力。
+> · **参照 fixture 的生成口径**（`tests/fixtures/qrRef.ts`，59742 B）：Python `qrcode.QRCode(error_correction=…, border=0, mask_pattern=0..7)` + `add_data(QRData(text.encode('utf-8'), mode=MODE_8BIT_BYTE))`。🔴 必须显式 `MODE_8BIT_BYTE` —— `add_data(text)` 会把纯数字串自动切成 numeric 模式（版本与矩阵都不同，比出来的「不一致」是假的）；🔴 必须 `border=0`（要纯模块区）。四组用例：`L|HELLO`（v1）/ `M|https://weread.qq.com/`（v2）/ `H|https://example.com/a?b=1`（v4）/ `M|<B 站真 URL>`（v8，49×49），每组八掩码各一份完整矩阵。
+> · **扫码图标的位置靠插槽保证，不靠事后搬 DOM**：`fillSecretRow` 新增 `beforeEye?: (wrap: HTMLDivElement) => void`，建序是 input → `beforeEye` → eye。⛔ 别先建 eye 再回调 —— 图标会跑到「显示」右边，正是用户点名不要的位置。按钮本体走 `iconButton('rl-qr-open', 'qr-code', …)`（`qr-code` 实测在 Obsidian asar 图标白名单内）。
+> · **「当前账号」形态的两条口径**：⑴ 有账号名时**不建输入框**（用户原话「原来的输入框区域替换为」），因为 Cookie 是几百字符密文、显示出来既没法核对也没法用；⑵ 账号名取不到时**退回输入框**，⛔ 别显示「当前账号: 未知」把框藏掉 —— 那样用户既看不到值也没法手改，等于把凭据锁死。取名字段：微信读书 `wr_name`、B 站 `DedeUserID`（拼 `UID xxx`，B 站 Cookie 里没有昵称）。
+> · **图标在两种形态下都在**（用户裁定「保留图标按钮」）：登录后仍要能换账号 —— 那就是再扫一次，⛔ 别让用户先退出再扫。
+> · **退出登录连带清续期凭据**：`biliRefreshToken = ''` —— 留着它只会去换一个已退出的账号。
+> · **`refresh_token` 口径不变**（#753 的硬要求继续成立）：只在**真拿到**时才写（`if (picked.refreshToken) …`），`undefined` 时不动旧值。
+> · **二维码的两条渲染细节**：⑴ 必须**白底**（`<rect fill="#ffffff">`）—— 深色主题下把深色模块画在深色背景上扫不出；⑵ `shape-rendering="crispEdges"` —— 默认抗锯齿会让细模块糊成一团，手机更难识别。
+> · **微信读书维持开窗口**：实测 8 个候选端点全 404（`/api/auth/getQRCode`、`/web/login/getQRCode`、`/api/login/getQRCode`、`/api/auth/loginInfo`、`/web/login/qrcode`、`/api/login/qrcode` 等），`POST /web/login/session/init` 只回 `{"success":1}`（13 字节，不带任何凭据）⇒ 没有纯 HTTP 扫码通道，只能开首页点「登录」用微信扫，盯 `wr_name`。
+> · **样式口径**（③-5 的硬要求对新增样式同样生效）：`.rl-qr-canvas` 尺寸用 `em` 跟着界面字号走、`line-height: 0`（SVG 是 inline 元素，默认行高会在下方留白）；`.rl-qr-open` 不写 `.rl-btn` 那套底色内距（它住在 `.rl-secret` 行内，不是动作行成员）；`.rl-acct` 的 `min-height` 与 `.rl-secret` 对齐（切形态时下面动作行不跳）。⛔ 无 hex / `rgb()` / px。
+>
+> 守卫：`tests/qrLogin.test.ts`（29，含新增 `cookieValueOf` / `accountNameOf` 两组）+ `tests/qrLoginWiring.test.ts`（25，重写）+ `tests/qrcode.test.ts`（15，与 Python 参照逐格比对）。接线守卫钉四件事：**删豆瓣**（`QrPlatform` 只剩两个、服务层无豆瓣端点、弹窗无 `douban`）/ **图标进输入框行**（`beforeEye` 建序、`iconButton` + `'qr-code'`、反向守卫 `⛔ text: '扫码登录'` 与 `⛔ renderQrLoginButton(actions`）/ **登录后换形态**（有名字不建输入框、无名字退回输入框、两形态都有图标）/ **B 站不开窗口**（`startBiliQrLogin` 体内无 `new BW(`、服务层无 `.setUserAgent(`）。
+> ⚠️ 测试辅助函数的坑（本轮踩过）：`methodBody` 只找 `private xxx(`，服务层是导出函数 ⇒ 另加 `exportBody`（边界到下一个顶层 `export`）；`onClose` 不是 private ⇒ 另加 `publicBody`。⛔ 别把边界写成「下一个 `}`」—— 函数体里到处是 `}`。
+>
+> 门禁：tsc exit 0 ／ `npm run check` **0 errors 89 warnings** ／ 全量 `vitest` **302 files 6635 tests** ／ esbuild **87 warnings**（main.js **2487153 B**）／ `assert-symbols.cjs` **318 条（基线 318）无新增** exit 0 ／ `_deploy.cjs` **`ALL_MATCH=1`**（main.js `e3d0db403f98`、manifest `2a4cab8f821f`、styles.css `4cc2beb70b5c` 743278 B）。
+> ⚠️ 本批**仍未真机走完「真手机扫码 → 落盘 → 重开 Obsidian 仍登录」的完整链路**（编码器正确性靠与成熟实现逐格一致证明，接口语义靠真机实测，但端到端一遍未点）。这是本批唯一未覆盖的验收项。
+>
+> **#753（2026-11-12 第 23 轮）：三家平台扫码登录（B 站 / 豆瓣 / 微信读书）+ B 站 `refresh_token` 持久化**
+> 🔴 **本轮的扫码方案已被 #754 整体推翻，只作历史记录读**：豆瓣扫码已删、B 站改为插件内自绘二维码（不再开窗口、不再设移动 UA）、按钮已移进输入框行。**仍然成立、⛔ 不要一起推翻的**：`data.code` 才是 B 站真状态、`SESSDATA` 要 `decodeURIComponent`、`cookieHeaderFromPairs` 剔空值、微信读书判 `wr_name` 非空、`refresh_token` 只在真拿到时才写、弹窗只 `onPicked` 不落盘、⛔ 不要 `await win.loadURL`、两条死路（页面内钩子抓 poll / CDP `getResponseBody`）。
+> 用户原话（`m00353` ③-2/③-3/③-4）：「参考 `obsidian-douban` 实现扫码登录」/「参考 `dsh@bili-agent-kit/core` 的 Token 刷新与文件存储策略，集成 B 站扫码登录与长期保持登录态，**扫码成功返回的 `refresh_token` 必须持久化**」/「微信读书扫码」。追问二维码怎么渲染，用户裁定逐字：**「弹出对应网页扫码」**（三家同一条）。
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | ③-2 豆瓣扫码 | 二维码 PNG 直链带 `Referer: https://accounts.douban.com/` 才 200（不带 403）；轮询状态只在 `payload.login_status` | `src/pure/qrLogin.ts` / `src/services/qrLogin.ts` |
+> | ③-3 B 站扫码 | 🔴 **真正的扫码状态在 `data.code` 不是顶层 `code`**（顶层恒 0）；桌面 UA 打开扫码页会被重定向并**换掉我们的 `qrcode_key`** ⇒ poll 永远「未扫码」 | `src/services/qrLogin.ts`（`setUserAgent(BILI_MOBILE_UA)`）/ `src/pure/qrLogin.ts` |
+> | ③-4 微信读书扫码 | 纯 HTTP 无扫码通道（`/api/auth/*` 全 404、`/web/login/session/init` 回 `{"success":1}` 但不给任何凭据）⇒ 只能开窗点「登录」拦 Cookie；判据 = `wr_name` **非空**（登录前该 Cookie 已存在但为空串） | `src/services/qrLogin.ts` / `src/pure/qrLogin.ts` |
+>
+> · **为什么不做本地二维码编码器**：用户裁定「弹出对应网页扫码」⇒ 加 `qrcode` 依赖纯属多余（运行时依赖仍只有 `jszip`），平台官方页面本身就是最不会过期的渲染器。
+> · **B 站移动 UA 是前提不是优化**：`_probe_ua.cjs` 实测 —— 生成 `myKey=5b70…`，移动 UA 开窗后 `finalUrl` **仍含该 key**、渲染 84×84 二维码；桌面 UA 会被踢到 `passport.bilibili.com/login` 并换 key。
+> · **⛔ 不要 `await win.loadURL(url)`**：首次导航必以 `ERR_ABORTED (-3)` reject（被后续导航取代），**不是失败** ⇒ `void win.loadURL?.(…)?.catch?.(() => undefined)` + 定时等待。
+> · **走过的死路（⛔ 别再试）**：页面内包 `XMLHttpRequest`/`fetch` 钩子抓 `qrcode/poll` 响应体 ⇒ `executeJavaScript` 直接抛错、一个字节没抓到；`webContents.debugger.attach('1.3')` + `Network.enable` + `getResponseBody` ⇒ **挂死**（120s 超时）。⇒ 改由 Node 侧按自己的 key 轮询。
+> · **`refresh_token` 只在新拿到时才写**：`if (picked.refreshToken) settings.biliRefreshToken = …` —— 重扫一次不该把上一次的续期凭据抹掉；`refreshBiliCookie` 返回 `null` 时**只清这一个键**，⛔ 不顺手清 `biliCookie`。
+> · **弹窗不落盘**：写盘要连 `saveSettings` + `clearCredentialStatus` + 徽标刷新三件事，散在弹窗必漏 ⇒ 落盘一律在设置页回调里，弹窗只 `onPicked`。
+> · **三处入口共用一颗按钮**：`renderQrLoginButton(actions, platform, onPicked)` —— ③-2/③-3/③-4 说的是**能力**不是三套 UI。B 站那颗挂在 `mountNetTestAction` 新增的第四参 `beforeTest`（建在「测试连接」**之前**：测试是「用凭据」，扫码是「填凭据」）。
+>
+> 守卫：`tests/qrLogin.test.ts`（24）+ `tests/qrLoginWiring.test.ts`（13）。后者读四个文件钉接线：弹窗内 ⛔ 无 `saveSettings(` / 无 `plugin.settings`、`onClose` 必调 `stopPolling()` + `child?.close()`、`setUserAgent?.(BILI_MOBILE_UA)`（容得下 `?.` —— 否则守的是写法不是行为）、⛔ 无 `await *.loadURL(`、CSS `.rl-qr-modal` 块内无 hex / `rgb()` / `px`。
+>
+> 门禁：tsc exit 0 ／ `npm run check` **0 errors 89 warnings** ／ 全量 `vitest` **301 files 6603 tests** ／ esbuild **87 warnings**（main.js **2481478 B**）／ `assert-symbols.cjs` **318 条（基线 318）无新增** exit 0 ／ `_deploy.cjs` **`ALL_MATCH=1`**（main.js `51e9dc64c1fe`、manifest `2a4cab8f821f`、styles.css `2e8d556ff07b`）。
+> ⚠️ 本批**未真机点过一遍扫码**（弹窗开窗与轮询只在探针里验证过单步，未走完「真手机扫码 → 落盘 → 重开 Obsidian 仍登录」的完整链路）。
+>
+> **#752（2026-11-12 第 22 轮）：③-1 统一周期管理 + ③-5 全局 UI 组件库并据此重构高级设置页**
+> 用户原话（`m00353` ③-1/③-5）：③-1「统一生命周期管理器 + 按认证类型分策略……为 13 个凭据做表格列项状态面板，表头 = 名称 / 是否配置 / 是否失效 / 预计过期时间或上次刷新时间，最右表头为一键检测按钮，未配置行整行变灰但点名称可跳转，状态面板与搜索配置页必须共享同一个 `credentialMeta` 数据源」；③-5「高级设置页所有组项审美极不统一（视觉层级混乱、组件规范不统一、页面很『碎』）」+「**建立全局 UI 组件库 `src/ui/components.ts` 并据此重构设置页**」+「**绝对禁用写死的颜色和像素**」+「**强制使用原生 API**，不要手搓 `<input>`/`<select>`」+「请先输出 `components.ts` 的完整代码，然后基于这些组件，重写我目前的高级设置页（特别是字段映射表格、卡片预览和条目属性网格区），彻底消灭视觉上的东拼西凑」。
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | ③-1 十三家凭据各说各话 | 「是否配置」从 settings 现算、「是否失效」只读 `credentialStatus`、「上次检测」只读 `credentialCheckedAt` —— 三条数据源分属三处，任一处自己 `new Date()` 就会编出假时间 | `src/pure/credentialMeta.ts` / `src/Settings.ts` |
+> | ③-5「东拼西凑」的真根因 | **同一套分段 chips 被逐字复制三份**（卡片信息栏 / 条目属性 / 笔记属性顺序），连 `typeBtns` + `syncTypeBar()` 闭包体都一样 | `src/ui/components.ts` / `src/Settings.ts` |
+> | ③-5 组说明行五套类名 | `rl-fieldmap-help` / `rl-fo-help` / `rl-cf-*` 各起一套，字号颜色外边距写三遍 | `styles.css`（唯一真源） |
+>
+> · **③-1 的三条分层口径**（写在 `credentialMeta.ts` 文件头）：⑴ 是否配置从 settings 现算、⛔ 不落盘；⑵ 是否失效**只读** `settings.credentialStatus`，本模块不产生不缓存结论，`undefined` ⇒ `expired:false` + `checked:false`，⛔ **绝不把「没测过」画成「失效」**；⑶ 上次检测时间**只读** `settings.credentialCheckedAt`、⛔ 不 `new Date()` 现造。⚠️ 13 条里 11 条是不透明 Cookie/Key，上游从不告知过期时刻 ⇒ 该列显示「上次检测：YYYY-MM-DD HH:mm」这个**可核查事实**，微信读书额外标「可续期」（`-2012` 登录超时可 HEAD 续期），⛔ 不编假时间。
+> · **③-5 组件库导出 8 个**：`srLabel` / `setTip` / `iconButton` / `groupHeader(parent, helpText, opts?: {helpCls?, feedbackCls?})` / `setFeedback(slot, text, tone)` / `chipBar(opts)`（含 `ChipItem`/`ChipBarHandle`，`ariaLabel` 是**不可见**的 tablist 读屏名）/ `statusTable(parent, columns)` + `cell(rowEl, opts)` / `ghostIconButton(cls, icon, tip)`。三条铁律：气泡单一来源（`data-tip` 与 `aria-label`/`title` 只能存在一个）、颜色尺寸禁写死（只 `var(--…)`/`em`/`fr`）、强制原生 API。
+> · 🔴 **`textButton` 写完又删掉**：外部引用数实测 = 0，而本仓早已有唯一带字按钮基准 `.rl-btn`（全仓 33 处使用、断言锚了 54 处）。留着等于给后来者第二条路 —— 那正是 ③-5 要消灭的东西。⛔ 别加回来，也别新建第三套。
+> · **字段映射组⛔ 不要重写**：它本来就对（`table-layout: fixed` + 表头/表体两张 `<table>` 共用一份 `<colgroup>` + `COL_WIDTHS = ['30%','24%','46%']` + `input` 只切类、`change` 才落盘）。`renderFieldMapStatus` 是**有状态**渲染（未配置那句折进说明行前半句、有错时 `role="alert"` + 逐条 `rl-fieldmap-err`）⇒ ⛔ 不能粗暴换 `setFeedback`（会丢折状态与读屏播报）。
+> · **条目属性「宽度」控件按用户举例改法落地**：删掉块底三枚常驻胶囊 `.rl-ef-segbtn`，改成块**右上角一枚** `layout-template` 图标（`.rl-ef-tools` 绝对定位 + `opacity: 0`，`:hover`/`:focus-within` 才浮出，`@media (hover: none)` 常显 —— 触屏没 hover，不常显就永远改不了宽度；用 `opacity` 不用 `display`，否则键盘 Tab 到不了）⇒ 点开 **Obsidian 原生 `Menu`**（`setIsLabel` 当前档 + `setChecked` + 当前档 `setDisabled`，`showAtPosition` 贴按钮底边）。`Menu` 自带键盘导航 / 焦点陷阱 / 边缘翻转，这就是「强制原生 API」的落地方式。⚠️ 本仓 `src/**` 此前 `new Menu(` **零使用**，本批首次引入。
+> · **`chipBar` 的三条创建顺序铁律**（写进注释）：⑴ 槽位归位必须在建 chips **之前**（`chipBar` 建完立刻 `sync()`，否则高亮与面板对不上）；⑵ chips 必须在 panel **之前**建（append 到 body 末尾，否则 chips 排到面板下面）；⑶ 最后建 panel 首绘。
+> · **③-1 换 `statusTable` 后两处必须用 `!important`**：行内 `gridTemplateColumns` 盖不过普通选择器 ⇒ 窄屏收列那段（`.rl-cred-row { grid-template-columns: … !important }`）。⛔ 别把列模板挪回 CSS 来避免 `!important` —— 那会让列宽重新散落 JS 与 CSS 两处。
+>
+> 守卫：`tests/credentialMeta.test.ts`（27）+ `tests/credentialPanelWiring.test.ts`（14，含「检测有就近回执」且反向守卫 ⛔ 无 `new Notice(`）+ `tests/entryFormSpanControl.test.ts`（6）+ `tests/settingsViewChips.test.ts`（10）+ `tests/fieldOrder.test.ts`（58）+ `tests/fieldOrderCompare.test.ts`（20）。
+>
+> 门禁：tsc exit 0 ／ 全量 `vitest` **299 files 6566 tests** ／ `npm run check` **0 errors 89 warnings** ／ esbuild **87 warnings**（main.js **2469124 B**）／ assert **318 条（基线 318）无新增** exit 0 ／ `_deploy.cjs` **`ALL_MATCH=1`**（main.js `02c9b6167d4a`、styles.css `7681c09864b4`）。
+> ⚠️ 本批**未真机肉眼回归**设置页观感（只做了产物断言 + 组件级源码守卫）。
+>
+> **#751（2026-11-12 第 21 轮）：②-1 备份体积根治（链式增量）+ ②-2 悬浮球/进度卡 + ②-3 标签词云与关联图谱方案 + ②-4 微信读书划线写入**
+> 用户原话（`m00353` ②）：②-1「不是仅支持回滚 5 版，之后写入的要对前 5 版进行覆盖清理啊」；②-2「优化右下角进度框和【悬浮球】样式（悬浮球是入口，进度框是展开态）」；②-3「增强统计页（如词云，各模块排序分组要对齐）+ 现媒体库内笔记全是孤立笔记不关联 ⇒ 给几个适配生成条目笔记关联图谱的思路，或按类型枢纽笔记」；②-4「微信读书划线高亮批注写入单独条目笔记的 `### 同步划线与高亮` 下（参考 `CuberLabs/Weread`）」。
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | ②-1 备份 1.65 MB | 🔴 **用户的归因前提被实测推翻**：轮转一直生效（确实只留 5 版），真因是**每版都存快照全文**（catalog 全量重写、内容高度重合）⇒ 体积 = 版数 × 全文 | `src/pure/catalogBackup.ts` |
+> | ②-2 悬浮球/进度卡两套皮 | 入口态与展开态各自长出来，配色与圆角不一套 | `src/pure/progressBall.ts` / `src/services/progressBall.ts` |
+> | ②-3 统计页各区块排序分组不齐 | 词云不在 `statsLayout` 的键里 ⇒ 排序表里没它、半栏宽度也没它 | `src/pure/wordCloud.ts` / `StatsBoard.svelte` |
+> | ②-4 划线批注没地方落 | 微信读书的划线 / 想法是两套接口（`bookmarklist` / `review/list`），章节名还得靠第三个接口 `chapterInfos` 补 | `src/pure/wereadNotes.ts` |
+>
+> · **②-1 落成 schema 2 链式增量**：链首（最新一版）存全文，其后每版只存「相对上一版的公共前缀 `p` / 公共后缀 `s` / 中间差异 `mid`」（`computeDelta` / `applyDelta`，解析后 `snapshots[i].text` 语义与 v1 **完全一致**，调用方零改动）。`DELTA_MAX_RATIO = 0.9` —— 差异超过全文 90% 就不做增量、直接存全文（防「完全不同」时反而变大）。实测 `.testvault/媒体库/catalog-backups.json` 从 **1,647,199 B → 331,097 B**。
+> · **②-2 拆两层**：`pure/progressBall.ts` 只出判定（`nextMode` / `barPercent` / `clampPercent` / `ballText` / `ballTip` / `shortLabel`（`BALL_LABEL_MAX = 14`）/ `endTip` / `arcRatio`（`BALL_IDLE_ARC = 0.18`）），`services/progressBall.ts` 才碰 DOM 与定时器 —— 这样「最小化后还能不能再展开」这类判据能被单测钉住。
+> · **②-3 只做了词云，图谱只出方案**：用户当场裁定「先只出方案，不动代码」⇒ `docs/full-cycle/ReelLudic/20-条目笔记关联图谱方案.md` 是**方案**不是实现（⛔ 别当已交付）。词云三条：`WORD_CLOUD_MAX = 40`（再多就看不清）、`WORD_CLOUD_LEVELS = 5`（字号五档）、字号取 `w.level` ⛔ 不许在模板里另算频次排行（两份真源必然漂移）；空态**分两态**（没条目 vs 有条目但没打标签，后者才指路怎么打标签）；颜色只用 `--text-*` 三档、字号用相对单位（写 `px` 会跟不动 Obsidian 的界面字号设置）。
+> · **②-4 三条接口一个章节常量**：`WEREAD_NOTES_SECTION = '同步划线与高亮'`（用户逐字给定的小节名）；`parseWereadBookmarks` / `parseWereadReviews` / `mergeWereadNotes` / `renderWereadNotes` 全在纯模块，服务层只负责发请求。⛔ 别把章节名写进渲染处。
+>
+> 守卫：`tests/catalogBackup.test.ts`（含增量恒等式与 `DELTA_MAX_RATIO` 边界）/ `tests/progressBall.test.ts` / `tests/progressBallDom.test.ts` / `tests/progressBallStyle.test.ts` / `tests/wordCloud.test.ts` / `tests/statsCloudWiring.test.ts`（8 条，含「字号档位来自 `w.level`」「空态分两态」「五档 CSS 齐全且用相对单位」「⛔ 无裸 hex」）/ `tests/wereadNotes.test.ts` / `tests/wereadNotesWiring.test.ts`。
+>
+> 门禁：与 #749/#750 同一次收口。
+>
+> **#750（2026-11-12 第 20 轮）：①-9 悬停提示单一真源 + ①-10 更新日志按钮 + ①-11 B 站 logo + ①-12 搜索骨架屏与免登录默认源 + ①-13 冲突弹窗文案 + ①-14 搜索源类型图标**
+> 用户原话（`m00353` ①-9…①-14）：①-9「字幕/选集面板小图标按钮无 hover 轻提示 + 部分按钮 hover **双提示覆盖**」+「下次加轻提示要检查是否存在**双提示嵌套覆盖**？」+「查看是否存在**按钮工厂函数**统一调用管理」；①-10「更新日志窗口的展开/收起循环按钮改成无边框透明化」；①-11「ReelLudic 信息栏『同作者 fhb263』前面加个 B 站 logo 可点击跳转 B 站主页」；①-12「多源搜索骨架屏 + 免登录默认源」；①-13「冲突弹窗按钮文案」；①-14「『元数据搜索源启用』组下书籍/漫画/影视/动画/音乐/游戏前面加**主题色通用类型小图标**」。
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | ①-9 双提示覆盖 | 同一元素既挂 `data-tip`（本插件自绘气泡）又挂 `aria-label`（Obsidian 会给带 `aria-label` 的 hover 目标**自己再画一个**官方气泡）⇒ 悬停叠出两层；又挂 `title` 同理 | `src/ui/components.ts` / `tests/tooltipSingleSource.test.ts` |
+> | ①-10 更新日志按钮 | 用户当场确认「确实已满足，这条算完成」—— `styles.css` 的 `.rl-notes-toggle` 本来就是透明无边框 | 无需改动（`styles.css:6898` 起） |
+> | ①-11 B 站主页 | 仓库里原本**没有任何线索**（全仓唯一出现过的 `space.bilibili.com/12345` 在 `tests/biliEmbed.test.ts` 里是测试样本）⇒ URL 只能由用户当场给 | `src/pure/supportLinks.ts` / `src/Settings.ts` |
+> | ①-12 搜索空白期无反馈 | 外层上屏条件只看 `results.length` ⇒ 「正在搜」和「搜完了没有」长得一样 | `src/views/components/EntryForm.svelte` |
+> | ①-12 默认源要登录 | 默认链只有豆瓣 ⇒ 没配凭据的用户搜出来是空的 | `src/pure/sourceRegistry.ts`（`DEFAULT_CHAINS`） |
+> | ①-13 冲突弹窗按钮含糊 | 旧文案在说「文件」与「库数据」两种**物**，用户此刻想的是**改哪一边** | `src/modals/NoteConflictModal.ts` |
+> | ①-14 六个类型组没有视觉锚 | 组名前只有纯文字，六组扫下来分不清哪组是哪类 | `src/Settings.ts:4243-4259` |
+>
+> · **①-9 落成常驻守卫而不是一次性修**（用户原话就是「下次加轻提示要检查是否存在双提示嵌套覆盖？」）：`tests/tooltipSingleSource.test.ts` 扫全仓 `src/**/*.{ts,svelte}`，`BUBBLE_ATTRS = ['aria-label','title']`，命中「同一接收者既挂 `data-tip`/`setTip` 又挂气泡属性」即红。命令式 DOM 与 Svelte 模板两条路径分别判（模板里判的是**同一个开始标签**）。⚠️ `aria-expanded` / `aria-pressed` / `aria-hidden` **不受限制** —— 它们只报状态不画气泡。
+> · **①-9 的按钮工厂结论**：全仓唯一的图标按钮工厂是 `src/views/audioPlayerMount.ts:203` 的 `iconButton(cls, icon, tip)`；本批把它与 `setTip` / `srLabel` 一起收进 `src/ui/components.ts`（③-5 的组件库），⛔ 别再各处手写 `data-tip`。`data-tip-delay` 走 `services/globalTooltip.tipDelayOf`（搜索源勾选行用 `1000`，全局默认 `500`）。
+> · **①-11 两条常量**：`BILI_SPACE_URL = 'https://space.bilibili.com/1828315053'`、`BILI_SPACE_TIP = '作者的 B 站主页'`（URL 与读屏名各一份真源，⛔ 别在渲染处手写第二遍）。⚠️ 写错不会报错，只会让用户点到一个 404 —— 那种错只在真机上肉眼可见。
+> · **①-12 骨架屏三条**：⑴ 外层上屏条件放宽成 `showResults`（「正在搜 + 有参与源」也算）；⑵ `onSearchProgress` 收到的 `items` 存进 `earlyBySource`（谁先回来谁先出卡片），**重新搜索必须清空**否则上一轮卡片串到这一轮；⑶ 骨架只在 `col.pending` 时渲染且整块 `aria-hidden`（读屏不该念占位方块）；样式只用原生变量、尊重「减少动效」。⚠️ 该组件的 `<style>` 是 Svelte **scoped**，CSS **不在** `styles.css`。
+> · **①-12 默认链改动**（`DEFAULT_CHAINS`）：`book: ['douban','openLibrary']`、`anime: ['douban','anilist']`、`comic: ['douban','mangadex']`、`music: ['douban','musicbrainz','itunes']` —— 都是**免登录**源，豆瓣仍在首位。
+> · **①-13 最终文案**：`保留笔记修改` / `保留表单修改`（同构句式，把权衡摆在同一层）。⛔ 「保留表单修改」语义 = 用表单（库数据）覆盖笔记文件，别名仍是 `overwrite`；`data-tip` 仍补后果（光看按钮名看不出会丢手写内容）。
+> · **①-14 三点口径**：⑴ **⛔ 不是 `<button>`** —— 用户原话写「小图标按钮」但它没有点击行为，做成按钮会给读屏和键盘多一个空 tab 停靠点 ⇒ 用装饰性 `<span aria-hidden="true">`；⑵ 颜色**内联**自 `TYPE_COLORS`（唯一色源，CSS 里 ⛔ 不许再写一份 hex），`comic` 不是 `EntryType`（它是 book 的子分类）⇒ 取 `TYPE_COLORS.book`；⑶ 图标名取 `SOURCE_GROUP_ICONS` 纯数据表（六个值均已实测存在于 asar 白名单）—— 未知名会让 `setIcon` **静默 no-op**，界面上只剩空白。
+>
+> 守卫：`tests/tooltipSingleSource.test.ts`（3 条，含「扫描器本身要摸得到源码」防路径写死导致永远绿）+ `tests/searchSkeleton.test.ts`（8）+ `tests/supportLinks.test.ts`。
+>
+> 门禁：与 #749 同一次收口。
+>
+> **#749（2026-11-12 第 19 轮）：字幕 AI 总结改成真流式打字机 + 设置页六条观感修正 + 页签轴向可切换 + 合集视图工具栏对齐**
+> 用户原话（`m09565`，一次给 8 条）：「字幕面板-AI总结输出动效改成流式打字机（在接收到流式文本片段时，**以固定节奏逐段追加到 DOM**，而不是等全部完成再一次性渲染。）」
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | ①-8 流式假象 | 真机实测 11 个片段全落在 300ms 内（首字 2987ms / 末字 3291ms）⇒「收到就刷」仍是「一下全出来」，只是 1 次闪变 11 次闪。**到达节奏不可控，显示节奏必须自造** | `src/pure/cueStream.ts` / `src/pure/cuePacer.ts` / `src/views/EpisodePageView.ts` / `src/services/cueSummary.ts` |
+> | ①-1 模型描述看不到准确度 | 当前档位的准确度 / 定位 / 场景全在 `data-tip` 里，不悬停等于没有；`accuracyLabel()` 回的串已带 `zh/en` 语义，第一版拼成「1.95/-%」 | `src/Settings.ts` |
+> | ①-2 点一下就重置滚动 | 每次交互都走 `this.display()` 整页重建 | `src/Settings.ts` |
+> | ①-3 看不出音色属于哪个模型 | 标签只写音色名 | `src/pure/ttsCloud.ts` / `src/Settings.ts` |
+> | ①-4 页签轴向写死 | 新增 `tabAxis` 两档（`expanded` 十枚 / `classic` 六枚），两模式导航状态独立保存；顺带修历史聚合页签 `'media'` 走错分支 | `src/pure/homeTabs.ts` / `src/views/HomeView.ts` / `HomeView.svelte` / `src/Settings.ts` |
+> | ①-5 窄屏页签太挤 | 非激活只留图标、激活项展开「图标+文字」；换页签后重算收窄并重定位指示器 | `HomeView.svelte` |
+> | ①-6 组卡空出一行 | `.rl-card-meta` 的 `min-height: 74px` 是给普通卡留状态徽标 / 星 / 进度的，组卡只有「组名 + 一句话副标题」两行 | `MediaList.svelte` |
+> | ①-7 两个视图工具栏不一套 | 真机量测唯一实质差异是 `flex-wrap`：默认视图 nowrap 一行 32px，合集视图 wrap 折成两行 72px | `CollectionBoard.svelte` |
+>
+> · **流式的三条口径**（`extractStreamingSummary(raw)` 幂等、传累积全文）：⑴ 只抠 `summary`，`points` 等收完整 JSON 再整块渲染（用户当场裁定方案 A）；⑵ 转义边解边拼（`\"` / `\\` / `\n` / `\uXXXX`）；⑶ 半截 `\u30` **等下一块**，⛔ 不当正文字符吐出去。`SUMMARY_KEYS = ['summary','摘要','概括']` —— 模型偶尔把键名写成中文。
+> · **节奏器的三条口径**（`cuePaceStep` / `cuePacePending`，纯函数不碰 DOM 不起定时器）：`CUE_PACE_MS_PER_CHAR = 22`（与 `TW_MS_PER_CHAR` 同量级才像同一套动效）、`CUE_PACE_CATCHUP_CHARS = 40`；单调不减 / 永不越过 target / 积压加速追赶。
+> · **接线**：`onPartial` **只更新 target**，rAF 推 `shown`；流式落点就地改 `.rl-epp-cueai-loading` 里新建的 `.rl-epp-cueai-live`，⛔ 不每次重建面板（会夺输入焦点、清空用户正在打的提问）；收尾 `stopPace()` 但**不立刻清字**，剩余一次性补齐（否则「打到一半突然从头再打」）。
+> · 🔴 **`is-cueai-wait` ⛔ 不能叫 `is-loading`** —— Obsidian 核心 `app.css:4282-4291` 给 `.is-loading::before` 挂了 3px 主题色进度条，流式文字上方会凭空多一条横蓝线（真机截图 `_shot/rd/cue-stream.png` 抓到的就是它）。类名撞宿主样式只有真机能看见。
+> · **①-1 的两条写法**：数据一律取自 `AsrCatalogTier`，⛔ 不在此另写文案表（两份真源必然漂移）；准确度两个数字**各自**带 `%`，`accEn === null`（Paraformer 上游没给英文指标）渲裸 `-`，⛔ 不填 0。
+> · **①-6 / ①-7 的反向守卫**：⛔ 不改 `.rl-card-meta` 基础规则（普通卡靠它对齐）；⛔ 不给组卡填「—」占位（伪装成真实字段）；⛔ 别再按「合集视图多了视图下拉」推导 wrap —— 那一枚主视图同样有。
+> · ⚠️ 新增响应式 prop `tabAxis` 已同步进 `src/views/HomeView.ts:173` 那条增量 `$set`（本仓同类事故已五次）。
+>
+> 守卫：`tests/cueStream.test.ts` / `tests/cuePacer.test.ts` / `tests/cueStreamWiring.test.ts` / `tests/cueSummaryStream.test.ts` / `tests/homeTabs.test.ts` / `tests/homeTabFit.test.ts` 六个文件，钉形状不钉数值（含「`onPartial` 只更新 target」「类名 `is-cueai-wait` 且全文件无 `is-loading`」）。
+>
+> 门禁：tsc exit 0 / `npm run check` **0 errors 89 warnings** / 全量 `vitest` **289 files 6416 tests** / esbuild **87 warnings**、main.js **2443712 B** / `assert-symbols.cjs` **321 条（基线 326）无新增** exit 0 / `_deploy.cjs` **`ALL_MATCH=1`**（main.js `65e271707333`、manifest `2a4cab8f821f`、styles.css `283da716d19a`）。
+> ⚠️ 本批**未真机回归**流式动效本身（只做了 `_vstream1.cjs` 的到达节奏实测与产物断言）；六条设置页观感修正仅经产物断言 + 量测脚本，未在真机逐条肉眼确认。
+>
+> **#748（2026-11-11 第 18 轮）：语音转文字环境体检与品牌图标 + 六个同步弹窗统一三段式说明 + 列表按属性归类 + 网络集无字幕两态文案**
+> 用户原话（`m05717`）：「AI 运行管家要能体检我的机器」/「这三个词（**同步数据**、**冲突处理**、**前置条件**）用**加粗**或者**主题色**显示，后面跟一个**全角冒号**」；另接 `m06406` ③④、`m07115`、`m07257`、`m09819`。
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | 环境体检判据散在渲染里 | 显存 / CUDA / CMake 全是数值判定，埋在 UI 里单测摸不到、真机只能肉眼看 ⇒ 拆两层：探测拿字符串，判定是纯函数 | `src/pure/asrHardware.ts` / `src/services/asrHardwareProbe.ts` |
+> | 六家引擎用通用房子图标 | 实测 Obsidian asar 图标库里 `openai`/`qwen`/`whisper`/`llama`/`sherpa`/`funasr`/`huggingface` **全部搜不到** | `src/pure/asrBrandIcon.ts` |
+> | 六个同步弹窗各写各的长句 | 措辞已开始漂移（豆瓣「只读豆瓣、不改动那边的内容」vs Steam「只读 Steam，不会改动那边的内容」） | `src/pure/syncHint.ts` / `src/modals/syncHintView.ts` + 六个弹窗 |
+> | 全类型视图没有归类维度 | 用户三选一里选了 **G1：网格里只有组卡、点卡进组** | `src/pure/listGrouping.ts` / `MediaList.svelte` |
+> | 无字幕空态只有一句话 | 两种状态界面上长得一样，但**用户该做的事完全不同**（一个去重填 Cookie，一个重填也没用） | `src/pure/netCueCopy.ts` |
+> | 单部系列与小数序号两个边界 | 单部折起来 = 多出一个只有一张卡的组；序号列是整数语义 | `src/pure/seriesGroup.ts` |
+>
+> · **品牌图标**：按各家技术特征画的极简标记（`viewBox` + path + 可选圆心补丁），`currentColor` 随主题变色，14px 下仍可辨认。⛔ 别声称它们是官方品牌资源。单独成纯函数的理由：图形数据能被单测直接摸到，也不必把字面量混进巨型 UI 文件。
+> · **三段式的两条渲染细节**：标签 `<strong>`（加粗给语义、主题色给视觉，深浅主题都立得住）、**冒号由渲染层补**不写进文案（否则「同步数据：：」）；正文 `**不影响**` 这类行内强调只认成对 `**`，落单星号原样输出不吞字符。⛔ 别把文案再散回各 Modal。
+> · **`listGrouping` 的分工写死**：本文件 = 纯函数（怎么分桶 / 桶排序 / 桶上汇总 = 年份跨度 + 系列数 + 代表封面），视图只负责画。二级结构**不在这里** —— 进组后组内仍走既有 `foldSeries`，用户要的「二级嵌套」= 一级组卡 + 组内系列卡，⛔ 不新造嵌套树。
+> · 🔴 **`netCueCopy` 为什么要 `reason`**：唯一可靠判据是 `fetchBiliSubtitle` 的 `onDiag.login_mid`（0 = B 站按未登录处理），旧实现把它压成 `null` 才导致视图层无从分辨。⚠️ `reason` 为 `null`/`undefined` 时按**状态二**渲染 —— 宁可让用户以为「源视频没字幕」，也不能喊「你的 Cookie 失效了」（后者会被用户照着去改设置）。处方路径已核对：B 站 Cookie 在 `src/Settings.ts:1832` 的 `createGroupSection(parent, '网络播放源凭据', …)`。顺带删掉「去平台看这一集」出口按钮。
+> · **`seriesGroup` 两个边界**：只有 1 部的系列不折成组但仍要可辨识（`:53`）；序号填 8.5 存 9，⛔ 不抛错卡住整次保存（`:136-142`）—— 用户填了一半的表单不该因为一个序号丢掉。
+>
+> 守卫：`tests/asrHardware.test.ts` / `tests/asrBrandIcon.test.ts` / `tests/syncHint.test.ts` / `tests/listGrouping.test.ts` / `tests/netCueCopy.test.ts` 新建，`tests/seriesGroup.test.ts` 补单部与小数序号两组。门禁同上（与 #749 同一次收口）。
+>
+> **#747b（2026-11-10 第 17 轮追加）：语音转文字扩到六家引擎 —— 模型平铺单选 / 安装清单 / 目录布局 / 外部程序定位**
+> 承接同批已登记的 #747，同日另一条线（`m01938` / `m03321` / `m05462` / `m08893` / `m09123` / `m09819`）。用户要「像选游戏画质一样挑一档引擎自动装好」，推进中撞出六个结构问题，逐条落进纯模块（⛔ 都不碰 fs / Obsidian API）。
+>
+> | # | 结构问题 | 改在哪 |
+> | --- | --- | --- |
+> | 六家引擎其实是五种执行器 | sherpa **必须拆成 offline / online 两个 runner**，两个不同二进制认的参数集不同 | `src/pure/asrEngines.ts` |
+> | 一家一行 + 行内下拉看不全 | 改成按大类分组的平铺单选，6 家 × 各档位拉平成一张表 | `src/pure/asrCatalog.ts` |
+> | 「一键装好」到底装什么 | 展开成带序号清单，逐项打勾 | `src/pure/asrBundles.ts` / `src/pure/asrInstallPlan.ts` / `AsrInstallModal.ts` |
+> | 模型文件散在 `models/` 根 | 每家一律 `models/<engine>/` | `src/pure/asrLayout.ts` |
+> | 下载完了还让用户找路径 | 就绪判据 = **系统里有没有**，不是框里填没填 | `src/pure/asrLocate.ts` |
+> | 三档模型体积 | 写死常量而非运行时读 Content-Length（下载前要先告诉用户还要下多大） | `src/pure/asrModels.ts` |
+>
+> · 🔴 **sherpa 实测报错**：online 版**不认** `--paraformer=`，直接报 `Invalid option --paraformer=…` 并打印 92 行 usage。offline 版认 `--paraformer=` / `--sense-voice-model=` / `--whisper-encoder=`；online 版只认流式的 `--encoder/--decoder/--joiner/--tokens`。「一个 exe 通吃」行不通。
+> · 🔴 **Confucius4 ⛔ 不走 `r2t2_llama`**（官方 README 推荐的 Python 包）：官方预编译原生库是 Linux x86_64 + CUDA + CPython 3.12 的 `libllama.so.0.4.0`，Windows 上根本没有；PyPI 上 `r2t2_llama` 也是 404。实测 `llama-mtmd-cli.exe -m <Q4_K_M> --mmproj <mmproj> --audio <wav>` 可用。
+> · **SenseVoice 上游现实**：官方只以 `.tar.bz2` 提供（实测 v2.0.1 的 288 个资产**全是** tar.bz2），Node zlib **不支持 bzip2**；本机实测系统自带 `bsdtar 3.8.9`（带 bz2lib），`tar -xjf` + `--strip-components=2` + 通配包内路径能单文件取出（26.5MB 包）。✅ 已实测 `sherpa-onnx-offline.exe` **单文件自足**（2,035,712 字节，干净 PATH + 干净 cwd 跑真实音频成功）⇒ 不必解出整个包。⚠️ 这个结论钉在测试里，上游改成动态链接时测试就该红。
+> · **两处与上游事实不符、已由用户裁定**：**X-ASR** 用户表里写「Q4_K 93MB / F16 310MB」，但 HF 上只有 ONNX（整套约 586MB，无 GGUF 量化包）⇒ **只列一行**，分块档位进配置面板切换；**Paraformer** 上游没有英文指标 ⇒ `accEn = null`，界面显示 `-`，⛔ 别填 0。体积 / 准确度 / 标签 / 场景**逐字取自** `_shot/user-requirement-raw.md` 行 105-122 —— 这是对外口径，⛔ 不要拿 `bundleBytes()` 重算覆盖（下载与就绪判定用的是真实字节数，两套数字各有用途）。
+> · 🔴 **`asrLayout` 扩到六家时踩的坑**：子目录名 = 引擎 id 这条规则**必须自动覆盖新引擎**，⛔ 别再写成逐个 `if` 列举 —— 之前就是那样，新增三家后有三个会悄悄回落到 `whisper`，六家模型全挤一个目录，`m09819` 那个毛病原样复发且更难清。⛔ 也别把 `path.join` 搬进来（本模块要能在无 Node 依赖环境跑），分隔符统一 `/`。
+> · **`asrModels` 三档实测字节**：`ggml-tiny.bin` **77,691,713** / `ggml-base.bin` **147,951,465** / `ggml-small.bin` **487,601,967**，由 `tests/asrModels.test.ts` 钉住。⚠️ 为什么只有 whisper.cpp 三档：Qwen3-ASR / SenseVoice 是 FunASR 生态运行时（各自一套可执行文件与模型格式），**喂不进 whisper-cli**，硬凑会让用户下完 500MB 发现跑不起来 ⇒ 按**能力档位**命名（极速 / 均衡 / 精准），技术名放副标题。
+>
+> 守卫：`tests/asrCatalog.test.ts` / `asrEngines` / `asrModels` / `asrBundles` / `asrInstallPlan` / `asrLayout` / `asrLocate` / `asrLlama` / `asrQwen` / `asrSherpaVad` / `asrPickLayout` / `llamaAsr` / `sherpaVad` 共十三份，钉判据与形状（含「子目录名自动跟随引擎 id」「`accEn === null` 不填 0」「体积常量与实测一致」）。门禁同上。
+>
+> **#747（2026-11-10 第 17 轮）：删掉音乐组头的「同步全部平台」+ 每行改「立即同步」+ 搜索结果区新增 ✨ 预填入口**
+> 用户原话（`m10797` / `m10798`）：「搜索配置下把全部平台同步按钮删除掉」「凭据行下的同步我的歌单按钮改成『立即同步』样式和其他凭据行按钮样式统一各自同步逻辑」「增强AI预填，把预填小图标按钮也放在元数据搜索出来的窗口UI下（AI预填搜索各类型条目的所有数据可填框规划一下）」
+>
+> **① 删组头同步条**（`src/Settings.ts` 的 `renderMusicCookieRows`）：理由写进源码注释 —— 动作粒度与这一组不匹配（这一组是三个平台的凭据卡，动作应只作用于这一行；「一次同步三家」在三家都没配 Cookie 时只打开一个全是「未粘贴 Cookie」的空弹窗）。`styles.css` 同步删掉 `.rl-music-sync-actions`，换成「组头已无动作行」的说明注释。
+> **② 每行「立即同步」**：`cls: 'mod-cta rl-sync-btn', text: '立即同步'` —— `rl-sync-btn` 是宽度/图标间距/hover 的样式真源，只写 `mod-cta` 会变成另一套尺寸，而用户点名的正是「样式统一」，现在与另外六条账号同步行完全一致；顺序照「回执槽 → 同步 → 测试连接」。酷狗那颗也照给（`KUGOU_SYNC_UNSUPPORTED` 在弹窗如实说明），⛔ 不按平台隐藏。
+> **③ 结果区 ✨**（用户位置裁定：「在结果卡片UI标题旁边内」）：`src/views/components/EntryForm.svelte` 的 `.rl-res-head` 行末加第二颗 `.rl-ai-btn rl-res-aibtn`，与标题行那颗**同源**（同一个 `runAiPrefill`、同一份 16 键目录、同一张预览面板），差别只在「什么时候点得到」。
+> 四件事必须同时成立，缺一件就退化成「按钮在、点了没反应」：
+> · **标题兜底**：这一区（`{#if results.length > 0 && !picked}`）里**标题框根本没上屏**（字段区在 `{#if picked}` 里）⇒ 新增条目走搜索进来时 `title` 是空的。取法 = `$: prefillSeedTitle = title.trim() || query.trim()`，为空时把搜索词**写回 `title`** 并给回执（可见、可改，⛔ 不静默拿别的词去问）。
+> · **⚠️ 必须是响应式变量**：模板里写 `disabled={prefillBusy || !prefillSeedTitle()}` 时，Svelte 的依赖收集只看模板表达式里出现的**变量名**，函数体内的 `title` / `query` 不在其中 ⇒ 用户输入搜索词后按钮**一直停在禁用态**（本轮真踩到：看着像「功能没做」，其实是没反应）。
+> · **面板得有两份**：字段区那份在 `{#if picked}` 里，结果区点 ✨ 时它没上屏 ⇒ AI 回来了、行也赋上了，用户屏幕上一片空白。结果区另有一份等待/预览面板，共用同一批状态，差别只在「回填完要不要跳去字段区」（`applyPrefillFromResults` 先 `applyPrefill()` 再 `picked = true; manualFill = true;` —— ⛔ 不切视图就是写了十几个变量而屏幕无变化）。
+> · **读屏名区分**：结果区那颗叫「AI 预填字段（搜索结果区）」，⛔ 与标题行那颗同名。
+>
+> 预填范围按用户裁定**保持不变**（16 键目录）—— ⛔ 没给 `country` / `originalTitle` / `language` / `durationMin` / `aliases` 补输入框：表单里没有输入口的字段预填了就是暗写（`pure/aiPrefill.ts` 文件头那条裁定的原话）。
+>
+> 守卫：`assert-symbols.cjs` check499 新增 ⑳（结果区那颗挂在 `.rl-res-head` 内、点 `runAiPrefillFromResults`、禁用态读响应式变量）与 ㉑（面板两块并存，反向守卫不许退回「只有字段区一份」）；新增 `tests/entryFormPrefillSeed.test.ts` 6 条锁接线形状，突变探针 **6/6 `[RED ok]`**。
+>
+> 门禁：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 `vitest` **274 files 5951 tests** / esbuild 87 warnings、main.js **2370561 B** / `assert-symbols.cjs` **325 条（基线 326）无新增** exit 0 / `_deploy.cjs` **`ALL_MATCH=1`**（main.js `d99dbae68dd3`、manifest `2a4cab8f821f`、styles.css `72de5d6b75ba`）。
+>
+> **#746（2026-11-09 第 16 轮）：卡片信息栏不刷新 + 音乐字段顺序 + LRC 静默丢弃 + B站文件名 + 音乐清单分平台入口 + 系列改名**
+> 用户原话（`m10030`）：「卡片信息栏改动了不正确反映…编辑属性的LRC歌词手动填入更新笔记还是无法保存，从b站下载音频的文件名还是不跟随条目标题名改变，②我的歌单三大平台放个同步按钮统一在凭据行里分别同步③给系列卡右键菜单加个改系列名的项在第一顺位」
+>
+> | # | 真因（一句话） | 改在哪 |
+> | --- | --- | --- |
+> | ① 卡片信息栏改了不生效 | `HomeView.ts` 的增量 `$set` **漏传** `cardFieldsByType` / `cardFieldsByKind` —— 本仓**第五次**同类事故 | `src/views/HomeView.ts` |
+> | ② 音乐第三行专辑→题材 | 预填表 + 属性框登记顺序 + 模板三个地方 | `src/pure/cardMeta.ts` / `src/pure/entryFormFields.ts` / `EntryForm.svelte` |
+> | ③ LRC 手填存不下来 | ①`noteWritten` 把「用户选保留」与「writeNote 抛错」混成一个 false ⇒ 静默丢弃；②`withLrcLyrics` 无块时静默原样返回 | `src/modals/EntryModal.ts` / `src/pure/lrcSource.ts` |
+> | ④ B站文件名不跟条目标题 | 宿主包装 `(video, onProgress) => …` **少一个形参**，`songTitle` 在那行被吃掉 | `main.ts` |
+> | ⑤ 三平台凭据行分别同步 | 新增 `onlyPlatform`，展示层 + 采集层**两处同源**过滤；顺手删掉假的 loading 自反转 | `MusicSyncModal.ts` / `main.ts` / `Settings.ts` |
+> | ⑥ 系列卡右键「改系列名」第一顺位 | 整组改名 + `catalog.seriesRatings` 的键**跟着搬家**（否则分变孤儿） | `MediaList.svelte` / `HomeView.svelte` / `src/views/HomeView.ts` / `main.ts` |
+>
+> 门禁：tsc 0 / check 0-89 / vitest **273 files 5945 tests** / esbuild 87 warnings（main.js 2366265 B）/ assert **325 条（基线 326）** 无新增 / deploy `ALL_MATCH=1`（main.js `595763d8c4b8`）。
+> 顺带修掉一条**永远红、也永远抓不到回归**的断言：#608 的窗口锚点写的是源码中不存在的 `{:else if ctxGroupKey}`（源码一直 `{#if ctxGroupKey}`）⇒ `indexOf` 恒 -1。已改真锚点，并把「改系列名在排序号之前」写进判据。
+> 遗留：③④⑤⑥ **均未真机回归**；① 的根因是「那条 `$set` 必须手工同步」，下批应考虑加断言扫「所有响应式 prop 都被覆盖」。
+>
+> **#745（2026-11-09 第 15 轮追加 · 阶段 C）：从音乐平台同步清单 —— 我的歌单 / 我喜欢的音乐**
+>
+> 承接 #742 / #743 / #744，同一份规划的最后一批（原估 13～20 人日）。用户 `m09138`「继续做阶段C」；三件争议点在 `m09291` 当面裁定，全部选推荐项：⑴ **只落单曲，歌单名写进标签**（⛔ 不建「歌单条目」、不扩 schema）；⑵ **Cookie 过期就停**（明确报错 + 提示重贴，⛔ 不重试、⛔ 不降级成匿名拉公开数据）；⑶ **每家独立降级**（私有接口风险接受，但一家坏不影响别家）。
+> - **纯逻辑 `src/pure/musicPlaylist.ts`**（新建，⛔ 文件里不出现 URL）：`MusicSyncSource` / `MusicSyncPlaylist` / `MusicSyncCandidate` / `MUSIC_SYNC_LIMIT = 2000` / `musicCookieExpired`（301·302·401·403 与 `code` 为 301/401/-1000，字符串与数字两态）/ `musicCookieExpiredMessage`（必须说清「哪家 / 怎么了 / 去哪儿改」）/ `musicSyncPartialMessage` / `musicCandidatesFromSongs` / `playlistTag` / `splitSyncCandidates` / `musicSyncSummary`。
+> - **采集层**：`neteaseCrypto.ts` 增 `buildUserPlaylistBody` / `parseUserPlaylists`（返回 `{ code, playlists }` 而非裸数组 —— 要能分辨「没登录 code 301」与「真的没歌单 200+空」），`parseVipAccountResponse` 扩出 `userId`（`user/playlist` 必填 `uid`，而 `uid` **只能**从账号接口的 `profile.userId` 拿，`MUSIC_U` 是加密串猜不出来）；`qq.ts` 增 `QQ_LIKED_DIRID` / `buildQqOwnedPlaylistsUrl` / `parseQqOwnedPlaylists`（`code` 语义：1000=未登录、4000=歌单不公开、0=正常）/ `buildQqFavoritesUrl` / `parseQqFavorites`。
+> - **服务层 `src/services/dl/myMusic.ts`**（新建）：`MyListOutcome<T>` / `neteaseMyPlaylists` / `neteasePlaylistTracks` / `qqMyPlaylists` / `qqPlaylistTracks` / `KUGOU_SYNC_UNSUPPORTED`。
+> - **三处「不复用」都有理由**：① 网易云歌单详情**不复用** `services/musicDownload.fetchPlaylistDetail` —— 那函数把请求头写死成不带 Cookie 的 `LYRIC_SOURCE_HEADERS.netease`，只够读公开歌单，而「我喜欢的音乐」是私有歌单；② QQ **不用** `/user/detail`（`fcg_get_profile_homepage`）—— 那份响应里「我喜欢」的 id 叫 `id`、自建歌单叫 `dissid`，两套字段名混排是最易写错处，改走 `fcg_user_created_diss`（`disslist[]` 统一 `dirid`）；③ **酷狗明确不支持** —— 它的「我的歌单」走 `cloudlist.service.kugou.com/v7/get_all_list`，需 android 网关签名（参数按 key 排序 + 盐值 MD5 + `x-router` 头 + `appid=1005`/`clientver=20489`），本仓现有酷狗链路全是明文接口，硬写未真机验证的签名器比「如实不支持」更容易误导用户。
+> - **UI `src/modals/MusicSyncModal.ts`**（新建）：与另外五个账号同步弹窗同构（打开即读 → 勾选 → 导入 → Notice → 关闭，⛔ 底部不放「取消」），**唯一差别是两层选择条**（先平台、再歌单）；曲目按 `platform:playlistId` 缓存，切歌单不重复请求；「库里已有」标记与落库同源（`indexMusicEntries`），⛔ 不另写一套判重。
+> - **宿主 `main.ts`**：`openMusicSync()` + `musicCookieOf()` + `fetchMusicSyncLists()`（网易云与 QQ 各自 try/catch）+ `fetchMusicSyncTracks()` + `importMusicSyncRows()`（**按歌单名分组**再逐组落库，标签各写各的）。
+> - **设置页**：`renderMusicCookieRows` 组头新增一颗「立即同步清单」（组级一颗，⛔ 不逐行加三颗 —— 同一动作在页面上不许出现三次）。
+> - **`styles.css`**：`.rl-msync-tabs` / `.rl-msync-pls` / `.rl-msync-tab` / `.rl-msync-pl`（选中态与设置页 chips 同一口径）/ `.rl-music-sync-actions`。
+> - **单测**：`tests/musicPlaylist.test.ts` 新建 **20 条**；`tests/musicSync.test.ts` 26 → **34** 条（新增认领相关 9 条）；`tests/dl-neteaseCrypto.test.ts` 16 → **17** 条（`parseVipAccountResponse` 三字段全等 + `userId` 缺失/非法回空串）。
+> - 🔴 **交付后自检发现并修掉的致命断点**：用户库 17 条音乐有 16 条来自**豆瓣**（`sourceUrl` 是 `music.douban.com/subject/…`，且 17 条**全无 `artist`**）⇒ `indexMusicEntries` 一条也认不出 ⇒ 判重落到「同名 ⇒ 跳过」⇒ **从网易云同步《七里香》会被库里豆瓣同名条目挡掉，整个清单同步对这类用户一首也进不来**。修法：新增纯函数 `pure/musicSync.adoptableMusicEntryId`（同名 + 同类 + **库内那条无平台键** + 歌手不冲突 ⇒ 认领，⛔ 不放宽同名保护），配合白名单 `MUSIC_ADOPT_FIELDS = ['source','sourceName','sourceUrl','poster']` 与宿主侧统一补丁函数 `musicPatchFor(seed, tag, prev, adopted)` —— 认领只补平台客观字段，⛔ 不覆盖标题（平台标题常带「【MV】」「1080P」）/歌手/专辑/评分/标签/笔记/音频路径/收听时长。**批量与单条共用同一个补丁函数**（Steam 那次「两个入口各写一份」的病根不许重演）。取证用一次性探针读真实 `catalog.json`，17 条全部认领回自己 id，跑完即删。
+> - ⚠️ **未做真机验证**：用户库 `musicDlCookies` 是空对象，三家私有清单接口无法本地实跑。验证只到「按参考实现源码核对接口形态 + 固定样本单测」；真实账号下要调字段，落点是 `src/pure/dl/{neteaseCrypto,qq}.ts` 与 `services/dl/myMusic.ts` 三个文件。
+> - **三个坑（已写进注释）**：① `playlistTag` 的截断上限⛔ 不能写字面量 `slice(0, 24)` —— 本仓有条**计数型**守卫在数这个字面量，写成常量 `PLAYLIST_TAG_MAX` 才回绿；② 无封面占位必须是 `rl-wshelf-cv is-ph`（另外五个弹窗共用），⛔ 自造 `rl-wshelf-cv-ph`（样式表里没有第二条规则会塌成空 span）；③ `MusicEntrySeed as Record<string, unknown>` 会被 tsc 拒（TS2352，无 string 索引签名），须 `as unknown as Record<string, unknown>`。
+> - **门禁**：tsc 0 / check 0 errors 89 warnings / vitest **273 files 5942 tests** / esbuild 87 warnings（main.js 2363539 B）/ assert **326 = 基线 326** exit 0 / deploy **ALL_MATCH=1**（main.js `0dc141812214`、styles.css `ba8737d645c5`）。
+>
+> **#744（2026-11-09 第 15 轮追加）：在线曲库搜索结果卡片显示来源平台名**
+>
+> 用户 `m09138`「在线曲库也要显示来源平台名」。原先四平台结果混在一栏，卡片上只有「在线曲库」一个徽标，用户分不清哪首来自哪家。
+> - **新建 `src/pure/musicPlatform.ts`**（**叶子模块**）：`MUSIC_PLATFORMS` / `MusicPlatform` / `MUSIC_PLATFORM_LABELS` / `isMusicPlatform` / `musicPlatformLabel`。抽出的理由是**循环依赖** —— `songLibrary.ts` 也要平台名，而 `musicSync.ts` 已 import 了 `songLibrary` 的 `SONG_LIB_ID`，常量留在 `musicSync` 就成环；`musicSync.ts` 用 re-export 保持旧调用点零改动。
+> - `src/pure/songLibrary.ts`：`if (platform) item.platformLabel = platform;` —— **有值才写键**（⛔ 不写 `|| undefined`，否则 `'platformLabel' in r` 恒真）。`src/pure/searchDisplay.ts`：`musicView` 的 `source` 改为 `str(o.platformLabel) || label`。
+> - 🔴 **字段名必须是 `platformLabel` 而不是 `platform`**：`EntryForm.pick()` 用 `'platform' in r` 判别游戏分支，音乐结果一带这个键，TS 联合收窄把剩下那支变成 `GameSearchResult | MusicSearchResult`，`svelte-check` 当场 **5 errors**。改名后全部消失。⚠️ `SourceRecord.platform` 是**游戏分支**字段，两者⛔ 不要合并。
+> - **单测**：`tests/songLibrary.test.ts` 25 条（新增 4，含「认不出平台时 `hasOwnProperty` 为 false」）、`tests/searchDisplay.test.ts` 52 条（新增 4，其中一条专锁「音乐结果⛔ 不许有 `platform` 键」）。突变探针 2/2 `[RED ok]`。
+>
+> **#743（2026-11-09 第 15 轮追加 · 阶段 B）：曲库结果卡片「入库」—— 一键直接建成 music 条目**
+>
+> 承接 #742，同一份规划的第二批「搜索结果 → 直接建成 `music` 条目」。落点由用户在 `m08838` 当面裁定为**「结果卡片并列一颗「入库」按钮（推荐）」**（不是另开同步弹窗，也不是只回填表单）。
+> - **新建 `src/pure/musicSync.ts`**（纯逻辑，286 行）：`MUSIC_PLATFORMS` / `MUSIC_PLATFORM_LABELS` / `isMusicPlatform` / `musicPlatformLabel` / `musicItemKey` / `musicKeyFromEntry` / `musicIdFromUrl` / `musicIdFromResult` / `musicEntrySeed` / `musicSeedFromResult` / `dedupeMusicSongs` / `indexMusicEntries`。
+> - **三条硬口径（都进单测）**：⑴ 判重键 = **来源 id** `music:{source}:{id}`，⛔ 不按标题（用户把「晴天」改成「晴天 (Live)」后按标题会重复导入）；⑵ **歌曲时长不落库** —— `durationMin` 是片长、`listenMinutes` 是收听时长，都不是「这首歌 4 分 29 秒」，往语义不同的现有字段塞值 = 静默写坏数据；⑶ 封面只在 `pure/posterSources` 拼，本模块⛔ 不出现 URL 字面量。
+> - **卡片入口的两个特殊处理**：① 卡片手里**没有 `DownloadSong`**（只剩 `songlib:{平台}:{id}` 这段字符串）⇒ 新增 `musicSeedFromResult` 反解，⛔ 不让卡片为了建一条条目再发一次搜索；② 封面**直接取已改写好的 `r.cover`、不再过 `platformCoverUrl`** —— 否则酷我会因为结果里没有 `albumPicPath` 把封面抹成空。
+> - **宿主落库**：`main.ts` 新增 `importMusicSongs(songs, onProgress?)`（批量）+ `importMusicResult(r)`（单条 → 私有 `writeMusicSeed`），落库后 `refreshViews()`。覆盖口径只换平台客观字段，⛔ 不动 `notes`/`tags`/`rating`/`audioPath`/`listenMinutes`；新建前查 `findTitleConflict` 保护同名笔记文件；`sourceUrl` 为空仍建条目（可播的歌不该因为判不了重就被丢掉）。
+> - **类型踩坑**：纯模块的形参若写成 `MusicSearchResult`，宿主拿 `SearchResult`（联合）直调会被 tsc 拒（`GameSearchResult.id: number` vs `string`）⇒ 收成结构子集 `MusicResultLike`（`id?: string | number`）。
+> - **UI**：`EntryForm.svelte` 结果卡片新增 `.rl-res-save`「入库」胶囊（只对 `songlib:` 结果出现，`on:click|stopPropagation`，`role="button"` + Enter/空格），入库成功用组件内 `savedHits` 就地标灰（⛔ 不等宿主重挂组件）；`EntryModal.ts` 注入 `onSaveMusic`。
+> - **单测**：`tests/musicSync.test.ts` 新建 **26 条**（平台键 4 / 判重键 6 / 落库字段 9 / 批量去重 3 / 卡片结果 6）。
+> - **验证**：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 vitest **272 files 5905 tests** / esbuild 87 warnings（main.js 2343712 B）/ assert **326 条（基线 326）** ✅ 无新增 exit 0 / `_deploy.cjs` **ALL_MATCH=1**（main.js `0f99f9540d40`）。
+> - **登记未动**：阶段 C（清单同步 13～20 人日）未开工，需先裁定歌单是否落成条目 / Cookie 过期谁负责 / 私有接口无官方保证能否接受。「入库」按钮刻意只给曲库栏 —— 其它源落库要拉详情补字段，直接落会建出空壳条目。
+>
+> **#742（2026-11-09 第 15 轮追加）：在线曲库搜索结果补全元数据（封面 + 时长）**
+>
+> 承接 #741 的第 ⑤ 条（用户原话「给三大音乐平台加搜索元数据和同步清单的功能（参考金标准开源项目，先规划成本）」）。规划已交付（`docs/full-cycle/ReelLudic/19-三大音乐平台元数据与清单同步成本规划.md`，24～34 人日）；用户在 `m08400` 说「按你推荐的来」⇒ 先做**阶段 A：搜索元数据补全**。
+> - **核心缺陷一句话**：`src/pure/songLibrary.ts` 的 `songLibraryResults` 只映射 6 个字段（`id`/`title`/`artist`/`album`/`source`/`sourceUrl`），`DownloadSong` 里的 `coverUrl`、`albumPicPath`、`duration` **全部被丢弃**。采集层四个 mapper 早就把这些值取回来了 —— 漏在最后一跳的纯映射。
+> - **封面复用而非新建**：拼接逻辑全部走已有的 `src/pure/posterSources.ts` 的 `platformCoverUrl`（QQ 尺寸抬 1500、酷狗删 `/stdmusic/<尺寸>/`、网易云一字不动、🔴 酷我必须用 `albumPicPath` 的专辑图而不是横的 MV 图）。⛔ `songLibrary.ts` 里不许出现 URL 字面量 —— 断言 `check464` 明令。
+> - **纯函数没改成 async**：`songLibraryResults` 有三条调用链（表单结果栏 `main.ts:1710` / 条目关联 `main.ts:6353` / 封面搜索 `main.ts:10722`），改异步收益为零。改为可选第二参 `covers?: ReadonlyMap<number, string>`，网易云那张封面由宿主侧 `main.ts` 新增的 `songLibraryCovers()` 先 `await neteaseCoversByIds(...)` 补拉再传入（网易云搜索响应一条封面都不带，这是阶段 A 的真实拦路）。
+> - **时长端到端**：`MusicSearchResult` 增 `duration?: number`（**秒**）→ `SourceRecord` 增 `duration` → `musicView()` 用 `pure/mediaInfo.formatDuration` 格成 `mm:ss`（分钟补零、≥1h 走 `h:mm:ss`、0 与拿不到一律 undefined 不画）→ 结果卡片 `.rl-res-row2` 新增 `.rl-res-dur` 段（`font-variant-numeric: tabular-nums` 防抖）。⚠️ 全仓有两个同名 `formatDuration`：`pure/dl/utils` 那份分钟**不补零**、`0` 返回 `0:00`，B 站列表在用 —— 导入时必须改别名。
+> - **顺手证伪两处误判**：① 结果卡片**根本不渲染 `SearchDisplay.meta`**（全仓 `.svelte` 零命中），专辑名一直是死字段 ⇒ 阶段 A 的可见收益只有封面和时长；② 不需要给 `main.ts` 补 `DownloadSong` 的 type import，`:72` 已有。
+> - **单测**：`tests/songLibrary.test.ts` 11 → **21** 条（新增封面 8 条含「酷我只能用专辑图」「补拉只对网易云生效」，时长 3 条）；`tests/searchDisplay.test.ts` 44 → **48** 条（新增 `04:29` / `00:07` / `1:02:05` / 0 与 undefined 不画 / 🔴 `durationMin: 95` 不能被当歌曲时长画出来）。突变探针 6/6 `[RED ok]`，全部还原后回绿。
+> - **验证**：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 vitest **271 files 5879 tests** / esbuild 87 warnings（main.js 2335898 B）/ assert **326 条（基线 326）** ✅ 无新增 exit 0 / `_deploy.cjs` **ALL_MATCH=1**（main.js `a36f5e9b3972`、styles.css `acccab194fd0`）。
+> - **登记未动**：① 专辑名（`meta`）仍是死字段，要不要在卡片上加一行是产品决策；② 网易云封面补拉多一跳网络请求（失败静默返回空 Map，不影响检索本身）；③ 阶段 B（搜索结果落库）与阶段 C（清单同步）未开始。
+>
+> **#741（2026-11-09 第 15 轮）：合并视图/文字菜单下视图勾选失效 + ASR 未选中被画成复选框 + B站 mp3 用条目歌名 + 「音视频取流」改名与 14 条文案替换**
+>
+> 用户原话（`m07546`，四条改动 + 一条成本规划）：①「高级设置-分类视图的用户自定义视图的勾选了标签但在基本设置-导航布局调整为文字菜单/合并视图时的不按照勾选类型而规范啊（改了好几次了）」②「高级设置-音频转文字-选择模型中的未选中呈现为复选框，麻烦改成单选框的样式」③「从b站下载并用ffmeg转录成Mp3的文件名应该改成该歌曲名.mp3而不是原来b站视频标题名称.mp3」④「“通用音频视频取流”名称改成“音视频取流”，且各选项的描述文案全部按照以下替换」⑤「给三大音乐平台加搜索元数据和同步清单（先规划成本）」。
+> - **① 视图勾选失效——页签过滤一直是正确的，漏的是筛选器**：`navTabs` 文字菜单与顶部胶囊都吃 `visibleTabs(activeViewPool, activeViewBookKinds)`，先证伪了直觉答案。缺陷 A：`MediaList.svelte` 的 `scopeOptions` 原为 `MERGE_SCOPES.map(...)` 写死 9 项，没乘 `typePool` ⇒ 能选到视图没勾的类型，`filterAndSort` 按被禁类型过滤而 `entries` 已被 `filterForView` 滤空 ⇒ 列表恒空。改为响应式过滤（`'all'` 恒留 / bookKind 仅当 pool 含 `book` / 其余按 `includes`）+ `onScopePick('all')` 兜底钳制。缺陷 B：`typeFilter` 跨视图残留，新增 `$: if (typePool && typeFilter !== 'all' && !typePool.includes(typeFilter)) typeFilter = 'all';`。
+> - **② ASR 未选中被画成方块**：根因不在 `.rl-asr-radio` 本身（它一直是 `border-radius: 50%`），而是 `.rl-asr-select` **只加给未选中行**（`selectable = !!opts.onUse && !opts.current`），其 `border-radius: 4px` 与圆点同优先级、后写者胜。修法把 `border-radius` 与 **hover 底色**都收窄到 `:not(.rl-asr-radio)` —— 圆点只有 12px，铺一层方块底会把它重新画成方块。
+> - **③ B站 mp3 用条目歌名**（用户裁定 `m07800`：「优先用条目歌名，为空才回落到 B站标题」）：新增 `pure/dl/utils.ts` 的 `buildBiliAudioFilename`，回落判据用**原文非空**而非「结果非 Unknown」——`sanitizeFilename('')` 返回 `'Unknown'`，按结果判会把用户真命名的 `Unknown` 悄悄换掉。`dlBiliDownload` 加第三参 `songTitle?`，`MusicDownload.svelte` 的 `pickBili` 传弹窗 `title`（条目歌名）而非 `v.title`（视频标题）。⚠️ 踩坑：在 `downloadRelPath({...})` 实参**中间**插注释会撞红断言 `check496 ⑬`（正则 `kind: 'music',\s*\n\s*filename:` 紧邻匹配）⇒ 注释必须写在被调函数那一行之外。
+> - **④ 文案替换**：`Settings.ts` 行标题改「音视频取流」+ 注释旧名清干净（全仓 0 命中）；`sourceRegistry.ts` 八条 `hint` 换用户逐字短句（Steam 末尾补「公开可见」）；三条 `DL_COOKIE_ROWS.desc`、`BILI_COOKIE_DESC`、`YT_NET_DESC`。YouTube 的 `**EditThisCookie**` 星号去掉（`createDiv({text})` 纯文本渲染会原样露出），代理半句由 `YT_PROXY_LABEL` 承担。**顺手清死码**：`ASR_FFMPEG_DESC` 全仓只有定义零引用（2026-11-07 搬 ffmpeg 配置时被落下），改名 `FFMPEG_PATH_DESC` 并真正接上。
+> - **断言判据翻面 7 条**（⛔ 只改判据不改代码迁就断言）：三平台 Cookie 行 / check489 ①（三段式整体作废，改为「各含一个可点域名且不含特色：用途：」）/ check489 ③ 产物锚 / check639 ⑤ Steam 位置 / check496 ⑬ 文件名 / check496 ⑱ PATH 文案 / check547 ③ scopeOptions。**教训**：句式守卫会随用户改主意整批翻面，要把**原来的意图**（「去哪拿的地址要能点」）重新表达成新判据，而不是删掉了事。
+> - **验证**：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 vitest **271 files 5864 tests** / esbuild 87 warnings / assert **326 条（基线 326）** ✅ 无新增 exit 0 / `_deploy.cjs` `ALL_MATCH=1`（main.js `8d2eaaecc516`、styles.css `acccab194fd0`）。新增 `buildBiliAudioFilename` 单测 6 条（其中 `'a/b:c*?'` ⇒ `'a_b_c__.mp3'` 当场抓出我写成三个下划线的错）。
+> - **⑤ 只交付规划**：`docs/full-cycle/ReelLudic/19-三大音乐平台元数据与清单同步成本规划.md`，总 **24～34 人日**，分 A（搜索元数据补全 1.5～2）/ B（搜索结果落库 3～4）/ C（清单同步 13～20）三批。**未写实现代码**。关键事实：三平台无官方开放 API；`dlRecommendedPlaylists` 走的是**公开推荐**不是用户私有清单；`MusicSearchResult` 无时长/曲目号字段；`sourceRegistry` 未注册三平台。
+>
+> **#740（2026-11-08 第 14 轮）：更新日志收起图标搬到标题旁 + 自定义视图勾选互相覆盖的真根因**
+>
+> 用户原话（`m05024`）：「把更新日志展开文字按钮改成小图标按钮放在更新日志标题的旁边，而且这个用户自定义视图我在设置里勾选了漫画、电影，怎么在首页视图上还显示其他类型的分类（即使没有条目…」。⚠️ 这条消息在存档侧即**截断**（`contextTimeline` / `lastUser` 两处同断，tokens=38）⇒ 第三条需求无法还原，本批只做能确证的两条。
+> - **① 更新日志按钮**：位置从正文上方通栏 `.rl-notes-actions` 搬进 `titleEl`（宿主 `.modal-title`），形态从 `setText('全部展开')` 改 `setIcon()`（`chevrons-up-down` / `chevrons-down-up`）。⚠️ `expand` / `collapse` 在 `obsidian.asar` 里**不存在**（lucide 后来的新名字），用图标探针扫过才敢写。`data-tip` 与 `aria-label` **同源于一个 `label` 变量**（⛔ 各写一串字面量时箭头和气泡互相打脸）。⚠️ `data-tip` 要自己 `bindTooltipDocument(this.modalEl.ownerDocument)` —— 全局 tooltip 按 document 绑定，主窗口由 `initGlobalTooltip()` 自动挂，**Modal 不在那条链上**（设置页早就手动绑过）。⚠️ CSS 必须 `display: inline-flex`，⛔ 不能 `flex`：`.modal-title` 是**块级** div，块级 flex 子元素撑满整行会把图标甩到标题行之外。
+> - **② 自定义视图「勾了还显示其它类型」——根因在写侧，不在页签过滤**：先证伪了直觉答案。拿真实库 `C:\Users\kest\Desktop\临时测试库\媒体库\catalog.json` 跑探针，`types:["anime","book"]` + `bookKinds:["comic"]` 算出的页签正好是「计划/漫画/动画/统计」—— 动画出现是因为库里**真的**勾了 anime，`visibleTabs` 没错。真根因是 `Settings.ts` 的 `commit(next: MediaView[])` 收**整数组快照**，每个行内控件闭包握着自己渲染那一刻的 `views`，而 `setMediaViews` 异步写盘、写完才 `rerender()` ⇒ 连点两枚类型 chip 时第二下用旧数组覆盖第一下。**库证据对得上**：`catalog.json` 里 `types` 只剩 `["anime","book"]`，用户点的 `movie` 丢了。
+> - **修法（read-modify-write，不是给每个控件各打补丁）**：① `commit` 改成补丁函数 `commit(patch: (cur: MediaView[]) => MediaView[])`，落盘前 `await thisPlugin.service.views()` 现读（⛔ 别再退回传整数组）；② 五处调用点全改补丁式（显示勾选/改名/删除/类型 chip/标签）；③ 类型 chip 点击**现算** `viewSelectionOf(x)`，`picked`/`on` 只配画初始 `is-on`/`aria-pressed`，⛔ 不参与写回；④ `MAX_VIEWS` 判据挪进补丁（`addBtn.disabled` 要等 rerender 才更新，中间有超建窗口期）；⑤ `renderOneViewRow` 的 `views` 形参随之无用，一并删掉（留着会让下一个人误以为还能拿到快照）。
+> - **新增守卫** `tests/settingsViewChips.test.ts`（10 条）。为什么是源码文本守卫：要锁的是「写回读的是**最新**视图、不是渲染快照」这条接线形状 —— 改回传整数组或改回吃 `picked`，**类型都合法、编译器一句话都不会说**。突变探针 4/4 `[RED ok]`（M1 退回整数组 / M2 chip 退回快照 / M3 按钮搬回正文上方 / M4 图标对调），还原后回绿。
+> - **验证**：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 vitest **271 files 5858 tests** / esbuild 87 warnings（main.js 2337364 B）/ assert **326 条（基线 326）** + ✅ 无新增失败 exit 0 / `_deploy.cjs` `ALL_MATCH=1`（main.js `7ae49708287c`、styles.css `d0f8fda731ce`）。
+> - **登记未动**：① 第 14 轮第三条需求原文截断，需用户重新说明；② 未做 Obsidian 实机截图回归（运行时不在本环境）。
+>
+> **#739（2026-11-08）：改标题后播放页不更新（#735 回归）+ 字幕来源标识 + 更新日志一键展开 + 清掉视图种类下拉**
+>
+> 用户原话：「从播放器详情页简介封面右键菜单修改了但当前播放页没有实时生效变动啊」「字幕面板来源标识怎么多出了个"AI"不是B站来源吗」「设置关于页-更新日志页面加个一键展开和收起的按钮（透明化无边框）」「高级设置-分类视图：自定义视图项怎么有个切换合集视图和该自定义视图的下拉框删除掉这没用，且在首页视图展示下拉隐藏默认视图和合集视图旁的[内置]样式」。两次裁定（m04712）：①字幕来源「统一显示「B站」，AI 信息挪到悬停提示里」；②视图种类「删下拉，并把自建视图的 kind 一律归为自定义视图」。
+> - **① 改标题不实时生效 —— 刷新链是通的，射程不够**：`EntryModal` 保存 → `finally` 里 `await this.plugin.refreshViews()` → `main.ts:10197` 循环首页视图 → `refreshAudioPlayers()` → `refreshEpisodePages()`，**一路都在跑**。真根因是同一页有三处片名、刷新只覆盖第一处：页内 `.rl-epp-title` 取 `ctx.entry.title`（会变）；播放器顶栏 `.rl-vp-title` 与标签页标题都取 `opts.entryTitle`（**永不变**）—— `opts` 是打开那一刻的快照（`src/views/VideoPlayerView.ts:175`，`:442 openWith` 之后再不写），`restoreLocalTitle()`（`:705-713`，唯一写入点、只在 `render()` 里调）读的就是它。第三处死角：独立播放器页签（`VIDEO_PLAYER_VIEW_TYPE`）在 `refreshViews()` 里**没有任何刷新入口**。
+> - **修法（不是三处各打一个补丁）**：`VideoPlayerView.ts` 新增 `applyEntryTitle(title)`（同值 return → 写 `opts.entryTitle` → `restoreLocalTitle()` → `refreshLeafHeader()` → `onEntryTitleChanged()` 子类扩展点），并把 `openWith()` 那两行 `leaf.updateHeader` 窄化调用**收进** `private refreshLeafHeader()`，全仓「怎么刷页签标题」只此一处；`EpisodePageView.refreshEntrySnapshot()` 里加一句 `this.applyEntryTitle(entry.title)`；`main.ts` 新增 `refreshPlayerTitles()` 由 `refreshViews()` 在 `refreshEpisodePages()` 之后调，按 `v.playingEntryId` 取库推送（照抄 `refreshPlayerMarksForNotes()` 范式）。
+> - **本来就没坏的一处，⛔ 别乱改**：`buildHead()` 读的是 `ctx.entry.title`（`src/views/EpisodePageView.ts:1565`）⇒ 页内标题以前就会变。用户说的「没变」是顶栏 + 页签。
+> - **🔴 断言脚本的符号计数陷阱**：`assert-symbols.cjs:1056-1064` 要求产物里 `updateHeader` **恰好 6 次**（3 调用点 × 2 个词）。把 `openWith` 那两行搬进新方法**不改变词频**，`uh !== 6` 不用动；但⛔ **注释里绝对不能出现这个词**（#393 实测：注释写一次 6→7 假红）—— 本批新方法名刻意避开。
+> - **② 字幕来源「AI」不是 bug，是一个胶囊想回答两个问题**：`cueSourceTagOf()`（`src/views/EpisodePageView.ts:2402`）把「来源」与「是否 AI」压进同一枚标签。改成 `text: 'B站'` + `title: 'B 站 AI 生成字幕'`（悬停保留完整性）+ `kind` 仍 `'ai'`。连带删 `styles.css` 的 `.rl-epp-cuetag[data-src='ai']` 配色（既然文字统一了，颜色再不同等于把藏起的信息漏回来）；`data-src` 属性**保留**（全仓唯一能区分 AI/人工的字面量）。
+> - **③ 更新日志一键展开/收起**：每版正文本来就是原生 `<details class="rl-notes-fold">`，无需改结构。`onOpen()` 在 `host` 前插 `.rl-notes-actions` + `.rl-notes-toggle`；点击先判 `every(f => f.open)` 再统一赋同一态（⛔ 不是逐条取反 —— 半开半合时取反会得到反过来的半开半合）；每枚 `<details>` 挂 `toggle` 监听 + 建完主动 `syncToggleLabel()`；`aria-label` 同步；`:focus-visible` 补 `outline`（键盘用户不能因为「无边框」失去焦点环）。⛔ 没复用 `.rl-about-btn`（那是设置页实心按钮）。
+> - **④ 视图种类下拉：「看起来没用」的控件，删之前必须归位数据**：`kind` 被四处真实消费 —— `HomeView.svelte:319`（决定看板/列表骨架）、`viewIconOf`（`:390-392`）、`viewMatchesEntry`（`:442`，**只有 custom 才按标签过滤**）、`viewIsUnconfigured`（`:454`）。直接删下拉会让老库选了 `collection` 的自建视图**永久卡在看板形态且无处改回**。所以两件事一起做：删 UI（`src/Settings.ts` `renderOneViewRow()` 的 `kindSel` 整段）+ 归一器兜底（`normalizeMediaView()` 里 `kind: 'custom'` 写死，并删掉已成孤儿的 `normalizeViewKind()`）。⚠️ 内置两枚由 `normalizeViews()` 用常量直接构造（`:352-355`）、**不走** `normalizeMediaView` ⇒ 它们的 `default` / `collection` 不受影响；这「只差一行」的区分写错就会让合集视图在首页退化成普通列表。
+> - **补两条单测**（`tests/mediaViews.test.ts`）：`自建视图的 kind 写死 custom —— 库里残留 collection / default 也要被抹平`、`自建视图归 custom，内置视图仍守 default / collection`。⚠️ **为什么必须补**：原有幂等用例（`:106-116`）输入里就有 `kind: 'collection'`，归一器改前改后它**都能过**（只比 `twice === once`）—— 「测试通过 ≠ 行为正确，只是没人断言那个字段」，本仓第二次踩同一个洞（前一次是 #732 的 `status: done`）。
+> - **首页下拉「（内置）」后缀**（`src/views/components/ViewChips.svelte:39-42`）：`label` 恒等于 `v.name`。解释正源在**设置页**那枚 `[系统内置]` 徽章（`src/Settings.ts` `.rl-view-row-badge`），首页工具条是天天点的操作面不该反复念免责声明；⛔ 别为了「平衡」把设置页徽章也摘了。`isBuiltinView` 在此文件已无用途，import 一并清掉。
+> - **验证**：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 vitest **270 files 5846 tests** / esbuild 87 warnings（main.js 2337240 B）/ assert **326 条（基线 326）** + ✅ 无新增失败 exit 0 / `_deploy.cjs` `ALL_MATCH=1`（main.js `b27ef03a829b`、styles.css `36d109b27274`）。
+> - **登记未动**：① `VIEW_KIND_HINTS` / `VIEW_KIND_DESCS` 里 `collection` 两条文案保留（`viewIconOf` 等仍按 kind 分派，内置合集视图也要这行说明）；② 本批未做截图回归。
+>
+> **#738（2026-11-08）：hover 提示失效的真根因 + 合集视图对齐主视图 + 页签摊开成十枚单类型**
+>
+> 用户原话：「字幕面板上的图标按钮鼠标hover不显示提示啊，还有一些仍存在双提示覆盖的项也改修复好，②合集视图展示的搜索框和切换视图按钮位置怎么不居中啊（结构布局要和其他视图统一）合集视图的筛选栏要和默认视图的筛选栏统一，用户自定义视图在设置里选择的类型在导航布局为顶部胶囊时页签要把所有类型摊开而不是集中在阅读和影视里面」。两组追问裁定：①筛选栏「只修位置、筛选栏控件统一默认视图（类型下拉、排序、状态、题材）」⇒ 保留下拉形态、只补题材；②页签「计划、文学、网文、漫画、电影、剧集、动画、游戏、音乐、统计」+「不保留影视聚合，只摊开单类型」。
+> - **hover 不显示的真根因不在按钮**：`src/services/globalTooltip.ts` 把 scroll 挂在 document **捕获阶段** ⇒ 任何元素内部滚动都会进来。字幕列表随播放翻页（#737 起还是平滑，一次翻页上百个 scroll 事件）⇒ 500ms 延迟刚开始就被一次**与按钮无关**的滚动取消（`cancelPending(); hide();` 无条件执行）。jsdom 复现：兄弟容器 scroll ⇒ 700ms 后 `.rl-tip` 连节点都不存在。修法：`if (!el) return;`（待显示阶段不取消，落点是 `show()` 现量）+ `if (target && !target.contains(el)) return;`（只在滚动容器是当前元素祖先时才收起）；⛔ 别把 capture 改冒泡（scroll 默认不冒泡）。新增 `tests/globalTooltipScroll.test.ts` 2 条双向断言，文件头写明「每个用例必须各建独立 document」（`boundDocs` WeakMap 按 document 幂等，同文件第二例会因跳过绑定而恒绿）。
+> - **双提示四处清零**：`Settings.ts` 三处（删除视图 / 删除笔记映射 / 恢复笔记映射 chip）+ `EntryForm.svelte` 的 `rl-bili-close`，全部去掉 `aria-label` 只留 `data-tip`，读屏名改走 `.rl-sr`。副作用：`#501` 反向守卫从欠账转绿 ⇒ 基线 327 → 326。
+> - **合集视图对齐**：`.rl-toolbar` `justify-content: flex-start` → **`center`**（与 `MediaList` 逐字同款；那条 2026-11-26 的「多了视图胶囊所以左对齐」注释已被用户当场否掉，注释改写并写死 ⛔ 别按「这一行多了什么」推导对齐）；`.rl-search-wrap` `min-width: 200px` → **`240px`**（切换视图时输入框不许跳宽度）。
+> - **题材控件抽成共享组件** `src/views/components/GenreFilter.svelte`（约 240 行，19 条 scoped 样式逐字搬自 `MediaList` 并保留每条理由）。CollectionBoard 补上第四项控件，`genrePool` **不含题材自身维度**（否则选项自我缩减、取消勾选的路断掉）；类型选「全部」时不渲染控件。⚠️ `MediaList` 内联那份**仍在**（断言脚本约 30 条逐字锁死，属独立批次，已写进组件文件头）。
+> - **页签摊开 6 → 10**：`HOME_TAB_ORDER = ['tracking','kind:book','kind:novel','kind:comic','movie','tv','anime','game','music','stats']`。文学/网文/漫画不是 `EntryType` 而是 `BookKind` ⇒ 用 `kind:` 前缀做 id（⛔ 不加前缀会与 `BookKind` 里的 `'book'` 撞值）。`'media'` 留在类型联合里读旧值但不在顺序表；`normalizeStartTab` 做升级映射（media→movie、book→kind:book），兜底改 `'movie'`。新增 `tabLockType` / `tabBookKind` / `tabMatchesEntry` 三个翻译函数到纯模块（原因是 **TS 不在箭头闭包里传递窄化**，解法不该是 `as` 断言）；`MediaList` 新增受控 prop `lockKind`（与 `scope` 两条独立通道，`lockKind` 优先）。
+> - **踩坑三则**：① `notebook-text` 给网文页签用会撞红「阅读器都用 notebook-text」那条纯计数守卫（7→8）⇒ 改 `book-text`（断言脚本 0 命中）；② `$: x: T = …` 不是合法 Svelte（`$:` 不能带类型标注）；③ 断言描述串里塞带单引号的 Svelte 条件会把脚本引号提前闭合 ⇒ `SyntaxError`，描述串外层必须换双引号。
+> - **验证**：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 vitest **270 files 5846 tests** / esbuild 87 warnings（main.js 2336336 B）/ assert `326 条（基线 326）` + ✅ 无新增失败 exit 0（`--strict` 仍 exit 1）/ `_deploy.cjs` `ALL_MATCH=1`（main.js `4cc1b8ddc2d3`）。
+>
+> **#737（2026-11-08）：字幕面板五件事 —— 滚动动效 / 跟读图标 / hover 提示 / 末行不再像被切 / 删「B站官方播放器」胶囊**
+>
+> 用户原话：「音乐播放器和字幕面板的滚动改要有动效而不是瞬间切换，还有这个字幕面板切换学习模式时这个跟读模式图标显示空白、字幕面板上的所有小图标按钮鼠标hover要有提示格式为：[学习模式：描述]、字幕面板上的字最后一行被截断了把字幕给给放大点不要显示被截断文字②播放器上的两个标识(B站官方播放器)给我删除掉」。两次追问裁定：①「两个标识」= **只删左上角胶囊，iframe `title` 属性保留**；②提示文案**不加「学习模式：」前缀，只留描述**。
+> - **滚动加动效**：新建 `src/pure/motion.ts`（`prefersReducedMotion()` + `scrollBehavior()`）。为什么必须新开模块读媒体查询 —— 本仓动效偏好此前全靠 CSS `@media (prefers-reduced-motion: reduce)`（styles.css 已 8 处），但 CSS 那条对 `scrollTo({behavior})` **不生效**。结果不缓存（用户可能中途改系统设置）。两处：`setCueScroll` 与 `centerCurLine`。
+> - **自己写的 bug（当场修）**：`setCueScroll` 原本在赋值后判「位置没变就摘掉目标」。平滑模式 `scrollTo` 立刻返回、`scrollTop` 还没动 ⇒ 恒等 ⇒ 目标被当场摘掉 ⇒ 队列白记、`onCueScroll` 把程序滚动当用户手动滚、**跟随被永久关掉**。改成 `if (behavior === 'auto' && list.scrollTop === before)`。
+> - **没有放宽 `onCueScroll` 的 ±2 判据**：平滑会派发一串中间帧、位置逐个逼近、不会精确命中。第二道判据 `Date.now() - cueUserInputAt > 350` 已能兜住（程序滚动旁边没有真实输入）。若放宽成 ±40，真人手动滚到目标附近会被判成程序滚动 ⇒「手动滚动打断跟随」失灵。
+> - **跟读图标空白 = 真 bug**：`syncCueShadowBtn()` 只切 class 与 `data-tip`，**从没调 `safeSetIcon`** ⇒ 24×22 空壳。补 `safeSetIcon(btn, 'mic-vocal')`（`mic` 已被「音频转文字」占用、`repeat*` 是循环档位；图标名用 `_iconprobe.cjs` 直接扫 Obsidian 内置 lucide 表确认存在）。
+> - **末行「被截断」的根因不是裁切**：`.rl-epp-cuetext` 无 `line-clamp`、无 `overflow: hidden`，字幕区三处 clamp 全在简介/AI 提示/空态。真因是**滚动视野**（越过页底时 `Math.min(max, …)` 把最后几行夹住，只能贴容器底沿）+ 列表底部 `padding` 只有 2px。处置三条：正文 12px/1.5 → **13px/1.6**；学习模式 15px/1.75 → **16px/1.85**；`padding: 2px 0` → **`2px 0 10px`**。⛔ 没用 `padding-bottom: 50%` 假装到底（那会让中间每页都缺一截）。
+> - **删胶囊要删四层**：`buildNetLayer` 的 `bar`/`title`/四个 peek 监听、字段 `netTitleEl`、方法 `setNetTitle` 及两处调用、`import { netEmbedTitleOf }`、CSS 的 `.rl-epp-netbar`/`.is-peek`/`@keyframes`/`.rl-epp-nettitle`。函数本体与 `tests/netInline.test.ts` 六条断言**保留**。
+> - **顺手纠正一处失真注释**：原文写「`netTitleEl` 被 `restoreLocalTitle()` 用来还原本地片名」是假的 —— `restoreLocalTitle()` 在 `src/views/VideoPlayerView.ts:705-713`，写的是 `titleTextEl`（顶栏片名，独立存在），与 `netTitleEl` 无关。
+> - **CSS 保留的教训注释（别删）**：胶囊原本是 `flex: 0 0 auto` **布局内**元素 ⇒ 占 24px ⇒ iframe 938×504=1.861 比 16:9 的 1.778 宽 ⇒ 左右补黑边。「黑边过大」真根因就是它。以后往 `.rl-epp-net` 纵向 flex 塞常驻元素必须 `position: absolute`。
+> - 门禁：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 vitest **269 files 5823 tests** / esbuild 87 warnings（main.js 2326911 B）/ `assert-symbols.cjs` 327 条基线无新增、exit 0、自审 3 PASS 0 FAIL / `_deploy.cjs` `ALL_MATCH=1`（main.js `5cee91b4a4ba`、styles.css `f6516a5e6baf`）。
+> - 新增 `tests/cuePanelMotion.test.ts` **17 条**（全绿）；突变 5/5 `[RED ok]`，源码逐字节还原。
+> - ⚠️ **探针两个坑**（记下来别再犯）：① 全局 `String.replace` 会打到**更早的同名声明**上（`font-size: 16px;` 等），必须先在目标选择器块内定位再换；② 取块用「第一个 `}`」会被函数体里的 `scrollTo({ top, behavior })` 对象字面量截断，必须做**花括号深度配对**。
+> - 遗留：未做截图回归；学习模式 16px 下窄栏一屏约 6–7 句，若嫌翻页频繁应调 `--rl-epp-listh` 而非回调字号。
+>
+> **#736（2026-11-08）：详情页封面菜单去掉「观看 / 删除条目」+「全部 N 部」搬到系列标题旁**
+>
+> 用户原话：「播放器详情页的简介封面右键菜单不要显示观看、删除条目项，还有这个系列区块的'全部15部'移动到系列标题旁边」。
+>
+> - **隐藏项 ≠ 第二份菜单**：给唯一真源 `views/components/EntryContextMenu.svelte` 加 `hideItems` prop（键是联合类型 `EntryMenuHideKey`，漏改 tsc 直接红），口径收在 `src/pure/entryMenu.ts` 的 `EPISODE_COVER_MENU_HIDE = ['watch','delete']`。⛔ 复制一份菜单改改 = 该文件头注释点名过的漂移。
+> - **为什么藏在正好这两项**：人在详情页里正在看那集，点「观看」要么重开要么打断播放；删掉当前条目等于把脚下地板抽走，危险操作留海报墙。其余八项一律保留（用户只点名两项，不擅自扩大）。
+> - **只藏按钮不够，分割线也得跟着收**：菜单是三段结构，藏掉 ①③ 两组后会留两条空线。模板里先算 `sec1`/`sec2`/`sec3`「这组还有没有项」，线写成 `{#if sec1}` 与 `{#if sec2 && sec3}`。⛔ 别用 `:nth-child` 钉（各类型项数不同）。
+> - **「全部 N 部」搬到标题行**：原在横带体内（`overflow-x: auto`），季数一多就滚出视野；它是节级操作（总量 + 展开入口），不该当内容。移到 `head` 上，CSS `margin-left: auto` 顶最右，并补 `.is-empty` 口径（整节藏时右侧入口不许漂着）。
+> - **监听只能在建槽处挂一次**：`buildLow()` 里 `addEventListener`，`buildSeasons()` 只 `setText` 回填。放进重画路径会一层层叠、点一下开两遍季列表。
+> - 门禁：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 vitest **268 files 5806 tests**（净增 9）/ esbuild 87 warnings（main.js 2327243 B）/ `assert-symbols.cjs` 327 条基线无新增、exit 0 / `_deploy.cjs` `ALL_MATCH=1`（main.js `60a6538cf127`、styles.css `6dc2d2f8a3bb`）。
+> - 守卫扩到 17 条；突变验证 4/4 `[RED ok]`（不传 hideItems / 横带又建入口 / 组件默认值非空 / CSS 退回 align-self），源码逐字节还原。
+> - ⚠️ 探针踩坑：仓库文本是 **CRLF**，字符串替换探针必须按真实换行展开 `from`/`to`，否则报「找不到目标片段」。
+>
+> **#735（2026-11-08）：剧集页简介封面右键菜单（复用海报墙同一套）**
+>
+> 用户原话：「简介的封面可右键可弹窗菜单（同海报墙编辑属性逻辑）」。当场选定**整个海报墙菜单**（不是只挑「编辑属性」一项）。
+>
+> - **视图里一行菜单文案都没有**：只把 `contextmenu` 转发出去，菜单由 `views/components/EntryContextMenu.svelte` 渲染，与海报墙共用同一组件、同一套 7 个 props（`onWatch` / `onQuickAssociate` / `onEditEntry` / `onAddExcerpt` / `onOpenEntryLogModal` / `onOpenEntryTextModal` / `onDeleteEntry`）。宿主在 `main.ts` 的 `pageCtx.entryMenu` 注入整套。
+> - **菜单必须挂 `document.body` 的壳，不能挂 `.rl-epp`**：`.rl-epp { overflow-y: auto }` 会把菜单裁掉；壳 `.rl-epp-ctxhost { position: fixed; inset: 0; z-index: 51; pointer-events: none }` + `.rl-ctx { pointer-events: auto }`（壳不设 `none` 就盖满整页吃掉所有点击）。
+> - **`$destroy()` 摘不掉我们自己建的 body 壳** ⇒ `destroyEntryMenu()` 里 `$destroy()` 与 `entryMenuHost?.remove()` 都要做；换片（`buildExtra` 开头）与关页（`onClose`）各调一次。
+> - **`.svelte` 在 `.ts` 里被窄化成 `SvelteComponent`**（`node_modules/svelte/types/index.d.ts:1803`）⇒ `openAt` 报 TS2339。⛔ 不用 `as any`（会把「组件真有这方法吗」一起丢掉），自己声明 `interface EntryMenuHandle`。
+> - **Esc 只能关一层**：组件自己监听 window `keydown`，`VideoPlayerView` 也注册了 Esc ⇒ 两套同活会一次关两层（#444 同款）。基类新增 `protected closeExtraOverlay(): boolean { return false; }`，Esc 回调**第一行**调它，选集页覆写成「菜单开着就收菜单」。
+> - **顺手补的洞**：`pageCtx.entry` 是打开页那一刻的快照。以前这页没有编辑入口所以没人看得见；加了右键菜单后「编辑属性」就在这页上，而 `refreshViews()` 只刷海报墙与音频播放器 ⇒ 改完封面仍显示旧图。补法：`refreshViews()` 末尾 `await this.refreshEpisodePages()`，视图侧 `refreshEntrySnapshot(entry, coverUrl)` 只重画**标题块 + 简介卡**（⛔ 不整页重开，会重建播放器打断播放）。没开选集页时 `getLeavesOfType` 空数组立刻 return，零开销。
+> - 新增守卫 `tests/episodePageEntryMenu.test.ts`（8 条，源码文本守卫、先剥注释）：锁接线形状而非算法。
+> - 门禁：tsc exit 0 / `npm run check` 0 errors 89 warnings / 全量 vitest **268 files 5797 tests** / esbuild 87 warnings（main.js 2325359 B）/ `assert-symbols.cjs` 327 条基线无新增、exit 0 / `_deploy.cjs` `ALL_MATCH=1`（main.js `73e2b3d95acd`、styles.css `4fe48ca82b9e`）。
+> - 遗留：菜单只挂简介卡封面（系列带 / 选集格子不动，用户只点名简介封面）；未做真机视觉回归。
+>
+> **#734（2026-11-08）：剧集页「简介 / 系列」改为常显 + 相关推荐上限 6 → 7**
+>
+> 用户原话：「简介、系列不再可收起 默认展开」+「相关推荐再加个条目上限为7」。
+>
+> - **「不再可收起」≠「默认展开」**：只传 `open = true` 是默认展开（箭头还在、点一下还能收）；要的是真的不可折。`EpisodePageView.buildSection` 加第 4 参 `collapsible = true`，「简介」「系列」两处传 `false`。
+> - **不可折叠时三件事都得做，少一件就是假按钮**：① 不建 `.rl-epp-secarrow`（箭头是「可以折叠」的唯一视觉承诺）② 不挂 `click` 监听（⛔ 挂着但 no-op，用户会一直点）③ `data-open` 恒为 `'1'`（`'0'` 会让 body `display:none` 且**再也打不开** ⇒ 内容永久消失）。
+> - **CSS 用 `.is-static` 不用 `data-open`**：撤掉 `cursor: pointer` 与 hover 底色。右栏两节展开时同为 `data-open='1'`，用状态值当选择器会把可折叠节一起锁死。
+> - **`RECOMMEND_LIMIT` 6 → 7**，注释重写「为什么是 7」（跟随左下常见高度，7 条横封面 + 两行文字排满不溢出）。
+> - **顺手修了一处会被本次改动作废的注释**：`styles.css` 微件解耦（`.rl-epp-widcell { align-self: start }`）的论证写的是「一折『简介』左列从 202.3px 塌到 46.3px」。现在折不了了，已补明解耦**照样必须留** —— 换片时简介长短本来就不同，`stretch` 一样会把微件拉高。判据是「与左列内容高度解耦」而非「与折叠动作解耦」。
+> - **验证**：tsc exit 0；`npm run check` 0 errors / 89 warnings（= 基线）；全量 vitest **267 files / 5789 tests passed**（新增 `tests/episodePageSections.test.ts` 8 条）；`esbuild production` 87 warnings（= 基线），`main.js` 2322779 B；`assert-symbols.cjs` `本次失败：327 条（基线 327 条）` + `✅ 无新增失败` exit 0；`_deploy.cjs` `ALL_MATCH=1`（main.js `4ea11fe4140d` / styles.css `75e19adb683a`）。
+> - **突变验证** `_mutsec.cjs`（已删）：三处退化全被抓 —— ① 上限改回 6 ②「简介」改回可折 ③ 右栏「选集」被顺手锁死；还原后逐字节一致并回绿，`[RED ok]`。
+> - **为什么用源码文本守卫**：`buildSection` / `buildLow` 是私有方法，构造它要真的 Obsidian `App` + DOM，纯函数单测够不着 ⇒ 锁的是「别有人把箭头和监听加回去」。⛔ 铁律：先 strip 注释再匹配（本仓已被自己的注释打穿三次：#379 / #730 / #731）。
+> - **遗留**：折叠分支对这两节成为死路径，代码保留（右栏还在用）；未做视觉回归截图。
+>
+> **#733（2026-11-08）：从笔记导入条目 › 新增「生成模板」按钮**
+>
+> 用户原话：「给从笔记导入条目项加个"生成模板"按钮，可在仓库根目录生成笔记模板」。按钮挂在与「检索」同一行，点一下在 `{媒体库}/条目模板.md` 生成一份填法参考（六类型可复制区块 + 字段中文名 + 取值形态 + 三条硬规则）。
+>
+> - **设计口径：只列「导入器真的会读」的键**。不抄 `metaFields`，也不抄 `noteGenerator` 写出侧 —— 写侧写、读侧不读的键有一大批（`tags`/`aliases`/`created`/`updated`/`screenwriter`/`producer`/`artist`/`binding`/`price`/`progress_*`/`reading_*`/`read_minutes`/`page_count`/`playtime_minutes`/`listen_minutes`），印进模板就是让用户**白填一遍** —— 正是 #732 的病根。这批单独列一节「导入器不读的字段（填了也不会生效）」。
+> - **两道保险防模板被当条目导入**：① 位置 `{媒体库}/条目模板.md` 与 `笔记/` 同级（扫描器只扫 `笔记/` 子树）② `title: "{{标题}}"` 占位符会被第二道闸拦下并提示。
+> - **注释必须单独成行**：`parseFrontmatterMap` 只跳过 `#` 开头行，行尾注释会被读进值里 ⇒ 每个字段「上一行 `# 中文名`，下一行 `key: value`」，单测专门守「非注释行不许出现 ` # `」。
+> - **已存在就跳过**（用户选型），Notice 给出路径并说明「删掉再生成即当前口径」。
+> - **验证**：tsc exit 0；`tests/noteTemplate.test.ts` **10 passed**；全量 **266 files / 5781 tests passed**；`npm run check` 0 errors / 89 warnings；esbuild 87 warnings（main.js 2322727 B）；`assert-symbols.cjs` 327 条 = 基线、无新增失败；`_deploy.cjs` `ALL_MATCH=1`（main.js `773a32d8bee9`）。**突变验证**：往 `COMMON_KEYS` 插 `tags`（导入器不读）⇒ vitest exit=1 抓到，还原后回绿（`[RED ok]`）。
+> - **踩坑**：`noteTemplate.ts` 拼字符串时反引号与模板串混用（tsc 6 处 `TS1005`/`TS1127`）；单测 `blockOf()` 切出的代码块以换行开头，而 `parseFrontmatterMap` 的 `^---` 是字符串开头锚定（无 multiline）⇒ `.trim()` 后才过。
+> - **遗留**：模板是单份参考文件（用户选型），要拆六份只需给 `buildNoteTemplate` 加按类型出口；`artist` 读侧仍未解析（既有缺口）故模板不列；`_mirror.cjs` 不在库 ⇒ 镜像未执行。
+>
+> **#732（2026-11-08）：从笔记导入条目的两个静默 bug —— 封面全丢 + 状态被悄悄改掉**
+>
+> 用户问「从笔记导入条目所需条件是什么」，为了答准确逐行读了 `src/pure/noteImport.ts`，条件答完了，顺手挖出两个「界面上不报错、结果就是不对」的 bug。
+>
+> - **封面全丢：`posterFromBanner` 写对了，却从来没被调用**。笔记里 `banner: "媒体库/封面/x.jpg"` 原样落进 `poster`，`resolvePosterUrl` 再拼一次 `libraryDir` ⇒ `媒体库/媒体库/封面/x.jpg` ⇒ 文件不存在 ⇒ 封面空白且**不报任何错**。函数本身三条测试全过 —— 因为测试只测函数，**缺的是锁住调用点**。
+> - **状态被悄悄改掉：一句 `as MediaEntry['status']` 当校验**。`normalizeEntry` 对非法 status 一律回落 `'want'` ⇒ 用户手写 `status: 已看` 或 `status: done` 都静默变成「想看」。**比直接报错更糟**：条目出现了、状态是错的、用户以为成功了。原测试还写着 `status: done` 并断言 `toBe('done')`，保护的是垃圾值原样通过。
+> - **用户裁定「降级提示」**：不阻断导入，但必须说清哪里不认识、降成了什么。新增 `statusOf(type, raw)` —— 认四态枚举，也认**按类型的中文标签**（反查 `pure/labels` 的 `statusLabel`，⛔ 不手写第二份标签表；`pure/tableCell.ts` 的 `statusFromText` 已是同口径先例）。非法值 push 一条 `warnings`，兜底文案按条目类型取（book 是「想读」、game 是「想玩」）。
+> - **占位符不能报假警报**：读 `status` 改用 `scalarOrUndef`，`status: "{{status}}"` 当没填。
+> - **新增守卫不测函数、测结构**：`stripComments` 后直接读 `main.ts` —— 必须含 `posterFromBanner(`（调用点存在），且必须**不含** `poster: cand.draft.poster`（堵住绕过归一化的老写法）。⚠️ 必须剥注释，这是本仓**第三次**踩「注释把自家守卫拦掉」（前两次：#379 CSS 守卫、#730 `tmdbVoteToRating` 守卫）。
+> - **验证**：tsc exit 0；`tests/noteImport.test.ts` 28 passed（改前 19）；全量 **265 files / 5771 tests passed**；`npm run check` 0 errors / 89 warnings；esbuild 87 warnings；`assert-symbols.cjs` 327 条 = 基线、无新增失败、exit 0；`_deploy.cjs` `ALL_MATCH=1`。**突变验证**：改回 `const poster = banner;` ⇒ 立刻红并抓到，`finally` 还原后回绿，tsc 复核干净。
+> - **遗留**：`_mirror.cjs` 不在库 ⇒ 镜像未执行；`main.ts` 还有其他 `as MediaEntry['status']` 式裸强转未排查；frontmatter 解析器不支持嵌套 / 多行 YAML（设计边界）。
+>
+> **#731（2026-11-08）：Steam 封面图床 4 处硬编码收口成 1 处真源 + 清掉 410.8 MB 临时目录**
+>
+> 接着 #730 清技术债清单里两条低风险的。清的过程里**顺手推翻了自己昨天列的一条假债**（见末条）。
+>
+> - **封面 URL：注释自称「两处」，实际 4 处**。`src/services/steam.ts` 的 `COVER_IMAGE_BASE` + `src/pure/steamSync.ts` / `src/pure/searchDisplay.ts` / `src/modals/SteamSyncModal.ts` 三处内联模板串，全是同一个图床 ⇒ **改一处漏三处就是贴图 404**，而封面是用户第一眼看见的东西。
+> - **收敛方案**：新建 `src/pure/steamCover.ts`（20 行、零依赖）—— `STEAM_COVER_BASE` + `steamCoverUrl(appid)`。为什么单开文件而不塞进 `pure/steamSync.ts`：`searchDisplay` 与 `SteamSyncModal` 只要这一个函数，从 `steamSync` 拿会把整包同步逻辑一起拖进依赖图。四处调用点全部改接；`services/steam.ts` 用 `export { STEAM_COVER_BASE as COVER_IMAGE_BASE }` 保留旧名字，不打断既有引用。
+> - **守卫测试锁的不是「函数返回什么」，是「不再有第二处硬编码」**：`tests/steamCover.test.ts` 3 用例 —— 口径是竖版 `library_600x900.jpg` 而非 32×32 的 `img_icon_url`；四个历史调用点**剥掉注释后**不得再出现图床域名或 `library_600x900`；真源文件本身只有一处图床常量。⚠️ 必须 `stripComments` 再断言，否则注释里提到 URL 会误报。
+> - **突变验证**：往 `searchDisplay.ts` 塞回内联模板串 ⇒ 守卫立刻红；还原后 3/3 绿、大括号 80/80 配平。**这守卫会咬人，不是装饰。**
+> - **`.chrome-*` 清理**：删前核实三项全过 —— 36 个目录、`git ls-files '.chrome-*'` = **0**（从未被跟踪）、全仓无任何 `.cjs/.mjs/.js` 引用、最近修改 `2026/10/22`（17 天没动）。删后 `git status --porcelain` 无 ` D`/`D ` 误删被跟踪文件。**释放 410.8 MB**。
+> - 🔴 **同日自我更正：我列的「Bangumi 缺盖章标记」是伪需求**。上一版 #730 第 ⑥ 条写「Bangumi 没有 `steamDetailFilledAt` 那种标记 ⇒ 每次同步仍重拉详情（有预算上限 40）」—— **整个是错的**：⑴ `grep 'autoSync.*[Bb]angumi'` **零命中**，Bangumi **没有任何自动同步**，只有用户手动点弹窗（`HomeView.ts:307` → `importBangumiCollections`、`main.ts:2155` → `importBangumiRows`）；⑵ 「预算上限 40」是 **Steam 的** `STEAM_DETAIL_FILL_LIMIT`（服务于开机静默的 `autoSyncSteamQuietly()`），被我误挂到 Bangumi 头上；⑶ 两条 Bangumi 路径**都先查重再发请求**（`main.ts:2205` 注释原话「同名检测放在**发网络请求之前**：跳过就别再去抓详情/人物了」）。⇒ Steam 需要盖章是因为它**开机自动跑 + 预算耗尽会主动跳过**；Bangumi 纯手动 + 先查重，**根本不会重拉**。**不加这个字段，⛔ 不给不存在的需求写代码。** 教训：**列技术债时先看触发路径，别把 A 的机制套到 B 头上。**
+> - 验证：tsc **exit 0** / `tests/steamCover.test.ts` **3 passed**、`steam`+`searchDisplay`+`steamSync` **139 passed** / 全量 **265 files / 5763 tests passed** / `npm run check` **0 errors 89 warnings**（= 基线）/ build **87 warnings**（main.js **2314997 B**，比上一版**少 194 B** —— 去掉 4 处重复字符串的实际收益）/ 断言 **exit 0、327 条与基线一致、无新增失败**（动了 4 个文件零误伤）/ 部署 `ALL_MATCH=1`（main.js `28ef27fc997e`）。
+> - 踩坑：`export { steamCoverUrl } from './steamCover';` **不产生本地绑定** ⇒ `src/pure/steamSync.ts(284,17): error TS2552: Cannot find name 'steamCoverUrl'. Did you mean 'steamIconUrl'?` —— 必须 `import` + `export` **两句都写**。另一条：**任何基于全文匹配的守卫，都必须先定义好「注释算不算数」**，这已是同类错误第三次（`#379` CSS 守卫、`#730` `tmdbVoteToRating` 守卫、本次）。
+> - 遗留如实登记：a11y **89 warnings**（44 label 未关联控件 / 16 `on:click` 缺键盘事件 / 10 `<div>` 缺 ARIA role 等）改动面横跨 6 个 svelte 文件，属独立批次未动；`docs/superpowers` 62 个文件是历史 spec/plan，**删不删是产品决策不是技术债**，不擅自处理；`_mirror.cjs` 不在库 ⇒ 镜像**未执行**；版本号仍 `1.5.0` 未 bump。
+>
+> **#730（2026-11-08）：详情映射收口 —— TMDB 分制污染 / Bangumi 三处投影 / 一条漏插值的进度文案**
+>
+> 接着 #729 还「同一件事写多遍」的债。**原审计结论当场被自己推翻**：说「只有 Steam 有详情映射纯函数」，实测豆瓣早在 `src/services/douban.ts` 就有 `toEntryDetailFields()`（27 字段白名单），TMDB 搜索侧也已有 `src/pure/resultMerge.ts` 的 `mergeTmdbDetail()`。真正坏的是另外三处。
+>
+> - 🔴 **缺陷 1（分制污染，影响排序）**：`importTmdbAccount` 用 `communityScore: tmdbVoteToRating(r.voteAverage)`，而该函数是 `Math.round(vote / 2)`（10 分制 → 5 星）⇒ **8.4 分存成 4**，在 10 分制字段里被系统性低估一半。`communityScore` 全仓按 10 分制排序（`pure/search.ts`、`pure/seriesGroup.ts`、`COMMUNITY_SCORE_MAX = 10`），而那条断言的标题自己就写着「10 分制社区分落 communityScore」——**标题与断言形态自相矛盾**。⇒ 删 `tmdbVoteToRating`，换 `tmdbVoteToCommunityScore(vote): number | undefined`（`0 < v <= 10` 才采信、留 1 位小数、越界/NaN/0 ⇒ `undefined`，⛔ 不编 0）。
+> - 🔴 **缺陷 2（字段整体丢失）**：详情 try 块只 `Object.assign` 了 `genres / director / cast` 三个字段，`TmdbDetail` 明明有 `rating` / `ratingCount`，`TmdbAccountItem` 连 `voteCount` 都没解析 ⇒ 导入的片子**永远没有「N 人评价」**。⇒ `TmdbAccountItem` 补 `voteCount?`、`parseTmdbAccountPage` 解析 `vote_count`（>0 才写键）、`importTmdbAccount` 补写 `communityScore`（详情优先）与 `ratingCount`（详情优先、`r.voteCount` 兜底）。
+> - 🔴 **缺陷 3（用户可见）**：`importBangumiCollections` 的 `onProgress` 模板串里**同一段三元写了两遍**，后一遍漏了 `${}` ⇒ 进度面板直接显示一行原样 JS 表达式「拉取收藏列表（想看）{t === 0 ? '想看' : ...}）」。已删掉后半段。
+> - **Bangumi 三处投影统一**：新建 `src/pure/bangumiSync.ts`（126 行）—— `bangumiDetailData()`（逐字段校验脏入参，rating 只认 `(0,10]`、ratingCount `>0` 取整、studio 两源合并、cast 过滤非字符串、null/数组/字符串入参不抛）+ `bangumiEntryFields()`（详情优先、列表兜底、`rating→communityScore` / `studio→developer`）+ `bangumiSearchEnrich()`（**只覆盖非空**）。`searchAnimeFresh` / `importBangumiCollections` / `importBangumiRows` 全部改接。
+> - ⚠️ **为什么不合并成一个函数**：三条路径兜底语义本就不同 —— 搜索是「只覆盖非空」（⛔ 用 `??` 会把已有值清成 undefined）、收藏导入是「详情优先列表兜底」、`importBangumiRows` 原来那句 `if (!input.genres?.length && detail.studio)` 的**前置条件恒真**（该处 `genres` 建出来就是 `[]`）是假开关。⇒ 拆两个函数、差异写进注释。
+> - 验证：tsc **exit 0** / 新增 `tests/bangumiSync.test.ts` **14 用例** / `tests/tmdbSync.test.ts` 改造（`8.4→8.4`、`9.999→10`、`0/NaN/11/-1 → undefined`，新增 `vote_count → voteCount`）/ 全量 **264 files / 5760 tests passed** / `npm run check` **0 errors 89 warnings**（= 基线）/ build **87 warnings**（main.js 2315191 B）/ 部署 `ALL_MATCH=1`（main.js `b5cab49952e9`）/ 断言 **exit 0、无新增失败、基线仍 327 条**。
+> - 🔴 **踩坑一：门禁「变绿」不是靠重冻基线，是修了一条不对称归一化**。首跑报「1 条已修好 + 2 条新增」但条数仍是 327，看着像脚本抽风。实因：归一化只在**采集当前失败**时剥产物字节偏移 `@3328324`（`indexOf` 结果，新增一个模块就整体后移 182 字节），**基线条目没归一** ⇒ 同一条老失败两边键不同，既进「已修好」又进「新增」。现在 `normalizeSig()` 是唯一入口、**两侧都过它**。⛔ 没重冻基线，没手改基线。
+> - 🔴 **踩坑二：反向守卫不能用裸标识符**。`!/tmdbVoteToRating/.test(m + ui)` 被**自己刚写的解释性注释**打穿（注释里写「旧代码走 `tmdbVoteToRating`」）⇒ 改成锚调用形态 `!/tmdbVoteToRating\s*\(/`。同类事故此前在 `#379` 的 CSS 反向守卫上已发生过一次（注释里写「⛔ 别再退回 `flex: 1 1 auto`」把自己的守卫打穿）——**这是同一类错误的第二次**。
+> - 踩坑三：`TmdbAccountItem` 先按完整 `BangumiSearchResult` 当入参类型，tsc 立刻报 `TS2345 Property 'genres' is missing`（`importBangumiRows` 的行没有 `genres`）⇒ 改用结构子集 `Pick<...>`，不逼调用方补假字段。
+> - 遗留如实登记：`wereadShelf` 的 `communityScore: info?.rating` 口径正确（10 分制）**未动**；本批未新增断言欠账、未重冻基线；`_mirror.cjs` 不在库 ⇒ 镜像**未执行**；版本号仍 `1.5.0` 未 bump。
+> - 🔴 **本条原有一句「Bangumi 没有 `steamDetailFilledAt` 那种『已盖章』收敛标记 ⇒ 每次同步仍重拉详情（有预算上限 40，非致命）」—— 2026-11-08 当日已被推翻，见 #731**：Bangumi **没有任何自动同步**（只有手动弹窗 + 先查重再发请求），「预算 40」是 Steam 的 `STEAM_DETAIL_FILL_LIMIT` 被误挂过来。这条债不存在，未加字段。
+>
+> **#729（2026-11-08）：断言脚本复活 —— 死门禁改成能拦新债的真门禁**
+>
+> 用户问「还有什么技术债」时审计出来的 P0：唯一的产物级 gate `assert-symbols.cjs` **已彻底失效**，而且是三层失效。
+>
+> - **① 崩溃**：第 20891 行裸 `fs.readFileSync` 读了已删除的 `src/modals/EpisodePickerModal.ts` ⇒ `ENOENT` ⇒ 整份脚本打崩，后面上千条断言一条都跑不到。历史注释（23754 / 23887 行）自证同类事故反复发生、每次只做局部规避。
+> - **② 假红**：断言读 `minify: true` 的产物。minify 是 2026-11-06 加的，脚本最后改于 2026-11-01（早 5 天）。同一源码同一断言：读压缩产物 **FAIL=1253**，读未压缩副本 **FAIL=232** ⇒ **1021 条（81%）是拿正则猜混淆结果的假红**。
+> - **③ 永不失败**：末行写死 `process.exit(0)`，`let fail` 只被累加、`grep 'fail\s*>\s*0\|exitCode\|exit\(1\)'` 零命中 ⇒ 即便跑通也永远返回成功。🔴 **这条最要命：永远绿的 gate 和跑不起来的 gate 一样没用。**
+>
+> 六处改动：① `esbuild.config.mjs` production 额外产出未压缩副本 `main.assert.js`（`shared` + 双 `esbuild.context` + 同一 `buildStamp`；⛔ 永不参与发布，`_deploy.cjs` 的 FILES 不含它）② 脚本头部 `JS_CANDIDATES` 按序探测 + 打印 `jsSource`，⚠️ **缺件不悄悄兜回 main.js**（兜回去 = 重新制造那 1021 条假红）③ 崩溃点改 `safeRead` ④ 新增「自审」三条：自扫 190 个引用路径核对存在性 / `RETIRED_SOURCES` 反向守卫 22 个已退场文件 / 断言必须读未压缩副本 ⑤ 末段改「**已知失败基线**」门禁（`assert-baseline.json` 冻结 327 条 ⇒ 新增失败红、修好的提示移出；`--write-baseline` 重冻、`--strict` 欠账也算红）⑥ `.gitignore` 补 `main.assert.js`。
+>
+> - 🔴 **为什么用基线而不是把 327 条全修完**：这 327 条绝大多数**不是 bug 是断言过时**。已实证一类：断言要求「两阅读器各一份（期望 2）」，代码已把 TXT/EPUB 抽成基类 `ReaderPanelBase`，`rl-excard` 只剩基类 1 份 + PDF 1 份 = 2，断言仍按「三阅读器各 1 = 3」数 ⇒ **代码变好、断言没跟上**。改断言变绿 = 把「没核对」写成「核对过了」；立刻修完 327 条 = 任务失控。基线让门禁**当场恢复拦截能力**，欠账按条可 review、可逐条还。
+> - 验证：tsc **exit 0** / build **87 warnings**（= 基线，main.js 2314289 B、main.assert.js 5070798 B）/ 全量 **263 files / 5745 tests passed** / 部署 `ALL_MATCH=1`（main.js `833f50a26d03` / styles.css `07bbfb0f1a3c` / manifest.json `2a4cab8f821f`）/ 断言 `PASS 3732 / FAIL 327`（全在基线内）**exit 0**，`--strict` ⇒ **exit 1**。
+> - **突变探针 `_mutgate.cjs`**：改坏产物 `FONT_FAMILY_OPTIONS = [` ⇒ 基线 exit 0 / 突变 **exit 1、新增失败 2** / 还原 exit 0 ⇒ `[RED ok]`。
+> - ⚠️ 踩坑两则：① 首版探针拿 `rl-excard-note` 突变得「新增=0」假阴性 —— 那条断言**本来就红**，改坏它签名不变；**验证门禁必须拿「当前通过」的证据下手**。② 🔴🔴 首版探针把 `styles.css` 的 `position: relative` 改成 `static`，还原分支写了未定义变量 ⇒ `ReferenceError` 退出、**改动没被还原**；已手工改回并复核 `{`/`}` 2150/2150（剥注释 2097/2097）、无 `position: static` 残留。**教训：突变探针只许动构建产物，⛔ 不许碰真实源文件。** ③ 中文字面量不能当突变目标（产物里是 `\uXXXX` 转义，ASCII 原文只在注释里）。
+> - 遗留如实登记：**327 条已知欠账**留在 `assert-baseline.json`（至少两大类：`ReaderPanelBase` 抽基类导致的计数漂移约 129 条 #351 段；`[css]` 5 条是 `rl-invert` 语义类已退场）；`_mirror.cjs` 不在库 ⇒ 镜像**未执行**；版本号仍 `1.5.0` 未 bump。
+>
+> **#728（2026-11-08）：Steam 同步 / 搜索拿不到评分（两个独立断点）**
+>
+> 用户原话：「steam同步和搜索获取评分不到」。**这是两处断，不是一个** —— 首版修复只碰了同步侧，标题却写成「同步 / 搜索」，属过度声称，本次复核补上搜索侧并更正文档。
+>
+> - **同步侧主因**：`src/services/steam.ts` 的 `parseReviewHistogram` 判据写的是 `r.success !== true`，而线上 `appreviewhistogram/{appid}` 返回 **`{"success":1}`（number）**，`typeof === 'number'` ⇒ 每次都判假、整个直方图被当失败丢掉 ⇒ `reviewPercent` 永远 undefined、`ratingCount` 只剩 `appdetails.recommendations.total` 兜底。改为 `if (r.success !== true && r.success !== 1) return {};`（⛔ 别写 `!r.success`：字符串 `'0'`/`'false'` 也是真值）。
+> - **搜索侧断点**：`parseSteamResults` 只挑 `type/id/name` 三字段、`toGameResult` 压根没有 `rating` 键 ⇒ 搜索列表里 Steam 条目**永远无星级**，而响应里 `metascore` 一直有。补 `metascoreOf(v)`（**字符串**→number，`trim()` 后空 ⇒ undefined）并在 `toGameResult` 里 `rating = metascore / 10`；无收录**不写键**，⛔ 不编 0。
+> - 🔴 取证（真网 33+ 条）：`storesearch` 的 `metascore` 是**字符串**，且**无收录时是空串 `""` 而不是缺键** —— CS2(730)=`""`、NIGHTREIGN(2622380)=`""`；Dota2(570)=`"90"`、ELDEN RING(1245620)=`"94"`、Apex(1172470)=`"88"`。所以判据必须是「转换后 `0 < n <= 100`」，⛔ 写 `!= null` 会把空串当有效分（`Number('') === 0` ⇒ 假「0 分」）。
+> - **收敛判据**：`steamEntryNeedsDetail` 从「只看 `poster` 空不空」改为「`poster` 空 **或** 没盖 `steamDetailFilledAt`」。理由：旧判据漏掉「早期同步过、有封面但没评分」的老条目；而按「缺评分」判又会让**零评测游戏**每轮重拉、白耗 `STEAM_DETAIL_FILL_LIMIT = 40` 预算 ⇒ 改用「请求过就盖章」。新字段 `steamDetailFilledAt?: string`（ISO）已进 `src/data/catalog.ts` 的 `normalizeEntry` 白名单；盖章写在 fetch 成功之后（`syncSteamNow.detailOf` / `importSteamRows`），`catch` 分支不盖章 ⇒ 网络失败下轮重试。
+> - **表单链路**：`EntryForm.svelte` 新增 `let reviewPercent = ...` 本地态（此前只有 `communityScore`/`ratingCount`），并在 `pick()`（含 steam 分支 `d.reviewPercent`/`d.ratingCount`）、`applyDoubanDetail()`、`submit()` 三处落地 —— 旧 `submit` 只透传 `entry?.reviewPercent`，**新增条目永远拿不到**。
+> - 验证：tsc **exit 0** / `svelte-check` **0 errors / 89 warnings**（= 基线）/ build **87 warnings**（= 基线）/ 全量 **263 files / 5745 tests passed** / 部署 `ALL_MATCH=1`（main.js `ba5428582c36` 2314289 / styles.css `0f2e82062230` / manifest.json `2a4cab8f821f`）。
+> - 真网端到端：同步侧 620=99%/430309、292030=95%/906760、730=86%/10745530（`rating` undefined）、570=80%/3029675、1091500=84%/967724；搜索侧 ELDEN RING `94→9.4`、Dota 2 `90→9`、CS2 `""→无 rating 键`。
+> - 踩坑：⚠️ **一次假绿** —— `tests/steam.test.ts` 的全字段映射用例用 `toEqual`，而 `toEqual` **忽略值为 `undefined` 的键**，旧断言从没写 `rating`，补上真实值后立刻失败。**测试曾经通过不代表行为正确，只代表没人断言那个字段。**
+> - 遗留如实登记：断言脚本 `assert-symbols.cjs` 因引用已从工作树删除的 `src/modals/EpisodePickerModal.ts` 而 **ENOENT 跑不起来** ⇒ 「断言未执行」；`_mirror.cjs` 不在库 ⇒ 镜像未执行。
+>
+> **#727（2026-11-08）：顶部页签按「视图勾选的类型」过滤**
+>
+> 用户原话：「还是对新视图改进，比如只选几个类型不全其他全部变成顶部胶囊适配」→ 澄清「不，我是说视图展示不是高级设置UI」→「是在设置新自定义视图勾选类型，然后其他不勾选的不展示出来，勾选的在导航布局为顶部胶囊时显示为胶囊」；映射规则选定「只显示『影视』+ 计划 + 统计（类型页签按勾选过滤，非类型页签常驻）」。
+>
+> - 结论：自定义视图勾了哪几种类型，顶部胶囊就只留对应页签。**计划 / 统计恒常驻**，`book`/`game`/`music` 按池判定，`media`（影视）在池里含 动画/剧集/电影 **任意一种**时显示。默认视图（池为 `null`）**六枚原样全显示**，零回归。
+> - 真源：`src/pure/homeTabs.ts` 新增 `visibleTabs(pool)` / `resolveVisibleTab(tabs, current)`；`MEDIA_TYPES` 从 `src/views/tab.ts` **搬进 `pure/homeTabs.ts`**（否则反向 import 成环），`views/tab.ts` 改再导出、既有 import 路径不变。
+> - 三个消费点共用同一份（🔴 只改渲染不改键盘 = ←/→ 按旧顺序数下标）：`src/views/components/HomeView.svelte:692` 的 `{#each navTabs}`、同文件 `onTabKeydown` 改用 `navTabs`、`src/views/components/NavMenu.svelte` 新增 `export let tabs = HOME_TAB_ORDER` 并让渲染与键盘都用它。
+> - 兜底：`$: { const fixed = resolveVisibleTab(navTabs, activeTab); if (fixed !== activeTab) switchTab(fixed); }` —— 停在「游戏」时切到只收影视的视图 ⇒ 自动落到「计划」。⚠️ 走 `switchTab` 保持宿主出口一致；它只写内存字段，⛔ 不碰 `settings.startTab`。
+> - 验证：tsc **0 行/exit 0** / build **87 warnings**（= 基线）/ `vitest run tests/homeTabs.test.ts` **19 passed**（新增 13 条）/ 部署 `ALL_MATCH=1`（main.js `e7678b6fa11d` 2313374 / styles.css `0f2e82062230` 652949 / manifest.json `2a4cab8f821f` 438）。真机 CDP：默认视图六枚；切 `types:["movie","tv"]` 视图后 `tracking/media/stats` = 计划/影视/统计；停在「游戏」再切 ⇒ 自动落 `rl-tab-tracking`。截图 `_shot/rd/tabs-filtered.png`。
+> - 踩坑：视图存**媒体库 catalog**（`service.setViews`），⛔ 不在 `settings.mediaViews`；视图下拉 `.rl-sel-btn` 的文案是**当前视图名**，不是「视图」二字；`service` 上没有 `getViews()`，读要用 `await p.service.load()` 取 `.views`。
+>
+> **#726（2026-11-08）：`styles.css` 注释清空「用户对话 + 日期 + 归属词」**
+>
+> 用户原话：「`css.styls` 这些用户原话：「不做AI挂件了，删除全部AI挂件相关代码」。和等日期全部删除就好好说明样式文件的注释不要这么多的用户和对话」（`css.styls` 为 `styles.css` 笔误）。
+>
+> - 口径：删的是**对话史料**（用户原话 + 日期 + `mXXXXX` 会话编号 + 「报障/裁定/点名/逐字」归属词），⛔ 不是把「用户」二字清零 —— 「否则用户一收栏就再也选不了集」这类**讲界面行为**的句子要改写成无主语句，不能删词成病句。🔴 **技术术语里的「逐字」不能动**：`逐字高亮`（歌词功能名）、`逐字换行`、`逐字一致`、`逐字段一行` 共 11 处保留。
+> - 做法：`_sweep-user-comments.cjs` 六阶段管道 —— 阶段 1 是 11 条正则，阶段 2~5 是 `PAIRS2` **219 条**精确改写（215/219 命中，4 条 MISS 均被更宽条目先吃掉、结果正确），`TIDY` 18 条排版清扫。顺序 **TIDY → PAIRS2 → TIDY**（第一遍 TIDY 消掉 `（ ：「…` 冒号前空格后，精确改写对才对齐）。`pairRegex()` 把片段空白转 `\s*` 以跨折行匹配。
+> - 读数：`styles.css` **480011 → 474546 字符**、11502 → 11491 行；注释块 **1079 个不变**；含「用户」**334 → 0**、含日期 **222 → 0**、含 `m\d{5}` **38 → 0**、含「原话」**28 → 0**；「报障」17→0、「裁定」45→0、「点名」19→0、「逐字」31→**11**（全为技术术语）；**注释外逐字节一致 = true**；大括号 2150/2150；行内病句 **0**；引号失衡仅剩 1 块（b276，原文即有）。
+> - 六类自伤已修：①正则整段替换吞掉引号内需求正文（改捕获组 `$1`）；②注释收尾 ` */` 被贴成 `*/`（前瞻字符类含 `*`）；③双空格误报（把行首对齐缩进算进去）；④孤立「（」；⑤#725 留下的 `键盘 对应/ 改为`；⑥引语跨行导致闭合 `」` 落单。⚠️ 教训：修补对必须写**最终形态**，一次补一批、补完立刻重跑专项探针。
+> - 验证：tsc **0 行/exit 0** / build **87 warnings**（= 基线）/ 部署 `ALL_MATCH=1`（main.js `3f77ec38689f` 2312610 / styles.css `0f2e82062230` 652949 / manifest.json `2a4cab8f821f` 438）。真机 `check view` **3/3 PASS**，截图 `_shot/rd/css-comments-clean.png` 确认渲染正常。
+> - ⚠️ **PowerShell 数 warning 会读成 88** —— 多出那条是 PowerShell 把 stderr 包装成错误记录的截断行（`...String) [], RemoteException`），不是 esbuild 告警。正确数法：`cmd /c "node esbuild.config.mjs production > out 2>&1"` 后只数以 `▲ [WARNING]` 开头的行。
+> - ⚠️ 产物断言未取得读数（`assert-symbols.cjs:20891` 读已删除的 `EpisodePickerModal.ts` 抛 ENOENT，历史欠账）；镜像未执行（`_mirror.cjs` 不在库）。
+
+> **#725（2026-11-08）：删 ASR 信任背书文案 + `styles.css` 注释去主观化与去 emoji**
+>
+> 用户原话：①删「本地音频转文字用。所有识别都在这台电脑上完成…只有真找不到时才需要你指定。」②「`styles.css` 文件里面的用户主观注释还有你指定的一些emoji图标删了」。
+>
+> - ① 删文案三处一起删：`src/Settings.ts:1135-1146` 的 `ASR_DESC` + JSDoc、原 `:6943-6944` 的 `createDiv({cls:'rl-hint-note rl-asr-note'})` 调用、`styles.css` 原 `:2586-2589` 的 `.rl-asr-note{padding-bottom:8px}` 死规则（该规则只有这一个消费者）。删前已核实 `tests/`+`main.ts` 零引用。
+> - ② 注释清理口径（用户拍板）：34 个「用户：『原话』」块只删主观措辞保留技术结论；注释内 20 种 emoji 全清。🔴🔴 **`content:"✓"` / `content:'🔁'` 在注释外、是真实渲染图标，不能删**。🔴 **`⇒`(450) / `→`(146) 是语法连接词不是装饰**，必须替换成「所以/改为/到」，一删了之会变病句。
+> - 读数：`styles.css` **483791 → 480011 字符**、11505 → 11502 行；注释块 **1079 个不变**；含 emoji 块 **556 → 0**；**注释外逐字节一致 = true**；大括号 2097/2097。修掉替换引入的病句：`改为 改`(0)、`」+空格+改为`(0)、`达标 改为 无需覆盖`→`达标，无需覆盖`。
+> - 验证：tsc **0** / build **87 warnings**（= 基线）/ 部署 `ALL_MATCH=1`（main.js `9760661285cf` 2312610 / styles.css `30c09b199012` 662695 / manifest.json `2a4cab8f821f` 438）。真机：`check view` **3/3 PASS**；设置页 `.rl-asr-tiles` `flexDirection="column"`、三块 `top`=624/675/725、`rows=3`。截图 `_shot/rd/css-clean-rows.png`。
+> - ⚠️ 产物断言未取得读数（`assert-symbols.cjs` 读已删除的 `EpisodePickerModal.ts` 抛 ENOENT，历史欠账）；镜像未执行（`_mirror.cjs` 不在库）。
+> - ⚠️ **仍有 334 块 / 446 行注释含「用户」字样**（「用户原话：…」「用户报障原文：…」），同属主观注释但**超出用户确认的 34 块口径**，本批未擅自扩大范围。
+
+> **#724（2026-11-08）：ASR 环境配置三块卡改「各自一行」**
+>
+> 用户原话：「识别程序、识别模型、音频工具改成各自一行显示，不并排了」。
+>
+> - ① 病根：`.rl-asr-tiles { flex-wrap: wrap }` + `.rl-asr-tile { flex: 1 1 180px }`，面板 **285px** 时恰好塞得下两张 ⇒ 前两块并排、第三块落行。🔴 **不是随机换行，是特定宽度下的固定畸形** —— 404px 展开态下三块本来就各占一行 ⇒ **只在宽面板量会判成假绿**。
+> - ② 修法：`.rl-asr-tiles` → `flex-direction: column; gap: 6px`；`.rl-asr-tile` → `flex: 0 0 auto`。⚠️ **`flex-basis` 在 column 方向指高度**，不改会把每块撑到 180px 高。只动 `styles.css` 一处，`src/Settings.ts` 零改动（该类名只有 `Settings.ts:7063-7075` 一个消费者）。
+> - 验证：tsc **0** / build **87 warnings**（= 基线）/ 部署 `ALL_MATCH=1`（main.js 2313237 / styles.css 668984 / manifest.json 438）。真机 CDP：`flexDirection="column"`、`gap="6px"`、三块 `top` = 141/192/243、`width` 全 378 ⇒ `rows=3`；窄宽复核（临时 `maxWidth=285px`）仍 `rows=3`。截图 `_shot/rd/asr-env-rows.png`。
+> - ⚠️ **产物断言未取得读数**：`assert-symbols.cjs` 读 `src/modals/EpisodePickerModal.ts` 抛 ENOENT（该文件已按用户要求整文件删除，脚本另有 5~6 处同类陈旧引用 —— 历史欠账，与本次改动无关，脚本不在仓库内无法修）。
+> - ⚠️ 镜像未执行（`_mirror.cjs` 已不在库）。规范回填 `UI-GUIDE.md` **v388** + §11.10「#724 补」（该段此前从未记过 tile 排列方式）。
+
+> **#720b（2026-11-07）：条目属性栅格按自身宽度降列数** —— 用户选「按窗口宽度降列数」。
+> - `applyEntryFormCols()`：`w<240 ? 1 : w<480 ? 2 : 6`，写 `data-cols` + `--rl-ef-cols`；CSS 逐档映射。
+> - 🔴 坑①：`ResizeObserver` 跨 document 被静默忽略（设置页独立窗口）⇒ 必须取 `canvas.ownerDocument.defaultView.ResizeObserver`；否则回调一次不触发、`data-cols` 恒为初始 `1`。
+> - 🔴 坑②：`container-type` 写在自己身上不生效；坑③：挪到外层 `.rl-ef-preview` 会套尺寸包含，画布 524→324px、宽窗反变 1 列。
+> - 🔴 窗口宽度与画布宽度**不成正比**：实测窗口 1440 → 画布 324px、窗口 900 → 画布 599px ⇒ 按窗口写断点会判反，只认画布 `clientWidth`。
+> - 真机：真实窗口 800 宽 → 画布 522px → 6 列（span 6 = 506px、span 3 = 249px）；700 → 2 列；520 → 2 列。截图 `r720b-ef.png`。
+> - 门禁：tsc 0 / build 87 warnings / check 0 errors·89 warnings / vitest 263 files·5712 tests；部署 `ALL_MATCH=1`。镜像未执行（`_mirror.cjs` 已不在库）。
+
+> **#723（2026-11-07）：AI集成「用途」组收口 —— 删全局档 / 分组重排 / 服务名统一 AI 前缀**
+>
+> 用户原话：删「全局配置模型」、删「阅读器 AI 快捷」里的「AI 快捷」、顺序调成【阅读、播放、编辑】、服务名改「AI翻译 / AI搜索」、删学习模式那段悬停查词长提示。
+>
+> - ① `aiServiceDefs()` 由 7 条改 **6 条**，删 `id:'global'`；`AiServiceDef` 的 `prompt` 收成必填、`applyAll` 字段整套删除；`renderAiServiceDetail` 里「应用到全部服务」整块（30 行）与恒真的 `if (def.prompt)` 包裹一起去掉。🔴 存储字段 `aiGlobalProvider` / `aiGlobalModel` **保留**（老 data.json 有值，删键=静默丢配置），只影响 `normalizeAiChoice` 兜底。
+> - ② `sceneTitle` 改「阅读 / 播放 / 编辑」；③ 顺序改 阅读(翻译/搜索) → 播放(字幕总结/字幕提问) → 编辑(总结/预填)；④ name 统一 `AI + 动作`（`AI翻译` / `AI搜索` / `AI字幕总结` / `AI字幕提问` / `AI总结` / `AI预填`），**`id` 一字未动**（它同时是 `this.aiPick` 的持久化键）。
+> - ⑤ 删 `DICT_DESC` 常量与 `sec3.createDiv({ cls: 'rl-hint-note rl-dict-note', text: DICT_DESC })`，保留 `DICT_PATH_DESC`。
+> - 验证：tsc 0 / build **87 warnings** / check **0 errors·89 warnings** / vitest **263 files·5721 tests**；部署 `ALL_MATCH=1`（main.js `7e57a50381e4` / styles.css `591ee28abd52`）；真机 `groups:["阅读","播放","编辑"]`、`items` 六条、`hasGlobal:false` / `hasAI快捷:false` / `hasApply:false` / `hasOldHint:false`，播放阅读页 `hasLongDict:false` / `dictNoteCount:0` / `hasPathDesc:true`。截图 `tools/.out/r723-ai.png`。
+> - ⚠️ 镜像未执行（`_mirror.cjs` 已不在库）。
+
+> **#722（2026-11-07）：AI集成「用途」右栏 —— 删多余提示 + 恢复默认并入标题行**
+> - ① 用户点名删掉「没改过，用内置默认（灰字就是默认提示词）」：脚注现在只在**已自定义**时出 `已自定义 · 共 N 字`，否则整条 `hidden`（不留空行，避免两字段间距忽大忽小）。
+> - ② 「恢复默认」从右栏底部搬到**服务标题行右侧**，类名复用高级设置三组那枚 `.rl-group-reset`，外观规则由两条选择器共用一条；`.rl-btn.rl-ai-dreset` 整条删除（⚠️ 「应用到全部服务」原与之共用尺寸规则，已单独接住）。
+> - 🔴 三个宿主样式坑（真机才看见）：`button:not(.clickable-icon)` 与 `.vertical-tab-content h4` 都是 (0,1,1) > 单类 (0,1,0) ⇒ 按钮底色 `rgb(230,230,230)`、标题被吃 16px 截成「翻译…」；flex 里 h4 带 `min-width:0` 会逐字换行成「翻译服 / 务」。
+> - 门禁：tsc 0 / build 87 warnings / check 0 errors·89 warnings / vitest 263 文件 5721 用例（均 = 基线）；部署 `ALL_MATCH=1`（main.js `74d071b776e5` / styles.css `591ee28abd52`）。
+> - 真机对照：AI 页与高级设置三枚 `恢复默认` 的 `getComputedStyle` 逐项一致（`bg rgba(0,0,0,0)` / `11px` / `h 18` / `pad 2px 8px`）；截图 `r722-translate.png`、`r722-custom.png`。镜像未执行（`_mirror.cjs` 不在库）。
+
+> **#721（2026-11-07）：页签改名「搜索配置」/ 引擎行点行只勾选 + 箭头透明无边框 / 笔记属性可增删**
+> - **①** `src/pure/settingNav.ts:56` 页签「元数据源配置」→「搜索配置」，全仓 50 处处方文案同步，**刻意跳过 6 处历史引述行**（`原话/改名/原「/原为/当时由/改为`）；断言脚本 4 处锚旧名属预期翻面（按 #717 先例不改宿主脚本）。
+> - **②** `renderAsrModelRow`：行点击恢复为「只选中」（`is-clickable` + 排除面板内部），收放归 22px 箭头；**删掉「当前选中默认展开」**（点行选中后重渲染会替你展开）。🔴 箭头「透明无边框」必须写 `.rl-asr-model .rl-asr-chev` 两条类 —— 核心 `button:not(.clickable-icon)`（0,1,1）压过单类（0,1,0），真机实测底色 `rgb(230,230,230)` + inset 阴影。复测 `chevBg: rgba(0,0,0,0)` / `chevShadow: none` / 三行 `chevRelY` 恒 25。
+> - **③** 笔记属性可增删：`fieldOrderHidden`（与顺序**正交**，⛔ 不能从 order 里删 —— `normalizeFieldOrder` 会把「不在配置里」补回末尾）、`FIELD_ORDER_LOCKED_KEYS`（id/type/title/created/updated 不许隐藏）、`resolveAllHidden` 按目标键（`__global` / `EntryType` / `k:<BookKind>`）各自允许集收窄；`applyFieldOrder(fm, order, hidden?)` 先过滤再排序；`EntryService.hiddenForEntry` 三段取并集。UI：`.rl-fo-del` 删除按钮 + 常驻「已隐藏 N 项」池。🔴 池子**必须渲染前建常驻节点**，在 `render()` 里现建会每次多一个、恢复后旧的还写着「已隐藏 1 项」（真机抓到）。
+> - **测试**：`tests/fieldOrder.test.ts` 新增 9 条 + **两轮突变验证均咬住**（去掉隐藏过滤 → 2 红；去掉锁定键守卫 → 2 红）。
+> - **门禁**：tsc 0 / build 87 warnings（基线）/ check 0 errors·89 warnings（基线）/ vitest **263 files · 5721 tests**（基线 5712 + 9）；`node _deploy.cjs` `ALL_MATCH=1`（main.js `84c19bd712b3`）。
+> - **真机**：页签 `[基本设置, 搜索配置, 播放阅读, AI集成, 高级设置, 关于]` 无旧名；点行选中后 `panelHidden: true`；删「封面」16→15 项 + 池子出现，点回 16 项 + 池子清空（测试写入已还原）。
+> - ⚠️ `_mirror.cjs` 已不在库，镜像同步未执行。
+
+> **#720（2026-11-07）：条目属性面板改 6 列栅格 · 真弹窗镜像（方案 D）**
+- 用户原话：「选择模型和环境配置不要1/2挤在一起，编辑属性条目给我结构重构啊参考网站给我5版方案」；方案对比页 = `tools/.out/entry-attr-options.html`（A 属性表 / B 卡片墙 / C 三列看板 / **D 真弹窗镜像** / E 列表+检查器），用户 m03239 选定 **D**。
+- ① 「选择模型 / 环境配置挤成 1/2」是真 bug：`.rl-asr-env` 是模型行的**子元素**，行是 `display:flex` ⇒ 面板成了第二个弹性项、被挤到右半（改前 `x=444 w=311`，改后 `x=318 w=404`）。修法：`.rl-asr-model.is-foldable { flex-wrap: wrap }` + `.rl-asr-model.is-foldable > .rl-asr-env { flex: 1 0 calc(100% - 20px); flex-basis: calc(100% - 20px); min-width: 0 }`；`calc` 里减的 20px 是面板自身 `margin-left`，写 `100%` 会超宽被切；⛔ 别在 `.rl-asr-model` 基础规则上加 `flex-wrap`（会牵动无面板的 `.is-clickable` 行）。
+- ② 面板结构：`list` + `mirror` 两段 ⇒ **一块** `.rl-ef-canvas`（6 列 grid，`gap: var(--size-4-2)`，虚线外框）；每块 `.rl-ef-blk` 由行内 `grid-column: span N` 占位（6/3/2）；块内 `.rl-ef-fld` 竖排（标签在上、控件在下）、`.rl-ef-ctl` 改 `width:100%`；块底 `.rl-ef-tools` 载跨度分段器 + ✕。整段只读色带 `.rl-ef-mirror*` 已删除。
+- ③ 三版前缀演变：`.rl-ef-box`（#718，已删）→ `.rl-ef-row`（#719）→ **`.rl-ef-blk`（#720）**。改样式前先 grep 旧前缀，否则是死样式（`.rl-ef-segbtn` / `.rl-ef-x` 前缀已一并从 `.rl-ef-row` 换成 `.rl-ef-blk`）。
+- 验证：tsc 0 / build 87 warnings（基线）/ check 0 errors·89 warnings（基线）/ vitest 263 files·5712 tests；部署 `ALL_MATCH=1`；真机 `cols=81px×6 / gap 8px / blkCount 11 / span6→506px / span3→251px / overflowX false / staleNodes 全 0`。
+- ⚠️ 镜像同步未执行（`_mirror.cjs` 已不在库）。
+
+> **#719（2026-11-07）**：**播放阅读左内距归零 / 引擎环境配置改箭头收放 / 组名改「管理与维护」/ 条目属性面板去卡化重做**（用户原话：「这个怎么前面空了一块啊，还有选择模型环境配置改成下拉箭头收起展开吧②基本设置-数据与维护名称改成『管理与维护』③这个条目属性什么鬼太丑了也不好调整，参考更多主流」）
+> **① 媒体载体前面空一块 —— 真 bug，根因是漏了一条同族覆盖**：`.rl-svc-group-body` 基础规则带 `padding: 2px 0 6px calc(var(--size-4-4) * 2)`（=32px，给基本设置那种长列表层级用），`[data-page="basic"]` 有归零覆盖、**`immersive` 没有** ⇒ body 多 32px + 行内核心 20px = 52px。新增 `.rl-set-page[data-page="immersive"] .rl-svc-group-body.setting-items { padding: 0 }`，只收 nativeGroup 那一支（语音服务组含 `.rl-voice-card` 仍需缩进）；⛔ 不改基础规则。实测 `padding-left 32→0px`、行 x 264→232 = 组 x 232。
+> **② 引擎环境配置改为行尾箭头收放**：删掉整行 `role=button` / `tabindex` / click / keydown 整套；改为行尾真 `<button.rl-asr-chev>`（`chevron-right`，展开旋转 90°，`aria-expanded` + `aria-label`「展开/收起环境配置」双向同步，click 里 `stopPropagation`）。删 `.rl-asr-model.is-foldable { cursor:pointer }`。实测三行 `chevCount:3`，开合 `hidden / is-open / aria-expanded` 三项双向正确。
+> **③ 组名「数据与维护」→「管理与维护」**：`src/Settings.ts:5724` + `src/pure/settingNav.ts:200`（图标 `trash-2`）+ `tests/settingNav.test.ts:133` 三处同步；测试另留两条反向断言（要求 old 名返回 null：数据与维护、封面与清理）⇒ 旧名不兜底。理由：组内是**动作**不是数据。实测基本设置页标题已含新名、无旧名。
+> **④ 条目属性面板去卡化（用户「太丑了也不好调整，参考更多主流」）**：11 张独立带边框卡片 → **整列一张卡 + 行间发丝线**；每行横排 `[把手] 属性名 ⋯ [72×22 控件小样] [整行|1⁄2|1⁄3 分段器] [✕]`；控件示意从「吃满整行的大空框」改为固定小样右对齐成一列；分段器三枚按钮收成一枚 3 段、`data-tip` 从 33 条并为整组 1 条；把手在本面板默认 `opacity:.5`（裸行无边框，全透明时「能拖」零提示）。实测 `rowCount:11`、`list{border:1px,radius:6px,overflow:hidden,h:412}`、`row{border:0,radius:0,bg:transparent,shadow:inset 0 1px 0}`、`ctl{72×22}`、`segTips:0`、整块 788→706px。
+> **⑤ ⚠️ 改④时撞的坑（已写进 UI-GUIDE §11.11）**：`styles.css` 里更早的「高级设置五组外壳与行统一」（m12814）规则**显式列了 `.rl-ef-row`**，特异度更高，会把 border/radius/bg/padding **静默加回每一行**；`tsc` / `svelte-check` / 单测全看不见，只有真机 `getComputedStyle` 才暴露（首版量出 `firstRowBorder:"1px"`）。已把 `.rl-ef-row`（含其 `:hover` 覆盖与 `.rl-ef-list` 的 `gap:6px`）从那条规则移除，其余四组仍照旧。**教训：改一条样式的观感前，先 grep 该类名在整份 CSS 里被哪些选择器提到过。**
+> **门禁**：tsc 0 · build 87 warnings（= 基线）· check 0 errors/89 warnings（= 基线）· vitest **263 files / 5712 tests passed，33.25s** · `node _deploy.cjs` 两目标 × 三产物 `ALL_MATCH=1`（main.js 2,312,560 B / styles.css 656,872 B）。真机 `tools/.out/probe-719c.cjs` 四条逐项量测 + 截图 `r719-media.png` / `r719-ef-final.png` / `r719-asr.png`。⚠️ 镜像**未执行**（`_mirror.cjs` 已不在库）。
+
+> **#718（2026-11-07）**：**设置页八条整改 + 两个真 bug**（用户原话：「插件设置页-基本设置下的数据与备份、数据与维护组其下的项是否分配合理？元数据源配置页下的元数据搜索源启用项鼠标hover各项没任何提示啊；把组内顺序调整为"元数据搜索源启用、元数据搜索源凭据、网络播放源凭据、音乐下载源凭据"…播放阅读的媒体载体组样式改回基本设置页那版…语音转文字的环境配置合并到选择模型折叠起来…三家共用那版去掉并全局跟随"通用音频视频取流那个路径（加个ffmpeg框）"…语音转文字、文字转语音图标去掉…AI集成用途两个框要高度对齐…高级设置-条目属性重构就想根据现有编辑属性UI页面拖动排序编辑增删不行吗」）
+> **① 组内分配（未改代码）**：基本设置 › 数据与备份 / 数据与维护大体合理；唯一名不副实是「Bases 视图模板」属**导出**不是备份，「媒体库目录」放备份也勉强但无更合适位置。
+> **② hover 无提示 —— 真 bug，根因是设置页开在独立窗口**：`services/globalTooltip.ts` 原 `const doc = document` 只绑主窗口，独立窗口的事件到不了监听器。改为多 document 模型（`bindTooltipDocument(doc)` + `WeakMap<Document, BoundDoc>` + 每 doc 一套 tip/定时器，`place()` 用 `doc.defaultView` 尺寸，气泡挂 `doc.body`）；`Settings.display()` 里用 `containerEl.ownerDocument` 绑。⚠️ `activeDocument` 是 `obsidian.d.ts` 的 `declare global` **全局变量，不是具名 export**。
+> **③④⑥**：元数据源配置页组序 = 启用 → 搜索源凭据 → 网络播放 → 音乐下载（上一轮「网络播放排第二」已被覆盖）；媒体载体组补 `createGroupSection` 第 4 参 `nativeGroup`（语音服务组不传，`.rl-voice-card` 会卡中卡）；语音两节标题去 `🎙️`/`🔊`。
+> **⑤**：点整行收放环境配置（`is-foldable` + `aria-expanded`；「选中引擎」改挂圆点/胶囊 + `stopPropagation`），新增 `renderEngineEnv(host, forEngine)` 用 `asrPathsFor(forEngine)`（⛔ 不能用只看当前引擎的 `asrEnvCheck()`）；删「三家共用 ffmpeg」段，ffmpeg 框并入「通用音频视频取流」行（绑 `asrFfmpegPath`，字段名带 asr 是历史⛔ 别改名）。
+> **🔴 `aria-expanded` 真 bug（探针抓到）**：原塞在 `if (!opts.pick)` 里 ⇒ 带档位下拉的 Whisper.cpp 行读出 `null`，读屏完全看不见收放状态。
+> **⑦**：`.rl-ai-master-wrap` 由 `align-items: flex-start` 改 `stretch` + `.rl-ai-master { justify-content: flex-start }` ⇒ 两框永久等高（实测 313/313、diff 0）。⛔ 不用 `space-between`。
+> **⑧**：条目属性预览改真控件外观（用户拍板方案 A：重画预览、保留拖拽）—— 每行「把手 + `.rl-ef-fld`（标签在上 / `.rl-ef-ctl.is-<kind>` 在下）+ 宽度档位 + 隐藏」；新增 `entryFormControlKind()` 依 `EntryForm.svelte` 41 个 `data-fld` 的真实控件类型判定（text/num/area/btn/meta）；旧 `.rl-ef-box` 删除。实测 11 行 `text:5/area:3/num:1/btn:1/meta:1`、`labelAbove:11`。
+> **🔴 截图后才发现的布局 bug**：343px 宽的面板里 `pathRow` 走核心 `.setting-item` 两栏，`.setting-item-info` 被压到 **73px** ⇒ 说明文字一字一行竖排、输入框顶出边界。修法：**只在本面板内**改单栏（⛔ 别提到全局改 `.setting-item`）。复测 info/ctrl 285px、输入框 229px、`scrollOverflow:0`，面板高 1065→616px。
+> **验证**：`tsc` EXIT=0 / `build` 87 warnings（=基线）/ `check` 0 errors·89 warnings（=基线）/ **263 files·5712 tests passed** / `_deploy.cjs` 两目标 × 三产物 `ALL_MATCH=1`（main.js 2,312,259 B、styles.css 651,651 B）。⚠️ 镜像**未执行**（`_mirror.cjs` 已不在库）。
+>
+> **1.5.0 收口（2026-11-07，本版最终形态）**：**全面更新 Project-Rule 文档 + 一份用户向的 1.5.0 更新日志**
+> **一句话口径**：1.4.0 把「库」做全（数据源 / 条目 / 笔记），1.5.0 把「看」做全（播放器 / 阅读器 / 字幕 / 学习模式）。本版**不含任何版本的「插件自取流」能力** —— 开发期实现过 DASH+MSE 双轨 + 本地回环代理绕防盗链，后按用户裁定**整体撤除**，网络集只剩**官方 iframe 内嵌**这一条路。
+> **① 新增文档**：`Project-Rule/RELEASE-1.5.0.md`（215 行，用户向）—— 一句话概括 + 新增功能 10 条 + 体验优化四类 + 问题修复表 12 条 + 界面美化 + 与 1.4.0 对比一览表 + 「已归并、不在本文的中间态」7 条 + 升级说明。**只取最终可见形态**，反复修改的中间态不进本文。
+> **② 全量更新**：`PRODUCT.md`（v1.4.0→v1.5.0、新增 1.5.0 状态段 + 1.5.x 增量段、源数 12→13）、`README.md`（版本行重写、测试行 186→263 文件/5712 用例、最新功能拆两条）、`DESIGN.md`（265→267 行；Modal 26→36 类/44 文件、pure 148→212 个、视图 7→8 个在册、源数 12→13 三处、新增 1.5.0 期扩展点段）、`AGENTS.md`（版本策略 1.4.1→1.5.0 期、依赖图源数 12→13、删已不存在的 `EpisodePickerModal`、pure 179→212、数据源口径 12→13 并补 weread；**文件受 65536 B 指令预算约束，改完实测 65535 B**）、`current-progress.md`（本条）。
+> **③ 三处过时用户可见处方文案（入口已搬迁/开关已删，用户照做找不到）**：`pure/asrEngines.ts` 的 `qwenMissingMessage` / `senseVoiceMissingMessage` 从「设置 → 高级设置 → 音频转文字」改为「设置 › 播放阅读 › 语音服务 › 语音转文字」；`pure/netCueCopy.ts` 的 B 站空态从「实验性功能 › 启用内置视频播放器」改为「元数据源配置 › 网络播放源凭据 › B站」；`views/EpisodePageView.ts` 的 `frozen` 分支不再让用户去开已删除的 `netInlinePlayer`，改说真实成因（要桌面版才读得到子帧进度）。
+> **④ 测试断言升级（⚠️ 原断言形同虚设）**：`tests/asrEngines.test.ts` 原来只 `toContain('音频转文字')` —— 入口删了但旧词还在文案里就能过。改为**拿两份导航真源逐级校验处方路径**：正则取「设置 › 页签 › 分组 ›」，页签必须 ∈ `SETTING_NAV_TABS`、分组必须 ∈ `Object.keys(SETTING_GROUP_ICONS)`。**突变验证两轮咬住**：只查第一级时「高级设置 › 音频转文字」不报红（高级设置仍是合法页签），补上分组级校验后才咬死。`tests/asrQwen.test.ts` 两处同步改。⚠️ 第一次只改了 `asrEngines.test.ts` 漏了 `asrQwen.test.ts` —— 根因是「按文件名猜测试」而不是**按被改字符串反查**。
+> **⑤ 验证（全部实测）**：`tsc --noEmit` **EXIT=0** / `npm run build` **EXIT=0 + 87 warnings（= 基线）** / `npm run check` **0 errors / 89 warnings（= 基线）** / 全量 vitest **263 files / 5712 tests passed**（含受影响的 3 套件 58 条）/ `_deploy.cjs` 两目标 × 三产物 **ALL_MATCH=1**（main.js 2,310,919 B / styles.css 644,305 B / manifest.json 438 B）。
+> **⚠️ 未执行**：`_mirror.cjs` 全仓已不存在 ⇒ 镜像同步记为「工具缺失」；`tools/_probe-vault.cjs` 同样不存在（`_deploy.cjs` 自动镜像分支走 catch 静默跳过）。另：`assert-symbols.cjs` 里 `RELEASE_NOTES` 的 1.5.0 summary 已改为不含已撤除功能的新文案（105 字、以「。」收尾、与根 `CHANGELOG.md` 的 `## [1.5.0] - 2026-11-01` 标题对齐）。
+>
+> **#717（2026-11-07）**：**AI 集成页「用途」组改主从布局（左索引 + 右详情）**（用户原话：「继续AI集成页的结构重构」；十版方案里选定 I 稿）
+> **一句话口径**：这属于**结构重构**，并不涉及改皮 —— 七条用途各带一份提示词，平铺会纵向无限拉长，「改这一条」还得先在一列里找到它。主从把**索引**和**编辑**分开：左栏一眼看全七条状态（状态点），点谁就只看谁。
+> **① 结构重写**（`src/Settings.ts`）：`renderAiServiceRows` 改为建 `.rl-ai-master-wrap`（`.rl-ai-master` 左索引 + `.rl-ai-detail` 右详情）；新增 `aiServiceDefs(): AiServiceDef[]` 作为**七条目唯一真源**（`global` / `translate` / `search` / `summary` / `prefill` / `cue-summary` / `cue-ask`，12 字段）；新增 `renderAiServiceDetail` 只画选中那一条；选中项存 `private aiPick`（**界面焦点、⛔ 不落盘**，与 `entryFormSlot` / `cardFieldsType` 同族）。旧的三方法 `renderAiSceneCard` / `renderAiGlobalRow` / `renderAiServiceRow` 整体退场。
+> **② ⚠️ 真机抓到的真 bug（单测抓不到）**：「不启用」的条目状态点是灰的，右栏拣选按钮却**亮着模型名** —— 根因 `normalizeProvider('off')` 归一回 `zhipu`，`shownModel()` 随即回一个 `GLM-4-Flash`，`text: model || aiPickText(...)` 的 `||` 把「不启用」短路掉了。`aiPickText` 纯函数本身是对的且已被单测钉死，**但组装处让它根本没被调用到** ⇒ 修法是 `const off = isAiOff(choice); const model = off ? '' : this.shownModel(...)`（不启用时模型段不参与计算），⛔ 不在视图层再补判空。
+> **③ 提示词：折叠块 → 常驻 textarea**：`.rl-ai-prompt-btn`「提示词 ›」整套退场；`renderPromptField` 签名收窄为 `{ value?; defaultText; onSave }`（**内部不再画标签**，标签由调用方 `.rl-ai-dlabel` 统一画 —— 修掉了「两行『提示词』叠着」）；失焦自动保存、⛔ 无保存按钮（用户 2026-11-07 明确选定）；脚注 `refreshFoot()` **回读输入框当前值**现算「已自定义 · 共 N 字」与恢复默认的 disabled（修掉了「保存后提示不刷新」）；「恢复默认」复用 `dispatchEvent(new Event('change', { bubbles: true }))` 走同一条归一化→写盘→刷新通路，⛔ 不整页重渲染。
+> **④ 样式**（`styles.css`）：删死样式（`.rl-ai-name-row .rl-ai-prompt-btn` 整组、`.rl-prompt-row.rl-ai-prompt-block`、`.rl-ai-svc-card`、`.rl-ai-scene*` 7 条、`.rl-ai-global*` 3 条、零引用的 `.rl-prompt-label`）；新增主从类（`.rl-ai-master-wrap` / `.rl-ai-master` flex 0 0 210px / `.rl-ai-mgrp` / `.rl-ai-mitem` + `.is-on` / `.rl-ai-mdot` 7px + `.is-off` / `.rl-ai-detail` / `.rl-ai-dtitle` / `.rl-ai-dsub` / `.rl-ai-dfield` / `.rl-ai-dlabel` / `.rl-ai-dfoot` / `.rl-ai-dhint` / `.rl-ai-dops`）。右栏拣选控件吃满整格宽靠**两级前缀**覆盖（`.rl-ai-detail .rl-ai-pick .rl-ai-pick-btn`），⛔ **不改** `.rl-ai-svc` 那条共享规则（语音服务行仍靠它）。`.rl-ai-svc` 现在**只剩 `renderTtsVoiceRow` 一处**在用 —— ⛔ 别当死样式删。
+> **⑤ 验证（全部实测）**：`tsc --noEmit` **EXIT=0** / `npm run build` **EXIT=0 + 87 warnings（= 基线）** / `npm run check` **0 errors / 89 warnings（= 基线）** / 全量 vitest **263 files / 5712 tests passed** / `_deploy.cjs` 两目标 × 三产物 **ALL_MATCH=1** / **真机 CDP 探针**（Obsidian 1.14.4，设置页是独立窗口）七条目逐条点选全部正确跟随、无横向溢出、控制台 0 错误、深色页正常；修 bug 后探针复跑：三条 off 条目 `btnText:"不启用▾"` + `btnOff:true`、四条 on 条目模型名与 `data-tip` 正常，**无回归**。
+> **⚠️ 断言 8 条预期翻面**（`assert-symbols.cjs` 是 11-01 版，锚在旧的场景卡/折叠提示词上，本批必然 FAIL）：提示词入口按钮、提示词块默认收起、提示词按钮 `height:auto` 与悬停色、四行一张卡、提示词块建在卡内、用途四行各自成卡、`.rl-ai-svc` 两条渲染路径各 addClass 一次、朗读音源在名称行尾。另 7 组 FAIL 是工作区历史漂移（下载目录文案 / LRC 按钮 / 就地提示样式 / 子分组标题 / 提问提示词内置串 / 小按钮），与本批无关，未动。脚本事在工作区外 `.workbuddy` ⇒ **未改原脚本**。
+> **⚠️ 未执行**：`_mirror.cjs` 全仓已不存在（AGENTS.md 仍写它是首选同步工具）⇒ 镜像同步这一步记为**工具已不在库**；`_deploy.cjs` 自动镜像分支会走 catch 静默跳过。
+>
+> **#716（2026-10-25）**：**默认值收紧 —— 元数据源「仅豆瓣」+ AI 用途「不启用」**（用户原话：「默认配置下设置-启用元数据凭据源默认全部为仅豆瓣勾选启用，其他不勾选」「默认配置下设置-AI集成-用途默认全部为不启用」）
 > **一句话口径**：只改**默认值**，不做一次性迁移（用户明确选 A）—— 新装 / 未存过该键的用户生效；已存过设置的库原样保留，避免覆盖用户的显式选择。
 > **① 源码**：`pure/sourceRegistry.ts` 的 `DEFAULT_CHAINS` 六组全收成 `['douban']`；`pure/translate.ts` 新增 `AI_PURPOSE_DEFAULT = AI_PROVIDER_OFF`；`Settings.ts` 的 `DEFAULT_SETTINGS` 四项用途取该常量。
 > **② 关键决策**：⛔ 不改 `normalizeAiChoice` 的兜底（仍是 zhipu）—— 改兜底会让所有脏数据静默变「不启用」，且 `DEFAULT_TRANSLATE_PROVIDER` 的类型不含 `off`。默认值必须落在 `DEFAULT_SETTINGS`。
@@ -60,6 +2611,7 @@
 > **⚠️ 边界**：**未在 Obsidian 本体运行**（本机无该运行时），验证强度 = 单测 + 产物断言。用户需 Reload 后到设置页点「立即同步」实测百分比落地。
 >
 > **#709（2026-10-25）**：**Steam 缺评分补齐 + 仓库根临时产物清理**（用户原话：「为什么有些同步导入的steam条目没有大众评分和评价人数，还有清理一下仓库根目录未调用临时产物」）
+> ⚠️ **本条已被 2026-11-08 的「Steam 同步 / 搜索拿不到评分」推翻一半**：`steamEntryNeedsDetail(cur)` 现在**不是**「只看 `poster` 空不空」，而是「`poster` 空 **或** 没盖 `steamDetailFilledAt`」。原因见文首该条 —— 只看 `poster` 会漏掉「早期同步过、有封面但没评分」的老条目，它们永不补。下面「刻意不以缺评分为判据」的理由仍然成立（零评测游戏会被每轮重拉），所以新判据改用「请求过就盖章」而非「拿到百分比才算补齐」。
 > **一句话口径**：①是**同一件事写了两遍必然有一遍先烂**（映射抽成唯一真源）；②是**按判据删而不是按文件名删**。
 > **① Steam 缺评分根因**：两个落库入口里，只有 `importSteamRows`（弹窗勾选导入）走 `fetchDetail` 并落 `rating`/`ratingCount`；而 `syncSteamNow`（启动静默同步 / 同步按钮）建条目只写 `{type,title,status,playtimeMinutes}`，**一个详情字段都不拉** ⇒ 用户看到「有些有、有些没有」。
 > **修法**：`src/pure/steamSync.ts` 新增唯一映射真源 `steamDetailFields(d: unknown)`（`rating` 只采信 `0 < v <= 10` —— `0` 是「没收录」不是 0 分；`ratingCount` 正数取整；genres 截断前 3）；`STEAM_DETAIL_FILL_LIMIT = 40` 限启动路径（防 2000 款游戏开机逐条拉详情）；`steamEntryNeedsDetail(cur)` **只看 `poster` 空不空**（刻意不以「缺评分」为判据 —— 多数游戏没 Metacritic 收录，按缺评分判会每轮重拉、永补不上）。
@@ -768,6 +3320,35 @@
 
 | 序号 | 批次 | 日期 | 内容 |
 |------|------|------|------|
+| 437 | **#776 m15513 两条 —— AI 总结取消打字机 + 字幕问答不再弹回顶部** | 2026-11-13 | ① **打字机有两套通道**：流式阶段 rAF 节奏器（`onPartial` 只更新 `liveTarget`、`cuePaceStep` 匀速推进、`typewriterSplit` 切片写节点）+ 收尾整段 `buildCueTypewriter`（`.rl-tw` + 透明占位 `.rl-tw-rest` 撑高、`typewriterVisibleCount` 逐帧吐字）；用户 m15513 要「一次输出完毕」⇒ **两条一起拆**，只删一条仍会逐字。 改后 `onPartial` 直接 `liveShown.textContent = liveTarget;`；`showCueAiPanel` 里改成 `body.createDiv({ cls: 'rl-epp-cueai-sum', text: result.summary })`；整删 `buildCueTypewriter` / `destroyCueTypewriter` + `resetCueAi` 与 `onClose` 两处调用 + 两行 import。 ⚠️ 仍**不重建面板**（重建会丢输入焦点、清空正在打的提问），只改这一行文本。 死码一并退场：`pure/typewriter.ts` 与 `pure/cuePacer.ts` **只服务这一处**（全仓 grep 确证）⇒ 两模块 + 两个测试文件 + `styles.css` 的 `.rl-tw` / `.rl-tw-shown` / `.rl-tw-rest` 三条规则全删（`styles.css` 因此变小 452 B）。 ② 真因 = `buildCueAskBox()` 末尾**无条件**调 `panel.scrollIntoView({ block: 'nearest' })`，而该方法在每次重画时都被调用（提交提问 / 回答回来 / 重新生成），面板比视口高时 `nearest` 会把面板**顶边**对齐视口顶边 ⇒ 每次问答都弹回 AI 摘要开头。 修法 = 新增字段 `cuePanelReveal = false`，只在 `toggleCueAiPanel` 的「从无到有」分支置 `true`，`scrollIntoView` 整段包进 `if (this.cuePanelReveal) { this.cuePanelReveal = false; ... }`；⛔ 不改 `block: 'center'`（每次重新生成都会把右栏跳一下，比不滚更烦）；首次仍要滚一次（窄屏两列下字幕节高 50vh=500px、节底到 1068px 而视口仅 1000 ⇒ 输入框在屏外）。 守卫：`cueStreamWiring` 22 tests（`onPartial` 契约翻转 + 反向禁 `requestAnimationFrame` / `typewriter` / `cuePace` + 新增「打字机通道整体下线」整条）、`cuePanelMotion` 21 tests（新增 4 条：闸门正则 / `scrollIntoView` 必须在闸门之后且全文只 1 处 / `cuePanelReveal = true` 必须在 `destroyCueAiPanel` 之后且 `showCueAiPanel` 前 800 字符内不得出现 / 字段默认 false + 仍用 `nearest`）。 全量 320/6993 → **318 files / 6973 tests**（净 −2 文件 −20 用例，来自两个纯模块测试删除）。 坑：`edit` 的 `old_string` 必须以完整规则块收尾（两次锚点不全，第一次 not found、第二次把旧注释留下变成两段注释叠着）；PowerShell `Get-Content` 读中文源码是乱码，只能数行数不能核对文字；删模块前必须 grep 全仓，`DESIGN.md` 与两份 CHANGELOG 里的 `pure/typewriter` 是**历史记录**⛔ 不是活引用。 门禁 tsc 0 / svelte-check 0e89w / build 0,87w / assert 318 = 基线 / `ALL_MATCH=1`（main.js `939c7f842359` 2551311 B、styles.css `c9f646d2a74a` 760685 B）。⚠️ 未覆盖：① 未真机录屏确认流式阶段不再逐字、② 未连续问答三次确认页面不动 |
+| 436 | **#775 m13127 三条 —— 合集卡标题归位 / 单一视图下拉退化 / 待补漏斗随搜索态显隐** | 2026-11-13 | ① 真因不是间距而是**横排布局**：旧 `.rl-board-card-coll` 是 `flex-direction: row` + `align-items: stretch` + `gap: 6px` + `grid-column: span 2`，封面钉 `width: 62px` / `flex: 0 0 62px` ⇒ 标题作为横排第二个 flex 子项落在**第二个格子**的横向位置。 真机 CDP 量测：行 `grid-template-columns` = 8×61px、卡片 `w:130`、封面 `w:62`、标题 `x = 卡片x + 68` 且 `w:62 / h:93`。 修法改回竖排 `column` + `align-items: center` + `gap: 4px`，标题 `width: 100%` / `text-align: center`，删掉横排时代的 `flex: 1 1 auto` 与 `width: auto` 补丁；封面**必须留一格宽上限** `max-width: var(--rl-board-card-max, 104px)`（占两格宽 + `aspect-ratio: 2/3` 会把封面拉到约 195px 高、整行被撑爆，旧版改 row 正是为躲这条，代价就是标题串格）；3 行钳制链一个都不能少（竖排 + `white-space: normal` 下 `text-overflow: ellipsis` 不画点）。 ② 意图 = 砍操作不砍信息：只剩一个视图时下拉没有可选项 ⇒ 退化为静态名字 `span.rl-viewpick-single`，**不是整条不渲染**（名字是「我在哪」的信息）；`views[0]?.name` 的 `?.` 不能省（`noUncheckedIndexedAccess` 开着，`views[0].name` 会 TS2532）。 ③ 判据复用 `shouldShowWatchDice`（骰子与漏斗同槽，⛔ 不能一个用 `trim()` 一个用 `length === 0`，判据分叉就错位）；只藏按钮会留空洞 ⇒ 必须同时 `.rl-search-wrap.tools-hidden .rl-search { padding-right: 12px }`。 守卫：`toolbarBoardPolish` 20 tests（③ 组第 1 条改「必须 `width: 100%` 且 ⛔ 无 `width: auto`」、钳制链去掉 `flex: 1 1 auto`，新增 describe「m13127 ① 名称必须落在封面下面」3 条）、`incomplete` 25 tests（「始终渲染：不许条件隐藏」整条作废 → 两条新守卫）。 全量 320/6989 → **320 files / 6993 tests**。 坑：真机探针两次自伤 —— `_probe_v775.cjs` 量到 `dir:"row"` 是**部署前的旧插件仍在内存里**（必须先重载）；`_probe_reload2.cjs` 写成 `const SCRIPT = (async function(){...})()` —— IIFE **立刻执行**，`.toString()` 得到 `[object Promise]`，node 直接 `ReferenceError: window is not defined`，正确写法是 `(async function f(){...}).toString()`（⛔ 不调用）；Obsidian 1.14.4 **没有 `reloadPlugin`**，只能 `leaf.detach()` → `pm.unloadPlugin` → `pm.loadPlugin` → `setViewState`。 门禁 tsc 0 / svelte-check 0e89w / build 0,87w / assert 318 = 基线 / `ALL_MATCH=1`（main.js `78b48510ce5b` 2553280 B、styles.css `9b1c32e363b0` 761137 B）。⚠️ 未覆盖：①②③ 全部只有源码守卫，真机目视未完成 |
+| 435 | **#774 m12719 三条观感修正 —— 删「视图」标签 / 统计页模块高度对齐 / 评分看板系列卡省略号** | 2026-11-13 | ① `ViewChips.svelte` 模板**两分支各写一份**的 `<span class="rl-sel-label">视图</span>` 一起删（只删一处，脏数据兜底分支时标签会复活）；`.rl-sel-label` 规则**整条删除**（留着是 Unused CSS selector，会顶破 svelte-check 89 基线）+ `.rl-viewpick` 去 `gap: 6px`。⛔ 未动「状态 / 排序」两枚标签（值可能不含自身名称：全部 / 评分高→低）。② 真因**不是间距不统一**：`.rl-sb-blocks` 早有 `align-items: stretch`，但那只拉**外框**，框内 `.rl-s-panel` / `.rl-hero` 是普通块级子项、高度仍 `auto` ⇒ 内容少的块顶在上方（真机量测改前 `kidBottomGap` 达 1929px）。修法 = `.rl-sb-block` 改 `display:flex; flex-direction:column` + **子选择器** `.rl-sb-block > .rl-s-panel / > .rl-hero / > .rl-s-block { flex:1 1 auto; min-height:0 }`（`min-height:0` 让块内滚动区不撑破整块；必须 `>` 不用后代，`.rl-s-panel` 别处有嵌套）+ `.rl-sb-block > .rl-hero > .rl-hero-main / > .rl-hero-side { height:100% }`（hero 自身是 grid，吃满高度后两列子项仍按内容排）。「除评分看板外」不必写例外规则（`.rl-s-block` 外框无背景无描边，拉高看不出来）。③ 真因 = 基类 `.rl-board-title` 的 `width:100%` 与合集里 `flex:1 1 auto` 横排子项冲突（`flex-basis:auto` 读整卡宽 ⇒ 先按整卡宽排版再 shrink，缩到 `min-width:0` 之下时内容已排到盒外，`-webkit-line-clamp` 的省略号落在看不见处）；修法 = `.rl-board-title-coll` 显式 `width:auto` 顶掉基类，⛔ 不用 `!important`、⛔ 不删基类（竖排单条卡正需要它撑满封面宽，`assert-symbols.cjs:13254` 也钉着 `white-space: nowrap`）。媒体库系列折叠卡标题走 `.rl-ttl` 本就带省略号，不缺。新建 `tests/toolbarBoardPolish.test.ts` 17 条。真机 CDP 量测：`hero` 247px == `overview` 247px、`feed` 230px == `trend` 230px；合集标题 `width:62px` + `whiteSpace:normal` + `clamp:3`，单条卡仍 `nowrap`。门禁全绿（320 files / 6989 tests），`ALL_MATCH=1`（main.js `f19a3c490228` 2551075 B；`styles.css` 哈希未变正常 —— 本轮全是 scoped 样式编进 `main.js`）。⚠️ 未构造长列表与超长合集名实测。 |
+| 434 | **#773 m12298 三条观感修正 —— 待补进搜索框 / 库概览窄窗自适应 / 抽卡页改版** | 2026-11-13 | ① 「待补」漏斗从工具栏同级**搬进搜索框右端的 `.rl-search-tools` 工具槽**（与骰子同槽，⛔ 不各自绝对定位 —— 骰子时隐时现会压住或留空）；骰子图标由 `🎲` emoji 换成内置 `shuffle`（全仓无 dice 类，`setIcon` 对未知名静默 no-op）；搜索框内距保留 `5px 30px 5px 27px` 单枚口径 + `.rl-search-wrap.has-dice` 追加 52px。② 真因 = 工具栏两端都是 `position: absolute`（左 `.rl-libstats` / 右 NavMenu 的 `.rl-nav-wrap.is-toolbar`），**不参与居中那组的让位计算** ⇒ 窄窗与搜索框顶在一起；修法 = `@media (max-width:760px)` 两行流式（库概览 `static` + `order:-1` + `flex:1 0 100%` 独占首行，导航入口回流行内），⛔ 不用 `overflow:hidden` 切内容，基础规则的 `position:absolute;left:0` 保留（assert `:19622` 依赖）。两视图（`MediaList` / `CollectionBoard`）逐字同款。③ `WhatToWatchModal` 重写：删「改属性」按钮 + `onEditEntry` 注入位 + `.rl-wtw-edit` 样式**三处一起退场**；「换一个/就它了」整组 `justify-content:flex-end` 贴右下（顺序仍 again order:1 < take order:2）；新增「简介」（取 `summary`，⛔ 不用 `aiSummary`）与「个人状态与评价」（状态/评分/`moodText`/`notes`，**有值才渲染**）；封面右下角按 `actionLabel.hasActionEntry`（唯一真源）分叉 = 播放圆钮（点了走宿主 `runEntryAction`）或「未关联」角标。宿主注入位 `onEditEntry` → `onPlayEntry: (e) => this.runEntryAction(e)`。守卫：`whatToWatch.test.ts` 19→23、`incomplete.test.ts` 23→24，旧断言（`height: var(--input-height)`）按新口径**改写**而非放宽。门禁全绿（319 files / 6972 tests），`ALL_MATCH=1`。⚠️ 未做真机截图对照。 |
+| 433 | **#772 m07854 ⑳ —— 心情系统（六档 emoji）** | 2026-11-13 | 「编辑属性 - 个人状态与评价」在个人评分与个人评语之间新增「心情」一排 chips（🤩 震撼/神作、🥰 治愈/开心、🤔 烧脑/思考、😭 致郁/破防、😴 无聊/犯困、🤬 受罪/愤怒），六类通用。新建 `src/pure/mood.ts` 作唯一真源（`MoodId` / `MOODS` / `normalizeMood` / `moodText` / `moodFromText` / `moodChipTip`）；数据层三处同改（`types.ts` 加 `mood?: MoodId`、`catalog.normalizeEntry` 白名单、`META_FIELDS` 登记 `kind: 'enum'`）；写侧 frontmatter 存**英文 id** 且无值不写行、正文属性表走 `moodText` 出「🤩 震撼」；读侧 handler 过 `normalizeMood` 白名单；表格视图补 `TABLE_CELL_BINDINGS.mood` 并让 `enum` 分支按 key 分叉（心情⛔ 不走状态白名单）。心境可清除（再点已选档位 = 取消）。守卫 38 条（新建 `tests/mood.test.ts`）+ 修既有四份测试的样本数据。门禁全绿，`ALL_MATCH=1`。 |
+| 432 | **#771 m07854 ⑱ —— 一键批量重命名（物理视频 / 音频文件）** | 2026-11-13 | 设置页「管理与维护」新增一行（插在「条目还原」之前）：名称「批量重命名」、desc「按「[年份] 片名 - 导演、季/集」规则重命名关联的媒体文件」、按钮「预览并执行」。🔴 **⛔ 不做成点一下直接跑** —— 改名不可撤销，Obsidian 回收站救不回来，所以先弹 `BatchRenameModal` 把「每个文件 旧 → 新」逐条列出来、跳过项逐条说明原因、默认全选可改的。🔴 坐标真源：`episodeFiles` 存的是 **vault 相对路径或系统绝对路径**（`main.ts:10814` 用 `getAbstractFileByPath` 直接查、绝对值由 `main.ts:7915` 的 `scanEpisodeDir` 回填）⇒ **⛔ 不能按 `libraryDir` 前缀猜库内/库外**（绝对路径会漏判、用户改过库目录名会误判），只按最后一个 `/` 拆目录与文件名，「能不能改」交给宿主 `TFile` 判定。🔴 季号真源 = `entry.progress?.season` —— `MediaEntry` 上**没有** `season`（`types.ts:65`/`:71` 的 `season` 属于 `ProgressPoint`/`Progress`），直接写 `entry.season` 是 TS2339。冲突键 = `` `${dir}\u0000${next.toLowerCase()}` ``，同键 ≥2 则整组 splice（逐条算会漏「A→B、B→A」互换）；目标名相同**整条跳过**、⛔ 不加 `(1)` 后缀；缺字段**不写占位符**（⛔ 不写 `[未知]`/`N/A`，占位符会进物理文件名）。改名唯一出口 = `app.fileManager.renameFile`（⛔ 不用 `adapter.rename`，前者同步更新所有指向该文件的链接），成功后回写 `episodes[at] = nextPath` / `audio = nextPath` 再 `await this.service.update(...)`（⛔ 不直接写 catalog.json）；取不到 `TFile` 的计入 `failed` 并 `console.warn`。新建三件：`src/pure/batchRename.ts`（`buildRenameStem` / `planEntryRename` / `planBatchRename` / `summarizeRenamePlans` / `renamePlanTip`，零文件系统依赖）、`src/modals/BatchRenameModal.ts`（逐条预览 + 跳过项逐条列出 + 默认全选 + `busy` 防重入 + 成功失败都 Notice）、`main.ts` 的 `openBatchRename()` / `runBatchRename(plans)`。守卫 **39 条**（`tests/batchRename.test.ts` 21 纯逻辑 + `tests/batchRenameWiring.test.ts` 18 接线）。🔴 踩坑三条：⑴ `Progress` 无 `date` 字段 ⇒ 测试夹具有 `date: ''` 会 TS2322；⑵ `methodBody` 按第一个 `{` 切函数体会抓到**返回类型对象字面量**（`Promise<{ renamed; failed }>`）⇒ 必须按尖括号深度跳过泛型（首跑红 3 条）；⑶ assert 曾红一次 —— 新增的 `.rl-rename-list` / `.rl-rename-skips` 各带 `scrollbar-gutter: stable` 使该声明 8→10 处，撞 `[#560]` 的 `=== 8` 计数，已改 `=== 10` 并补两条逐处点名正则（⛔ 仍不许全局，`字段映射` 反向守卫原样保留）。门禁：tsc 0 ／ 全量 vitest **318 files 6928 tests** ／ svelte-check **0e89w** ／ build 87w ／ assert **318=基线（✅ 无新增失败）** ／ deploy `ALL_MATCH=1`（main.js `98673dfd84d9` **2541897 B**、styles.css `e46e00c02f2d` **755478 B**）。⚠️ 未覆盖验收：真机跑一次「预览并执行」，确认物理文件名真变了、Obsidian 链接没断、catalog 回写正确。 |
+| 431 | **#770 m07854 ⑰ —— 截图右键即时批注（画圈 / 箭头 / 马赛克）** | 2026-11-13 | 左键照旧一键截图（`shotBtn.addEventListener('click', () => void this.takeShot());` **一字未改**），右键走 `contextmenu` → `annotateShot()` → `ShotAnnotateModal`。三条硬约束：⑴ 坐标存**归一化 0..1**（截图按视频原始分辨率抓、预览被缩到 880 宽，存像素必然错位）；⑵ 撤销 = 弹掉最后一个形状 + **整帧重放**（⛔ 不堆 canvas 快照）；⑶ 马赛克是**像素块**、必须从 `base`（原图）采样（⛔ 不用 `filter: blur()`、⛔ 不从 `over` 采样否则越打越糊）。右键只挂 `contextmenu` **不挂 `mousedown`**（mousedown 里 `preventDefault()` 会吞掉左键 click 派发链）；必须 `preventDefault()` 否则原生右键菜单压在上面。导出前必须**先 `drawImage(base)` 再 `drawImage(over)`**（顺序反了落盘是透明底 + 几笔红线）。复用同一个 `onCaptureShot` 出口，宿主 `saveVideoShot` 一字未改。新建三模块：`src/pure/shotAnnotate.ts`（几何/误触/马赛克块/撤销/文案）、`src/pure/shotAnnotateDraw.ts`（纯绘制 + 假 `Ctx2D` 可测，移到 `pure/` 是因为 vitest alias 只登记 `src` 顶层目录、⛔ 不为一个文件开 `render/` 新目录）、`src/modals/ShotAnnotateModal.ts`（两层画布 + 三工具 + 撤销 + 导出合成）。守卫 `tests/shotAnnotate.test.ts` **35 条**（归一化 4 / 形状误触 4 / 撤销深拷贝 4 / 马赛克布局 3 / 绘制层 8 / 文案 2 / 接线 10）。🔴 **一次真实事故**：改 import 路径时用了 PowerShell `Set-Content -Encoding UTF8`，文件被写成乱码 + BOM（`截图批注` → `鎾斁鍣?`），已用 write 整文件重写恢复（`BOM=False`）——**改仓库文本一律 write/edit，⛔ 永不用 `Set-Content`**。顺带查出批注工具按钮真的没有 hover 规则（不是断言写错）已补 `.rl-anno-tool:hover`。`assert-symbols.cjs:4330` 那条因提示追加「· 右键批注」过时 ⇒ 改判据为 `/"截取当前帧（S）[^"]*"/`（以该前缀开头即可）。门禁：tsc 0 ／ 全量 vitest **316 files 6889 tests** ／ svelte-check **0e89w** ／ build 87w ／ assert **318=基线** ／ deploy `ALL_MATCH=1`（main.js `44ce12d08f4d` **2534639 B**、styles.css `72dc3eb958ba` **753493 B**）。⚠️ 未覆盖验收：真机右键→画三笔→撤销→保存→查附件图与笔记区块未点过；马赛克在真实视频帧上的块大小观感（1/120 短边）未目视确认。 |
+| 430 | **#769 m07854 ⑯ —— 仅卡片网格下点信息栏原地编辑** | 2026-11-13 | 判据必须是 `$: cardGridView = viewMode === 'grid';` **严格相等**，⛔ 不能写 `!wallView` / `viewMode !== 'wall'`：分组视图（`viewMode === 'grouped'`）与卡片网格**共用同一个 `.rl-grid` 容器**，但组卡的信息栏是**组名**、没有可编辑的条目 ⇒ 放宽会把分组视图一起打开、点组名弹编辑一个不存在的对象；海报墙自 #624 起 `.rl-card-meta` 整块被 `{#if !wallView}` 门控，本来就不渲染信息栏。不做 `stopPropagation()` 的话卡片根节点（`MediaList.svelte:3200`）的 click 是「打开笔记」⇒ 一次点击会同时开笔记 + 开编辑弹窗，所以 click 里必须**先** `ev.stopPropagation()` 再 `onEditEntry(e.id)`。可访问性三件套跟着 `cardGridView` 一起条件化（`role={cardGridView ? 'button' : undefined}` + `tabindex={cardGridView ? 0 : undefined}` + `data-tip`），`on:keydown` 只认 `Enter` 与 `Space` 且 Space 必须 `preventDefault()`（否则顺手滚页）；反向⛔ 不许无条件 `role="button"`（非网格视图下它不可点，标成按钮会误导读屏）。样式新增 `.rl-card-meta.rl-meta-edit { cursor: pointer; border-radius; transition }` + `:hover { background: var(--background-modifier-hover) }` + `:active`，⛔ **不给 `.rl-card-meta` 本体加 `cursor: pointer`**（海报墙/分组视图下它不可点，那是撒谎）。🔴 a11y 基线一处取舍：`role` 与 `tabindex` 由同一个 `cardGridView` 支配、永远同真同假，但 svelte-check 静态看不出动态 `role`，会把 `tabindex={0}` 判成「非交互元素带非负 tabindex」把 89 顶成 90 ⇒ 就地 `<!-- svelte-ignore a11y-no-noninteractive-tabindex -->` 并写明理由（先例同文件 `:4148`、`EntryForm.svelte`），⛔ 不许删 `tabindex` 消警告（键盘就进不去）。守卫 `tests/cardMetaEdit.test.ts` 10 条（判据 3 / 交互 5 / 可点态 2）；⚠️ 首跑 5 红全是守卫自身写错：`class="rl-card-meta"` 在文件里不止一处（组卡同名）⇒ 改用唯一锚 `class:rl-meta-edit={cardGridView}`；`svelte-ignore` 本身是 HTML 注释、strip 后消失 ⇒ 那条断言读原文；开标签第一个 `>` 落在 `on:click` 的 `=>` 上 ⇒ 处理器内容改块切片。门禁：tsc 0 ／ 全量 vitest **315 files 6854 tests** ／ svelte-check **0e89w** ／ build 87w ／ assert **318=基线** ／ deploy `ALL_MATCH=1`（main.js `7bb2077811fd` **2526407 B**、styles.css `fbc63f99db69` 750300 B）。⚠️ 未覆盖验收：真机「卡片网格点信息栏开编辑、且笔记没被同时打开」及「列表/海报墙/分组视图下点信息栏不开编辑」未点过。 |
+| 429 | **#768 m07854 ⑮ —— 搜索框「添加」旁的漏斗，一键筛「待补」半成品** | 2026-11-13 | 判据两侧都有唯一真源、⛔ 不能在视图里重写：「缺关联」= `pure/seriesAssoc.assocFlagsOf(e).linked`（与 `pure/actionLabel.hasActionEntry` 逐字同口径，一律「trim 后非空」，且已处理影视逐集数组 + 老字段 `links` / 书籍 / 游戏 / 音乐四类分叉）、「缺评分」= `normalizeRating(e.rating) <= 0`。新建 `pure/incomplete.ts`（`isIncomplete` = 两者 **OR** —— 用户原话的斜杠是并列枚举；`incompleteReasonsOf` 一次读 `assocFlagsOf` 拆两项；`countIncomplete`；`incompleteTip(count, active)` 以 `[待补]` 逐字开头、计数为 0 时说「库里没有…」）。`filterAndSort` 新增 append-only 维度 `incompleteOnly?: boolean`。两个视图各挂一枚 `.rl-incomplete`（**筛选开关非 CTA**，⛔ 不违反 #632「工具栏只有一枚主按钮」）：`class:is-on` + `aria-pressed` + `data-tip` 带实时条数 + 始终可点（⛔ 不 disabled、⛔ 不条件隐藏）。条数算的是「当前页签/状态/题材/搜索已筛过、尚未套待补」那批 ⇒ 提示数字与点下去剩下的条数对得上；两视图筛选态**各自独立**、**不落盘**（临时态，⛔ 别加设置键）。样式必须**两级选择器** `.rl-toolbar .rl-incomplete`（宿主 `button:not(.clickable-icon)` 的 (0,1,1) 灰底压得过单类）+ `background: transparent` / `border: 0` / `box-shadow: none` / `height: var(--input-height)`（与「＋ 添加」同一把尺）+ `is-on` 只换 accent 色不加底色。守卫 `tests/incomplete.test.ts` 23 条（判据 10 / 文案 4 / 接线 9）；⚠️ 首跑 1 红是探针自身用 400 字符窗口把紧邻的 `rl-add mod-cta` 圈进来（不是实现问题），改 `openTagOf()` 只取开标签后转绿。门禁：tsc 0 / 全量 vitest 314 files 6844 tests / svelte-check 0e89w / build 87w / assert 318=基线 / `ALL_MATCH=1`（main.js `986bfd78e670` 2525039 B、styles.css `fbc63f99db69` 750300 B）。⚠️ 未覆盖：真机点一遍「只剩半成品」未做。 |
+| 428 | **#767 m07854 ⑭ —— 「今天看什么」骰子（搜索框内随机抽卡，全屏 Modal）** | 2026-11-13 | 「全屏弹卡」⛔ 不能自绘遮罩：本仓 `position: fixed` 会被视图 transform 祖先整体偏移（`MediaList.svelte:2228`/`:4053`/`:5121` 三处注释，#610 同源）⇒ 走宿主 `Modal`（挂 body 下、自带遮罩/Esc/焦点管理）。新建 `pure/whatToWatch`（`WATCH_PICK_MIN_RATING=4` 与 `starClass` 金色档同线；`isWatchCandidate` = id 非空 + `status==='want'` + `normalizeRating(rating)>=4`；`pickWatchCandidate(pool, excludeId, rand)` 三条硬口径 = 池空 `null` ⛔ 不造假 / 单条且正是 excludeId **返回它**（否则「换一个」永远空手像坏了）/ 池 ≥2 一定换掉；`rand()` 越界钳下标 ⛔ 不返回 undefined；`shouldShowWatchDice` 按 **trim 后非空**判，⛔ 别用 `searchText.length===0`，敲空格藏骰子会被当 bug）+ 新建 `modals/WhatToWatchModal.ts`（`extends Modal`，网格卡 + 「换一个」/`mod-cta rl-wtw-take`「就它了」/「改属性」，先 `close()` 再 `setTimeout(…,0)` 打开条目避免遮罩抢焦点；空池有说明空态 ⛔ 不静默不弹）。两处搜索框逐字同加（⑥ parity）：`{#if onOpenWhatToWatch && shouldShowWatchDice(searchText)}` + 🎲 + `.rl-search` 右内距 10→**30px** + 两级选择器透明化样式。宿主 `main.ts` 的 `openWhatToWatchModal()` 候选池用**全库** `this.service.list()`（⛔ 不是当前页签那份）、封面走 `resolvePoster`。守卫 `tests/whatToWatch.test.ts` 20 条 + `collectionToolbarParity` 改 padding 口径（**职责不变**）并新增「两视图都有骰子」1 条。🔴 踩坑（第三次同一个）：测试文件头块注释里写 `*/` 字面量 ⇒ 注释提前结束、后面全被吞（报 `Expected ";" but found "searchText"`）。门禁：tsc 0 ／ vitest **313 files 6821 tests** ／ svelte-check 0e89w ／ build 0e87w ／ assert 318 持平 ／ deploy `ALL_MATCH=1`（main.js `835d505335ab` 2522245 B、styles.css `fbc63f99db69` 750300 B）。⚠️ 未覆盖验收：真机点骰子 → 「换一个」不重复 → 「就它了」打开条目整条链路。 |
+| 427 | **#766 m07854 ⑬ —— 视图切换左旁的「系列堆叠 / 全部单卡平铺」循环按钮** | 2026-11-13 | 拆系列卡**不是** `listGrouping` 的活（它只管列表视图行形态 `listTreeRows` ⇄ `listFlatRows`），⑬ 拆的是卡片网格/海报墙的 `seriesRows`（`foldSeries`）⇒ 新增独立设置 `unfoldSeries`，⛔ 不合并（否则出现「列表里摊平 → 网格里系列也没了」的连带）。判据提成 `$: unfoldRows = searching \|\| unfoldSeries;` 收口一处（`seriesRows` 有四个消费者，⛔ 不许在 `drawList` 里再判）。按钮放 `.rl-vb-view` **容器内部首位**（外层靠 `margin-left:auto` 定位右侧簇，插在 `<span>` 前会被甩到左侧簇末尾），样式必须**两级选择器**压过宿主 `button:not(.clickable-icon)` 的 (0,1,1) 灰底（`src/modals/ReaderPanelBase.ts:1633` 同款老坑）。图标只能清点仓库已在用的名字（asar 里无图标库 `ICON_FILE_COUNT 2`；CDP 上下文 `window.setIcon` / `window.require` 均不可用）⇒ `layers`（`MediaList.svelte:3771` 在用）/ `layout-grid`（`pure/viewModes.ts:49` 等在用），`film`/`clapperboard` 实测不存在。透传两处都不能漏（`HomeView.ts` 初始 props + `:173` 增量 `$set`）。守卫 `tests/unfoldSeries.test.ts` 17 条；门禁 tsc 0 ／ vitest 312 files 6801 tests ／ svelte-check 0e89w ／ build 0e87w ／ assert 318 持平（两条旧断言按新口径改写）／ deploy ALL_MATCH=1（main.js `619eee4f762d` 2514869 B、styles.css `14f6905e4886` 746985 B）。⚠️ 未覆盖验收：真机点按钮后是否真摊平、重开是否记住。 |
+| 426 | **#765 m07854 ⑫ —— 智能搜索穿透（搜索时强制忽略系列折叠 ＋ 列表合集树形 ＋ 维度分组卡）** | 2026-11-13 | 真因是三种「藏条目的壳」叠加：`seriesRows` 无条件 `foldSeries`、列表视图 `listTreeRows` 的合集父级行、`groupCards` 的维度桶 → 搜「熊出没」只看到一张系列卡。改法：新增 `$: searching = debouncedSearch.trim().length > 0`（必须用防抖后的词，与 `filtered` 同源），在 `groupPoolEntries` / `groupCards` / `activeGroupBucket` 三处各加 `&& !searching`，`seriesRows` 改三元 `searching ? listFlatRows(groupPoolEntries) : foldSeries(groupPoolEntries)`，列表视图 `listGrouping && !searching`。⛔ 不清 `activeSeriesKey`/`activeGroupKey`（清空搜索要能原地回到刚才进的组）；复用既有 `listFlatRows` 不在视图层另写 map。守卫 `tests/searchPenetration.test.ts` 8 条。assert-symbols 的两条旧断言已按新口径改写（`seriesRows` 从「恒走」改「非搜索态恒走」、check592 同步加 `!searching`）。门禁：tsc 0 / vitest **311 files 6784 tests** / check 0 errors / build 87 warnings / assert 318 持平 / deploy `ALL_MATCH=1`（main.js `3cd7e1d5a310`） |
+| 425 | **#764 m07854 ⑪ —— 计划页「继续观看 / 阅读」队列 ＋ 搜索框宽度自适应 ＋ 搜索结果关键词高亮** | 2026-11-13 | ① 本仓没有 `last_position`（视频落 `videoPositions`、书籍落 `readingProgress`）→ 新建 `pure/resumeQueue`（只认「在看」+ 两条字段，`updatedAt` 倒序 + id 兜底）；「新增 tab」做成计划页二级切换第三档而非一级页签（一级会连带改分类轴/导航记忆/`isNavTab`/起始页下拉）→ 新建 `ResumeBoard.svelte`（卡片/列表双视图）；② 真因是 `flex: none` + `min-width: 240px`（不是 padding）→ 两视图**逐字同步** `flex: 0 1 280px` + 160px 下限，并同步改 `collectionToolbarParity` 那条旧口径守卫；③ ⛔ 不走 `{@html}`（标题是用户输入）→ 新建 `pure/titleHighlight` 切片 + `{#each}` 渲染 `<mark class="rl-hl">`，底色用 `var(--text-highlight-bg)` 不写 hex。实测 `film`/`clapperboard` 不在图标集 → 占位改 `gallery-horizontal`。守卫 27 条（resumeQueue 13 + wiring 14）；🔴 strip 铁律扩一条：Svelte 的 `<!-- -->` 也必须剥（本批被自己的头部注释打穿一次）。门禁：tsc 0 / vitest **310 files 6776 tests** / svelte-check 0 errors 89 warnings / build 0 errors 87 warnings / assert 318 持平无新增 / deploy `ALL_MATCH=1`（main.js `6a8b3a4ba5df` 2513165 B） |
+| 424 | **#763 m07854 ⑩ —— 统计页各模块对齐（间距变量化 ＋ 趋势图 viewBox 跟实测宽度 ＋ Tab 基线 ＋ 标题换行）** | 2026-11-13 | 五处间距各写各的（12/12/10/10/8）→ 收敛成两个变量；趋势图 `viewBox="0 0 620 130"` 配 320px 实际宽 ⇒ 刻度被横向压成 0.516 倍；🔴 Svelte 4 依赖收集只看模板里的标识符、看不进函数体 ⇒ `trendTickX(i)` 那三处 viewBox 变了也不重算（实测刻度停在 594 跑到框外被裁）→ 改显式传 `trendW`；Tab 与卡片左基线差 5px（body `padding-left` 12→7）；标题换行悬空（today 只留 `align-items:center`、right 补 `justify-content:flex-end`）。守卫 `tests/statsAlign.test.ts` 13 条。真机复测 viewBox 320/470 与刻度最大 x 294/444 同步。门禁 308 files 6749 tests。 |
+| 423 | **#762 m07854 ⑨ —— 悬浮球球心百分比 ＋ 模型下载统一镜像优先** | 2026-11-13 | 收起态小球球心本来是空的（百分比只在展开卡片里）→ 新增 `ringPctEl` 建在 svg 之后（环是 grid、svg 是 absolute 不占格）；`tabular-nums` 必加否则每 200ms 数字宽度跳动让整颗球发抖；下载链从「官方优先、失败回落镜像」翻成「镜像首选、失败回落官方」（`downloadModel` 第 5 参语义反转、`fallbackUrl→primaryUrl`、Whisper 包镜像排最前官方兜底）。守卫 `tests/progressBall.test.ts` 28 条 ＋ 三个下载测试翻面共 94 条。门禁 307 files 6736 tests。 |
+| 422 | **#761 m07854 ⑧ —— 倍速加 3× ＋ 记住每个媒体上次播放位置** | 2026-11-13 | `SPEED_STEPS` 六档加 3 成七档；续播机制本来就有（读/写/节流/`shouldResume` 全在），真缺口是 `main.ts` 的 `playLocalEpisode`（编辑表单集按钮）**既不给 `entryId` 也不给 `initialPositions`/`onSavePosition`** ⇒ 该入口永远从 0 开始、播完不留位置；集下标必须透传否则第 3 集记到 0 上（`onPlayEpisode(p,i)` → `playLocalEpisode(path, index ?? 0, entry)`），`entry` 可选是因为有尚未落库的新条目、⛔ 不造假 id。守卫 `tests/resumePosition.test.ts` 6 条。门禁 307 files 6729 tests。 |
+| 421 | **#760 m07854 ④⑤⑥⑦ —— 语音组限高 ＋ 品牌图标 ＋ 合集工具栏统一 ＋ 弹窗 hover 提示** | 2026-11-13 | ④「语音与识别」组实为**语音转文字**组，高度来自 `.rl-asr-tiles`（X-ASR 最多 7 项全铺开、不限高）⇒ `max-height: 240px` + 内部滚动（当场问过用户，覆盖 m03035/m05717 的「不要滚动条」旧口径）。⑤「系统语音」「硅基流动」标题前图标改品牌标：新建 `pure/osIcons.ts`（`systemVoiceIcon()`；Windows 标只有 simple-icons v12 有，v13+ 全 404；linux 的 Tux 5354 字符超长路径刻意不引入 ⇒ 回退 `monitor`）；两处 `safeSetIcon` 改 `renderAiIcon`。⑥ 合集视图状态项「全部状态」→「全部」、排序 `<MiniSelect>` 补 `chevron={false}`（尺寸口径实测两文件逐字相同，无需改）。⑦ 🔴 **真因不是按钮缺 `data-tip`**（真机实测 8 颗全齐、主窗口 hover 全出气泡），而是**弹出窗口里根本没绑提示器** —— `initGlobalTooltip()` 只绑主窗口一份 document ⇒ 选集页拖成独立窗口后 `data-tip` 收不到监听。修法：`main.ts` 挂 `window-open` + 启动时 `iterateAllLeaves` 兜底扫已存在窗口。**A/B 冷启动闭环**：撤绑定 ⇒ 弹窗 target 全 `no-node`、主窗口仍 `block`；恢复 ⇒ 三个 target 全 `block`。配套教训：`main.ts` 行注释里的 `下载/音乐/**` 会让两段式 strip 吞掉几 K 字符真实代码 ⇒ 注释剥离必须用单次交替正则。门禁：tsc 0 / vitest 306 files 6720 / svelte-check 0 err 89 warn / build 87 warn / assert 318（基线 318）无新增（同步改写 3 条过时断言）/ `ALL_MATCH=1`（main.js `b097e2236327` 2493189 B）。⚠️ ④ 的 240px 是估的（真机曾 PORT_DOWN 未量到）。 |
+| 420 | **#759 m07854 ①②③ —— 默认源链一次性播种 ＋ 检测结论反向同步 ＋ 分页签挪位** | 2026-11-13 | ① `DEFAULT_CHAINS` 值早就对，坏在**生效方式**：靠 `resolveSourceChain` 对 `undefined` 动态回退 ⇒ 默认值是活值，将来一改就追溯性篡改用户配置；写入侧 `commit(draft)` 的「等于默认链 ⇒ `delete next[group]`」⇒ 用户显式勾成默认值也被写回 `undefined`。修法：新增 `seedSourceChains(cfg)`（只补未配置/空/整链非法的组）；`commit` 一律 `next[group] = norm`；新增 `sourceChainsSeeded?: boolean`；`main.ts` onload 在**基线赋值之后**做一次性播种（⛔ 顺序不能倒，否则 `chainChanged` 会白清一遍缓存）。② #758 只打通「配置→面板」，反方向断的：面板一键检测只 `paintRow` 自己那行，下面配置行徽标是另一个闭包 ⇒ 新增 `credentialBadgeRefresh: Map` + `registerCredentialBadge` / `refreshCredentialBadge(key?)`，五族各登记（🔴 key 必须带族前缀，三族 id 有重名）。③ 「按全类型分页签」从「导航布局」之后挪到「海报密度」之后（8 行→9 行）。守卫：`sourceRegistry.test.ts` 59→63、`credentialPanelWiring.test.ts` 14→24、新建 `appearanceRowOrder.test.ts` 4 条。 |
+| 419 | **#758 统一周期管理面板实时刷新 ＋ 删微信读书「登录超时可续期」** | 2026-11-12 | 用户 `m07505`：「怎么我在搜索配置里配置了项和测试了连接但统一管理周期的不实时显示我的新增项，还有微信读书这个把上次检测的提示描述"登录超时可续期"删除掉，接下来还有什么任务没完成列出来」。🔴 **不实时的真根因不是算错，是「没人通知它重算」**：`paintRow` / `summaryEl` **只活在 `renderCredentialTable` 的闭包里**，全仓唯一触发重绘的是它自己那颗「一键检测」的 click；用户填凭据（`onInput` / `onPicked` / `onLogout`）、点行内「测试连接」、开机自检，三条路径都只 `clearCredentialStatus` / `setCredentialStatus` + `refreshBadge()`（只刷那一行自己的徽标），**从不通知上面那张表** ⇒ 表上三列全停在 `display()` 那一刻的快照。**修法**：新增成员字段 `credentialTableRefresh: (() => void) \| null` + `private refreshCredentialTable(): void { this.credentialTableRefresh?.(); }`；`renderCredentialTable` 内建 `paintAll()`（重算 `summaryEl` + 遍历 `[data-cred-row]` 逐行 `paintRow`），**建完 13 行之后**赋值；`display()` 开头（`containerEl.empty()` 之后）置 `null`。**11 个写入点全接上**：音乐源 `onInput` / 音乐源测试连接 / 微信读书 `persist()`（扫码+粘贴+登出共用）/ 元数据源主字段 `onInput` / 副字段 `onInput` / 元数据源测试连接 / B 站 `persistBili()` / B 站测试连接 / YouTube 代理 `input` / YouTube Cookie `onInput` / YouTube 测试连接。⛔ **不做整页重建**（`setActivePage` 刻意不重建，整页重建会重置滚动位置与折叠组展开态）；⛔ **不用事件总线**（本仓无既存设置页事件通道，为一张表新造全局注册/注销生命周期更易漏）；⛔ **行集合恒定 13 条**（`CREDENTIAL_TOTAL = 13`）⇒ 用户说的「新增项」实际是**同一行从「未配置」变「已配置」**，`paintAll` 找不到行时**跳过而不是补建**（补建会 append 到末尾与固定顺序错位）；**开机自检刻意不接**（发生在 `onload`，设置页可能没开，`credentialTableRefresh === null` 自然空转；下次 `display()` 拿最新 `credentialStatus` 重算天生是新的）。🔴 **续期提示整条通道退场**（删不是清空 —— 留个恒空函数就是死码）：`CredentialMeta.renewHint` 字段、`makeRow` 第 7 形参、`credentialExpiryHint` 函数、`src/Settings.ts` 的 `whenCell` 两句、`styles.css` 的 `.rl-cred-hint` 规则全部删除，各留注释说明来由。**守卫**：`tests/credentialPanelWiring.test.ts` 14→**19 条**（新增 `describe('#758 · 面板要有外部刷新通道')` 5 条：闭包交出 + `paintAll` 本体含 `summarizeCredentialMeta(fresh)` 与 `paintRow`／赋值点在建行之后／`display()` 置空在 `empty()` 之后／`refreshCredentialTable()` 走 `?.()` 空守卫／**11 个写入点逐个**用 `indexOf` 定位后往后看 400 字符内有没有 `refreshCredentialTable()`，⛔ 全文 `toMatch` 是假绿），`tests/credentialMeta.test.ts` 26 条（「续期提示」三组正向 → **2 条反向守卫**：13 行都没有 `renewHint` 属性 / 模块不再导出 `credentialExpiryHint`）。⚠️ `display()` 是覆写 **公开**方法、源码里没有 `private` 前缀 ⇒ `methodBody` 定位不到（首跑就这么红 1 条），改按真实签名锚。**门禁**：tsc 0 ／ check 0-89 ／ vitest **302 files 6672 tests**（#757 为 6668，净增 4）／ esbuild 87 warnings ／ assert **318 条（基线 318）无新增** exit 0 ／ deploy **`ALL_MATCH=1`**（main.js `3f6b04bd94c1` **2490976 B**、styles.css `a149a9a530bd` **744326 B**、manifest `2a4cab8f821f` 438 B）。⚠️ **仍未真机走一遍**「填一条 Cookie → 看表面色变、点行内测试连接 → 看『是否失效/上次检测』跟着变」。 |
+| 418 | **#757 微信读书「子窗口登录了但设置页没反应」：判据换复合式 ＋ 两个域都问 ＋ 权威复核 ＋ 进度可见** | 2026-11-12 | 用户 `m07156`：「微信读书扫码后子窗口登录了，但设置页啥也没反应」。🔴 **判据真错**：`isWereadLoggedIn` 只认 `wr_name` 非空，而把微信读书前端 4 个 bundle（`D5nOnlJZ-legacy`/`C0dUUX0x-legacy`/`9oq92R5p`/`8c04ZuYa`，共 ~1.5MB）全量扫过 —— `wr_name`/`wr_skey`/`wr_vid` 字面量 **0 命中**，登录态根本不是靠它们在前端判的；权威对照 `zhaohongxuan/obsidian-weread-plugin` 的判据是「`wr_vid` 必须有 + `wr_name`/`wr_skey` 至少一个非空」⇒ `src/pure/qrLogin.ts` 新增 `WEREAD_ID_COOKIE='wr_vid'` 与 `WEREAD_LOGIN_COOKIES=['wr_skey','wr_name']`，`isWereadLoggedIn` 重写为「`wr_vid` 必须 **且** 身份键 `some`」；`WEREAD_LOGIN_COOKIE='wr_name'` **没删**，降级成只用于显示「当前账号」并注释「⛔ 别拿它判登录」。🔴 **只拿到半份 Cookie**：Electron 的 `cookies.get({domain})` 按 domain 字段**精确匹配**、不认父域，而 CDP `Network.getAllCookies` 实测 `wr_gid` 挂 `weread.qq.com`、`wr_fp` 挂 **`.weread.qq.com`** ⇒ `readJarPairs` 改两域都问 `[...tryGet({domain: host}), ...tryGet({domain: \`.${host}\`})]`，`url` 兜底保留。🔴 **名字是残渣也判成功**：新增私有 `probeWereadShelf(cookie)` 带 Cookie 打 `buildWereadShelfUrl()`，复用 `parseWereadShelfAuth`（与「测试连接」同一份文案真源，⛔ 没另写 `errCode === -2010`）；**没过就 `stage:'pending'` 继续等，⛔ 不是 `error`** —— 微信读书登录是「开首页→用户自己点登录→弹码→扫码」，服务端认账有延迟，判 error 等于把「再等两秒」变成「请重来」。🔴 **「啥也没反应」是文案不动**：`pending` 原恒返回同一句「等待扫码」、弹窗又无手动重读入口 ⇒ 文案改 `等待扫码（已读到 N 条 Cookie）` / `已看到登录信息，等待微信读书确认（…）`，并给微信读书多一颗「我已在窗口里登录，立即读取」（`void this.tick(feedback)`）。**账号名显示**：`accountNameOf` 昵称优先、取不到退回 `微信读书用户 ${wr_vid}`（原来只认昵称 ⇒「当前账号」整块消失退化成输入框）。**守卫**：`tests/qrLoginWiring.test.ts` 35→**42 条**（新增三组 7 条：复合判据 2 条含反向守卫「`WEREAD_LOGIN_COOKIE` 不许出现在 `isWereadLoggedIn` 里」/ 双域名 1 条必含 `` domain: `.${host}` `` / 权威复核 2 条含「没过必须 pending」与「⛔ 别另写 `errCode === -2010`」/ 进度可见 2 条），`tests/qrLogin.test.ts` 36→**40 条**（`微信读书登录判据` 改 5 条，「**只有 `wr_name` → false**」正是老实现的误判反证）；辅助 `asyncFnBody` 从 `describe` 内部**提升到模块级**（两组都用，留内部第二组调不到 —— 首跑就这样红 2 条）。**门禁**：tsc 0 ／ check 0-89 ／ vitest **302 files 6668 tests**（#756 为 6657，净增 11）／ esbuild 87 warnings ／ assert **318 条（基线 318）无新增** exit 0 ／ deploy **`ALL_MATCH=1`**（main.js `4db624a4a57e` **2490378 B**、styles.css `884457660bb2` 744041 B）。🔴 **取证通道教训**：Obsidian 对 `C:\Users\kest\AppData\Roaming\obsidian\Network\Cookies` 持**排他锁**，复制 / `immutable=1` / `FILE_SHARE_ALL` 全失败，唯一可用通道是 **CDP**（`Network.getCookies` / `getAllCookies`），且 `tools/realdevice/cdp.cjs` 的 `session.eval()` **已直接返回 `r.result.value`**，⛔ 别再取一次。⚠️ 仍未真机走完「手机扫码→落盘→重开仍登录」全链路。 |
+| 417 | **#756 扫码登录两条真机缺陷修复：B 站票据换凭据 ＋ 微信读书能取到 Cookie** | 2026-11-12 | 用户 `m06077` 一句话两条：「微信读书扫码后不自动获取cookie，b站扫码能获取但测试连接失败」。🔴 **B 站「能获取」是假象**：`data.json` 实测 `"biliCookie": "ticket=c91b5659…; gourl=https://www.bilibili.com; first_domain=.bilibili.com"` —— `data.url` 现在是 **crossDomain 票据地址**，凭据由它 **302 的 `Set-Cookie`** 下发，旧 `cookieFromBiliCallbackUrl` 把 query 全当 Cookie 存 ⇒ 存进去全是票据参数、`SESSDATA` 一个没有（但 `biliRefreshToken: da7f7f9c…` 是 32 位 hex ⇒ poll 确实走到 `data.code === 0`）。🔴 **最关键的漏在 `src/services/nodeHttp.ts`**：`requestOnce` 原先**只在「3xx 且有 location」那条分支**才 `mergeCookies`，「**200 + `Set-Cookie`**」这种最正常的下发形态被整段丢掉 —— B 站 poll 成功那轮正是 200 ⇒ 扫码成功、`refresh_token` 拿到、凭据永远为空。修：`requestOnce` 末尾补末跳 `set-cookie` 合并（`const tailSetCookie = res.headers && res.headers['set-cookie']`）+ `NodeHttpResponse` 新增 append-only `cookies?: string` + `nodeHttpGet` 透传。**B 站兑换**：新增 `exchangeBiliTicket(ticketUrl, seedCookies)` 五级来源 —— ⑴ poll 轮自身 Cookie（最高优先）⑵ `res.cookies` 重定向链 ⑶ **`cookieFromBiliCallbackUrl(res.finalUrl)`**（跨域接口常把凭据拼进 302 的 Location query，**Node 不执行 JS ⇒ 落地页写 `document.cookie` 那步永不发生**）⑷ 末跳 `set-cookie` 头 ⑸ jar 兜底；`cookieFromBiliCallbackUrl` 改**白名单**（只 `BILI_CREDENTIAL_COOKIES = ['SESSDATA','bili_jct','DedeUserID']`，**空值也丢**）；新增 `isBiliTicketUrl`（判据 = query 有 `ticket` 参数，`ticket_id` 不误中）/ `biliCredentialCookieOf`（**故意不解码** —— jar 里的值已是原文，再 `decodeURIComponent` 会把含 `%` 的 `SESSDATA` 弄坏）。**微信读书两个成因**：⑴ `readJarPairs` 只 `get({ url: 'https://weread.qq.com/' })`，登录态有一部分挂 `path=/web`，根路径问不到 ⇒ 改「先按 `domain` 问、空则退回 `url`」+ 同名 cookie **深 path 优先**（`const depth = String(c.path \|\| '/').length`）；⑵ 所有平台同用 `QR_SESSION_TTL_MS = 180_000`，而微信读书要「开首页→自己点登录→弹码→扫码」⇒ 新增 `sessionTtlOf(platform)`，微信读书 `WEREAD_SESSION_TTL_MS = 600_000`（10 分钟），过期文案按平台分。**弹窗不再一次锁死**：`QrLoginModal` done 分支原先先 `settled = true; stopPolling()` 再校验 ⇒ 兑换失败一次就永久停在「已确认」；改为**先 `if (!r.cookie)` 报「已确认登录，但这次没拿到登录凭据，正在重试…」并 `return`（⛔ 不 stopPolling）**，拿到凭据才 `settled = true`。**存量脏数据自愈**：`main.ts` onload（紧跟 `downloadDirMigrated` 块后）`const dirtyBili = String(this.settings.biliCookie ?? '').trim(); if (dirtyBili && !/(^\|;\\s*)SESSDATA=/.test(dirtyBili)) { this.settings.biliCookie = ''; await this.saveSettings(); }` —— 不清则用户升版后仍看到 `ticket=…`、测连接继续红。**兑换失败必须报错不许吞**：「扫码成功，但没能换到登录凭据（票据已失效或接口改版），请重新生成二维码」。**守卫**：`tests/qrLogin.test.ts` **36 条**（新增 `#756 · B 站票据兑换（纯逻辑侧）` 一组 4 条 + 微信读书 10 分钟 TTL；改写「空值也丢」与「`SESSDATA=%E0%A4%A` 解码失败不整条作废」）+ `tests/qrLoginWiring.test.ts` **35 条**（新增 `asyncFnBody` 辅助锚 `async function xxx(`，因 `readJarPairs` 不是 `export`；守卫块改**花括号配对**精确取块 —— 固定窗口 `+260` 会吞到后面的 `stopPolling`）+ `tests/nodeHttp.test.ts` **11 条**（新增「**200 响应的 `Set-Cookie` 也要回报到 `cookies`**」与「302 与末跳 200 串成一条链」，改回只在 3xx 合并立刻红）。**门禁**：tsc 0 ／ check 0-89 ／ vitest **302 files 6657 tests** ／ esbuild 87 warnings ／ assert **318 条（基线 318）无新增** exit 0 ／ deploy **`ALL_MATCH=1`**（main.js `6de691081e17` **2489465 B**、styles.css `884457660bb2` 744041 B）。⚠️ **仍未真机走完「手机扫码 → 落盘 → 重开仍登录」全链路**：B 站证据 = 接口形状实测 + 单测；微信读书的 `path=/web` **尚未在真机 jar 上直接验过**（CDP 求值上下文里 `window.require` 不可用，读不到 jar）。下次真机仍空，第一件事是打印 `sess.cookies.get({ domain: 'weread.qq.com' })` 完整列表看 `wr_name` 挂在哪个 path。 |
+| 416 | **#755 统一周期管理面板精简 ＋ 关于页改作者 GitHub 入口 ＋ 扫码图标挪到 Cookie 框最左旁** | 2026-11-12 | 用户 `m05813`（附 991×837 截图）一次给三件事：「去掉单独检测，一键检测改成纯小图标（无边框透明化），名称旁的描述（元数据源、音乐平台等）删除掉，名称列项把边框去掉②设置-关于页ReelLudic信息栏的b站图标跟上github的图标，点击可跳转作者主页"https://github.com/fhb263"③扫码登录的不获取cookie码登录态保存在哪里？把二维码小图标按钮放在cookie框的最左旁」。🔴 **① 边框去不掉的真根因不是 CSS 写错**：Obsidian 的 `button:not(.clickable-icon)`（特异度 **0,1,1**）给所有按钮铺整行灰底 + 内阴影 + 边框，单类选择器（0,1,0）**压不过** —— `clickable-icon` 正是宿主豁免这条规则的那个类（本仓 `src/modals/ReaderPanelBase.ts:1633` 早有记载；既有同款处理 `src/modals/QuickAssociateModal.ts:838`、`src/services/progressBall.ts:112` 与 `:128`）⇒ 名称钮与一键检测钮都补 `clickable-icon`，只写 `border: 0` 在真机**完全不生效**。**① 表格精简**：`statusTable` 五列改四列（删「检测」列）+ `paintRow` 删 `ops` 格与单条刷新钮 + **`runOne` 整个函数删除** + 删 `rl-cred-family` 族名 + 一键检测改纯图标（`safeSetIcon(…,'refresh-cw')` + `setTip` + `srLabel`，去掉 `.rl-cred-testall-icon` 包裹与「一键检测」文字）+ CSS 删 `.rl-cred-testone`/`.rl-cred-family`/`.rl-cred-cell-ops` 全部规则、窄屏从四列改三列。**② 图标与落点**：`src/pure/supportLinks.ts` 新增 `AUTHOR_GITHUB_URL='https://github.com/fhb263'`／`AUTHOR_GITHUB_TIP='作者的 GitHub 主页'`／`AUTHOR_GITHUB_ICON`（simple-icons v16，由探针从 CDN 取回，实测 **822 字节 / viewBox 24×24 / 单路径 712 字符**，CC0-1.0，⛔ 不手抄）；关于页那枚 `bili` 变量改名 `authorLink`、`renderAiIcon(…, AUTHOR_GITHUB_ICON)`、`window.open(AUTHOR_GITHUB_URL, '_blank')`。🔴 **落点易错点**：作者主页 ≠ 仓库地址（`REPO_URL='…/obsidian-reelludic'`），两者同属 fhb263 但落点不同，⛔ 别合并；守卫专测这条关系（`not.toBe(REPO_URL)` + `REPO_URL.startsWith(AUTHOR_GITHUB_URL + '/')`）。⚠️ `BILI_SPACE_URL`/`BILI_SPACE_TIP` 两个常量**保留**（①-11 交付物），只是本页不再消费、已从 import 移除。**③ 图标位置**：`fillSecretRow` 新增 `beforeInput` 插槽（建在 `createEl('input')` **之前**），`beforeEye` 标 `@deprecated`；建序铁律 `beforeInput → input → beforeEye → eye`，⛔ 别用 `order`/`flex-direction` 事后挪（DOM 顺序与视觉顺序不一致，键盘 Tab 次序就分家）；守卫不只断言「调了 `beforeInput`」，还真读**建序**（`atBeforeInput < atInput < atEye`），否则把它挪到 input 之后测试还是绿。**③ 用户提问的答案**：扫码拿到的 Cookie 存 **`data.json` 的 settings 字段** —— 微信读书 → `wereadCookie`、B 站 → `biliCookie`、B 站续期凭据 → `biliRefreshToken`，全部经 `plugin.saveSettings()` 落盘；检测结论另存 `credentialStatus`（boolean 表）+ `credentialCheckedAt`（时间戳）。**门禁**：tsc 0 ／ check **0 errors 89 warnings** ／ vitest **302 files 6639 tests** ／ esbuild 87 warnings（main.js **2487074 B**）／ assert **318 条（基线 318）无新增** exit 0 ／ deploy **ALL_MATCH=1**（main.js `05cb49d7da89`、styles.css `884457660bb2` 744041 B）。⚠️ **未真机肉眼回归**面板观感与图标位置。 |
+| 415 | **#754 扫码登录推翻重做：删豆瓣、B 站插件内自绘二维码、图标进输入框行、登录后换「当前账号」形态** | 2026-11-12 | 用户 `m05505` 一次给四件事：「删除豆瓣的扫码登录」／「b站扫码登录怎么是跳转到浏览器登录还会触发下载 iBiliPlayer…浏览器有账号登录了就一直登录不了cookie也不能获取回填」／「扫码登录按钮改成二维码小图标按钮放在输入框的右侧旁边（紧挨着"显示"按钮的左侧）」／「用扫码登录的UI要变化成原来的输入框区域替换为"当前账号: 微信读书用户"」。追问裁定：微信读书**「保留：弹窗打开微信读书首页，你点『登录』用微信扫」**、登录后**「保留图标按钮 + 加一个『退出登录』」**。🔴 **两个真根因**：⑴ #753 为保住 `qrcode_key` 给子窗口设了 `BILI_MOBILE_UA`，B 站 H5 页认出移动端 UA 就渲染「下载 App」引导页（`iBiliPlayer` 是其安卓包名）；⑵ Electron 子窗口是**独立 session**，与系统浏览器登录态完全隔离 ⇒ 他浏览器登着、插件侧照样空。**解法**：B 站整条改为**插件内自绘二维码**（不开窗口、不跳浏览器、Node 侧按自己的 key 轮询），`src/pure/qrcode.ts` 自研编码器（**零新依赖**，运行时依赖仍只有 `jszip`；只有 byte 模式、版本 1–10、四档纠错、默认 `'M'`；`qrSvgPath` 每深色模块一条子路径合成单条 `path`）。🔴 **编码器真 bug**：首版逐格比对 5 红但结构自检 10 绿 ⇒ 差异仅 17 格且**全落第 8 行与第 8 列** ⇒ 格式信息坐标写反（「bit0–5 沿**列 8** 竖排」被写成沿**行 8** 横排）⇒ **「数据区全对、只有第 8 行第 8 列错」这种码人眼正常、手机扫不出**，⛔「能画出黑白方块」的断言毫无约束力。参照 fixture（`tests/fixtures/qrRef.ts` 59742 B）用 Python `qrcode` 生成，🔴 必须显式 `MODE_8BIT_BYTE`（否则纯数字串被切成 numeric 模式、版本都不同）且 `border=0`。**豆瓣整条删除**（`QrPlatform` 只剩 `'bilibili' \| 'weread'`，删 `normalizeDoubanStatus` / 两个端点 / `BILI_MOBILE_UA` / `needsMobileUa`）。**按钮位置**：`fillSecretRow` 新增 `beforeEye?: (wrap) => void` 插槽，建序 input → beforeEye → eye（⛔ 先建 eye 会让图标跑到「显示」右边）；按钮走 `iconButton('rl-qr-open', 'qr-code', …)`（`qr-code` 实测在 asar 白名单；`qrcode`/`scan` MISSING）。**登录后形态**：新增 `renderQrAccountField` —— 有账号名时**不建输入框**，换成 `.rl-acct` 行（「当前账号」+ 名字 + 换账号图标 + 退出登录）；**取不到名字必须退回输入框**（⛔ 别显示「当前账号: 未知」把框藏掉，否则既看不到值也没法手改）。取名字段：微信读书 `wr_name`、B 站 `DedeUserID` 拼 `UID xxx`。**退出登录连带清 `biliRefreshToken`**。二维码渲染两条硬要求：**白底 `<rect fill="#ffffff">`**（深色主题否则扫不出）+ `shape-rendering="crispEdges"`（抗锯齿会糊）。微信读书维持开窗（8 个候选端点全 404，`POST /web/login/session/init` 只回 `{"success":1}` 不带凭据）。**门禁**：tsc 0 ／ check 0-89 ／ vitest **302 files 6635 tests** ／ esbuild 87 warnings（main.js **2487153 B**）／ assert **318 条（基线 318）无新增** exit 0 ／ deploy **ALL_MATCH=1**（main.js `e3d0db403f98`、styles.css `4cc2beb70b5c` 743278 B）。⚠️ **仍未真机走完「手机扫码 → 落盘 → 重开仍登录」全链路**（编码器靠逐格一致证明、接口靠真机实测，但端到端未点）。 |
+| 414 | **#753 三家平台扫码登录（B 站／豆瓣／微信读书）＋ B 站 `refresh_token` 持久化** | 2026-11-12 | 用户 `m00353` ③-2/③-3/③-4；追问二维码渲染，用户裁定逐字**「弹出对应网页扫码」**（三家同一条）⇒ 不做本地编码器、不加 `qrcode` 依赖。**纯逻辑** `pure/qrLogin`（24 单测）：B 站 🔴 **真状态在 `data.code` 不是顶层 `code`**（顶层恒 0；`86101` 未扫码 / `86102`·`86090` 已扫待确认 / `86038` 过期 / `0` 成功带 `url`+`refresh_token`）、`SESSDATA` 要 `decodeURIComponent`（含 `%2C`）、`cookieHeaderFromPairs` **剔空值**（`key=` 会被站点当显式置空）、微信读书判 `wr_name` **非空**（登录前已有一堆匿名 Cookie）、豆瓣未识别状态一律 `pending`（换文案比换接口频繁）。**服务层** `services/qrLogin`：`@electron/remote` 通道（与 `embedCookie.ts:97` 同一条，⛔ 不引第二种）；🔴 **B 站必须 `setUserAgent(BILI_MOBILE_UA)`** —— 桌面 UA 会被重定向到 `passport.bilibili.com/login` 并**换掉我们的 `qrcode_key`** ⇒ poll 永远「未扫码」（`_probe_ua.cjs` 实测移动 UA 保住 key 且渲染 84×84 二维码）；⛔ **不要 `await win.loadURL`**（首次导航必 `ERR_ABORTED (-3)` reject，不是失败）。**弹窗** `modals/QrLoginModal`：只 `onPicked` **不落盘**（写盘要连 `saveSettings` + `clearCredentialStatus` + 徽标刷新三件事，散在弹窗必漏）。**`biliRefreshToken` append-only 新键**；⛔ 只在真拿到时才写（重扫不该抹掉上次续期凭据）；`refreshBiliCookie` 返回 `null` 时只清这一个键、⛔ 不顺手清 `biliCookie`。**三处入口共用一颗** `renderQrLoginButton(actions, platform, onPicked)`；B 站那颗挂 `mountNetTestAction` 新增第四参 `beforeTest`（建在「测试连接」**之前**：测试用凭据、扫码填凭据）。⛔ 死路两条：页面内包 `fetch`/`XHR` 钩子抓 poll（`executeJavaScript` 直接抛错）、`webContents.debugger.attach` + `getResponseBody`（**挂死**）⇒ 改由 Node 侧按自己的 key 轮询。**门禁**：tsc 0 ／ check 0-89 ／ vitest **301 files 6603 tests** ／ esbuild 87 warnings（main.js **2481478 B**）／ assert **318 条（基线 318）无新增** exit 0 ／ deploy **ALL_MATCH=1**（main.js `51e9dc64c1fe`、styles.css `2e8d556ff07b`）。⚠️ **未真机走完「手机扫码 → 落盘 → 重开仍登录」全链路**。 |
+| 413 | **#752 ③-1 统一周期管理 ＋ ③-5 全局 UI 组件库并据此重构高级设置页** | 2026-11-12 | 用户 `m00353` ③-1「为 13 个凭据做表格列项状态面板……必须共享同一个 `credentialMeta` 数据源」／③-5「**建立全局 UI 组件库 `src/ui/components.ts` 并据此重构设置页**」+「**绝对禁用写死的颜色和像素**」+「**强制使用原生 API**」+「彻底消灭视觉上的东拼西凑」。**③-1**：`pure/credentialMeta` 三条分层口径 —— 是否配置从 settings 现算⛔不落盘／是否失效**只读** `credentialStatus`（`undefined` ⇒ `expired:false`+`checked:false`，⛔ **绝不把「没测过」画成「失效」**）／上次检测**只读** `credentialCheckedAt`（⛔ 不 `new Date()` 现造）；⚠️ 13 条里 11 条是不透明 Cookie/Key，上游从不告知过期时刻 ⇒ 该列显示「上次检测」这个**可核查事实**、微信读书标「可续期」，⛔ 不编假时间。面板 = `statusTable` 五列 + `paintRow` 单行重绘 + 一键检测**串行** + 就近回执 `setFeedback`（⛔ 不用 `Notice`，右上角太远）。**③-5 真根因**：**同一套分段 chips 被逐字复制三份**（卡片信息栏／条目属性／笔记属性顺序），连 `typeBtns`+`syncTypeBar()` 闭包体都一样 ⇒ 收进 `chipBar()`；组说明行五套类名收成 `.rl-ui-help` 唯一真源。组件库导出 8 个：`srLabel`／`setTip`／`iconButton`／`groupHeader`／`setFeedback`／`chipBar`（`ariaLabel` 是不可见 tablist 读屏名）／`statusTable`+`cell`／`ghostIconButton`。🔴 **`textButton` 写完又删**（外部引用实测 = 0，本仓唯一带字按钮基准是 `.rl-btn` 全仓 33 处使用、断言锚 54 处）—— 留着就是给后来者第二条路，那正是 ③-5 要消灭的。**条目属性宽度控件按用户举例改法**：删块底三枚常驻胶囊 → 块**右上角一枚** `layout-template` 图标（`opacity:0` + `:hover`/`:focus-within` 浮出 + `@media (hover:none)` 常显；用 `opacity` 不用 `display` 否则键盘 Tab 到不了）→ 点开 **原生 `Menu`**（`setIsLabel` 当前档 + `setChecked` + 当前档 `setDisabled` + `showAtPosition`）；⚠️ 本仓 `src/**` 此前 `new Menu(` **零使用**。**`chipBar` 三条创建顺序铁律**：槽位归位先于建 chips（建完立刻 `sync()`）／chips 先于 panel／最后建 panel 首绘。⛔ **字段映射组不要重写**（本来就对：`table-layout:fixed` + 两张 `<table>` 共用 `<colgroup>` + `COL_WIDTHS` + `input` 只切类、`change` 才落盘）；`renderFieldMapStatus` 是**有状态**渲染（未配置那句折进说明行、有错时 `role="alert"`）⛔ 不能换 `setFeedback`。**门禁**：tsc 0 ／ vitest **299 files 6566 tests** ／ check 0-89 ／ esbuild 87 warnings（main.js **2469124 B**）／ assert 318 无新增 ／ deploy **ALL_MATCH=1**（`02c9b6167d4a`／`7681c09864b4`）。⚠️ **未真机肉眼回归设置页观感**。 |
+| 412 | **#751 ②-1 备份体积根治（链式增量）＋ ②-2 悬浮球/进度卡 ＋ ②-3 标签词云与关联图谱方案 ＋ ②-4 微信读书划线写入** | 2026-11-12 | 用户 `m00353` ②-1「不是仅支持回滚 5 版，之后写入的要对前 5 版进行覆盖清理啊」／②-2「优化右下角进度框和【悬浮球】样式（悬浮球是入口，进度框是展开态）」／②-3「增强统计页（如词云）+ 现媒体库内笔记全是孤立笔记不关联 ⇒ 给几个关联图谱思路，或按类型枢纽笔记」／②-4「微信读书划线高亮批注写入单独条目笔记的 `### 同步划线与高亮` 下」。🔴 **②-1 用户的归因前提被实测推翻**：轮转**一直生效**（确实只留 5 版），真因是**每版都存快照全文**（catalog 全量重写、内容高度重合）⇒ 体积 = 版数 × 全文 ⇒ 改 **schema 2 链式增量**（链首存全文，其后每版只存「公共前缀 `p` / 公共后缀 `s` / 中间差异 `mid`」，`computeDelta`／`applyDelta`，解析后 `snapshots[i].text` 语义与 v1 **完全一致**、调用方零改动）；`DELTA_MAX_RATIO = 0.9` —— 差异超全文 90% 就不做增量（防「完全不同」时反而变大）。实测 `.testvault/媒体库/catalog-backups.json` **1,647,199 B → 331,097 B**。**②-2 拆两层**：`pure/progressBall` 只出判定（`nextMode`／`barPercent`／`clampPercent`／`ballText`／`ballTip`／`shortLabel`(`BALL_LABEL_MAX=14`)／`endTip`／`arcRatio`(`BALL_IDLE_ARC=0.18`)），`services/progressBall` 才碰 DOM 与定时器。**②-3 只做词云、图谱只出方案**（用户当场裁定「先只出方案，不动代码」⇒ `docs/full-cycle/ReelLudic/20-条目笔记关联图谱方案.md` 是**方案不是实现**，⛔ 别当已交付）：`WORD_CLOUD_MAX=40`／`WORD_CLOUD_LEVELS=5`／字号取 `w.level` ⛔ 不许在模板里另算频次排行（两份真源必然漂移）／空态**分两态**（没条目 vs 有条目但没打标签）／颜色只用 `--text-*` 三档、字号用相对单位（写 `px` 跟不动 Obsidian 界面字号）。**②-4**：`WEREAD_NOTES_SECTION = '同步划线与高亮'`（用户逐字给定）；划线／想法／章节名是**三个接口**（`bookmarklist`／`review/list`／`chapterInfos`），解析与合并全在 `pure/wereadNotes`，⛔ 别把章节名写进渲染处。**门禁**：与 #749/#750 同一次收口。 |
+| 411 | **#750 ①-9 悬停提示单一真源 ＋ ①-10 更新日志按钮 ＋ ①-11 B 站 logo ＋ ①-12 搜索骨架屏与免登录默认源 ＋ ①-13 冲突弹窗文案 ＋ ①-14 搜索源类型图标** | 2026-11-12 | 用户 `m00353` ①-9…①-14。**①-9 真因**：同一元素既挂 `data-tip`（本插件自绘气泡）又挂 `aria-label`（Obsidian 会给带 `aria-label` 的 hover 目标**自己再画一个**官方气泡）⇒ 悬停叠两层；又挂 `title` 同理。用户原话要求「下次加轻提示要检查是否存在双提示嵌套覆盖？」⇒ 落成**常驻守卫** `tests/tooltipSingleSource.test.ts`（扫全仓 `src/**/*.{ts,svelte}`，`BUBBLE_ATTRS=['aria-label','title']`，同一接收者既挂 `data-tip`/`setTip` 又挂气泡属性即红；命令式 DOM 与 Svelte 模板两条路径分别判；⚠️ `aria-expanded`/`aria-pressed`/`aria-hidden` **不受限** —— 只报状态不画气泡；含「扫描器本身要摸得到源码」防路径写死导致永远绿）。**①-9 按钮工厂结论**：全仓唯一图标按钮工厂是 `src/views/audioPlayerMount.ts:203` 的 `iconButton(cls, icon, tip)`，本批与 `setTip`/`srLabel` 一起收进 `src/ui/components.ts`，⛔ 别再各处手写 `data-tip`；`data-tip-delay` 走 `services/globalTooltip.tipDelayOf`（搜索源勾选行 `1000`、全局 `500`）。**①-10**：用户当场确认「确实已满足，这条算完成」⇒ **不改代码**（`.rl-notes-toggle` 本来就透明无边框）。**①-11**：`BILI_SPACE_URL='https://space.bilibili.com/1828315053'`（用户当场给的 UID）+ `BILI_SPACE_TIP='作者的 B 站主页'`，⛔ 别在渲染处手写第二遍；⚠️ 写错不报错、只会 404，只在真机肉眼可见。**①-12 骨架屏三条**：外层上屏条件放宽成 `showResults`（「正在搜 + 有参与源」也算）／`onSearchProgress` 的 `items` 存进 `earlyBySource` 且**重新搜索必须清空**（否则上一轮卡片串到这一轮）／骨架只在 `col.pending` 渲染且整块 `aria-hidden`；样式只用原生变量、尊重「减少动效」；⚠️ 该组件 `<style>` 是 Svelte **scoped**，CSS **不在** `styles.css`。**①-12 默认链**（`DEFAULT_CHAINS`，全是免登录源、豆瓣仍首位）：`book:['douban','openLibrary']`／`anime:['douban','anilist']`／`comic:['douban','mangadex']`／`music:['douban','musicbrainz','itunes']`。**①-13 最终文案**：`保留笔记修改`／`保留表单修改`（同构句式把权衡摆同一层）；⛔ 「保留表单修改」语义 = 用表单（库数据）覆盖笔记文件、别名仍是 `overwrite`，`data-tip` 仍补后果（光看名字看不出会丢手写内容）。**①-14 三点口径**：⑴ **⛔ 不是 `<button>`** —— 用户原话写「小图标按钮」但它无点击行为，做成按钮会给读屏和键盘多一个空 tab 停靠点 ⇒ 装饰性 `<span aria-hidden="true">`；⑵ 颜色**内联**自 `TYPE_COLORS`（唯一色源，CSS 里 ⛔ 不许再写 hex），`comic` 不是 `EntryType`（book 的子分类）⇒ 取 `TYPE_COLORS.book`；⑶ 图标名取 `SOURCE_GROUP_ICONS` 纯数据表（六个值均实测存在于 asar 白名单）—— 未知名会让 `setIcon` **静默 no-op**、界面只剩空白。**门禁**：与 #749 同一次收口。 |
+| 410 | **#749 字幕 AI 总结改成真流式打字机 ＋ 设置页六条观感修正 ＋ 页签轴向可切换 ＋ 合集视图工具栏对齐** | 2026-11-12 | 用户 `m09565` 八条：「字幕面板-AI总结输出动效改成流式打字机（在接收到流式文本片段时，**以固定节奏逐段追加到 DOM**，而不是等全部完成再一次性渲染。）」🔴 **真机实测推翻第一直觉**：11 个片段全落在 300ms 内（首字 2987ms / 末字 3291ms）⇒「收到就刷」仍是「一下全出来」，只是 1 次闪变 11 次闪 ⇒ **到达节奏不可控，显示节奏必须自造**。**纯模块两件**：`pure/cueStream`（`extractStreamingSummary(raw)` 幂等传累积全文、`SUMMARY_KEYS=['summary','摘要','概括']`、只抠 summary / points 收完整块 / 半截 `\u30` 等下一块）+ `pure/cuePacer`（`CUE_PACE_MS_PER_CHAR=22` / `CUE_PACE_CATCHUP_CHARS=40` / `cuePaceStep` / `cuePacePending`，三条口径 = 单调不减 / 不越 target / 积压加速）。**接线**：`EpisodePageView.ts:2801-2918` 的 `onPartial` 只更新 target、rAF 推 shown；落点就地改 `.rl-epp-cueai-live`，⛔ 不重建面板（夺焦点 + 清空提问）；收尾 `stopPace()` 但不清字，剩余一次性补齐。🔴 **`is-cueai-wait` ⛔ 不能叫 `is-loading`** —— Obsidian `app.css:4282-4291` 给 `.is-loading::before` 挂了 3px 主题色进度条。设置页六条：①-1 补 `.rl-asr-meta`（数据取自 `AsrCatalogTier`，准确度两数各自带 `%`、`accEn===null` 渲裸 `-`；第一版拼成「1.95/-%」是 bug）/ ①-2 切音色只重画单卡 ⛔ 不 `this.display()` / ①-3 音色标签带模型归属 / ①-4 `tabAxis` 两档且两模式导航状态独立保存 + 修历史聚合页签 `'media'` 走错分支 / ①-5 窄屏非激活只留图标、换页签重定位指示器 / ①-6 组卡 `min-height:0`（⛔ 不改基础规则、⛔ 不填「—」）/ ①-7 合集视图去 `flex-wrap`（真机唯一实质差异，默认视图 nowrap 32px vs 合集 wrap 72px）。⚠️ `tabAxis` 已同步进 `HomeView.ts:173` 的 `$set`。**门禁**：tsc 0 ／ check 0-89 ／ vitest **289 files 6416 tests** ／ esbuild 87 warnings（main.js **2443712 B**）／ assert **321 条（基线 326）无新增** exit 0 ／ deploy **ALL_MATCH=1**（main.js `65e271707333`、styles.css `283da716d19a`）。⚠️ 流式动效本身**未真机回归**。 |
+| 409 | **#748 语音转文字环境体检与品牌图标 ＋ 六个同步弹窗统一三段式说明 ＋ 列表按属性归类 ＋ 网络集无字幕两态文案** | 2026-11-11 | 用户 `m05717` ①「AI 运行管家要能体检我的机器」/ ②「三个词用加粗或主题色显示，后面跟全角冒号」；另接 `m06406` ③④、`m07115`、`m07257`、`m09819`。**环境体检拆两层**：`services/asrHardwareProbe` 拿字符串（碰 spawn / 读盘 / os）、`pure/asrHardware` 判数值（⛔ 不做 IO）⇒ 假探测输出就能把每条判据钉住。**品牌图标** `pure/asrBrandIcon`：实测 Obsidian asar 图标库里 `openai`/`qwen`/`whisper`/`llama`/`sherpa`/`funasr`/`huggingface` **全部搜不到** ⇒ 按各家技术特征自绘 6 个极简标记，`currentColor` 随主题变色，14px 可辨认（⛔ 不声称是官方资源）。**同步三段式** `pure/syncHint` + `modals/syncHintView`：文案抽成纯函数而非写在弹窗里 —— ⑴ 是本轮交付主体、必须能被单测逐字钉住；⑵ 6 个弹窗措辞已开始漂移（豆瓣「只读豆瓣、不改动那边的内容」vs Steam「只读 Steam，不会改动那边的内容」）。渲染两条：标签 `<strong>`、**冒号由渲染层补**（否则「同步数据：：」）；正文只认成对 `**`，落单星号原样输出。接入 Bangumi / 豆瓣 / 音乐 / Steam / TMDB / 微信读书六个弹窗。**一级分组** `pure/listGrouping`：用户三选一裁定 **G1（网格里只有组卡、点卡进组）**，⛔ 否掉「组卡当章首+条目同屏」与「顶部横滑标签条」；本文件只做分桶 / 排序 / 桶上汇总，二级**不在这里** —— 进组后仍走既有 `foldSeries`（「二级嵌套」= 一级组卡 + 组内系列卡，⛔ 不新造嵌套树）。**无字幕两态** `pure/netCueCopy`：唯一可靠判据是 `fetchBiliSubtitle` 的 `onDiag.login_mid`（0 = 未登录），旧实现压成 `null` 才导致无从分辨；⚠️ `reason` 缺失按**状态二**渲染（宁可说「源视频没字幕」，也不能喊「Cookie 失效」——后者会被用户照着去改设置）；处方路径核对为 `src/Settings.ts:1832` 的「网络播放源凭据」组；删掉「去平台看这一集」按钮。**系列两个边界** `pure/seriesGroup`：单部不折组但仍可辨识（`:53`）、序号填 8.5 存 9 ⛔ 不抛错卡住保存（`:136-142`）。**门禁**：与 #749 同一次收口。 |
 | 387 | **#639 Steam 集成（凭据入口／同步库与愿望单／启动同步时长）＋ 微信读书同步入口搬迁** | 2026-10-15 | 用户：「参考 CMorooney/obsidian-game-search-plugin 实现游戏类型新增条目的增强……并将微信读书同步入库的项放在微信读书凭据下拉处，两个同步按钮样式都改成白字主题色底」。🔴🔴 **实测先行**：① `GetOwnedGames` **无 Key 直接 401** ⇒ 库/时长同步离不开 API Key；② `GetWishlist` **免 Key**，但**资料非公开回 `{"response":{}}`（HTTP 仍 200）** ⇒ **「空」与「失败」必须分开说**（本批最重要判据）；③ 两个域要分清（`api.steampowered.com` = Web API）。**纯模块 `pure/steamSync`**（23）+ **`services/steamWebApi`**（11）：凭据校验 / 三态解析 / 时长换算（**覆盖而非累加**）/ 保守配对（**绝不模糊匹配**）/ 6 小时启动门槛。**凭据入口**：注册表 Steam 挂 `keyField`；折叠体内 Key 密文 + **SteamID 明文** + **公开提示** + 「同步 Steam」。**同步**：库配对 + 愿望单（名字靠 appdetails 补）。**启动同步**：与凭据自检并排、**静默**。**微信读书入口**搬进其凭据行（旧行退场）。**门禁**：tsc 0 ／ 87 warnings ／ 单测 34/34 ／ 断言 **4463 PASS 0 FAIL**（+14；翻面 4）／ 突变 **51-51 RED**（M43~M51）／ 真 Chrome **9/9**（两按钮 `bg=rgb(124,140,255)`+白字且同款）／ md5 `042901901669` ／ styles.css `8a4a45a09376` ／ 部署 ✅ ／ 镜像 ✅（509）。⚠️ **两条排雷**：⒜ 复现页 **CSS 抽取器又被注释骗**（抽出废 CSS 被丢弃 ⇒ 4 条假红）⇒ 先剥注释；⒝ **按钮必须同挂 `.mod-cta`**（核心 0,2,1 > 两级类 0,2,0）⇒ 选择器写 `button.rl-sync-btn`。UI-GUIDE **v356**。 |
 | 387 | **#668 编辑条目的关联图谱（手动关联 + 双向镜像 + 点节点切条目）** | 2026-10-18 | 用户：「继续做编辑条目的关联图谱功能」（设计 = `docs/superpowers/plans/2026-10-15-related-graph-design.md`；#630 象形稿 + 四项已裁定）。 **①** 新字段 `related?: RelatedLink[]` append-only 零迁移，进 `normalizeEntry` 白名单；逐项校验收口在 `pure/relatedGraph.normalizeRelatedList` （脏项单丢 / 同 id 后写的赢 / **自环丢** / label 空不落键 / 非数组落 undefined）。 **②** 纯模块：出入边合并（互相挂按**出边优先**）、取反表**成对** + 表外一律「被关联」（⛔ 不猜）、`graphLayout` **只出几何不出坐标**、⛔ 不产出 NaN。 **③** `RelatedChips.svelte` 挂在「个人评语」之下：chips（关系词就地改 + 库内检索挂接）+ 放射 SVG（出边实心 / 入边**空心虚线** / 悬停淡出 / ≥6 条交替半径 / >8 条标签转悬停 / **下半圈文案翻到节点上方**）；空态不画空图；失效引用只提示「N 条关联已失效」（⛔ 不删数据）。 **④** 点节点 = 同一弹窗切条目：**脏了才拦**（ConfirmModal）→ `mountForm` 重建，🔴 **必须同时换 `this.entry`**（漏了 = B 的字段保存进 A， M13 专设一条突变）；`readEntryForForm` 抽出来给 `onOpen` 与切条目**共用一份口径**；⚠️ **没有「返回上一条」**（设计 §6 待议）。 **⑤** 笔记新增 `## 关联` 章节（只写出边 `- 关系词：[[标题]]`）并纳入 `writeNote` **重写保留区**（目录有则目录为准，笔记有目录没有才搬回）。 **门禁**：tsc 0 ／ 87 warnings(= 基线) ／ 单测 **4355 passed**（4 条既有红，无交集）／ 断言 **4231 PASS、既有红仍 37** ／ 突变 `_mut635.cjs` **18-18 RED** ／ 真 Chrome 复现页 **5 档全绿** ／ md5 三方一致 `ed247030f6c8` ／ 部署 ✅ ／ 镜像 ✅。 **⑦ 二轮（同日，用户上手截图）**：「两个关联按钮 / 移到启动路径下方 / 取消下拉」⇒ 入口只留标题行一枚（空态那枚撤）、
 整块移到影视 `{#if}` 支的末尾（移动脚本自带「块配平 + 整份结构计数不变」两道自检；⚠️ 只有影视出图谱）、

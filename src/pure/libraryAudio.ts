@@ -125,3 +125,56 @@ export function pickLibraryAudio(
         .sort((a, b) => Number(b.exact) - Number(a.exact) || b.score - a.score || a.path.localeCompare(b.path));
     return { best: ranked[0] ?? null, ranked };
 }
+
+/**
+ * 🔴 m04435 ② 反向匹配：「**这个刚下载的文件**，是库里哪一条音乐条目的？」—— 无 obsidian / 无 DOM，可单测。
+ *
+ * 用户原话（m04435）：「从B站下载音乐：后台下载完成后**自动关联已有音乐条目**，不要求用户再手动搜索。」
+ * ⇒ 下载完手里只有 `relPath`（`下载/音乐/晴天.mp3`），得反查条目 —— 方向与 `pickLibraryAudio`
+ *   （给一个条目找文件）**正好相反**，所以不能直接复用它的入参，只能复用**同一把尺**。
+ *
+ * 🔴 三条口径（都写死，⛔ 别在调用处另判）：
+ *  ⑴ **只用下载文件名里的「歌名」去比条目**，⛔ 不拿艺人段去比 —— `buildBiliAudioFilename` 落盘形态
+ *     是「`songTitle.mp3`」或「`艺人 - 视频标题.mp3`」，后者里的「艺人」是 B站 up 主名，
+ *     与条目的 `author`（真歌手）根本不是一回事，拿它比会误命中同 up 主的别的歌。
+ *  ⑵ **只认 `music` 类型**，且**已有关联音频的跳过**（`audioPath` 非空）—— 自动关联的语义是
+ *     「补上缺的那一环」，⛔ 不能把用户已经手工挑好的关联冲掉（那是最难查的一类回归）。
+ *  ⑶ 判据复用 `scoreLibraryAudio`「同名硬证据优先、分数次之」的排序，并且**要求过门槛**
+ *     （`LIBRARY_AUDIO_MIN_SCORE`）—— 分不够就返回 `null`，让调用方提示「没找到可自动关联的条目」，
+ *     ⛔ 别为了「总能关联上」而在调用处把门槛降成 0（那会给用户连上完全无关的歌）。
+ *
+ * ⚠️ 返回 `null` 是**正常结局**（用户库里根本没有这条音乐），调用方必须能安静处理，
+ *    不能当成错误抛给用户。
+ */
+export function matchAudioFileToEntry<
+    T extends { id: string; type: string; title?: string; author?: string; audioPath?: string },
+>(entries: readonly T[], fileName: string): T | null {
+    const name = String(fileName ?? '').trim();
+    if (!name) return null;
+    // 文件名 → 拿来比的「歌名」：🔴 用**最后**一个 ` - ` 之后那段（`艺人 - 歌名` 落盘形态），
+    // 但若切出来的那段不像歌名（为空），退回整段 —— 与 `splitSongStem` 同一套切法，⛔ 别另写。
+    const parts = splitSongStem(name);
+    const probe = parts.title || audioStem(name);
+    const probeKey = probe.trim();
+    if (!probeKey) return null;
+
+    let best: { entry: T; exact: boolean; score: number; path: string } | null = null;
+    for (const e of entries ?? []) {
+        if (!e || e.type !== 'music') continue;
+        if (String(e.audioPath ?? '').trim()) continue; // 已有手工关联 ⇒ ⛔ 不覆盖
+        const title = String(e.title ?? '').trim();
+        if (!title) continue;
+        const score = songSimilarityScore(probeKey, title, String(e.author ?? '').trim());
+        if (score < LIBRARY_AUDIO_MIN_SCORE) continue;
+        const exact = segmentsExactTitle(title, String(e.author ?? ''), probeKey);
+        // 与 `pickLibraryAudio` **同一套排序关键字**：同名硬证据 → 分数 → id 字典序（保证结果稳定可断言）
+        const better =
+            !best ||
+            Number(exact) - Number(best.exact) > 0 ||
+            (Number(exact) === Number(best.exact) && score > best.score) ||
+            (Number(exact) === Number(best.exact) && score === best.score && e.id.localeCompare(best.entry.id) < 0);
+        if (better) best = { entry: e, exact, score, path: e.id };
+    }
+    return best ? best.entry : null;
+}
+

@@ -30,6 +30,7 @@
         type SeriesBoardRow,
     } from 'pure/seriesRating';
     import type { Rating } from 'pure/rating';
+    import Icon from './Icon.svelte';
 
     export let entries: MediaEntry[] = [];
     /** 封面 URL 解析（与主视图同一条出口；拿不到时显示占位块）
@@ -79,6 +80,27 @@
      */
     export let ctrlWheelZoom = false;
 
+    /**
+     * 🔴 2026-11-14（用户 m02498）：「也给评分看板加个系列卡堆叠和单卡平铺的循环切换图标按钮
+     * 同首页的按钮放在评分看板导航栏上」。
+     *
+     * 语义：`false` = **系列卡堆叠**（同系列折成一张合集卡，默认）；`true` = **全部单卡平铺**
+     * （同系列各成员各占一格，看板上不再有合集卡）。
+     *
+     * ⚠️ 与首页那枚按钮（`MediaList.svelte` 的 `.rl-vb-unfold`）**共用同一个设置字段**
+     *    `settings.unfoldSeries`（`main.ts:13152` `setUnfoldSeries`）—— 用户说的是「同首页的按钮」，
+     *    ⛔ 别为看板另开一个字段：同一个手势在两处各留一份开关必然互相打架（本仓老坑）。
+     * ⚠️ 但**作用面不同**：那个字段管海报墙/列表的 `seriesRows` 折叠，这里管评分看板的格子投影；
+     *    同一个布尔驱动两处投影是有意的 —— 用户心智里「系列要不要折叠」就是一件事。
+     */
+    export let unfoldSeries = false;
+    /**
+     * 切「系列卡堆叠 ⟷ 全部单卡平铺」。
+     * 🔴 与 `MediaList.svelte` 里 `onToggleUnfoldSeries` 完全同一套约定：
+     *    **未注入（`null`）时整枚按钮不渲染** —— 没接线就不画（⛔ 别画一枚点了没反应的按钮）。
+     */
+    export let onToggleUnfoldSeries: ((next: boolean) => void) | null = null;
+
     /** 应用乐观值后的条目集合（渲染与统计都吃它 ⇒ 拖完立刻看到变化） */
     $: merged = entries.map((e) => (optimistic[e.id] !== undefined ? { ...e, rating: optimistic[e.id] } : e));
     /** 应用乐观值后的合集分表（同上，但键是分组键） */
@@ -92,9 +114,13 @@
      * 行序 / 配色仍然复用 `pure/ratingBoard.boardRows()` + `toneOf` 那一套单一真源。
      *
      * ⚠️ 用户在象形稿上看到的「94 张 → 34 张」就是这个函数的产出（真实数据实测 -64%）。
+     *
+     * 🔴 2026-11-14（用户 m02498）：加了 `unfoldSeries` 之后这里的**两个**投影都要吃同一个布尔 ——
+     *    `buildSeriesBoard`（画格）与 `seriesUnratedRatio`（「未评分 N / M」的分子分母）。
+     *    ⛔ 只给一个传、另一个用缺省：切到平铺后格数变了而计数条不动，用户立刻看到「数字和画面对不上」。
      */
-    $: rows = buildSeriesBoard(merged, mergedSeries, tab);
-    $: ratio = seriesUnratedRatio(merged, mergedSeries, tab);
+    $: rows = buildSeriesBoard(merged, mergedSeries, tab, unfoldSeries);
+    $: ratio = seriesUnratedRatio(merged, mergedSeries, tab, unfoldSeries);
 
     /** 拖拽中的条目 id（`dataTransfer` 在某些环境读不到，本地留一份更可靠） */
     let draggingId: string | null = null;
@@ -322,6 +348,25 @@
 <div class="rl-board" style={`--rl-board-card-max:${cardMaxPx}px`} on:wheel={onWheel} role="region" aria-label="评分看板">
     <div class="rl-board-head">
         <div class="rl-board-titlebar">评分看板</div>
+        <!-- 🔴 2026-11-14（用户 m02498）：「也给评分看板加个系列卡堆叠和单卡平铺的循环切换图标按钮
+             同首页的按钮放在评分看板导航栏上」。
+             ⚠️ 与首页那枚（`MediaList.svelte` 的 `.rl-vb-unfold`）**同一套约定**：
+                宿主没注入 `onToggleUnfoldSeries`（`null`）时整枚不渲染 —— 没接线就不画；
+                `is-on` = 平铺态（图标换成 `layout-grid`，与首页那枚的翻面逻辑一致）。
+             ⚠️ 图标不用 `aria-label`、只用 `data-tip`（本仓 UI-GUIDE §3：两者同挂会出两层气泡）。 -->
+        {#if onToggleUnfoldSeries}
+            <button
+                class="rl-board-unfold"
+                class:is-on={unfoldSeries}
+                type="button"
+                aria-pressed={unfoldSeries}
+                data-tip={unfoldSeries
+                    ? '全部单卡平铺（当前）—— 同系列不再折成一张合集卡（合集分只是暂时看不见，随时切回来）。点击改回系列卡堆叠'
+                    : '系列卡堆叠（当前）—— 同系列折成一张合集卡。点击改为全部单卡平铺'}
+                on:click={() => onToggleUnfoldSeries?.(!unfoldSeries)}>
+                <Icon icon={unfoldSeries ? 'layout-grid' : 'layers'} size={14} />
+            </button>
+        {/if}
     </div>
     <!-- 顶部分类 Tabs（选中高亮 + 实时计数 Badge） -->
     <div class="rl-board-tabs" role="tablist" aria-label="内容分类">
@@ -460,8 +505,22 @@
              文字保持固定档（本看板本来就是信息密度工具，字跟着封面的比例放大没有必要）。 */
         font-size: 13px;
     }
-    .rl-board-head { margin-bottom: 10px; }
+    .rl-board-head { margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
     .rl-board-titlebar { font-size: 1.1em; font-weight: 700; color: var(--text-normal); margin-bottom: 4px; }
+    /* 🔴 2026-11-14（用户 m02498）：「系列卡堆叠 ⟷ 全部单卡平铺」循环切换按钮，摆在标题栏右侧
+       （与首页 `.rl-vb-unfold` 同一套视觉：26px 见方、透明底、悬停/开启时上主题色）。
+       ⚠️ `margin-bottom: 4px` 与标题栏对齐 —— 标题栏自带 4px 下边距，按钮不加就会高 4px（错位）。
+       ⚠️ 选择器带 `.rl-board` 前缀：Svelte 编译后单类选择器是 (0,1,0)，宿主主题里若有同名通用
+          `button` 规则会压过来（本仓老坑，见 `.rl-board .rl-board-tab` 同样写法）。 */
+    .rl-board .rl-board-unfold {
+        display: inline-flex; align-items: center; justify-content: center;
+        height: 24px; width: 24px; padding: 0; margin: 0 0 4px 0;
+        border: 0; border-radius: var(--rl-t-radius-md, 6px);
+        background: transparent; box-shadow: none;
+        color: var(--text-muted); font-family: inherit; cursor: pointer;
+    }
+    .rl-board .rl-board-unfold:hover { color: var(--interactive-accent); background: var(--background-modifier-hover); }
+    .rl-board .rl-board-unfold.is-on { color: var(--interactive-accent); }
     /* ── 顶部 Tabs（选中 = 主题色胶囊 + 计数 Badge）── */
     .rl-board-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
     .rl-board .rl-board-tab {
@@ -602,39 +661,78 @@
         width: 100%; font-size: .8em; line-height: 1.3; text-align: center;
         color: var(--text-muted); cursor: pointer;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        /* 🔴🔴 2026-11-14（m02377，用户：「还是系列卡显示大一点，导致不对齐的问题」）：
+           合集卡标题折两行（h≈27px）、单条卡标题单行（h≈14px）⇒ 同一行里两种卡**底部差 13px**，
+           整排看起来参差不齐。真机量测（合集卡与单条卡同宽 57px 之后）：
+             单条卡 h=103 / 合集卡 h=116 —— 差的正是这两行标题。
+           ⇒ 给标题区统一一个**两行高度下限**：单条卡多出来的是空白（`nowrap` 单行垂直居中），
+             合集卡正好用满两行，两种卡外框等高 ⇒ 行内底部自然对齐。
+           ⚠️ 用 `em` 不用 px：字号随主题/缩放变，写死 px 会在别的字号档错位。
+           ⚠️ 2.6em = 2 × `line-height: 1.3`，⛔ 改上面那行 line-height 时必须同步这里。 */
+        min-height: 2.6em;
     }
     .rl-board-title:hover { color: var(--interactive-accent); }
 
     /* ── 合集卡（整个系列折成一格）────────────────────────────────────────
        🔴 2026-10-27 用户裁定「评分看板按系列合集展示」+「合集分与单卡同位」。
-       几何参数取自象形稿 `_shot/src/rating-board-collection.html` 的方案 A 定稿（该稿 14 项探针全绿、
-       卡片高 97.9px 与单条卡 105px 齐平、小字 1 行不折）。
-       ⚠️ 两条实测踩过的坑，改之前先读：
-         ① ⛔ 别只加 `grid-column: span 2` 而不改 `flex-direction` —— 封面会按 `aspect-ratio: 2/3`
-            被拉到约 190px 高，整行被撑爆，比不加还糟；
-         ② 58px 的窄列装不下「标题 + 部数」，折 3 行会把卡从 105px 撑到 139px。 */
+       几何参数取自象形稿 `_shot/src/rating-board-collection.html` 的方案 A 定稿（该稿 14 项探针全绿）。
+       ⚠️ 一条实测踩过的坑，改之前先读：
+          ⛔ 别给合集卡加 `grid-column: span 2` —— 它会让封面按 `aspect-ratio: 2/3`
+            被拉到约 190px 高，整行被撑爆；而且卡片比同行单条卡宽一倍、右半边空着，
+            用户会直接说「不对齐」（2026-11-14 就是这么被打回来的）。
+
+       🔴🔴 m13127 ①（用户逐字）：「评分看板的系列卡封面下面名称移到第二张卡片的位置上了修复它」
+       ⇒ 真因是**布局方向**，不是偏移：旧版这里是 `flex-direction: row`（封面在左、标题在右），
+         合集卡又占两格（`span 2` ≈ 130px），于是标题作为横排第二个子项正好落在
+         **第二个格子的横向位置**（真机量测：卡片 x=438 w=130、标题 x=506 w=62 h=93）。
+         用户说的「移到第二张卡片的位置」就是这个几何 —— 视觉上标题像是串到了邻格。
+       ⇒ 修法 = 回到与单条卡**同一套竖排**：`flex-direction: column`、封面整卡宽、
+         标题在封面**下面**。
+       ⚠️ 必留 `align-items: stretch` → 这里改 `align-items: center`（与 `.rl-board-card` 一致），
+          否则封面会被拉成整行高。 */
     .rl-board-card-coll {
-        grid-column: span 2;
-        max-width: none;
-        flex-direction: row;
-        align-items: stretch;
-        gap: 6px;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
     }
+    /* 合集卡的封面：整卡宽 + 2:3，**与单条卡同一口径**（上限走 `--rl-board-card-max`，随手感缩放一起长）。
+       ⚠️ 合集卡**不占两格**（见上面 2026-11-14 那段），所以这里 `width: 100%` 就等于单条卡的封面宽，
+          不会出现「封面一格、卡片两格」的错位。 */
     .rl-board-card-coll .rl-board-cov-coll {
         position: relative;
-        width: 62px;
-        flex: 0 0 62px;
+        width: 100%;
+        max-width: var(--rl-board-card-max, 104px);
+        flex: 0 0 auto;
     }
+    /* 合集卡标题：竖排子项，**宽度与封面同口径（一格）**，可以折行（系列名普遍比单条标题长）。
+       ⚠️ 保留 `min-width: 0` 与 `-webkit-line-clamp` —— 超出由 clamp 画省略号。
+       🔴 m12719 ③（用户：「统计看板系列卡展示的名称要加截断的要加省略号」）仍然成立：
+          截断信号只有 `-webkit-line-clamp`（`text-overflow: ellipsis` 在竖排 `white-space: normal`
+          下不画点），所以这组属性一个都不能删。
+
+       🔴🔴 2026-11-14（用户：「评分看板的系列卡显示名称还是占了两个格子修复它，这什么回事把名称
+          省略掉行不行」）：真机量测（1440×900）——
+            单条卡 61px / 合集卡 130px（span 2）/ 合集封面 64px / **合集标题 130px、`max-width: none`**。
+          第一次只把标题宽度收到一格（`max-width: var(--rl-board-card-max)`）—— 标题不再跨格了，
+          但用户紧接着反馈「还是系列卡显示大一点，导致不对齐」：**卡片本身仍占两格**，
+          于是它在网格里比同行的单条卡宽一倍，右半边空着，整行看着参差不齐。
+       ⇒ 最终裁定（用户 m02377 选中方案 A「系列卡只占一格，其余不变」）：
+          **删掉 `grid-column: span 2`，合集卡和普通单条卡占一样大的格**。
+          这才是用户说的「单卡平铺」—— 在评分看板这个语境里，它指**占位大小与单卡一致**，
+          而不是海报墙那个 `unfoldSeries`（那个会连合集卡本身一起删掉，用户明确否了 B 方案）。
+       ⚠️ 随之必须去掉 `max-width: none`：那是给「占两格」用的解禁；占一格后要**回到基类**的
+          `max-width: var(--rl-board-card-max, 104px)`，否则稀疏行（整行只 1 件）会把合集卡拉成巨图。
+       ⚠️ 合集分 / 拖拽改分 / 右下角叠角部数**全部保留** —— 摊平的只是占位，不是能力。
+       ⚠️ 标题的多行钳制仍要留（真机复测：一格宽下合集名普遍 5~20 字，单行 nowrap 会只剩 3~4 个字）。 */
     .rl-board-title-coll {
-        flex: 1 1 auto;
+        width: 100%;
+        max-width: var(--rl-board-card-max, 104px);
         min-width: 0;
-        text-align: left;
-        /* 合集名普遍比单条标题长（如「熊出没之探险日记2」），给 3 行折行空间，
-           但必须配 `min-width: 0` 否则 flex 子项不肯缩、ellipsis 不生效。 */
+        text-align: center;
         white-space: normal;
         display: -webkit-box;
-        line-clamp: 3;
-        -webkit-line-clamp: 3;
+        line-clamp: 2;
+        -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
     }

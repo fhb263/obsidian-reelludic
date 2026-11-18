@@ -1,6 +1,7 @@
 // 在线曲库结果映射（pure/songLibrary）单测 —— #464
 import { describe, it, expect } from 'vitest';
 import { songLibraryResults, SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
+import { POSTER_SOURCE_LABELS } from 'pure/posterSources';
 import type { DownloadSong } from 'services/dl';
 
 /** 造一条四平台歌曲（默认：网易云《海阔天空》/ BEYOND） */
@@ -84,3 +85,117 @@ describe('songLibraryResults 去重', () => {
         expect(out.length).toBe(1);
     });
 });
+
+// ───────────────────────── 第 15 轮：搜索元数据（封面 + 时长） ─────────────────────────
+// 用户原话：「给三大音乐平台加搜索元数据的功能」。
+// 🔴 这批用例锁的是**「映射层不再丢字段」**，不是「封面长什么样」——
+//    尺寸改写规则各自有归属（`tests/posterSources.test.ts` 在测），这里只断言「值被传下去了、且来源正确」。
+describe('songLibraryResults 搜索元数据：封面', () => {
+    it('网易云：`coverUrl` 原样传下（一个字都不改写 —— 原始就是 1500×1500）', () => {
+        const url = 'https://p1.music.126.net/abc==/109951163406532811.jpg';
+        const [r] = songLibraryResults([song({ source: 'netease', coverUrl: url })]);
+        expect(r.cover).toBe(url);
+    });
+
+    it('QQ：尺寸段被抬到 1500（实测 1000 反而 404）—— 证明走的是 `platformCoverUrl` 而不是原样传', () => {
+        const [r] = songLibraryResults([
+            song({ source: 'qq', id: 'q1', coverUrl: 'https://y.gtimg.cn/music/photo_new/T002R300x300M000abc.jpg' }),
+        ]);
+        expect(r.cover).toBe('https://y.gtimg.cn/music/photo_new/T002R1500x1500M000abc.jpg');
+    });
+
+    it('酷狗：删掉 `/stdmusic/<尺寸>/` 段（删得掉就是 1477×1477）', () => {
+        const [r] = songLibraryResults([
+            song({ source: 'kugou', id: 'k1', coverUrl: 'https://imge.kugou.com/stdmusic/480/20230920/abc.jpg' }),
+        ]);
+        expect(r.cover).toBe('https://imge.kugou.com/stdmusic/20230920/abc.jpg');
+    });
+
+    it('🔴 酷我：必须用 `albumPicPath` 拼**专辑图**，⛔ 不能用 `coverUrl`（那是横的 MV 图）', () => {
+        const [withAlbum] = songLibraryResults([
+            song({ source: 'kuwo', id: 'w1', coverUrl: 'https://img.kuwo.cn/mv/324x182.jpg', albumPicPath: '120/s3s94/93/211513640.jpg' }),
+        ]);
+        expect(withAlbum.cover).toBe('https://img1.kuwo.cn/star/albumcover/1000/s3s94/93/211513640.jpg');
+        // 只有 MV 图、没有专辑图 ⇒ 宁可不显示封面，也不把横图方着贴上去
+        const [mvOnly] = songLibraryResults([song({ source: 'kuwo', id: 'w2', coverUrl: 'https://img.kuwo.cn/mv/324x182.jpg' })]);
+        expect(mvOnly.cover).toBeUndefined();
+    });
+
+    it('平台没给封面 ⇒ `cover` 为 undefined（卡片画占位图），⛔ 不编造也不留空串', () => {
+        const [r] = songLibraryResults([song({ source: 'qq', coverUrl: undefined })]);
+        expect(r.cover).toBeUndefined();
+    });
+
+    it('🔴 网易云补拉：自身没封面时用 `covers` 里的图（它的搜索响应一条封面都不带）', () => {
+        const [r] = songLibraryResults([song({ source: 'netease', neteaseId: 347230, coverUrl: undefined })], new Map([[347230, 'https://p1.music.126.net/looked-up.jpg']]));
+        expect(r.cover).toBe('https://p1.music.126.net/looked-up.jpg');
+    });
+
+    it('平台自己给了封面就以平台为准（补拉那张不一定是它选的那张）', () => {
+        const [r] = songLibraryResults(
+            [song({ source: 'netease', neteaseId: 347230, coverUrl: 'https://p1.music.126.net/own.jpg' })],
+            new Map([[347230, 'https://p1.music.126.net/looked-up.jpg']]),
+        );
+        expect(r.cover).toBe('https://p1.music.126.net/own.jpg');
+    });
+
+    it('补拉表只对**网易云**生效（其它平台的 id 空间不相干，别串台）', () => {
+        const [r] = songLibraryResults([song({ source: 'qq', id: '347230', coverUrl: undefined })], new Map([[347230, 'https://p1.music.126.net/looked-up.jpg']]));
+        expect(r.cover).toBeUndefined();
+    });
+});
+
+describe('songLibraryResults 搜索元数据：时长', () => {
+    it('`duration`（秒）原样透传，**不在这里格式化**（卡片那边用 mediaInfo.formatDuration 统一处理）', () => {
+        const [r] = songLibraryResults([song({ duration: 269 })]);
+        expect(r.duration).toBe(269);
+    });
+
+    it('0 / 负数 / NaN ⇒ undefined（卡片据此整段不画，⛔ 不写「未知」也不写 `0:00`）', () => {
+        for (const bad of [0, -1, Number.NaN]) {
+            const [r] = songLibraryResults([song({ id: `b${String(bad)}`, duration: bad })]);
+            expect(r.duration).toBeUndefined();
+        }
+    });
+
+    it('平台没给时长 ⇒ undefined', () => {
+        const [r] = songLibraryResults([song({ duration: undefined })]);
+        expect(r.duration).toBeUndefined();
+    });
+});
+
+describe('songLibraryResults 来源平台名', () => {
+    // 🔴 用户 2026-11-09 原话：「在线曲库也要显示来源平台名」。
+    //    曲库栏把四平台压成了一栏，卡片只写「在线曲库」时分不清这首是哪家的。
+    it('四平台各带自己的平台名（网易云 / QQ音乐 / 酷狗 / 酷我）', () => {
+        const cases: [DownloadSong['source'], string][] = [
+            ['netease', '网易云'],
+            ['qq', 'QQ音乐'],
+            ['kugou', '酷狗'],
+            ['kuwo', '酷我'],
+        ];
+        for (const [src, label] of cases) {
+            const [r] = songLibraryResults([song({ source: src, id: `x-${src}` })]);
+            expect(r.platformLabel).toBe(label);
+        }
+    });
+
+    it('🔴 `source` 仍是 `songlib`（栏位归属），平台名单开一个键 —— ⛔ 别拿平台名顶替 source', () => {
+        const [r] = songLibraryResults([song()]);
+        expect(r.source).toBe(SONG_LIB_ID);
+        expect(r.platformLabel).toBe('网易云');
+    });
+
+    it('平台认不出 ⇒ 不写 platformLabel 键（卡片回落到「在线曲库」，⛔ 不画空串也不画 undefined）', () => {
+        const [r] = songLibraryResults([song({ source: 'douban' as never })]);
+        // ⚠️ 用 hasOwnProperty 而不是 `.platformLabel === undefined`：
+        //    后者在「键存在但值是 undefined」时也会过，那正是本仓踩过的「空 vs 缺」分辨不了的坑
+        expect(Object.prototype.hasOwnProperty.call(r, 'platformLabel')).toBe(false);
+    });
+
+    it('平台名与下载窗口的平台档位同名（两处文案漂移会让用户以为换了家）', () => {
+        const [r] = songLibraryResults([song({ source: 'qq', id: 'qq-1' })]);
+        expect(r.platformLabel).toBe(POSTER_SOURCE_LABELS.qq);
+    });
+});
+

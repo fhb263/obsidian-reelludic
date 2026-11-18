@@ -338,11 +338,35 @@ describe('withLrcLyrics（把歌词正文写回块内）', () => {
         expect(withLrcLyrics(TEMPLATE, '')).toBe(TEMPLATE);
     });
 
-    it('无块 / 未闭合 ⇒ 原样返回（⛔ 不许凭空造一个块出来）', () => {
+    it('🔴 无块但给了歌词 ⇒ **补一个 `## 歌词` 小节**（2026-11-09 第 16 轮翻面：原来静默丢弃）', () => {
         const noBlock = '# 书\n\n## 个人评语\n\n内容\n';
-        expect(withLrcLyrics(noBlock, '[00:01.00]a')).toBe(noBlock);
+        const out = withLrcLyrics(noBlock, '[00:01.00]a');
+        expect(out).not.toBe(noBlock);
+        // 补出来的块要能被同一个模块读回去（自洽）
+        expect(lrcBlockLyrics(out)).toBe('[00:01.00]a');
+        // ⛔ 不许把原有内容吃掉
+        expect(out).toContain('## 个人评语');
+        expect(out).toContain('内容');
+    });
+
+    it('⛔ 无块且**没有歌词** ⇒ 仍原样返回（不给普通条目凭空塞空块）', () => {
+        const noBlock = '# 书\n\n## 个人评语\n\n内容\n';
+        expect(withLrcLyrics(noBlock, '')).toBe(noBlock);
+        expect(withLrcLyrics(noBlock, '   \n  ')).toBe(noBlock);
+    });
+
+    it('🔴 frontmatter 存在时，补出来的 `## 歌词` 插在 frontmatter 之后（⛔ 别插到最前面把 fm 打断）', () => {
+        const fm = '---\ntype: music\ntitle: "晴天"\n---\n\n# 晴天\n\n正文\n';
+        const out = withLrcLyrics(fm, '[00:01.00]a');
+        expect(out.startsWith('---\ntype: music\ntitle: "晴天"\n---\n')).toBe(true);
+        expect(out.indexOf('## 歌词')).toBeLessThan(out.indexOf('# 晴天'));
+        expect(lrcBlockLyrics(out)).toBe('[00:01.00]a');
+    });
+
+    it('未闭合的围栏 ⇒ 视为无块，同样补一个完整块（⛔ 别往半截围栏里塞正文）', () => {
         const broken = '```lrc\nsource [[a.mp3]]\n';
-        expect(withLrcLyrics(broken, '[00:01.00]a')).toBe(broken);
+        const out = withLrcLyrics(broken, '[00:01.00]a');
+        expect(lrcBlockLyrics(out)).toBe('[00:01.00]a');
     });
 
     it('多指令行全部保留（`source` + `lyrics` 都不丢）', () => {

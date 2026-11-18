@@ -16,8 +16,15 @@
 
 import { AUDIO_ASSOCIABLE_EXTENSIONS, VIDEO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
 
-/** 下载物类型 —— 决定扩展名白名单与该类型的**缺省目录**（#459 起⛔ 不再由它拼子目录） */
-export type DownloadKind = 'music' | 'book' | 'video' | 'other';
+/**
+ * 下载物类型 —— 决定扩展名白名单与该类型的**缺省目录**（#459 起⛔ 不再由它拼子目录）。
+ *
+ * 🔴 2026-11-16 新增 `flash`：游戏条目的 `.swf` 要落盘，而原来的 `other` 是**空白名单**
+ *    （`DOWNLOAD_EXT_WHITELIST.other = []` ⇒ 恒 false）。⛔ 别把 `swf` 塞进 `other`：
+ *    那个空白名单是「来历不明的东西一律不落地」这条防线，给它开口子等于全线失守。
+ *    新开一个类型，白名单只有 `swf` 一条，事故面最小。
+ */
+export type DownloadKind = 'music' | 'book' | 'video' | 'flash' | 'other';
 
 /** 下载根目录**缺省名**（库内相对路径）—— 仅用于「输入为空」时的兜底，以及下面各类型默认目录的前缀 */
 export const DOWNLOAD_ROOT_DEFAULT = '下载';
@@ -37,6 +44,9 @@ export const DOWNLOAD_DIR_DEFAULT: Record<DownloadKind, string> = {
     music: `${DOWNLOAD_ROOT_DEFAULT}/音乐`,
     book: `${DOWNLOAD_ROOT_DEFAULT}/书籍`,
     video: `${DOWNLOAD_ROOT_DEFAULT}/视频`,
+    // 2026-11-16：Flash 影片（游戏条目挂的 .swf）单独一间，与影视/音乐分开，
+    // 免得用户在一个目录里既看到电影又看到小游戏。
+    flash: `${DOWNLOAD_ROOT_DEFAULT}/Flash 游戏`,
     // ⚠️ 值用「未分类」而不是惯常的近义词：全仓有一条反向守卫锚**「键名 + 那个中文词」连写的形态**
     //    （那是「音乐子分类下线」的证据形态），而**任何以该中文开头的值都会被它子串命中**
     //    （试过加后缀，照样撞）⇒ 只能换个不含该前缀的词。
@@ -53,6 +63,10 @@ export const DOWNLOAD_EXT_WHITELIST: Record<DownloadKind, readonly string[]> = {
     music: AUDIO_ASSOCIABLE_EXTENSIONS,
     video: VIDEO_ASSOCIABLE_EXTENSIONS,
     book: ['epub', 'pdf', 'txt', 'mobi', 'azw3', 'fb2', 'cbz', 'zip', 'cbt', 'tar'],
+    // 2026-11-16：只认 swf。⛔ 别顺手把关联资源（图片/音频/配置）也加进来 —— 那类要按 swf
+    // 同目录批量补，是一次**独立的、用户可见的**多文件下载，塞进这里会让「点一下获取」
+    // 变成一个数量不可控的批量任务（本版刻意只取主影片，缺口写进了获取失败/成功的提示里）。
+    flash: ['swf'],
     other: [],
 };
 

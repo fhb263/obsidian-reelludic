@@ -8,6 +8,7 @@
 // P1-8：posterUrl 从 pure/tmdbImage 取（值与类型分开导入）—— 原先从 services/tmdb
 // 值导入会让 pure 层在运行时依赖 services，pure 的零副作用承诺作废。
 import { posterUrl } from 'pure/tmdbImage';
+import { steamCoverUrl } from 'pure/steamCover';
 import type { TmdbSearchResult } from 'services/tmdb';
 import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
 import type { BangumiSearchResult } from 'services/bangumi';
@@ -15,6 +16,9 @@ import type { ProviderId } from 'pure/sourceRegistry';
 import { SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
 // HTML 还原的**唯一真源**（⛔ 别在这里手写第二份实体表 / 剥标签正则）
 import { decodeHtmlBlockText } from 'pure/htmlText';
+// 歌曲时长格式化（秒 → `mm:ss`；拿不到给空串）。⛔ 别在这里手拼时长 ——
+//   `pure/dl/utils` 那个同名函数口径不同（分钟不补零、`0` 返回 `'0:00'`），是 B 站列表专用的。
+import { formatDuration as formatTrackDuration } from 'pure/mediaInfo';
 
 export type SearchResult = TmdbSearchResult | OmdbSearchResult | BookSearchResult | GameSearchResult | BangumiSearchResult | MusicSearchResult;
 
@@ -33,6 +37,13 @@ export interface SearchDisplay {
     ratingCount?: number;
     /** 出版社 / 平台 / 制作公司 / 导演 等附加信息（第三行，可选） */
     meta?: string;
+    /**
+     * 歌曲时长（**已格式化**的 `mm:ss` / `h:mm:ss`，不是秒数）。
+     * 🔴 2026-11-09 第 15 轮（用户：「给三大音乐平台加搜索元数据的功能」）新增。
+     * 口径与 `meta` 一致：**展示层只负责拼可见文本**，原始秒数留在 `MusicSearchResult.duration`。
+     * 拿不到 ⇒ `undefined`（卡片那个 `{#if}` 整段不画，⛔ 不写「未知」也不写 `0:00`）。
+     */
+    duration?: string;
     /** 数据源徽标文本：豆瓣 / TMDB / Bangumi / IMDb / AniList…（所有结果都有） */
     source?: string;
     /** 数据源官方页直达 URL（点击来源徽标打开新标签） */
@@ -70,6 +81,11 @@ interface SourceRecord {
     country?: string;
     language?: string;
     durationMin?: number;
+    /**
+     * 歌曲时长（**秒**）—— 只有 #464 在线曲库结果带这个键（`MusicSearchResult.duration`）。
+     * ⚠️ 与上面 `durationMin`（**收听时长**，分钟）语义完全不同，⛔ 别合并成一个字段。
+     */
+    duration?: number;
     posterPath?: string;
     mediaType?: 'movie' | 'tv';
     year?: number;
@@ -230,7 +246,16 @@ function musicView(o: SourceRecord, raw?: string): SearchDisplay {
         rating: num(o.rating),
         ratingCount: num(o.ratingCount),
         meta: str(o.album),
-        source: label,
+        // 🔴 第 15 轮：曲库结果自带 `duration`（秒）⇒ 这里格式化成 `mm:ss`。
+        //    其它音乐源（豆瓣 / iTunes / MusicBrainz）没有这个键 ⇒ `num` 给 undefined ⇒ 卡片不画那一段。
+        duration: formatTrackDuration(num(o.duration)) || undefined,
+        // 🔴 2026-11-09（用户：「在线曲库也要显示来源平台名」）：列头/徽标仍是「在线曲库」，
+        //    但卡片上要能看出这首是哪家的 ⇒ 曲库结果再用 `platformLabel` 覆盖这个展示名。
+        //    ⚠️ 只改**展示名**，`sourceUrl` 仍按 `src` 算（直达还是那首歌的平台页）；
+        //    非曲库结果没有 `platformLabel` 键 ⇒ 保持原标签（豆瓣 / iTunes / MusicBrainz），行为零变化。
+        //    ⚠️ 刻意读 `platformLabel` 而**不是** `platform`：后者是**游戏分支的判别键**
+        //    （`EntryForm.pick()` 用 `'platform' in r` 认游戏），音乐结果不能沾。
+        source: str(o.platformLabel) || label,
         sourceUrl: buildSourceUrl(src, o),
     };
 }
@@ -266,7 +291,7 @@ function gameView(o: SourceRecord, raw?: string): SearchDisplay {
             : typeof o.id === 'string' && /^\d+$/.test(o.id) ? o.id : undefined;
     const cover =
         src === 'steam' && appid
-            ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_600x900.jpg`
+            ? steamCoverUrl(Number(appid))
             : str(o.cover);
     return {
         cover,

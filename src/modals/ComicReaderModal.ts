@@ -131,6 +131,8 @@ export interface ComicReaderOptions {
     /** 区域截图（拖框 → 宿主 capturePage 取像素 → 写笔记「## 阅读截图」）。
      *  面板只交矩形 + 定位，⛔ 不碰 vault / electron。 */
     onShotSave?: (rect: ShotRect, loc?: ShotLoc) => void;
+    /** 2026-11-13 用户指令：截图按钮**右键** → 框选后进批注（pixpin 式工具条）。宿主没接则回落普通截图。 */
+    onShotAnnotate?: (rect: ShotRect, loc?: ShotLoc) => void;
 }
 
 function clampInt(v: number, min: number, max: number): number {
@@ -491,10 +493,20 @@ export class ComicReaderPanel {
         // ② 区域截图（2026-10-23）：拖框 → 宿主 capturePage 取像素 → 写笔记「## 阅读截图」。
         // 🔴 面板只交矩形 + 定位，⛔ 不碰 vault / electron（见 `options.onShotSave` 注释）。
         if (this.options.onShotSave) {
-            const shotBtn = quick.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '区域截图：框选区域截图回填笔记内' } });
+            // 🔴 2026-11-13 用户指令：左键 = 框选直接回填；右键 = 框选后批注
+            const shotBtn = quick.createEl('button', {
+                cls: 'rl-btn rl-reader-btn',
+                attr: { 'data-tip': '区域截图：左键框选回填笔记 · 右键框选后批注' },
+            });
             safeSetIcon(shotBtn, 'image');
             shotBtn.addEventListener('mousedown', (ev) => ev.stopPropagation());
             shotBtn.addEventListener('click', () => this.startShot());
+            // ⚠️ 不挂 mousedown 判 button —— 会吞左键 click
+            shotBtn.addEventListener('contextmenu', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.startShot(true);
+            });
         }
 
         // 🔴 #636：缩略图栏开关（用户裁定「顶栏一枚开关」）—— 它是**内容导航**，不是快捷模式
@@ -1455,20 +1467,24 @@ export class ComicReaderPanel {
     }
 
     /** 区域截图：拖框 → 交矩形 + 定位给宿主（取像素 / 落盘 / 写笔记全在 `main.saveReaderShot`）。 */
-    private startShot(): void {
+    private startShot(annotate = false): void {
         if (!this.options.onShotSave || this.shotOverlay) return;
+        // 2026-11-13：右键 = 批注；宿主没接 `onShotAnnotate` 就回落普通截图
+        const pick = annotate ? (this.options.onShotAnnotate ?? this.options.onShotSave) : this.options.onShotSave;
         this.hideCtx();
         const host = this.viewMode === 'scroll' ? (this.scrollEl ?? this.stageEl) : this.stageEl;
         const idx = this.pageIndex;
         const ratio = this.viewMode === 'scroll' ? this.scrollRatio : 0;
         const overlay = new ShotOverlay(host, (rect) => {
             this.shotOverlay = null;
-            this.options.onShotSave?.(rect, { page: idx + 1, pct: Math.round(Math.max(0, Math.min(1, ratio)) * 100) });
+            pick?.(rect, { page: idx + 1, pct: Math.round(Math.max(0, Math.min(1, ratio)) * 100) });
         }, () => {
             this.shotOverlay = null;
         });
         this.shotOverlay = overlay;
-        overlay.start('拖拽框选要截图的区域 · Esc 取消');
+        overlay.start(annotate ? '拖出要批注的区域 · 拖手柄调大小 · 点「批注」确认 · Esc 取消' : '拖拽框选要截图的区域 · Esc 取消', {
+            adjust: annotate,
+        });
     }
 
     /** 点到某页（缩略图格子 / 底栏翻页共用）：单页制换页，连续滚动滚到那一页 */

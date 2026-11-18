@@ -19,7 +19,9 @@ import {
 
 describe('statsLayout · 归一', () => {
     it('缺省顺序 = 原三层倒金字塔的视觉顺序，且每块都有展示名', () => {
-        expect([...STATS_BLOCK_DEFAULTS]).toEqual(['hero', 'feed', 'trend', 'overview', 'board']);
+        // 🔴 2026-11-12（用户 m00353 ②-3）：新增 `cloud`（标签词云），**追加在末尾** ——
+        //    老用户 `statsOrder` 里没这个键，`normalizeStatsOrder` 补到末尾；缺省也放末尾，两者才一致。
+        expect([...STATS_BLOCK_DEFAULTS]).toEqual(['hero', 'feed', 'trend', 'overview', 'board', 'cloud']);
         for (const k of STATS_BLOCK_DEFAULTS) expect(STATS_BLOCK_LABELS[k]).toBeTruthy();
     });
 
@@ -30,7 +32,7 @@ describe('statsLayout · 归一', () => {
 
     it('丢弃未知键与重复项，保留用户顺序；缺失键**追加到末尾**', () => {
         expect(normalizeStatsOrder(['board', '__nope__', 'hero', 'board', 'feed'])).toEqual([
-            'board', 'hero', 'feed', 'trend', 'overview',
+            'board', 'hero', 'feed', 'trend', 'overview', 'cloud',
         ]);
         const out = normalizeStatsOrder(['board']);
         expect(out[0]).toBe('board');
@@ -39,7 +41,7 @@ describe('statsLayout · 归一', () => {
 
     it('与缺省逐位一致 ⇒ `isDefaultStatsOrder` 为真（宿主据此删键）', () => {
         expect(isDefaultStatsOrder([...STATS_BLOCK_DEFAULTS])).toBe(true);
-        expect(isDefaultStatsOrder(['board', 'hero', 'feed', 'trend', 'overview'])).toBe(false);
+        expect(isDefaultStatsOrder(['board', 'hero', 'feed', 'trend', 'overview', 'cloud'])).toBe(false);
     });
 });
 
@@ -47,8 +49,8 @@ describe('statsLayout · 单列移动（moveStatsBlock）', () => {
     const order = [...STATS_BLOCK_DEFAULTS];
 
     it('插到目标前 / 后', () => {
-        expect(moveStatsBlock(order, 'board', 'hero', 'before')).toEqual(['board', 'hero', 'feed', 'trend', 'overview']);
-        expect(moveStatsBlock(order, 'board', 'hero', 'after')).toEqual(['hero', 'board', 'feed', 'trend', 'overview']);
+        expect(moveStatsBlock(order, 'board', 'hero', 'before')).toEqual(['board', 'hero', 'feed', 'trend', 'overview', 'cloud']);
+        expect(moveStatsBlock(order, 'board', 'hero', 'after')).toEqual(['hero', 'board', 'feed', 'trend', 'overview', 'cloud']);
     });
 
     it('⛔ 不改入参', () => {

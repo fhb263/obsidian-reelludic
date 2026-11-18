@@ -190,6 +190,8 @@ export interface PdfReaderOptions {
      * （笔记文件的唯一拥有者是 `EntryService`，⛔ 面板里不许碰 vault）。
      */
     onShotSave?: (rect: ShotRect, loc?: ShotLoc) => void;
+    /** 2026-11-13 用户指令：截图按钮**右键** → 框选后进批注（pixpin 式工具条）。宿主没接则回落普通截图。 */
+    onShotAnnotate?: (rect: ShotRect, loc?: ShotLoc) => void;
     /**
      * 2026-10-23 用户指令：PDF 顶栏补「文本翻译」快捷入口。
      * 与 TXT/EPUB **共用同一个签名与同一条宿主通道**（`main.translateText`）；缺省 → 点翻译直接提示不支持。
@@ -677,10 +679,20 @@ export class PdfReaderPanel {
         // 🔴 面板只交矩形 + 定位，不碰 vault / electron（见 `options.onShotSave` 注释）。
         // 🔴 一次性动作，⛔ 不走 `mkQuick`/`toggleAnnotate`（那不是模式，点一次框一次）。
         if (this.options.onShotSave) {
-            const shotBtn = quick.createEl('button', { cls: 'rl-btn rl-reader-btn', attr: { 'data-tip': '区域截图：框选区域截图回填笔记内' } });
+            // 🔴 2026-11-13 用户指令：左键 = 框选直接回填笔记；**右键 = 框选后进批注**（可六向调框 + pixpin 工具条）。
+            const shotBtn = quick.createEl('button', {
+                cls: 'rl-btn rl-reader-btn',
+                attr: { 'data-tip': '区域截图：左键框选回填笔记 · 右键框选后批注' },
+            });
             safeSetIcon(shotBtn, 'image');
             shotBtn.addEventListener('mousedown', (ev) => ev.stopPropagation());
             shotBtn.addEventListener('click', () => this.startShot());
+            // ⚠️ 不挂 mousedown 判 button —— 会吞掉左键 click；contextmenu 单独挂最稳（与播放器同款）
+            shotBtn.addEventListener('contextmenu', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.startShot(true);
+            });
         }
 
         // ⑤ 文本翻译 / ⑥ 网络搜索 —— 进模式后选中正文即弹浮层
@@ -1556,10 +1568,12 @@ export class PdfReaderPanel {
      *   ② 矩形是**视口坐标**（`ShotOverlay` 用 fixed 遮罩），直接交给宿主 `capturePage`。
      *   ③ 定位取「当前页 + 页内比例」，与书签同一套口径（`currentPageIndex` / `currentPageRatio`）。
      */
-    private startShot(): void {
+    private startShot(annotate = false): void {
         const save = this.options.onShotSave;
         if (!save) return;
         if (this.shotOverlay) return;
+        // 2026-11-13：右键 = 批注。宿主没接 `onShotAnnotate` 就回落成普通截图（⛔ 不要静默什么都不做）
+        const pick = annotate ? (this.options.onShotAnnotate ?? save) : save;
         this.hideSelbar();
         this.hideSettings();
         const overlay = new ShotOverlay(
@@ -1567,14 +1581,17 @@ export class PdfReaderPanel {
             (rect) => {
                 this.shotOverlay = null;
                 const idx = this.currentPageIndex();
-                save(rect, { page: idx + 1, pct: Math.round(this.currentPageRatio(idx) * 100) });
+                pick(rect, { page: idx + 1, pct: Math.round(this.currentPageRatio(idx) * 100) });
             },
             () => {
                 this.shotOverlay = null;
             },
         );
         this.shotOverlay = overlay;
-        overlay.start('拖拽框选要截图的区域 · Esc 取消');
+        // 批注模式要多一步「调好框再确认」⇒ 松手不提交，露出八个手柄
+        overlay.start(annotate ? '拖出要批注的区域 · 拖手柄调大小 · 点「批注」确认 · Esc 取消' : '拖拽框选要截图的区域 · Esc 取消', {
+            adjust: annotate,
+        });
     }
 
     private addBookmark(): void {

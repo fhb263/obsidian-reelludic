@@ -3,6 +3,8 @@
     import MediaList from './MediaList.svelte';
     import CalendarBoard from './CalendarBoard.svelte';
     import TrackingBoard from './TrackingBoard.svelte';
+    // 🔴 m07854 ⑪ ①：计划页第三档「继续观看 / 阅读」
+    import ResumeBoard from './ResumeBoard.svelte';
     import StatsBoard from './StatsBoard.svelte';
     // 🔴 #657：统计页区块顺序的缺省值与类型（真源在 pure/statsLayout）
     import { STATS_BLOCK_DEFAULTS, type StatsBlockKey } from 'pure/statsLayout';
@@ -12,6 +14,16 @@
     // 🔴 #550：合并视图那枚「更多」菜单（媒体库 / 追更 / 统计）抽成独立组件 —— 同样**两个挂载点**：
     //   库列表页经工具栏的 `nav-entry` 插槽落在**与搜索框并排的右端**（#552 起）；追更 / 统计页由本组件包一行。
     import MergedPageMenu from './MergedPageMenu.svelte';
+    // 🔴 合集视图（2026-11-23）：IP 卡片 → 子系列行 的另一套骨架。
+    //    ⚠️ 它**不是** MediaList 的一档：合集视图换的是整页骨架，塞进 MediaList 会让三维筛选/分组/表格列
+    //       全部多出一层语义（那边已经 4700 行）。
+    import CollectionBoard from './CollectionBoard.svelte';
+    // 🔴 2026-11-26（m04109）分类视图切换条抽成**唯一真源组件** `ViewChips`：
+    //    用户原话「把顶级分类和搜索框添加条目按钮并排显示」⇒ 这一条不再是首页顶上独立的一行，
+    //    而是被塞进两个视图**各自的工具栏行**（默认视图走 MediaList 的 `view-chips` 插槽，
+    //    合集视图直接写在 CollectionBoard 的 `.rl-toolbar` 里）。
+    //    ⛔ 别在本组件再手写一遍胶囊 DOM —— 那就是「同一概念两份实现」，两边必然漂移。
+    import ViewChips from './ViewChips.svelte';
     import type { MergedPage } from 'pure/mergedPages';
     // 🔴 #603：合并视图那块的**读屏名**要用页名真源（原先写死「媒体库」—— 追更 / 统计两页也叫这个名）
     import { mergedPageLabel } from 'pure/mergedPages';
@@ -32,18 +44,39 @@
     import { MEDIA_TYPES, type HomeTab } from '../tab';
     // 🔴 #541：页签的**顺序 / 显示名 / 图标 / 归一全部来自 `pure/homeTabs`** —— 那是唯一真源
     //    （设置页「起始页」下拉与下面的文字菜单分支都读它）⇒ ⛔ 别在本组件里再留一份 TAB_ORDER / tabLabel / tabIcon。
-    import { HOME_TAB_ORDER, homeTabIcon, homeTabLabel, isNavTab } from 'pure/homeTabs';
+    import { homeTabIcon, homeTabLabel, resolveVisibleTab, visibleTabs, bookKindOfTab, tabLockType, tabMatchesEntry, equivalentTabFor, tabOrderFor, type TabAxis } from 'pure/homeTabs';
     import { indicatorStyle } from 'pure/themeTokens';
     import { resolveTabKey } from 'pure/tabNav';
     // 🔴 #547 / #550 合并视图：类型那一维的**锁类型**仍在本组件算（`listLockType`），
     //    但那三个下拉本身（选项表 / 文案）已并入 `MediaList` 的筛选行（#550）⇒ 这边只留 `mergedLockType`。
     import { mergedLockType, type MergedScope } from 'pure/mergedScope';
+    // 🔴 2026-11-26（m04553）：合集视图左上角要显示「N 个媒体」⇒ 量词必须与主视图 `.rl-libstats` 同源。
+    //    ⛔ 别在这里写 `'个'`/`'部'` 字面量 —— 分类量词的真源是 `pure/labels.overviewUnitLabel`。
+    import { overviewUnitLabel } from 'pure/labels';
     import type { SortBy } from 'pure/search';
     import { POSTER_COLUMNS_DEFAULT, type PosterDensity } from 'pure/posterGrid';
     // 1.3.1 ①：海报墙卡片显示哪几行（高级设置 › 海报墙卡片）
     import { DEFAULT_CARD_FIELDS_BY_TYPE, type CardFieldKey } from 'pure/cardMeta';
     import { DEFAULT_TABLE_COLUMNS_BY_TYPE } from 'pure/tableColumns';
     import type { SeriesGroup } from 'pure/seriesGroup';
+    // 🔴 分类视图（2026-11-23）：模型 / 归一 / 筛选 / IP 聚合**全在 pure/mediaViews** ——
+    //    ⛔ 别在本组件里再算一遍「哪些条目进这个视图」（那就是两份口径，必然漂）。
+    import {
+        DEFAULT_VIEW_ID,
+        buildCollectionGroups,
+        customViewTagPool,
+        filterForView,
+        viewBookKindPool,
+        viewTypePool,
+        visibleViews,
+        type MediaView,
+    } from 'pure/mediaViews';
+    // 🔴 2026-11-26（m05012）：「N 个媒体」的量词在书籍子分类视图下要更具体（本网文 / 本漫画），
+    //    量词真源仍是 `pure/bookKind.BOOK_KIND_TOP_UNITS`，⛔ 别在模板里写字面量。
+    import { BOOK_KIND_TOP_UNITS } from 'pure/bookKind';
+    // ⚠️ 2026-11-26（m04109）：`VIEW_KIND_LABELS` / `isBuiltinView` / `viewIconOf` 三个导入已从这里删除 ——
+    //    它们原来只服务本组件内联的胶囊 DOM，现在那段整体搬进了 `ViewChips.svelte`（唯一真源）。
+    //    ⛔ 别再加回来：本组件不再自己渲染胶囊，留着只会是「未使用导入」的警告。
     import Icon from './Icon.svelte';
 
     // Tab 顺序 / 图标 / 显示名：#541 起统一由 `pure/homeTabs` 提供（`HOME_TAB_ORDER` / `homeTabIcon` /
@@ -64,10 +97,17 @@
     /** 折叠卡右下角那枚按钮：打开系列「季列表」弹窗
      *  🔴 #444c：宿主侧开的是**应用级 Modal**（`SeriesPickerModal`）—— 视图只负责「报告用户点了哪一组」。 */
     export let onOpenSeriesPicker: (g: SeriesGroup) => void = () => {};
-    /** 🔴 #609 折叠卡右键「排序号」→ 拖拽排序弹窗（同样是宿主侧的应用级 Modal） */
-    export let onOpenSeriesReorder: (g: SeriesGroup) => void = () => {};
-    /** 🔴 #629 折叠卡右键「批量关联」→ 系列逐条关联清单（宿主侧应用级 Modal） */
+    /** 🔴 #629 折叠卡右键「批量关联」→ 系列逐条关联清单（宿主侧应用级 Modal）
+     *  🔴 2026-11-15 m08506 起它是折叠卡右键菜单里**唯一**的一条。 */
     export let onOpenSeriesAssociate: (g: SeriesGroup) => void = () => {};
+
+    /** 🔴 m07813②（用户逐字）：「给系列卡也做一个编辑属性窗口…同单击单卡卡片网格信息栏逻辑一样，
+     *  单击系列卡信息栏也打开编辑属性窗口」
+     *  🔴 2026-11-15 m08506 用户第二次裁定：「还是将改系列名、排序号、批量填合集、批量填标签
+     *  放进编辑系列属性页面窗口里较好，删除右键菜单和其单独改的入口和页面」
+     *  ⇒ 两个入口（单击信息栏 / 悬停 ⋯ 菜单）都落到这一个 prop 上。
+     *  ⚠️ 纯透传给 `MediaList`，组件本身不落库（只报「点了哪一组」）。 */
+    export let onOpenSeriesProps: (g: SeriesGroup) => void = () => {};
     /** 右键「动词 · 去关联」直达快捷关联弹窗（无入口时主操作不再跳整编辑表单） */
     export let onQuickAssociate: (e: MediaEntry) => void = () => {};
     export let onSetStatus: (id: string, s: MediaStatus) => Promise<void> = async () => {};
@@ -112,6 +152,33 @@
     export let seriesRatings: Record<string, number> = {};
     /** 写某个系列的合集分（宿主落盘 + 刷视图；组件只报告，不碰磁盘） */
     export let onSetSeriesRating: (key: string, rating: Rating) => Promise<void> = async () => {};
+    /**
+     * 🔴 分类视图（用户 2026-11-23 裁定「视图存进媒体库，跟库走」）。
+     *
+     * 三档（真源 `pure/mediaViews`）：
+     *   · `default`    默认视图 = **物本位**：现在这套分类胶囊栏原样不动。
+     *   · `collection` 合集视图 = 先出 IP 卡片，点进去才展开子系列行。
+     *   · `custom`     自定义视图 = **事本位**：按标签筛选（如「工作」「日常」）。
+     *
+     * ⚠️ 与 `seriesRatings` 同构：它是 catalog 的**顶层字段**，宿主单独取一次再传进来
+     *    （`HomeView.ts` 的 `render()` 已并进 `Promise.all`，初始 props 与增量 `$set` 两处都传）。
+     * 🔴 归一器恒返回 ≥1 条且默认视图恒在 index 0 ⇒ ⛔ 这边别写「空数组就兜底」的第二套逻辑。
+     */
+    export let views: MediaView[] = [];
+    /**
+     * 🔴 2026-11-27（m06545）：原 `onActiveViewChange` 只用于「切档后把语境推给 AI 挂件」
+     *    （用户 m05414）。挂件整体删除 ⇒ 这个回调与 `pickView()` 的转发一并删除，
+     *    视图切换回到最朴素的 `activeViewId = id`。
+     * ⛔ 别再为「给某个全局小挂件推状态」把它补回来。
+     */
+    /**
+     * 🔴🔴 2026-11-26（用户 m04553）：「新视图只能在插件高级设置页里加，首页不显示加按钮」
+     *    ⇒ 原来那个 `onViewsChange` 写出口**已删除**：它唯一的使用者是首页「＋ 新建视图」，
+     *       而那颗按钮没了 ⇒ 本组件**只读** `views`，不再回写。
+     *    ⛔ 别因为「留着也许有用」把它加回来 —— 没有调用者的 `export let` 会触发
+     *       `unused export property` 警告并顶破 89 条基线（本仓踩过）。
+     *    视图的增删改一律走设置页 → `plugin.setMediaViews()`（宿主 `main.ts` 那条唯一写出口）。
+     */
     /** 一键把动态写进当天日记（范围跟随面板的 日/周/月/年 切换） */
     export let onRecordJournal: (range: FeedRange) => Promise<void> = async () => {};
     /** 打开某份年度报告（统计页「往年报告」入口） */
@@ -166,6 +233,26 @@
      */
     export let onToggleGrouping: ((next: boolean) => void) | null = null;
     /**
+     * 🔴 m07854 ⑬（2026-11-13）**系列卡是否摊平**（视图切换下拉左旁那枚循环按钮）。
+     * `true` = 全部单卡平铺；`false`/缺省 = 系列卡堆叠。
+     * ⚠️ 与上面的 `listGrouping` **是两件事**：后者管列表视图的行形态，本字段管卡片网格 / 海报墙的系列折叠卡。
+     * ⚠️ 缺省 `false`：设置里 `undefined` 也当「堆叠」（老库没这个键 ⇒ 观感与升级前一致）。
+     */
+    export let unfoldSeries = false;
+    /** 上面那枚按钮的回推出口（`null` = 宿主没接线 ⇒ `MediaList` 里整枚不渲染） */
+    export let onToggleUnfoldSeries: ((next: boolean) => void) | null = null;
+    /**
+     * 🔴 m07854 ⑭：「今天看什么」骰子的回推出口（`null` = 没接线 ⇒ 两处搜索框里都不画那枚按钮）。
+     *
+     * 🔴🔴 **2026-11-13 用户指令（本批反转了⑭的候选池口径）**，原话：
+     *    「在对应的页签下的随机看一部应该是当前类型的随机出来而不是全部类型混在一起
+     *     （只有当导航布局为合并视图时随机看一部才是全库中挑）」
+     *    ⇒ 出口签名带上候选池：普通布局传 `listEntries`（**当前页签 + 当前视图**筛过的那份），
+     *      合并视图传 `null` 让宿主回退全库。⛔ 别在这里自己判 `mergedOn` 之后又传全量 ——
+     *      判据只有一处（下面的 `watchDiceOpen`），两处各判必然漂移。
+     */
+    export let onOpenWhatToWatch: ((entries: readonly MediaEntry[] | null) => void) | null = null;
+    /**
      * 🔴 #635 ④：评分看板「拖入即改评分」⇒ 宿主写回条目 + 笔记 + 刷新视图。
      * ⚠️ 与 `onCellCommit` **分开**（那是通用 patch、这是评分专用）：看板要的是「明确的评分数」，
      *    复用一个泛 patch 通道会让「拖错了怎么办」的失败回滚判据失去抓手。
@@ -197,6 +284,13 @@
      *    立刻纠正回请求值（页签自己弹回去）。
      */
     export let requestedTab: HomeTab | null = null;
+    /**
+     * 页签分类轴（用户 m09565 ①-4）：`expanded` = 全类型摊开十枚 / `classic` = 聚合六枚。
+     * 缺省 `expanded` ⇒ 与 2026-11-08 起的行为逐项一致（⛔ 别把缺省改成 classic，那是升级即换脸）。
+     * ⚠️ 改这个值会**换掉页签集合**（不是只换排版）⇒ 当前 `activeTab` 很可能在新集合里不存在，
+     *    必须靠 `setTabAxis()` 那条通道折到就近页签（见下方 `onTabAxis` 的消费块）。
+     */
+    export let tabAxis: TabAxis = 'expanded';
     /** 书架默认视图（设置页配置）：海报墙 grid / 列表 list */
     export let defaultViewMode: 'grid' | 'list' = 'grid';
     /** 海报密度（设置页配置，pure/posterGrid 归一）：紧凑 / 标准 / 宽松 / 自定义列数 */
@@ -223,7 +317,156 @@
 
     let activeTab: HomeTab = initialTab;
     /** 计划页签视图：追更表 / 月历 */
-    let trackingMode: 'board' | 'calendar' = 'board';
+    let trackingMode: 'board' | 'calendar' | 'resume' = 'board';
+
+    /**
+     * 🔴 当前选中的分类视图（用户 2026-11-23）。
+     *
+     * ⚠️ 选中的是 **id 不是对象**：视图改名/改标签后 id 不变，选中态才不会莫名跳回默认。
+     * ⚠️ 存档里那张表被删到不含这个 id（设置页删了当前视图）时，**不回写 `activeViewId`** ——
+     *    真实态由 `activeView` 兜底（落到 `views[0]` = 默认视图），高亮判据也读 `activeView.id`。
+     *    ⛔ 别再「顺手纠正 activeViewId」：那会构成 `activeView → activeViewId → activeView` 的
+     *    响应式环（svelte-check: Cyclical dependency detected），编译期就红。
+     */
+    let activeViewId: string = DEFAULT_VIEW_ID;
+
+    /**
+     * 首页真正露出来的那几条（🔴 **唯一**的「哪些视图上首页」判断，见 `visibleViews`）。
+     *
+     * 🔴🔴 2026-11-15 用户 m05159 问题二（逐字）：
+     *    「保存分类视图配置后，首页应自动切换为已勾选视图，且只展示已启用视图，
+     *      **不显示未启用的「默认视图」选项及相关文案**。」
+     *    ⇒ 这条**推翻了** 2026-11-25 那条「当前选中要破例留着」的兜底。
+     *       原兜底的理由是「别在用户脚下抽地毯」，但代价正是用户这次报的毛病：
+     *       设置页明明取消了勾选，首页那条选项还在，看起来像没保存。
+     *       现在的取舍：**配置说了算** —— 取消勾选就从首页消失，选中态由下面的
+     *       `activeView` 自动落到「仍然启用的那一条」上。
+     * ⛔ 别再把 `activeView` 拼回这个数组（那就是回来一半的抽地毯）。
+     */
+    $: shownViews = visibleViews(views);
+
+    /**
+     * 当前视图对象。
+     *
+     * 三条兜底，顺序不能变：
+     *   ① 选中的那条**仍在启用列表里** ⇒ 用它（用户的选择优先，哪怕它不在第一位）；
+     *   ② 选中那条被取消勾选了 / 被删了 ⇒ 落到**第一条启用视图**（这就是用户要的
+     *      「保存配置后首页自动切换为已勾选视图」）；
+     *   ③ 一条启用的都没有（理论不可能：问题一已拦住「全部取消」；但仍要防脏数据 /
+     *      旧存档）⇒ `views[0]`，归一器保证它是默认视图。
+     * ⚠️ 依赖方向是 `shownViews → activeView`（单向），⛔ 别让它反过来读 `activeView`，
+     *    否则就是 svelte-check 的 Cyclical dependency。
+     */
+    $: activeView = shownViews.find((v) => v.id === activeViewId) ?? shownViews[0] ?? views[0];
+
+    /** 是否处于「合集视图」（= IP 聚合，走 `CollectionBoard`，⛔ 不进 MediaList） */
+    $: viewIsCollection = activeView?.kind === 'collection';
+
+    /**
+     * 视图过滤后的条目（**唯一一处**过滤出口）。
+     *
+     * 🔴 默认视图**不过滤**（`filterForView` 对它也只按 `types` 过滤，而默认视图 types 恒空
+     *    ⇒ 原样返回）—— 这一步不能省，但它对默认视图是恒等变换，所以现有行为零风险。
+     * ⚠️ 在 `listEntries` **之前**接：视图是「库 → 视图」的第一道筛，
+     *    后面页签/合并视图那套三维筛选照旧在 MediaList 内部跑（两层是**叠加**关系）。
+     */
+    $: viewEntries = activeView ? filterForView(entries, activeView) : entries;
+    /**
+     * 统计页词云要**整体排除**的标签 = 所有自定义视图的归属标签并集。
+     *
+     * 🔴 2026-11-16 用户逐字：「如果按标签归属自定义视图（如日常、工作），那标签词云统计的
+     *    如工作、日常标签怎么办这些不是正常的标签」⇒ 这些是「视图归属键」，不是兴趣标签。
+     * ⚠️ 取 **`views`（全部视图）而不是 `activeView`**：词云统计的是整库长期画像，
+     *    跟用户此刻停在哪一档无关；按当前视图算 ⇒ 切一下视图词云就变一批词，那是 bug 不是特性。
+     * ⚠️ 排除发生在 `pure/wordCloud.buildWordCloud` 内部（第三参），⛔ 不在这里过滤条目 ——
+     *    条目该不该进视图是 `filterForView` 的事，两者是正交的两件筛法。
+     */
+    $: cloudDiscardTags = customViewTagPool(views);
+    /** 合集视图的 IP 分组（⛔ 别在模板里 map —— 卡片顺序/行顺序全在 `buildCollectionGroups` 定） */
+    $: collectionGroups = viewIsCollection ? buildCollectionGroups(viewEntries) : [];
+    /**
+     * 当前视图的**类型白名单**（`null` = 不限制）。
+     * 🔴 名字带 `ViewPool` 而不是 `viewTypePool`：后者是 `pure/mediaViews` 的函数名，重名会把它遮住。
+     */
+    $: activeViewPool = activeView ? viewTypePool(activeView) : null;
+    /** 当前视图的**书籍子分类白名单**（`null` = 不限制）。必须先于 `navTabs` 声明/被它依赖。 */
+    $: activeViewBookKinds = activeView ? viewBookKindPool(activeView) : null;
+    /**
+     * 🔴 #727 顶部胶囊 / 文字菜单**实际渲染哪几枚页签**。
+     *
+     * 用户裁定（2026-11-08）：「在设置新自定义视图勾选类型，然后其他不勾选的不展示出来」，
+     * 映射规则选定为「类型页签按勾选过滤，计划 / 统计常驻」。
+     *
+     * 🔴 2026-11-08（用户 m03712）第二轮：「页签要把所有类型摊开」⇒ 文学 / 网文 / 漫画
+     *    三枚子分类页签也要按视图勾的子分类过滤，故第二参传 `activeViewBookKinds`。
+     *
+     * ⚠️ 判据用 `activeViewPool`（视图那维），⛔ 不用 `listTypePoolMerged` —— 后者已经把
+     *    页签那维也乘进去了，再用它过滤页签会形成**自指**：切到「阅读」页签后池子只剩 book，
+     *    于是「影视/游戏/音乐」当场消失，用户再也切不回去。
+     * ⚠️ 必须与渲染、键盘导航**共用这一份**（`onTabKeydown` 也用它）；
+     *    否则 ←/→ 会按旧顺序数下标、焦点落到不存在的按钮上。
+     * ⚠️ 合并视图那一档不渲染页签，但这个值仍然安全（它只做减法，不影响内容区）。
+     */
+    $: navTabs = visibleTabs(activeViewPool, activeViewBookKinds, tabAxis);
+    /**
+     * 🔴 用户 m09565 ①-4：换分类轴时把当前页签**就近折算**过去。
+     *
+     * 两种轴不是子集关系（classic 有聚合 `book`/`media`，expanded 有书籍三子分类 + 影视三型）
+     * ⇒ 换轴后 `activeTab` 很可能在新集合里不存在。若放任下面那条 `resolveVisibleTab` 兜底，
+     * 它会落到**第一枚**（= 计划），用户从「电影」切过去会莫名跳到追更表 —— 那不是「保持位置」。
+     * ⇒ 这里先用 `equivalentTabFor` 按语义折（电影/剧集/动画 → 影视；文学/网文/漫画 → 阅读），
+     *    再交给下面那条通用纠偏处理「折过去但被视图类型池过滤掉」的情况。
+     * ⚠️ 判据只在这一条块里做，⛔ 别把 `equivalentTabFor` 塞进 `resolveVisibleTab`：
+     *    那个纯函数按设计「不可见就落第一枚」，掺进语义折算会让它承担两种职责。
+     */
+    $: {
+        const folded = equivalentTabFor(tabAxis, activeTab);
+        // 🔴🔴 用户 m09565 ①-4「两种模式的导航状态要独立保存」——**这里绝不能调 `switchTab`**。
+        //    真机实测（2026-11-12）踩到的第二个缺陷：切回聚合轴时视图停在「影视」，
+        //    且 `homeTabByAxis.classic` 被从 `'game'` 覆盖成 `'media'` —— 正是丢弃了用户的位置。
+        //    根因：`switchTab` 会走 `onTabChange` → `plugin.homeTab = t` → 写进**当前轴**那一格，
+        //    于是「折算」这个纯展示动作反倒篡改了记忆。
+        //    ⇒ 折算只动本地 `activeTab`；轴记忆由 `main.ts syncTabAxis` 推 `requestedTab` 决定。
+        if (folded !== activeTab) activeTab = folded;
+    }
+    /**
+     * 🔴 #727 当前页签被过滤掉了 ⇒ 自动落到第一枚可见页签。
+     *  典型场景：用户停在「游戏」页签，然后切到一个只收影视的视图 —— 游戏页签消失，
+     *  若不兜底，内容区会继续渲染「游戏」的空列表，而顶部没有任何按钮处于选中态（看起来像卡死）。
+     *  ⚠️ 只在真的不可见时才切（`resolveVisibleTab` 可见时原样返回）⇒ 不会打断正常点击。
+     *  ⚠️ 用 `switchTab` 而非直接赋值：那两条出口（React 侧 `onTabChange`）要保持一致；
+     *     它只写内存字段，⛔ 不碰 `settings.startTab`（起始页是用户的设置，不该被自动切页改写）。
+     */
+    $: {
+        const fixed = resolveVisibleTab(navTabs, activeTab);
+        if (fixed !== activeTab) switchTab(fixed);
+    }
+    /**
+     * 合集视图左上角「N 个媒体」的量词。
+     *
+     * 🔴 2026-11-26（m05012）之后视图可能只收书籍的**某个子分类**
+     *    （`bookKinds: ['novel']`）⇒ 量词必须是「本网文」而不是「本书」。
+     *    所以先取书子分类池，再退化到「类型池恰好只剩一种」时用该类型的量词。
+     * ⚠️ 顺序不能颠倒：子分类比主类型更具体，反了会让「网文视图」显示成「本书」。
+     * ⚠️ `activeViewBookKinds` 的声明已上移到 `navTabs` 之前（页签过滤要先用到它），
+     *    ⛔ 别在这里再写一条 —— 同一个 `$:` 声明两次，Svelte 编译能过但语义只剩后一条。
+     */
+    $: viewUnit = (() => {
+        const kinds = activeViewBookKinds;
+        if (kinds && kinds.length === 1) return BOOK_KIND_TOP_UNITS[kinds[0]];
+        const pool = activeViewPool;
+        return overviewUnitLabel(pool && pool.length === 1 ? pool[0] : null);
+    })();
+
+    /**
+     * 🔴🔴 2026-11-26（用户 m04553）逐字：「新视图只能在插件高级设置页里加，首页不显示加按钮」
+     *    ⇒ 原来这里那条 `addView()`（＋ 新建视图）**整块删除**，连 `viewAddDisabled` 一起。
+     *    建视图的唯一入口 = 设置页「高级 → 分类视图 → + 新建自定义视图」。
+     *    ⛔ 别把它加回来：首页是「用视图」的地方，不是「配视图」的地方 ——
+     *       用户点一下就在库里多一条空视图、还得再去设置页配标签，那条链路本来就走不通。
+     *    ⚠️ 因此 `MAX_VIEWS` / `createView` / `nextViewId` 三个导入也从本文件移除了
+     *       （它们只服务那条已删的函数；留着是「未使用导入」）。
+     */
 
     /**
      * 当前页签**有没有「搜索框那一行」**（= 是否由 `MediaList` 承载）。
@@ -254,24 +497,57 @@
     $: effPage = mergedOn
         ? mergedPage
         : (activeTab === 'tracking' ? 'tracking' : activeTab === 'stats' ? 'stats' : 'library');
-    /** 传给 `MediaList` 的三件（两种布局在这里合流，⛔ 别在模板里各写一份） */
+    /**
+     * 🔴 2026-11-08（用户 m03712）摊开页签后，当前页签要翻译成 `MediaList` 的三件受控参数：
+     *    · 普通类型页签（movie/tv/anime/game/music）⇒ `lockType = 该类型`
+     *    · 书籍子分类页签（`kind:book` / `kind:novel` / `kind:comic`）⇒ `lockType = 'book'`
+     *      **且** `lockKind = 该子分类`（子分类这一维宿主以前碰不到，本批新增通道）
+     *    · 非条目页签（计划 / 统计）⇒ 不锁（它们压根不渲染 MediaList）
+     *    ⚠️ `bookKindOfTab` 是子分类唯一的翻译入口，⛔ 别在这里手写 `startsWith('kind:')`。
+     */
+    $: tabKind = bookKindOfTab(activeTab);
     $: listLockType = mergedOn
         ? mergedLockType(mergedScope)
-        : activeTab === 'media' ? null : activeTab;
+        : tabLockType(activeTab);
+    /** 传给 `MediaList` 的书籍子分类锁（`null` = 不锁，见组件里 `lockKind` 的注释） */
+    $: listLockKind = mergedOn ? null : tabKind;
     $: listTypePool = mergedOn ? null : activeTab === 'media' ? MEDIA_TYPES : null;
-    /** `MediaList` 的 `lockType` 只认条目类型（`EntryType | null`），而 `listLockType` 还可能是
-     *  「非条目页签」的 `'tracking'` / `'stats'`（`HomeTab` 比 `EntryType` 宽）。
-     *  ⚠️ 这不是把值改坏：`effPage` 的三分支已保证 `'tracking'` / `'stats'` 那两页根本**不渲染**
-     *  `MediaList`（见下方 `{#if effPage === 'tracking'}` / `{:else if effPage === 'stats'}`），
-     *  所以那两个值走到这里时本来就该是「不锁类型」。
-     *  ⛔ 别用 `as EntryType`（等于对类型系统撒谎）；也⛔ 别把 `MediaList.lockType` 放宽成
-     *  `EntryType | 'tracking' | 'stats' | null`（那会让组件内部 20+ 处 `lockType === 'book'`
-     *  之类的判断失去穷尽性检查）。 */
-    $: mediaListLockType = listLockType === 'tracking' || listLockType === 'stats' ? null : listLockType;
-    $: listEntries = mergedOn
-        ? entries
-        : activeTab === 'media' ? entries.filter((e) => MEDIA_TYPES.includes(e.type)) : entries;
-
+    /**
+     * 🔴 分类视图（2026-11-23）与页签那一维**取交集** —— 二者是独立维度，但 MediaList 只收一个 `typePool`。
+     *
+     * · 视图没配类型（默认视图 / 合集视图）⇒ `activeViewPool` 为 null ⇒ 原样用页签那维；
+     * · 页签那维不限制（合并视图 / 媒体页签）⇒ 用视图那维；
+     * · 都有 ⇒ 交集。空交集是**正确结果**（用户选了一个本视图没收录的页签），⛔ 别兜底成全量。
+     * ⚠️ 默认视图这一路恒为 null ⇒ 对现有行为零影响。
+     */
+    $: listTypePoolMerged = (() => {
+        // ⚠️ 先把值抄进 const：箭头闭包里 TS 会丢掉 `if (!x) return` 的收窄（报 'possibly null'）
+        const viewPool = activeViewPool;
+        const tabPool = listTypePool;
+        if (!viewPool) return tabPool;
+        if (!tabPool) return viewPool;
+        return tabPool.filter((t) => viewPool.includes(t));
+    })();
+    /**
+     * ⚠️ 2026-11-08：原来这里还有一条 `mediaListLockType = listLockType === 'tracking' || 'stats' ? null : listLockType`
+     *    —— 它存在的理由是「`listLockType` 可能装非条目页签」。摊开页签后翻译已收进
+     *    `pure/homeTabs.tabLockType()`，那个函数对 tracking / stats **直接返回 `null`**，
+     *    于是这条比较永远为假、成了死代码（svelte-check 也会报「两种类型没有重叠」）。
+     *    ⇒ 整条删除，模板直接用 `listLockType`。⛔ 别再把「归 null」这层搬回组件里 ——
+     *      那是页签语义的一部分，属于 `pure/homeTabs`。
+     */
+    $: listEntries = mergedOn ? viewEntries : viewEntries.filter((e) => tabMatchesEntry(activeTab, e));
+    /**
+     * 🔴 2026-11-13 用户口径：骰子的候选池跟着**当前页签**走，只有合并视图才回退全库。
+     *    ⇒ 这一处判据是唯一真源（`mergedOn`），⛔ 别在模板里再写一遍 `navLayout === 'merged'`。
+     *    · 合并视图 ⇒ 传 `null`（宿主 `openWhatToWatchModal(null)` 会 `service.list()` 全库）
+     *    · 其余布局 ⇒ 传 `listEntries`（当前页签 + 当前视图筛过的那份）
+     * ⚠️ 收成一个受控变量而不是内联箭头闭包：内联写法每次渲染都造一个新函数，
+     *    子组件的 `class:has-dice={onOpenWhatToWatch && …}` 会跟着无谓重算。
+     */
+    $: watchDiceOpen = onOpenWhatToWatch
+        ? () => onOpenWhatToWatch?.(mergedOn ? null : listEntries)
+        : null;
     function tabLabel(t: HomeTab): string {
         return homeTabLabel(t);
     }
@@ -280,7 +556,12 @@
     $: if (requestedTab !== null) {
         const want = requestedTab;
         requestedTab = null;
-        if (isNavTab(want) && want !== activeTab) switchTab(want);
+        // 🔴 用户 m09565 ①-4：判据从 `isNavTab(want)` 换成 `tabOrderFor(tabAxis)`。
+        //    旧写法只认 `HOME_TAB_ORDER`（全类型十枚）⇒ 聚合模式下宿主推来的 `'book'` / `'media'`
+        //    会被判非法、请求被**静默丢弃**（症状：聚合模式下改起始页毫无反应）。
+        //    ⚠️ 折轴这一步也不能省：宿主推的是「用户设置的起始页」，它可能属于另一条轴。
+        const folded = equivalentTabFor(tabAxis, want);
+        if ((tabOrderFor(tabAxis) as readonly string[]).includes(folded) && folded !== activeTab) switchTab(folded);
     }
 
     /** #543 侧边栏已改成**恒定图标轨** ⇒ 折叠钮与 #541 那个 `toggleNavCollapsed` 一并退场
@@ -290,7 +571,6 @@
         activeTab = t;
         onTabChange(t);
     }
-
     /**
      * 顶部胶囊的页签键盘导航（1.0.4，ARIA APG Tabs 模式）：
      * 整组只占一个 Tab 停留点（仅当前页签 tabindex=0），进入后用 ←/→ 在组内移动并立即激活，
@@ -300,10 +580,10 @@
      *    顶部胶囊永远是 ←/→（⛔ 别把那个三元判断加回来 —— 本组件已经没有竖向导航了）。
      */
     function onTabKeydown(ev: KeyboardEvent, current: HomeTab) {
-        const r = resolveTabKey(ev.key, HOME_TAB_ORDER.indexOf(current), HOME_TAB_ORDER.length);
+        const r = resolveTabKey(ev.key, navTabs.indexOf(current), navTabs.length);
         if (!r.handled) return;
         ev.preventDefault();
-        const next = HOME_TAB_ORDER[r.index];
+        const next = navTabs[r.index];
         if (next !== current) switchTab(next);
         // 焦点跟随：不主动聚焦会留在原按钮上，而那个按钮已变成 tabindex=-1
         void tick().then(() => {
@@ -373,18 +653,27 @@
         };
         document.addEventListener('scroll', onAnyScroll, { capture: true, passive: true });
         // 现代主题：窗口尺寸变化后按钮宽度会变，指示器必须重算（native 下 syncIndicator 自身会短路）
-        window.addEventListener('resize', syncIndicator);
+        // 🔴 用户 m09565 ①-5：收窄判定也挂在这里 —— 先量该不该收窄，**等它落定**再定位指示器
+        //    （按钮宽度会因藏字而变，先定位后收窄 = 指示器错位）。
+        const refit = (): void => {
+            void syncTabFit().then(() => syncIndicator());
+        };
+        window.addEventListener('resize', refit);
         // 🔴 但只靠 window resize 不够（2026-09-23 修）：**后台 leaf 重新可见**、侧栏收放、拖分隔条
         //    都不会触发 window.resize —— 而「视图先前不可见 ⇒ 首测读到 0 宽」正是那次 bug 的入口。
         //    ResizeObserver 盯住页签容器自身：容器 0×0 → 真实尺寸的**那一次**也会回调，
         //    就是「不可见期间测错、可见后自愈」的那条路径。
         //    ⚠️ 指示器是容器的 absolute 子项、不参与容器尺寸 ⇒ 改宽度不会反过来触发 RO（无回调环）。
-        const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => syncIndicator());
-        if (ro && tabsEl) ro.observe(tabsEl);
+        //    🔴🔴 但 2026-11-12 实测发现「盯自身」会形成死循环：收窄**本身**会改 `.rl-tabs` 的宽度
+        //    ⇒ RO 再回调 ⇒ 摘类重量 ⇒ 又改宽度…实测每 ~12ms 抖一次、永不收敛。RO 的职责是
+        //    「可用宽度变了才重量」，而可用宽度由**父级**决定 ⇒ 盯父级，不盯自己。
+        const fitHost = tabsEl?.parentElement ?? null;
+        const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => refit());
+        if (ro && fitHost) ro.observe(fitHost);
         return () => {
             ro?.disconnect();
             document.removeEventListener('scroll', onAnyScroll, { capture: true });
-            window.removeEventListener('resize', syncIndicator);
+            window.removeEventListener('resize', refit);
         };
     });
 
@@ -416,8 +705,15 @@
     // 不能依赖 `await tick()` 的微任务顺序来替代：这里用 .then 是为了不阻塞 Svelte 的更新队列。
     $: if (uiTheme === 'modern' && activeTab) {
         void activeTab;
+        // 🔴 换分类轴时 `activeTab` 可以是同一枚（「游戏」两轴同名），但页签数量 6⇄10 变了
+        //    ⇒ 显式对数量建依赖，否则收窄结果不会重算、第二轴沿用第一轴的判定。
+        void navTabs.length;
         void tick().then(() => {
-            syncIndicator();
+            // 🔴 用户 m09565 ①-5：换页签后「哪一枚该展开」变了 ⇒ 收窄结果也要重算，
+            //    否则从「统计」切到「电影」时，明明能放下却还是全图标（或反过来把当前项截断）。
+            void syncTabFit().then(() => {
+                syncIndicator();
+            });
             void indEl; // 建立对指示器节点的依赖：节点在 {#if} 内后挂载，需待其就位后重算
         });
     }
@@ -445,11 +741,121 @@
     /** 指示器的 transform + width（走内联 style，因数值随布局实时变化） */
     let indStyle = '';
     /** 容器内边距，必须与下方 CSS `.rl-tabs.rl-tabs-modern` 的 padding 保持一致 */
-    const TAB_PAD = 5;
+    // ⚠️ m07364：容器 padding 由 5px 收到 4px（iOS 分段控制器），本常量必须同步 ——
+    //    指示器用 `offsetLeft - TAB_PAD` 算位移，常量与 CSS padding 不同值会让滑块整体偏移。
+    const TAB_PAD = 4;
     /** 布局未就绪时的重试计数（防无限 rAF） */
     let indRetry = 0;
     /** 重试上限（约 10 帧）；仍不就绪则交给 ResizeObserver —— 视图一旦可见它会立刻回调 */
     const IND_RETRY_MAX = 10;
+
+    /**
+     * 🔴 用户 m09565 ①-5：窄屏下**非激活页签只显示图标，激活页签展开成「图标 + 文字」**。
+     *
+     * 为什么不用媒体查询 / 断点：可用宽度取决于**侧栏/分栏**，不是视口宽 —— 实测同一窗口下
+     * 容器只有 461px、六枚页签各 78px 合计 478px（溢出 17px）。写死断点必然在某种分栏下判错。
+     * ⇒ 直接量 `scrollWidth > clientWidth`（真实是否溢出），再按实测结果收窄。
+     *
+     * 🔴 状态必须走**变量 + `class:` 指令**，⛔ 不能直接 `el.classList.add(...)`：
+     *    Svelte 4 的样式裁剪只看模板里出现过的类名，纯 JS 加的类会让 `is-narrow` / `is-tight`
+     *    那两条规则被判成 `Unused CSS selector`（实测顶破 89 warnings 基线，涨到 91）。
+     *    写成 `class:is-narrow` 后模板里就有了这两个名字，裁剪器认账。
+     * ⚠️ 量之前必须先把类摘掉（下面的 `tabFit = 'none'`），否则量到的是「已收窄」的宽度、永远判不出该不该收窄。
+     */
+    let tabFit: 'none' | 'narrow' | 'tight' = 'none';
+    /** 收窄判定的重试计数（布局未就绪时 `scrollWidth` 读到 0，不能当成「没溢出」） */
+    let fitRetry = 0;
+    /** 上次判定时的「父级可用宽度 + 激活页签」，两者都没变就不用重量（见下面的抖动说明） */
+    let fitSig = '';
+    /**
+     * 量测期间临时关掉过渡（见 `syncTabFit` 的第三段说明）。
+     * ⚠️ 必须走变量 + `class:` 指令，⛔ 不能 `classList.add` —— 同 `is-narrow` 那条，
+     *    Svelte 4 样式裁剪只认模板里出现过的类名。
+     */
+    let fitMeasuring = false;
+    /**
+     * 一次收窄判定 = 两趟量测（摘掉收窄态 → 量自然宽 → 决定加不加）。
+     *
+     * 🔴🔴 判据必须拿**父级可用宽度**比，⛔ 不能比自己的 `clientWidth`：
+     *    `.rl-tabs` 是 `width: fit-content`（容器按内容收缩），它的 `clientWidth` **永远**跟着内容走
+     *    ⇒ `scrollWidth > clientWidth` 只会在 padding/border 上差几像素，于是**恒判为溢出**。
+     *    2026-11-12 真机实测踩到：自然宽 327px、父级可用 481px（明明放得下），却一直挂在 `is-narrow`。
+     *    ⇒ 改成 `scrollWidth > 父级内容宽`，那才是「这一排放不下」的真判据。
+     * ⚠️ 并且必须先摘掉收窄态再量：带着收窄类量到的是「已收窄」宽度，判定只会单向收紧、退不回来。
+     *
+     * 🔴🔴 **布局未就绪时 `scrollWidth` 是 0**，而 `0 <= avail + 1` 恒真 ⇒ 会被当成「放得下」而
+     *    再也不量。2026-11-12 真机实测踩到：页面全展开、实测 `scrollW 478 / avail 461`（确实溢出），
+     *    但界面一直是未收窄态 —— 因为 `onMount` 那一趟量到的是 0。
+     *    ⇒ 补「量不出数就重试若干帧」+ 额外盯住**父级**（容器是 fit-content，父级变宽时它自己不一定变）。
+     */
+    async function syncTabFit(): Promise<void> {
+        const box = tabsEl;
+        const host = box?.parentElement ?? null;
+        if (!box || !host) return;
+        // 父级的内容宽（扣掉左右内距）
+        const hs = getComputedStyle(host);
+        const padX = (parseFloat(hs.paddingLeft) || 0) + (parseFloat(hs.paddingRight) || 0);
+        const avail = host.clientWidth - padX;
+        /*
+         * 🔴🔴 幂等闸门（2026-11-12 真机实测抓出的**死循环**）：
+         *    RO 原先盯的是 `.rl-tabs` **自己**，而收窄会改它自己的宽度 ⇒ 又触发 RO ⇒ 再摘类重量…
+         *    实测 MutationObserver 每 ~12ms 记一次「摘 is-narrow / 加 is-narrow」，永不收敛，
+         *    外部任何时刻量到的都可能正好落在「刚摘掉」那一帧（`fit:"none"`），像是判定没跑。
+         *    两处一起修：① RO 改盯**父级**（见 onMount）；② 这里加签名闸门 —— 父级可用宽度与
+         *    激活页签都没变时，结果必然一样，直接跳过，别为了「重新确认」把类摘掉又加回去。
+         */
+        // 签名必须含**页签数量**：换分类轴时 6 枚⇄10 枚，父宽与激活页签都可能不变
+        // （「游戏」两轴同名）⇒ 只靠 avail+activeTab 会误判成「结果必然一样」而跳过重量。
+        const sig = `${avail}|${navTabs.length}|${activeTab}`;
+        if (sig === fitSig && tabFit !== 'none') return;
+        fitSig = sig;
+        /*
+         * 🔴🔴 量之前必须**关掉过渡**（2026-11-12 真机实测抓出的第三个坑）：
+         *    `.rl-tab-txt` 有 `max-width .18s` 过渡，摘掉 `is-narrow` 后文字宽度是**动画式**回到 26px 的
+         *    ⇒ `await tick()` 后立刻量到的 `scrollWidth` 还停在「文字几乎为 0」的中途值（实测 6 枚本该
+         *    478px，却量到 ≈273px）⇒ 判成「放得下」⇒ 永不收窄。
+         *    真机症状：切回另一条轴后 6 枚全是 78px 宽、撑出 17px 横向溢出（`fit:"none", scrollW:478`）。
+         *    ⇒ 量测期挂 `is-measuring` 把过渡掐掉，量完再摘。
+         */
+        fitMeasuring = true;
+        if (tabFit !== 'none') {
+            tabFit = 'none';
+            await tick();
+        }
+        const live = tabsEl;
+        if (!live) {
+            fitMeasuring = false;
+            return;
+        }
+        const natural = live.scrollWidth;
+        // 量不出数 ⇒ 还没布局好，重试（⛔ 别当成「没溢出」）
+        if (avail <= 0 || natural <= 0) {
+            fitMeasuring = false;
+            fitSig = '';
+            if (fitRetry < IND_RETRY_MAX) {
+                fitRetry++;
+                requestAnimationFrame(() => void syncTabFit());
+            }
+            return;
+        }
+        fitRetry = 0;
+        if (natural <= avail + 1) {
+            fitMeasuring = false;
+            return;
+        }
+        tabFit = 'narrow';
+        await tick();
+        if (!tabsEl) {
+            fitMeasuring = false;
+            return;
+        }
+        if (tabsEl.scrollWidth <= avail + 1) {
+            fitMeasuring = false;
+            return;
+        }
+        tabFit = 'tight';
+        fitMeasuring = false;
+    }
 
     /**
      * 重算指示器位置。切换 Tab、窗口缩放后调用（横向滚动不需重算：指示器随内容一起滚，坐标系一致）。
@@ -477,9 +883,23 @@
         indRetry = 0;
         indStyle = style;
     }
+
 </script>
 
 <div class="rl-home" class:rl-home-side={navLayout === 'sidebar'} bind:this={rootEl}>
+    <!-- 🔴🔴 2026-11-26（m04109）视图切换条**不再占一整行**。
+         用户逐字：「这个合集视图下也要搜索框、添加条目、筛选栏同步主视图，
+         并且把顶级分类和搜索框添加条目按钮并排显示」
+         ⇒ 「顶级分类」就是这排视图胶囊，现在它被塞进**工具栏那一行**：
+            · 默认视图 / 自定义视图 ⇒ 走 `<svelte:fragment slot="view-chips">` 进 MediaList 的工具栏最左端；
+            · 合集视图         ⇒ 由 `<CollectionBoard>` 自己渲染（它照同一套类名自建工具栏）。
+         ⚠️ 所以这里原本那条 `{#if effPage === 'library' && views.length > 0}` + `.rl-views` 整行已删除。
+         ⛔ 别再恢复成独立一行 —— 那正是用户这次要消掉的「多一层」。
+         历史记录（保留，供追溯）：2026-11-23 用户裁定「在现有分类胶囊栏**上方**加一条视图切换」；
+         2026-11-24 用户报障「怎么没有用户添加的自定义视图」⇒ 补「＋ 新建视图」。
+         两条裁定现在都由 `ViewChips` 承载（它内部就带那颗「＋」，且只在 `views.length > 0` 时渲染 —
+         ⚠️ 判的是 `views.length` 而不是可见条数：全都藏起来时「＋」也得在，否则没路建新视图）。 -->
+
     {#if navLayout === 'sidebar'}
         <!-- 🔴 #546 入口挂载点之二：**没有工具栏的页签**（计划 / 统计 —— 那两页没有搜索框那一行）
              由本组件渲染成靠右的**独立一行**（用户 2026-10-07 裁定）。
@@ -489,14 +909,23 @@
                 ⛔ 别在这儿再手写一份面板 DOM —— 那就是「同一概念两份实现」，必然漂移。 -->
         {#if !hasToolbar}
             <div class="rl-navbar">
-                <NavMenu {activeTab} onSelect={switchTab} />
+                <NavMenu {activeTab} tabs={navTabs} onSelect={switchTab} />
             </div>
         {/if}
-    {:else if navLayout === 'top'}
+    {:else if navLayout === 'top' && !viewIsCollection}
         <!-- 🔴🔴 #551 修回归：这里**必须显式写成一个档位**（`top`），⛔ 不许用不带条件的兜底分支 ——
              合并视图那一档自己不再渲染任何导航行（三下拉与「更多」都在内容区），
              兜底分支会把 merged **一并吃进来**，于是在合并视图里顶部还挂着一整排页签
              （#550 删掉合并视图那条分支时留下的洞，用户上手第一眼就抓到了）。
+         🔴🔴 2026-11-26（m04870）**合集视图不渲染这排页签**。
+         用户逐字：「还有这个合集视图不要出现顶部胶囊，只类似合并视图的菜单」→ 追问后裁定：
+         「合集视图进入后只能切换到默认视图上才先完全不要页签了」
+         ⇒ 合集视图里**一枚导航入口都不留**（页签、文字菜单、「更多」都不给）。
+         换页的唯一出路 = 工具栏那枚**视图下拉**切回默认视图（默认视图的页签就回来了）。
+         ⛔ 别给合集视图再补「更多」菜单当退路：用户要的就是这块干净，
+            而且合集视图的工具栏里已经有视图下拉，不存在「进得去出不来」。
+         ⚠️ 条件必须写在**这一档**上（`&& !viewIsCollection`），不能改成兜底分支 —— 理由见上面 #551。
+         排序/筛选/搜索全在 `CollectionBoard` 自己的工具栏里，不受这里影响。
          🔴 #603 同类修正：这条页签栏 `width: 100%`（页签居中、两侧全是空白）⇒ 原先把可访问名挂在它上面
          （`aria-label`，值就是插件名）会让「鼠标划过页签栏两端的空白」也浮出一个气泡 ⇒ 一并改成
          `aria-labelledby` 指向 `.rl-sr` 文本节点（同一套口径，见下面那块面板）。 -->
@@ -504,6 +933,9 @@
         <div
             class="rl-tabs"
             class:rl-tabs-modern={uiTheme === 'modern'}
+            class:is-narrow={tabFit === 'narrow'}
+            class:is-tight={tabFit === 'tight'}
+            class:is-measuring={fitMeasuring}
             role="tablist"
             aria-labelledby="rl-home-tabs-label"
             aria-orientation="horizontal"
@@ -511,7 +943,7 @@
             {#if uiTheme === 'modern'}
                 <span class="tab-ind" bind:this={indEl} style={indStyle}></span>
             {/if}
-            {#each HOME_TAB_ORDER as t}
+            {#each navTabs as t}
                 <button
                     id={`rl-tab-${t}`}
                     class:on={activeTab === t}
@@ -522,7 +954,10 @@
                     on:click={() => switchTab(t)}
                     on:keydown={(ev) => onTabKeydown(ev, t)}>
                     <Icon icon={homeTabIcon(t)} size={13} />
-                    {tabLabel(t)}
+                    <!-- 🔴 用户 m09565 ①-5：文字必须包一层 span —— 窄屏下要「非激活项只留图标、激活项图例+文字」，
+                         只能整体隐藏这个 span。⛔ 别直接把文字留在 button 里：那样 CSS 没有任何钩子能只藏文字。
+                         `aria-hidden` 不加：读屏仍可凭可见文字念出页签名（隐藏是纯视觉收窄，不是语义消失）。 -->
+                    <span class="rl-tab-txt">{tabLabel(t)}</span>
                 </button>
             {/each}
         </div>
@@ -543,10 +978,17 @@
         class="rl-tab-body"
         id="rl-home-tabpanel"
         role="tabpanel"
-        aria-labelledby={mergedOn ? 'rl-merged-page-label' : `rl-tab-${activeTab}`}
+        aria-labelledby={mergedOn ? 'rl-merged-page-label' : viewIsCollection ? 'rl-coll-view-label' : `rl-tab-${activeTab}`}
         tabindex="0">
         {#if mergedOn}
             <span class="rl-sr" id="rl-merged-page-label">{mergedPageLabel(effPage)}</span>
+        {/if}
+        <!-- 🔴 2026-11-26（m04870）合集视图的那排页签已不渲染（见上面导航分支）⇒ `rl-tab-${activeTab}`
+             会变成**悬空引用**（读屏念出错乱的「tab」）。这里补一枚同名 `.rl-sr` 节点接住它，
+             值取当前视图名（默认视图 / 合集视图 / 自定义视图那一条），跟着视图走比写死准确。
+         ⚠️ `.rl-sr` 是 1×1 被裁掉的 ⇒ 鼠标够不着、不会冒出悬停气泡（#603 的同一条口径）。 -->
+        {#if !mergedOn && viewIsCollection}
+            <span class="rl-sr" id="rl-coll-view-label">{activeView?.name ?? ''}</span>
         {/if}
         <!-- 🔴 #544：内容区那枚 19px 大标题**已按用户要求删除** —— 页名改由浮现面板里的文字承担。 -->
         {#if mergedOn && effPage !== 'library'}
@@ -560,6 +1002,12 @@
             <div class="rl-tracking-switch">
                 <button class:on={trackingMode === 'board'} aria-pressed={trackingMode === 'board'} data-tip="列表看板（按更新时间）" on:click={() => (trackingMode = 'board')}>追番表</button>
                 <button class:on={trackingMode === 'calendar'} aria-pressed={trackingMode === 'calendar'} data-tip="日历看板（按播出日期）" on:click={() => (trackingMode = 'calendar')}>排期表</button>
+                <!-- 🔴 m07854 ⑪ ①：计划页第三档「继续观看 / 阅读」——
+                     用户原话「首页页签计划页新增 tab「继续观看/阅读」队列」。
+                     ⚠️ 做成与「追番表 / 排期表」同级的二级切换档，⛔ 不加进一级页签：
+                     一级页签走 `pure/homeTabs.HOME_TAB_ORDER`，加一枚会连带改分类轴、导航记忆、
+                     `isNavTab` 白名单与设置页起始页下拉，代价远大于收益。 -->
+                <button class:on={trackingMode === 'resume'} aria-pressed={trackingMode === 'resume'} data-tip="继续观看 / 阅读（按最近活跃）" on:click={() => (trackingMode = 'resume')}>继续</button>
             </div>
             {#if trackingMode === 'calendar'}
                 <CalendarBoard
@@ -570,6 +1018,14 @@
                     {onSelectDay}
                     {onPlanDate}
                     {onStartWatching} />
+            {:else if trackingMode === 'resume'}
+                <!-- 🔴 m07854 ⑪ ①：只传它真需要的四个 prop（`ResumeBoard` 不读更新检测/导入那套，
+                     多传会被 Svelte 4 收下但没人用 —— 少传反而让契约清楚）。 -->
+                <ResumeBoard
+                    {entries}
+                    {posterUrl}
+                    {onOpenEntry}
+                    {onEditEntry} />
             {:else}
                 <TrackingBoard
                     {entries}
@@ -597,8 +1053,43 @@
                  ⛔ 反过来也别把 `StatsBoard` / `RatingBoard` 收窄成 `string | null`（那会逼着这里包一层）。 -->
             <!-- ⚠️ 新增 prop 一律**追加在 `{ctrlWheelZoom}` 之后**，⛔ 别插进 `coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom}`
                  这段里面 —— 产物断言 `#635 ③` 锚的就是这三者**连续字面**相邻的形态。 -->
-            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} {seriesRatings} {onSetSeriesRating} order={statsOrder} onOrderChange={onStatsOrderChange} />
+            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} {seriesRatings} {onSetSeriesRating} order={statsOrder} onOrderChange={onStatsOrderChange} {unfoldSeries} {onToggleUnfoldSeries} discardTags={cloudDiscardTags} />
         {:else}
+            {#if viewIsCollection}
+                <!-- 🔴 2026-11-23 合集视图：换的是**整页骨架**（IP 卡片 → 类型分段卡片网格），不走 MediaList。
+                     ⚠️ 条目已经过 `filterForView`（`viewEntries`），这里只负责分组展示。
+                     🔴 2026-11-26（m04109）用户要求「合集视图下也要搜索框、添加条目、筛选栏同步主视图」
+                        ⇒ 这几件**由 CollectionBoard 自己渲染**（它照 MediaList 的类名与尺寸自建同一行），
+                          所以这里必须把宿主能力透传下去：增删改、缩放、视图胶囊、右键菜单全套回调。
+                        ⚠️ 少传一个就会在那边变成「点了没反应」的哑按钮 —— 与 MediaList 那段是**同一份契约**。 -->
+                <CollectionBoard
+                    groups={collectionGroups}
+                    {posterUrl}
+                    {colorTheme}
+                    {onOpenEntry}
+                    {onEditEntry}
+                    {onWatch}
+                    {onAdd}
+                    {onQuickAssociate}
+                    {onAddExcerpt}
+                    {onOpenEntryLogModal}
+                    {onOpenEntryTextModal}
+                    {onDeleteEntry}
+                    {posterDensity}
+                    {posterColumns}
+                    {ctrlWheelZoom}
+                    {onPosterZoom}
+                    views={shownViews}
+                    activeViewId={activeView?.id ?? ''}
+                    onPickView={(id) => (activeViewId = id)}
+                    viewCount={viewEntries.length}
+                    viewUnit={viewUnit}
+                    onOpenWhatToWatch={watchDiceOpen} />
+                <!-- 🔴 2026-11-26（m04870）合集视图**不再透传** mergedOn / mergedPage / onPickMergedPage。
+                     用户裁定：「合集视图进入后只能切换到默认视图上才先完全不要页签了」
+                     ⇒ 合集视图里一枚导航入口都不留，连同上一轮加的「更多」菜单一起撤掉。
+                     ⛔ 别再补回来：换页出路 = 工具栏那枚**视图下拉**切回默认视图。 -->
+            {:else}
             <MediaList
                 entries={listEntries}
                 {posterUrl}
@@ -614,6 +1105,9 @@
                 {timelineZoom}
                 {listGrouping}
                 {onToggleGrouping}
+                {unfoldSeries}
+                {onToggleUnfoldSeries}
+                onOpenWhatToWatch={watchDiceOpen}
                 {defaultViewMode}
                 {posterDensity}
                 {posterColumns}
@@ -625,8 +1119,8 @@
                 {onOpenLink}
                 {onWatch}
                 {onOpenSeriesPicker}
-                {onOpenSeriesReorder}
                 {onOpenSeriesAssociate}
+                {onOpenSeriesProps}
                 {onQuickAssociate}
                 {onSetStatus}
                 {onMarkUpdated}
@@ -639,8 +1133,9 @@
                 {seriesRatings}
                 {onBulkTags}
                 {onConfirmBulk}
-                lockType={mediaListLockType}
-                typePool={listTypePool}
+                lockType={listLockType}
+                lockKind={listLockKind}
+                typePool={listTypePoolMerged}
                 scope={mergedOn ? mergedScope : null}
                 scopeStatus={mergedOn ? mergedStatus : null}
                 scopeSort={mergedOn ? mergedSort : null}
@@ -659,12 +1154,26 @@
                      ⚠️ 二者互斥（`navLayout` 只有一个值），⛔ 不会同时渲染。 -->
                 <svelte:fragment slot="nav-entry">
                     {#if navLayout === 'sidebar'}
-                        <NavMenu {activeTab} onSelect={switchTab} inline />
+                        <NavMenu {activeTab} tabs={navTabs} onSelect={switchTab} inline />
                     {:else if mergedOn}
                         <MergedPageMenu page={mergedPage} onPick={(p) => (mergedPage = p)} inline />
                     {/if}
                 </svelte:fragment>
+                <!-- 🔴🔴 2026-11-26（m04109）视图胶囊进工具栏**最左端**（与搜索框 + 添加并排）。
+                     用户原话：「把顶级分类和搜索框添加条目按钮并排显示」。
+                     ⚠️ 传的是 `shownViews`（设置页勾了「显示」的 + 当前选中那条兜底），⛔ 不是 `views`；
+                        「全都藏起来」时仍要送来非空的一行 —— 那颗「＋ 新建视图」就在 `ViewChips` 内部，
+                        它的外层判据是 `views.length > 0`（见组件注释）。
+                     ⚠️ `ViewChips` 是**唯一真源**：合集视图那边用的是同一个组件。
+                        ⛔ 别在这里手写胶囊 DOM —— 两份实现必然漂移（用户上次就是被这种漂移咬到）。 -->
+                <svelte:fragment slot="view-chips">
+                    <ViewChips
+                        views={shownViews}
+                        activeViewId={activeView?.id ?? ''}
+                        onPickView={(id) => (activeViewId = id)} />
+                </svelte:fragment>
             </MediaList>
+            {/if}
         {/if}
     </div>
 
@@ -704,6 +1213,16 @@
           用户要的「放在切换三视图按钮上方」在这一行上依然成立。
        ⚠️ 这一层只负责**摆放**，⛔ 不再有任何导航自身的样式（那些全在 NavMenu 里，两个挂载点共用）。 */
     .rl-navbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+
+    /* ── 🔴 2026-11-26（m04109）分类视图切换条的样式**整体搬走**了 ──────────────────
+       用户原话：「把顶级分类和搜索框添加条目按钮并排显示」⇒ 胶囊不再占独立一行，
+       而是进了两个视图各自的工具栏 ⇒ 它连带自己的样式一起搬进了 `ViewChips.svelte`（唯一真源）。
+       ⛔ 别把 `.rl-views` / `.rl-view-chip` / `.rl-view-add` 这套写回本组件：
+          · 本组件已经**不渲染**胶囊 DOM（只剩 `<ViewChips>` 这个组件标签）⇒ 写在这里一律是
+            dead CSS（svelte-check 会报 `Unused CSS selector`，直接破 89 警告基线）；
+          · 更根本的是两份样式必然漂移 —— 合集视图那边用的是同一个组件，不共享就会一改一漏。
+       历史记录（保留，供追溯）：2026-11-23 用户裁定「在现有分类胶囊栏**上方**加一条」；
+       2026-11-24 「怎么没有用户添加的自定义视图」⇒ 补「＋ 新建视图」（虚线圆、到上限置灰但仍留 tooltip）。 */
 
     /* ── #550 合并视图：追更 / 统计两页的「更多」行 ────────────────────────────────
        🔴 #547 那条顶端独立筛选栏已按用户要求**整体删除**（三个下拉并入内容区筛选行、
@@ -757,6 +1276,31 @@
         transition: color .18s ease, border-color .18s ease, background .18s ease, font-weight .12s ease;
     }
     .rl-tabs button:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+    /* 🔴 用户 m09565 ①-5：窄屏下非激活页签只留图标、激活项展开成「图标 + 文字」。
+       判定由 `syncTabFit()` 实测 `scrollWidth` 给出（⛔ 不用媒体查询：可用宽度取决于分栏而非视口）。
+       · `.is-narrow`：非激活项藏文字（当前项仍带文字，用户永远看得懂自己在哪）；
+       · `.is-tight`：藏完仍溢出 ⇒ 全部只留图标，保证最后一枚不被裁掉。
+       ⚠️ 状态走 `class:is-narrow` 指令（⛔ 不许改回 `el.classList.add`）：Svelte 4 的样式裁剪
+          只认模板里出现过的类名，纯 JS 加的类会让这两条规则被判 `Unused CSS selector`、顶破 89 告警基线。
+       ⚠️ 文字节点被藏时按钮变窄，`offsetLeft/offsetWidth` 也跟着变 ⇒ `syncIndicator()` 必须在
+          `syncTabFit()` **落定之后**调用（已按此顺序接好）。
+       ⚠️ 藏字不用 `display:none`：那会让 `scrollWidth` 的测量口径在「藏了」与「没藏」之间横跳，
+          而这里恰恰靠 `scrollWidth` 判是否溢出。用 `max-width:0` + `opacity:0` 收干净，保留可量性。 */
+    .rl-tabs.rl-tabs-modern.is-narrow button:not(.on) .rl-tab-txt,
+    .rl-tabs.rl-tabs-modern.is-tight button .rl-tab-txt {
+        max-width: 0; opacity: 0; overflow: hidden; margin-left: -5px;
+    }
+    /* 收窄态按钮左右内距同步收一点，否则「只有图标」时按钮里会剩一圈空 */
+    .rl-tabs.rl-tabs-modern.is-narrow button:not(.on),
+    .rl-tabs.rl-tabs-modern.is-tight button { padding-left: 12px; padding-right: 12px; }
+    /* 文字节点本身的过渡：展开/收窄时不跳一下 */
+    .rl-tab-txt {
+        display: inline-block; max-width: 200px;
+        transition: max-width .18s ease, opacity .14s ease, margin-left .18s ease;
+    }
+    /* 🔴 量测期掐掉过渡：否则摘掉 is-narrow 后量到的是「文字还在动画中途」的宽度（见 syncTabFit 注释）。 */
+    .rl-tabs.is-measuring .rl-tab-txt,
+    .rl-tabs.is-measuring button { transition: none !important; }
     .rl-tabs button:active { transform: scale(.96); }
     .rl-tabs button:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
     .rl-tabs button.on {
@@ -764,20 +1308,51 @@
         border-bottom-color: var(--interactive-accent);
     }
 
-    /* ── 1.0.3 现代主题页签：分段控件（胶囊容器 + 描边滑动指示器）──
+    /* ── 1.0.3 现代主题页签：分段控件（矩形容器 + 描边滑动指示器）──
        为何必须走结构分支而非纯 CSS 变量：变量能改颜色与圆角，但变不出新 DOM 节点（指示器），
        只能靠模板 {#if} 表达。页签图标两主题恒渲染（定稿曾为纯文字，2026-09-12 用户裁定恢复）。
        fallback 说明：本块整体挂在 .rl-tabs-modern 下，native 主题选择器不匹配、规则根本不生效，
-       故 var() 的第二参数纯属防御性冗余；此处仍一并写上，与 Task 3/4 中「native 也会命中」的规则保持一致纪律。 */
+       故 var() 的第二参数纯属防御性冗余；此处仍一并写上，与 Task 3/4 中「native 也会命中」的规则保持一致纪律。
+
+       🔴🔴 2026-11-26（m04870 / m04553）**胶囊 → 矩形**。
+       用户逐字：「这些胶囊样式的按钮有点不符合整体协调观了改成距形和筛选、排序相符的样式」
+       「顶部胶囊怎么没改样式」⇒ 「胶囊」指的就是**本块**这三处 `--rl-t-radius-pill` 圆角：
+         ⑴ 容器 `.rl-tabs.rl-tabs-modern`；⑵ 滑动指示器 `.tab-ind`；⑶ 页签按钮 `button`。
+       三处必须**同值**改成 `--rl-t-radius-md`（= 筛选/排序那排 MiniSelect 的 `.rl-sel-btn` 圆角），
+       否则会出现「按钮方了、底下那块描边还是药丸」的错位 —— 用户上一轮说的「没改样式」正是这个病。
+       ⛔ 别再退回 pill（999px）：那会让左右两端页签露在容器圆角外面。
+
+       ⚠️ 2026-11-15（m07364）**上面「三处同值」已被下面 iOS 分段控制器那一版部分推翻**：
+         容器圆角改成 `--rl-t-radius-lg`（8px，比按钮的 md 大一档），指示器与按钮仍用 md。
+         这不是笔误 —— iOS 分段控制器正是「外槽比内滑块圆角略大」的形态，且容器圆角 >
+         按钮圆角**不会**像 pill 那样把两端页签顶出去（差 2px，肉眼几乎不可见）。
+         ⛔ 别为了「同值」把容器改回 md：那会让底槽与滑块的圆角完全重合、失去 iOS 的层次感。
+
+       🔴🔴 2026-11-15（m07364）**矩形描边 → iOS 分段控制器（Segmented）**。
+       用户逐字：「采用"iOS 分段控制器 (Segmented)"风格 去边框：把内部所有小按钮的边框（border）
+       全删掉。做底槽：给最外层的大容器加一个极浅的灰色背景（例如 #F1F3F5），圆角调大
+       （如 8px 或 10px），去掉大外框的边框线…间距：减少按钮之间的间距（仅留 2-4px），
+       让它们看起来是一个整体控件。」
+       本块四条对应改动：
+         ⑴ **去掉大外框的两条 border**（正边框 + 下边框）—— 底槽只靠底色与圆角成形；
+         ⑵ 圆角 md(6px) → **lg(8px)**，比按钮圆角大一档 ⇒ 按钮不再露到容器圆角外面；
+         ⑶ `gap: 0` → **3px**（用户要 2-4px），让相邻按钮之间留一道底槽色的缝，
+            选中滑块浮在上面才像一整块控件而不是连成一片；
+         ⑷ `padding: 5px` → **4px**。⚠️ 改这里**必须同步** `TAB_PAD`（:732 的 `const TAB_PAD = 5;`）
+            与 `.tab-ind` 的 `top/left/height`（`4px` / `4px` / `calc(100% - 8px)`）—— 指示器是
+            用 `offsetLeft - TAB_PAD` 算位移的，三处不同值会让滑块整体偏移、高度也不再居中。
+       ⚠️ 底槽色**仍走 `background: var(--background-secondary)`**，⛔ 别改成字面 `#F1F3F5`：
+         浅色主题下 secondary 本身就是 `#f6f6f6` 量级（与用户举例的 #F1F3F5 同档），
+         而 `assert-symbols.cjs` 有一条专门钉「基础分支原样保留 `background:var(--background-secondary)`」
+         —— 写死色值会当场打红，且深色主题会跟着失真（下面那条 `body.theme-dark` 才管深色）。 */
     .rl-tabs.rl-tabs-modern {
         position: relative;
-        display: inline-flex; align-items: center; gap: 0;
+        display: inline-flex; align-items: center; gap: 3px;
         width: fit-content; max-width: 100%;
-        margin: 0 auto 12px; padding: 5px;
+        margin: 0 auto 12px; padding: 4px;
         background: var(--background-secondary);
-        border: 1px solid var(--background-modifier-border);
-        border-bottom: 1px solid var(--background-modifier-border);
-        border-radius: var(--rl-t-radius-pill, 999px);
+        border: none;
+        border-radius: var(--rl-t-radius-lg, 8px);
         box-shadow: var(--rl-t-shadow-inset, none);
         flex-wrap: nowrap;
         /* 🔴 必须显式 flex-start（2026-09-21 用户报「窄栏下胶囊与按钮容器边界冲突」的根因）：
@@ -812,12 +1387,27 @@
     :global(body.theme-dark) .rl-tabs.rl-tabs-modern {
         background: color-mix(in srgb, var(--background-primary), var(--color-base-100, #ffffff) 6%);
     }
-    /* 指示器：绝对定位 + transform 平移，left/top 固定为 padding 值 */
+    /* 🔴 m07364：深色主题下选中滑块不能是纯白（在 #1C1C1C 底上刺眼、与底槽反差过大）。
+       取「页面色混亮端 18%」= 明显比底槽（6%）亮一档，仍属同明度区间，观感即 iOS 深色模式。
+       ⚠️ 必须带 `body.theme-dark` 前缀 —— 与上面那条同族，浅色主题保持纯白不变。 */
+    :global(body.theme-dark) .rl-tabs.rl-tabs-modern .tab-ind {
+        background: color-mix(in srgb, var(--background-primary), var(--color-base-100, #ffffff) 18%);
+    }
+    /* 指示器：绝对定位 + transform 平移，left/top 固定为 padding 值。
+       🔴 m07364：iOS 分段控制器的选中滑块是**一块浮起的纯白圆角块**，不是描边药丸 ⇒
+         ⑴ 删掉 `border: 1.5px solid var(--interactive-accent)`（用户「把内部所有小按钮的
+            边框全删掉」；描边是上一版矩形风用来表达选中的，现在改由白色底 + 阴影表达）；
+         ⑵ 底色由 `--background-primary` 改成**纯白**（用户「选中的"电影"，背景色变成纯白色」）。
+            深色主题下纯白会刺眼，由下面 `body.theme-dark` 那条换成同明度的浅面；
+         ⑶ `top/left` 与 `height` 跟着容器 `padding` 从 5px 收到 **4px**
+            （`calc(100% - 8px)`），否则滑块会比按钮高出一圈。
+       ⚠️ 阴影继续用 `--rl-t-shadow-ind`（modern 下已是 `0 2px 6px rgba(0,0,0,.13)`）——
+         这正是 iOS 滑块那种「轻轻浮起」的观感，⛔ 别在这里另写字面 box-shadow。 */
     .rl-tabs.rl-tabs-modern .tab-ind {
-        position: absolute; top: 5px; left: 5px; height: calc(100% - 10px);
-        background: var(--background-primary);
-        border: 1.5px solid var(--interactive-accent);
-        border-radius: var(--rl-t-radius-pill, 999px);
+        position: absolute; top: 4px; left: 4px; height: calc(100% - 8px);
+        background: #ffffff;
+        border: none;
+        border-radius: var(--rl-t-radius-md, 6px);
         box-shadow: var(--rl-t-shadow-ind, none);
         transition: transform var(--rl-t-dur-ind, .28s) var(--rl-t-ease-ind, cubic-bezier(.34, 1.3, .64, 1)),
                     width var(--rl-t-dur-ind, .28s) var(--rl-t-ease-ind, cubic-bezier(.34, 1.3, .64, 1));
@@ -826,9 +1416,22 @@
     /* 图标与文字压在指示器之上（z-index:1），并剥掉 native 的下划线/margin 负值 */
     .rl-tabs.rl-tabs-modern button {
         position: relative; z-index: 1;
-        padding: 7px 17px; border-radius: var(--rl-t-radius-pill, 999px);
-        border-bottom: none; margin-bottom: 0;
+        /* m07364：17px → 14px，配合容器 gap 3px，六个页签整体更紧凑（用户「让它们看起来是一个整体控件」） */
+        padding: 7px 14px; border-radius: var(--rl-t-radius-md, 6px);
+        /* 🔴🔴 m07364「把内部所有小按钮的边框（border）全删掉」—— 2026-11-15 真机实测：
+           `border` 早就是 `0px none` 了，屏幕上那圈方框**不是 border**，而是核心给 `button`
+           的 `box-shadow: var(--input-shadow)` —— 计算值实测
+           `rgba(0,0,0,.12) 0 0 0 1px inset, rgba(0,0,0,.067) 0 1px 2px 0, …`，
+           第一段就是 **1px 内阴影冒充的描边**。所以只删 `border` 永远消不掉它，
+           必须同时 `box-shadow: none`。⛔ 别把这两条删回去 —— 删了按钮又开始画框。
+           （`border: none` 仍要留着：核心 `button:not(.clickable-icon)` 的特异性是 (0,1,1)，
+           单靠 `border-bottom: none` 压不住上/左/右三边。） */
+        border: none; box-shadow: none; margin-bottom: 0;
         background: transparent; white-space: nowrap;
+        /* m07364：未选中态文字 = 深灰（用户「不要用纯黑，用 #4B5563 之类的灰」）。
+           ⛔ 别写死 #4B5563 —— `--text-muted` 就是这一档灰，且深色主题会自动翻成浅灰；
+           图标继承 currentColor（见 Icon.svelte），所以这一条同时让图标跟着变灰。 */
+        color: var(--text-muted);
         transition: color var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
     }
     .rl-tabs.rl-tabs-modern button:hover { background: transparent; }
@@ -841,4 +1444,23 @@
     }
 
     .rl-tab-body { flex: 1; min-width: 0; }
+
+    /* ── 🔴 2026-11-14（用户 m05195 提需求、m05299 拍板「做首页窄屏适配」） ───────────────
+       首页这一层只负责**外框与页签**（各页签内部的网格在 MediaList / CollectionBoard /
+       StatsBoard / CalendarBoard 各自的 style 块里适配）。窄屏要处理的是三处外框留白：
+         · `.rl-home` 的 10px 内距在 360pt 手机上吃掉近 3% 宽度 —— 收到 6px；
+         · 页签栏在 `is-narrow` / `is-tight` 下已经由 JS（`syncTabFit`）藏掉文字，
+           这里只把左右内距再收一档，让图标间距不至于散成一片；
+         · `.rl-more-bar` / `.rl-navbar` 两行右对齐的入口栏在窄屏下与内容抢宽度 ⇒ 允许换行。
+       ⚠️ 阈值 560px 复用 `styles.css` 里卡片网格那一档（`.rl-wtw-card` / `.rl-rm-grid`），
+          ⛔ 不新增一次性阈值。 */
+    @media (max-width: 560px) {
+        .rl-home { padding: 6px; border-radius: 6px; }
+        .rl-tabs.rl-tabs-modern { margin-bottom: 8px; padding: 4px; }
+        .rl-tabs.rl-tabs-modern button,
+        .rl-tabs button { padding-left: 8px; padding-right: 8px; }
+        .rl-navbar,
+        .rl-more-bar { flex-wrap: wrap; row-gap: 4px; }
+        .rl-tracking-switch { flex-wrap: wrap; }
+    }
 </style>

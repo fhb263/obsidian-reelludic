@@ -23,6 +23,10 @@
 /** Steam Web API 基址（与现有 `services/steam.ts` 的商店端点区分：这是 **Web API**，不是 storefront API） */
 export const STEAM_API_BASE = 'https://api.steampowered.com';
 
+// 封面图床（`steamCoverUrl`）—— 见文件末尾的 re-export 说明。
+// 放顶部是 import 应有的位置（ESM 虽有提升，但写在文件中间读起来像"局部引入"）。
+import { steamCoverUrl } from './steamCover';
+
 /** 一次同步最多拉多少条（防用户库里几千个游戏把库撑爆；超出时如实报「已截断」） */
 export const STEAM_SYNC_LIMIT = 2000;
 
@@ -371,26 +375,33 @@ export const STEAM_DETAIL_FILL_LIMIT = 40;
 /**
  * 这条已存在的条目**还缺不缺** Steam 详情（缺 = 值得花一次请求去补）。
  *
- * 🔴 判据只看 **`poster` 是否为空**，这是经过推敲的收敛设计：
- *    ① 用户报障的老条目全部来自 `syncSteamNow`，那一版**一个字段都没写**、连 `poster` 都没有
- *       ⇒ 「缺封面」把它们全捞出来，一轮补齐；
- *    ② 补齐时 `poster` 一定被写上（`steamCoverUrl` 是本地拼的、不依赖网络）⇒ **下一轮就不再命中**，
- *       预算不会被长期占用。
- * ⚠️ 刻意**不把「缺评分」当判据**：很多游戏根本没有 Metacritic 收录（`rating` 本来就是 undefined），
- *    按「缺评分」判会让它们**每一轮启动都重拉一次**，白耗配额还永远补不上 —— 那不是收敛，是漏水。
+ * 🔴 判据 = **缺封面** 或 **没有补过详情的标记**（`steamDetailFilledAt` 为空）。
+ *
+ * ⚠️ 为什么不再「只看 poster」（2026-11-08 修障）：那版判据会让**已有封面但缺评分**的条目
+ *    永久漏网 —— 用户报障「steam 同步和搜索获取评分不到」里，老条目全是这一类
+ *    （早期 `syncSteamNow` 只写了标题/封面，评分与好评率一个都没写）⇒ 它们**永远不会**被补。
+ *
+ * ⚠️ 为什么用**标记**而不是「缺 reviewPercent」当判据：百分比来自 histogram，
+ *    确实存在「该游戏零评测」这种**永远补不上**的情形。按「缺评分」判 ⇒ 这类条目每轮开机重拉一次、
+ *    白耗配额（这是上一版注释里写死的教训，⛔ 别再走回去）。标记法的收敛性与之无关：
+ *    **请求过一次就写标记**，无论拿到多少字段 ⇒ 下一轮必然不再命中。
+ *
  * ⚠️ 用户自己的 `rating`（个人评分）**不参与判断** —— 那是两回事，永远不从 Steam 覆盖。
  */
-export function steamEntryNeedsDetail(cur: { poster?: string }): boolean {
-    return !(typeof cur.poster === 'string' && cur.poster.trim());
+export function steamEntryNeedsDetail(cur: { poster?: string; steamDetailFilledAt?: string }): boolean {
+    if (!(typeof cur.poster === 'string' && cur.poster.trim())) return true;
+    return !(typeof cur.steamDetailFilledAt === 'string' && cur.steamDetailFilledAt.trim());
 }
 
 /**
- * 商店**竖版**封面（与 `services/steam.ts` 的 `COVER_IMAGE_BASE` 同一张图床、同一路径规则）。
- * ⚠️ 纯模块里刻意**不 import** 服务层（那层会牵 obsidian）⇒ 常量在这里再写一次，两处必须同值。
+ * 商店**竖版**封面 —— 现已收口到 `pure/steamCover`（唯一真源）。
+ * 🔴 2026-11-08 之前这里把常量又写了一遍，注释自称「两处必须同值」；
+ *    实际全仓有 **4 处**（本文件 / services/steam.ts / pure/searchDisplay.ts / modals/SteamSyncModal.ts）
+ *    ⇒ 那种「靠注释约定同步」的写法已经失真过一回了。
+ * ⚠️ 本文件自己也要用（`steamEntrySeed` 建封面），所以 import 与 re-export 都要写 ——
+ *    只写 `export { x } from '...'` **不会**产生本地绑定，tsc 当场报 TS2552。
  */
-export function steamCoverUrl(appid: number): string {
-    return `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/library_600x900.jpg`;
-}
+export { steamCoverUrl };
 
 /**
  * 库与愿望单**都拉不到**时的结论（弹窗顶部那句）——三态各自说人话。

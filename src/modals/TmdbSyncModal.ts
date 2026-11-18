@@ -11,6 +11,8 @@
 
 import { Modal, Notice, type App } from 'obsidian';
 import { applyScrollPref } from 'services/scrollPref';
+import { tmdbHintSections } from 'pure/syncHint';
+import { renderSyncHint } from 'modals/syncHintView';
 import {
     TMDB_SYNC_COMBOS,
     tmdbComboLabel,
@@ -52,13 +54,8 @@ export class TmdbSyncModal extends Modal {
         contentEl.addClass('rl-wshelf-modal');
         this.titleEl.setText('从 TMDB 同步想看清单与收藏');
 
-        contentEl.createDiv({
-            cls: 'rl-wshelf-hint',
-            text:
-                '读取你 TMDB 账号的想看清单（Watchlist）与收藏（Favorites）——电影和剧集都拉，勾选后导入本库。' +
-                '只读 TMDB、不改动那边的内容；库里已有的默认不勾，勾上 = 覆盖（你自己的评语/进度/摘抄不会被动）。' +
-                '需要先在「设置 › 元数据源配置 › 元数据搜索源凭据 › TMDB」里填 API Key（32 位）与 access_token（eyJ 开头的 v4 长串）。',
-        });
+        // 🔴 2026-11-11 用户 m05717 ②：三段式（同步数据 / 冲突处理 / 前置条件），标签加粗 + 全角冒号
+        renderSyncHint(contentEl.createDiv({ cls: 'rl-wshelf-hint' }), tmdbHintSections());
 
         const status = contentEl.createDiv({ cls: 'rl-wshelf-status', text: '正在读取全部清单…' });
         const bar = contentEl.createDiv({ cls: 'rl-wshelf-bar' });
@@ -136,7 +133,7 @@ export class TmdbSyncModal extends Modal {
         const readAll = (): void => {
             const { apiKey, sessionId } = this.opts.credentials();
             if (!apiKey.trim()) {
-                status.setText('还没有配置 TMDB API Key —— 请先到「设置 › 元数据源配置 › 元数据搜索源凭据 › TMDB」填入。');
+                status.setText('还没有配置 TMDB API Key —— 请先到「设置 › 搜索配置 › 元数据搜索源凭据 › TMDB」填入。');
                 return;
             }
             if (!sessionId.trim()) {

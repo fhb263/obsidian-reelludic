@@ -95,6 +95,13 @@
     import { readSeriesRating } from 'pure/seriesRating';
     import { describeBulkApply } from 'pure/bulkConfirm';
     import { filterAndSort } from 'pure/search';
+    // 🔴 m07854 ⑪ ③：标题关键词高亮的切片真源（纯函数，与 pure/search 同口径大小写不敏感）
+    import { splitTitleByQuery, titleHasQuery } from 'pure/titleHighlight';
+    // 🔴 m07854 ⑭：骰子的显隐判据（纯函数 —— 「敲个空格算不算在用搜索框」要有唯一答案）
+    import { shouldShowWatchDice } from 'pure/whatToWatch';
+    // 🔴 m07854 ⑮「待补」漏斗：判据在 `pure/incomplete`（缺关联 ∪ 缺个人评分），
+    //    计数与文案也都在那儿 —— ⛔ 别在本组件里重写条件（单一真源）。
+    import { countIncomplete, incompleteTip } from 'pure/incomplete';
     // 🔴 #552：`BOOK_KIND_TOP_UNITS` 随库概览一起恢复 —— 阅读页签选中某个子分类时，
     //    工具栏那枚概览的量词跟着换（「12 本网文」而不是笼统的「本书」），对齐影视「8 部剧集」那套。
     import { BOOK_KINDS, BOOK_KIND_LABELS, BOOK_KIND_TOP_UNITS, bookKindCounts, normalizeBookKind } from 'pure/bookKind';
@@ -104,7 +111,7 @@
     // 🔴 #547 / #550 合并视图：作用域由宿主推下来，本组件只负责把它翻译成 typeFilter / kindFilter。
     //    🔴 #550：那枚「媒体类型」下拉也搬进本组件渲染（并入内容区筛选行，取消顶端独立行）⇒
     //    还要它的**选项表与文案**（⛔ 不在组件里手写第二份中文）。
-    import { MERGED_SCOPES, mergedBookKind, mergedScopeLabel, type MergedScope } from 'pure/mergedScope';
+    import { MERGED_SCOPES, isMergedBookKind, mergedBookKind, mergedScopeLabel, type MergedScope } from 'pure/mergedScope';
     import { groupMusicByArtist } from 'pure/musicGroup';
     import { cardSubtitle, hasCardSubtitle, cardCreator, hasCardCreator, cardGenres, hasCardGenres, cardFieldValue, seriesCardFieldValue, cardFieldsFor, DEFAULT_CARD_FIELDS_BY_TYPE, type CardFieldKey } from 'pure/cardMeta';
     // 1.3.1 ②（#621）表格视图：列配置（pure/tableColumns）与单元格读写（pure/tableCell）真源
@@ -124,8 +131,11 @@
     //    `pure/cardMeta.seriesCardFieldValue`（它内部才用这两个聚合函数）。
     //    ⛔ 别因为「组件里看不到它们了」就在视图层再拼一次（那样行数与取值又会各走一套）。
     import { foldSeries, listTreeRows, listFlatRows, listDisplayRows, seriesKeyOf, seriesStatus, nextSeriesEntry, seriesReadPercent, seriesReadDone, seriesIndexValue, type SeriesGroup, type SeriesRow } from 'pure/seriesGroup';
+    // 🔴 2026-11-11 用户需求（m06406 ③）：「全类型同个条目属性归类，如按时间跨度、按类型分类及多种分类怎么分显示」。
+    //    纯数据层在 `pure/listGrouping`（分桶 / 桶序 / 组卡汇总全都可单测），⛔ 别把分桶逻辑写进本文件。
+    import { buildGroupCards, entriesInBucket, groupCardSub, groupDimOptionsFor, groupEntriesBy, normalizeGroupDim, type GroupDim, type ListGroupCard } from 'pure/listGrouping';
     // 进度 / 状态小字（#444c 下沉到纯模块）：卡片与弹窗**共用同一份口径**，⛔ 别在两处各写一套。
-    import { listProgress, readPercent, bookUnitOf, cardPlaytimeBadge, cardReadBadge } from 'pure/mediaProgress';
+    import { listProgress, readPercent, bookUnitOf, cardPlaytimeBadge, cardReadBadge, cardListenBadge } from 'pure/mediaProgress';
     import { placeMenu } from 'pure/menuPlacement';
     // 🔴 #626 多带两样：`posterGridTemplateForWall`（墙的列模板 —— 自定义档的**间距比网格宽**，裁决收在 pure 层）、
     //    `POSTER_WALL_GAP`（墙的间距，必须与 `.rl-wall{gap}` 同值）。
@@ -159,12 +169,15 @@
     import Icon from './Icon.svelte';
     // #566：受控下拉的自绘版（原生 `<select>` 的 popup 在 Windows 上不受 CSS 控制 ⇒ 列表无法居中）
     import MiniSelect from './MiniSelect.svelte';
+    // 🔴 2026-11-26：条目卡右键菜单的**全仓唯一真源**（合集视图 CollectionBoard 用的是同一个组件）。
+    //    ⛔ 别在本文件里再写一份菜单 —— 两份必然漂移，用户正是为此提的需求（m04109）。
+    import EntryContextMenu from './EntryContextMenu.svelte';
     // 🔴 #680：题材面板是**手写 DOM**（不是 MiniSelect），要让同组的三个下拉在它展开时收起 ——
     //    走 MiniSelect 模块导出的广播口（⛔ 别在这里直接碰那个私有注册表）。
     import { broadcastClosePeers } from './MiniSelect.svelte';
 
     export let entries: MediaEntry[] = [];
-    export let onAdd: (t?: EntryType, kind?: BookKind) => void = () => {};
+    export let onAdd: (t?: EntryType, kind?: BookKind, q?: string) => void = () => {};
     export let onEditEntry: (id: string) => void = () => {};
     export let onOpenEntry: (id: string) => void = () => {};
     export let onOpenLink: (url: string) => void = () => {};
@@ -178,16 +191,30 @@
      */
     export let onOpenSeriesPicker: (g: SeriesGroup) => void = () => {};
     /**
-     * 🔴 #609 折叠卡右键「排序号」→ 打开**拖拽排序弹窗**（翻面 #608 的「点一下自动重排」）。
-     * 🔴 弹窗是**应用级 Modal**（宿主 `openSeriesReorder` 打开）—— 本组件只「报告用户点了哪一组」，
-     *    落库（`bulkSetSeriesIndex`）与回执 `Notice` 都在宿主侧，⛔ 别在这里再存一份结果。
-     */
-    export let onOpenSeriesReorder: (g: SeriesGroup) => void = () => {};
-    /**
      * 🔴 #629 折叠卡右键「批量关联」→ 打开**整个系列的逐条关联清单**（宿主 `openSeriesAssociate`）。
-     * ⚠️ 与「排序号」同一条纪律：本组件只报「点了哪一组」「点了哪条菜单项」，弹窗与落库都在宿主侧。
+     * ⚠️ 本组件只报「点了哪一组」「点了哪条菜单项」，弹窗与落库都在宿主侧。
+     * 🔴 2026-11-15 m08506 起它是折叠卡右键菜单里**唯一**的一条（其余四条搬进了
+     *    `SeriesPropsModal` 窗口，那四个独立弹窗已整体删除）。
      */
     export let onOpenSeriesAssociate: (g: SeriesGroup) => void = () => {};
+
+    /**
+     * 🔴 m07813②（用户逐字）：「给系列卡也做一个编辑属性窗口（同时右键菜单的改系列名、批量填合集、
+     *    批量填标签收进编辑系列属性页面内。同单击单卡卡片网格信息栏逻辑一样，**单击系列卡信息栏**
+     *    也打开编辑属性窗口）」
+     *
+     * 🔴 2026-11-15 m08506 用户第二次裁定（**推翻上一版**，逐字）：「还是将改系列名、排序号、
+     *    批量填合集、批量填标签放进编辑系列属性页面窗口里较好，**删除右键菜单和其单独改的入口和页面**」
+     *    ⇒ 这个窗口是那四件事的**唯一入口**。
+     *
+     * ⇒ 折叠卡**两个入口**（2026-11-15 问答裁定）：
+     *    ① 单击信息栏（`.rl-card-meta`，与单卡 `onEditEntry` 同款交互：只在该视图下可点）
+     *    ② 悬停 ⋯ 菜单（就是原来那枚「更多（右键）」按钮 —— 它打开的就是那张右键菜单，
+     *       ⛔ 别为此再往浮层里加第二枚按钮）
+     *
+     * ⚠️ 与其余系列入口同一条纪律：组件只报「点了哪一组」，弹窗与落库都在宿主侧。
+     */
+    export let onOpenSeriesProps: (g: SeriesGroup) => void = () => {};
     /** 右键「动词 · 去关联」直达：无入口时点主操作 → 快捷关联弹窗（不再整表单跳转） */
     export let onQuickAssociate: (e: MediaEntry) => void = () => {};
     export let onSetStatus: (id: string, s: MediaStatus) => Promise<void> = async () => {};
@@ -219,8 +246,9 @@
      * 🔴 「哪几条、各拿什么号」由纯模块 `planSeriesReindex` 算好再传下来 ⇒ 宿主只管落库。
      */
     // 🔴 #609：原 `onBulkSeriesIndex`（组件侧算补丁 → 宿主落库）**已整体撤除** —— 排序入口变成
-    //    应用级弹窗后，补丁由宿主自己算（`main.openSeriesReorder` → `SeriesReorderModal` → `planSeriesReindexAll`），
+    //    应用级弹窗后，补丁由宿主自己算（`SeriesPropsModal` → `planSeriesReindexAll`），
     //    组件不再经手「哪几条拿什么号」。⛔ 别把它加回来（那会出现「组件也有一份编号逻辑」的第二真源）。
+    // 🔴 2026-11-15 m08506：那个排序弹窗本身也已删除 —— 现在排序就在「编辑系列属性」窗口里拖。
     /** 批量应用前置确认（批B）：返回 false = 用户取消。无撤销栈，把关口前移到动手之前 */
     export let onConfirmBulk: (message: string) => Promise<boolean> = async () => true;
     export let posterUrl: (e: MediaEntry) => string | undefined = () => undefined;
@@ -301,6 +329,21 @@
      *    改由下面那枚「媒体类型」下拉承担（9 项里已含 文学 / 网文 / 漫画，⛔ 不再并排出现）。
      */
     export let scope: MergedScope | null = null;
+    /**
+     * 🔴 2026-11-08（用户 m03712）：「页签要把所有类型摊开」，摊开后的文学 / 网文 / 漫画
+     *    三枚页签各自锁死一个书籍子分类 ⇒ 宿主必须能**直接把 `kindFilter` 定死**。
+     *
+     * `null` = 非受控（保持本组件原有的自管行为：阅读页签自己那排 chips 可点）。
+     * 有值 = 受控：`kindFilter` 恒等于它，且**不渲染**那排子分类 chips
+     *      （页签已经把子分类摊到一级了，再摆一排可点的 chips 就等于同一维度有两个开关）。
+     *
+     * ⚠️ 与 `scope` 是**两条独立通道**，⛔ 别合并：
+     *    `scope` 是合并视图那套（`MergedScope = 'all' | BookKind | 非书籍 EntryType`），
+     *    它在 `:490` 把 `kindFilter` 归到 `mergedBookKind(scope)`；
+     *    本 props 是「一级页签直接点名的子分类」。
+     *    两者同时存在时 **本 props 优先**（页签比合并视图的筛选栏更上层），见下面那条 `$:`。
+     */
+    export let lockKind: BookKind | null = null;
     /** 🔴 #547 合并视图：状态筛选由宿主受控（null = 自管） */
     export let scopeStatus: MediaStatus | 'all' | null = null;
     /** 🔴 #547 合并视图：排序由宿主受控（null = 自管） */
@@ -327,6 +370,41 @@
      * ⚠️ **未注入（`null`）时整枚按钮不渲染** —— 本仓铁律：没接线就不画一个点了没反应的按钮。
      */
     export let onToggleGrouping: ((next: boolean) => void) | null = null;
+    /**
+     * 🔴 m07854 ⑬（2026-11-13）**系列卡是否摊平**（视图切换下拉左旁那枚循环按钮）。
+     * `true` = 全部单卡平铺（`seriesRows` 走 `listFlatRows`，系列折叠卡不存在）；
+     * `false`/缺省 = 系列卡堆叠（同系列折成一张，与 1.5.0 之前一致）。
+     *
+     * ⚠️ 与上面的 `listGrouping` **是两件事**，⛔ 别合并：
+     *    `listGrouping` 只影响**列表视图的行形态**；本字段影响**卡片网格 / 海报墙的系列折叠卡**。
+     *    合并会让「在列表里切了不并组 → 切到网格发现系列也没了」这种连带发生。
+     * ⚠️ 缺省 `false`：设置里 `undefined` 也当「堆叠」（老库没这个键 ⇒ 观感与升级前一致）。
+     */
+    export let unfoldSeries = false;
+    /**
+     * 上面那枚按钮的回推出口（受控口径，与 `onToggleGrouping` 同款）。
+     * ⚠️ **未注入（`null`）时整枚按钮不渲染** —— 没接线就不画一枚点了没反应的按钮。
+     */
+    export let onToggleUnfoldSeries: ((next: boolean) => void) | null = null;
+
+    /**
+     * 🔴 m07854 ⑭：搜索框里的「今天看什么」骰子。
+     *
+     * 用户原话：「搜索框内部加「今天看什么」随机抽卡的**骰子 🎲 图标**（无边框透明化），
+     *   点击从所有「想看」且评分较高的条目中随机全屏弹出一张卡片……**交互：不用搜索框时显示，
+     *   输入文字搜索时隐藏**」
+     *
+     * ⚠️ 与 `onToggleUnfoldSeries` 同一套约定：**未注入（`null`）时整枚按钮不渲染** ——
+     *    没接线就不画一枚点了没反应的按钮（本仓铁律）。
+     * ⚠️ 「抽谁」「换一个」的判定全在宿主的 Modal 里（`modals/WhatToWatchModal`），组件只把
+     *    「用户点了」这件事报上去 —— ⛔ 别在这里自己筛候选，否则同一份判据会有两份。
+     *
+     * 🔴 2026-11-13 用户口径：候选池按**当前页签**抽（只有合并视图才全库）。
+     *    ⇒ 「传哪份池」由父组件（`HomeView.svelte` 的 `watchDiceOpen`）闭包绑定，
+     *      本组件只把「点了」报上去，签名仍是零参 —— ⛔ 别在这里加条目池参数，
+     *      组件不知道页签、也不该知道（多一处判据 = 多一个漂移点）。
+     */
+    export let onOpenWhatToWatch: (() => void) | null = null;
 
     /**
      * 当前视图。
@@ -472,6 +550,12 @@
     //   ⚠️ 类型那一维走宿主推的 `lockType` ⇒ 上面那条「lockType 变则 typeFilter 跟随」的老规则**不动**
     //      （两处各管一维，⛔ 别合并；状态 / 排序的同步见下面 `sortBy` 声明之后）。
     $: if (scope !== null) kindFilter = mergedBookKind(scope);
+    // 🔴 2026-11-08：一级页签点名的子分类**优先于** `scope`（页签比合并视图的筛选栏更上层）。
+    //    放在 `scope` 那条之后是刻意的 —— 两条 `$:` 都会写 `kindFilter`，Svelte 按声明序执行，
+    //    后写的生效 ⇒ 受控值必须在后面，否则会被 `mergedBookKind(scope)` 覆盖掉。
+    $: if (lockKind !== null) kindFilter = lockKind;
+    /** 子分类那排 chips 只在「阅读页签 + 非合并视图 + 没被页签锁死」时出现（见 `lockKind` 注释） */
+    $: showKindChips = scope === null && lockType === 'book' && lockKind === null;
     // 音乐页签子分类行已于 1.0.3.1 下线（用户 2026-09-13 裁定删除「其他」，音乐回归单一类目）
     /** 清除全部筛选与搜索条件（空态「清除筛选」按钮用）：锁定类型页签的类型不可改，只重置可变条件 */
     function clearFilters() {
@@ -517,6 +601,27 @@
         onSortPick(picked);
     }
     /**
+     * 🔴 2026-11-11（m06406 ③）换分组维度。
+     * ⚠️ 换维度**必须退组**：`activeGroupKey` 是「上一次那个维度下的桶键」，
+     *    换了维度它还指着旧键 ⇒ `entriesInBucket` 筛出空集 ⇒ 用户看到「一片空白」却不知道为什么。
+     * （`$: if (groupDim === 'none' && activeGroupKey)` 只兜住「关掉分组」这一条，换维度得在这里退。）
+     */
+    function pickGroupDim(v: string): void {
+        const picked = normalizeGroupDim(v);
+        if (picked === groupDim) return;
+        groupDim = picked;
+        if (activeGroupKey) closeBucket();
+    }
+    /** 本页签实际可用的分组维度（单类型页签下砍掉「按类型」，见 `pure/listGrouping.groupDimOptionsFor`） */
+    $: groupDimOptions = groupDimOptionsFor(lockType);
+    /**
+     * 🔴 2026-11-11（m08970 ②）：页签锁死类型后，若当前停在「按类型」就地退回「不分组」。
+     * ⚠️ 必须写成 `$:` 而不是在 `switchTab` 里补一句：从「全部/计划」页签切到「电影」页签时
+     *    没有任何 tab 回调能覆盖到 `groupDim`，这个值会静静停在 `'type'`，
+     *    界面上就出现「下拉显示着一个不在选项表里的值」＋「一屏只有一个组卡」。
+     */
+    $: if (lockType && groupDim === 'type') groupDim = 'none';
+    /**
      * 列表排序（用户 2026-09-14 裁定）：**不提供表头点击排序** —— 排序统一走工具栏「排序」下拉
      * （SORT_OPTIONS 已覆盖标题/年份/状态/双评分 × 正反 12 向）。
      * 曾经做过两版表头排序（th 直接 onclick → th 内 button + aria-sort），最终按上手观感整体移除：
@@ -528,11 +633,20 @@
     // ⛔ 别在这里再把它们写回来（两套口径必然漂移：卡面说「已读 40%」、弹窗说「存档」）。
     let searchText: string = '';
     let menuOpenFor: string | null = null;
-    /** 右键菜单状态（#608 起**两个宿主共用一套容器与定位**）：
-     *  · `ctxFor`      = **条目卡**右键（条目 id）→ 主操作 / 关联入口 / 编辑条目 / 删除条目…
-     *  · `ctxGroupKey` = **系列折叠卡**右键（系列 key）→ 只有一条「排序号」（#608）。
-     *  🔴 二者互斥（打开一个先清另一个）—— 菜单一次只属于一个对象。⛔ 别让两个同时非空。 */
-    let ctxFor: string | null = null;
+    /**
+     * 右键菜单状态（#608 起两个宿主互斥，打开一个先清另一个）。
+     *
+     * 🔴 2026-11-26 **条目卡菜单已抽走**：用户逐字「合集卡内的卡片应该也和主视图交互操作一致
+     *    才对而不是另做个右上角编辑属性图标」⇒ 条目右键菜单现在是
+     *    `EntryContextMenu.svelte`（**全仓唯一真源**），本组件只负责 `openAt()` 与读它的 `open`。
+     *    ⛔ 别把主操作 / 关联入口 / 编辑属性 / 摘抄 / 短评 / 删除这一套再写回本文件 ——
+     *      合集视图用的是同一个组件，写回来就是两份菜单，必然漂移（这正是这条需求被提出的原因）。
+     * ⚠️ `ctxGroupKey` = **系列折叠卡**右键（系列 key）→「排序号 / 批量关联 / 批量填合集·标签」。
+     *    这一类**留在本组件**：它只服务海报墙的折叠卡，合集视图里没有折叠卡。
+     */
+    let entryMenu: EntryContextMenu | null = null;
+    /** 条目菜单是否开着 —— 给 Esc 优先级判断用（等价于旧的 `ctxFor !== null`） */
+    let entryMenuOpen = false;
     let ctxGroupKey: string | null = null;
     let ctxX = 0;
     let ctxY = 0;
@@ -611,13 +725,50 @@
     /** 筛选栏状态 chips：全部/想看/在看/已看/存档（弃剧已移除） */
     const statusChips: (MediaStatus | 'all')[] = ['all', 'want', 'watching', 'watched', 'archived'];
     // 🔴 #566 自绘下拉（MiniSelect）的选项表：`value/label` 对 —— 模板里不再写 `<option>`。
-    const scopeOptions = MERGED_SCOPES.map((s) => ({ value: s as string, label: mergedScopeLabel(s) }));
+    /**
+     * 🔴 m07546 需求①（用户：「用户自定义视图的勾选了标签但在导航布局调整为文字菜单/合并视图时
+     *    的不按照勾选类型规范」）——**合并视图的「媒体类型」下拉必须服从视图的类型池**。
+     *
+     * 原实现 `MERGED_SCOPES.map(...)` 写死全部 9 项 ⇒ 视图里只勾了「动画 + 文学」，
+     * 下拉里照样能选「电影 / 游戏 / 音乐」；选中后 `filterAndSort` 就按那个被禁类型过滤，
+     * 而 `entries` 早已被 `filterForView` 按视图过滤过 ⇒ **列表恒空**，用户读作「不按勾选规范」。
+     *
+     * 收窄规则（`typePool == null` = 视图没限制 ⇒ 原样 9 项）：
+     *   · `'all'` **恒留** —— 它是「不限类型」而非某个类型，删掉就没法回到全库；
+     *   · 书籍三子分类只在池里有 `book` 时留（`'book'` 在这一维指**文学**，见 `pure/mergedScope` 文件头）；
+     *   · 其余按 `typePool` 过滤。
+     * ⚠️ 只是**过滤选项**，不改变任何 id 语义 —— `mergedLockType` / `mergedBookKind` 一个字没动。
+     */
+    $: scopeOptions = MERGED_SCOPES.filter((s) => {
+        if (s === 'all' || !typePool) return true;
+        if (isMergedBookKind(s)) return typePool.includes('book');
+        return typePool.includes(s);
+    }).map((s) => ({ value: s as string, label: mergedScopeLabel(s) }));
+    /**
+     * 若当前作用域因视图切换而变得**不可选**，钳回 `'all'`（并把选择回推宿主）。
+     * ⚠️ 不钳制的话下拉会显示一个不在选项表里的值 —— `MiniSelect` 找不到对应 label，
+     *    用户看到空白按钮，而列表却还是空的。
+     */
+    $: if (scope !== null && !scopeOptions.some((o) => o.value === scope)) onScopePick('all');
     // 状态的 label 随 lockType 变（非合并视图的状态名按类型给）⇒ 保持响应式
     $: statusOptions = statusChips.map((s) => ({ value: s as string, label: s === 'all' ? '全部' : statusLabel(lockType ?? 'movie', s) }));
     // 排序选项表换 `value/label` 对（⛔ map 别写在模板里 —— 表达式写不了 TS 断言，本批实测）
     $: sortSelOptions = sortOptions.map((o) => ({ value: o.value, label: o.label }));
     /** 类型筛选 chips：受 typePool 限制（聚合页签仅影视三类）；null 时显示全部类型 */
     $: typeChips = (['all'] as ('all' | EntryType)[]).concat(typePool ?? ENTRY_TYPES);
+    /**
+     * 🔴 m07546 需求①（第二条缺陷）：**切视图后 `typeFilter` 要跟着收窄**。
+     *
+     * `typeFilter` 是本组件的内部态，上面那条「`lockType` 变则 `typeFilter` 跟随」只认**页签**，
+     * 认不出「视图换了」——合并视图里 `lockType` 恒 `null`（`scope='all'`），于是：
+     * 用户在 A 视图勾了「动画 + 电影」，把 chips 选到「电影」，再切到一个只勾了「动画」的视图，
+     * `typeFilter` 仍停在 `'movie'` ⇒ `filterAndSort` 按电影过滤、而 `entries` 已被
+     * `filterForView` 滤成只剩动画 ⇒ **列表恒空**，症状正是用户说的「不按勾选类型规范」。
+     *
+     * ⚠️ 只在**池子不含当前值**时才回落 —— 池子为 `null`（视图不限制）时不动，
+     *    那是「不限制」而不是「空池」，⛔ 别把 chips 的选择无端清掉。
+     */
+    $: if (typePool && typeFilter !== 'all' && !typePool.includes(typeFilter)) typeFilter = 'all';
     /** 排序下拉选项：每项排序成对提供正/反向 —— 表在 `pure/sortOptions`（#547 起与顶端筛选栏共用一份） */
 
     // 🔴 #547：工具栏那枚「N 项媒体 / N 本书」**库概览已按用户要求整体删除**
@@ -649,6 +800,15 @@
     }
 
     // 纯逻辑下沉的搜索/筛选/排序（pure/search.filterAndSort）：保证单测可锁定回归
+    /**
+     * 🔴 m07854 ⑮「待补」漏斗开关：只看**缺关联 或 缺个人评分**的条目。
+     *
+     * ⚠️ 这是**视图内临时筛选**、不是设置项 ⇒ 不落盘、⛔ 别加进 `Settings`（用户要的是「一键筛出来看看」，
+     *    不是永久改变首页口径；切页签/重开回到全部才是预期）。
+     * ⚠️ 与搜索、状态、题材等维度是 **AND**（走同一条 `filterAndSort`），所以可以叠加：
+     *    比如「搜『熊出没』+ 待补」= 这一系列里还没补全的那几条。
+     */
+    let incompleteOnly = false;
     $: filtered = filterAndSort(entries, {
         status: statusFilter,
         type: lockType ?? typeFilter,
@@ -656,7 +816,42 @@
         sortBy,
         bookKind: lockType === 'book' ? kindFilter : undefined,
         genres: genreSel,
+        incompleteOnly,
     });
+
+    /**
+     * 漏斗按钮上要显示的条数 —— 算的是**当前页签/状态/题材/搜索已筛过、但还没套「待补」**的那批，
+     * 而不是全库。理由：用户点漏斗时看的是眼前这屏，数字与点击后剩下的条数必须对得上，
+     * 否则「提示说 12 条、点完只剩 3 条」会被当成算错。
+     */
+    $: incompleteCount = countIncomplete(
+        filterAndSort(entries, {
+            status: statusFilter,
+            type: lockType ?? typeFilter,
+            query: debouncedSearch,
+            sortBy,
+            bookKind: lockType === 'book' ? kindFilter : undefined,
+            genres: genreSel,
+            incompleteOnly: false,
+        }),
+    );
+
+    /**
+     * 🔴 m07854 ⑫**智能搜索穿透**：搜索词非空时，整面墙/整列表都强制**退化成逐条目平铺**，
+     * 即忽略「维度分组桶」「系列折叠卡」「列表合集树形父子行」三种藏法。
+     *
+     * 用户原话：「搜『熊出没』不要只显示并组的系列，而要摊开：强制忽略系列分组，
+     * 把系列里命中的单部电影直接展示」。
+     *
+     * ⚠️ 为什么不是「只放宽系列折叠」：搜索是**找东西**的动作，用户此刻要找的是**那一条**，
+     *    而不是「这个系列里有几条沾边」。维度分组卡（按年份/类型/题材分的桶）同样会把命中项
+     *    藏进一张组卡里、还要再点一次才看得见 —— 一并摊平。
+     * ⚠️ 用 `debouncedSearch`（300ms 防抖后）而不是 `searchText`：判据必须与 `filtered` 同源，
+     *    否则输入瞬间会出现「已经按新词筛了、却还在折叠」的一帧错位。
+     * ⛔ 别在这里顺手清 `activeSeriesKey`/`activeGroupKey`：那是用户的浏览位置，
+     *    搜索清空后要能原地回到他刚才进的组（见 `rowSource` 的 `activeGroup` 分支优先级）。
+     */
+    $: searching = debouncedSearch.trim().length > 0;
 
     // 🔴🔴 #570（用户 2026-10-08：「海报墙条目**取消上限取消分页**」）：分页那套**整体退场**（含它那个
     //    纯模块与单测，一起删掉了）—— 本组件不再分页，**一次给出全部行**（`listRows = rowSource`）。
@@ -677,7 +872,9 @@
      */
     type DrawItem =
         | { kind: 'card'; entry: MediaEntry }
-        | { kind: 'folded'; group: SeriesGroup };
+        | { kind: 'folded'; group: SeriesGroup }
+        /** 🔴 一级分组卡（用户 2026-11-11 定版 G1）：点它=进这一组，组内仍走既有 `foldSeries` */
+        | { kind: 'grp'; card: ListGroupCard };
 
     /**
      * 当前**正在看的那个系列**（键 = `pure/seriesGroup.seriesKeyOf`）；`null` = 看整面墙（默认）。
@@ -691,6 +888,60 @@
      * ⚠️ 墙上的默认态仍然是**折叠**（`activeSeriesKey` 初值 null）⇒ 用户要的「海报墙有且默认折叠」不变。
      */
     let activeSeriesKey: string | null = null;
+
+    /**
+     * 🔴 2026-11-11（m06406 ③，用户定版 G1）**一级分组的当前维度**。
+     *
+     * 用户原话：「全类型同个条目属性归类如按时间跨度、按类型分类及多种分类怎么分显示」，
+     * 选项表在 `pure/listGrouping.GROUP_DIM_OPTIONS`（`none` = 不分组 = 现有行为，**缺省**）。
+     *
+     * ⚠️ **有意不持久化**：它是「当下怎么看」的临时视角，与排序 / 题材那种偏好不是一回事。
+     * ⛔ 别把它写进 settings —— 换页签回来发现列表被分了组、而分组下拉在列表视图外看不见，
+     *    用户会以为「条目丢了」（本仓「筛选不把用户踢出视图」那条老结论的同款心思）。
+     */
+    let groupDim: GroupDim = 'none';
+    /**
+     * 当前**正在看的那一组**（`null` = 看全部分组卡）。
+     * 🔴 与 `activeSeriesKey` 是**两级**：进组后组内再点系列折叠卡 = 进系列视图，
+     *    返回时先回组、再回全部。两个键各自独立，⛔ 别合并成一个（层级语义会丢）。
+     */
+    let activeGroupKey: string | null = null;
+
+    /** 进组：**只动 `activeGroupKey`** —— 不改排序（分组不是排序），但会清掉已不成立的系列视图 */
+    function openBucket(key: string): void {
+        activeGroupKey = key;
+        if (activeSeriesKey) closeSeries();
+    }
+    function closeBucket(): void {
+        activeGroupKey = null;
+        if (activeSeriesKey) closeSeries();
+    }
+    /**
+     * 维度被关掉时**必须退组**：否则 `activeGroupKey` 指向一个已经不存在的桶
+     * （如从「按类型」切到「按年代」后仍攥着 `type:movie`）⇒ 条目池被筛成空，用户看到「什么都没有」。
+     * ⚠️ 判空写进函数体（Svelte 4 的依赖分析不穿透函数体）⇒ 不与 `groupDim` 形成响应式自环。
+     */
+    function exitVanishedBucket(): void {
+        if (activeGroupKey) closeBucket();
+    }
+    $: if (groupDim === 'none' && activeGroupKey) exitVanishedBucket();
+    /**
+     * 进组后的**条目池**：从 `filtered` 按桶重算（⛔ 不读组卡对象，见 `entriesInBucket` 注释）。
+     * 只收窄输入、不参与分桶 ⇒ 没有响应式环。
+     */
+    $: groupPoolEntries = groupDim !== 'none' && activeGroupKey && !searching ? entriesInBucket(filtered, groupDim, activeGroupKey) : filtered;
+    /**
+     * 组卡列表（`dim` 关掉时为空数组 ⇒ 视图走原来的平铺 / 系列折叠）。
+     * ⚠️ 进组之后**不再产出组卡**（否则会「组里还套着组」无限递归下去）。
+     * 🔴 m07854 ⑫：搜索时也不产出组卡 —— 命中项会被一张"按年份/类型分的桶卡"重新藏起来，
+     *    用户得再点一次才看得见，与「搜到就直接摊开」正相反。
+     */
+    $: groupCards = groupDim !== 'none' && !activeGroupKey && !searching ? buildGroupCards(groupEntriesBy(filtered, groupDim)) : [];
+    /** 进组后顶栏要写的组名与条数（从**同一次分桶**取，⛔ 不再写第三份维度→中文映射） */
+    $: activeGroupBucket = groupDim !== 'none' && activeGroupKey && !searching
+        ? groupEntriesBy(filtered, groupDim).find((b) => b.key === activeGroupKey) ?? null
+        : null;
+
     /**
      * 进系列视图前的排序档（#441）：系列视图是**临时交互态**（#437 的定位），
      * 离开时把它**原样还回去** —— ⛔ 别让「进去看一眼」把用户的排序偏好改掉。
@@ -721,7 +972,9 @@
         seriesViewOnKey = (ev: KeyboardEvent) => {
             if (ev.key !== 'Escape') return;
             // 🔴 #608：折叠卡右键菜单（`ctxGroupKey`）与条目右键菜单**同一层**，一并算作最内层
-            if (ctxFor || ctxGroupKey || genreOpen || viewOpen) return; // 更内层的浮层（右键菜单 / 题材面板 / 视图菜单）优先
+            // 🔴 2026-11-26：条目菜单的状态现在住在 `EntryContextMenu` 里（`entryMenuOpen` 是它的镜像），
+            //    ⛔ 别在这里改读别的量 —— 漏了这一项，右键菜单开着按 Esc 会连带把系列视图也退掉（#444 老坑）。
+            if (entryMenuOpen || ctxGroupKey || genreOpen || viewOpen) return; // 更内层的浮层（右键菜单 / 题材面板 / 视图菜单）优先
             closeSeries();
         };
         window.addEventListener('keydown', seriesViewOnKey);
@@ -825,7 +1078,22 @@
      *    反而看不出条目 —— 与折叠卡的初衷（海报墙一屏同质海报）不是一回事。
      * ⚠️ 非 grid 视图下 `rows` 全是散卡 ⇒ 「摊回条目」的结果**与原口径逐条等价**（列表/瀑布流零回归）。
      */
-    $: seriesRows = foldSeries(filtered);
+    /**
+     * 🔴 m07854 ⑬（2026-11-13）**摊平条件** = 搜索态 ∪ 用户主动切了「全部单卡平铺」。
+     *
+     * 为什么与 ⑫ 的 `searching` 合并成一条派生量而不是各处各写一份三元：
+     * 折叠卡的路只有一条（`seriesRows`），但读它的地方有三层（`activeGroup` / `drawList` /
+     * 系列视图的池）。只要 `seriesRows` 一处摊平，下游全部自动跟随 ——
+     * 所以**判据收口在这里**，⛔ 别在 `drawList` 里再判断一次（那就是两份口径，必然漂）。
+     *
+     * ⚠️ `unfoldSeries` 影响 grid / wall 那两支（`seriesRows` 的消费者）**与列表视图**
+     *    （见 `rowSource` 的列表分支）；列表视图的「展示分组」另有 `listGrouping` 管 ——
+     *    🔴 2026-11-14 用户 m07593 ② 翻面：用户在列表视图点「全部单卡平铺」原本**完全没效果**
+     *    （该开关只喂 `seriesRows`），现在「平铺」这个偏好在列表里也生效（平铺优先于分组）。
+     *    两个字段仍是**两档独立设置**，⛔ 别合并。
+     */
+    $: unfoldRows = searching || unfoldSeries;
+    $: seriesRows = unfoldRows ? listFlatRows(groupPoolEntries) : foldSeries(groupPoolEntries);
     /**
      * 从分组结果里按键取组（**唯一入口**）：
      * ⚠️ 两个消费者（系列视图 / 折叠卡）都走它 ——
@@ -926,10 +1194,17 @@
                   //    行序 = `filtered` 的顺序）。两分支都吐 `SeriesRow[]` ⇒ 下游 `listDisplayRows` /
                   //    `listItems` / `drawList` 一行都不用改（⚠️ 摊平态的 `openGroupKeys` 自然失效：
                   //    没有组行可展开；切回分组态时组件里那套展开集原样还在）。
-                  listGrouping
-                    ? listTreeRows(filtered, sortBy)
-                    : listFlatRows(filtered)
-                : filtered.map((e): SeriesRow => ({ kind: 'single', entry: e }));
+                  // 🔴 2026-11-14 用户 m07593 ②：「全部单卡平铺」（`unfoldSeries`）在**列表视图**也要生效
+                  //    （用户原话：「首页列表视图下点击单卡平铺没效果」）⇒ 摊平优先于「展示分组」：
+                  //    `unfoldSeries` 开 ⇒ 一律走 `listFlatRows`（同系列不折成组行）。
+                  //    ⚠️ `unfoldSeries` 与 `listGrouping` 仍是**两个独立字段**（设置里各是一档），
+                  //    这里只是让「平铺」这个偏好覆盖列表的分组口径，⛔ 别把两个字段合并成一个。
+                  unfoldSeries
+                    ? listFlatRows(groupPoolEntries)
+                    : listGrouping && !searching
+                        ? listTreeRows(groupPoolEntries, sortBy)
+                        : listFlatRows(groupPoolEntries)
+                : groupPoolEntries.map((e): SeriesRow => ({ kind: 'single', entry: e }));
     $: listRows = rowSource;
     /**
      * 🔴 #592：列表视图的**显示行** = 合集父级行 +（展开时）成员子行 / 单集行。
@@ -942,7 +1217,16 @@
     /** 绘制序列（grid 用）：折叠卡**恒是折叠态**（要看得进系列视图）；系列视图里则是「组内 N 张」。 */
     // 🔴 #444：系列视图的组头**搬到筛选栏**（`.rl-series-bar`）—— 三种视图类型共用一条，
     //    ⛔ 别在网格里再留一份（两处各写一份必然漂移；而且列表 / 瀑布流里网格组头本来也渲染不出来）。
-    $: drawList = listRows.flatMap((r): DrawItem[] => (r.kind === 'single' ? [{ kind: 'card', entry: r.entry }] : [{ kind: 'folded', group: r.group }]));
+    /**
+     * 🔴 2026-11-11（m06406 ③，用户定版 G1）：**一级分组卡直接顶掉整面墙**。
+     *  - `groupDim !== 'none'` 且**还没进组** ⇒ 墙上只有组卡，一张条目卡都不出现（用户要的就是「先看有哪些组」）；
+     *  - 进组之后 `groupCards` 为空 ⇒ 落回原来的条目 / 系列折叠卡（组内行为与不分组时**完全一致**）。
+     * ⚠️ 组卡**不参与** `listRows` 那一串（它没有 entry、也不该被批量选择 / 展平选中）；
+     *    所以这段判断放在 `drawList` 这一层收口，⛔ 别往 `foldSeries` / `listTreeRows` 里塞。
+     */
+    $: drawList = groupCards.length > 0 && (viewMode === 'grid' || viewMode === 'wall')
+        ? groupCards.map((card): DrawItem => ({ kind: 'grp', card }))
+        : listRows.flatMap((r): DrawItem[] => (r.kind === 'single' ? [{ kind: 'card', entry: r.entry }] : [{ kind: 'folded', group: r.group }]));
     /** 瀑布流分列：纯封面等高卡片，轮流放入各列（保持排序结果从左到右横排，非 CSS columns 竖排） */
     /**
      * 🔴 #624 海报墙（wall）模式：卡片**只渲染封面 + 一行标题**（用户裁定「不带年份 / 评分 / 信息栏」）。
@@ -953,12 +1237,31 @@
      */
     $: wallView = viewMode === 'wall';
     /**
+     * 🔴 m07854 ⑯：是否「卡片网格视图」（用户要求「**仅**卡片网格下点信息栏原地编辑」）。
+     * ⚠️ 写成严格相等而不是 `!wallView`：分组视图（`grouped`）也走 `.rl-grid` 容器，
+     *    但它的信息栏是**组名**、没有可编辑的条目；海报墙连信息栏都不渲染（#624）。
+     * ⛔ 别改成 `viewMode !== 'wall'` —— 那会把分组视图一起打开。
+     */
+    $: cardGridView = viewMode === 'grid';
+    /**
      * 🔴 #626 卡片网格 / 海报墙**各自的**列模板。
      * 差异只剩**间距**一处（⛔ 别把两份并成一个）：
      *   墙 `.rl-wall{gap:10px}` / 网格 `.rl-grid{gap:12px}`，而自定义列数要按真实 gap 反算列宽
      *   （`posterGridTemplate` 的第 3 参），所以墙走 `posterGridTemplateForWall` 把 gap 换掉。
      * 🔴 用户 2026-10-20 删除「海报墙列数」⇒ **列数来源已统一**（都是共享的密度档 / 列数），
      *    `wallColumns` 这个第一参已从函数签名里拿掉，⛔ 别再给墙传第二套列数。
+     */
+    /**
+     * 🔴 2026-11-11（m08970 ④）组卡与普通卡**共用同一份列模板**。
+     *
+     * 上一版为避免「6 个组被塞进 6 轨」曾让分组时返回空串、回落 `minmax(180px)`，
+     * 结果组卡 224px 而普通卡 67px —— 用户原话「怎么大了一圈应该同其他卡片大小一致」，
+     * 而且**Ctrl+滚轮对组卡完全无效**（内联模板是空串，缩放改的列数没有作用对象）。
+     * ⇒ 现在分组视图也走 `posterGridTemplate`：同列宽、同 gap、同一套 Ctrl+滚轮。
+     * ⚠️ 「6 组塞进 6 轨」不是缺陷而是**设置使然**：用户把列数设成 6，普通卡也是 6 列；
+     *    觉得小就 Ctrl+滚轮或去设置页调（那正是用户这次要的②）。
+     * ⚠️ 这里⛔ 不要写样式标签名的字面量 —— Svelte 解析器在 JS 注释里也会当成样式块开头，
+     *    报 `Unknown word 'repeat'`（本批实测踩到，编译期才发现）。
      */
     $: gridColsTemplate = wallView
         ? posterGridTemplateForWall(posterDensity, posterColumns)
@@ -1104,6 +1407,33 @@
         return !!u && /doubanio\.com/.test(u);
     }
 
+    /**
+     * 🔴 2026-11-14 用户 m07593 ⑥：「卡片视图单击信息栏后弹出编辑属性窗口后返回，
+     *    这个卡片封面持续鼠标 hover 状态不消失，修复它」。
+     *
+     * 根因与 `CollectionBoard.svelte:298-311` 的 `releaseFocus` **完全同源**：
+     * 卡片带 `tabindex="0"`，点 `.rl-card-meta`（可点的信息栏，在卡片网格视图里它自己也是
+     * `tabindex="0"` ⇒ **拿到焦点的是信息栏本身**）而悬停遮罩的显隐条件里有
+     * `.rl-card:hover .rl-cov-hover, .rl-card:focus-within .rl-cov-hover { opacity: 1; }`
+     * （`styles.css` 与 `CollectionBoard.svelte:831` **同一条规则**）——
+     * `:focus-within` 那半边**不能删**（它是键盘用户看见「打开 ↗」的唯一途径）。
+     * ⇒ 在动作完成后**主动交还焦点**：`window.setTimeout(…, 0)` 让浏览器先把焦点处理走完再 blur，
+     *   ⛔ 别同步 blur（部分平台会把原生菜单一起关掉）。
+     *
+     * ⚠️ blur 目标 = **当前真正持有焦点的那个元素**（信息栏或卡片根）——
+     *    只 blur 卡片根没用：焦点在信息栏上时，`:focus-within` 照样命中。
+     */
+    function releaseCardFocus(ev: Event): void {
+        const target = ev.currentTarget as HTMLElement | null;
+        if (!target) return;
+        const card = target.closest('.rl-card') as HTMLElement | null;
+        window.setTimeout(() => {
+            const active = document.activeElement as HTMLElement | null;
+            if (active && card && card.contains(active)) active.blur();
+            else target.blur();
+        }, 0);
+    }
+
     // 阅读进度百分比 / 书籍进度单位 —— 🔴 #444c 起实现下沉到 `pure/mediaProgress.readPercent` / `bookUnitOf`
 
     // ── B3 右键菜单（#608：条目卡与系列折叠卡**共用同一套容器 / 定位 / 关闭**）──
@@ -1149,19 +1479,22 @@
         window.addEventListener('mousedown', ctxOnDown);
         window.addEventListener('keydown', ctxOnKey);
     }
-    /** 条目卡右键（主操作 / 关联入口 / 编辑条目 / ±摘抄·游玩 / 删除条目） */
+    /** 条目卡右键（主操作 / 关联入口 / 编辑条目 / ±摘抄·游玩 / 删除条目）
+     *  🔴 2026-11-26 起**委托给 `EntryContextMenu`**（全仓唯一真源，合集视图用同一个组件）：
+     *  本组件只负责「先把折叠卡菜单清掉，再让公共组件落位」。⛔ 菜单项别在这里再写一遍。 */
     async function openCtx(e: MediaEntry, ev: MouseEvent) {
         ev.preventDefault();
-        ctxGroupKey = null; // 🔴 两宿主互斥：开条目菜单先清折叠卡菜单
-        ctxFor = e.id;
-        await placeCtxAt(ev);
+        ev.stopPropagation();
+        closeGroupCtx(); // 🔴 两宿主互斥：开条目菜单先清折叠卡菜单
+        await entryMenu?.openAt(e, ev);
     }
-    /** #608 系列折叠卡右键（只有一条「排序号」）—— ⚠️ 必须 `stopPropagation`：
-     *  折叠卡整卡还挂着 `on:click`（进系列视图），右键虽不触发 click，但别再让事件冒到外层容器。 */
+    /** #608 系列折叠卡右键（排序号 / 批量关联 / 批量填合集·标签）—— ⚠️ 必须 `stopPropagation`：
+     *  折叠卡整卡还挂着 `on:click`（进系列视图），右键虽不触发 click，但别再让事件冒到外层容器。
+     *  ⚠️ 这一族**留在本组件**：它只服务海报墙的折叠卡，合集视图里没有折叠卡。 */
     async function openGroupCtx(g: SeriesGroup, ev: MouseEvent) {
         ev.preventDefault();
         ev.stopPropagation();
-        ctxFor = null;
+        entryMenu?.close(); // 两宿主互斥
         ctxGroupKey = g.key;
         await placeCtxAt(ev);
     }
@@ -1171,8 +1504,11 @@
     }
     function closeCtx() {
         unbindCtxWindow();
-        ctxFor = null;
         ctxGroupKey = null;
+    }
+    /** 只关折叠卡菜单（开条目菜单前调用 —— ⛔ 别用 closeCtx()，那个还会连带清掉条目菜单） */
+    function closeGroupCtx() {
+        if (ctxGroupKey !== null) closeCtx();
     }
     // ── 🔴🔴 #598 视图切换：**单枚下拉菜单** ────────────────────────────────────────────────
     //    用户：「切换海报墙/列表/瀑布流视图控件还是太丑了，有什么其他方案切换」→ `AskUserQuestion` 裁定
@@ -1378,23 +1714,6 @@
     onDestroy(unbindViewWindow);
     // 卸载兜底：系列视图的 Esc 监听（同上纪律 —— 系列视图开着时整个组件被卸载，监听不能留在 window 上）
     onDestroy(unbindSeriesViewEsc);
-    /** 类型化主操作（阅读/观看/播放/启动）：入口可用直接执行；不可用 → 快捷关联弹窗直达（不再先开编辑表单） */
-    function ctxPrimary(e: MediaEntry) {
-        closeCtx();
-        if (hasActionEntry(e)) onWatch(e);
-        else onQuickAssociate(e);
-    }
-    /** 右键主操作 title：可用=实际动作描述；不可用=去关联提示（点击直达快捷关联弹窗）
-     *  🔴 #535：可用时的文案要随「有没有**本地**入口」分叉 —— 只有网络地址却写「打开书籍文件」是在骗人。
-     *     ⛔ 门控仍一律走 `hasActionEntry`（`hasLocalEntry` **只**决定文案，不当门控）。 */
-    function ctxPrimaryHint(e: MediaEntry): string {
-        return hasActionEntry(e) ? actionReadyHint(e.type, hasLocalEntry(e)) : actionUnavailableHint(e.type);
-    }
-    async function ctxDelete(e: MediaEntry) {
-        closeCtx();
-        // 确认在 plugin.deleteEntry 内（Modal 确认，替代 window.confirm）
-        await onDeleteEntry(e.id);
-    }
     // ── B5 批量操作 ──
     function toggleSelect(id: string) {
         const next = new Set(selectedIds);
@@ -2381,7 +2700,19 @@
 
 <!-- 层2：搜索（定宽）+ 添加 + 概览（小字弱化置右） -->
 <div class="rl-toolbar">
-    <div class="rl-search-wrap">
+    <!-- 🔴 2026-11-26 用户逐字（m04109）：「这个合集视图下也要搜索框、添加条目、筛选栏同步主视图，
+         并且把顶级分类和搜索框添加条目按钮并排显示」
+         ⇒ 「顶级分类」= **分类视图切换胶囊**（默认视图 / 合集视图 / 自定义视图），
+           由宿经这个具名插槽塞进**搜索框那一行的最左端**，与搜索框、添加按钮同排。
+         ⚠️ 走插槽而不是在本组件里 import `ViewChips`：视图定义的持有者是宿主（`HomeView`），
+            MediaList 只该知道自己被哪一档视图渲染（`typePool` 就已经是宿主算好的）。
+            组件内再取一次 views 就会出现「同一份状态两个读取者」，必然漂移。
+         ⚠️ 插槽为空时这里什么都不渲染（其它宿主 / 无视图功能的场景零影响）。
+         ⚠️ 这一行是 `justify-content: center`，胶囊作为**流内**第一个 flex 项会把
+            「胶囊 + 搜索 + 添加」整组一起居中 —— 三者相邻，「并排」的观感成立；
+            ⛔ 别把胶囊改成绝对定位：那会和左端 `left: 0` 钉住的库概览（`.rl-libstats`）叠在一起。 -->
+    <slot name="view-chips" />
+    <div class="rl-search-wrap" class:has-dice={onOpenWhatToWatch && shouldShowWatchDice(searchText)} class:tools-hidden={!shouldShowWatchDice(searchText)}>
         <!-- 占位字前置搜索图标（lucide search，灰同占位字；用户 2026-09-12 需求） -->
         <Icon icon="search" size={13} cls="rl-search-ico" />
         <!-- 🔴 #444：搜索框里的 Esc **只清空搜索、不透传**（`stopPropagation`）——
@@ -2395,13 +2726,68 @@
             aria-label="搜索条目"
             on:keydown={(ev) => { if (ev.key === 'Escape') { searchText = ''; ev.stopPropagation(); } }}
         />
+        <!-- 🔴 m07854 ⑳ ①：搜索框右端的**工具槽** —— 骰子 + 漏斗两枚图标同住一槽。
+             用户原话：「这个待补图标放在首页搜索框内，而且这个随机看一部图标按钮不要 emoji 图标，
+             改成 Ob 对应的图标」。
+             ⇒ 两处改动：
+               ⑴ 漏斗（见下）从工具栏同级**搬进** `.rl-search-wrap` 内部；
+               ⑵ 骰子不再用 `🎲` emoji 字面量，换成 Obsidian 内置 lucide 图标 `shuffle`
+                  （**全仓没有 dice 类图标**，实测 `dices` 不存在 ⇒ 会被 `setIcon` 静默吞掉、
+                  按钮变成空白；`shuffle` 已在 `StatsBoard.svelte` 实名用过，语义就是「随机」）。
+             ⚠️ 为什么必须是一个槽（`.rl-search-tools`）而不是两枚各自绝对定位：
+                骰子会随 `shouldShowWatchDice` 时隐时现，两枚各钉 `right` 时漏斗要么被骰子压住、
+                要么骰子消失后留个空位 —— 同槽横排 + `right: 4px` 才能让它们自然贴齐右端。
+             ⚠️ 槽宽随内容变 ⇒ 输入框的右内距必须**分档**（见样式里的 `.rl-search-wrap.has-dice`），
+                ⛔ 别只写一个固定大值：骰子隐藏时右侧会白留一条。 -->
+        <span class="rl-search-tools">
+            <!-- 🔴 m07854 ⑭：「今天看什么」骰子。
+                 用户原话：「搜索框内部加……骰子图标（无边框透明化）……**不用搜索框时显示，
+                 输入文字搜索时隐藏**」。
+                 ⚠️ 判据走 `shouldShowWatchDice(searchText)`（纯函数，trim 后非空才算「在用搜索框」）——
+                    ⛔ 别写 `searchText.length === 0`：只敲一个空格就把骰子藏起来会被当成 bug。
+                 ⚠️ 未注入回调时不渲染（没接线不画点了没反应的按钮）。 -->
+            {#if onOpenWhatToWatch && shouldShowWatchDice(searchText)}
+                <button
+                    class="rl-search-dice"
+                    type="button"
+                    data-tip="今天看什么？（从「想看」且评分 ≥ 4 的条目里随机抽一部）"
+                    on:click={() => onOpenWhatToWatch?.()}>
+                    <Icon icon="shuffle" size={14} />
+                </button>
+            {/if}
+            <!-- 🔴 m07854 ⑮：漏斗图标 —— 一键只看「待补」（缺关联 / 缺个人评分）。
+                 用户原话：「搜索框「添加」按钮旁加一个小漏斗图标，悬停显示 `[待补]`（缺少关联 / 缺少个人评分），
+                 一键筛出没补全元数据的「半成品」」；⑳ ① 追加裁定「这个待补图标放在首页搜索框内」。
+                 ⚠️ 它**不是** CTA（#632 只禁「第二枚主按钮」），是一枚筛选开关：带 `aria-pressed`、
+                    `is-on` 时换 accent 色，再点一次回到全部。
+                 ⚠️ 计数 `incompleteCount` 算的是「当前页签/状态/题材/搜索已筛过、尚未套待补」的那批 ⇒
+                    提示里的数字与点下去剩下的条数一致。
+                 ⚠️ 计数为 0 时也渲染、不 disabled：用户要的是随时能点开看一眼「还有没有要补的」，
+                    置灰会让人以为功能没做。`data-tip` 会如实说「库里没有…」。
+                 🔴 m13127 ②：但**输入文字搜索时要和骰子一起让位** ——
+                    用户原话：「首页搜索框的待补按钮在输入文字搜索时要隐藏，没有文字时显示」。
+                    判据复用同一个 `shouldShowWatchDice`（trim 后非空 = 在用搜索框），⛔ 别另写一份
+                    `searchText.length === 0`：两枚图标在同一个槽里，判据一旦分叉就会出现
+                    「骰子藏了、漏斗还占着右端 22px」的错位。 -->
+            {#if shouldShowWatchDice(searchText)}
+                <button
+                    class="rl-incomplete"
+                    class:is-on={incompleteOnly}
+                    type="button"
+                    aria-pressed={incompleteOnly}
+                    data-tip={incompleteTip(incompleteCount, incompleteOnly)}
+                    on:click={() => (incompleteOnly = !incompleteOnly)}>
+                    <Icon icon="filter" size={14} />
+                </button>
+            {/if}
+        </span>
     </div>
     <!-- 影视聚合页签「添加跟随聚焦」：聚焦 动画/剧集/电影 时新增表单默认该类型（规则见 pure/focusType）；聚焦「全部」→ undefined = EntryForm 默认电影；单类型页签恒锁 lockType。
          🔴 #555：系列视图里再兜一层 —— 范围已被该系列切干净（组键含 `type`，见 pure/seriesGroup），
          而此时 lockType / typeFilter 都还停在「全部」⇒ 默认型别只能从 `activeGroup.type` 取
          （用户报：「动画系列卡内添加条目默认成电影」）。
          书籍页签同步传当前子分类（kindFilter）：聚焦「漫画」→ 表单下拉选中「漫画」并走漫画源；「网文」→ 书籍+网文；「文学/全部」→ 缺省文学 -->
-    <button class="rl-add mod-cta" data-tip="新建条目" on:click={() => onAdd(resolveAddType(lockType, typeFilter, activeGroup ? activeGroup.type : null), lockType === 'book' && kindFilter !== 'all' ? kindFilter : undefined)}><Icon icon="plus" size={14} /> 添加</button>
+    <button class="rl-add mod-cta" data-tip="新建条目" on:click={() => onAdd(resolveAddType(lockType, typeFilter, activeGroup ? activeGroup.type : null), lockType === 'book' && kindFilter !== 'all' ? kindFilter : undefined, searchText.trim() || undefined)}><Icon icon="plus" size={14} /> 添加</button>
     <!-- 🔴 #632：工具栏**只剩「＋ 添加」一枚**（#631 那枚「批量添加」按钮与整套批量添加已整体退场，
          用户：「批量添加按钮入口从首页上移除，改成新增条目后搜索窗口不消失、可继续添加」）。
          ⛔ 别再把第二枚 CTA 挂回来 —— 连续添加走的是「新建条目」表单自身的收口（见 `EntryModal.onSubmit`）。 -->
@@ -2444,6 +2830,18 @@
             <button class="rl-series-bar-back" on:click={closeSeries} data-tip="返回全部（Esc）">返回全部</button>
         </span>
         <span class="rl-vb-sep" aria-hidden="true"></span>
+    {:else if activeGroupBucket}
+        <!-- 🔴 2026-11-11（m06406 ③）：**进了某一组的视图指示条**（与系列视图条同款同位置）。
+             用户定版 G1 = 「点组卡进组看组内」⇒ 进组后必须有一眼可见的「我现在在哪、怎么出去」，
+             ⛔ 别只靠分组下拉里那行文字暗示（用户看不出自己在组里）。
+             ⚠️ 系列条优先级更高（`activeGroup` 在前），因为进系列时组已让位。 -->
+        <span class="rl-series-bar rl-grp-bar" role="status">
+            <span class="rl-series-bar-cnt">分组</span>
+            <span class="rl-series-bar-name">{activeGroupBucket.label}</span>
+            <span class="rl-series-bar-cnt">{activeGroupBucket.items.length} 部</span>
+            <button class="rl-series-bar-back" on:click={closeBucket} data-tip="返回分组（看全部组）">返回分组</button>
+        </span>
+        <span class="rl-vb-sep" aria-hidden="true"></span>
     {:else}
         {#if scope !== null}
             <!-- 🔴 #550 合并视图：原来那两排 chips（类型 / 书籍子分类）**整体退场**，改由这一枚下拉承担 ——
@@ -2472,7 +2870,7 @@
             </span>
             <span class="rl-vb-sep" aria-hidden="true"></span>
         {/if}
-        {#if scope === null && lockType === 'book'}
+        {#if showKindChips}
             <span class="rl-vb-group" role="group" aria-label="书籍分类">
                 {#each kindChips as k}
                     <button class:on={kindFilter === k} aria-pressed={kindFilter === k} on:click={() => (kindFilter = k)}>
@@ -2494,6 +2892,22 @@
             group="rl-toolbar-filters"
             onPick={pickStatus} />
     </span>
+    {#if viewMode === 'grid' || viewMode === 'wall'}
+        <!-- 🔴 2026-11-11（m06406 ③）**分组维度下拉**。
+             ⚠️ 只在网格 / 海报墙出现：组卡是「用卡片顶替整面墙」的形态，列表 / 瀑布流没有对应骨架
+                ⇒ 那两种视图里连入口都不给（给了就是「点了没反应」的假控件）。
+             ⚠️ 进组之后**不隐藏**下拉本身（用户要能随时改维度）；改维度会由 `$: if (groupDim === 'none' …)`
+                那条把 `activeGroupKey` 清掉，避免攥着一个不存在的桶把条目筛空。 -->
+        <span class="rl-vb-select">
+            <span class="rl-sel-label">分组</span>
+            <MiniSelect
+                value={groupDim}
+                options={groupDimOptions}
+                ariaLabel="分组方式"
+                group="rl-toolbar-filters"
+                onPick={(v) => pickGroupDim(v)} />
+        </span>
+    {/if}
     {#if viewMode !== 'grouped'}
         <!-- 排序下拉：与状态同款受控（合并视图下改动回推宿主）；音乐分组视图没有排序 ⇒ 整段不渲染（#547 原门控）。 -->
         <span class="rl-vb-select">
@@ -2621,6 +3035,41 @@
         {/if}
     {/if}
     <span class="rl-vb-view" role="group" class:is-open={viewOpen}>
+        <!-- 🔴 m07854 ⑬（2026-11-13）：视图切换下拉**左旁**那枚「系列卡堆叠 ⇄ 全部单卡平铺」单循环图标按钮。
+             用户原话：「在视图切换下拉菜单（如 `卡片网格`）左旁加一个单击循环图标按钮（无边框透明化，
+             高度与下拉对齐，『文件夹堆叠』图标 / 『独立卡片』图标），默认系列卡堆叠，点击切换后
+             首页变成全部单卡平铺（拆系列卡）」。
+
+             ⚠️ **它放在 `.rl-vb-view` 内部的首位**，而不是插在 `<span>` 之前：
+                外层 `.rl-vb-view{margin-left:auto}` 是靠右簇的定位锚，插到 `<span>` 之前会被甩到左侧簇末尾，
+                与「下拉左旁」不符。放进容器内即天然紧贴下拉左缘，且下拉浮层仍锚在同一个 `position:relative` 上。
+             ⚠️ 图标用 `layers`（堆叠）/ `layout-grid`（独立卡片）—— 两个都是**本仓已在用、真机验证可见**的
+                名字（`layers` 见本文件合集按钮，`layout-grid` 见 `pure/viewModes`）。⛔ 别猜 `folder-stack`
+                / `gallery-vertical` 这类没在仓库出现过的名字（实测 `film`/`clapperboard` 就不存在）。
+             ⚠️ 可见文案**只有图标**（用户要「无边框透明化」），`aria-label` 由 `aria-pressed` + `data-tip` 承担；
+                ⛔ 别同时挂 `aria-label`（#670：会与 `data-tip` 叠出两层气泡）。
+             ⚠️ 始终渲染（包括列表 / 瀑布流 / 时间线）：它是**偏好**不是临时动作，
+                切到网格 / 海报墙时才看得出效果 —— `data-tip` 里如实说明这一点，⛔ 别做成 disabled（本仓「常驻后置灰」禁令）。
+             ⚠️ 宿主没注入 `onToggleUnfoldSeries`（`null`）时整枚不渲染 —— 没接线就不画。
+             🔴 m07593 ⑤（用户：「瀑布流视图下隐藏切换循环按钮（本身已是单卡平铺）」）：
+                瀑布流本身就是「全部单卡平铺」，这枚切换按钮在那一档没有意义 ⇒ 用 **CSS 隐藏**而不是
+                改 `{#if …}` 条件（`tests/unfoldSeries.test.ts` 钉着最近的 `{#if ` 必须是 `{#if onToggleUnfoldSeries}`）。
+                状态挂在**按钮自身**（`class:rl-vb-masonry`），⛔ 别挪到外层 `.rl-vb-view` 上 ——
+                断言 `assert-symbols.cjs` #547 逐字钉着 `.rl-vb-view` 的开标签（多一个 class 就失配）。 -->
+        {#if onToggleUnfoldSeries}
+            <button
+                class="rl-vb-unfold"
+                class:is-on={unfoldSeries}
+                class:rl-vb-masonry={viewMode === 'masonry'}
+                type="button"
+                aria-pressed={unfoldSeries}
+                data-tip={unfoldSeries
+                    ? '全部单卡平铺（当前）—— 同系列不再折成一张卡；仅卡片网格 / 海报墙可见效果。点击改回系列堆叠'
+                    : '系列卡堆叠（当前）—— 同系列折成一张卡；仅卡片网格 / 海报墙可见效果。点击改为全部单卡平铺'}
+                on:click={() => onToggleUnfoldSeries?.(!unfoldSeries)}>
+                <Icon icon={unfoldSeries ? 'layout-grid' : 'layers'} size={14} />
+            </button>
+        {/if}
         <!-- 🔴🔴 #670（用户：「鼠标 hover 轻提示还有覆盖两层不可见」）：这枚按钮**同时挂了 `aria-label` 与 `data-tip`**，
              而 Obsidian 会给带 `aria-label` 的元素自绘官方气泡、本仓的 `data-tip` 也是自绘的 ⇒ **同屏两层**。
              按钮里已经有可见文字（当前视图名 + ▾），读屏本来就念得出来 ⇒ **删掉 `aria-label`，只留 `data-tip`**
@@ -2756,8 +3205,58 @@
     <div class="rl-grid" class:rl-wall={viewMode === 'wall'} use:zoomWheel={wallView ? 'wall' : 'grid'} style={`grid-template-columns:${gridColsTemplate}`}>
         <!-- 🔴 #434：从条目序列改成 `drawList` —— 一行可能是散卡 / 折叠卡 / 组头。
              摊平（而不是三个分支各写一遍卡片标记）的理由见 script 里 DrawItem 的注释。 -->
-        {#each drawList as it (it.kind === 'card' ? it.entry.id : it.group.key)}
-        {#if it.kind === 'card'}
+        {#each drawList as it (it.kind === 'card' ? it.entry.id : it.kind === 'grp' ? it.card.key : it.group.key)}
+        {#if it.kind === 'grp'}
+            {@const g = it.card}
+            <!-- ⚠️ {@const} 只能当 #if / #each 的**直接子节点**（Svelte 编译规则），
+                 ⛔ 别把它挪进下方任何 div 里 —— 挪进去就是 `{@const} must be the immediate child of` 编译错误。 -->
+            {@const gsub = groupCardSub(g)}
+            <!-- 🔴 组卡（用户 2026-11-11 定版 G1）：**与系列折叠卡完全同构** ——
+                 同 `.rl-card` + `.rl-cov-wrap` + `.rl-card-meta`，同列宽同高，天然不撑破网格。
+                 ⛔ 别为它另起一套卡片骨架（那会与 `.rl-grid` 的 stretch 对不上，出现半高卡）。 -->
+            <div
+                class="rl-card rl-gcard"
+                role="button"
+                tabindex="0"
+                data-tip={`看「${g.label}」这一组（${g.count} 部）`}
+                on:click={() => openBucket(g.key)}
+                on:keydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openBucket(g.key); } }}>
+                <div class="rl-cov-wrap">
+                    {#if g.covers.length > 0 && posterUrl(g.covers[0])}
+                        <!-- 叠图：其余封面先画（DOM 在前 ⇒ 在下面），主封面**最后画**（压顶，不需要 z-index）。
+                             🔴 **必须 `.reverse()`**：`--si` 越大错位越往右下，只有让 si 大的**先画**（压在最底），
+                                小的后画，扇开的层次才正确。少了它 = si 大的把 si 小的盖住，看着像「倒着叠」。
+                             ⚠️ 与系列折叠卡同一套 `--si` / `--sn` 机制（⛔ 别另发明一套叠图位移）。 -->
+                        {#each g.covers.slice(1).map((it, i) => ({ it, si: i + 1 })).reverse() as L (L.it.id)}
+                            <img
+                                class="rl-cov-stack rl-cov-stack-extra"
+                                style={`--si:${L.si};--sn:${g.covers.length}`}
+                                src={posterUrl(L.it)}
+                                alt=""
+                                loading="lazy"
+                                decoding="async"
+                                referrerpolicy={isDoubanImage(posterUrl(L.it)) ? 'unsafe-url' : undefined} />
+                        {/each}
+                        <img
+                            class="rl-cov-stack rl-cov-stack-main"
+                            style={`--si:0;--sn:${g.covers.length}`}
+                            src={posterUrl(g.covers[0])}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            referrerpolicy={isDoubanImage(posterUrl(g.covers[0])) ? 'unsafe-url' : undefined} />
+                    {:else}
+                        <div class="rl-cov rl-cov-ph" style={`--h:${hash(g.key) % 360}`}><span>{g.label.slice(0, 2)}</span></div>
+                    {/if}
+                    <span class="rl-series-cnt">×{g.count}</span>
+                    <div class="rl-cov-hover"><span class="rl-hover-open">打开分组 ↗</span></div>
+                </div>
+                <div class="rl-card-meta">
+                    <div class="rl-ttl" title={g.label}>{g.label}</div>
+                    {#if gsub}<div class="rl-sub">{gsub}</div>{/if}
+                </div>
+            </div>
+        {:else if it.kind === 'card'}
             {@const e = it.entry}
             <div
                 class="rl-card"
@@ -2826,9 +3325,9 @@
                             压在黑色遮罩上会直接消失；「不要改风格」按**字号 / 条粗细 / 填充色**理解。
                             遮罩本身是**渐变**（不是实底）⇒ 封面下半部分仍看得见。 -->
                     <!-- 🔴 #624：海报墙上**封面底部的进度 / 时长遮罩**也不渲染（属「信息栏」那一类）。 -->
-                    {#if !wallView && (cardPlaytimeBadge(e) || cardReadBadge(e) || seriesNo(e, !!activeGroup) !== undefined || readPercent(e) !== undefined)}
+                    {#if !wallView && (cardPlaytimeBadge(e) || cardReadBadge(e) || cardListenBadge(e) || seriesNo(e, !!activeGroup) !== undefined || readPercent(e) !== undefined)}
                         <div class="rl-cov-foot">
-                            {#if cardPlaytimeBadge(e) || cardReadBadge(e) || seriesNo(e, !!activeGroup) !== undefined}
+                            {#if cardPlaytimeBadge(e) || cardReadBadge(e) || cardListenBadge(e) || seriesNo(e, !!activeGroup) !== undefined}
                                 <div class="rl-cov-foot-top">
                                     {#if seriesNo(e, !!activeGroup) !== undefined}
                                         <span class="rl-cov-series-no" data-tip={`系列序号：${seriesNo(e, !!activeGroup)}`}>{seriesNo(e, !!activeGroup)}</span>
@@ -2839,7 +3338,17 @@
                                         <!-- 🔴 #537 书籍「已读 2h」：**同一个类** `.rl-cov-playtime`（几何只有一套；
                                              ⛔ 别新造 `.rl-cov-readtime`）。与游戏互斥（一卡只可能是其中一类）。 -->
                                         <span class="rl-cov-playtime" data-tip="阅读时长（阅读器累计 + 手动填写）">{cardReadBadge(e)}</span>
+                                    {:else if cardListenBadge(e)}
+                                        <!-- 🔴 m02288 音乐「已听 2h」：**同一个类** `.rl-cov-playtime`。
+                                             用户裁定「和游戏/书籍保持在底部原位」⇒ 不搬到左上角，⛔ 别新造角标。
+                                             取值 `listenMinutes` = 播放器自动累计 +「记录时长」手动补记。
+                                             三枚互斥（一卡的 type 只可能是 game / book / music 之一）。 -->
+                                        <span class="rl-cov-playtime" data-tip="收听时长（播放器自动累计 + 手动填写）">{cardListenBadge(e)}</span>
                                     {/if}
+                                    <!-- 🔴 2026-11-16 用户裁定（m05206 逐字）：「为什么卡片网格封面有个『系』的标识去掉它」
+                                         ⇒ 原来这里那枚 `.rl-cov-lone`（单部系列的「系」角标）整块删除。
+                                         ⛔ 别再加回来：系列归属已经在「编辑属性 → 系列」与系列视图里看得到，
+                                            封面角标只留**数据**（时长 / 序号），不留归属。 -->
                                 </div>
                             {/if}
                             {#if readPercent(e) !== undefined}
@@ -2888,8 +3397,62 @@
                             on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onWatch(e); }}><Icon icon={actionIcon(e.type)} size={14} /><span class="rl-sr">{actionAriaLabel(e.type)}</span></button>
                     {/if}
                 </div>
-                <div class="rl-card-meta">
-                    <div class="rl-ttl">{e.title}</div>
+                <!-- 🔴 m07854 ⑯：**仅卡片网格视图**下，点信息栏 = 原地进「编辑属性」。
+                     用户原话：「仅在**卡片网格**视图下，点击信息栏即可**原地编辑**（直接进入编辑属性窗口）」。
+                     ⚠️ 判据必须是 `viewMode === 'grid'` 严格相等，⛔ 不能写 `!wallView`：
+                        分组视图（`grouped`）与海报墙共用同一个 `.rl-grid` 容器，但用户只点名了卡片网格；
+                        海报墙本来就连信息栏都不渲染（#624），分组卡的信息栏是组名、点它开编辑也没有对象。
+                     ⚠️ 必须 `stopPropagation()` —— 卡片根节点（`:3200`）的 click 是「打开笔记」，
+                        不拦住的话一次点击会同时开笔记 + 开编辑弹窗。
+                     🔴 **`role` / `tabindex` / `on:keydown` 三件套必须跟着 `cardGridView` 一起条件化**，
+                        不能只加 `on:click`：
+                        · 只加 click 会让 svelte-check 多报 2 条 a11y（`<div> with click handler must have an
+                          ARIA role` + `visible, non-interactive elements with an on:click event must be
+                          accompanied by a keyboard event handler`），把 89 条告警基线顶破；
+                        · 更实际的是——鼠标能点、键盘却进不去，就是没做完。
+                        · 反向也不能无条件给 role：非网格视图下它不可点，标成 button 会误导读屏。
+                     ⚠️ Enter / Space 都要认（`role="button"` 的约定），且 Space 要 `preventDefault`
+                        否则会顺手把页面往下滚。
+                     ⚠️ 这里必须就地 `svelte-ignore a11y-no-noninteractive-tabindex`：`role` 是**动态**的
+                        （`cardGridView ? 'button' : undefined`），svelte-check 静态看不出它同一条件下
+                        也会变成 `button`，于是把 `tabindex={0}` 判成「非交互元素带了非负 tabindex」。
+                        这是静态分析的局限，不是真问题 —— 两个属性由同一个 `cardGridView` 支配，永远同真同假。
+                        ⛔ 别为了消警告把 `tabindex` 去掉（键盘就进不去了），也别改成无条件 `role="button"`
+                        （非网格视图下它不可点，标成按钮会误导读屏）。先例见同文件 `:4148` 与本仓
+                        `EntryForm.svelte` 的同类写法，目的都是守住「89 warnings = 基线」这条门禁。 -->
+                <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+                <div
+                    class="rl-card-meta"
+                    class:rl-meta-edit={cardGridView}
+                    role={cardGridView ? 'button' : undefined}
+                    tabindex={cardGridView ? 0 : undefined}
+                    data-tip={cardGridView ? '点击编辑属性' : undefined}
+                    on:click={(ev) => {
+                        if (!cardGridView) return;
+                        ev.stopPropagation();
+                        // 🔴 m07593 ⑥：弹窗关掉后卡片仍带焦点 ⇒ 封面遮罩常驻 ⇒ 交还焦点
+                        releaseCardFocus(ev);
+                        onEditEntry(e.id);
+                    }}
+                    on:keydown={(ev) => {
+                        if (!cardGridView) return;
+                        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        // 🔴 m07593 ⑥：键盘路径同样要交还焦点（否则键盘用户 Enter 一次就常驻遮罩）
+                        releaseCardFocus(ev);
+                        onEditEntry(e.id);
+                    }}>
+                    <!-- 🔴 m07854 ⑪ ③：搜索命中时把标题按关键词切片，命中段套 `<mark class="rl-hl">`。
+                         ⛔ 不用 `{@html}` —— 标题是用户输入，拼 HTML 就是一处注入面。
+                         切片与判定都在 pure/titleHighlight（与 pure/search.matchesSearch 同口径：
+                         大小写不敏感），⛔ 别在模板里再写一套 indexOf。
+                         ⚠️ 只在高亮时走 `{#each}`，否则走单段分支：卡片数量大，多一层循环没必要。 -->
+                    {#if titleHasQuery(e.title, debouncedSearch)}
+                        <div class="rl-ttl">{#each splitTitleByQuery(e.title, debouncedSearch) as seg}{#if seg.hit}<mark class="rl-hl">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</div>
+                    {:else}
+                        <div class="rl-ttl">{e.title}</div>
+                    {/if}
                     <!-- 海报墙防错位：这几行**要么全渲染、要么全不渲染**（同一份配置作用于所有卡片）
                          ⇒ 同列卡片元信息行数恒定（卡片 #1 vs #2 vs #3 高度齐平）。
                          缺失字段显示「—」占位（见 pure/cardMeta.cardFieldValue），行本身不会因某条缺值而消失。
@@ -3074,13 +3637,21 @@
                          「打开合集」文字样式，如【x15】在鼠标hover时隐藏）」）——
                          与普通卡那一层**逐字同款**（同一个 `.rl-cov-hover` / `.rl-hover-more` / `.rl-hover-open`）：
                            · **遮罩**：`.rl-cov-hover` 自己的 `rgba(0,0,0,.38)` + `opacity 0→1`（悬停才出现）；
-                           · **右上 `⋯`**：开的是**这张卡自己的菜单**（`openGroupCtx` ⇒ 排序号 / 批量关联）——
-                             ⛔ 别复用条目那个 `openCtx`（那张卡没有「那一条」可操作，`ctxGroupKey` / `ctxFor` 互斥）；
-                           · **居中「打开合集」**：纯文字（无底无框、悬停不变色 —— #628 刚定的口径），
+                           · **右上 `⋯`**：开的是**这张卡自己的菜单**（`openGroupCtx` ⇒ 编辑系列属性 / 改系列名 /
+                             排序号 / 批量关联 / 批量填合集 / 批量填标签）—— ⛔ 别复用条目那个 `openCtx`
+                             （那张卡没有「那一条」可操作，`ctxGroupKey` / `ctxFor` 互斥）；
+                             🔴 m07813②：用户裁定的第三个入口「悬停 ⋯ 菜单」就是**这一枚** —— 它与右键开的是
+                             同一个 `openGroupCtx` ⇒ 菜单首项「编辑系列属性」自动出现在这儿，
+                             ⛔ 别为此再往浮层加第二枚按钮（浮层已有 ⋯ / 打开系列两枚，加第三枚会挤掉文案）。
+                           · **居中「打开系列」**：纯文字（无底无框、悬停不变色 —— #628 刚定的口径），
                              动作 = `openSeries(g.key)`（= 点卡片本体那个动作，两处同一出口）。
+                         🔴 2026-11-26 用户逐字：「卡片网格/海报墙悬停系列卡片时显示文案把“打开合集”改成
+                            “打开系列”其他不变」⇒ **只改这枚文字与它的 data-tip**，样式/位置/动作一律不动。
+                            ⚠️ 它进的是「单系列视图」，跟合集视图无关，叫「合集」本来就是错的名；
+                            ⛔ 表格视图父级行那枚（`openSeriesFromList`，:3457 附近）不在本次范围内，保持原样。
                          ⚠️ 两枚按钮都 `stopPropagation`：卡片本体挂着「进系列视图」，别让浮层顺带触发它两次。
                          ⚠️ 与普通卡一样**不做 `!wallView` 门控** —— 海报墙上的两枚图标（⋯ / ▶）本来就在，
-                            浮层并入之后墙上也是同一套（#626 裁定保留 ⋯，本批只是给它补了「打开合集」这枚文字）。 -->
+                            浮层并入之后墙上也是同一套（#626 裁定保留 ⋯，本批只是给它补了这枚文字）。 -->
                     <div class="rl-cov-hover">
                         <button
                             class="rl-hover-more"
@@ -3088,8 +3659,8 @@
                             on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); openGroupCtx(g, ev); }}>⋯<span class="rl-sr">更多操作</span></button>
                         <button
                             class="rl-hover-open"
-                            data-tip={`打开合集：${g.title}`}
-                            on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); openSeries(g.key); }}>打开合集 ↗</button>
+                            data-tip={`打开系列：${g.title}`}
+                            on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); openSeries(g.key); }}>打开系列 ↗</button>
                     </div>
                     <!-- 系列操作按钮（#438）：右下角、与普通卡那枚 `▶` **同位置同动效同语义**
                          （hover/聚焦浮现、32px 圆形、`actionIcon` 定图标 ⇒ 动画=播放、书籍=阅读）。
@@ -3117,7 +3688,32 @@
                         </div>
                     {/if}
                 </div>
-                <div class="rl-card-meta">
+                <!-- 🔴 m07813②（用户逐字）：「同单击单卡卡片网格信息栏逻辑一样，单击系列卡信息栏也打开编辑属性窗口」
+                     ⇒ 折叠卡信息栏照抄单卡 `:3450` 那一套（同一份 `cardGridView` 门控、同款 stopPropagation、
+                     同款键盘 Enter/Space、同款 `releaseCardFocus` 交还焦点），只把落点换成
+                     `onOpenSeriesProps(g)`（编辑系列属性窗口），⛔ 不是 `openSeries`（那是点卡片本体）。
+                     ⚠️ `svelte-ignore` 同单卡那条：role/tabindex 由同一个 `cardGridView` 支配，永远同真同假。 -->
+                <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+                <div
+                    class="rl-card-meta"
+                    class:rl-meta-edit={cardGridView}
+                    role={cardGridView ? 'button' : undefined}
+                    tabindex={cardGridView ? 0 : undefined}
+                    data-tip={cardGridView ? '点击编辑系列属性' : undefined}
+                    on:click={(ev) => {
+                        if (!cardGridView) return;
+                        ev.stopPropagation();
+                        releaseCardFocus(ev);
+                        onOpenSeriesProps(g);
+                    }}
+                    on:keydown={(ev) => {
+                        if (!cardGridView) return;
+                        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        releaseCardFocus(ev);
+                        onOpenSeriesProps(g);
+                    }}>
                     <div class="rl-ttl">{g.title}</div>
                     <!-- 🔴🔴 #625（用户 2026-10-13 报障「系列卡不一致，视图里也空了一大块」）：
                          折叠卡的信息行**与普通卡同源同数** —— 同一份「按类型信息栏」配置、同一批行序与 class。
@@ -3565,7 +4161,7 @@
                         <button
                             class="rl-edit-row"
                             data-tip="编辑属性"
-                            on:click={(ev) => { ev.stopPropagation(); onEditEntry(e.id); }}><Icon icon="pencil" size={14} /><span class="rl-sr">编辑属性</span></button>
+                            on:click={(ev) => { ev.stopPropagation(); ev.currentTarget.blur(); onEditEntry(e.id); }}><Icon icon="pencil" size={14} /><span class="rl-sr">编辑属性</span></button>
                         {#if hasActionEntry(e)}
                             <button
                                 class="rl-edit-row rl-edit-watch"
@@ -3608,77 +4204,71 @@
     </div>
 {/if}
 
+<!-- ── 右键菜单 ───────────────────────────────────────────────────────────────
+     🔴 2026-11-26：**条目卡菜单抽走了** —— 用户逐字「合集卡内的卡片应该也和主视图交互操作
+        一致才对而不是另做个右上角编辑属性图标」⇒ 条目那一族现在由 `EntryContextMenu.svelte`
+        （全仓唯一真源）渲染，本处只留一行挂载。⛔ 别把主操作 / 关联入口 / 编辑属性 / 摘抄 /
+        短评 / 删除这一套搬回来 —— 合集视图用的是同一个组件，搬回来就是两份菜单，必然漂移。
+     🔴 `ctxGroupKey`（系列折叠卡）那一族**留在这里**：它只服务海报墙的折叠卡，合集视图没有折叠卡。
+        容器仍只在「目标非空」时挂载 —— ⛔ 别做成两个并列的 `.rl-ctx` 容器：那会有两个 `bind:this`，
+        切换分支时旧块的 teardown 可能把 `ctxMenuEl` 抹成 null（`placeCtxAt` 量不到尺寸 ⇒ 落点恒贴左上角）。 -->
+<EntryContextMenu
+    bind:this={entryMenu}
+    bind:open={entryMenuOpen}
+    {onWatch}
+    {onQuickAssociate}
+    {onEditEntry}
+    {onAddExcerpt}
+    {onOpenEntryLogModal}
+    {onOpenEntryTextModal}
+    {onDeleteEntry} />
+
 <div class="rl-ctx-anchor" bind:this={ctxAnchorEl}>
-    <!-- 🔴 #608：**一个容器服务两个宿主**（条目卡 / 系列折叠卡）。容器只在「至少一个目标非空」时挂载，
-         内容按目标分叉 —— ⛔ 别做成两个并列的 `.rl-ctx` 容器：那会有两个 `bind:this`，切换分支时
-         旧块的 teardown 可能把 `ctxMenuEl` 抹成 null（`placeCtxAt` 量不到尺寸 ⇒ 落点恒贴左上角）。 -->
-    {#if ctxFor || ctxGroupKey}
-        <div
-            class="rl-ctx"
-            bind:this={ctxMenuEl}
-            style={`left:${ctxX}px;top:${ctxY}px${ctxMaxH !== undefined ? `;max-height:${ctxMaxH}px` : ''}${ctxMaxW !== undefined ? `;max-width:${ctxMaxW}px` : ''}`}
-            on:click={(ev) => ev.stopPropagation()}
-            on:mousedown={(ev) => ev.stopPropagation()}
-            on:contextmenu={(ev) => ev.preventDefault()}>
-            {#if ctxFor}
-                {@const ctxEntry = entries.find((x) => x.id === ctxFor)}
-                {#if ctxEntry}
-                    <!-- 主操作（四类统一）：入口可用=动词直接执行；不可用=点开快捷关联弹窗补录 -->
-                    <button on:click={() => ctxPrimary(ctxEntry)} data-tip={ctxPrimaryHint(ctxEntry)}>{actionMenuTitle(ctxEntry)}</button>
-                    <!-- 🔴 #599：**常驻**的关联入口（不论有没有关联都在）—— 文案与弹窗标题同一真源
-                         （`associateMenuLabel`）。有入口时主操作是「观看 / 阅读 / 启动 / 播放」，
-                         改关联 / 换关联只剩这一条路；无入口时它与主操作同一个动作（进路不变）。 -->
-                    <button on:click={() => { closeCtx(); onQuickAssociate(ctxEntry); }} data-tip="选择本地文件 / 网络地址（随时可改）">{associateMenuLabel(ctxEntry.type)}</button>
-                    <!-- 🔴 2026-10-21（用户：「用细灰线（分割线）把菜单分成 3 组」）——
-                         第 1 组 = 入口本身（主操作 + 关联入口），第 2 组 = 改属性与补录，第 3 组 = 删除。
-                         ⚠️ 分隔线是**普通 div**（不是 `hr`）：`hr` 在 Obsidian 里被样式表当成正文分隔符压过边距。 -->
-                    <div class="rl-ctx-sep"></div>
-                    <!-- 🔴 2026-10-21（用户：「把『编辑条目』统一改成『编辑属性』」）——
-                         与属性面板/字段编辑同一套词，⛔ 别改回「条目」：弹窗改的是**属性**，不是那一条记录。
-                         ⚠️ 全仓另有 4 处「编辑条目」字面量（音乐行 ✎ 提示、列表铅笔提示、追更表按钮、
-                            `EntryForm` 的浮层标题）—— 🔴 #686（用户 2026-10-22：「全仓 4 处也改成编辑属性名称」）
-                            已全部统一为「编辑属性」；注释 / 文档里的历史引用**保留**（那是当时的语境，不是用户看到的字）。 -->
-                    <button on:click={() => { closeCtx(); onEditEntry(ctxEntry.id); }} data-tip="编辑字段与关联">编辑属性</button>
-                    <!-- 🔴 #685（用户 2026-10-22）：右键补录组，按**条目类型**给对应动作 ——
-                         摘抄 = 文学 / 网文（⛔ 漫画不算，漫画走「添加短评」）｜短评 = 电影 / 剧集 / 动画 / 漫画 / 音乐｜
-                         攻略 = 游戏｜重温 = 电影 / 剧集 / 动画｜周目 = 游戏｜时长 = 文学 / 网文 / 漫画 / 音乐 / 游戏。
-                         ⚠️ 分隔线是**内容层级**（⛔ 别用 `:nth-child` 钉死 —— 各类型菜单项数不同）。 -->
-                    {#if ctxEntry.type === 'book' && normalizeBookKind(ctxEntry.bookKind) !== 'comic'}
-                        <button on:click={() => { closeCtx(); onAddExcerpt(ctxEntry); }} data-tip="粘贴文本生成摘抄">添加摘抄</button>
-                    {/if}
-                    {#if ctxEntry.type === 'movie' || ctxEntry.type === 'tv' || ctxEntry.type === 'anime' || ctxEntry.type === 'music' || (ctxEntry.type === 'book' && normalizeBookKind(ctxEntry.bookKind) === 'comic')}
-                        <button on:click={() => { closeCtx(); onOpenEntryTextModal(ctxEntry, 'comment'); }} data-tip="写一句短评 → 写入笔记独立的「短评」章节">添加短评</button>
-                    {/if}
-                    {#if ctxEntry.type === 'game'}
-                        <button on:click={() => { closeCtx(); onOpenEntryTextModal(ctxEntry, 'guide'); }} data-tip="写下攻略 → 写入笔记「攻略」章节">添加攻略</button>
-                    {/if}
-                    {#if ctxEntry.type === 'movie' || ctxEntry.type === 'tv' || ctxEntry.type === 'anime'}
-                        <button on:click={() => { closeCtx(); onOpenEntryLogModal(ctxEntry, 'rewatch'); }} data-tip="第几次重刷 + 感想 → 写入笔记「重温记录」">记录重温</button>
-                    {/if}
-                    {#if ctxEntry.type === 'game'}
-                        <button on:click={() => { closeCtx(); onOpenEntryLogModal(ctxEntry, 'playthrough'); }} data-tip="第几周目 + 感想 → 写入笔记「周目记录」">记录周目</button>
-                    {/if}
-                    {#if ctxEntry.type === 'book' || ctxEntry.type === 'music' || ctxEntry.type === 'game'}
-                        <button on:click={() => { closeCtx(); onOpenEntryLogModal(ctxEntry, 'time'); }} data-tip="记一次时长 → 写入笔记「阅读 / 收听 / 游玩记录」章节">记录时长</button>
-                    {/if}
-                    <div class="rl-ctx-sep"></div>
-                    <button class="rl-ctx-danger" on:click={() => ctxDelete(ctxEntry)} data-tip="删除条目">删除条目</button>
-                {/if}
-            {:else if ctxGroupKey}
-                <!-- 🔴 #608 系列折叠卡右键：**只放「这一组」的事**（用户口径「右键菜单排序号」）。
-                     ⛔ 别把条目那几条（主操作 / 关联入口 / 删除）搬过来 —— 折叠卡是一张聚合卡，不是条目。
-                     🔴 #609 翻面：点的动作从「当场自动重排」改成「**打开拖拽排序弹窗**」（用户：
-                        「弹窗批量勾选排序手动排，**不是自动排**」）⇒ 这里只负责转交 `onOpenSeriesReorder`。
-                     🔴 #629 新增第二条「**批量关联**」（用户：「新增系列卡片右键菜单-批量关联按钮」）——
-                        动作 = 打开那一组的**逐条关联清单**（宿主 `SeriesAssociateModal`），
-                        ⛔ 不是「一键给全组填同一个值」（问答裁定的是**逐条**）。 -->
-                {@const ctxGroup = findSeriesGroup(seriesRows, ctxGroupKey)}
-                {#if ctxGroup}
-                    <button on:click={() => { closeCtx(); onOpenSeriesReorder(ctxGroup); }} data-tip="拖拽调整这一系列的先后，确定后按新顺序编号">排序号</button>
-                    <button on:click={() => { closeCtx(); onOpenSeriesAssociate(ctxGroup); }} data-tip={`逐条打开「${ctxGroup.title}」各成员的${associateMenuLabel(ctxGroup.type)}`}>批量关联</button>
-                {/if}
-            {/if}
-        </div>
+    {#if ctxGroupKey}
+        <!-- 🔴 #608 系列折叠卡右键：**只放「这一组」的事**（用户口径「右键菜单排序号」）。
+             ⛔ 别把条目那几条（主操作 / 关联入口 / 删除）搬过来 —— 折叠卡是一张聚合卡，不是条目。
+             🔴 #629「**批量关联**」（用户：「新增系列卡片右键菜单-批量关联按钮」）——
+                动作 = 打开那一组的**逐条关联清单**（宿主 `SeriesAssociateModal`），
+                ⛔ 不是「一键给全组填同一个值」（问答裁定的是**逐条**）。
+             🔴 🔴 2026-11-15 用户 m08506（逐字）：「还是将改系列名、排序号、批量填合集、批量填标签
+                放进编辑系列属性页面窗口里较好，**删除右键菜单和其单独改的入口和页面**」
+                ⇒ 那四条**整体搬进了** `SeriesPropsModal` 窗口，它们原来各自挂着的那三个输入弹窗
+                  与那个拖拽排序弹窗已**整体删除**（连宿主方法、接线、组件文件一起退场）。
+                🔴 本注释里⛔ 别逐字写出那几个已删标识符 —— `tests/seriesProps.test.ts` 有反向守卫
+                  扫「整条链路上 0 处」，写进来会污染成假红（本仓已踩过四次同类坑）。
+                ⚠️ 同一轮 ask_user_question 又裁定「右键菜单保留，只留这一条」——留下的就是下面的
+                  「批量关联」（它是**逐条清单**：每条单独选关联对象，不是批量写同一个值，
+                  所以搬不进那个批量写窗口）。
+                ⛔ 别把那四条加回来；也别再加分隔线与「编辑系列属性」总入口 ——
+                  用户的两个入口是「单击信息栏」和「悬停 ⋯ 菜单」，后者打开的就是这张只剩一条的菜单。
+             ⚠️ `{@const}` 必须是 `{#if}` 的**直接子节点**（Svelte 硬约束，2026-11-26 踩过：
+                当时它被包在 `<div class="rl-ctx">` 里 ⇒ 报错 `{@const} must be the immediate child of {#if}`）
+                ⇒ 所以先 `{@const}` 再判空、再画容器，⛔ 别把 const 挪回容器内部。
+             🔴🔴 2026-11-16 用户第三次裁定（逐字）：「系列卡右键条目菜单应该保持有【编辑属性、批量关联】两项」
+                ⇒ 上一轮「只剩批量关联一条」被**推翻**：现在**两项**，顺序就是用户写的那两个字面
+                  ——先「编辑属性」（打开那个系列属性窗口，与单击信息栏同一落点），后「批量关联」（逐条清单）。
+                ⚠️ 变化的**只是入口数量**：那四条批量写操作依然**只在窗口里**，⛔ 一条都不许单独回到菜单
+                  （用户从来没要过「右键里直接改系列名」这种形态，两轮都是收进窗口）。
+                ⚠️ 这里的「编辑属性」是**系列**的窗口，与单卡条目菜单里那个「编辑属性」不是同一个东西 ——
+                  单卡那条在 `EntryContextMenu.svelte`，本处只服务折叠卡。 -->
+        {@const ctxGroup = findSeriesGroup(seriesRows, ctxGroupKey)}
+        {#if ctxGroup}
+            <!-- ⚠️ 菜单容器上的三个事件处理器只做 `stopPropagation` / `preventDefault`（拦截冒泡到卡片与
+                 浏览器原生菜单），容器本身**不是**可交互控件 ⇒ svelte-check 会报两条 a11y 警告。
+                 那会打破「89 warnings = 基线」这条门禁（⛔ 不是省事，是守住基线）；先例见
+                 `EntryForm.svelte:5471` 的同类写法。 -->
+            <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+            <div
+                class="rl-ctx"
+                bind:this={ctxMenuEl}
+                style={`left:${ctxX}px;top:${ctxY}px${ctxMaxH !== undefined ? `;max-height:${ctxMaxH}px` : ''}${ctxMaxW !== undefined ? `;max-width:${ctxMaxW}px` : ''}`}
+                on:click={(ev) => ev.stopPropagation()}
+                on:mousedown={(ev) => ev.stopPropagation()}
+                on:contextmenu={(ev) => ev.preventDefault()}>
+                <button on:click={() => { closeCtx(); onOpenSeriesProps(ctxGroup); }} data-tip={`编辑「${ctxGroup.title}」的系列名 / 评分 / 归属合集 / 标签 / 排序`}>编辑属性</button>
+                <button on:click={() => { closeCtx(); onOpenSeriesAssociate(ctxGroup); }} data-tip={`逐条打开「${ctxGroup.title}」各成员的${associateMenuLabel(ctxGroup.type)}`}>批量关联</button>
+            </div>
+        {/if}
     {/if}
 </div>
 
@@ -3747,7 +4337,14 @@
     }
     .rl-toolbar .rl-cnt { opacity: .6; font-size: 10px; }
     /* 搜索框定宽（阶段7+：240~320px，无需通栏拉伸）；内嵌 lucide 搜索图标（09-12） */
-    .rl-toolbar .rl-search-wrap { position: relative; flex: none; width: 280px; max-width: 320px; min-width: 240px; }
+    /* 🔴 m07854 ⑪ ③：搜索框长度要随窗口变窄自适应。
+       改前 `flex: none; min-width: 240px` ⇒ 无论窗口多窄都死死占 280px，窄到 360px 宽时
+       工具栏上「搜索框 + 添加 + 列配置」会挤出横向滚动条。
+       现在 `flex: 0 1 280px` 允许收缩、`min-width: 160px` 兜住可用下限（再窄连「搜索」两字
+       提示都放不下），`max-width` 仍是 320px —— 宽屏不会因为 flex-grow 被拉成一整条。
+       ⚠️ 与 `CollectionBoard.svelte` 的同名规则必须逐字一致（⑥ 的 parity 守卫钉着三档宽度），
+       ⛔ 只改一边。 */
+    .rl-toolbar .rl-search-wrap { position: relative; flex: 0 1 280px; width: 280px; max-width: 320px; min-width: 160px; }
     .rl-toolbar :global(.rl-search-ico) {
         position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
         color: var(--text-faint); pointer-events: none;
@@ -3755,7 +4352,91 @@
     .rl-toolbar .rl-search {
         font-family: inherit; font-size: 12px; border: 1px solid var(--background-modifier-border);
         background: var(--background-primary); color: var(--text-normal); border-radius: var(--rl-t-radius-md, 6px);
-        padding: 5px 10px 5px 27px; width: 100%;
+        /* 右侧 30px 是给搜索框内那枚漏斗留的位（与左侧 27px 的放大镜对称）。
+           ⛔ 别改回 10px —— 漏斗会压住占位文字的尾巴。
+           ⚠️ 骰子也在右侧时由 `.rl-search-wrap.has-dice .rl-search` 追加到 52px（两枚 22px + 缝），
+              这里保留 30px 的**单枚**口径：骰子按 `shouldShowWatchDice` 时隐时现，写死 52px 会在
+              骰子隐藏时白留一条。 */
+        padding: 5px 30px 5px 27px; width: 100%;
+    }
+    /* 🔴 m07854 ⑳ ①：搜索框右端的**工具槽**（骰子 + 漏斗同槽横排）。
+       为什么是槽而不是两枚各自绝对定位：骰子会随输入时隐时现，两枚各钉 `right` 时
+       漏斗要么被骰子压住、要么骰子消失后留个空位；同槽 `right: 4px` + `gap: 2px`
+       才能让它们在两种状态下都贴齐右端。
+       ⚠️ `pointer-events` 必须是 auto（槽里的按钮要点）；装饰性的放大镜才是 none。 */
+    .rl-toolbar .rl-search-tools {
+        position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+        display: inline-flex; align-items: center; gap: 2px;
+    }
+    /* 骰子在场时右内距加宽到 52px（两枚 22px + 2px 缝 + 4px 贴边 + 2px 余量）。
+       ⚠️ 判据挂在 `.rl-search-wrap.has-dice` 上（模板里由 `shouldShowWatchDice` 给）——
+          ⛔ 别在 CSS 里猜图标数量。 */
+    .rl-toolbar .rl-search-wrap.has-dice .rl-search { padding-right: 52px; }
+    /* 🔴 m13127 ②：**输入文字搜索时两枚图标都让位** ⇒ 右内距也要跟着收回去。
+       用户原话：「首页搜索框的待补按钮在输入文字搜索时要隐藏，没有文字时显示」。
+       ⚠️ 单靠 `{#if}` 藏按钮是不够的：`.rl-search` 的 `padding-right: 30px`（单枚口径）
+          会留下一块**没有任何图标**的空白，长关键词能用的宽度被白吃掉。
+       ⚠️ 判据与模板同一个 `shouldShowWatchDice`，⛔ 别在 CSS 里另写 `:not(:placeholder-shown)`
+          —— 那个判的是「输入框有没有内容」而不是「用户在不在搜索」（一个空格差别就露馅）。 */
+    .rl-toolbar .rl-search-wrap.tools-hidden .rl-search { padding-right: 12px; }
+    /* 🔴 m07854 ⑭：「今天看什么」骰子（用户要「无边框透明化」）。
+       🔴 m07854 ⑳ ①：图标从 `🎲` emoji 换成内置 lucide `shuffle`（用户：「不要 emoji 图标，
+          改成 Ob 对应的图标」）。全仓**没有** dice 类图标（`dices` 实测不存在、`setIcon` 会静默
+          不画），`shuffle` 已在 `StatsBoard.svelte` 实名用过，语义即「随机」。
+       ⚠️ 尺寸 22×22 与漏斗对齐；`pointer-events` 必须保持 auto（这是按钮，不是装饰）。
+       ⚠️ 宿主 `button:not(.clickable-icon)` 的 (0,1,1) 灰底压过单类选择器 ⇒ **必须两级**
+          （`.rl-toolbar .rl-search-dice`）才能真透明，本仓老坑 `src/modals/ReaderPanelBase.ts:1633`。 */
+    .rl-toolbar .rl-search-dice {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 22px; height: 22px; padding: 0; margin: 0;
+        border: 0; border-radius: var(--rl-t-radius-sm, 4px);
+        background: transparent; box-shadow: none;
+        line-height: 1; cursor: pointer;
+        color: var(--text-muted); opacity: .8;
+    }
+    .rl-toolbar .rl-search-dice:hover { opacity: 1; color: var(--interactive-accent); background: var(--background-modifier-hover); }
+    .rl-toolbar .rl-search-dice:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+    /* 🔴 m07854 ⑮：「待补」漏斗（无边框透明化，与骰子同一套尺子）。
+       🔴 m07854 ⑳ ①：从工具栏同级**搬进**搜索框右端的工具槽（用户：「这个待补图标放在首页搜索框内」）。
+          ⚠️ 搬进来后它不再是独立 flex 项 ⇒ 去掉原来的 `height: var(--input-height)` 与右外边距，
+             改成与骰子同款的 22×22 方钮（两枚同高才在一条线上）。
+       ⚠️ 必须两级选择器才压过宿主 `button:not(.clickable-icon)` 的 (0,1,1) 灰底（同骰子那条注释）。
+       激活态只换颜色不加底色：用户要的是「透明化」，加了底色就成了一枚普通按钮。 */
+    .rl-toolbar .rl-incomplete {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 22px; height: 22px; padding: 0; margin: 0;
+        border: 0; border-radius: var(--rl-t-radius-sm, 4px);
+        background: transparent; box-shadow: none;
+        font-family: inherit; cursor: pointer;
+        color: var(--text-muted); opacity: .85;
+    }
+    .rl-toolbar .rl-incomplete:hover { opacity: 1; color: var(--interactive-accent); background: var(--background-modifier-hover); }
+    .rl-toolbar .rl-incomplete.is-on { color: var(--interactive-accent); opacity: 1; }
+    .rl-toolbar .rl-incomplete:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+    /* 🔴 m07854 ⑳ ②：**窄窗下工具栏重排**。
+       用户原话：「首页右上角如 N 部电影这悬停的在页面窗口变窄时也要跟着调整」。
+       真因：这一行是「左端库概览（`absolute; left: 0`）+ 居中那组（胶囊/搜索/添加）+
+       右端导航入口（`absolute; right: 0`，19px 大字）」—— 两个绝对定位的端头**不参与居中那组的
+       让位计算**，窄到一定程度它们会和居中的搜索框顶在一起（视觉上就是「压住了」）。
+       ⇒ 窄窗改成**两行流式**：第一行只有库概览（静态、独占一行、可省略号），第二行是
+         居中那组 + 右端导航入口（也回到流内、靠右）。这样任何宽度都不会重叠，
+         而不是靠 `overflow: hidden` 把内容切掉（切掉才是真的「没跟着调整」）。
+       ⚠️ 导航入口在 `NavMenu.svelte` 里（组件内 scoped 样式）⇒ 只能 `:global` 命中；
+          本文件已有的 `:global(.rl-search-ico)` 是同一套做法。
+       ⚠️ 阈值取 760px：再窄才真正开始顶（实测 900px 以上仍有余量），⛔ 别一味调大
+          —— 太早重排会让宽屏也变成两行。 */
+    @media (max-width: 760px) {
+        .rl-toolbar { flex-wrap: wrap; row-gap: 6px; }
+        .rl-toolbar .rl-libstats {
+            position: static; transform: none; order: -1;
+            flex: 1 0 100%; justify-content: flex-start;
+            /* 极窄窗（侧边栏）里「共 123 部电影」也可能放不下 ⇒ 省略号收尾，⛔ 不换行 */
+            overflow: hidden; text-overflow: ellipsis;
+        }
+        .rl-toolbar .rl-search-wrap { flex: 0 1 280px; }
+        :global(.rl-toolbar .rl-nav-wrap.is-toolbar) {
+            position: static; transform: none; margin-left: auto;
+        }
     }
     .rl-toolbar .rl-search:focus { outline: none; border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
     .rl-toolbar .rl-search::placeholder { color: var(--text-faint); }
@@ -3804,21 +4485,36 @@
         display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
         margin-bottom: 12px;
     }
-    .rl-vb-group { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+    .rl-vb-group { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    /* 🔴🔴 2026-11-26（用户 m04553）逐字：「这些胶囊样式的按钮有点不符合整体协调观了改成距形和筛选、排序相符的样式」
+       ⇒ 类型筛选（全部/电影/剧集/动画…）从**胶囊**改成**矩形**，盒模型与同一行的 `.rl-sel-btn`
+       （状态/排序那两枚下拉）逐字对齐：1px 边框 + `--rl-t-radius-md` + `--input-shadow` + 同高。
+       ⛔ 别再写回 `border-radius: var(--rl-t-radius-pill, 999px)` —— 那一行里「筛选」是方的、
+          「排序」是方的、只有它在飘圆角，正是用户说的「不符合整体协调观」。
+       ⚠️ `box-shadow: var(--input-shadow)` 必须留：Obsidian 核心给按钮的内描边环就在这里，
+          去掉会显得比旁边的下拉「矮一档」。 */
     .rl-vb-group button {
         font-family: inherit; font-size: 12px; color: var(--text-muted);
-        background: transparent; border: none; padding: 4px 10px; border-radius: var(--rl-t-radius-pill, 999px); cursor: pointer;
-        transition: background .15s ease, color .15s ease;
+        background: var(--background-primary); border: 1px solid var(--background-modifier-border);
+        height: var(--input-height); padding: 2px 8px;
+        border-radius: var(--rl-t-radius-md, 6px); box-shadow: var(--input-shadow);
+        cursor: pointer;
+        transition: color .15s ease, background .15s ease, border-color .15s ease;
     }
     /* 1.0.4：悬停只让**文字**变主题色、不铺底色（用户 2026-09-14 裁定，与视图切换图标同一语言）；
-       按下内缩保留（.on 规则写在其后 → 选中项悬停保持选中外观） */
+       按下内缩保留（.on 规则写在其后 → 选中项悬停保持选中外观）。 */
     .rl-vb-group button:hover { color: var(--interactive-accent); }
     .rl-vb-group button:active { transform: scale(.96); }
     .rl-vb-group button:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -1px; }
     /* 键盘可达（批C）：卡片与列表标题聚焦时必须有可见指示，否则键盘用户不知道焦点在哪 */
     .rl-card:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -1px; }
     .rl-row-link:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; border-radius: 3px; }
-    .rl-vb-group button.on { background: var(--background-modifier-hover); color: var(--interactive-accent); font-weight: 600; }
+    /* 选中态：**实心强调色**（用户裁定口径「选中的那个要一眼看出来」，与 `.rl-sel-btn.is-open` 一致地给足对比，
+       但类型筛选是「当前档位」而非「临时展开」⇒ 直接铺底反色，比只变文字色更明确）。 */
+    .rl-vb-group button.on {
+        background: var(--interactive-accent); border-color: var(--interactive-accent);
+        color: var(--text-on-accent); font-weight: 600;
+    }
     .rl-vb-group .rl-cnt { font-size: 10px; opacity: .6; margin-left: 2px; }
     .rl-vb-group button.on .rl-cnt { opacity: .85; }
     .rl-vb-sep { width: 1px; height: 16px; background: var(--background-modifier-border); margin: 0 6px; flex: none; }
@@ -3912,6 +4608,27 @@
        🔴 hover / 打开态**只变色、不铺底**（本仓「并排切换类悬停只变色」口径，产物里有反向守卫钉着
        `.rl-vb-view…:hover{color:…}`）—— ⛔ 别把底色挪进 hover。 */
     .rl-vb-view { position: relative; display: inline-flex; margin-left: auto; }
+    /* 🔴 m07854 ⑬：下拉左旁那枚「系列卡堆叠 ⇄ 全部单卡平铺」循环按钮。
+       用户要「无边框透明化 + 高度与下拉对齐」⇒ height 取 `var(--input-height)`（与 `.rl-vb-btn` 同一把尺），
+       宽度按图标撑开、不给 border / background / box-shadow（宿主 `button:not(.clickable-icon)` 的 (0,1,1)
+       会铺整行灰底 + 内阴影，这里必须用**两级选择器**压过它 —— 本仓老坑，见 `ReaderPanelBase.ts:1633`）。
+       ⚠️ 激活态（`is-on`）只改颜色，⛔ 不加底色：用户要的是「透明化」，加个色块会跟旁边下拉的边框打架。 */
+    .rl-vb-view .rl-vb-unfold {
+        display: inline-flex; align-items: center; justify-content: center;
+        height: var(--input-height); width: 26px; padding: 0; margin: 0 2px 0 0;
+        border: 0; border-radius: var(--rl-t-radius-md, 6px);
+        background: transparent; box-shadow: none;
+        color: var(--text-muted); font-family: inherit; cursor: pointer;
+    }
+    .rl-vb-view .rl-vb-unfold:hover { color: var(--interactive-accent); background: var(--background-modifier-hover); }
+    .rl-vb-view .rl-vb-unfold.is-on { color: var(--interactive-accent); }
+    .rl-vb-view .rl-vb-unfold:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+    /* 🔴 2026-11-14 用户 m07593 ③：「瀑布流视图下隐藏切换循环按钮（本身已是单卡平铺）」——
+       瀑布流本来就是散卡平铺，这枚「堆叠 ⇄ 平铺」按钮在那个视图里**没有意义**。
+       ⚠️ 用**CSS 隐藏**而不是改 `{#if onToggleUnfoldSeries}` 的条件 ——
+          `tests/unfoldSeries.test.ts` 钉着「按钮位置往前找最近的 `{#if ` 必须是 `{#if onToggleUnfoldSeries}`」，
+          改条件会让守卫失配；⛔ 也别做成 disabled（本仓「常驻后置灰」禁令）。 */
+    .rl-vb-view .rl-vb-unfold.rl-vb-masonry { display: none; }
     .rl-vb-view .rl-vb-btn {
         display: inline-flex; align-items: center; gap: 6px;
         height: var(--input-height); padding: 2px 8px;
@@ -4048,6 +4765,16 @@
     }
     .rl-card:hover .rl-series-cnt, .rl-card:focus-within .rl-series-cnt { opacity: 0; }
 
+    /* ── 🔴 2026-11-11（m06406 ③，用户定版 G1）**一级分组卡** ─────────────────────────────
+       骨架与系列折叠卡**完全同构**（`.rl-card` / `.rl-cov-wrap` / `.rl-card-meta` / 叠图 `--si`/`--sn`），
+       所以这里只补它自己的：光标。
+       ⛔ 别给 `.rl-gcard` 加 `display`/`padding`/尺寸 —— 一旦与 `.rl-card` 不同宽高，
+          `.rl-grid` 的 stretch 就会让它比同排条目卡矮一截（本仓 #501③ 的「同排底部要齐」）。
+       ⛔ 也别加 `height` / `aspect-ratio`：封面比例由 `.rl-cov-wrap` 的 `aspect-ratio: 2/3` 定。
+       🔴 2026-11-11 用户 m08970 ③「分组卡信息栏有个分组标签去掉」⇒ `.rl-gtag` 连模板带样式一起退场，
+          ⛔ 别再加回来：组卡本来就在「分组」下拉的语境里，再挂一枚写着「分组」的标签是纯噪音。 */
+    .rl-gcard { cursor: pointer; }
+
     /* ── #501③ 叠图封面（「里面几张封面的**叠图**」）：组内前 N 张的**真实封面**层叠 ──
        🔴 **外尺寸必须与普通卡完全一致**（既有铁律：同排卡片底部要齐，仿真页 sr434 量过 Δw=Δh=0）。
           这里的做法 = 高度由 `.rl-cov-wrap` 的 `aspect-ratio: 2/3` **独占**决定，
@@ -4071,8 +4798,11 @@
        ⚠️ 用 `inline-size` 而不是 `size`：`size` 要求**两轴**尺寸都由外部给定、并会把内容隔离得更死，
           而本元素正是靠 `aspect-ratio` 反算高度的 —— 只隔离横向风险最小。
        ⚠️ 写在 `.rl-series-card` 作用域内 = **2 个复合选择器**（compound ≤2 是本组件铁律，见上面 `.rl-wall` 那段）。 */
-    .rl-series-card .rl-cov-wrap { position: relative; aspect-ratio: 2 / 3; container-type: inline-size; }
-    .rl-series-card .rl-cov-stack {
+    /* 🔴 2026-11-11 组卡（用户定版 G1）也走这套叠图 ⇒ 选择器必须**同时**覆盖 `.rl-gcard`。
+       ⛔ 只写 `.rl-series-card` 时组卡拿不到 `position:absolute` 与宽高公式，叠层退回文档流，
+          每张海报按原尺寸竖排 ⇒ 整张卡高到 **1081px**（真机实测；正常应约 336px）。 */
+    .rl-series-card .rl-cov-wrap, .rl-gcard .rl-cov-wrap { position: relative; aspect-ratio: 2 / 3; container-type: inline-size; }
+    .rl-series-card .rl-cov-stack, .rl-gcard .rl-cov-stack {
         position: absolute; display: block; object-fit: cover;
         /* 🔴 #502① **错位步长自适应**（层数不再封顶 3 张后的必然要求）：
            4 层以内每层 **9px**；再多的层**总让出量固定 28px** ⇒ 每层 = 28 / (层数 − 1)（越叠越窄，像一摞书页）。
@@ -4264,6 +4994,9 @@
         white-space: nowrap; pointer-events: none;
         max-width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis;
     }
+    /* 🔴 2026-11-16 用户裁定（m05206）：「卡片网格封面有个『系』的标识去掉它」
+       ⇒ 原 `.rl-cov-lone`（单部系列的「系」角标）的样式整块删除。
+       ⛔ 别再把它加回来：封面角标只承载**数据**（时长 / 序号），不承载系列归属。 */
     /* 🔴 #530 系列序号角标（**只在系列视图内**渲染，见模板 `seriesNo`）：
        几何与 `.rl-cov-playtime` **同一条规则**（上面那条合并选择器），⛔ 别在这里再写第二份尺寸。
        🔴🔴 #558（用户 2026-10-08「封面底部的信息排布」）：它现在与时长**并排成一行**
@@ -4382,6 +5115,18 @@
           ⇒ `.rl-wall .rl-card-meta` 把 min-height 归零（见 `.rl-wall` 那组）。
           ⛔ 别在这里删/改这条 —— 普通卡的同排等高全靠它。 */
     .rl-card-meta { padding: 7px 8px; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 74px; }
+    /* 🔴 m07854 ⑯：卡片网格下信息栏可点（点它 = 原地进「编辑属性」）。
+       ⚠️ 只给**可点态**加 cursor 与极轻的 hover 底色；⛔ 别给 `.rl-card-meta` 本体加 cursor: pointer
+          —— 海报墙/分组视图下它不可点，那样会骗人。
+       ⚠️ hover 用 `--background-modifier-hover` 且**只在内侧**（`border-radius` + 负 margin 让底色不超出信息区），
+          不写死颜色（主题切换会失效）。 */
+    .rl-card-meta.rl-meta-edit {
+        cursor: pointer;
+        border-radius: var(--rl-t-radius-sm, 4px);
+        transition: background-color 120ms ease;
+    }
+    .rl-card-meta.rl-meta-edit:hover { background: var(--background-modifier-hover); }
+    .rl-card-meta.rl-meta-edit:active { background: var(--background-modifier-active-hover, var(--background-modifier-hover)); }
     /* 🔴 #640 ⑷：**补位空行** —— 信息区行数按条目类型各配一份（#617）⇒ 混类型视图里
        行数少的卡片比同行矮一截（底部对不齐）。补齐到「这一屏最大的行数」后，
        多出来的那一行就是这个空 div —— 它只提供**高度**（与真行同款的行高/外边距），
@@ -4391,6 +5136,16 @@
     .rl-pad-row { line-height: 1.4; }
     /* 视觉层级（阶段3+6）：标题 → 原名·年份 → 创作者 → 标签 → 进度 → 状态+评分 */
     .rl-ttl { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* 🔴 m07854 ⑪ ③：搜索结果里命中的标题片段（用户原话「卡片标题匹配关键词做**黄色高亮**」）。
+       ⚠️ 用 `--text-highlight-bg`（宿主主题的高亮底色，深色主题下自动变成暗黄）而不是写死 hex，
+       与本仓「⛔ 不存品牌/主题色值」的纪律一致；文字色用 `inherit`，否则会与标题的 700 字重打架。
+       ⚠️ `<mark>` 默认有 `background-color: mark` 与 `color: marktext` 两条 UA 样式，必须一起覆盖。 */
+    .rl-ttl .rl-hl {
+        background: var(--text-highlight-bg);
+        color: inherit;
+        border-radius: var(--rl-t-radius-sm, 3px);
+        padding: 0 1px;
+    }
     .rl-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .rl-creator { font-size: 10px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* 标签行（阶段6：前 2 个标签，知识库感；多标签 title 显示全量） */
@@ -4406,6 +5161,12 @@
        ⛔ 别再给 `.rl-my-inline` 加 auto 边距、也别把本行改成 `justify-content: space-between`
        —— 那会把两颗元素推成「分踞两端」，正是这次要去掉的观感。 */
     .rl-row1 { display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; row-gap: 3px; }
+    /* 🔴 用户 m09565 ①-6：组卡的 meta 只承载「组名 + 一句话副标题」两行，
+       而 `.rl-card-meta` 那条 `min-height: 74px` 是给**普通卡**的（那里要留出 状态徽标/星/进度 那几行的高度，
+       否则同一行上卡片高矮不齐）。组卡没有那些行 ⇒ 它凭空多出 43px 空白，看着就是「去掉分组标签后空出一行」。
+       ⚠️ 不能用 `min-height: 0` 直接改基础规则：普通卡靠它对齐，改了就回去「高矮不齐」。
+       ⛔ 也别给组卡填一句「—」占位：那会伪装成一个真实字段。 */
+    .rl-gcard .rl-card-meta { min-height: 0; }
     .rl-row2 { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 3px; }
     /* 书籍进度：百分比 + 绿色进度条 + 页数（页数在条右侧） */
     .rl-read-pages { font-size: 9px; color: var(--text-faint); flex: none; white-space: nowrap; }

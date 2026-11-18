@@ -22,6 +22,14 @@ import {
     type WereadCandidate,
 } from 'pure/weread';
 import { parseWereadShelf, type WereadShelfParse } from 'pure/wereadShelf';
+import {
+    buildWereadBookmarkUrl,
+    buildWereadReviewUrl,
+    mergeWereadNotes,
+    parseWereadBookmarks,
+    parseWereadReviews,
+    type WereadNote,
+} from 'pure/wereadNotes';
 import type { BookSearchResult } from 'services/resultTypes';
 import type { DlTransport } from 'services/dl';
 
@@ -32,6 +40,16 @@ export interface WereadSearchOutcome {
     error?: string;
     /** 实际使用的检索词（成功时带） */
     query?: string;
+}
+
+/** ②-4 拉划线的结果（`ok: false` 时 `notes` 恒为空，⛔ 别拿空数组当「没有笔记」）。 */
+export interface WereadNotesOutcome {
+    ok: boolean;
+    notes: WereadNote[];
+    /** 硬失败原因：没 Cookie / 划线端点失败 / 登录态失效 */
+    error?: string;
+    /** 软失败：划线拿到了、想法没拿到（决定要不要提示用户） */
+    warning?: string;
 }
 
 /** 搜索微信读书（`keyword` 为空 → 空结果 + error）。 */
@@ -162,6 +180,65 @@ export async function fetchWereadBookInfo(
     } catch {
         return null;
     }
+}
+
+/** ②-4 拉一本书的划线 + 想法（同步到笔记 `### 同步划线与高亮` 用）。
+ *
+ * 🔴 口径与上面几个拉取函数一致，另有两条是 ②-4 专有的：
+ *   ⑴ **两个端点分开报错**：划线（`bookmarklist`）与想法（`review/list`）是两条独立接口，
+ *      一个空 / 一个挂掉时不能整体判死 —— 划线成功、想法失败时照样把划线写进笔记，
+ *      失败原因折进 `warning`（宿主据此提示，⛔ 不静默当「这本书没有笔记」）；
+ *   ⑵ 划线这一步失败就**不再打想法**：登录态失效（-2010 / -2012）对两个端点同时成立，
+ *      多打一次只会让用户多等一个往返。
+ * ⚠️ 只桌面端（Node 传输层）；调用方负责串行 + 间隔，本函数不管节流。
+ */
+export async function fetchWereadNotes(
+    t: DlTransport,
+    cookie: unknown,
+    bookId: string,
+): Promise<WereadNotesOutcome> {
+    const ck = normalizeWereadCookie(cookie);
+    const id = String(bookId ?? '').trim();
+    if (!ck) return { ok: false, notes: [], error: '未填写微信读书 Cookie' };
+    if (!id) return { ok: false, notes: [], error: '缺少书籍 id' };
+    const headers = {
+        'User-Agent': WEREAD_UA,
+        Referer: WEREAD_REFERER,
+        Accept: WEREAD_ACCEPT,
+        Cookie: ck,
+    };
+
+    const pull = async (url: string): Promise<{ raw?: unknown; error?: string }> => {
+        let res: { status: number; text: string } | undefined;
+        try {
+            res = await t.get(url, headers);
+        } catch {
+            return { error: '网络请求失败' };
+        }
+        if (!res || res.status < 200 || res.status >= 300) {
+            return { error: `微信读书返回 ${res?.status ?? '错误'}` };
+        }
+        try {
+            return { raw: JSON.parse(res.text) };
+        } catch {
+            return { error: '返回内容无法解析（多半被风控或接口变更）' };
+        }
+    };
+
+    const hb = await pull(buildWereadBookmarkUrl(id));
+    if (hb.error) return { ok: false, notes: [], error: hb.error };
+    const hp = parseWereadBookmarks(hb.raw);
+    if (hp.error) return { ok: false, notes: [], error: hp.error };
+
+    const rv = await pull(buildWereadReviewUrl(id));
+    if (rv.error) {
+        return { ok: true, notes: mergeWereadNotes(hp.notes, []), warning: `想法拉取失败：${rv.error}` };
+    }
+    const rp = parseWereadReviews(rv.raw);
+    if (rp.error) {
+        return { ok: true, notes: mergeWereadNotes(hp.notes, []), warning: `想法拉取失败：${rp.error}` };
+    }
+    return { ok: true, notes: mergeWereadNotes(hp.notes, rp.notes) };
 }
 
 /**

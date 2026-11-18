@@ -1,8 +1,9 @@
 // ⬇️ 2026-09-28 移植自 obsidian-lyricflux/tests/download-utils.test.ts（同作者；仅改导入路径为 pure/dl/*）。
 import { describe, it, expect } from 'vitest'
 import {
-    sanitizeFilename, buildSongFilename, songSimilarityScore, isNeteaseDownloadable, formatDuration,
-    buildSongWebUrl, buildSourceSearchUrl, buildPlaylistWebUrl, buildOpenaiModelsUrl, parseOpenaiModelsResponse,
+    sanitizeFilename, buildSongFilename, buildBiliAudioFilename, songSimilarityScore, isNeteaseDownloadable,
+    formatDuration, buildSongWebUrl, buildSourceSearchUrl, buildPlaylistWebUrl, buildOpenaiModelsUrl,
+    parseOpenaiModelsResponse,
 } from 'pure/dl/utils'
 
 describe('下载文件名校验（downloadUtils）', () => {
@@ -16,6 +17,39 @@ describe('下载文件名校验（downloadUtils）', () => {
         expect(buildSongFilename('周杰伦', '七里香')).toBe('周杰伦 - 七里香.mp3')
         expect(buildSongFilename('', '七里香')).toBe('Unknown - 七里香.mp3')
         expect(buildSongFilename('Beyond', '')).toBe('Beyond - Unknown.mp3')
+    })
+})
+
+// 🔴 2026-11-09（第 15 轮需求③）：B站下载的文件名优先用**条目歌名**。
+//    用户原话：「从b站下载并用ffmpeg转录成Mp3的文件名应该改成该歌曲名.mp3而不是原来b站视频标题名称.mp3」
+//    ⚠️ 这里刻意测「回落的判据是**原文非空**而不是**结果非 Unknown**」—— 因为 `sanitizeFilename('')`
+//    返回 `'Unknown'`，若按结果判，用户真把条目命名成 Unknown 时会被悄悄换成视频标题。
+describe('B站下载文件名（buildBiliAudioFilename）', () => {
+    it('有条目歌名 ⇒ 就是「歌名.mp3」，不带作者、不带视频标题', () => {
+        expect(buildBiliAudioFilename('晴天', '周杰伦', '【MV】晴天 - 周杰伦 1080P')).toBe('晴天.mp3')
+    })
+
+    it('条目歌名为空 / 全空白 ⇒ 回落到「作者 - 视频标题.mp3」（四平台那套口径）', () => {
+        expect(buildBiliAudioFilename('', '周杰伦', '晴天')).toBe('周杰伦 - 晴天.mp3')
+        expect(buildBiliAudioFilename('   ', '周杰伦', '晴天')).toBe('周杰伦 - 晴天.mp3')
+    })
+
+    it('歌名两端空白被裁掉（⛔ 别把空格带进文件名）', () => {
+        expect(buildBiliAudioFilename('  晴天  ', '周杰伦', '视频标题')).toBe('晴天.mp3')
+    })
+
+    it('歌名里的 Windows 非法字符走同一条净化', () => {
+        expect(buildBiliAudioFilename('a/b:c*?', '周杰伦', '视频标题')).toBe('a_b_c__.mp3')
+    })
+
+    it('扩展名入参：带点与不带点都认，空值回落 mp3', () => {
+        expect(buildBiliAudioFilename('晴天', '周杰伦', '标题', 'm4a')).toBe('晴天.m4a')
+        expect(buildBiliAudioFilename('晴天', '周杰伦', '标题', '.m4a')).toBe('晴天.m4a')
+        expect(buildBiliAudioFilename('晴天', '周杰伦', '标题', '')).toBe('晴天.mp3')
+    })
+
+    it('回落分支同样认扩展名参数', () => {
+        expect(buildBiliAudioFilename('', '周杰伦', '晴天', 'm4a')).toBe('周杰伦 - 晴天.m4a')
     })
 })
 

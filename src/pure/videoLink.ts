@@ -102,10 +102,34 @@ export function backLinkText(seconds: number): string {
 }
 
 /**
+ * 时间戳链接的**显示文字**：多集条目带集号，单集/电影只有时间。
+ *
+ * 🔴 用户 2026-11-01 报障逐字：「如何处理一个笔记52集的各集时间戳冲突问题」
+ *    ⇒ 52 集共用一个 `## 单时间戳` 区时，每行只写 `0:27` —— 数据（链接目标里的 `ep=0`）是对的，
+ *      但**人眼看不出这一条属于第几集**，翻笔记时无从判断，这就是「冲突」。
+ *      加集号后 `第3集·0:27` 一眼能读，链接目标一个字都不用动。
+ *
+ * ⛔ **文字里不许出现空白**（见 `backLinkText` 的 long-form 警告）：Obsidian `UE()` 会在第一个空白处
+ *    截断 token，碎片被当 URL 解析 ⇒ 悬停即报 `Invalid URL`。所以是 `第3集`（无空格）而不是
+ *    `第 3 集`——界面别处（`pure/player.episodeLabel`）用带空格的形态，但**这里不能用**。
+ *
+ * 集号口径与界面一致：`ep` 是 0 基，显示 `ep + 1`。
+ * `multi=false`（单集 / 电影）或 `ep` 非法 ⇒ 只有时间，不给单集条目平添噪音。
+ */
+export function stampLabel(seconds: number, opts?: { ep?: number; multi?: boolean }): string {
+    const time = backLinkText(seconds);
+    const ep = opts?.ep;
+    if (!opts?.multi) return time;
+    if (typeof ep !== 'number' || !Number.isFinite(ep) || ep < 0) return time;
+    return `第${Math.floor(ep) + 1}集·${time}`;
+}
+
+/**
  * 构造时间戳链接（双轨，按给了哪个 id 自动选形态）。
  * **缺少可定位的参数 → null**（不产出不可用链接，调用方据此跳过插入）。
  * `filePath` 含空格时用 `<>` 包住（markdown 对含空格链接的标准写法）。
- * 默认文字 = **只有时间** `5:56`（用户 2026-09-19 改判：**去掉「·回到视频」尾巴**；见 `backLinkText`）。
+ * 默认文字 = **只有时间** `5:56`（用户 2026-09-19 改判：**去掉「·回到视频」尾巴**；见 `backLinkText`）；
+ * 多集条目由调用方经 `stampLabel()` 传 `label` 带上集号（用户 2026-11-01：「52 集的各集时间戳冲突」）。
  */
 export function buildTimeLink(opts: {
     seconds: number;

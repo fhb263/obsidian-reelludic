@@ -14,6 +14,19 @@ export interface NodeHttpResponse {
      *    我们发的是 `/search?key=x`，而真正的书籍地址是**跳到之后**那一页 ⇒ 不拿最终 URL 就没法记账。
      */
     finalUrl?: string;
+    /**
+     * **整条重定向链上累积下来的 Cookie**（`name=value; name=value`，append-only 可选字段）。
+     *
+     * 🔴 由来（#756，用户 m06077「B 站扫码能获取但测试连接失败」）：
+     *    B 站扫码成功后 `data.url` 已不再是老的
+     *    `passport.biligame.com/crossDomain?DedeUserID=…&SESSDATA=…` 形态，而是**票据地址**
+     *    `…/web/crossDomain?ticket=…&gourl=…&first_domain=…` —— 里面**没有**任何登录凭据，
+     *    真正的 `SESSDATA` / `bili_jct` / `DedeUserID` 由该地址 **302 响应的 `Set-Cookie`** 下发。
+     *    而 `requestOnce` 本来就为「跨重定向续传 Cookie」累积过这份数据，只是在返回时丢掉了。
+     * ⇒ 把它透出来，让扫码那一路能「拿票据换真凭据」，⛔ 别再让调用方去 URL 里抠 query。
+     * ⚠️ 只在**跟过至少一跳**时才有意义；单跳 200 的响应这份多半是空串。
+     */
+    cookies?: string;
 }
 
 export interface NodeHttpBufferResponse {
@@ -22,6 +35,72 @@ export interface NodeHttpBufferResponse {
     headers: Record<string, string | string[] | undefined>;
     /** 同 `NodeHttpResponse.finalUrl` */
     finalUrl?: string;
+}
+
+/**
+ * `nodeHttpGetBuffer` 的选项（append-only）。
+ *
+ * 🔴 为什么要能自定义超时（2026-11-16 真机实测）：Flash 运行时那个 GitHub release 包
+ *    10,527,427 字节，本机走直连**实测 278 秒**；而默认 `TIMEOUT_MS = 30_000` 会在
+ *    第 30 秒把连接掐断 ⇒ 包永远装不上，界面只显示「运行时安装失败」，真因完全看不见。
+ *    ⛔ 别为了这个把全局 `TIMEOUT_MS` 调大：那会让所有「测试连接」类请求一起变迟钝。
+ */
+export interface NodeHttpGetBufferOptions {
+    /** 单跳请求超时（毫秒）；缺省用 `TIMEOUT_MS`（30s） */
+    timeoutMs?: number;
+    /**
+     * 下载进度回调（append-only 可选字段；用户 m02844「做进度表」）。
+     *
+     * 🔴 由来：Flash 运行时那个包 10,527,427 字节、实测 278 秒，界面原先只有一个静止的
+     *    「正在下载 Flash 运行时」—— 用户分不清是卡死还是在下。这里按**已收字节**报，调用方
+     *    自己算百分比与 MB。
+     *
+     * ⚠️ `total` 是**当前这一跳**的 `content-length`：GitHub release 先 302 到
+     *    `release-assets.githubusercontent.com`，第一跳没有 body ⇒ `total` 可能是 0。
+     *    调用方在 `total <= 0` 时只显示已下载量，⛔ 别除以 0。
+     */
+    onProgress?: (received: number, total: number) => void;
+}
+
+/**
+ * 流式 POST 的选项。
+ *
+ * 🔴 为什么单开一个函数而不是给 `nodeHttpPost` 加回调：
+ *    非流式那条路会被 `retry()` 包着（GET 重试）与 `Buffer.concat` 整块收口，
+ *    把「逐块回调」塞进去会让两条语义互相污染 —— 流式一旦收到半截就不该重试
+ *    （重试会从头再吐一遍，界面上变成重复文字）。
+ */
+export interface NodeHttpStreamOptions {
+    /**
+     * 每收到一块**已按 UTF-8 解码**的文本就调一次。
+     * ⚠️ 这里用 `StringDecoder` 而不是 `buf.toString()`：多字节中文常被 TCP 切在
+     *    半个字上，直接 `toString` 会吐 `�`（本仓在 llama 那一路踩过同样的坑）。
+     */
+    onText?: (text: string) => void;
+    /** 收到响应头时回调（可据此提前判断 4xx 并中止） */
+    onResponse?: (status: number, headers: Record<string, string | string[] | undefined>) => void;
+    /**
+     * 返回 true ⇒ 主动断开（用来在收到 `[DONE]` 后立刻收尾，不必等服务端关连接）。
+     * ⚠️ 在 `onText` 之后被问一次。
+     */
+    shouldStop?: () => boolean;
+    /** 整段流的总超时（毫秒）。流式比非流式更需要它：服务端可能一直挂着不关 */
+    timeoutMs?: number;
+    /** 代理（与 `nodeHttpPost` 同口径：墙外目标必须传） */
+    proxy?: string;
+    signal?: { aborted: boolean };
+}
+
+/** 流式 POST 的结果：状态码 + **累积的整段文本**（流式过程中已逐块回调过） */
+export interface NodeHttpStreamResult {
+    status: number;
+    /** 整段文本（与逐块回调内容按序拼接一致）；用来走原有的非流式解析器 */
+    text: string;
+    /** 是否被 `shouldStop` / 超时 / 外部信号提前中断 */
+    stopped: boolean;
+    /** 中断原因（`stopped` 为真时才有） */
+    stopReason?: 'done' | 'timeout' | 'abort' | 'error';
+    error?: string;
 }
 
 const TIMEOUT_MS = 30_000;
@@ -53,10 +132,67 @@ export function mergeCookies(existing: string, setCookies: string[]): string {
     return Array.from(map.entries()).map(([n, v]) => `${n}=${v}`).join('; ');
 }
 
-/** 单次原生请求（惰性 require，仅桌面端 Node 环境可用）；同时返回 text 与 buffer，调用方按需取 */
-function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: string): Promise<NodeHttpResponse & { buffer: Buffer }> {
+/**
+ * 🔴🔴 2026-11-10 真机事故：**字幕正文一直没走代理**，所以症状是「元数据拿到了、正文却超时」。
+ *
+ *    `fetchYtInfo` 能通是因为它 `spawn` **yt-dlp 子进程**（带着代理跑）；
+ *    而字幕正文走的是本层**直连** ⇒ `https://www.youtube.com/api/timedtext?...`
+ *    被墙黑洞到 `Request timed out after 30000ms`（node 直连重放同一 URL 报
+ *    `connect ETIMEDOUT 104.244.42.197:443`，同一件事的两种说法）。
+ *    ⇒ 只要目标站在墙外，`proxy` 就不是可选项。**⛔ 别把这个参数删掉，也别改回「默认直连」。**
+ *
+ * 只给 **https 目标** 建 CONNECT 隧道（http 目标走原路，国内站不需要）。
+ */
+async function openTunnel(target: URL, proxy: string): Promise<unknown> {
+    const p = new URL(proxy);
+    const http = require('http');
+    const host = target.hostname;
+    const port = target.port || (target.protocol === 'https:' ? 443 : 80);
     return new Promise((resolve, reject) => {
-        const mod = url.startsWith('https') ? require('https') : require('http');
+        const req = http.request({
+            host: p.hostname,
+            port: p.port || (p.protocol === 'https:' ? 443 : 80),
+            method: 'CONNECT',
+            path: `${host}:${port}`,
+            headers: { Host: `${host}:${port}` },
+        });
+        req.once('connect', (res: { statusCode: number }, socket: unknown) => {
+            if (res.statusCode !== 200) {
+                socket && (socket as { destroy?: () => void }).destroy?.();
+                reject(new Error(`代理 CONNECT 被拒 ${res.statusCode}: ${proxy}`));
+                return;
+            }
+            resolve(socket);
+        });
+        req.once('error', reject);
+        req.setTimeout(TIMEOUT_MS, () => req.destroy(new Error(`代理 CONNECT 超时: ${proxy}`)));
+        req.end();
+    });
+}
+
+/** 单次原生请求（惰性 require，仅桌面端 Node 环境可用）；同时返回 text 与 buffer，调用方按需取 */
+async function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: string, proxy?: string, timeoutMs: number = TIMEOUT_MS, onProgress?: (received: number, total: number) => void): Promise<NodeHttpResponse & { buffer: Buffer }> {
+    const mod = url.startsWith('https') ? require('https') : require('http');
+    const extra: Record<string, unknown> = {};
+    if (proxy && url.startsWith('https')) {
+        const target = new URL(url);
+        const tls = require('tls');
+        const socket = await openTunnel(target, proxy);
+        const secure = tls.connect({ socket, servername: target.hostname });
+        await new Promise((res, rej) => { secure.once('secureConnect', res); secure.once('error', rej); });
+        /**
+         * 🔴⛔ **不能只写 `agent: false` + `options.createConnection`**：
+         *    Node 的 http 客户端只要走 Agent 就**忽略 `options.createConnection`**
+         *    （`agent:false` 只等于「新建一个默认 Agent」，不等于不用 Agent）。
+         *    实测症状极坑：隧道看着建好了、实际仍然直连 —— B 站照样 200（直连本来就通），
+         *    YouTube 却报 `connect ETIMEDOUT 31.13.92.37:443`（DNS 污染出来的假 IP）。
+         *    ⇒ 必须把 `createConnection` 挂到 **Agent 实例**上。
+         */
+        const agent = new mod.Agent({ keepAlive: false });
+        agent.createConnection = () => secure;
+        extra.agent = agent;
+    }
+    return new Promise((resolve, reject) => {
         /**
          * 🔴🔴 #424：POST **必须显式给 `Content-Type` 与 `Content-Length`**。
          *
@@ -76,10 +212,26 @@ function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<string,
             if (!hasHeader('content-type')) h['Content-Type'] = 'application/x-www-form-urlencoded';
             h['Content-Length'] = String(Buffer.byteLength(body ?? '', 'utf8'));
         }
-        const req = mod.request(url, { method, headers: h }, (res: { statusCode: number; headers: Record<string, string | string[] | undefined>; on: (e: string, cb: (...a: never[]) => void) => void }) => {
+        const req = mod.request(url, { method, headers: h, ...extra }, (res: { statusCode: number; headers: Record<string, string | string[] | undefined>; on: (e: string, cb: (...a: never[]) => void) => void }) => {
             const chunks: Buffer[] = [];
             let size = 0;
-            res.on('data', (chunk: Buffer) => { chunks.push(Buffer.from(chunk)); size += chunk.length; });
+            // 进度上报（只在给了回调时才建这层）：⚠️ 用 `content-length` 判总量，
+            //   跳转到 release-assets 那一跳才有；第一跳 302 无 body ⇒ total 为 0。
+            const total = Number.parseInt(String((res.headers['content-length'] ?? '') as string), 10) || 0;
+            // ⚠️ 重定向跳的响应体（302 的 HTML / 空体）不报进度 —— 只报真正落盘那一跳，
+            //    否则调用方会先看到 1KB 再归零重来。
+            const reportable = onProgress && res.statusCode >= 200 && res.statusCode < 300;
+            res.on('data', (chunk: Buffer) => {
+                chunks.push(Buffer.from(chunk));
+                size += chunk.length;
+                if (reportable) {
+                    try {
+                        onProgress(size, total);
+                    } catch {
+                        /* 回调炸了不影响下载 */
+                    }
+                }
+            });
             res.on('error', reject);
             res.on('end', () => {
                 const buffer = Buffer.concat(chunks, size);
@@ -87,7 +239,9 @@ function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<string,
             });
         });
         req.on('error', reject);
-        req.setTimeout(TIMEOUT_MS, () => req.destroy(new Error(`Request timed out after ${TIMEOUT_MS}ms: ${url}`)));
+        // ⚠️ `setTimeout` 在这里是**空闲超时**（socket 上多久没数据），不是整段总时长：
+        //    大文件连续有数据就不会被掐，只有彻底停住才触发 —— 278 秒的下载靠它兜底。
+        req.setTimeout(timeoutMs, () => req.destroy(new Error(`Request timed out after ${timeoutMs}ms: ${url}`)));
         // ⚠️ 用 `end(body)` **一次写完**（不是 write + end）：配合上面的 Content-Length 才是固定长度发；
         //    漏了它会退回 chunked、前面那些头也白设。
         req.end(method === 'POST' ? (body ?? '') : undefined);
@@ -95,7 +249,8 @@ function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<string,
 }
 
 /** 单次请求 + 手动跟随重定向 + Set-Cookie 续传（3xx 最多 MAX_REDIRECTS 跳） */
-async function requestOnce(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: string): Promise<NodeHttpResponse & { buffer: Buffer }> {    let currentUrl = url;
+async function requestOnce(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: string, proxy?: string, timeoutMs: number = TIMEOUT_MS, onProgress?: (received: number, total: number) => void): Promise<NodeHttpResponse & { buffer: Buffer }> {
+    let currentUrl = url;
     let currentMethod: 'GET' | 'POST' = method;
     let currentBody = body;
     const currentHeaders = { ...headers };
@@ -108,7 +263,7 @@ async function requestOnce(url: string, method: 'GET' | 'POST', headers: Record<
     // 若只在重定向分支写回会导致首请求无 Cookie 被 403 拒绝）
     if (cookie) currentHeaders.Cookie = cookie;
     for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
-        const res = await rawRequest(currentUrl, currentMethod, currentHeaders, currentBody);
+        const res = await rawRequest(currentUrl, currentMethod, currentHeaders, currentBody, proxy, timeoutMs, onProgress);
         const location = res.headers && (res.headers['location'] as string | undefined);
         if (res.status >= 300 && res.status < 400 && location) {
             const setCookie = res.headers && res.headers['set-cookie'];
@@ -123,24 +278,188 @@ async function requestOnce(url: string, method: 'GET' | 'POST', headers: Record<
             continue;
         }
         // 🔴 `currentUrl` 到这里已经是**最后一次跳转之后**的地址 ⇒ 一并回报（调用方按需使用）
-        return { ...res, finalUrl: currentUrl };
+        // 🔴 `cookies` 是整条链上累积的（含每一跳 302 的 `Set-Cookie`）—— B 站「票据换凭据」靠它，
+        //    见 `NodeHttpResponse.cookies` 的注释；⛔ 别改成只回最后一跳的头。
+        // 🔴🔴 #756 补漏：**末跳 200 自己带的 `Set-Cookie` 也必须并进来**。
+        //    原先只有「3xx 且有 location」那条分支才 `mergeCookies`，于是
+        //    「200 + Set-Cookie」这种最正常的下发方式被整段丢掉 —— B 站 poll 成功那轮正是这种形态，
+        //    结果就是「扫码成功、refresh_token 拿到了，但凭据永远是空的」。
+        const tailSetCookie = res.headers && res.headers['set-cookie'];
+        if (tailSetCookie) {
+            cookie = mergeCookies(cookie, Array.isArray(tailSetCookie) ? tailSetCookie : [tailSetCookie]);
+        }
+        return { ...res, finalUrl: currentUrl, cookies: cookie };
     }
     throw new Error(`Too many redirects: ${url}`);
 }
 
-/** 桌面端 GET（幂等，自动重试 GET_RETRY 次） */
-export async function nodeHttpGet(url: string, headers?: Record<string, string>): Promise<NodeHttpResponse> {
-    const r = await retry(() => requestOnce(url, 'GET', sanitizeHeaders(headers)), GET_RETRY);
-    return { status: r.status, text: r.text, headers: r.headers, finalUrl: r.finalUrl };
+/** 桌面端 GET（幂等，自动重试 GET_RETRY 次）。`proxy` 为空则直连；墙外目标（YouTube 等）必须传 */
+export async function nodeHttpGet(url: string, headers?: Record<string, string>, proxy?: string): Promise<NodeHttpResponse> {
+    const r = await retry(() => requestOnce(url, 'GET', sanitizeHeaders(headers), undefined, proxy), GET_RETRY);
+    return { status: r.status, text: r.text, headers: r.headers, finalUrl: r.finalUrl, cookies: r.cookies };
 }
 
 /** 桌面端 GET 二进制下载（图片等，幂等重试）：返回 Buffer 供 vault.createBinary 写入 */
-export async function nodeHttpGetBuffer(url: string, headers?: Record<string, string>): Promise<NodeHttpBufferResponse> {
-    const r = await retry(() => requestOnce(url, 'GET', sanitizeHeaders(headers)), GET_RETRY);
+export async function nodeHttpGetBuffer(
+    url: string,
+    headers?: Record<string, string>,
+    proxy?: string,
+    opts: NodeHttpGetBufferOptions = {},
+): Promise<NodeHttpBufferResponse> {
+    const timeoutMs = opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : TIMEOUT_MS;
+    const r = await retry(
+        () => requestOnce(url, 'GET', sanitizeHeaders(headers), undefined, proxy, timeoutMs, opts.onProgress),
+        GET_RETRY,
+    );
     return { status: r.status, buffer: r.buffer, headers: r.headers, finalUrl: r.finalUrl };
 }
 
 /** 桌面端 POST（非幂等，不重试） */
-export async function nodeHttpPost(url: string, body: string, headers?: Record<string, string>): Promise<NodeHttpResponse> {
-    return requestOnce(url, 'POST', sanitizeHeaders(headers), body);
+export async function nodeHttpPost(url: string, body: string, headers?: Record<string, string>, proxy?: string): Promise<NodeHttpResponse> {
+    return requestOnce(url, 'POST', sanitizeHeaders(headers), body, proxy);
 }
+
+/**
+ * 桌面端**流式** POST（SSE / `stream: true` 用）。
+ *
+ * 🔴 由来（用户 m09565 ①-8）：字幕 AI 总结要「收到片段就追加」。
+ *    非流式那条路要等模型把整段吐完（实测 8~15 秒），界面上只能先转圈再一次性出字。
+ *
+ * ⚠️ **不做重定向跟随**：AI 端点都是固定 URL、不会 3xx；而那套跟随逻辑在
+ *    `requestOnce` 里与「整块收口」耦合在一起，搬过来只会让两条语义互相污染。
+ *    真遇到 3xx 就按失败报给调用方（会带上 Location，便于排查）。
+ *
+ * ⚠️ **不用 `retry()`**：流式一旦开始吐字，重试会让界面上的文字从头再来一遍。
+ *
+ * @returns 状态码 + 累积全文（`text` 与逐块 `onText` 的内容按序拼接一致）
+ */
+export async function nodeHttpPostStream(
+    url: string,
+    body: string,
+    headers?: Record<string, string>,
+    opts: NodeHttpStreamOptions = {},
+): Promise<NodeHttpStreamResult> {
+    const mod = url.startsWith('https:') ? require('https') : require('http');
+    const h = sanitizeHeaders(headers);
+    // ⚠️ 与 `rawRequest` 同一条纪律：POST 必须显式给这两个头，
+    //    否则 Node 用 chunked 发出去，不少 AI 网关会直接 400。
+    if (!Object.keys(h).some((k) => k.toLowerCase() === 'content-type')) h['Content-Type'] = 'application/json';
+    h['Content-Length'] = String(Buffer.byteLength(body ?? '', 'utf8'));
+    // SSE 必须显式声明，否则某些网关会做缓冲、把流攒成一次性响应（那就白流式了）
+    if (!Object.keys(h).some((k) => k.toLowerCase() === 'accept')) h.Accept = 'text/event-stream';
+
+    const extra: Record<string, unknown> = {};
+    if (opts.proxy && url.startsWith('https:')) {
+        const target = new URL(url);
+        const tls = require('tls');
+        const socket = await openTunnel(target, opts.proxy);
+        const secure = tls.connect({ socket, servername: target.hostname });
+        await new Promise((res, rej) => {
+            secure.once('secureConnect', res);
+            secure.once('error', rej);
+        });
+        const agent = new mod.Agent({ keepAlive: false });
+        agent.createConnection = () => secure;
+        extra.agent = agent;
+    }
+
+    const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
+    const { StringDecoder } = require('string_decoder');
+
+    return new Promise<NodeHttpStreamResult>((resolve) => {
+        let status = 0;
+        let all = '';
+        let stopped = false;
+        let stopReason: NodeHttpStreamResult['stopReason'];
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+
+        const finish = (error?: string): void => {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            resolve({ status, text: all, stopped, stopReason, error });
+        };
+
+        const req = mod.request(url, { method: 'POST', headers: h, ...extra }, (res: {
+            statusCode: number;
+            headers: Record<string, string | string[] | undefined>;
+            on: (e: string, cb: (...a: never[]) => void) => void;
+            destroy: (e?: Error) => void;
+            setEncoding?: (enc: string) => void;
+        }) => {
+            status = res.statusCode;
+            opts.onResponse?.(res.statusCode, res.headers);
+            const decoder = new StringDecoder('utf8');
+            res.on('data', (chunk: Buffer) => {
+                if (settled) return;
+                // ⚠️ 用 StringDecoder 兜住「多字节字符被 TCP 切半」
+                const text = decoder.write(Buffer.from(chunk));
+                if (!text) return;
+                all += text;
+                opts.onText?.(text);
+                if (opts.shouldStop?.()) {
+                    stopped = true;
+                    stopReason = 'done';
+                    // ⚠️ 先 destroy 再 finish：不 destroy 的话连接会挂到服务端超时，
+                    //    在 Electron 里表现为「页面关了但请求还在」
+                    try {
+                        res.destroy();
+                    } catch {
+                        /* 已断开 */
+                    }
+                    finish();
+                }
+            });
+            res.on('error', (e: Error) => {
+                if (stopped) return;
+                finish(e?.message || '流式响应中断');
+            });
+            res.on('end', () => {
+                // 收尾时把解码器里可能残留的半个字符吐出来
+                const tail = decoder.end();
+                if (tail) {
+                    all += tail;
+                    opts.onText?.(tail);
+                }
+                finish();
+            });
+        });
+
+        req.on('error', (e: Error) => {
+            if (stopped) return;
+            finish(e?.message || '流式请求失败');
+        });
+        timer = setTimeout(() => {
+            stopped = true;
+            stopReason = 'timeout';
+            try {
+                req.destroy();
+            } catch {
+                /* 已断开 */
+            }
+            finish(`流式请求超时（${timeoutMs}ms）`);
+        }, timeoutMs);
+
+        // 外部取消（关面板 / 换集）
+        if (opts.signal) {
+            const tick = setInterval(() => {
+                if (settled || !opts.signal?.aborted) return;
+                clearInterval(tick);
+                stopped = true;
+                stopReason = 'abort';
+                try {
+                    req.destroy();
+                } catch {
+                    /* 已断开 */
+                }
+                finish();
+            }, 120);
+            req.once('close', () => clearInterval(tick));
+        }
+
+        // ⚠️ 用 `end(body)` 一次写完（配合上面的 Content-Length 才是定长发送）
+        req.end(body ?? '');
+    });
+}
+

@@ -17,6 +17,8 @@
 
 import { Modal, Notice, type App } from 'obsidian';
 import { applyScrollPref } from 'services/scrollPref';
+import { doubanHintSections } from 'pure/syncHint';
+import { renderSyncHint } from 'modals/syncHintView';
 import {
     DOUBAN_ALL_KINDS,
     DOUBAN_ALL_STATES,
@@ -66,13 +68,9 @@ export class DoubanSyncModal extends Modal {
         contentEl.addClass('rl-wshelf-modal');
         this.titleEl.setText('从豆瓣同步收藏');
 
-        contentEl.createDiv({
-            cls: 'rl-wshelf-hint',
-            text:
-                '读取你在豆瓣标记过的全部条目（想看 / 在看 / 看过、想读 / 在读 / 读过、想听、想玩 …），勾选后导入本库。' +
-                '只读豆瓣、不改动那边的内容；库里已有的会跳过、不会被覆盖。' +
-                '需要先在「设置 › 元数据源配置 › 元数据搜索源凭据 › 豆瓣」里粘贴登录态 Cookie。',
-        });
+        // 🔴 2026-11-11 用户 m05717 ②：改成「同步数据 / 冲突处理 / 前置条件」三段式，
+        //    标签加粗 + 全角冒号。文案在 `pure/syncHint`，渲染在 `modals/syncHintView`。
+        renderSyncHint(contentEl.createDiv({ cls: 'rl-wshelf-hint' }), doubanHintSections());
 
         const status = contentEl.createDiv({ cls: 'rl-wshelf-status', text: '正在读取全部收藏…' });
 
@@ -217,7 +215,7 @@ export class DoubanSyncModal extends Modal {
          */
         const readAll = (): void => {
             if (!this.opts.cookie().trim()) {
-                status.setText('还没有配置豆瓣 Cookie —— 请先到「设置 › 元数据源配置 › 元数据搜索源凭据 › 豆瓣」粘贴登录态 Cookie，然后点「重新读取」。');
+                status.setText('还没有配置豆瓣 Cookie —— 请先到「设置 › 搜索配置 › 元数据搜索源凭据 › 豆瓣」粘贴登录态 Cookie，然后点「重新读取」。');
                 retryBtn.setText('重新读取');
                 return;
             }

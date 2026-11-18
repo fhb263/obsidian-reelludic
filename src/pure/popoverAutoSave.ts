@@ -52,6 +52,13 @@ export const AUTOSAVE_KEYS = {
     gameLaunch: 'game:launch',
     /** 游戏浮层：网络路径 */
     gameUrl: 'game:url',
+    /** 游戏浮层：本地 Flash 影片（.swf；2026-11-16 内置 Ruffle 直接玩） */
+    gameSwf: 'game:swf',
+    /**
+     * 游戏浮层：**内嵌播放页**（H5 / Unity 类游戏没有 swf 可下，改为在 iframe 里打开网页）。
+     * ⚠️ 它是**网页地址**，与 `gameUrl`（商店页，交给系统浏览器）不是一回事，⛔ 别合并两个键。
+     */
+    gameEmbed: 'game:embed',
     /** 音乐浮层：文件路径 */
     audioPath: 'audio:path',
     /** 音乐浮层：网络地址（#601 新增字段） */

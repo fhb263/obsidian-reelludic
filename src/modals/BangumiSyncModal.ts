@@ -13,6 +13,8 @@
 
 import { Modal, Notice, type App } from 'obsidian';
 import { applyScrollPref } from 'services/scrollPref';
+import { bangumiHintSections } from 'pure/syncHint';
+import { renderSyncHint } from 'modals/syncHintView';
 import type { BangumiSearchResult } from 'services/bangumi';
 
 /** 列表一行 */
@@ -62,13 +64,8 @@ export class BangumiSyncModal extends Modal {
         contentEl.addClass('rl-wshelf-modal');
         this.titleEl.setText('从 Bangumi 同步收藏');
 
-        contentEl.createDiv({
-            cls: 'rl-wshelf-hint',
-            text:
-                '读取你在 Bangumi 标记过的条目（想看 / 在看 / 看过），勾选后导入本库。' +
-                '只读 Bangumi、不改动那边的内容；库里已有的默认不勾，勾上 = 覆盖（你自己的评语/进度/摘抄不会被动）。' +
-                '需要先在「设置 › 元数据源配置 › 元数据搜索源凭据 › Bangumi」里粘贴 Access Token。',
-        });
+        // 🔴 2026-11-11 用户 m05717 ②：三段式（同步数据 / 冲突处理 / 前置条件），标签加粗 + 全角冒号
+        renderSyncHint(contentEl.createDiv({ cls: 'rl-wshelf-hint' }), bangumiHintSections());
 
         const status = contentEl.createDiv({ cls: 'rl-wshelf-status', text: '正在读取全部收藏…' });
         const bar = contentEl.createDiv({ cls: 'rl-wshelf-bar' });
@@ -147,7 +144,7 @@ export class BangumiSyncModal extends Modal {
 
         const readAll = (): void => {
             if (!this.opts.token().trim()) {
-                status.setText('还没有配置 Bangumi Token —— 请先到「设置 › 元数据源配置 › 元数据搜索源凭据 › Bangumi」粘贴，然后点「重新读取」。');
+                status.setText('还没有配置 Bangumi Token —— 请先到「设置 › 搜索配置 › 元数据搜索源凭据 › Bangumi」粘贴，然后点「重新读取」。');
                 return;
             }
             retryBtn.disabled = true;

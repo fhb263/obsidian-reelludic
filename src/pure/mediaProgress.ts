@@ -8,7 +8,7 @@
 // ⚠️ 本模块**没有 obsidian、没有 DOM、没有 Svelte**，可单测（本仓「纯逻辑下沉」红线）。
 import type { MediaEntry } from 'data/types';
 import { statusLabel } from 'pure/labels';
-import { formatPlaytime } from 'pure/playtime';
+import { formatBadgeTime } from 'pure/playtime';
 
 /** 书籍进度单位：关联 TXT（按章节解析）→ 章，其余（PDF / 手填 / 豆瓣兜底）→ 页 */
 export function bookUnitOf(e: { bookFile?: string } | null | undefined): string {
@@ -62,14 +62,19 @@ export function listProgress(e: MediaEntry): { text: string; pct?: number } {
  *
  * 🔴 2026-10-01 #471（用户原话：「游戏类型海报墙上已玩 10h 放在游戏封面左下角用个标记」）：
  *    这段文本原先挂在**元信息区**的 `.rl-prog` 行（旧名 `cardProgressText`），本批**只搬呈现位置**
- *    （⇒ 封面角标 `.rl-cov-playtime`），取值口径一个字没改（`playtimeMinutes` 是分钟，按小时四舍五入）。
+ *    （⇒ 封面角标 `.rl-cov-playtime`）。
+ * 🔴 m04435 ④（用户逐条给了示例）：**取值改成 `formatBadgeTime`** ——
+ *    分钟向下取整后按 `59min` / `1h` / `1h1min` / `2h` 呈现。
+ *    旧实现是 `Math.round(playtimeMinutes / 60)` + `h`，25 分钟会显示成「已玩 0h」（把半小时内的游玩抹成 0）；
+ *    新口径下同样的 25 分钟是「已玩 25min」，用户能看见自己确实玩过。
  * ⛔ 别再往这里加书籍页码那一档 —— 书籍进度走卡片自己的 `.rl-readrow`（百分比 + 进度条 + N/M 页），
  *    旧函数里那条分支在卡片上**从来没有消费者**（模板判据一直是 `e.type !== 'book'`），已随本批退场。
  * ⛔ 空值**不渲染角标**（封面不是元信息区，不留「-」空槽撑行高 —— 那条占位随旧行一起退场）。
  */
 export function cardPlaytimeBadge(e: MediaEntry): string {
     if (e.type !== 'game' || !e.playtimeMinutes) return '';
-    return `已玩 ${Math.round(e.playtimeMinutes / 60)}h`;
+    const t = formatBadgeTime(e.playtimeMinutes);
+    return t ? `已玩 ${t}` : '';
 }
 
 /**
@@ -78,15 +83,37 @@ export function cardPlaytimeBadge(e: MediaEntry): string {
  * 🔴 用户原话（2026-10-05）：「显示在海报墙上『已读 2h』」。
  *   · 位置 = 封面左下角，**复用**游戏那枚 `.rl-cov-playtime` 的类与几何（同一角落只该有一套尺寸；
  *     ⛔ 别新造 `.rl-cov-readtime` —— 那会让 #530 的「序号避让」父级 `:has()` 规则漏掉书籍卡）；
- *   · 取值走 `pure/playtime.formatPlaytime`（与游戏时长**同一个格式化真源**）——
- *     与游戏 `已玩 Nh`（`Math.round` 取整）有意不同：书籍时长常见半小时级（0.5h），取整会显示成 1h；
+ *   · 🔴 m04435 ④：取值改走 `formatBadgeTime`（`59min` / `1h` / `1h59min` / `2h`），
+ *     与游戏「已玩」**同一套角标口径** —— 用户这轮的原话就是「已读 / 已听 / 已玩**统一**」。
+ *     旧的 `formatPlaytime`（`0.5h` / `12.5h`）已退场：它把「59 分钟读了一小时不到」显示成 `1h` 满格，
+ *     角标在封面上就那么大，小数小时的可读性远不如 `59min`。
  *   · 与 `.rl-readrow` 的「已读 X%」**不是一回事**：那条是阅读**进度**，这条是阅读**耗时**，两行并存。
  * ⛔ 空值**不渲染角标**（封面不留空槽）。
  */
 export function cardReadBadge(e: MediaEntry): string {
     if (e.type !== 'book' || !e.readMinutes) return '';
-    const h = formatPlaytime(e.readMinutes);
-    return h ? `已读 ${h}` : '';
+    const t = formatBadgeTime(e.readMinutes);
+    return t ? `已读 ${t}` : '';
+}
+
+/**
+ * 音乐**收听时长**角标的文本（🔴 m02288；仅音乐且有时长；其余一律空串）。
+ *
+ * 用户原话（m02288）：「用音乐播放器播放每首音乐要统计总时长列在卡片网格封面左上角上统一，
+ * 而不是让用户手动记录」。
+ * 🔴 位置裁定（用户当场选的选项）：「**和游戏/书籍保持在底部原位**」——
+ *    所以它复用同一个封面角落与**同一个类名** `.rl-cov-playtime`（`.rl-cov-foot-top` 那一行），
+ *    ⛔ 没有新造「左上角」角标（用户否掉了那个方案）。
+ *
+ * 取值 = `listenMinutes`（播放器自动累计 + 「记录时长」手动补记，两者落的是同一个字段）；
+ * 🔴 m04435 ④：格式化改走 `formatBadgeTime`（`59min` / `1h` / `1h59min` / `2h`）——
+ *    用户这轮把「已读 / 已听 / 已玩」三枚的**单位口径统一**了，三处必须同源，⛔ 别留一个走老函数。
+ * ⛔ 空值不渲染角标（封面不留空槽，与另外两枚同一条纪律）。
+ */
+export function cardListenBadge(e: MediaEntry): string {
+    if (e.type !== 'music' || !e.listenMinutes) return '';
+    const t = formatBadgeTime(e.listenMinutes);
+    return t ? `已听 ${t}` : '';
 }
 
 /**

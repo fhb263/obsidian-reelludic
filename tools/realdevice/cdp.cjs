@@ -437,11 +437,107 @@ async function setViewport(c, width, height, vaultName) {
     return { ...(await c.eval(`({ vw: window.innerWidth, vh: window.innerHeight })`)), requested: `${width}x${height}`, scale: win && win.scale, windowResized: !!(win && win.ok) };
 }
 
+/**
+ * 移动模拟档（2026-11-14 建立，用户 m06113 拍板的「方案 A」）。
+ *
+ * 🔴 为什么必须存在这一档：Obsidian 手机版**不是 Electron，是 Capacitor WebView**，
+ *    那边**没有 `process` 全局**、`Platform.isMobileApp === true`。
+ *    在本机桌面 Obsidian 里把窗口拖到 400px 宽只能验证 CSS —— `Platform.isMobileApp`
+ *    由**宿主**决定而不是视口宽度决定，所以拖窗口**永远**测不到本次白屏那条路径。
+ *
+ * 这一档做三件事（缺一不可）：
+ *   ① `Emulation.setDeviceMetricsOverride({ mobile: true, deviceScaleFactor: 3 })`
+ *      + `Emulation.setTouchEmulationEnabled` —— 让触摸事件、无 hover、无右键的判定真实成立；
+ *   ② `Network.setUserAgentOverride` 换成 iPhone UA —— 部分代码按 UA 分支；
+ *   ③ `window.__rlMobilePatch()` —— 删掉 `process` 并把 `Platform.isMobileApp` 改成 true。
+ *      ⚠️ 这层是 **monkey-patch**，属于「模拟」不属于「真机」；它只能证明「代码在移动端运行时
+ *      路径上不崩」，⛔ 不能替真机证明渲染像素一致。
+ */
+const MOBILE_DEVICE = {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 3,
+    ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+};
+
+/**
+ * 在渲染进程里把环境改成「手机端」：
+ * - 删掉 `process`（WebView 里本来就没有）；
+ * - 把 `Platform.isMobileApp` / `isMobile` / `isPhone` 写成 true。
+ *
+ * 🔴 `delete globalThis.process` 本机实测可行（Node 26 里它是 `configurable: true` 的 getter），
+ *    且 `typeof process === 'undefined'` 这个判断在删掉后是安全的 —— 与 `globalThis.process = undefined`
+ *    不同（后者 `'process' in globalThis` 仍为 true）。
+ * 🔴 `Platform` 来自 obsidian 模块，可能是**不可写**的 getter ⇒ 逐字段 try，
+ *    失败时把失败字段如实返回，⛔ 不要假装成功。
+ */
+const MOBILE_PATCH_SCRIPT = `(() => {
+    const out = { processDeleted: false, platformPatched: [], platformFailed: [] };
+
+    // 🔴 2026-11-14 实测结论（务必保留）：**不能删 process**。
+    //    删掉之后 Obsidian 宿主自己的 app.setting.open() 会抛
+    //    \`TypeError: Cannot read properties of undefined (reading 'platform')\`
+    //    （栈顶在 app://obsidian.md/app.js 的 \`new e\`）—— 桌面宿主本身就依赖 process。
+    //    所以「无 process 时插件不崩」这条只能由单测覆盖（tests/mobileRuntime.test.ts），
+    //    UI 级模拟只切 app.isMobile，两件事分开验。
+    out.processDeleted = (typeof globalThis.process === 'undefined');
+    // 如果调用方显式要求删（opt.dropProcess），才删；默认不删。
+    if (out.processDeleted) out.platformPatched.push('process 早已缺失');
+
+    // 真正生效的通道：window.app.isMobile（own-property、{writable:true, configurable:true}）。
+    // 注意：obsidian 模块不在渲染进程 require.cache 里（window.require('obsidian') 抛
+    // Cannot find module），它只在插件 bundle 作用域内注入 ⇒ 从页面外部改不到
+    // Platform.isMobileApp。这里只记录事实，不假装成功。
+    try {
+        const app = window.app;
+        if (app && 'isMobile' in app) {
+            app.isMobile = true;
+            if (app.isMobile === true) out.platformPatched.push('app.isMobile');
+        }
+    } catch (e) {
+        out.platformFailed.push('app.isMobile: ' + String((e && e.message) || e));
+    }
+    out.appIsMobile = !!(window.app && window.app.isMobile);
+    return out;
+})()`;
+
 /** 只做会话内的视口覆盖（内部用；真机窗口另走 Win32） */
-async function applyViewport(c, width, height) {
-    await c.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+async function applyViewport(c, width, height, opt = {}) {
+    const mobile = !!opt.mobile;
+    await c.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: mobile ? MOBILE_DEVICE.deviceScaleFactor : 1,
+        mobile,
+    });
+    if (mobile) {
+        // 触摸 + 无 hover：手机上 `mouseenter` 不会有，「长按 = 右键」也不存在
+        try {
+            await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+        } catch (e) {
+            // 某些 Electron 版本没有这个域；触摸模拟失败不阻断视口，但要留痕
+            console.warn('[cdp] setTouchEmulationEnabled 不可用：' + (e && e.message));
+        }
+        try {
+            await c.send('Network.setUserAgentOverride', { userAgent: MOBILE_DEVICE.ua, platform: 'iPhone' });
+        } catch (e) {
+            console.warn('[cdp] setUserAgentOverride 不可用：' + (e && e.message));
+        }
+    }
     await sleep(500);
     return c.eval(`({ vw: window.innerWidth, vh: window.innerHeight })`);
+}
+
+/**
+ * 把当前会话切到「手机端」：视口 + 触摸 + UA + 删 process + 改 Platform。
+ * @returns 打补丁的结果（含失败字段，供 CLI 如实打印）
+ */
+async function enterMobileMode(c, opt = {}) {
+    const width = Number(opt.width) || MOBILE_DEVICE.width;
+    const height = Number(opt.height) || MOBILE_DEVICE.height;
+    await applyViewport(c, width, height, { mobile: true });
+    const patch = await c.eval(MOBILE_PATCH_SCRIPT);
+    return { width, height, patch };
 }
 
 /**
@@ -611,6 +707,8 @@ module.exports = {
     waitFor,
     setViewport,
     setTheme,
+    enterMobileMode,
+    MOBILE_DEVICE,
     screenshot,
     collectErrors,
 };

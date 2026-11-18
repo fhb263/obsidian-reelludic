@@ -55,7 +55,25 @@ const basesSnippetInline = {
 
 const prod = process.argv[2] === 'production'
 
-const context = await esbuild.context({
+// 构建标识（#334）：把**打包时刻**注入 `__REEL_BUILD__`，插件启动时打印一行。
+// 专治「重载了没有」这个反复出现的排查盲区 —— 磁盘上的 main.js 是新的、而 Obsidian 内存里
+// 跑的仍是旧代码时，症状会表现成「刚修的问题又出现了」，此前只能靠反推代码里的字符串来判断。
+// ⚠️ tsc 侧声明见 `src/types/build-stamp.d.ts`（`tsc -noEmit` 在前，缺声明会挡构建）。
+// 🔴 2026-11-08：**只算一次**再注入两份产物 —— 压缩版与断言版必须同一个时间戳，
+//    否则断言脚本读到两份不同 stamp 时无法判断「是不是同一次构建」。
+const buildStamp = new Date().toISOString()
+
+// ── 公共配置（两份产物共用，差异只有 minify / outfile）──────────────────────────
+// 🔴 2026-11-08 断言脚本复活：`assert-symbols.cjs` 有上千条断言锚的是**源码形态**
+//    （`new ConfirmModal(this.app, message, ` 这类可读标识符与空白）。
+//    2026-11-06 打开 minify 之后，标识符被改名、空白被吃掉 ⇒ 实测 1253 条 FAIL 里
+//    有 1021 条（81%）是**压缩造成的假红**，不是代码坏了（对照实验：同一份源码关掉
+//    minify 后 FAIL 从 1253 降到 232）。
+//    ⇒ production 时额外产出一份**未压缩**的 `main.assert.js` 专供断言脚本读取。
+//    ⚠️ 它只是**观测副本**，永不参与发布：`_deploy.cjs` 的 FILES 只有
+//      main.js / manifest.json / styles.css；`.gitignore` 已排除它。
+//    ⛔ 别把断言改成「读 minified 产物再来兜」—— 那是拿正则去猜混淆结果，必假绿。
+const shared = {
     banner: {
         js: banner,
     },
@@ -91,21 +109,52 @@ const context = await esbuild.context({
     ],
     format: 'cjs',
     target: 'es2018',
-    // 构建标识（#334）：把**打包时刻**注入 `__REEL_BUILD__`，插件启动时打印一行。
-    // 专治「重载了没有」这个反复出现的排查盲区 —— 磁盘上的 main.js 是新的、而 Obsidian 内存里
-    // 跑的仍是旧代码时，症状会表现成「刚修的问题又出现了」，此前只能靠反推代码里的字符串来判断。
-    // ⚠️ tsc 侧声明见 `src/types/build-stamp.d.ts`（`tsc -noEmit` 在前，缺声明会挡构建）。
     define: {
-        __REEL_BUILD__: JSON.stringify(new Date().toISOString()),
+        __REEL_BUILD__: JSON.stringify(buildStamp),
     },
     logLevel: 'info',
     sourcemap: prod ? false : 'inline',
     treeShaking: true,
+}
+
+// ── 压缩（2026-11-06 加）──────────────────────────────────────────────────────
+// 此前这里**从来没开过 minify**，产物长期停在 4.96MB / 5MB 硬线的 99.3%
+// （只余 35KB），随便加一点功能就发不出去。实测同一份源码：
+//   不压缩 4,964,603 B → `minify: true` 2,268,512 B（省 54.3%）。
+// 这是**零功能改动**的瘦身：不删任何特性、不改任何行为，只是让 esbuild 干它该干的活。
+//
+// 为什么敢开（开之前做过蓝军自检，不是拍脑袋）：
+//   ① 全仓 `src/` + `main.ts` 搜 `eval(` / `new Function(` / `Function.prototype.toString` /
+//      `.toString().match` —— **零命中**，没有靠源码文本或构造器反射的地方；
+//   ② `.name` 的命中全部是**数据对象的字段**（TMDB/Steam/歌词/模型 id），只有
+//      `src/pure/aiPrefill.ts:394` 读的是 `fn?.name`，而那是**服务端返回的 JSON**
+//      （`choices[0].message.tool_calls[].function.name`），与 JS 函数的 `.name` 无关；
+//   ③ 用 `tools/.smoke-load.cjs` 真 `require` 产物 + 打桩 obsidian/electron，断言
+//      默认导出是类、原型上有 `onload`/`onunload` —— 压缩前后都 PASS。
+//      ⇒ 判据不是「构建成功」，而是「产物能被加载、插件类真的成立」。
+// ⚠️ 不开 `keepNames`：那会多花 101KB 只为保住标识符名字，而上面三条已证明没人依赖名字。
+// ⚠️ 不 `drop: ['console']`：本仓大量 `console.warn/error` 是缺陷排查的唯一线索，
+//    只为省 1KB 把它们静默掉不划算。
+const context = await esbuild.context({
+    ...shared,
+    minify: true,
     outfile: 'main.js',
 })
 
+// 断言专用未压缩副本（见 shared 上方注释）。只在 production 产生，dev watch 不产。
+const assertContext = prod
+    ? await esbuild.context({
+        ...shared,
+        minify: false,
+        outfile: 'main.assert.js',
+    })
+    : null
+
 if (prod) {
     await context.rebuild()
+    await assertContext.rebuild()
+    await context.dispose()
+    await assertContext.dispose()
     process.exit(0)
 } else {
     await context.watch()
