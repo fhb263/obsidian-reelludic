@@ -485,7 +485,11 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
         lines.forEach((line, i) => {
             // 🔴 m04435 ③：`[Gold]` 标记过的行挂 `is-gold` —— CSS 靠它出**暗金**（非当前行）
             //    和**亮金**（`.is-gold.is-cur`）。⛔ 别在这里写颜色（真源在 `styles.css`）。
-            //    ⚠️ `is-gold` 只影响配色，不影响逐字高亮：`.rl-ap-lyr-w` 那套照旧生效。
+            //    ⚠️ `is-gold` **不改变 DOM 结构**（该行照旧拆成 `.rl-ap-lyr-w` 词元），
+            //       但配色上它必须盖住逐字态 —— 否则金句当前行会被 `.is-cur .rl-ap-lyr-w.is-on`
+            //       (0,4,0) 抢成主题色（🔴 m07623 用户报障：「被逐字滚动效果覆盖成主题色了」）。
+            //       覆盖规则在 `styles.css` 的 `.rl-ap-lyr-line.is-gold.is-cur .rl-ap-lyr-w*`，
+            //       判据在 `tests/lrcGold.test.ts` 的「按层叠算实际颜色」一组。⛔ 别在这里写颜色。
             const goldCls = line.gold ? ' is-gold' : '';
             const row = el('div', 'rl-ap-lyr-line' + (plainLyrics ? ' is-plain' : '') + goldCls);
             // 🔴 #406 逐字高亮：整行拆成词元 span（词元拼接 == `line.text`，⛔ 不动文本内容）。

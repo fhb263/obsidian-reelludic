@@ -207,9 +207,12 @@ describe('🔴 m04435 ③ [Gold] 渲染：暗金 / 亮金', () => {
         expect(CSS).toMatch(/\.theme-dark \.rl-ap-lyr-line\.is-gold \{[^}]*color: #c79a35;/);
     });
 
-    it('⚠️ 金配色不抢逐字高亮：`.rl-ap-lyr-w` 那两条规则必须还在', () => {
+    it('⚠️ 逐字高亮的基础两条规则必须还在（非金句全靠它们）', () => {
         expect(CSS).toMatch(/\.rl-ap-lyr-line\.is-cur \.rl-ap-lyr-w \{[^}]*color: var\(--text-faint\)/);
         expect(CSS).toMatch(/\.rl-ap-lyr-line\.is-cur \.rl-ap-lyr-w\.is-on \{[^}]*color: var\(--text-accent\)/);
+        // 🔴 m07623：本条只保「基础规则在位」。**「金句当前行到底显什么色」由层叠胜负决定**，
+        //   字符串存在性检查查不出被覆盖 —— 那部分判据在 `tests/lrcGold.test.ts` 的「层叠」一组，
+        //   按特异度 + 出现顺序算实际生效值（本 bug 正是这样漏过去的：两条规则都在，金却被盖掉）。
     });
 });
 

@@ -14191,6 +14191,19 @@ body.rl-shot-dragging {
    未拆词元的行（没开开关 / 该行无逐字时间）不含 `.rl-ap-lyr-w`，这两条规则自然不生效。 */
 .rl-ap-lyr-line.is-cur .rl-ap-lyr-w { color: var(--text-faint); }
 .rl-ap-lyr-line.is-cur .rl-ap-lyr-w.is-on { color: var(--text-accent); }
+/* 🔴 m07623（用户：「LRC `[Gold]`格式下，被逐字滚动效果覆盖成主题色了啊」）：
+   金句一旦被拆成词元 span，上面那两条逐字规则会把**行色**整段盖掉 ——
+   `.is-cur .rl-ap-lyr-w` 是 (0,3,0)、`.is-cur .rl-ap-lyr-w.is-on` 是 (0,4,0)，
+   都压过 `.is-gold` (0,2,0) 与 `.is-gold.is-cur` (0,3,0) ⇒ 金句当前行变主题色/灰。
+   这里补一组**更高特异性**的金色覆盖，让「金」在逐字态下依然成立，同时保住逐字本身的
+   明暗对比（已唱到 = 亮金、未唱到 = 暗金），⛔ 不是为了覆盖而退回灰色。
+   ⚠️ 特异性账（类计数）：本组 (0,4,0) / (0,5,0)，深色再各 +1 ⇒ 恒高于上面两条基础规则；
+      而基础规则**必须原样保留**（非金句的逐字高亮全靠它们，产物断言也盯着那两条）。
+   ⚠️ 深色主题沿用上面「暗金整体提亮一档」的口径（#a8791f → #c79a35），亮金两主题同值。 */
+.rl-ap-lyr-line.is-gold.is-cur .rl-ap-lyr-w { color: #a8791f; }
+.rl-ap-lyr-line.is-gold.is-cur .rl-ap-lyr-w.is-on { color: #f5c451; }
+.theme-dark .rl-ap-lyr-line.is-gold.is-cur .rl-ap-lyr-w { color: #c79a35; }
+.theme-dark .rl-ap-lyr-line.is-gold.is-cur .rl-ap-lyr-w.is-on { color: #f5c451; }
 /* #508：双语译文**单独一行**（更小 + 更灰），**不参与逐字高亮**。
    LRC双语歌词呈现渲染作两行（原文参与逐字高亮，译文作第二行变小变灰不参与逐字高亮）。
    它之所以天然不参与高亮：词元 span 只覆盖**原文**（解析侧 `pure/lrc.splitAnnotation` 拆的），
