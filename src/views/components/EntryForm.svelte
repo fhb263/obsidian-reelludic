@@ -2067,7 +2067,16 @@ export let initialBookKind: BookKind | undefined = undefined;
             // ⚠️ 这是**程序化回填**（不是手填）⇒ `metaTouched` 保持 false，#386 的预览徽标仍只对手填出现。
             // ⛔ 别退回 `sourceName = ''`（那是 #430 的旧口径）：数据源明明记下了，框里却只有一个占位符 ——
             //   用户看到的就是「没拉取到来源」。
-            sourceName = sourceLabel(sourceFrom);
+            // 🔴 m10134 ①：曲库结果回填的「来源名」要写**平台名**（网易云 / QQ音乐 / 酷狗 / 酷我），
+            //   ⛔ 不是「在线曲库」。曲库栏把四平台压成了一栏，`r.source` 只能是 `SONG_LIB_ID`
+            //   （栏位归属，不可改，见 `pure/songLibrary.ts:88-107` 的 #458 教训），平台名单独挂在
+            //   `platformLabel` 上 —— 卡片展示侧早就用它覆盖了（`pure/searchDisplay.ts:258`），
+            //   这里当初漏了，于是卡片写着「网易云」、表单来源框却写「在线曲库」，两处对不上。
+            // ⚠️ 非曲库结果没有 `platformLabel` 键 ⇒ 仍走 `sourceLabel(sourceFrom)`，行为零变化。
+            // ⚠️ 必须用 `'platformLabel' in r` 窄化：`SearchResult` 是联合类型，
+            //    只有音乐结果带这个键，直接点访问会被 svelte-check 判 TS2339。
+            const pickedPlatform = ('platformLabel' in r ? String(r.platformLabel ?? '') : '').trim();
+            sourceName = pickedPlatform || sourceLabel(sourceFrom);
             sourceUrl = describeSearchResult(r).sourceUrl ?? '';
             communityScore = r.rating != null ? String(r.rating) : '';
             ratingCount = r.ratingCount ? String(r.ratingCount) : '';
