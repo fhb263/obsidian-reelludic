@@ -3,6 +3,7 @@ import {
     DEFAULT_PREFILL_PROMPT,
     MAX_PREFILL_ROUNDS,
     PREFILL_SYNOPSIS_PREFIX,
+    PREFILL_TOOL_FETCH_PAGE,
     PREFILL_TOOL_METADATA,
     PREFILL_TOOL_WEB_SEARCH,
     buildPrefillRequest,
@@ -20,6 +21,7 @@ import {
     preferToolSynopsis,
 } from 'pure/aiPrefill';
 import { ZHIPU_MODEL } from 'pure/translate';
+import { formFieldSpec } from 'pure/formFields';
 
 
 /** 便捷封装（原 `buildAiPrefillBody` 的等价物：标题空 ⇒ null；带 tools ⇒ 请求体也带） */
@@ -86,6 +88,24 @@ describe('prefillFieldsFor（字段目录 = 真源）', () => {
         for (const banned of ['status', 'rating', 'notes', 'progress', 'audioPath', 'episodeFiles', 'playtime']) {
             expect(all.has(banned)).toBe(false);
         }
+    });
+
+    it('🔴 m09330 六类型都给「标签」框，且提示词口径是**逗号**（⛔ 不是题材那套斜杠）', () => {
+        // 用户 m09330：「增加每个类型条目编辑属性表单AI预填可填的框」，点名要「标签」。
+        // 标签与题材的切分口径**不同**（`pure/formFields`：tags=comma、genres=slash），
+        // 提示词若跟着题材写「用 / 分隔」，模型吐 `周末/睡前` 会被当成一个标签名存下来。
+        for (const t of ['movie', 'tv', 'anime', 'book', 'game', 'music'] as const) {
+            expect(KEYS(t), `${t} 缺 tags`).toContain('tags');
+        }
+        expect(KEYS('book', 'novel')).toContain('tags');
+        expect(KEYS('book', 'comic')).toContain('tags');
+        const tagsDef = prefillFieldsFor('movie').find((d) => d.key === 'tags')!;
+        expect(tagsDef.label).toBe('标签');
+        expect(tagsDef.hint).toContain('逗号');
+        expect(tagsDef.hint).not.toContain('用 / 分隔');
+        // 与 `pure/formFields` 的 sep 对齐（真源只有一处，别两边各写一遍）
+        expect(formFieldSpec('tags')?.sep).toBe('comma');
+        expect(formFieldSpec('genres')?.sep).toBe('slash');
     });
 
     it('字段键在**同一个类型内**不重复，且都带 label 与 hint', () => {
@@ -226,9 +246,11 @@ describe('buildPrefillRows（预览行）', () => {
 
 // ──────────── #499D agent 工具回路（用户：「能不能做 agent 调用 tools 或者 skills 搜索」）────────────
 describe('工具定义与回路裁决', () => {
-    it('工具清单就两款，名字与常量一致（⛔ 宿主执行器认的就是这两个名字）', () => {
+    it('工具清单就三款，名字与常量一致（⛔ 宿主执行器认的就是这三个名字）', () => {
         const names = prefillTools().map((t) => t.function.name);
-        expect(names).toEqual([PREFILL_TOOL_METADATA, PREFILL_TOOL_WEB_SEARCH]);
+        // m09330 加第三款 fetch_page：必应 RSS 只有标题+摘要、元数据源搜索级常不带简介，
+        // 没有「读页面」这一步，模型永远拿不到简介原文、只能编。
+        expect(names).toEqual([PREFILL_TOOL_METADATA, PREFILL_TOOL_WEB_SEARCH, PREFILL_TOOL_FETCH_PAGE]);
         for (const t of prefillTools()) {
             expect(t.type).toBe('function');
             expect(t.function.description.length).toBeGreaterThan(10);
@@ -253,7 +275,7 @@ describe('工具定义与回路裁决', () => {
 
     it('buildAiPrefillBody 带 tools ⇒ 请求体里有 tools；不带 ⇒ 一个字段都不多（与 #499 完全一致）', () => {
         const withT = prefillBody({ type: 'movie', title: 'x' }, undefined, undefined, undefined, prefillTools())!;
-        expect(withT.tools).toHaveLength(2);
+        expect(withT.tools).toHaveLength(3);
         const withoutT = prefillBody({ type: 'movie', title: 'x' })!;
         expect(withoutT.tools).toBeUndefined();
         expect(Object.keys(withoutT).sort()).toEqual(['messages', 'model', 'stream']);
@@ -382,11 +404,18 @@ describe('简介照搬：标记 / 提取 / 覆盖裁决', () => {
         });
     });
 
-    it('preferToolSynopsis：没查到原文 ⇒ 原样返回（模型凭记忆写的那份留下）', () => {
+    it('🔴🔴 preferToolSynopsis：没查到原文 ⇒ **删除 summary**（⛔ 不许保留模型凭记忆写的那份）', () => {
+        // m09330（用户：「怎么AI搜索出来每个条目简介都是编的，我要的是原生原味的简介」）：
+        // 旧口径是「原样返回、把模型写的那份留下」—— 那正是「编的简介」进入笔记的通道。
+        // 现在没拿到权威原文就一个字都不给，宁可留空让人手填。
         const defs = prefillFieldsFor('movie');
-        const fields = { summary: '模型凭记忆写的' };
-        expect(preferToolSynopsis(fields, null, defs)).toBe(fields);
-        expect(preferToolSynopsis(fields, '   ', defs)).toBe(fields);
+        const fields = { year: '2015', summary: '模型凭记忆写的' };
+        expect(preferToolSynopsis(fields, null, defs)).toEqual({ year: '2015' });
+        expect(preferToolSynopsis(fields, '   ', defs)).toEqual({ year: '2015' });
+        // 反向守卫：⛔ 不许回潮成「保留模型那份」
+        expect(preferToolSynopsis(fields, null, defs)).not.toHaveProperty('summary');
+        // 且**不许原地改**传进去的对象（调用方可能还要用）
+        expect(fields.summary).toBe('模型凭记忆写的');
     });
 
     it('preferToolSynopsis：该类型不问简介 ⇒ 不塞（`defs` 是白名单，⛔ 别凭空加字段）', () => {

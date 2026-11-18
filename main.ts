@@ -31,8 +31,9 @@ import type { LrcBilingualMerge } from 'pure/lrcBilingual';
 import { AiPrefillService } from 'services/aiPrefill';
 import type { AiPrefillOutcome } from 'services/aiPrefill';
 import type { AiPrefillInput } from 'pure/aiPrefill';
-import { PREFILL_SYNOPSIS_PREFIX, PREFILL_TOOL_METADATA, PREFILL_TOOL_WEB_SEARCH } from 'pure/aiPrefill';
+import { PREFILL_SYNOPSIS_PREFIX, PREFILL_TOOL_FETCH_PAGE, PREFILL_TOOL_METADATA, PREFILL_TOOL_WEB_SEARCH } from 'pure/aiPrefill';
 import { BING_SEARCH_UA, bingResultsToText, buildBingRssUrl, parseBingRss } from 'pure/bingSearch';
+import { PAGE_TEXT_MAX, extractPageSynopsis, pageReadableText } from 'pure/pageText';
 import { describeSearchResult, synopsisOf, type SearchResult } from 'pure/searchDisplay';
 import { createVaultIO } from 'services/vaultIO';
 import { TmdbClient, posterUrl as tmdbPosterUrl, type TmdbDetail, type TmdbSearchResult } from 'services/tmdb';
@@ -11524,9 +11525,38 @@ export default class ReelLudicPlugin extends Plugin {
             // 🔴 #499E：把**最佳命中的简介原文**一并交出去（用户 2026-10-03：「简介要搜索照搬真正作品的简介」）。
             //    服务层会照搬它去覆盖模型自己写的那一版 ⇒ 这段**必须带标记、且放在文本末尾**
             //    （标记与提取器是 `pure/aiPrefill` 的同一对常量，⛔ 别在这儿手写一遍字符串）。
-            // ⚠️ 取 `hits[0]`（各源的排序已是相关性序）；查不到原文就**不加这一行**，让模型凭记忆兜底。
-            const synopsis = synopsisOf(hits[0]);
+            // 🔴 m09330：⛔ 不再只看 `hits[0]` —— 第一名常常没简介（豆瓣 / Open Library 的搜索级记录
+            //    经常只有标题与年份），只看它等于整条回路没原文、模型回去编。现在**按相关性顺序找第一个
+            //    带简介的命中**（仍然优先靠前的，只是不再被一名卡死）。
+            const withSynopsis = hits.find((h) => (synopsisOf(h) ?? '').trim().length > 0);
+            const synopsis = withSynopsis ? synopsisOf(withSynopsis) : undefined;
             return synopsis ? `${head}\n\n${PREFILL_SYNOPSIS_PREFIX}${synopsis}` : head;
+        }
+
+        // 🔴 m09330（用户：「怎么AI搜索出来每个条目简介都是编的，我要的是原生原味的简介」）：
+        //    新增 `fetch_page` —— 前面两条工具都拿不到简介原文时，靠它**顺着搜索结果点进去抓正文**。
+        //    为什么非它不可：`web_search` 走必应 RSS，每条只有标题 + 两行摘要（`pure/bingSearch`）；
+        //    元数据源的搜索级记录也常常不带简介 ⇒ 没有这一步，「简介」永远是编的。
+        if (name === PREFILL_TOOL_FETCH_PAGE) {
+            const raw = str('url');
+            const target = /^https?:\/\//i.test(raw) ? raw : '';
+            if (!target) return '（没给合法的网页地址，要以 http:// 或 https:// 开头）';
+            try {
+                const res = await nodeHttpGet(target, {
+                    'User-Agent': BING_SEARCH_UA,
+                    'Accept-Language': 'zh-CN,zh;q=0.9',
+                });
+                if (res.status !== 200) return `（抓取失败：HTTP ${res.status}）`;
+                const body = pageReadableText(res.text, PAGE_TEXT_MAX);
+                if (!body) return '（这个页面没有可读正文，换一个来源试试）';
+                // ⚠️ 简介原文**必须放在末尾**（提取器取标记之后的串尾），正文太长时只留前半段，
+                //    免得把简介挤出上下文预算。
+                const syn = extractPageSynopsis(res.text);
+                const head = `页面正文（${target}）：\n${body.slice(0, Math.min(body.length, 2400))}`;
+                return syn ? `${head}\n\n${PREFILL_SYNOPSIS_PREFIX}${syn}` : head;
+            } catch (e) {
+                return `（抓取失败：${e instanceof Error ? e.message : String(e)}）`;
+            }
         }
 
         return `（未知工具：${name}）`;

@@ -196,7 +196,7 @@ describe('AiPrefillService · agent 工具回路', () => {
         const r = await h.svc.generate({ type: 'movie', title: 'x' });
         expect(r).toEqual({ fields: { year: '2021' }, sources: [] });
         expect(h.calls).toHaveLength(2);
-        expect(JSON.parse(h.calls[0].body!).tools).toHaveLength(2);
+        expect(JSON.parse(h.calls[0].body!).tools).toHaveLength(3);
         expect(JSON.parse(h.calls[1].body!).tools).toBeUndefined(); // 第二次不再带
         expect(h.notes.some((n) => n.includes('不支持工具调用'))).toBe(true);
     });
@@ -246,13 +246,16 @@ describe('AiPrefillService · 简介照搬', () => {
         expect(r!.sources).toEqual(['元数据源']);
     });
 
-    it('工具没查到简介 ⇒ 模型凭记忆写的那份留下（并在依据里如实说「凭模型记忆」）', async () => {
+    it('🔴🔴 工具没查到简介 ⇒ **模型写的那份一律丢弃**（m09330：宁可留空，不许编）', async () => {
         const h = loopHarness({
             replies: [toolCall('lookup_metadata', { title: '某冷门作', type: 'movie' }), okReply('{"summary":"模型凭记忆写的概述"}')],
             runTool: async () => '命中 1 条：\n1. 某冷门作 — 1999 · 豆瓣',
         });
         const r = await h.svc.generate({ type: 'movie', title: '某冷门作' });
-        expect(r!.fields.summary).toBe('模型凭记忆写的概述');
+        // 用户 2026-11-18：「怎么AI搜索出来每个条目简介都是编的，我要的是原生原味的简介」
+        // 查不到原文就一个字都不给 —— 这是「编的简介」进笔记的唯一通道，必须堵死。
+        expect(r!.fields.summary).toBeUndefined();
+        expect(r!.fields).not.toHaveProperty('summary');
     });
 
     it('🔴 简介原文**只认首个**：后一轮的搜索结果不能改写已锁定的那份', async () => {
@@ -280,12 +283,14 @@ describe('AiPrefillService · 简介照搬', () => {
         expect(r!.fields).toEqual({ summary: '只有简介也值得落下来' });
     });
 
-    it('工具**失败**（没吐简介）⇒ 不误伤模型写的简介', async () => {
+    it('工具**失败**（没吐简介）⇒ 模型写的简介同样丢弃（失败不等于可以编）', async () => {
         const h = loopHarness({
             replies: [toolCall('lookup_metadata', { title: 'x', type: 'movie' }), okReply('{"summary":"模型写的"}')],
             runTool: async () => { throw new Error('HTTP 429'); },
         });
         const r = await h.svc.generate({ type: 'movie', title: 'x' });
-        expect(r!.fields.summary).toBe('模型写的');
+        // ⚠️ 旧标题是「不误伤模型写的简介」，m09330 之后这条预期反了：
+        // 工具挂了确实拿不到原文，但**「拿不到原文」正是丢掉模型那版的条件**，不是保留它的理由。
+        expect(r!.fields).not.toHaveProperty('summary');
     });
 });

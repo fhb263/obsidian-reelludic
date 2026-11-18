@@ -32,6 +32,7 @@ import { parseAiJsonObject } from 'pure/aiJson';
 export type PrefillFieldKey =
     | 'year'
     | 'genres'
+    | 'tags'
     | 'author'
     | 'artist'
     | 'publisher'
@@ -62,6 +63,7 @@ const NUMERIC_KEYS: ReadonlySet<PrefillFieldKey> = new Set(['year', 'pageCount',
 const MAX_CHARS: Readonly<Record<PrefillFieldKey, number>> = {
     year: 4,
     genres: 60,
+    tags: 120,
     author: 80,
     artist: 80,
     publisher: 80,
@@ -86,13 +88,28 @@ const MAX_CHARS: Readonly<Record<PrefillFieldKey, number>> = {
 const SUMMARY_DEF: PrefillFieldDef = {
     key: 'summary',
     label: '简介',
-    hint: '作品简介原文：工具结果里给了「简介原文」就照抄（一字不改）；没给才凭记忆写 2~4 句',
+    hint: '作品简介原文：工具结果里给了「简介原文」就照抄（一字不改）；⛔ 没给就**留空**，不要自己写',
+};
+
+/**
+ * 🔴 m09330（用户 2026-11-18：「增加每个类型条目编辑属性表单AI预填可填的框」，点名要「标签」）：
+ * 六类型通用的「标签」字段。
+ *
+ * ⚠️ 分隔符口径**必须与表单一致**：`src/pure/formFields.ts` 里 `tags` 的 `sep` 是 `'comma'`
+ *    （note 逐字「⚠️ 只认逗号（斜杠会被当成标签名的一部分）」）。所以这里的 hint 说「用逗号分隔」，
+ *    ⛔ 别跟着题材 / 主演写成「用 / 分隔」—— 那样填出来的标签会连斜杠一起变成标签名。
+ */
+const TAGS_DEF: PrefillFieldDef = {
+    key: 'tags',
+    label: '标签',
+    hint: '给这条内容打的个人标签，多个**用逗号分隔**（如 周末, 睡前）',
 };
 
 /** 影视（电影 / 电视剧 / 动画）三类的字段几乎同构，只有「总集数」和「主演」的标签不同 */
 function screenDefs(type: EntryType): PrefillFieldDef[] {
     const defs: PrefillFieldDef[] = [
         { key: 'genres', label: '题材', hint: '作品题材，多个用 / 分隔' },
+        TAGS_DEF,
         { key: 'year', label: type === 'movie' ? '上映年' : '首播年', hint: '首映年份，只写 4 位数字' },
         { key: 'directorWriters', label: '导演', hint: '导演，多个用 / 分隔（如确信也可附上编剧）' },
         { key: 'cast', label: type === 'anime' ? '主演（声优）' : '主演', hint: '主要演员，多个用 / 分隔' },
@@ -114,6 +131,7 @@ export function prefillFieldsFor(type: EntryType, bookKind?: BookKind): PrefillF
                 { key: 'year', label: '上架年', hint: '开始连载 / 上架的年份，只写 4 位数字' },
                 { key: 'author', label: '作者', hint: '作者名，多个用 / 分隔' },
                 { key: 'genres', label: '题材', hint: '作品题材，多个用 / 分隔' },
+                TAGS_DEF,
                 { key: 'pageCount', label: '元数据章数', hint: '总章节数，只写数字' },
                 SUMMARY_DEF,
                 { key: 'authorIntro', label: '作者简介', hint: '作者介绍，中文 1~3 句' },
@@ -126,6 +144,7 @@ export function prefillFieldsFor(type: EntryType, bookKind?: BookKind): PrefillF
                 { key: 'publisher', label: '出版社', hint: '出版社名' },
                 { key: 'author', label: '作者', hint: '原作 / 编剧，多个用 / 分隔' },
                 { key: 'genres', label: '题材', hint: '作品题材，多个用 / 分隔' },
+                TAGS_DEF,
                 { key: 'artist', label: '画师', hint: '作画，多个用 / 分隔' },
                 { key: 'pageCount', label: '总话数', hint: '总话数，只写数字' },
                 SUMMARY_DEF,
@@ -136,6 +155,7 @@ export function prefillFieldsFor(type: EntryType, bookKind?: BookKind): PrefillF
             { key: 'publisher', label: '出版社', hint: '出版社名' },
             { key: 'author', label: '作者', hint: '作者名，多个用 / 分隔' },
             { key: 'genres', label: '题材', hint: '作品题材，多个用 / 分隔' },
+            TAGS_DEF,
             { key: 'isbn', label: 'ISBN', hint: 'ISBN 号，只写数字（如 9787536692930）' },
             { key: 'pageCount', label: '元数据页数', hint: '总页数，只写数字' },
             SUMMARY_DEF,
@@ -147,6 +167,7 @@ export function prefillFieldsFor(type: EntryType, bookKind?: BookKind): PrefillF
     if (type === 'game') {
         return [
             { key: 'genres', label: '题材', hint: '游戏题材 / 类型，多个用 / 分隔' },
+            TAGS_DEF,
             { key: 'year', label: '发行年', hint: '发行年份，只写 4 位数字' },
             { key: 'platform', label: '平台', hint: '支持平台，如 PC / Switch / PS5' },
             { key: 'developer', label: '开发商', hint: '开发 / 制作公司' },
@@ -158,6 +179,7 @@ export function prefillFieldsFor(type: EntryType, bookKind?: BookKind): PrefillF
         { key: 'author', label: '作者', hint: '歌手 / 艺术家' },
         { key: 'album', label: '专辑', hint: '所属专辑名' },
         { key: 'genres', label: '题材', hint: '音乐风格，多个用 / 分隔' },
+        TAGS_DEF,
         { key: 'year', label: '发行年', hint: '发行年份，只写 4 位数字' },
         SUMMARY_DEF,
     ];
@@ -171,10 +193,13 @@ export const DEFAULT_PREFILL_PROMPT =
     '你在为个人影音书游收藏库补全条目资料。根据用户给出的作品信息，填写他列出的字段。\n' +
     '· 只填写你确有把握的内容；**不确定的字段直接省略**（不要给空串，不要猜，不要编造人名与数字）。\n' +
     '· 年份只写 4 位数字；页数 / 章数 / 集数 / ISBN 只写数字；其余均为字符串。\n' +
-    '· 多个同类值之间用「 / 」分隔（题材、主演、导演等）。\n' +
-    '· 🔴 简介：**若工具结果里给出了「简介原文」，就照抄那一段**（一字不改地搬过来，跨行的折成一行），' +
-    '⛔ 不要缩写、不要润色、不要改写成自己的话。工具没给简介时，才凭记忆写 2~4 句客观陈述；' +
-    '不要剧透结局，不要「本片讲述了」「本书讲述了」这类套话。\n' +
+    '· 多个同类值之间用「 / 」分隔（题材、主演、导演等）；**标签用逗号分隔**（标签名里的斜杠要保留）。\n' +
+    '· 🔴 简介：**只照抄**工具结果里给出的「简介原文」（一字不改地搬过来，跨行的折成一行），' +
+    '⛔ 不要缩写、不要润色、不要改写成自己的话。\n' +
+    '· 🔴🔴 **没有拿到「简介原文」就【绝不写简介】**：这个字段留空、直接从 JSON 里省掉。' +
+    '⛔ 严禁凭记忆、凭印象、凭常识编一段——用户要的是作品原本的简介，编的等于错。' +
+    '需要简介就去调工具（`lookup_metadata` 查元数据源、`fetch_page` 抓权威页面原文），' +
+    '查到为止；实在查不到，就让这个字段空着。\n' +
     '· 只输出一个 JSON 对象（键就是用户列出的字段名），不要代码块标记，不要任何解释。';
 
 export interface AiPrefillInput {
@@ -235,7 +260,15 @@ export function prefillMessages(
     if (clueAuthor) lines.push(`作者线索：${clueAuthor}`);
     lines.push('', '请填写下列字段（能确定几个就填几个）：', fieldLines(defs));
     if (withTools) {
-        lines.push('', '如果下面的字段你没有把握，可以先调用工具查一查（查到什么算什么，查不到就凭你知道的写）。');
+        lines.push(
+            '',
+            '如果下面的字段你没有把握，可以先调用工具查一查（优先查证事实，别凭印象填）。',
+            '🔴🔴 **「简介」这一格只认工具给的原文**：先 `lookup_metadata` 查元数据源；' +
+                '那里没有原文，就用 `web_search` 搜到权威条目页（豆瓣 / Bangumi / 维基 / 官网），' +
+                '再用 `fetch_page` 把页面正文抓回来照抄。' +
+                '⛔ 查不到就把「简介」留空（从 JSON 里省掉），**绝对不许自己编一段**——' +
+                '用户要的是作品原本的简介，编出来的等于错。',
+        );
         // 🔴 #508（用户：「AI预填功能除了搜标题还要能一同并搜填在作者框的名称」）：
         //    这句是**代码拥有的**（⛔ 不放进设置页那条可改写的提示词里）——
         //    「默认提示词说『不确定就省略』」+「工具指令说『可以先查』」合起来，模型很容易
@@ -285,6 +318,15 @@ export function buildPrefillRequest(
 export const PREFILL_TOOL_METADATA = 'lookup_metadata';
 /** 工具名：联网搜索（必应 RSS，免费无需 Key） */
 export const PREFILL_TOOL_WEB_SEARCH = 'web_search';
+/**
+ * 工具名：抓取一个**权威页面**的正文（🔴 m09330 新增）。
+ *
+ * 为什么必须有它：`web_search` 走必应 RSS，每条结果**只有标题 + 两行摘要**
+ * （`pure/bingSearch` 的 `parseBingRss`），里面从来没有作品简介；而 `lookup_metadata`
+ * 的搜索级记录也常常不带简介（Open Library 的简介只在 works.json 详情里）。
+ * 两条路都拿不到原文 ⇒ 模型只能编。这个工具让模型**顺着搜索结果点进去抓原文**。
+ */
+export const PREFILL_TOOL_FETCH_PAGE = 'fetch_page';
 /** 工具回路**最多几轮**（含首轮）—— 防止模型来回查个没完（每次都是一个完整请求） */
 export const MAX_PREFILL_ROUNDS = 3;
 
@@ -313,16 +355,29 @@ export function extractToolSynopsis(text: unknown): string | null {
  * 工具查到了原文 ⇒ **无条件覆盖**模型给出的 `summary`（⛔ 不比较、不择优 —— 实测模型会顺手润色，
  * 让它自己拿主意就回到了「客观概述」那条老路）。
  *
- * 三道保险：没有原文 / 该类型不问简介 / 空白串 ⇒ **原样返回**（模型凭记忆写的那份留下）。
+ * 🔴🔴 m09330（用户 2026-11-18：「怎么AI搜索出来每个条目简介都是编的，我要的是原生原味的简介」）
+ * **改判**：没查到原文 ⇒ **把 `summary` 整个删掉**（⛔ 不再「原样返回、留着模型写的那份」）。
+ *
+ * 为什么必须删：旧口径下「查不到就凭记忆写 2~4 句」，而实测绝大多数情况下工具确实查不到原文
+ * （必应 RSS 没有简介、元数据源搜索级常不带简介）⇒ 用户看到的**永远**是编的那份。
+ * 现在简介只有两个合法来源：工具给的原文，或者**空着**。
+ *
+ * 三道保险：该类型不问简介 / 空白串 ⇒ 原样返回（连「删 summary」都不做，因为本就没这个字段语义）。
  */
 export function preferToolSynopsis(
     fields: Partial<Record<PrefillFieldKey, string>>,
     synopsis: unknown,
     defs: PrefillFieldDef[],
 ): Partial<Record<PrefillFieldKey, string>> {
-    const s = String(synopsis ?? '').replace(/\s+/g, ' ').trim();
-    if (!s) return fields;
     if (!defs.some((d) => d.key === 'summary')) return fields;
+    const s = String(synopsis ?? '').replace(/\s+/g, ' ').trim();
+    if (!s) {
+        // 没原文 ⇒ 不许留模型编的那版（用户点名要「原生原味」）
+        if (!('summary' in fields)) return fields;
+        const next = { ...fields };
+        delete next.summary;
+        return next;
+    }
     return { ...fields, summary: clip(s, MAX_CHARS.summary) };
 }
 
@@ -358,13 +413,32 @@ export function prefillTools(): AiToolDef[] {
                 name: PREFILL_TOOL_WEB_SEARCH,
                 description:
                     '联网搜索网页（适合冷门作品、或者想确认年份/主创/平台这类需要查证的事实）。' +
-                    '返回若干条搜索结果的标题与摘要。一次没找到可以换个关键词再搜一次。',
+                    '返回若干条搜索结果的标题、摘要与**链接**。一次没找到可以换个关键词再搜一次；' +
+                    '要读某个结果的正文（尤其是**作品简介**），把它的链接交给 `' + PREFILL_TOOL_FETCH_PAGE + '`。',
                 parameters: {
                     type: 'object',
                     properties: {
                         query: { type: 'string', description: '搜索词，例如「作品名 导演」「作品名 开发商」' },
                     },
                     required: ['query'],
+                },
+            },
+        },
+        {
+            type: 'function',
+            function: {
+                name: PREFILL_TOOL_FETCH_PAGE,
+                description:
+                    '抓取一个网页的正文（🔴 拿**作品简介原文**的主要途径）。传一个权威页面地址' +
+                    '（豆瓣 / Bangumi / Wikipedia / 官网 / IGDB 等条目页），返回该页可读正文；' +
+                    '若页面里能识别出简介段落，**末尾会以「' + PREFILL_SYNOPSIS_PREFIX + '」开头附上原文** ——' +
+                    '填「简介」字段时照抄那一段，⛔ 不要改写。',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        url: { type: 'string', description: '要抓取的网页地址（http/https 开头）' },
+                    },
+                    required: ['url'],
                 },
             },
         },
@@ -437,6 +511,7 @@ export function prefillToolLabel(call: PrefillToolCall): string {
     };
     if (call.name === PREFILL_TOOL_WEB_SEARCH) return `搜索网络：${pick('query') || '…'}`;
     if (call.name === PREFILL_TOOL_METADATA) return `查元数据源：${pick('title') || '…'}`;
+    if (call.name === PREFILL_TOOL_FETCH_PAGE) return `读页面：${pick('url') || '…'}`;
     return `调用工具：${call.name}`;
 }
 
@@ -444,6 +519,7 @@ export function prefillToolLabel(call: PrefillToolCall): string {
 export function prefillSourceLabel(name: string): string {
     if (name === PREFILL_TOOL_WEB_SEARCH) return '网络搜索';
     if (name === PREFILL_TOOL_METADATA) return '元数据源';
+    if (name === PREFILL_TOOL_FETCH_PAGE) return '页面原文';
     return name;
 }
 

@@ -733,6 +733,7 @@ export let initialBookKind: BookKind | undefined = undefined;
         return {
             year,
             genres,
+            tags: tagsText,
             author,
             artist,
             publisher,
@@ -835,6 +836,10 @@ export let initialBookKind: BookKind | undefined = undefined;
                 case 'platform': platform = row.next; break;
                 case 'developer': developer = row.next; break;
                 case 'album': album = row.next; break;
+                // 🔴 m09330：标签（用户点名要预填这个框）。⚠️ 表单侧变量是 `tagsText`，
+                //    落库时在 `input.tags = tagsText.split(/[,，]/)` 那一步才切成数组 ——
+                //    这里只能整串写回，⛔ 别提前 split（预览值里带逗号才是对的）。
+                case 'tags': tagsText = row.next; break;
             }
         }
         clearPrefill();
