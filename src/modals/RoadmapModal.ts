@@ -56,7 +56,15 @@ export const ROADMAP_CELLS: readonly RoadmapCell[] = [
     {
         name: '计划追踪',
         scope: '追番表、排期表、追更检测',
-        level: 'v0',
+        // 🔴 2026-11-18 用户裁定（本轮回填取证后拍板）：由 v0 升到 v1「基本可用」。
+        //    依据三项在 `src/` 里都已落地，不再是概念：
+        //      · 追番表 —— `pure/bangumiSync.ts` / `services/bangumi.ts` / `ImportBangumiModal.ts`；
+        //      · 排期表 —— `HomeView.svelte` 计划页第三档 `{ trackingMode = 'calendar' }>排期表</button>`；
+        //      · 追更检测 —— `data/types.ts:342` 的 `latestKnownEpisode?: number`（注释逐字「追更检测已知最新集
+        //        （v0.5 A2 落库）：最近一次网站更新检测到的最大集数，进追更表秒显 + 更新提示去重基线」）
+        //        + `HomeView.svelte` 的 `onSaveLatestKnown` 写回。
+        //    ⚠️ 同批取证的「AI 赋能」「生态联动」用户裁定**保持 v0**，⛔ 别顺手一起上调。
+        level: 'v1',
     },
     {
         name: '统计报告',
