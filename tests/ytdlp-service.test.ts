@@ -186,7 +186,7 @@ describe('fetchBiliAudioWithYtDlp', () => {
         expect(h.spawnCalls).toHaveLength(0);
     });
 
-    it('进度：真输出逐行翻成「百分比 + 阶段」（百分比跟着当前阶段文案）', async () => {
+    it('进度：真输出逐行翻成「百分比 + 阶段 + 速度」（百分比跟着当前阶段文案）', async () => {
         const seen: Array<[number | null, string]> = [];
         const h = makeHarness(
             () => ({
@@ -205,11 +205,15 @@ describe('fetchBiliAudioWithYtDlp', () => {
             url: 'u',
             onProgress: (pct, label) => seen.push([pct, label]),
         });
+        // 🔴 m09805 改判：真输出里的 `at …/s` 段现在拼在 label 尾部（共享回调只有两参，
+        // 由消费端 `splitLabelSpeed` 再拆出来）。⛔ 不是放宽 —— 每条都逐字核对速度值。
         expect(seen).toEqual([
             [null, '正在从 B 站下载音频…'],
-            [0, '正在从 B 站下载音频…'],
-            [34, '正在从 B 站下载音频…'],
-            [100, '正在从 B 站下载音频…'],
+            [0, '正在从 B 站下载音频… · 542 KB/s'],
+            [34, '正在从 B 站下载音频… · 3.0 MB/s'],
+            // 这一行**没有** `at` 段 ⇒ 沿用上一句里记住的速度（进度条不闪回无速度态）
+            [100, '正在从 B 站下载音频… · 3.0 MB/s'],
+            // 阶段切换 ⇒ 速度清空（⛔ 别把下载末速挂在「正在转 mp3」上）
             [null, '正在转为 mp3…'],
         ]);
     });

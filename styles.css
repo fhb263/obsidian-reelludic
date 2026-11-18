@@ -12604,6 +12604,80 @@ body.rl-shot-dragging {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(390%); }
 }
+/* ── 多任务列表（🔴 m09805 用户：「列出三个下载进度条，要区分每个下载的是什么标题，再加个如1MB/s等展示速度」） ──
+   一球多行：每行 = 标题 + 百分比 / 细进度条 / 细节 + 速度。
+   ⚠️ 行与单任务的 `.rl-pball-bar` **互斥**（服务层用 `is-hidden` 切），⛔ 不要两套同时显示。 */
+.rl-pball-tasks {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2, 8px);
+    margin: var(--size-4-1, 4px) 0;
+    /* 三个任务是用户举的例子；再多就滚动，⛔ 别让卡片长到盖住半屏正文 */
+    max-height: 200px;
+    overflow-y: auto;
+}
+.rl-pball-tasks.is-hidden { display: none; }
+/* 单任务 bar 在多任务模式下隐藏（服务层加这个类，与 `.rl-pball-tasks` 互斥） */
+.rl-pball-bar.is-hidden { display: none; }
+.rl-pball-task {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.rl-pball-taskhead {
+    display: flex;
+    align-items: baseline;
+    gap: var(--size-4-1, 4px);
+    min-width: 0;
+}
+/* 标题：长标题省略号（⛔ 别换行把卡片撑高） */
+.rl-pball-taskttl {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-normal);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.rl-pball-taskpct {
+    flex: 0 0 auto;
+    font-size: var(--font-ui-smaller);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+/* 行内进度条复用 `.rl-pball-bar` 的观感，但更细、不做外边距（行与行之间已有 gap） */
+.rl-pball-taskbar {
+    margin: 0;
+    height: 3px;
+}
+.rl-pball-taskfoot {
+    display: flex;
+    align-items: baseline;
+    gap: var(--size-4-1, 4px);
+    min-width: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+}
+.rl-pball-taskdetail {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 速度单独一列、等宽数字（⛔ 别和 detail 挤成一串，跳动时会带着整行抖） */
+.rl-pball-taskspeed {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+/* 收尾行：完成绿、失败红（与 `.rl-pball.is-done/.is-fail` 同色语义） */
+.rl-pball-task.is-done .rl-pball-taskpct { color: var(--color-green); }
+.rl-pball-task.is-fail .rl-pball-taskpct { color: var(--color-red); }
+.rl-pball-task.is-done .rl-pball-fill { background: var(--color-green); }
+.rl-pball-task.is-fail .rl-pball-fill { background: var(--color-red); }
 .rl-pball-foot {
     display: flex;
     align-items: baseline;

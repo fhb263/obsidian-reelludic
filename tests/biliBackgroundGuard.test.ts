@@ -77,7 +77,9 @@ describe('m03052 ⑤ · 组件只订阅、不拥有下载', () => {
     it('重开弹窗要恢复「正在下载」（⛔ 别让用户以为第一次白点了）', () => {
         const body = stripComments(methodBody(COMPONENT, 'onMount('));
         expect(body).toContain('runningBiliDownloads()');
-        expect(body).toMatch(/downloadingId\s*=\s*`bili:\$\{/);
+        // 🔴 m09805 改判：在跑的是**集合**（可同时三首），单字符串已装不下
+        expect(body).toContain('biliBusy = new Set(runningNow)');
+        expect(body).not.toMatch(/downloadingId\s*=\s*`bili:\$\{/);
     });
 
     it('onDestroy 只摘订阅，⛔ 不许取消任务', () => {
@@ -100,16 +102,17 @@ describe('m03052 ⑤ · 服务层承诺', () => {
     it('同一 bvid 幂等（`running.get` 先查，⛔ 不重复起任务）', () => {
         const body = methodBody(SERVICE, 'export function startBiliDownload(');
         const existingAt = body.indexOf('const existing = running.get(bvid);');
-        const ballAt = body.indexOf('startProgressBall(');
+        const ballAt = body.indexOf('ensureBall(');
         expect(existingAt).toBeGreaterThan(0);
         expect(body).toContain('if (existing) return existing.promise;');
-        // 先查重、后起球：否则重复点会闪两次球
+        // 先查重、后起卡：否则重复点会闪两次
+        // 🔴 m09805 改判：起卡收进 `ensureBall()`（有卡就复用，⛔ 不再每首歌新建）
         expect(existingAt).toBeLessThan(ballAt);
     });
 
     it('进度球在**任务开始**就起（不是等第一次进度回调）', () => {
         const body = methodBody(SERVICE, 'export function startBiliDownload(');
-        const ballAt = body.indexOf('startProgressBall(');
+        const ballAt = body.indexOf('ensureBall(');
         const runnerAt = body.indexOf('runner(video, onProgress');
         expect(ballAt).toBeGreaterThan(0);
         expect(runnerAt).toBeGreaterThan(0);
@@ -155,7 +158,11 @@ describe('m03052 ⑤ · 宿主接线', () => {
 
     it('`dispose` 只摘球与订阅，⛔ 不 abort 在跑的任务', () => {
         const body = methodBody(SERVICE, 'export function disposeBiliDownloads(');
-        expect(body).toContain('ball?.dismiss()');
+        // 🔴 m09805 改判：多任务下一张卡可能同时挂着别的下载 ⇒ 只摘**自己的** `bili:` 行，
+        // 摘空了卡自己收（⛔ 不再是整球 dismiss，那会把别人的行一起灭掉）
+        expect(body).toContain("t.id.startsWith('bili:')");
+        expect(body).toContain('b.removeTask?.(t.id)');
+        expect(body).toContain('b?.dismiss()');
         expect(body).toContain('progressListeners.clear()');
         expect(body).toContain('outcomeListeners.clear()');
         expect(body).not.toMatch(/abort|cancel/i);

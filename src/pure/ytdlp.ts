@@ -118,6 +118,27 @@ export function parseYtDlpPercent(line: string): number | null {
 }
 
 /**
+ * 从一行 stdout 里取**下载速度**（`[download]  12.1% of  45.6MiB at  1.23MiB/s`）；认不出 ⇒ `null`。
+ *
+ * 🔴 用户 m09805 逐字要求：「再加个如1MB/s等展示速度」。
+ * yt-dlp 的速度段就是 `at` 后面那一截（`at  1.23MiB/s` / `at Unknown speed`），
+ * 且**只在下载阶段有**（`[ExtractAudio]` 之后没有速度）⇒ 这时返回 `null` 让上层清空旧速度，
+ * ⛔ 别把「下载时最后那 1.2MB/s」一直挂在「正在转 mp3」上。
+ */
+export function parseYtDlpSpeed(line: string): string | null {
+    const m = /\bat\s+([\d.]+)\s*([KMG]i?B)\/s\b/i.exec(String(line ?? ''));
+    if (!m) return null;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    // 统一成 `1.2 MB/s` 这种带空格的写法，且**格式口径与 `pure/progressTasks.formatSpeedBytes` 一致**
+    // （`>=100` 取整、其余 `toFixed(1)`）—— 两处各写一套会在「542.46 / 3.02」上给出不同文案。
+    const unit = m[2].replace(/i/gi, '').toUpperCase();
+    // 完全照 `formatSpeedBytes` 的三档：B/s 一律取整、其余 `>=100` 取整、剩下的 `toFixed(1)`
+    const text = unit === 'B' ? String(Math.round(n)) : n >= 100 ? n.toFixed(0) : n.toFixed(1);
+    return `${text} ${unit}/s`;
+}
+
+/**
  * 把一行 stdout 翻成阶段文案（⛔ 不给百分比 —— 那是 `parseYtDlpPercent` 的活）。
  * 认不出来 ⇒ `null`（调用方保持上一句文案，⛔ 别刷成空串）。
  */

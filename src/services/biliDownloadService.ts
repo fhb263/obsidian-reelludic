@@ -23,7 +23,9 @@
 
 import type { BiliVideo } from 'pure/dl/bilibili';
 import type { DownloadProgressCallback } from 'services/dl';
-import { startProgressBall, type ProgressBallHandle } from 'services/progressBall';
+import type { ProgressTaskRow } from 'pure/progressTasks';
+import { splitLabelSpeed } from 'pure/progressTasks';
+import { currentProgressBall, startProgressBall, type ProgressBallHandle } from 'services/progressBall';
 
 /** 一次 B站下载的结局（供「关掉弹窗再回来」时回显） */
 export interface BiliDownloadOutcome {
@@ -54,17 +56,51 @@ const running = new Map<string, RunningTask>();
 const progressListeners = new Set<BiliProgressListener>();
 const outcomeListeners = new Set<BiliOutcomeListener>();
 let lastOutcomeRef: BiliDownloadOutcome | null = null;
+/**
+ * 多任务卡片句柄（🔴 m09805：一球多行）。
+ *
+ * ⚠️ m03052 时代这里是 `ball` = 一次任务一个球，第二首歌上来就把第一首顶掉（`startProgressBall`
+ * 是单例）。现在改成**复用同一张卡**：先 `currentProgressBall()`，没有才 `start`，每首歌一行。
+ * ⛔ 别再退回「每任务一个球」——那正是 m09805 报的「看不到三个进度」的根因。
+ */
 let ball: ProgressBallHandle | null = null;
 
 /** 结束后「结局」保留多久（用户 m10634 抱怨「点一下就消失」⇒ 给足时间回来看） */
 const OUTCOME_KEEP_MS = 5 * 60 * 1000;
 
-function endBall(ok: boolean, message: string): void {
-    if (!ball) return;
+/**
+ * 拿多任务卡片（复用或新建）。
+ *
+ * 🔴 m09805：并行的关键就在这一句 —— 「有卡就复用」。`startProgressBall` 是单例，
+ * 无条件调用会**顶掉**正在跑的其他任务的行。
+ */
+function ensureBall(title: string): ProgressBallHandle {
+    const cur = currentProgressBall();
+    // ⚠️ 收尾的卡不能复用（`upsertTask` 会被 disposed 挡掉，新任务就看不见了）——见 `isEnded`
+    if (cur && typeof cur.upsertTask === 'function' && !cur.isEnded?.()) {
+        ball = cur;
+        return cur;
+    }
+    ball = startProgressBall(title);
+    return ball;
+}
+
+/**
+ * 收尾一张行。
+ *
+ * ⚠️ **不立刻 `removeTask`**：行要留着给用户看「哪首完成了 / 哪个失败了」，摘行由
+ * `END_LINGER` 之外的时机统一做（见 `disposeBiliDownloads` 与下面的定时清理）。
+ */
+function endTaskRow(id: string, ok: boolean, message: string): void {
     const b = ball;
-    ball = null;
-    if (ok) b.done(message);
-    else b.fail(message);
+    if (!b?.finishTask) return;
+    b.finishTask(id, ok ? 'done' : 'fail', message);
+    if (ok) return;
+    // 失败行也留着 —— 用户回来要看「为什么失败」。保留期与结局一致。
+    const at = Date.now();
+    setTimeout(() => {
+        if (lastOutcomeRef && lastOutcomeRef.at <= at) b.removeTask?.(id);
+    }, OUTCOME_KEEP_MS);
 }
 
 /**
@@ -86,19 +122,45 @@ export function startBiliDownload(runner: BiliDownloadRunner, video: BiliVideo, 
         bvid,
         promise: Promise.resolve({ bvid, ok: false, message: '', at: Date.now() }),
     };
-    // 球在**任务开始**就起（⛔ 不是等第一次进度回调才起）—— 用户切走笔记时也已经有球可看
-    ball = startProgressBall(`正在下载《${songTitle || video?.title || bvid}》`);
-    ball.update({ percent: null, detail: '准备中' });
+    const shownTitle = songTitle || video?.title || bvid;
+    /**
+     * 🔴 m09805：**复用同一张卡、新增一行**（⛔ 不是每首歌起一个球）。
+     * 行的 id 用 `bili:<bvid>` —— 与弹窗里 `downloadingId` 的键同构，排查时一眼对得上。
+     */
+    const rowId = `bili:${bvid}`;
+    const b = ensureBall(`正在下载《${shownTitle}》`);
+    b.upsertTask?.({
+        id: rowId,
+        title: shownTitle,
+        percent: null,
+        label: '准备中',
+        speed: '',
+        detail: '',
+        phase: 'running',
+    });
 
     // ⚠️ `services/dl` 的 `DownloadProgressCallback` 是 **(percent, label)** 两参，不是
     //    `asrModelDownload` 那个 (percent, received, total) 三参 —— 同名不同签名，写错了 tsc 会直接红。
     //    所以字节数不需要自己拼：`label` 里已经是「12.3 / 45.6 MB」这种现成文案。
+    // 🔴 m09805：速度由产生端拼在 label 尾部（`正在下载… · 1.2 MB/s`），这里拆回两段
+    //    —— 见 `pure/progressTasks.splitLabelSpeed` 的理由（共享回调签名只有两参）。
     const onProgress: DownloadProgressCallback = (percent, label) => {
-        const text = label || (typeof percent === 'number' ? `B站下载 ${Math.round(percent)}%` : 'B站下载中');
-        ball?.update({ percent: typeof percent === 'number' ? percent : null, label: 'B站下载', detail: text });
+        const split = splitLabelSpeed(label);
+        const text = split.label || (typeof percent === 'number' ? `B站下载 ${Math.round(percent)}%` : 'B站下载中');
+        const pct = typeof percent === 'number' ? percent : null;
+        b.upsertTask?.({
+            id: rowId,
+            title: shownTitle,
+            percent: pct,
+            label: text,
+            speed: split.speed,
+            detail: '',
+            phase: 'running',
+        });
         for (const fn of progressListeners) {
             try {
-                fn(bvid, typeof percent === 'number' ? percent : null, text);
+                // 订阅者（弹窗那一行）拿到的是**原始** label —— 它有自己的文案位，不需要拆。
+                fn(bvid, pct, label);
             } catch {
                 /* 订阅者自己的错不该带崩下载 */
             }
@@ -124,7 +186,7 @@ export function startBiliDownload(runner: BiliDownloadRunner, video: BiliVideo, 
             setTimeout(() => {
                 if (lastOutcomeRef && lastOutcomeRef.at === at) lastOutcomeRef = null;
             }, OUTCOME_KEEP_MS);
-            endBall(outcome.ok, outcome.message);
+            endTaskRow(rowId, outcome.ok, outcome.message);
             for (const fn of outcomeListeners) {
                 try {
                     fn(outcome);
@@ -170,9 +232,21 @@ export function onBiliOutcome(fn: BiliOutcomeListener): () => void {
     };
 }
 
-/** 插件卸载时摘掉球（⛔ 不中止任务 —— 卸载场景任务本来就活不过 reload） */
+/**
+ * 插件卸载时摘掉球（⛔ 不中止任务 —— 卸载场景任务本来就活不过 reload）。
+ *
+ * ⚠️ m09805 起这里**不 dismiss 整张卡**：卡可能是别的任务（模型下载 / 转写）起的，
+ * 我们只是往里面加了行。只摘自己的行，摘空了卡自己会收。
+ */
 export function disposeBiliDownloads(): void {
-    ball?.dismiss();
+    const b = ball;
+    if (b?.tasks) {
+        for (const t of b.tasks()) {
+            if (t.id.startsWith('bili:')) b.removeTask?.(t.id);
+        }
+    } else {
+        b?.dismiss();
+    }
     ball = null;
     progressListeners.clear();
     outcomeListeners.clear();

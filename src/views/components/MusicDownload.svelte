@@ -141,6 +141,16 @@
     let err = '';
     let busy = false;
     let downloadingId = '';
+    /**
+     * 🔴 m09805（用户逐字）：「音乐条目从B站下载音频能不能多线程」
+     *
+     * B站下载**不再受 `downloadingId` 的单任务闸约束** —— 它有自己的在跑集合。
+     * 为什么不能继续复用 `downloadingId`：那是个字符串，天然只能表示「一个在跑」；
+     * 用户要同时下三首，就必须是集合。⛔ 别把 `downloadingId` 改成数组来兼管两件事 ——
+     * 四平台那条链路的 `is-busy` 语义是「整行禁用」，与 B站 的「每行各自禁」不同。
+     * ⚠️ Svelte 4 对 `Set` 的 `has()` 不会自动触发更新 ⇒ 每次改动都**重新赋值**一个新 Set。
+     */
+    let biliBusy: ReadonlySet<string> = new Set<string>();
     let tip = '';
     /** 下载阶段文本（正本进度条的等价物） */
     let stage = '';
@@ -168,8 +178,8 @@
         // 🔴 m03052 ⑤：订阅后台进度 —— 弹窗开着时在**当前行**显示阶段；
         //    关掉弹窗后没人听，进度只走悬浮球（⛔ 不影响下载）。
         offBiliProgress = onBiliProgress((bvid, pct, label) => {
-            // 只认本组件当前跟踪的那一首（多个任务时其他歌的进度不该串到这一行）
-            if (downloadingId !== `bili:${bvid}`) return;
+            // 只认本组件当前跟踪的那些（🔴 m09805：可能同时在跑多首）
+            if (!biliBusy.has(bvid)) return;
             stagePct = pct;
             stage = label;
         });
@@ -185,9 +195,14 @@
             const key = `${outcome.bvid}@${outcome.at}`;
             if (seenOutcomes.has(key)) return;
             seenOutcomes.add(key);
-            downloadingId = '';
-            stage = '';
-            stagePct = null;
+            // 🔴 m09805：只摘**这一首**（别的任务还在跑，⛔ 别把全局状态清空）
+            const nextBusy = new Set(biliBusy);
+            nextBusy.delete(outcome.bvid);
+            biliBusy = nextBusy;
+            if (nextBusy.size === 0) {
+                stage = '';
+                stagePct = null;
+            }
             if (outcome.ok) {
                 tip = outcome.message;
                 if (outcome.relPath) onPicked(outcome.relPath);
@@ -202,7 +217,7 @@
          * 但用户会以为第一次白点了）。
          */
         const runningNow = runningBiliDownloads();
-        if (runningNow.length > 0) downloadingId = `bili:${runningNow[0]}`;
+        if (runningNow.length > 0) biliBusy = new Set(runningNow);
         /**
          * 🔴 **打开即搜**（2026-09-28 用户：「我在音乐条目编辑条目界面时点那个下载歌曲的按钮怎么不直接搜索
          * 该歌曲返回结果还要我自己搜」）：条目已经有标题 / 作者 ⇒ 直接用「标题 作者」当检索词**立刻搜一次**。
@@ -440,10 +455,14 @@
      *    （这正是改造前的 bug 形态：`stage/stagePct` 是组件状态，弹窗一销毁就没人画进度了）。
      */
     function pickBili(v: BiliVideo): void {
-        if (downloadingId) return;
+        // 🔴 m09805：**不再被 `downloadingId` 拦**（那是四平台单任务闸）。
+        //    同一首重复点由服务层按 bvid 去重，这里只挡「这一首已经在跑」的重复点击。
+        if (biliBusy.has(v.bvid)) return;
         err = '';
         tip = '';
-        downloadingId = `bili:${v.bvid}`;
+        const nextBusy = new Set(biliBusy);
+        nextBusy.add(v.bvid);
+        biliBusy = nextBusy;
         stage = '';
         stagePct = null;
         // 🔴 m03052 ⑤：**不在这里等结果**（没有 `await`、也没有 `.then` 回显）——
@@ -819,7 +838,7 @@
                 <span class="rl-dl-head-m">{biliMeta}</span>
             </div>
             {#each biliVideos.slice(0, shown) as v (v.bvid)}
-                <div class="rl-dl-row" class:is-busy={downloadingId === `bili:${v.bvid}`}>
+                <div class="rl-dl-row" class:is-busy={biliBusy.has(v.bvid)}>
                     <!-- 🔴 `referrerpolicy="no-referrer"` 是**必需的、不是装饰**：B站图床
                          （`i0.hdslb.com`）按 Referer 防盗链 —— 实测同一张图无 Referer `200`、
                          带 `Referer: app://obsidian.md` **`403`**（Obsidian 内 `<img>` 的 Referer 恒是它）。
@@ -852,9 +871,9 @@
                          —— yt-dlp 只能「整段下完再转码」，给个假试听反而更贵。 -->
                     <button
                         class="rl-dl-go"
-                        disabled={!!downloadingId}
+                        disabled={!!downloadingId || biliBusy.has(v.bvid)}
                         on:click={() => void pickBili(v)}
-                        data-tip="下载为 mp3 到库内下载目录（用 yt-dlp）">
+                        data-tip={biliBusy.has(v.bvid) ? '这一首正在下载（可同时下多首）' : '下载为 mp3 到库内下载目录（用 yt-dlp）'}>
                         <Icon icon="download" size={13} />
                         <span class="rl-sr">下载到库内</span>
                     </button>

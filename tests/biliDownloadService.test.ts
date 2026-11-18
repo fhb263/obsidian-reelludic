@@ -15,19 +15,36 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 const ballUpdates: { percent?: number | null; label?: string; detail?: string }[] = [];
 const ballEvents: string[] = [];
+/** 🔴 m09805：多任务行的调用记录（一球多行） */
+const taskUpserts: { id: string; title: string; percent: number | null; label?: string; speed?: string }[] = [];
+const taskFinishes: { id: string; phase: string; detail?: string }[] = [];
+/** 当前“活动卡” —— `currentProgressBall()` 返回它，`startProgressBall` 建新的 */
+let activeMockHandle: unknown = null;
 
 vi.mock('services/progressBall', () => ({
     startProgressBall: () => {
         ballEvents.push('start');
-        return {
+        const handle = {
             update: (next: { percent?: number | null; label?: string; detail?: string }) => {
                 ballUpdates.push(next);
             },
             done: () => ballEvents.push('done'),
             fail: () => ballEvents.push('fail'),
             dismiss: () => ballEvents.push('dismiss'),
+            upsertTask: (row: { id: string; title: string; percent: number | null; label?: string; speed?: string }) => {
+                taskUpserts.push(row);
+            },
+            finishTask: (id: string, phase: string, detail?: string) => {
+                taskFinishes.push({ id, phase, detail });
+            },
+            removeTask: () => undefined,
+            tasks: () => [] as never,
+            isEnded: () => false,
         };
+        activeMockHandle = handle;
+        return handle;
     },
+    currentProgressBall: () => activeMockHandle,
 }));
 
 /**
@@ -102,20 +119,52 @@ describe('m03052 ⑤ · B站后台下载服务层', () => {
         expect(last?.message).toContain('抽不出音频');
     });
 
-    it('进度同时喂给悬浮球与订阅者（两处都要看到）', async () => {
+    it('进度同时喂给悬浮球的行与订阅者（两处都要看到）', async () => {
         ballUpdates.length = 0;
+        taskUpserts.length = 0;
         const seen: { pct: number | null; label: string }[] = [];
         const off = svc.onBiliProgress((_bvid, pct, label) => seen.push({ pct, label }));
         const d = deferredRunner();
         const p = svc.startBiliDownload(d.runner, video('BV4prog'), '歌名');
         d.emitProgress(42, '12.3 / 45.6 MB');
         expect(seen).toEqual([{ pct: 42, label: '12.3 / 45.6 MB' }]);
-        // 球也收到了（percent 与 detail 都要有）
-        expect(ballUpdates.some((u) => u.percent === 42)).toBe(true);
-        expect(ballUpdates.some((u) => (u.detail ?? '').includes('12.3'))).toBe(true);
+        // 🔴 m09805 改判：进度进的是**多任务行**（一球多行），⛔ 不再是整球 update
+        expect(taskUpserts.some((u) => u.percent === 42)).toBe(true);
+        expect(taskUpserts.some((u) => (u.label ?? '').includes('12.3'))).toBe(true);
+        expect(taskUpserts.every((u) => u.id === 'bili:BV4prog')).toBe(true);
         off();
         d.finish({ ok: true, message: 'ok' });
         await p;
+    });
+
+    it('🔴 m09805 速度从 label 尾部拆出来，单独进 speed（不污染阶段文案）', async () => {
+        taskUpserts.length = 0;
+        const d = deferredRunner();
+        const p = svc.startBiliDownload(d.runner, video('BV4spd'), '歌名');
+        // yt-dlp 的产生端把速度拼在 label 尾部（共享回调只有两参，见 splitLabelSpeed 注释）
+        d.emitProgress(42, '正在从 B 站下载音频… · 1.2 MB/s');
+        const last = taskUpserts[taskUpserts.length - 1];
+        expect(last.speed).toBe('1.2 MB/s');
+        expect(last.label).toBe('正在从 B 站下载音频…');
+        d.finish({ ok: true, message: 'ok' });
+        await p;
+    });
+
+    it('🔴 m09805 两首并行下载各自占一行，⛔ 不互相顶掉', async () => {
+        taskUpserts.length = 0;
+        ballEvents.length = 0;
+        const d1 = deferredRunner();
+        const d2 = deferredRunner();
+        const p1 = svc.startBiliDownload(d1.runner, video('BV4par1', '第一首'), '第一首');
+        const p2 = svc.startBiliDownload(d2.runner, video('BV4par2', '第二首'), '第二首');
+        // 两首都要在跑（旧实现第二首会把第一首的球顶掉）
+        expect(svc.isBiliDownloading('BV4par1')).toBe(true);
+        expect(svc.isBiliDownloading('BV4par2')).toBe(true);
+        expect(taskUpserts.map((u) => u.id)).toEqual(['bili:BV4par1', 'bili:BV4par2']);
+        expect(taskUpserts.map((u) => u.title)).toEqual(['第一首', '第二首']);
+        d1.finish({ ok: true, message: 'ok1' });
+        d2.finish({ ok: true, message: 'ok2' });
+        await Promise.all([p1, p2]);
     });
 
     it('订阅回调抛错不能带崩下载', async () => {
@@ -150,17 +199,19 @@ describe('m03052 ⑤ · B站后台下载服务层', () => {
         expect(svc.runningBiliDownloads()).not.toContain('BV7done');
     });
 
-    it('失败时球调 fail、成功时调 done（用户要看得见结局）', async () => {
+    it('失败时行标 fail、成功时标 done（用户要看得见结局）', async () => {
+        taskFinishes.length = 0;
         const d1 = deferredRunner();
         const p1 = svc.startBiliDownload(d1.runner, video('BV8fail'), '歌名');
         d1.finish({ ok: false, message: '失败' });
         await p1;
-        expect(ballEvents).toContain('fail');
+        // 🔴 m09805 改判：结局落在**那一行**上，⛔ 不再是整球 fail（多任务下不能整球收尾）
+        expect(taskFinishes.some((f) => f.id === 'bili:BV8fail' && f.phase === 'fail')).toBe(true);
 
         const d2 = deferredRunner();
         const p2 = svc.startBiliDownload(d2.runner, video('BV9ok'), '歌名');
         d2.finish({ ok: true, message: '成功' });
         await p2;
-        expect(ballEvents).toContain('done');
+        expect(taskFinishes.some((f) => f.id === 'bili:BV9ok' && f.phase === 'done')).toBe(true);
     });
 });

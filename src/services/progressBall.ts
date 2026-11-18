@@ -10,6 +10,15 @@ import {
     type BallMode,
     type ProgressBallEnd,
 } from 'pure/progressBall';
+import {
+    taskBarPercent,
+    taskRowTip,
+    tasksAlive,
+    tasksDetail,
+    tasksPercent,
+    tasksTitle,
+    type ProgressTaskRow,
+} from 'pure/progressTasks';
 // 提示 + 读屏名统一走组件基座（①-9：⛔ 别再手写 aria-label，会与 data-tip 叠两层气泡）
 import { setTip, srLabel } from 'ui/components';
 
@@ -55,6 +64,25 @@ export interface ProgressBallHandle {
     fail(message?: string): void;
     /** 立刻销毁（插件卸载 / 任务被外部取消时调；⛔ 用户点击**不**走这条） */
     dismiss(): void;
+    /**
+     * 多任务模式：插入/更新一行（同一 `id` 复用原行，⛔ 不新增）。
+     *
+     * 🔴 用户 m09805：「列出三个下载进度条，要区分每个下载的是什么标题，再加个如1MB/s等展示速度」
+     */
+    upsertTask?(row: ProgressTaskRow): void;
+    /** 多任务模式：把某行标成 done/fail（**不立刻删行**，见 `pure/progressTasks` 口径⑴） */
+    finishTask?(id: string, phase: 'done' | 'fail', detail?: string): void;
+    /** 多任务模式：摘掉某行；摘到空 ⇒ 卡片自己收掉 */
+    removeTask?(id: string): void;
+    /** 当前所有行（只读快照，供调用方判断「这条任务还在不在」） */
+    tasks?(): readonly ProgressTaskRow[];
+    /**
+     * 这张卡是否已经收尾（已完成/失败，正在停留等自毁）。
+     *
+     * 🔴 有了它才能正确「复用或新建」：收尾后停留的 2.6 秒里 `this.disposed === true`，
+     * 此时新任务若复用这张卡，`upsertTask` 会被 disposed 直接挡掉 ⇒ 用户点了下载却看不到任何行。
+     */
+    isEnded?(): boolean;
 }
 
 export interface ProgressBallOptions {
@@ -81,6 +109,16 @@ class ProgressBallImpl implements ProgressBallHandle {
     private arcEl: SVGCircleElement | null = null;
     private cancelBtn: HTMLButtonElement | null = null;
     private minBtn: HTMLButtonElement | null = null;
+    /**
+     * 多任务行容器（🔴 m09805：一球多行）。
+     *
+     * ⚠️ 只有真的出现过 `upsertTask` 才建行 —— 单任务调用方（转写 / 模型下载 / 字幕）
+     * 走的仍是原来那条「一条 bar + 一条 foot」，⛔ 别让它们莫名其妙多出一层空列表。
+     */
+    private taskListEl: HTMLElement | null = null;
+    /** 已渲染的行节点（按 id 复用，⛔ 每次重排都重建的话，进度条动画会一直重置） */
+    private taskNodes = new Map<string, HTMLElement>();
+    private rows: ProgressTaskRow[] = [];
     private armedCancel = false;
     private armTimer: number | null = null;
     private timer: number | null = null;
@@ -139,6 +177,14 @@ class ProgressBallImpl implements ProgressBallHandle {
             });
             this.cancelBtn = cancel;
         }
+
+        /**
+         * 多任务列表（🔴 m09805）。
+         * ⚠️ 与下面的单条 `barEl` **互斥**：有行时隐藏单条 bar，没有行时用单条 bar。
+         *    两者同时显示会出现「一条总进度 + 三条明细」的双份百分比。
+         */
+        this.taskListEl = card.createDiv({ cls: 'rl-pball-tasks' });
+        this.taskListEl.classList.add('is-hidden');
 
         this.barEl = card.createDiv({ cls: 'rl-pball-bar' });
         this.barFillEl = (this.barEl as HTMLElement).createDiv({ cls: 'rl-pball-fill' });
@@ -208,7 +254,13 @@ class ProgressBallImpl implements ProgressBallHandle {
         //    ⛔ 不再补 `.rl-sr`（否则读屏会把「展开进度」和阶段名连着念两遍）。
         if (this.pillEl) setTip(this.pillEl, actionLabel('expand'));
         // 收起态时给卡片补一句话：点回来。⛔ 不用 title（与 data-tip 重复会闪两次）
-        if (this.el) this.el.setAttribute('data-tip', ballTip(this.state()));
+        // ⚠️ 多任务模式下用行汇总，⛔ 别用单任务的 this.label（那会让收起态显示错标题）
+        if (this.el) {
+            const tip = this.rows.length > 0
+                ? [tasksTitle(this.rows, this.label), tasksDetail(this.rows)].filter(Boolean).join(' · ')
+                : ballTip(this.state());
+            this.el.setAttribute('data-tip', tip);
+        }
     }
 
     private state(): { label: string; percent: number | null; detail?: string } {
@@ -297,10 +349,173 @@ class ProgressBallImpl implements ProgressBallHandle {
 
     update(next: { label?: string; percent?: number | null; detail?: string }): void {
         if (this.disposed) return;
+        // 多任务模式下不再接受整体覆盖式 update —— 那会把 N 行的汇总标题打回单任务文案。
+        // ⚠️ 单任务调用方（转写 / 模型下载）不受影响：它们从不调 upsertTask。
+        if (this.rows.length > 0) return;
         if (next.label !== undefined) this.label = next.label;
         if (next.percent !== undefined) this.percent = next.percent;
         if (next.detail !== undefined) this.detail = next.detail;
         this.paint();
+    }
+
+    // ──────────── 多任务（🔴 m09805）────────────
+
+    upsertTask(row: ProgressTaskRow): void {
+        if (this.disposed) return;
+        const i = this.rows.findIndex((r) => r.id === row.id);
+        if (i < 0) this.rows = [...this.rows, row];
+        else {
+            const next = this.rows.slice();
+            next[i] = row;
+            this.rows = next;
+        }
+        this.paintTasks();
+    }
+
+    finishTask(id: string, phase: 'done' | 'fail', detail?: string): void {
+        if (this.disposed) return;
+        const i = this.rows.findIndex((r) => r.id === id);
+        if (i < 0) return;
+        const next = this.rows.slice();
+        const cur = next[i];
+        next[i] = {
+            ...cur,
+            phase,
+            percent: phase === 'done' ? 100 : cur.percent,
+            label: phase === 'done' ? '已完成' : '失败',
+            speed: '',
+            detail: detail ?? cur.detail ?? '',
+        };
+        this.rows = next;
+        this.paintTasks();
+        // 全部收尾 ⇒ 整张卡片进收尾态（绿色/红色 + 停留后自毁），与单任务口径一致
+        if (!this.rows.some((r) => r.phase === 'running')) {
+            const failed = this.rows.filter((r) => r.phase === 'fail').length;
+            this.finish(failed > 0 ? 'fail' : 'done', tasksDetail(this.rows));
+        }
+    }
+
+    removeTask(id: string): void {
+        if (this.disposed) return;
+        const next = this.rows.filter((r) => r.id !== id);
+        if (next.length === this.rows.length) return;
+        this.rows = next;
+        if (!tasksAlive(this.rows)) {
+            this.remove();
+            return;
+        }
+        this.paintTasks();
+    }
+
+    tasks(): readonly ProgressTaskRow[] {
+        return this.rows.slice();
+    }
+
+    isEnded(): boolean {
+        return this.ended || this.disposed;
+    }
+
+    /** 把多任务行刷到 DOM（按 id 复用节点；只改文本与宽度，⛔ 不重建整棵子树） */
+    private paintTasks(): void {
+        const list = this.taskListEl;
+        if (!list || !this.el) return;
+        const multi = this.rows.length > 0;
+        list.classList.toggle('is-hidden', !multi);
+        // 单条 bar 与多行互斥（见 mount 里的注释）
+        if (this.barEl) this.barEl.classList.toggle('is-hidden', multi);
+
+        // 先按 id 收拢：删掉已经不在 rows 里的节点
+        for (const [id, node] of [...this.taskNodes]) {
+            if (!this.rows.some((r) => r.id === id)) {
+                node.remove();
+                this.taskNodes.delete(id);
+            }
+        }
+        for (const row of this.rows) {
+            let node = this.taskNodes.get(row.id);
+            if (!node) {
+                node = this.buildTaskRow(row);
+                this.taskNodes.set(row.id, node);
+                list.appendChild(node);
+            }
+            this.paintTaskRow(node, row);
+        }
+
+        // 空掉单行 bar 的宽度，否则切回单任务时会残留上一条的百分比
+        if (multi && this.barFillEl) this.barFillEl.style.width = '';
+
+        const title = tasksTitle(this.rows, this.label);
+        const detail = tasksDetail(this.rows);
+        const pct = tasksPercent(this.rows);
+        if (this.headlineEl) this.headlineEl.setText(title);
+        if (this.txtEl) this.txtEl.setText(pct === null ? '…' : `${pct}%`);
+        if (this.ringPctEl) this.ringPctEl.setText(pct === null ? '…' : `${pct}%`);
+        if (this.detailEl) this.detailEl.setText(detail);
+        // 球心的环与展开态的汇总条用同一个汇总百分比（口径见 `pure/progressTasks`⑶）
+        if (this.arcEl) this.arcEl.setAttribute('stroke-dashoffset', String(RING_C * (1 - (pct === null ? 0.18 : pct / 100))));
+        const lbl = this.pillEl?.querySelector('.rl-pball-lbl');
+        if (lbl) lbl.setText(shortLabel(title));
+        this.el.setAttribute('data-tip', [title, detail].filter(Boolean).join(' · '));
+    }
+
+    /** 建一行：标题 / 进度条 / 速度 + 百分比 */
+    private buildTaskRow(row: ProgressTaskRow): HTMLElement {
+        const node = document.createElement('div');
+        node.className = 'rl-pball-task';
+        const head = document.createElement('div');
+        head.className = 'rl-pball-taskhead';
+        const title = document.createElement('span');
+        title.className = 'rl-pball-taskttl';
+        const pct = document.createElement('span');
+        pct.className = 'rl-pball-taskpct';
+        head.appendChild(title);
+        head.appendChild(pct);
+        const bar = document.createElement('div');
+        bar.className = 'rl-pball-bar rl-pball-taskbar';
+        const fill = document.createElement('div');
+        fill.className = 'rl-pball-fill';
+        bar.appendChild(fill);
+        const foot = document.createElement('div');
+        foot.className = 'rl-pball-taskfoot';
+        const speed = document.createElement('span');
+        speed.className = 'rl-pball-taskspeed';
+        const detail = document.createElement('span');
+        detail.className = 'rl-pball-taskdetail';
+        foot.appendChild(detail);
+        foot.appendChild(speed);
+        node.appendChild(head);
+        node.appendChild(bar);
+        node.appendChild(foot);
+        // 存个反向引用，paintTaskRow 里不再 querySelector（每帧查 DOM 没意义）
+        (node as unknown as { __rlParts?: unknown }).__rlParts = { title, pct, bar, fill, speed, detail };
+        return node;
+    }
+
+    private paintTaskRow(node: HTMLElement, row: ProgressTaskRow): void {
+        const parts = (node as unknown as {
+            __rlParts?: {
+                title: HTMLElement;
+                pct: HTMLElement;
+                bar: HTMLElement;
+                fill: HTMLElement;
+                speed: HTMLElement;
+                detail: HTMLElement;
+            };
+        }).__rlParts;
+        if (!parts) return;
+        node.classList.toggle('is-done', row.phase === 'done');
+        node.classList.toggle('is-fail', row.phase === 'fail');
+        parts.title.setText(row.title);
+        const p = taskBarPercent(row.percent);
+        parts.pct.setText(row.phase === 'done' ? '✓' : row.phase === 'fail' ? '!' : p === null ? '…' : `${p}%`);
+        // 无百分比（且还在跑）⇒ 不确定态跑马灯，⛔ 不画一根停在 0 的条
+        parts.bar.classList.toggle('is-indet', row.phase === 'running' && p === null);
+        parts.fill.style.width = row.phase === 'done' ? '100%' : p === null ? '' : `${p}%`;
+        parts.speed.setText(row.speed ?? '');
+        parts.detail.setText(row.detail ?? '');
+        const tip = taskRowTip(row);
+        node.setAttribute('data-tip', tip);
+        // ⚠️ 行本身不是按钮，读屏名走 `.rl-sr` 会与 data-tip 叠两层 ⇒ 只留 data-tip
     }
 
     /** 收尾共用：切到结果态 + 安排自毁 */
@@ -324,10 +539,23 @@ class ProgressBallImpl implements ProgressBallHandle {
         if (this.txtEl) this.txtEl.setText(kind === 'done' ? '✓' : '!');
         // 球心同口径（m07854 ⑨）：收尾的小球不该还挂着 87% 这种中途数字
         if (this.ringPctEl) this.ringPctEl.setText(kind === 'done' ? '✓' : '!');
-        if (this.detailEl) this.detailEl.setText('');
+        // ⚠️ 多任务模式**不清** detail：那一行是「已完成 2 · 失败 1」这类汇总（`finishTask` 算的），
+        //    清空会让用户看不到到底几个失败。单任务才按原口径清掉。
+        if (this.detailEl && this.rows.length === 0) this.detailEl.setText('');
         if (this.barEl) this.barEl.toggleClass('is-indet', false);
-        if (this.barFillEl) this.barFillEl.style.width = kind === 'done' ? '100%' : '0%';
-        if (this.arcEl) this.arcEl.setAttribute('stroke-dashoffset', kind === 'done' ? '0' : String(RING_C));
+        if (this.rows.length === 0) {
+            if (this.barFillEl) this.barFillEl.style.width = kind === 'done' ? '100%' : '0%';
+            if (this.arcEl) this.arcEl.setAttribute('stroke-dashoffset', kind === 'done' ? '0' : String(RING_C));
+        } else {
+            // 多任务：汇总百分比按行算（有失败 ⇒ 不确定态，⛔ 别画满环掩盖失败）
+            const multiPct = tasksPercent(this.rows);
+            if (this.arcEl) {
+                const ratio = multiPct === null ? 0.18 : multiPct / 100;
+                this.arcEl.setAttribute('stroke-dashoffset', String(RING_C * (1 - ratio)));
+            }
+            if (this.txtEl) this.txtEl.setText(multiPct === null ? '!' : `${multiPct}%`);
+            if (this.ringPctEl) this.ringPctEl.setText(multiPct === null ? '!' : `${multiPct}%`);
+        }
         // 收尾态不再需要动作按钮（没东西可取消/收起）
         this.minBtn?.remove();
         this.cancelBtn?.remove();
@@ -373,6 +601,9 @@ class ProgressBallImpl implements ProgressBallHandle {
         this.arcEl = null;
         this.cancelBtn = null;
         this.minBtn = null;
+        this.taskListEl = null;
+        this.taskNodes.clear();
+        this.rows = [];
         if (active === this) active = null;
     }
 }
@@ -391,6 +622,16 @@ export function startProgressBall(label: string, opts: ProgressBallOptions = {})
     const ball = new ProgressBallImpl(label, opts);
     active = ball;
     return ball;
+}
+
+/**
+ * 取**当前已在跑**的那张卡片；没有则返回 null。
+ *
+ * 🔴 m09805：多任务场景（B 站并行下载）不能每首歌都调 `startProgressBall` —— 那是单例，
+ * 第二首会把第一首的球顶掉。正确姿势是先 `currentProgressBall()` 复用，没有再 `start`。
+ */
+export function currentProgressBall(): ProgressBallHandle | null {
+    return active;
 }
 
 /** 立刻拆掉卡片（插件 `onunload` 调；⛔ 不依赖 DOM 是否还在） */

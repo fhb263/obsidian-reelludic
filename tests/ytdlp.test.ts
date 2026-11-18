@@ -7,6 +7,7 @@ import {
     buildYtDlpArgs,
     lastYtDlpErrorLine,
     parseYtDlpPercent,
+    parseYtDlpSpeed,
     pickYtDlpOutput,
     sanitizeYtDlpExe,
     ytDlpFailureMessage,
@@ -126,6 +127,29 @@ describe('parseYtDlpPercent', () => {
         expect(parseYtDlpPercent('[download] Destination: out\\x.m4a')).toBeNull();
         expect(parseYtDlpPercent('[ExtractAudio] Destination: out\\x.mp3')).toBeNull();
         expect(parseYtDlpPercent('')).toBeNull();
+    });
+});
+
+describe('parseYtDlpSpeed（🔴 m09805 每行显示下载速度）', () => {
+    it('从真输出的 `at <数字><单位>/s` 段取出速度并归一', () => {
+        // 前三条取自 `parseYtDlpPercent` 里那批**真 yt-dlp 输出**，只是一行里取不同段。
+        // ⚠️ 输出口径与 `pure/progressTasks.formatSpeedBytes` 同一档：`>=100` 取整、其余一位小数
+        //    ⇒ 542.46 归成 `542 KB/s`（⛔ 不是原样保留两位）
+        expect(parseYtDlpSpeed('[download]   0.0% of    5.91MiB at  542.46KiB/s ETA 00:11')).toBe('542 KB/s');
+        expect(parseYtDlpSpeed('[download]  33.8% of    5.91MiB at    3.02MiB/s ETA 00:01')).toBe('3.0 MB/s');
+        // 下载完成那行是 `in 00:00:02 at 2.70MiB/s`（⛔ 不是 `at … ETA`，也要认）
+        expect(parseYtDlpSpeed('[download] 100% of    5.91MiB in 00:00:02 at 2.70MiB/s')).toBe('2.7 MB/s');
+    });
+
+    it('没有 at 段（Destination / 转码 / 空行）⇒ null，让上层清空速度', () => {
+        expect(parseYtDlpSpeed('[download] Destination: d\\x.m4a')).toBeNull();
+        expect(parseYtDlpSpeed('[ExtractAudio] Destination: d\\x.mp3')).toBeNull();
+        expect(parseYtDlpSpeed('[ffmpeg] Fixing malformed AAC bitstream')).toBeNull();
+        expect(parseYtDlpSpeed('')).toBeNull();
+    });
+
+    it('⛔ 不把已下载大小当速度（`of 5.91MiB` 是总量，不是速度）', () => {
+        expect(parseYtDlpSpeed('[download]  33.8% of    5.91MiB ETA 00:01')).toBeNull();
     });
 });
 

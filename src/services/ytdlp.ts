@@ -19,6 +19,7 @@ import { downloadExt } from 'pure/downloadPlan';
 import {
     buildYtDlpArgs,
     parseYtDlpPercent,
+    parseYtDlpSpeed,
     pickYtDlpOutput,
     ytDlpFailureMessage,
     ytDlpNeedsShell,
@@ -95,6 +96,7 @@ function spawnOnce(
         let out = '';
         let err = '';
         let label = START_LABEL;
+        let speed = '';
         let settled = false;
         const finish = (o: SpawnOutcome): void => {
             if (settled) return;
@@ -107,13 +109,26 @@ function spawnOnce(
             for (const line of text.split(/\r?\n/)) {
                 const pct = parseYtDlpPercent(line);
                 if (pct !== null) {
-                    onProgress?.(pct, label);
+                    // 🔴 m09805：进度行里还带速度（`… at 1.23MiB/s`），一起交出去。
+                    //    认不出速度的行（老版本 yt-dlp / 已到收尾）⇒ 清空，⛔ 别把上一次的速度留着。
+                    const nextSpeed = parseYtDlpSpeed(line);
+                    if (nextSpeed) speed = nextSpeed;
+                    onProgress?.(pct, speed ? `${label} · ${speed}` : label);
                     continue;
                 }
-                const next = ytDlpStageLabel(line);
+                const next = parseYtDlpSpeed(line);
                 if (next) {
-                    label = next;
-                    onProgress?.(null, next);
+                    // 有些版本只在下载行的速度段出现、百分比行被 `--newline` 拆开 ⇒ 单独更新一次
+                    speed = next;
+                    onProgress?.(null, `${label} · ${speed}`);
+                    continue;
+                }
+                const stage = ytDlpStageLabel(line);
+                if (stage) {
+                    label = stage;
+                    // 阶段切换（→ 转 mp3）就没有下载速度了，清掉避免误导
+                    speed = '';
+                    onProgress?.(null, stage);
                 }
             }
         });
