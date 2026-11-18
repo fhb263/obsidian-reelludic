@@ -15,6 +15,7 @@
 //    传 `{ progress: { episode: 5 } }` 会把 `season` / `history` / `totalEpisodes` **整个抹掉**。
 //    所以每个嵌套字段的 `set` 都先把**同级字段补齐**再覆盖目标字段（见 `nestedProgress`）。
 import type { EntryType, MediaEntry, Progress } from 'data/types';
+import { formFieldSpec, splitFieldValues } from 'pure/formFields';
 import { statusLabel } from 'pure/labels';
 import { findMetaField } from 'pure/metaFields';
 import { moodFromText, moodText, normalizeMood } from 'pure/mood';
@@ -171,12 +172,16 @@ export type TableCellParse =
     | { ok: true; patch: Partial<MediaEntry> }
     | { ok: false; reason: string };
 
-/** 列表类字段的输入拆分：`,` / `，` 分隔，去空白、丢空项（`科幻, 灾难` → `['科幻','灾难']`） */
-function splitListText(t: string): string[] {
-    return t
-        .split(/[,，]/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+/**
+ * 列表类字段的输入拆分：口径**不在这里定**，取 `pure/formFields` 那份真源（#735）。
+ *
+ * 🔴 这里曾经自己写死 `/[,，]/` —— 只认逗号，而同一批字段在编辑表单里认「斜杠 / 顿号 / 逗号」。
+ *    后果：用户在表单里填 `科幻 / 冒险` 存成两条，在表格同一格里填同样的字串却**静默存成一条**
+ *    名为「科幻 / 冒险」的题材。两处口径必须同源，否则用户永远不知道自己被哪一句骗了。
+ */
+function splitListText(t: string, key: string): string[] {
+    // 规格表里没登记的可编辑列（目前没有）按斜杠档处理 —— 与 `FieldSeparator` 的缺省口径一致
+    return splitFieldValues(t, formFieldSpec(key)?.sep ?? 'slash');
 }
 
 /**
@@ -249,7 +254,7 @@ export function parseTableCellInput(e: MediaEntry, key: string, text: string): T
         if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return { ok: false, reason: '日期要写成 2026-10-13' };
         return { ok: true, patch: b.set(t, e) };
     }
-    if (kind === 'list') return { ok: true, patch: b.set(splitListText(t), e) };
+    if (kind === 'list') return { ok: true, patch: b.set(splitListText(t, key), e) };
     return { ok: true, patch: b.set(t, e) };
 }
 

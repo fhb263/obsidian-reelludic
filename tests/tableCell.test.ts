@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { ENTRY_TYPES, type MediaEntry } from 'data/types';
+import { formFieldSpec } from 'pure/formFields';
 import { tableColumnPoolFor } from 'pure/tableColumns';
 import {
     hasTableCellBinding, parseRatingCell, parseTableCellInput, tableCellCurrentPatch, tableCellDraft, tableCellText,
@@ -183,5 +185,62 @@ describe('🔴 #621 往返不变式（显示文本 → 解析 ⇒ 还是同一�
         const p = tableCellCurrentPatch(entry(), 'progress_episode');
         expect(p?.progress).toMatchObject({ season: 2, episode: 12, totalEpisodes: 24 });
         expect(tableCellCurrentPatch(entry(), '__community')).toBeUndefined();
+    });
+});
+
+/**
+ * #735 表格格子的多值拆分必须与编辑表单**同源**。
+ *
+ * 病灶：`pure/tableCell` 曾自己写死 `/[,，]/`，而 `pure/formFields` 给
+ * `genres` / `cast` / `aliases` 登记的口径是「斜杠 / 顿号 / 逗号都认」⇒ 用户在表单里
+ * 填 `科幻 / 冒险` 存两条，在表格同一格填同样字串只存一条「科幻 / 冒险」。
+ */
+describe('#735 多值分隔符：表格 ↔ 编辑表单同一份真源', () => {
+    it('🔴 列表列认「斜杠 / 全角斜杠 / 顿号 / 中英文逗号」四种分隔', () => {
+        const r = parseTableCellInput(entry(), 'genres', '科幻 / 冒险、灾难，悬疑, 惊悚');
+        expect(r.ok).toBe(true);
+        if (r.ok) expect(r.patch.genres).toEqual(['科幻', '冒险', '灾难', '悬疑', '惊悚']);
+    });
+
+    it('四种 list 列都吃到同一套口径（不是只有 genres 特殊处理）', () => {
+        const cases: Array<[string, string, string[]]> = [
+            ['genres', '科幻 / 冒险', ['科幻', '冒险']],
+            ['cast', '甲 / 乙、丙，丁', ['甲', '乙', '丙', '丁']],
+            ['screenwriter', '甲/乙', ['甲', '乙']],
+            ['aliases', '别名 A / 别名 B', ['别名 A', '别名 B']],
+        ];
+        for (const [key, text, want] of cases) {
+            const r = parseTableCellInput(entry(), key, text);
+            expect(r.ok, `${key} 解析被拒`).toBe(true);
+            if (r.ok) {
+                // `screenwriter` 走的是同一批字段，patch 里的键名与 entry 字段一致
+                const got = (r.patch as Record<string, unknown>)[key];
+                expect(got, `${key} 的拆分结果不对`).toEqual(want);
+            }
+        }
+    });
+
+    it('🔴 反向守卫：`pure/tableCell` 里不许再出现写死的列表切分正则', () => {
+        const src = readFileSync(new URL('../src/pure/tableCell.ts', import.meta.url), 'utf8');
+        // 一旦有人把「只认逗号」那行抄回来，这条立刻红（这正是 #735 的病根形态）
+        expect(src).not.toContain('.split(/[,，]/)');
+        expect(src).not.toContain('.split(/[\\/、,，]/)');
+        // 必须真的走规格表那份真源
+        expect(src).toContain('splitFieldValues');
+        expect(src).toContain("formFieldSpec(key)?.sep ?? 'slash'");
+    });
+
+    it('提示语与解析口径同源：`sep` 决定「用逗号」还是「用斜杠」，⛔ 不许两处各写一份', () => {
+        // 规格表里 list 字段的 `sep` 决定提示文案；解析侧读的是同一个 `sep`
+        for (const key of ['genres', 'cast', 'aliases']) {
+            const spec = formFieldSpec(key);
+            expect(spec?.arity, `${key} 应是多值`).toBe('multi');
+            expect(spec?.sep, `${key} 的 sep 应登记成 slash`).toBe('slash');
+        }
+        expect(formFieldSpec('tags')?.sep).toBe('comma');
+        // MediaList 的提示函数不许再手写死文案（反向守卫：旧形态整体退场）
+        const list = readFileSync(new URL('../src/views/components/MediaList.svelte', import.meta.url), 'utf8');
+        expect(list).not.toContain("def.kind === 'list' ? '用逗号分隔'");
+        expect(list).toContain('listEditHint(def.key)');
     });
 });

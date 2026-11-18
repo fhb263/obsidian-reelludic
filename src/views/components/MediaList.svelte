@@ -117,6 +117,7 @@
     // 1.3.1 ②（#621）表格视图：列配置（pure/tableColumns）与单元格读写（pure/tableCell）真源
     import { DEFAULT_TABLE_COLUMNS_BY_TYPE, TABLE_COLUMN_LIMIT, columnAppliesTo, commonColumnsForTypes, seriesCellText, tableColumnDefsFor, tableColumnPoolFor, tableColumnsForTypes, type TableColumnDef } from 'pure/tableColumns';
     import { hasTableCellBinding, parseTableCellInput, tableCellCurrentPatch, tableCellDraft, tableCellText } from 'pure/tableCell';
+    import { placeholderOf } from 'pure/formFields';
     // ⚠️ 本组件其余分支**不用** `Notice`（回执一律在宿主侧）—— 这里是**唯一**例外：
     //    「改的这格写不进去」必须**当场**告诉用户（留在宿主侧会丢掉是哪个字段、为什么）
     import { Notice } from 'obsidian';
@@ -2682,13 +2683,27 @@
         return tableCellText(e, def.key);
     }
 
+    /**
+     * 列表列编辑框的提示语 —— 直接用 `pure/formFields` 的 `placeholderOf`（#735）。
+     * 🔴 连**字面**都不许在本组件另写一份：规格表是「这个字段怎么填」的唯一真源，
+     *    解析侧（`pure/tableCell`）读的是同一条 `sep`。两边同源，才不会出现
+     *    「提示说逗号、解析认斜杠」这种把用户数据静默掰弯的错位。
+     * `screenwriter` 没进规格表（它由 `director` 那条「导演 / 编剧」统一描述）⇒ 走回退文案。
+     */
+    function listEditHint(key: string): string {
+        return placeholderOf(key, '多个用斜杠分隔');
+    }
+
     /** 编辑框的占位提示（只给「值的形态有讲究」的那几列；其余留空 —— ⛔ 别给每列都塞一句废话） */
     function cellEditPlaceholder(def: TableColumnDef): string {
         switch (def.key) {
             case 'status': return '想看 / 在看 / 已看 / 搁置';
             case 'rating': return '0~5，或 0~10（9/10）';
             case 'year': return '4 位数字';
-            default: return def.kind === 'list' ? '用逗号分隔' : def.kind === 'date' ? '2026-10-13' : '';
+            // 🔴 列表列的提示**不在这里写死**：口径归 `pure/formFields` 的规格表（#735）。
+            //    上一版这里写死「用逗号分隔」，而解析侧已改成认「斜杠 / 顿号 / 逗号」——
+            //    提示与解析各写一份，正是「按提示填却被存成一条」的病灶。
+            default: return def.kind === 'list' ? listEditHint(def.key) : def.kind === 'date' ? '2026-10-13' : '';
         }
     }
 

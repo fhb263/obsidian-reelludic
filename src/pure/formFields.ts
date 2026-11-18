@@ -173,6 +173,32 @@ export function separatorWord(sep: FieldSeparator | undefined): string {
     return sep === 'comma' ? '逗号' : '斜杠';
 }
 
+/**
+ * 多值字段的**切分正则**——全仓唯一一份（#735）。
+ *
+ * 🔴 为什么必须收在这里：`tags` 只认逗号（斜杠是标签名的一部分），
+ *    而 `genres` / `cast` / `aliases` / 编剧 三样都认「斜杠 / 顿号 / 逗号」。
+ *    这两套口径此前被抄成三份（`EntryForm` 提交侧、`SeriesPropsModal` 加标签、
+ *    `tableCell` 表格格子），表格那份抄漏了斜杠与顿号 ⇒ **同一个字段在表单里能填、
+ *    在表格里静默变成一个**。占位符文案由 `placeholderOf` 生成、切分由这里给出，
+ *    两句话才是同一个真源的两面。
+ *
+ * ⚠️ `EntryForm.svelte` 的提交侧仍是内联正则 —— 不是漏改：`tests/formPlaceholders.test.ts`
+ *    会把源码里的 `/[...]/` 字面量剥出来与规格表的 `sep` 逐字对比，改写成函数调用那张表就失效了。
+ */
+export const FIELD_SPLIT_PATTERN: Record<FieldSeparator, RegExp> = {
+    slash: /[\/、,，]/,
+    comma: /[,，]/,
+};
+
+/** 按字段口径拆分多值输入：去首尾空白、丢空项（`科幻 / 冒险` → `['科幻','冒险']`） */
+export function splitFieldValues(text: string, sep: FieldSeparator = 'slash'): string[] {
+    return String(text ?? '')
+        .split(FIELD_SPLIT_PATTERN[sep])
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+}
+
 /** 多值字段的分隔符示例串 */
 export function separatorSample(sep: FieldSeparator | undefined): string {
     return sep === 'comma' ? '，' : ' / ';
