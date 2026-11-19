@@ -12,6 +12,12 @@
 //     （百度单页 1MB、必应 100KB，结果块靠脚本渲染）⇒ 解析脆、易随改版失效。
 //   ⇒ **RSS 是唯一「结构化 + 稳定」的免费档**，也是本模块存在的理由。
 //
+// 🔴🔴 2026-11-19 追加实测（用户 m15532「AI预填的GLM4-flash模型搜索怎么只依据元数据源搜索的，
+//   要依据网络权威搜索啊」的第二层真因）：**含空格的中文多段查询会被逐字拆词** ——
+//   `七里香 周杰伦 简介` 返回 `七（汉语汉字）_百度百科`、`名侦探柯南 豆瓣` 返回 `名_百度百科`。
+//   ⇒ 地址构造前先过 `compactBingQuery()` 单段化（完整证据与「试过但无效」的六种参数都记在那）;
+//   于是「提示词让模型联网搜」才真的能搜到条目页。⛔ 别把这一步去掉。
+//
 // ⛔ 这里只做「地址构造 + 解析 + 文本化」三件事；发请求在 `services/aiPrefill`（走宿主网络栈）。
 // ⚠️ 用 `decodeHtmlText`（剥标签 → 还原实体 → 折叠空白 → trim）而不是只还原实体的那个：
 //    RSS 的 `description` 里**带高亮标签**（必应会给命中词包 `<b>`），只还原实体会把标签原样喂给模型。
@@ -31,11 +37,49 @@ export const BING_RSS_LIMIT = 8;
 export const WEB_SEARCH_TEXT_MAX = 2000;
 
 /**
+ * 中日韩字符（用来判定「这条查询是不是中文」）。
+ * 🔴🔴 **名字必须避开通用短名 `CJK_RE`**：`pure/readingUnits.ts` 已有一个 `CJK_RE`，
+ *    重名会让 esbuild 为消歧把**那个**也改名成 `CJK_RE2` ⇒ 撞红毫不相干的
+ *    「先剥 CJK 再分词」产物断言（本条实测踩到过，`make-instr` 抓到的失败是
+ *    `/\.replace\(CJK_RE, " "\)/` 变 false、断言总数 222 → 223）。
+ *    与 `bingSearch.rssTag` 的 `tag`、#491 的 `section` 同族。
+ */
+const BING_CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+/**
+ * 🔴🔴 把查询**单段化** —— 必应 RSS 对「含空格的中文多段查询」会**逐字拆词**，必须先把修饰词砍掉。
+ *
+ * 实测取证（2026-11-19，`probe-bing7.cjs` / `probe-bing8.cjs`，真请求八轮）：
+ *   · `七里香 周杰伦 简介` ⇒ 第 1 条 `七（汉语汉字）_百度百科`、第 2 条 `7（自然数之一）`（**只取了首字**）；
+ *   · `名侦探柯南 豆瓣` ⇒ `名_百度百科`；`三体 刘慈欣 简介` ⇒ `三（汉语汉字）_百度百科`；
+ *   · `艾尔登法环 开发商` ⇒ `艾尔之光-ELSWORD-官方网站`（半相关）。
+ *   · **单段就全好**：`七里香` ⇒ `七里香（2004年周杰伦演唱的流行摇滚歌曲）_百度百科`（正中目标）；
+ *     `名侦探柯南` / `三体` / `艾尔登法环` 同样第一条第 1 条就命中。
+ *   · 逐项否掉的其它思路（⛔ 别回头再试）：`mkt=zh-CN`、`setlang=zh-Hans&cc=CN`、
+ *     `ensearch=0`、`count=10` **全部无效**（结果逐字相同）；给首词或整串**加引号**——
+ *     `"七里香"` 单段可用，但 `"七里香" 周杰伦 简介`（多段）**照样退化**；
+ *     **去空格拼接**也不行（`三体刘慈欣` ⇒ `三（汉语汉字）`、`名侦探柯南豆瓣` ⇒ `名_百度百科`）。
+ *   · 英文短语不受影响（`The Lord of the Rings` 加不加引号都正常）⇒ 只对**含 CJK 的多段查询**单段化。
+ *
+ * ⚠️ 代价：修饰词（「简介」「豆瓣」「开发商」）会被丢掉，但中文百科/豆瓣条目页**本来就排在第一位**，
+ *    丢掉修饰词换「不返回单字词典页」是划算的。⛔ 别为了「保留更多词」改回去。
+ */
+export function compactBingQuery(raw: string): string {
+    const q = String(raw ?? '').replace(/\s+/g, ' ').trim();
+    if (!q) return '';
+    if (!q.includes(' ')) return q;
+    if (!BING_CJK_RE.test(q)) return q;
+    // 只取首段（通常是作品名本身）；空段已由上面的 `\s+` 折叠排除
+    return q.split(' ')[0] ?? q;
+}
+
+/**
  * 搜索地址；**空查询 ⇒ 空串**（调用方据此直接回一句「没给查询词」，⛔ 不白跑一次请求 ——
  * 与 `pure/posterSearch.buildBingImageUrl` 同口径）。
+ * 🔴 查询先过 `compactBingQuery` 单段化（否则中文多段会被必应拆成单字，见那个函数的注释）。
  */
 export function buildBingRssUrl(query: string): string {
-    const q = encodeURIComponent(String(query ?? '').trim());
+    const q = encodeURIComponent(compactBingQuery(query));
     if (!q) return '';
     return `https://${BING_SEARCH_HOST}/search?q=${q}&format=rss`;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BING_RSS_LIMIT, BING_SEARCH_HOST, WEB_SEARCH_TEXT_MAX, bingResultsToText, buildBingRssUrl, parseBingRss } from 'pure/bingSearch';
+import { BING_RSS_LIMIT, BING_SEARCH_HOST, WEB_SEARCH_TEXT_MAX, bingResultsToText, buildBingRssUrl, compactBingQuery, parseBingRss } from 'pure/bingSearch';
 
 /** 真机抓下来的一条 item（含 CDATA、高亮标签、实体） */
 const ITEM = (title: string, link: string, desc: string) =>
@@ -16,12 +16,46 @@ const FEED =
     '<item><title></title><link></link><description>空壳</description></item>' +
     '</channel></rss>';
 
+describe('compactBingQuery（🔴 2026-11-19 实测：中文多段查询会被逐字拆词）', () => {
+    it('含空格的中文查询只保留首段（作品名）', () => {
+        expect(compactBingQuery('七里香 周杰伦 简介')).toBe('七里香');
+        expect(compactBingQuery('名侦探柯南 豆瓣')).toBe('名侦探柯南');
+        expect(compactBingQuery('三体 刘慈欣 简介')).toBe('三体');
+    });
+
+    it('单段查询原样返回（不折腾已经能用的形态）', () => {
+        expect(compactBingQuery('七里香')).toBe('七里香');
+        expect(compactBingQuery('名侦探柯南')).toBe('名侦探柯南');
+    });
+
+    it('⛔ 英文短语**不**单段化（实测 `The Lord of the Rings` 加不加引号都正常）', () => {
+        expect(compactBingQuery('The Lord of the Rings')).toBe('The Lord of the Rings');
+        expect(compactBingQuery('Inception')).toBe('Inception');
+    });
+
+    it('中英混排仍按中文处理（有 CJK 就单段化）', () => {
+        expect(compactBingQuery('SPY×FAMILY 间谍过家家')).toBe('SPY×FAMILY');
+    });
+
+    it('多空格折叠 + 首尾空白剥掉；空查询 ⇒ 空串', () => {
+        expect(compactBingQuery('  三体   刘慈欣  ')).toBe('三体');
+        expect(compactBingQuery('')).toBe('');
+        expect(compactBingQuery('   ')).toBe('');
+    });
+});
+
 describe('buildBingRssUrl（实测口径）', () => {
     it('主机 / 路径 / format=rss / 关键词编码（⛔ 别发明别的参数）', () => {
         const u = buildBingRssUrl('周处除三害 导演');
         expect(u.startsWith(`https://${BING_SEARCH_HOST}/search?q=`)).toBe(true);
         expect(u).toContain('&format=rss');
-        expect(u).toContain(encodeURIComponent('周处除三害 导演'));
+        // 🔴 多段中文只编码首段（见 `compactBingQuery`；原文见 `probe-bing7.cjs` / `probe-bing8.cjs` 实测）
+        expect(u).toContain(encodeURIComponent('周处除三害'));
+        expect(u).not.toContain(encodeURIComponent('导演'));
+    });
+
+    it('单段查询逐字进 URL，不被截断', () => {
+        expect(buildBingRssUrl('七里香')).toContain(encodeURIComponent('七里香'));
     });
 
     it('🔴 空查询 ⇒ 空串（调用方据此不白跑一次请求）', () => {

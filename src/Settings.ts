@@ -2162,9 +2162,18 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             //    零信息量、零动作。用户已明确要求删除 ⇒ 只跳过这一家，其余两家照旧。
             //    ⚠️ **保留「测试连接」**：酷狗的 `KUGOU_VIP_ROLEINFO_URL` 是真能区分有效/失效的，
             //      与 QQ 那条「端点全灭」的情形完全不同 ⇒ ⛔ 别顺手把测试按钮一起删掉。
+            // 🔴🔴 2026-11-19 晚（用户 m15532：「QQ音乐凭据行的立即同步按钮也删除掉吧」）：
+            //    **QQ 这一行同样不再出「立即同步」**。这次是**实测**才敢删（不是照抄酷狗那一条）：
+            //    · 列歌单那步是**通的**（`fcg_user_created_diss` 拿到 4 个歌单，`我喜欢` 报 `song_cnt=17`）；
+            //    · 但**取曲目那步是空的**：`fcg_musiclist_getmyfav` 回 `code:0` 且 `mapmid` 长度 **0**、
+            //      `map` 也 0；`fcg_ucc_getcdinfo_byids_cp`（本仓 `buildQqDissDetailUrl` 那套参数，
+            //      `onlysong=1 / platform=yqq / GB2312`）对 `dirid=201` 与 `dirid=1` 都回 `code=0`
+            //      但 `songs=0`、`songnum=undefined`。
+            //    ⇒ 点开弹窗只能看到歌单名、点进去一首歌都没有，比酷狗那条更没用（酷狗至少还明说「不支持」）。
+            //    用户已要求删除 ⇒ 与酷狗同处理。**「测试连接」照旧保留**。
             //    ⚠️ 断言侧：`#665` 要求「立即同步」字面量 ≥5 处，这里只是**不执行**建按钮那两行，
             //      字面量本身没删 ⇒ 那几条不受影响。
-            if (p.id !== 'kugou') {
+            if (p.id !== 'kugou' && p.id !== 'qq') {
                 const syncRowBtn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '立即同步' });
                 syncRowBtn.addEventListener('click', () => {
                     // 🔴 口径与另外五个账号同步弹窗一致：**先列清单、勾选后才落库**（⛔ 不做「点一下全量落库」）；

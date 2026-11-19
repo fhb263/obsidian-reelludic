@@ -32,7 +32,7 @@ import { AiPrefillService } from 'services/aiPrefill';
 import type { AiPrefillOutcome } from 'services/aiPrefill';
 import type { AiPrefillInput } from 'pure/aiPrefill';
 import { PREFILL_SYNOPSIS_PREFIX, PREFILL_TOOL_FETCH_PAGE, PREFILL_TOOL_METADATA, PREFILL_TOOL_WEB_SEARCH } from 'pure/aiPrefill';
-import { BING_SEARCH_UA, bingResultsToText, buildBingRssUrl, parseBingRss } from 'pure/bingSearch';
+import { BING_SEARCH_UA, bingResultsToText, buildBingRssUrl, compactBingQuery, parseBingRss } from 'pure/bingSearch';
 import { PAGE_TEXT_MAX, extractPageSynopsis, pageReadableText } from 'pure/pageText';
 import { describeSearchResult, synopsisOf, type SearchResult } from 'pure/searchDisplay';
 // 🔴 m14816：AI 预填的「简介相关性闸口」（用户：「这个AI预填搜索的简介完全不相干都填进来了」）
@@ -11574,7 +11574,12 @@ export default class ReelLudicPlugin extends Plugin {
             if (res.status !== 200) return `（搜索失败：HTTP ${res.status}）`;
             const items = parseBingRss(res.text);
             if (!items.length) return '（没有搜到结果，换个关键词再试）';
-            return `搜索「${query}」的前 ${items.length} 条结果：\n${bingResultsToText(items)}`;
+            // 🔴 搜索引擎只认「单段查询」（中文多段会被逐字拆词，见 `pure/bingSearch.compactBingQuery`）。
+            //    这里把**实际用的词**告诉模型：它以为搜的是「七里香 周杰伦 简介」，实际只搜了「七里香」,
+            //    不说清楚它会拿「修饰词被忽略」的旧认知继续往下走。⛔ 别把这段提示删掉。
+            const used = compactBingQuery(query);
+            const note = used !== query ? `（只保留了作品名「${used}」，修饰词会被搜索引擎忽略）` : '';
+            return `搜索「${query}」${note}的前 ${items.length} 条结果：\n${bingResultsToText(items)}`;
         }
 
         if (name === PREFILL_TOOL_METADATA) {
