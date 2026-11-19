@@ -120,26 +120,38 @@ function safeRandom(rng: Rng | undefined): number {
 }
 
 /**
- * 生成洗牌袋：**整张队列 Fisher-Yates 打乱**。
+ * 生成洗牌袋：**把当前曲排除后，其余各首 Fisher-Yates 打乱**。
  *
- * 🔴 两条纪律：
+ * 🔴 三条纪律：
  *  ⑴ 打乱的是**副本**（⛔ 别就地把入参数组打乱 —— 调用方的队列顺序会被改掉，队列列表 UI 跟着乱）；
- *  ⑵ **袋首不得是当前曲**（`exclude`）：否则「点下一首」原地重播当前曲，看起来像按了没反应；
- *     仅在长度 > 1 时挪（单曲队列挪了就没有下一首了）。
+ *  ⑵ **当前曲不进袋**（`exclude`）—— 这是 m11034 的核心修正，理由见下；
+ *  ⑶ 单曲队列（排除后为空）⇒ 返回空袋，`decideTrack` 会走 `replay: true`（等效单曲循环）。
+ *
+ * ## 🔴🔴 为什么当前曲必须**整个剔除**，而不是「洗进袋子再挪到袋尾」
+ *
+ * m08028 之后的实现是「全队列洗牌 + 若袋首是当前曲就挪到袋尾」。用户 m11034 报的就是它：
+ * 「为什么 10 首内播放就排到之前播放过的音乐」—— 实测（20 个随机种子，`tests/audioQueue.test.ts`
+ * 的「一轮内不重复」用例就是那次实测的固化）**最早在第 2 步就撞回刚听过的那首**。
+ *
+ * 根因是「一轮」的定义错了：全队列洗牌时，当前曲**已经在播**，却又在袋里排了一次 ⇒ 10 首歌的袋子
+ * 实际只提供 9 首「新歌」，第 10 次抽取必然取回当前曲；而「挪袋尾」只防了**紧邻**重复，
+ * 不防「隔一首、隔两句」的重复 —— 那正是用户说的「10 首内就排到之前播放过的」。
+ *
+ * 正确语义：**一轮 = 除当前曲外每首恰好一次**。袋子取空（一轮放完）时重新洗，重洗时同样剔除
+ * 「此刻正在播的那首」⇒ 相邻两轮的交界处也不会紧邻重复。代价是每轮少一首（N 首队列一轮 N-1 首），
+ * 换来的是「N 首之内绝不重样」这个用户能直接感知到的性质。
  */
 export function buildShuffleBag(
     paths: readonly string[],
     exclude: string = '',
     rng?: Rng,
 ): string[] {
-    const out = [...paths];
+    // 剔除当前曲（⛔ 不是打乱后再挪位）：先把 pool 建好，再对它做 Fisher-Yates。
+    const pool = exclude ? paths.filter((p) => p !== exclude) : [...paths];
+    const out = pool;
     for (let i = out.length - 1; i > 0; i--) {
         const j = Math.floor(safeRandom(rng) * (i + 1));
         [out[i], out[j]] = [out[j], out[i]];
-    }
-    if (exclude && out.length > 1 && out[0] === exclude) {
-        const [first] = out.splice(0, 1);
-        out.push(first);
     }
     return out;
 }
@@ -206,6 +218,9 @@ export function decideTrack(input: AudioQueueInput): AudioQueueDecision {
             return { target: paths[pick], replay: paths[pick] === current, bag: bagIn };
         }
         const bag = bagIn.length ? bagIn : buildShuffleBag(paths, current, input.rng);
+        // 🔴 m11034：袋可能为空 —— 队列只有一首时，`buildShuffleBag` 把当前曲排除后什么都不剩。
+        //    此时必须回 `replay: true`（等效单曲循环），⛔ 不能回 `target: null` 让单曲歌单戛然而止。
+        if (!bag.length) return { target: current || paths[0], replay: true, bag };
         const target = bag.shift() ?? null;
         return { target, replay: target === current, bag };
     }

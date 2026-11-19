@@ -844,6 +844,11 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     const updateQueue = (next: readonly AudioPlayerTrack[]): void => {
         const cur = items[idx];
         items = next.slice();
+        // 🔴 m11034：队列变了 ⇒ 洗牌袋里可能留着**已经不在队列里**的路径。
+        //    不清理的话，`applyDecision` 里 `findIndex` 返 -1 会静默 return ——
+        //    用户点「下一首」像按了没反应（且没有任何提示）。只保留仍在队列里的项。
+        const alive = new Set(items.map((t) => t.path));
+        bag = bag.filter((p) => alive.has(p));
         if (!items.length || !cur) return;
         const i = items.findIndex((t) => !!t.entryId && t.entryId === cur.entryId);
         if (i < 0) return;

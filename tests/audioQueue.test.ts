@@ -102,19 +102,19 @@ describe('buildShuffleBag（Fisher-Yates 洗牌袋）', () => {
         expect(paths).toEqual(['a', 'b', 'c']);
     });
 
-    it('长度守恒、元素一个不少不多（是打乱不是丢）', () => {
-        const out = buildShuffleBag(['a', 'b', 'c', 'd', 'e'], '', seq([0.3, 0.7, 0.1, 0.9]));
-        expect(out).toHaveLength(5);
-        expect([...out].sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+    it('长度 = 队列长度 − 1（当前曲被**整个剔除**，⛔ 不是洗完再挪到袋尾）', () => {
+        const out = buildShuffleBag(['a', 'b', 'c', 'd', 'e'], 'a', seq([0.3, 0.7, 0.1, 0.9]));
+        expect(out).toHaveLength(4);
+        expect([...out].sort()).toEqual(['b', 'c', 'd', 'e']);
+        expect(out).not.toContain('a');
     });
 
     it('🔴 确定随机源 ⇒ 结果可复现，**且确实变了顺序**（防「没洗」与「洗成恒等」）', () => {
-        // ⚠️ 这两个期望值是**挑过**的：必须能区分「洗过」与「根本没洗、只挪了袋首」。
+        // ⚠️ 这两个期望值是**挑过**的：必须能区分「洗过」与「根本没洗」。
         //    实测教训 —— 只钉 `rng=0` 那一组时，把 Fisher-Yates 循环整段删掉结果**恰好相同**
-        //    （洗出来是 [b,c,a]、「没洗 + 袋首挪尾」也是 [b,c,a]）⇒ 突变抓不到 = 假绿。
-        //    加 `rng=0.5` 这一组后两者分道扬镳（洗 ⇒ [c,b,a]，没洗 ⇒ [b,c,a]）。
-        expect(buildShuffleBag(['a', 'b', 'c'], 'a', seq([0]))).toEqual(['b', 'c', 'a']);
-        expect(buildShuffleBag(['a', 'b', 'c'], 'a', seq([0.5]))).toEqual(['c', 'b', 'a']);
+        //    ⇒ 突变抓不到 = 假绿。加 `rng=0.5` 这一组后两者分道扬镳。
+        expect(buildShuffleBag(['a', 'b', 'c'], 'a', seq([0]))).toEqual(['c', 'b']);
+        expect(buildShuffleBag(['a', 'b', 'c'], 'a', seq([0.5]))).toEqual(['b', 'c']);
         // 不给 exclude 时直接看打乱结果（恒等排列绝不该出现）
         expect(buildShuffleBag(['a', 'b', 'c'], '', seq([0]))).toEqual(['b', 'c', 'a']);
         expect(buildShuffleBag(['a', 'b', 'c'], '', seq([0.5]))).toEqual(['a', 'c', 'b']);
@@ -124,17 +124,99 @@ describe('buildShuffleBag（Fisher-Yates 洗牌袋）', () => {
         );
     });
 
-    it('🔴 袋首不得是当前曲（否则点「下一首」原地重播，像按了没反应）', () => {
+    it('🔴 m11034 当前曲**不在袋里**（不是「袋首不是它」——挪袋尾只防紧邻，防不了隔一首重复）', () => {
         // 扫多个随机取值 ⇒ 覆盖多种排列，而不是只验一种排列下的巧合
         for (const r of [0, 0.3, 0.5, 0.99]) {
             const bag = buildShuffleBag(['a', 'b', 'c'], 'a', seq([r]));
-            expect(bag[0]).not.toBe('a');
-            expect([...bag].sort()).toEqual(['a', 'b', 'c']); // 挪袋首不能把元素弄丢
+            expect(bag).not.toContain('a');
+            expect([...bag].sort()).toEqual(['b', 'c']); // 剔除不能把别的元素弄丢
         }
     });
 
-    it('单曲队列不挪袋首（挪了就没有下一首了）', () => {
-        expect(buildShuffleBag(['a'], 'a', seq([0]))).toEqual(['a']);
+    it('单曲队列 ⇒ 空袋（调用方据此走 replay，⛔ 不是没有下一首）', () => {
+        expect(buildShuffleBag(['a'], 'a', seq([0]))).toEqual([]);
+    });
+});
+
+describe('🔴 m11034 一轮之内绝不重复（洗牌袋的核心契约）', () => {
+    /** 可复现随机源（不用 Math.random，结果可断言） */
+    function seeded(seed: number): () => number {
+        let s = seed >>> 0;
+        return () => {
+            s = (s * 1664525 + 1013904223) >>> 0;
+            return s / 4294967296;
+        };
+    }
+
+    /** 从 current 起连续 ended 推进 steps 步，返回完整播放序列 */
+    function playSeq(paths: string[], current: string, steps: number, seed: number): string[] {
+        const rng = seeded(seed);
+        let bag: string[] = [];
+        let cur = current;
+        const seq = [cur];
+        for (let i = 0; i < steps; i++) {
+            const d = decideTrack({
+                paths,
+                current: cur,
+                mode: 'shuffle',
+                trigger: 'ended',
+                direction: 'next',
+                bag,
+                rng,
+            });
+            bag = d.bag;
+            if (d.target === null) break;
+            seq.push(d.target);
+            if (!d.replay) cur = d.target;
+        }
+        return seq;
+    }
+
+    /** 首个重复元素的下标（= 队列长度 ⇒ 一整轮无重复），没有则 -1 */
+    function firstRepeat(seq: string[]): number {
+        const seen = new Set<string>();
+        for (let i = 0; i < seq.length; i++) {
+            if (seen.has(seq[i])) return i;
+            seen.add(seq[i]);
+        }
+        return -1;
+    }
+
+    it('🔴🔴 20 个种子 × 10 首队列：**前 10 首一把不重复**（修复前实测最早在第 2 步就撞回）', () => {
+        const paths = Array.from({ length: 10 }, (_, i) => `/m/${i}.mp3`);
+        for (let seed = 1; seed <= 20; seed++) {
+            const seq = playSeq(paths, paths[0], 30, seed);
+            // 播放序列第 0 位是当前曲，第 1..10 位应是「其余 9 首 + 新一轮的第 1 首」，都不许等于第 0 位
+            expect(firstRepeat(seq)).toBeGreaterThanOrEqual(paths.length);
+            // 前 10 首（含当前曲）必须覆盖整张队列、一个不漏
+            expect(new Set(seq.slice(0, 10)).size).toBe(10);
+        }
+    });
+
+    it('🔴 相邻两轮的交界处也不紧邻重复（袋空重洗时同样剔除当前曲）', () => {
+        const paths = ['a', 'b', 'c', 'd'];
+        for (let seed = 1; seed <= 30; seed++) {
+            const seq = playSeq(paths, 'a', 24, seed);
+            for (let i = 1; i < seq.length; i++) {
+                expect(seq[i]).not.toBe(seq[i - 1]);
+            }
+        }
+    });
+
+    it('袋长序列 = N−1 严格递减到 0 再重洗（一轮的定义：除当前曲外每首恰好一次）', () => {
+        const paths = Array.from({ length: 10 }, (_, i) => `/m/${i}.mp3`);
+        const rng = seeded(7);
+        let bag: string[] = [];
+        let cur = paths[0];
+        const lens: number[] = [];
+        for (let i = 0; i < 20; i++) {
+            const d = decideTrack({ paths, current: cur, mode: 'shuffle', trigger: 'ended', direction: 'next', bag, rng });
+            bag = d.bag;
+            lens.push(bag.length);
+            if (d.target && !d.replay) cur = d.target;
+        }
+        // 9 首的袋子取 9 次归零，然后重洗成 9 首……
+        expect(lens.slice(0, 10)).toEqual([8, 7, 6, 5, 4, 3, 2, 1, 0, 8]);
     });
 });
 
@@ -199,10 +281,10 @@ describe('decideTrack —— sequential（顺序播放）', () => {
 });
 
 describe('decideTrack —— shuffle（随机播放）', () => {
-    it('袋空 ⇒ 现洗一袋，取袋首并回传剩下的袋', () => {
+    it('袋空 ⇒ 现洗一袋，取袋首并回传剩下的袋（当前曲已被剔除，袋长 = N−1）', () => {
         const d = decideTrack({ ...base, mode: 'shuffle', rng: seq([0]) });
-        expect(d.target).toBe('b'); // rng 恒 0 ⇒ 洗成 [b, c, a]，且袋首已避让当前曲 a
-        expect(d.bag).toEqual(['c', 'a']);
+        expect(d.target).toBe('c'); // paths ['a','b','c']，剔除 'a' 后洗 [b,c]，rng=0 ⇒ 洗成 [c,b]
+        expect(d.bag).toEqual(['b']);
         expect(d.replay).toBe(false);
     });
 
