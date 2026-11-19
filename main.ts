@@ -35,6 +35,8 @@ import { PREFILL_SYNOPSIS_PREFIX, PREFILL_TOOL_FETCH_PAGE, PREFILL_TOOL_METADATA
 import { BING_SEARCH_UA, bingResultsToText, buildBingRssUrl, parseBingRss } from 'pure/bingSearch';
 import { PAGE_TEXT_MAX, extractPageSynopsis, pageReadableText } from 'pure/pageText';
 import { describeSearchResult, synopsisOf, type SearchResult } from 'pure/searchDisplay';
+// 🔴 m14816：AI 预填的「简介相关性闸口」（用户：「这个AI预填搜索的简介完全不相干都填进来了」）
+import { decideSynopsis, textMentionsTitle } from 'pure/prefillRelevance';
 import { createVaultIO } from 'services/vaultIO';
 import { TmdbClient, posterUrl as tmdbPosterUrl, type TmdbDetail, type TmdbSearchResult } from 'services/tmdb';
 import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
@@ -11593,9 +11595,22 @@ export default class ReelLudicPlugin extends Plugin {
             // 🔴 m09330：⛔ 不再只看 `hits[0]` —— 第一名常常没简介（豆瓣 / Open Library 的搜索级记录
             //    经常只有标题与年份），只看它等于整条回路没原文、模型回去编。现在**按相关性顺序找第一个
             //    带简介的命中**（仍然优先靠前的，只是不再被一名卡死）。
-            const withSynopsis = hits.find((h) => (synopsisOf(h) ?? '').trim().length > 0);
-            const synopsis = withSynopsis ? synopsisOf(withSynopsis) : undefined;
-            return synopsis ? `${head}\n\n${PREFILL_SYNOPSIS_PREFIX}${synopsis}` : head;
+            // 🔴🔴 m14816（用户 2026-11-19：「这个AI预填搜索的简介完全不相干都填进来了」）：
+            //    上面那条「找第一个带简介的命中」**漏了唯一该有的前提 —— 它得真的是这部作品**。
+            //    搜索级结果里常有同系列 / 同演员 / 同名不同作 / 只有关键词相近的条目排进前几，
+            //    只要其中一条挂 `summary`，那段文字就被当成本作简介照搬（`preferToolSynopsis` 见原文即无条件覆盖）。
+            //    ⇒ 现在统一走 `pure/prefillRelevance` 的 `decideSynopsis`：先按标题判同（全等 > 包含），
+            //      再用年份/作者择优；**标题对不上一律不许提供简介**（宁可空着，也不许填别人的）。
+            const decision = decideSynopsis(hits, { title });
+            if (decision.pick) {
+                return `${head}\n\n${PREFILL_SYNOPSIS_PREFIX}${decision.pick.synopsis}`;
+            }
+            // 没通过闸口时**要说清原因**，让模型自己决定是否换词重搜 —— ⛔ 别只丢个空结果。
+            const why =
+                decision.sameNameNoSynopsis > 0
+                    ? `（命中里有 ${decision.sameNameNoSynopsis} 条同名作品，但都没有简介原文；⛔ 不要凭记忆编简介，简介字段留空或换关键词再查）`
+                    : `（${decision.total} 条命中里没有与「${title}」同名的作品，⛔ 不要拿别的作品的简介凑数，简介字段留空）`;
+            return `${head}\n${why}`;
         }
 
         // 🔴 m09330（用户：「怎么AI搜索出来每个条目简介都是编的，我要的是原生原味的简介」）：
@@ -11606,6 +11621,13 @@ export default class ReelLudicPlugin extends Plugin {
             const raw = str('url');
             const target = /^https?:\/\//i.test(raw) ? raw : '';
             if (!target) return '（没给合法的网页地址，要以 http:// 或 https:// 开头）';
+            // 🔴 m14816：抓回来的页面**必须自证是这部作品**才允许抽简介。
+            //    用户原话「这个AI预填搜索的简介完全不相干都填进来了」——`fetch_page` 这一路同样会跑偏：
+            //    模型给一个搜索结果页 / 导航页 / 百科消歧义页，`extractPageSynopsis` 的③兜底
+            //    （「最长的一段 `<p>`」）就会抽出一段与作品毫无关系的正文，再被无条件照搬进简介框。
+            //    ⇒ 让模型把**要查的作品标题**一起传进来（`title` 是可选参数，老调用不带也不会报错），
+            //      页面正文里根本没出现这个标题 ⇒ **不附简介**，只交正文并说明原因。
+            const wantTitle = str('title');
             try {
                 const res = await nodeHttpGet(target, {
                     'User-Agent': BING_SEARCH_UA,
@@ -11618,7 +11640,13 @@ export default class ReelLudicPlugin extends Plugin {
                 //    免得把简介挤出上下文预算。
                 const syn = extractPageSynopsis(res.text);
                 const head = `页面正文（${target}）：\n${body.slice(0, Math.min(body.length, 2400))}`;
-                return syn ? `${head}\n\n${PREFILL_SYNOPSIS_PREFIX}${syn}` : head;
+                if (!syn) return head;
+                // ⚠️ 只有「模型给了标题」时才做这道校验：没给标题就无法判断页面属于谁，
+                //    不能凭空判「不相干」（那会把正常调用全废掉）。
+                if (wantTitle && !textMentionsTitle(body, wantTitle) && !textMentionsTitle(syn, wantTitle)) {
+                    return `${head}\n（⚠️ 这个页面里没有出现「${wantTitle}」，它很可能不是这部作品的条目页 ⇒ 没有附简介原文。⛔ 不要把这个页面的内容当简介，换个权威条目页再抓）`;
+                }
+                return `${head}\n\n${PREFILL_SYNOPSIS_PREFIX}${syn}`;
             } catch (e) {
                 return `（抓取失败：${e instanceof Error ? e.message : String(e)}）`;
             }

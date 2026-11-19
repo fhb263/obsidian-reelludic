@@ -136,3 +136,54 @@ describe('⑩ 统计页对齐 · 标题行换行后不悬空（用户「右上�
         expect(base).not.toMatch(/justify-content:\s*space-between/);
     });
 });
+
+// ── m14861：统计区块拖动后切页签「回到原来的位置」 ────────────────────────────
+//
+// 用户原话（m14861）：「为什么我页签统计的模块拖动了然后切换一下页签就返回原来的位置了」。
+//
+// 真因不是顺序丢了（`settings.statsOrder` 每次拖动都落盘成功、切页签后也读得回来），
+// 而是**列宽算错**：`spanOf(k)` 在函数体里读闭包 `boardWidth`，而 Svelte 4 的依赖分析
+// 只看模板表达式里出现的标识符、**看不进函数体** ⇒ 模板 `is-span-{spanOf(k)}` 只登记
+// `spanOf` 与 `k`，`boardWidth` 变了这段 class 不失效，列宽永远停在初始的 1200。
+//
+// 真机实测（修复前，.testvault）：容器 258px（窄于 STATS_NARROW_MAX=719，六块全该整行）时
+// `board` 仍渲染 `is-span-2`(258px)、其余 `is-span-1`(123px)，全是按 1200 算的；把视口拉到
+// 1600/1200/800/500（容器 608/408/208/66）后 `is-span-N` 类**一个都没变**。切页签会销毁重建
+// `StatsBoard`（`boardWidth` 从缺省 1200 重新起步），重建后量到真实宽度 ⇒ 排布与拖动前那套
+// 宽度算出来的不一致，于是用户看到「回到原位」。
+//
+// 修复后真机实测（重启实例加载新包）：608px 下六块**全部** `is-span-1`；拖动后切走再切回，
+// 每块的 `is-span-N` 与 x/宽度逐字一致（`SAME=true`）。
+describe('⑩ 统计页自适应 · 列宽必须把宽度**传参**给 spanOf（用户 m14861 拖动后复位）', () => {
+    it('spanOf 收 width 形参，函数体只转发给 statsBlockCols', () => {
+        expect(code).toMatch(/function spanOf\(k: StatsBlockKey, width: number\): 1 \| 2 \{/);
+        expect(code).toMatch(/function spanOf\(k: StatsBlockKey, width: number\): 1 \| 2 \{\s*return statsBlockCols\(k, width\);/);
+    });
+
+    it('🔴 反向守卫：spanOf 函数体里不许再出现闭包 boardWidth', () => {
+        // 写成 `spanOf(k)` + 函数体读 `boardWidth` 时这条会红 —— 那正是缺陷形态。
+        expect(code).not.toMatch(/function spanOf\(k: StatsBlockKey, width: number\)[^}]*boardWidth/);
+    });
+
+    it('模板调用必须显式传 boardWidth（依赖才成立）', () => {
+        expect(code).toMatch(/class="rl-sb-block is-span-\{spanOf\(k, boardWidth\)\}"/);
+        // 反向：不许留下单参调用（漏传会让列宽静默停在旧宽度）
+        expect(code).not.toMatch(/spanOf\(k\)/);
+    });
+
+    it('boardWidth 仍由 ResizeObserver 实测喂进来（判据没被顺手改坏）', () => {
+        expect(code).toMatch(/new ResizeObserver\(\(es\) => \{/);
+        expect(code).toMatch(/boardWidth = e\.contentRect\.width;/);
+        expect(code).toMatch(/boardWidth = sbEl\.clientWidth \|\| boardWidth;/);
+        // 初始值必须存在（首帧还没量到宽度时不能是 undefined，否则 statsBlockCols 全返回 2）
+        expect(code).toMatch(/let boardWidth = 1200;/);
+    });
+
+    it('真源 `statsBlockCols` 的窄屏分支没被绕开（宽度 < 719 ⇒ 一律整行）', () => {
+        // 这条防的是「有人为了绕开依赖问题，把窄屏判断塞回模板里」——
+        // 那样 `statsBlockCols` 的单元测试与真机行为会分叉。
+        expect(code).toMatch(/return statsBlockCols\(k, width\);/);
+        // 模板里不许出现硬编码的宽度比较
+        expect(code).not.toMatch(/is-span-\{boardWidth/);
+    });
+});

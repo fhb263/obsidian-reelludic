@@ -166,9 +166,26 @@
         return { destroy: () => ro.disconnect() };
     }
 
-    /** 每块在网格里占几列（真源 = `pure/statsLayout.statsBlockCols`；2 = 整行，1 = 半行） */
-    function spanOf(k: StatsBlockKey): 1 | 2 {
-        return statsBlockCols(k, boardWidth);
+    /**
+     * 每块在网格里占几列（真源 = `pure/statsLayout.statsBlockCols`；2 = 整行，1 = 半行）。
+     *
+     * 🔴🔴 2026-11-19（用户 m14861：「统计的模块拖动了然后切换一下页签就返回原来的位置了」）：
+     *   `width` 必须**从模板当实参传进来**，⛔ 绝不能像上一版那样写成 `spanOf(k)` 再在函数体里读 `boardWidth`。
+     *
+     * 真因（真机实测，不是推测）：Svelte 4 的依赖分析**只看模板表达式里出现的标识符，不穿透函数体**。
+     *   上一版模板是 `is-span-{spanOf(k)}` ⇒ 编译器只登记 `spanOf` 与 `k`，
+     *   `boardWidth` 变化**不会让这段 class 失效**，列宽永远停在初始的 `1200`。
+     *   实测证据：容器实测 258px（窄于 `STATS_NARROW_MAX=719`，六块全该整行）时
+     *   `board` 仍渲染 `is-span-2`(258px)、其余 `is-span-1`(123px)，全是按 1200 算的；
+     *   再把视口拉到 1600/1200/800/500（容器 608/408/208/66），`is-span-N` 类**一个都没变**。
+     *   ⇒ 切页签时 `{#if effPage === 'stats'}` 销毁重建 `StatsBoard`，`boardWidth` 从缺省 1200 重新起步；
+     *     重建后（`onMount` 才量到真实宽度）的列宽与拖动前那套宽度算出的列宽不一致 ——
+     *     用户看到的就是「布局返回原来的位置」。顺序数据其实一直没丢（`settings.statsOrder` 每次都落盘成功）。
+     *   ⚠️ 本仓同族坑：`HomeView.svelte` 用「显式 `void activeTab` 建依赖」解决过同类问题。
+     *     铁律：模板里调用读响应式变量的函数，必须把那个变量**作为实参写出来**。
+     */
+    function spanOf(k: StatsBlockKey, width: number): 1 | 2 {
+        return statsBlockCols(k, width);
     }
 
     function onBlockDragStart(ev: DragEvent, k: StatsBlockKey) {
@@ -573,7 +590,7 @@
              浏览器在它们上面**根本不触发 `dragstart`**，用户一拖就变成选文字 —— 这就是"自由拖动无法生效"的真因。
              把手是一个独立的小元素，指针落上去一定是拖动，不会被内容抢走手势。 -->
         <div
-            class="rl-sb-block is-span-{spanOf(k)}"
+            class="rl-sb-block is-span-{spanOf(k, boardWidth)}"
             class:is-dragging={dragBlock === k}
             class:drop-before={dropTarget?.key === k && dropTarget.fullRow && dropTarget.side === 'before'}
             class:drop-after={dropTarget?.key === k && dropTarget.fullRow && dropTarget.side === 'after'}

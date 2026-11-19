@@ -432,11 +432,17 @@ export function prefillTools(): AiToolDef[] {
                     '抓取一个网页的正文（🔴 拿**作品简介原文**的主要途径）。传一个权威页面地址' +
                     '（豆瓣 / Bangumi / Wikipedia / 官网 / IGDB 等条目页），返回该页可读正文；' +
                     '若页面里能识别出简介段落，**末尾会以「' + PREFILL_SYNOPSIS_PREFIX + '」开头附上原文** ——' +
-                    '填「简介」字段时照抄那一段，⛔ 不要改写。',
+                    '填「简介」字段时照抄那一段，⛔ 不要改写。' +
+                    '⚠️ 请把**要查的作品标题**一并填进 `title`：工具会核对页面里是否真的出现了这个标题，' +
+                    '对不上就**不会附简介**（避免把搜索结果页/导航页的正文当成作品简介）。',
                 parameters: {
                     type: 'object',
                     properties: {
                         url: { type: 'string', description: '要抓取的网页地址（http/https 开头）' },
+                        title: {
+                            type: 'string',
+                            description: '要查的作品标题（用于核对这个页面是不是它的条目页；强烈建议填）',
+                        },
                     },
                     required: ['url'],
                 },
