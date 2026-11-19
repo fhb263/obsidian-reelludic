@@ -19,6 +19,8 @@ import {
     parseKugouLyricSearch,
     buildKugouLyricDownloadUrl,
     parseKugouLyricDownload,
+    buildKugouAlbumInfoUrl,
+    parseKugouAlbumDetail,
 } from 'pure/dl/kugou'
 
 describe('酷狗搜索 URL 构造（buildKugouSearchUrl）', () => {
@@ -319,5 +321,68 @@ describe('酷狗歌词（lyrics.kugou.com search + download）', () => {
         expect(parseKugouLyricDownload('bad')).toBeNull()
         expect(parseKugouLyricDownload(JSON.stringify({ content: '' }))).toBeNull()
         expect(parseKugouLyricDownload(JSON.stringify({}))).toBeNull()
+    })
+})
+
+/**
+ * 🔴 m12958 ②：酷狗专辑详情（`mobilecdn` 免登录接口）—— 简介与发行日期的来源。
+ */
+describe('酷狗专辑详情（api/v3/album/info）', () => {
+    it('buildKugouAlbumInfoUrl 带 albumid + version=8000 + plat=0（缺后两个会返 errcode 20001）', () => {
+        const url = buildKugouAlbumInfoUrl('1044789')
+        expect(url).toContain('mobilecdn.kugou.com/api/v3/album/info')
+        expect(url).toContain('albumid=1044789')
+        expect(url).toContain('version=8000')
+        expect(url).toContain('plat=0')
+    })
+
+    it('解析 publishDate + description', () => {
+        const raw = JSON.stringify({
+            errcode: 0,
+            data: { albumname: '七里香', publishtime: '2004-08-03 00:00:00', intro: '周杰伦第五张专辑。', category: 1 },
+        })
+        const d = parseKugouAlbumDetail(raw)
+        expect(d).not.toBeNull()
+        expect(d!.publishDate).toBe('2004-08-03')
+        expect(d!.description).toContain('第五张专辑')
+        expect(d!.name).toBe('七里香')
+    })
+
+    it('🔴 `genre` 恒为空串 —— `category` 是数字编号（实测「七里香」是 1），⛔ 不许当题材', () => {
+        const raw = JSON.stringify({ errcode: 0, data: { albumname: '七里香', category: 1, intro: 'x' } })
+        const d = parseKugouAlbumDetail(raw)
+        expect(d!.genre).toBe('')
+        // 反向守卫：数字编号绝不能以任何形式出现在题材里
+        expect(d!.genre).not.toContain('1')
+    })
+
+    it('errcode !== 0（含带 version 缺失时的 20001）⇒ null', () => {
+        expect(parseKugouAlbumDetail(JSON.stringify({ errcode: 20001 }))).toBeNull()
+        expect(parseKugouAlbumDetail(JSON.stringify({ errcode: 0 }))).toBeNull()
+    })
+
+    it('坏 JSON ⇒ null（⛔ 不抛）', () => {
+        expect(parseKugouAlbumDetail('bad')).toBeNull()
+        expect(parseKugouAlbumDetail('{}')).toBeNull()
+    })
+
+    it('搜索解析带出 PublishDate → publishDate 与 AlbumID → albumId（搜索级只有日期，题材/简介靠专辑键补拉）', () => {
+        const raw = JSON.stringify({
+            data: {
+                lists: [
+                    {
+                        FileHash: 'HASH1',
+                        SongName: '七里香',
+                        SingerName: '周杰伦',
+                        AlbumName: '七里香',
+                        AlbumID: '1044789',
+                        PublishDate: '2004-08-03',
+                    },
+                ],
+            },
+        })
+        const [s] = parseKugouSearchResponse(raw)
+        expect(s.publishDate).toBe('2004-08-03')
+        expect(s.albumId).toBe('1044789')
     })
 })

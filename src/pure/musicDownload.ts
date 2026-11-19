@@ -46,6 +46,11 @@ export interface MusicSong {
      *    展示走 `reviewPercent`（百分制），⛔ 别当星级用。
      */
     pop?: number;
+    /**
+     * 🔴 m12958：**发行日期**（归一后的 `YYYY-MM-DD`）。只有网易云搜索级给得出
+     * （`publishTime` 毫秒时间戳，⚠️ 但很多歌是 0）⇒ 归一失败一律 undefined。append-only。
+     */
+    publishDate?: string;
     /** 歌曲网页地址（弹窗「打开歌曲页」用；空串 = 不可用） */
     pageUrl: string;
 }

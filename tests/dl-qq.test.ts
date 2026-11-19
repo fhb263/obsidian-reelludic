@@ -22,6 +22,10 @@ import {
     parseQqDissCounts,
     buildQqLyricUrl,
     parseQqLyricResponse,
+    checkQqCookieShape,
+    buildQqAlbumDetailBody,
+    buildQqAlbumDetailUrl,
+    parseQqAlbumDetail,
 } from 'pure/dl/qq'
 
 describe('QQ 搜索响应解析（parseQqSearchResponse）', () => {
@@ -382,5 +386,132 @@ describe('QQ 歌词（fcg_query_lyric_new）', () => {
         expect(parseQqLyricResponse(JSON.stringify({ retcode: 0, code: 0, lyric: '' }))).toBeNull()
         expect(parseQqLyricResponse(JSON.stringify({ retcode: 0, code: 0 }))).toBeNull()
         expect(parseQqLyricResponse('bad')).toBeNull()
+    })
+})
+
+/**
+ * 🔴 m12958 ①：QQ「测试连接」改判「Cookie 结构完整性」。
+ *
+ * 取证背景（决定了为什么守的是「结构」而不是「在线有效性」）：六个 musicu 用户模块
+ * 在免登录 / 假 Cookie / 真实 Cookie 三种情况下**全部**返回 `code 500003 / subcode 860100001`，
+ * 三个备选端点也零区分力 ⇒ 「这枚 Cookie 有效吗」客观上**不可在线判定**。
+ * 旧实现用 `parseQqUserInfo` 判 `code === 0` 的后果是：**任何真实 Cookie 都被判「连接失败」**。
+ */
+describe('QQ Cookie 结构检查（checkQqCookieShape）', () => {
+    it('空串 ⇒ 不通过，提示去 F12 复制', () => {
+        const r = checkQqCookieShape('')
+        expect(r.ok).toBe(false)
+        expect(r.message).toContain('F12')
+    })
+
+    it('有 uin 但无票据 ⇒ 不通过，点名三个票据键（说明是未登录时复制的）', () => {
+        const r = checkQqCookieShape('uin=o123456; other=1')
+        expect(r.ok).toBe(false)
+        expect(r.uin).toBe('123456')
+        expect(r.hasTicket).toBe(false)
+        expect(r.message).toContain('qm_keyst')
+        expect(r.message).toContain('未登录')
+    })
+
+    it('有票据但无 uin ⇒ 不通过（多半只复制了单个字段）', () => {
+        const r = checkQqCookieShape('qm_keyst=abc123; other=1')
+        expect(r.ok).toBe(false)
+        expect(r.uin).toBe('')
+        expect(r.hasTicket).toBe(true)
+        expect(r.message).toContain('没有 uin')
+    })
+
+    it('uin + 票据齐全 ⇒ 通过，但**必须**声明「无法在线确认」', () => {
+        const r = checkQqCookieShape('uin=o123456; qm_keyst=abc123; other=1')
+        expect(r.ok).toBe(true)
+        expect(r.uin).toBe('123456')
+        expect(r.hasTicket).toBe(true)
+        // 🔴 这两句是本次修障的**契约**：不能因为「结构齐」就让用户以为「服务端也认可了」
+        expect(r.message).toContain('结构完整')
+        expect(r.message).toContain('无法在线确认')
+        // 且必须给出「过期了怎么办」的落地指引
+        expect(r.message).toContain('500003')
+    })
+
+    it('三种票据键（qm_keyst / qqmusic_key / p_skey）任一都算有票据', () => {
+        for (const key of ['qm_keyst', 'qqmusic_key', 'p_skey']) {
+            const r = checkQqCookieShape(`uin=o123456; ${key}=abc123`)
+            expect(r.ok, key).toBe(true)
+            expect(r.hasTicket, key).toBe(true)
+        }
+    })
+
+    it('票据值不能为空（`qm_keyst=;` 不算）', () => {
+        const r = checkQqCookieShape('uin=o123456; qm_keyst=')
+        expect(r.hasTicket).toBe(false)
+        expect(r.ok).toBe(false)
+    })
+})
+
+/**
+ * 🔴 m12958 ②：QQ 专辑详情（`GetAlbumDetail`，免登录可用）。
+ * 这是「题材 + 简介」的唯一来源 —— 搜索级只有 `pubtime`，没有 `desc` / `genreNew`。
+ */
+describe('QQ 专辑详情（GetAlbumDetail）', () => {
+    it('buildQqAlbumDetailBody 打 music.musichallAlbum.AlbumInfoServer / GetAlbumDetail，param 带 albumMid', () => {
+        const body = JSON.parse(buildQqAlbumDetailBody('0042pB7D2rGE4a'))
+        expect(body.req_1.module).toBe('music.musichallAlbum.AlbumInfoServer')
+        expect(body.req_1.method).toBe('GetAlbumDetail')
+        expect(body.req_1.param.albumMid).toBe('0042pB7D2rGE4a')
+    })
+
+    it('buildQqAlbumDetailUrl 走 musicu.fcg 且 data 已编码', () => {
+        const url = buildQqAlbumDetailUrl('0042pB7D2rGE4a')
+        expect(url).toContain('u.y.qq.com/cgi-bin/musicu.fcg')
+        expect(url).toContain('format=json')
+        expect(url).toContain('data=')
+        // 不能出现裸 JSON（必须 encodeURIComponent）
+        expect(url).not.toContain('{"comm"')
+    })
+
+    it('解析基本三样：publishDate / description / genre', () => {
+        const raw = JSON.stringify({
+            req_1: {
+                code: 0,
+                data: {
+                    basicInfo: {
+                        albumName: '七里香',
+                        publishDate: '2004-08-03',
+                        desc: '《七里香》是周杰伦的第五张专辑。',
+                        genreNew: 'Pop',
+                    },
+                },
+            },
+        })
+        const d = parseQqAlbumDetail(raw)
+        expect(d).not.toBeNull()
+        expect(d!.publishDate).toBe('2004-08-03')
+        expect(d!.description).toContain('第五张专辑')
+        expect(d!.genre).toBe('Pop')
+        expect(d!.name).toBe('七里香')
+    })
+
+    it('🔴 题材优先取 `genreNew`；两者都空就留空（⛔ 不拿语言/专辑类型冒充）', () => {
+        const withNew = parseQqAlbumDetail(
+            JSON.stringify({ req_1: { code: 0, data: { basicInfo: { genre: 'Pop', genreNew: 'Rock' } } } }),
+        )
+        expect(withNew!.genre).toBe('Rock')
+        // 实测形态：genre 是空串、genreNew 也缺 ⇒ 留空，不许编
+        const none = parseQqAlbumDetail(
+            JSON.stringify({ req_1: { code: 0, data: { basicInfo: { genre: '', language: '国语', albumType: '录音室专辑' } } } }),
+        )
+        expect(none!.genre).toBe('')
+        expect(none!.genre).not.toContain('国语')
+        expect(none!.genre).not.toContain('录音室')
+    })
+
+    it('code !== 0（实测单曲专辑常返 104400）⇒ null', () => {
+        expect(parseQqAlbumDetail(JSON.stringify({ req_1: { code: 104400 } }))).toBeNull()
+        expect(parseQqAlbumDetail(JSON.stringify({ req_1: { code: 0 } }))).toBeNull()
+    })
+
+    it('坏 JSON / 空对象 ⇒ null（⛔ 不抛）', () => {
+        expect(parseQqAlbumDetail('bad')).toBeNull()
+        expect(parseQqAlbumDetail('{}')).toBeNull()
     })
 })

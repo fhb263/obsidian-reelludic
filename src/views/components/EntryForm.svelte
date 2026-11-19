@@ -243,6 +243,24 @@ export let initialBookKind: BookKind | undefined = undefined;
      */
     export let onFetchSongCommentCount: (platform: string, songId: string) => Promise<number | undefined> = async () => undefined;
     /**
+     * 🔴 m12958 ② 拉**曲库结果所属专辑的元数据**（题材 / 简介 / 发行年）。
+     *
+     * 用户原话：「从三大平台搜索或同步得到的条目没有发行年、题材、简介」。
+     * 分工（取证结论决定的边界）：
+     *   · **发行年**搜索级就有（QQ `pubtime` / 酷狗 `PublishDate`）⇒ 由 `pure/songLibrary` 直接映射进
+     *     `SearchResult.year`，**不走这个回调**；
+     *   · **题材 / 简介**搜索级没有，要再打一次「专辑详情」：QQ `GetAlbumDetail`（免登录可用，
+     *     `desc` 实测 2862 字、`genreNew` 如 `Pop`）、酷狗 `api/v3/album/info`（`intro` 实测 2536 字）。
+     *     这两样是「锦上添花」，⛔ 补不到不该拦住回填。
+     * ⚠️ 第一个参数是**平台键**（`qq` / `kugou` / …），⛔ 不是显示名 ——
+     *    `platformLabel` 给的是「QQ音乐」，宿主按键分流，传显示名会静默返回 `{}`。
+     * ⚠️ 失败一律返回 `{}`（宿主侧已保证不抛），本组件拿到空对象就什么都不改。
+     */
+    export let onFetchSongAlbumMeta: (
+        platform: string,
+        albumKey: string,
+    ) => Promise<{ publishDate?: string; genre?: string; description?: string }> = async () => ({});
+    /**
      * 🔴 #609 拉**一本微信读书书的详情**（`/web/book/info?bookId=`）—— 与「从微信读书同步书架」逐本补详情
      * **同一个端点、同一份解析**（宿主 `main.fetchWereadBookInfo`）。
      * ⚠️ 需要已填 Cookie；没填 / 失败 ⇒ 返回 `null`，本组件**静默保留搜索级字段**（与豆瓣详情同款降级）。
@@ -1402,6 +1420,28 @@ export let initialBookKind: BookKind | undefined = undefined;
     /** 用户手填总集数 ⇒ 收掉自动标记（此后切类型不再改写用户填的值） */
     function markTotalEpisodesTouched(): void {
         totalEpisodesAuto = false;
+        episodeCountMiss = false;
+    }
+    /* 🔴 2026-11-19 用户报障（m11999）：「还是拉取不行啊，为什么我拉取"柯南"的条目豆瓣的总集数还是为空」。
+       实测结论：**豆瓣自己就没有柯南的集数**（不是插件 bug）——
+         · 柯南 `1463371` 的 `#info` 里整块没有「集数」行（正文另写「该剧目前还未确定具体集数」）；
+         · 豆瓣 rexxar API `m.douban.com/rexxar/api/v2/tv/1463371` 的 `episodes_count` 是 **0**、
+           `last_episode_number` 为 null、`episodes_info` 为空串；
+         · `/subject/1463371/episodes` 返 404；
+         · 对照条目「佩琳物语」`3016188`（已完结）`#info` 有 `集数: 53`，插件链路一次就拿到 53 ⇒ 链路本身是通的。
+       用户裁定（2026-11-19）：「查不到就留空 + 给提示」——
+       ⛔ 不许编造集数（拿 0/1/搜索页的条数冒充），也 ⛔ 不许静默留空（用户会以为功能坏了）。
+       所以：只在**豆瓣详情确实返回了、但里面没有集数**时置位，界面上写明原因并让用户手填。 */
+    const EPISODE_COUNT_MISS_HINT =
+        '豆瓣没有提供这部剧的集数（未定集的长期连载常见），已留空 —— 请手动填写总集数。';
+    let episodeCountMiss = false;
+    /* 只在豆瓣自己的详情分支调用：`applyDoubanDetail` 是多源共用的（豆瓣 / OMDb / OpenLibrary /
+       Steam 全走它），在那儿置位会把别的源也误标成「豆瓣没给」。 */
+    function noteEpisodeCountMiss(d: Record<string, unknown>): void {
+        if (type !== 'tv' && type !== 'anime') return;
+        if (totalEpisodes) return;
+        if (d.episodeCount) return;
+        episodeCountMiss = true;
     }
     /* 🔴 2026-10-23 用户：「填 1000 集会一次性铺开 1000 行，滚动困难」⇒ 集号网格**按每 10 行分区**、
        分区标题吸顶。真实分区大小要看**容器宽度**（一行能放几个 36px 按钮），量不到就回落 13 列
@@ -2271,6 +2311,31 @@ export let initialBookKind: BookKind | undefined = undefined;
                         // 补拉失败静默：评价人数是锦上添花，⛔ 不该挡住回填
                     }
                 }
+                // 🔴 m12958 ②：曲库结果的**专辑元数据**（题材 / 简介 / 发行年）补拉。
+                //    用户原话：「从三大平台搜索或同步得到的条目没有发行年、题材、简介」。
+                // 与上面那条评论数的分工：那条按**歌曲 id** 打评论接口（只要评价人数），
+                // 这条按**专辑键**打专辑详情（要 `desc` 简介与 `genreNew` 题材）——两个键、两个端点。
+                // ⚠️ 发行年在搜索级已由 `pure/songLibrary` 映射进 `r.year`（见上方 `if (r.year)`），
+                //    这里只在**那里没给**（网易云 `publishTime` 常为 0）时用专辑详情兜一次。
+                // ⚠️ 三个字段各自独立判空、都**不覆盖用户已填**（`!genres` / `!summary` / `!year`）；
+                //    ⛔ 别写成「拿到 meta 就整体赋值」—— 用户手填的内容会被接口值顶掉。
+                if (r.source === SONG_LIB_ID && 'albumKey' in r && r.albumKey && (!genres || !summary || !year)) {
+                    // 🔴 平台键取 id 的**第二段**：`songlib:<平台键>:<歌曲id>`（见 `pure/songLibrary` 的
+                    //    `id: \`${SONG_LIB_ID}:${String(s.source ?? '')}:${String(s.id ?? '')}\``）。
+                    //    ⛔ 不能用 `platformLabel` —— 那是「QQ音乐」这类**显示名**，宿主按 `qq`/`kugou` 分流，
+                    //    传显示名会静默返回 `{}`（这正是「补了半天什么也没填上」的经典死法）。
+                    const libKey = String(r.id ?? '').split(':')[1] ?? '';
+                    try {
+                        const meta = await onFetchSongAlbumMeta(libKey, String(r.albumKey));
+                        if (meta.genre && !genres) genres = meta.genre;
+                        if (meta.description && !summary) summary = meta.description;
+                        // `publishDate` 归一后是 `YYYY-MM-DD`（见 `pure/dl/utils.normalizePublishDate`），
+                        // 「发行年」框只要 4 位 ⇒ 取前四位。⛔ 别整串塞进去（表单会把它当成年份原文落库）。
+                        if (meta.publishDate && !year) year = meta.publishDate.slice(0, 4);
+                    } catch {
+                        // 补拉失败静默：题材/简介是锦上添花，⛔ 不该挡住回填
+                    }
+                }
                 // 豆瓣音乐兜底：搜索级缺歌手/专辑/年份时，点击时按需拉详情补全（#info 发行时间 → 发行年）
                 if (r.source === 'douban' && (!r.artist || !r.album || !r.year)) {
                     try {
@@ -2321,6 +2386,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                         const d = await onFetchDoubanDetail(String(r.id), type);
                         if (d) {
                             applyDoubanDetail(d);
+                            noteEpisodeCountMiss(d);
                             new Notice('已自动补全豆瓣详情字段', 2000);
                         }
                     } catch {
@@ -2371,6 +2437,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                             const d = await onFetchDoubanDetail(String(tv.id), type);
                             if (d) {
                                 applyDoubanDetail(d);
+                                noteEpisodeCountMiss(d);
                                 new Notice('已自动补全豆瓣详情字段', 2000);
                             }
                         } catch {
@@ -5066,6 +5133,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                     <div data-fld="total-episodes" style={fldStyle('total-episodes')}>
                         <label class="rl-lbl">总集数</label>
                         <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="如 12" />
+                        {#if episodeCountMiss}<div class="rl-hint">{EPISODE_COUNT_MISS_HINT}</div>{/if}
                     </div>
                 {/if}
             {/if}
@@ -5088,6 +5156,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                 <div data-fld="total-episodes" style={fldStyle('total-episodes')}>
                     <label class="rl-lbl">总集数</label>
                     <input class="rl-input" type="number" min="0" bind:value={totalEpisodes} on:input={resizeEpisodeFiles} placeholder="如 12" />
+                    {#if episodeCountMiss}<div class="rl-hint">{EPISODE_COUNT_MISS_HINT}</div>{/if}
                 </div>
                 <div data-fld="episode" style={fldStyle('episode')}>
                     <label class="rl-lbl" data-tip="填第几集（决定进度显示）">当前进度</label>

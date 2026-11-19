@@ -27,26 +27,28 @@ import {
 } from 'services/musicDownload';
 import type { MusicSong } from 'pure/musicDownload';
 import {
+    buildQqAlbumDetailUrl,
     buildQqDissCountsBody,
     buildQqDissDetailUrl,
     buildQqDissDetailV2Body,
     buildQqDissListUrl,
     buildQqSearchUrl,
-    buildQqUserInfoUrl,
     buildQqVkeyBody,
     buildQqVkeyUrl,
+    checkQqCookieShape,
     extractQqUin,
     makeGuid,
+    parseQqAlbumDetail,
     parseQqDissCounts,
     parseQqDissDetail,
     parseQqDissDetailV2,
     parseQqDissList,
     parseQqPurl,
     parseQqSearchResponse,
-    parseQqUserInfo,
     QQ_MUSICU_URL,
 } from 'pure/dl/qq';
 import {
+    buildKugouAlbumInfoUrl,
     buildKugouSearchUrl,
     buildKugouSongInfoUrl,
     buildKugouSpecialDetailUrl,
@@ -56,6 +58,7 @@ import {
     KUGOU_MOBILE_UA,
     KUGOU_PC_REFERER,
     KUGOU_VIP_ROLEINFO_URL,
+    parseKugouAlbumDetail,
     parseKugouRoleinfo,
     parseKugouSearchResponse,
     parseKugouSongInfoResponse,
@@ -161,6 +164,18 @@ export interface DownloadSong {
      * append-only 字段。
      */
     pop?: number;
+    /**
+     * 🔴 m12958：**发行日期**（归一后的 `YYYY-MM-DD`）。三家搜索级都给得出：
+     * 网易云 `publishTime`（毫秒，**很多歌是 0**）、QQ `pubtime`（秒）、酷狗 `PublishDate`（现成串）。
+     * ⚠️ 只是**日期**不是年份 —— 表单「发行年」要 4 位，走 `publishYearOf`。append-only 字段。
+     */
+    publishDate?: string;
+    /**
+     * 🔴 m12958：**专辑定位键**，用于事后补拉题材/简介（`albumMetaFor`）。
+     * QQ = `albummid`、酷狗 = `AlbumID`；⛔ 网易云不填（其专辑接口实测 `code=-462` 被拦）。
+     * ⛔ 别叫 `albumId` —— `album` 已经是专辑**名**，两个键并存容易看错。append-only 字段。
+     */
+    albumKey?: string;
 }
 
 /** 统一的推荐歌单项（各平台解析后归一化） */
@@ -264,6 +279,10 @@ function mapNeteaseSongs(out: MusicSearchOutcome): DownloadSong[] {
             vip: !s.downloadable,
             // 🔴 m10134：热度分（只有网易云搜索响应带 `pop`）
             pop: s.pop,
+            // 🔴 m12958：发行日期。⛔ 这里**不填 albumKey** —— 网易云专辑接口实测 `code=-462`
+            //    被反爬拦下（`api/album/<id>` 与 `api/song/detail` 都拿不到 description），
+            //    填了键只会让点选时白发一次必失败的请求。
+            publishDate: s.publishDate,
             ext: 'mp3' as const,
             webUrl: s.pageUrl || undefined,
         }));
@@ -284,6 +303,9 @@ function mapQqSongs(text: string): DownloadSong[] {
         coverUrl: s.coverUrl,
         vip: s.vipOnly,
         ext: s.ext,
+        // 🔴 m12958：发行日期 + 专辑键（补拉题材/简介要用）
+        publishDate: s.publishDate,
+        albumKey: s.albumMid,
         webUrl: buildSongWebUrl({ source: 'qq', id: s.songmid, songmid: s.songmid }) ?? undefined,
     }));
 }
@@ -301,6 +323,9 @@ function mapKugouSongs(text: string): DownloadSong[] {
         bitrate: s.bitrate,
         vip: s.privilege === 10,
         ext: 'mp3' as const,
+        // 🔴 m12958：发行日期 + 专辑键（补拉简介要用）
+        publishDate: s.publishDate,
+        albumKey: s.albumId,
         webUrl: buildSongWebUrl({ source: 'kugou', id: s.hash }) ?? undefined,
     }));
 }
@@ -629,6 +654,75 @@ export async function dlPlaylistSongs(
     }
 }
 
+// ────────────────────────────── 专辑补拉（题材 / 简介 / 发行年） ──────────────────────────────
+
+/**
+ * 专辑级元数据 —— 从「专辑详情」接口补出来的三样东西。
+ *
+ * 🔴 2026-11-19 m12958（用户：「从三大平台搜索或同步得到的条目没有发行年、题材、简介」）：
+ *    搜索接口**只给日期**（QQ `pubtime` / 酷狗 `PublishDate` / 网易云 `publishTime`），
+ *    题材与简介要再打一次「专辑详情」才拿得到。所以这里只做「按专辑键补拉」，不碰搜索链路。
+ *
+ * ⚠️ 三个字段**各自独立判空**：接口常有「有简介没题材」或「有题材没简介」的情形，
+ *    ⛔ 别写成「任一为空就整份丢弃」—— 那会把能补的也一起丢掉。
+ */
+export interface AlbumMeta {
+    /** 归一后的 `YYYY-MM-DD` */
+    publishDate?: string;
+    /** 题材（QQ 的 `genreNew`，如 `Pop`；酷狗**恒无**，见下） */
+    genre?: string;
+    /** 专辑简介（QQ 可达 2862 字、酷狗 2536 字） */
+    description?: string;
+}
+
+/** QQ 专辑详情：`GetAlbumDetail` 免登录可用，`basicInfo` 带 `publishDate` / `desc` / `genreNew` */
+async function qqAlbumMeta(t: DlTransport, albumMid: string): Promise<AlbumMeta> {
+    const res = await t.get(buildQqAlbumDetailUrl(albumMid), { Referer: QQ_REFERER });
+    const d = parseQqAlbumDetail(okText(res));
+    if (!d) return {};
+    const out: AlbumMeta = {};
+    if (d.publishDate) out.publishDate = d.publishDate;
+    if (d.genre) out.genre = d.genre;
+    if (d.description) out.description = d.description;
+    return out;
+}
+
+/**
+ * 酷狗专辑详情：`api/v3/album/info` 免登录可用，给 `publishtime` / `intro`。
+ * ⚠️ **不产出 `genre`** —— 酷狗那个 `category` 是**数字编号**（实测 `七里香` 是 `1`），
+ *    不是题材文本；`parseKugouAlbumDetail` 已把它固定成空串。⛔ 别在这里把数字当题材塞给表单。
+ */
+async function kugouAlbumMeta(t: DlTransport, albumId: string): Promise<AlbumMeta> {
+    const res = await t.get(buildKugouAlbumInfoUrl(albumId), { Referer: KUGOU_PC_REFERER, 'User-Agent': KUGOU_MOBILE_UA });
+    const d = parseKugouAlbumDetail(okText(res));
+    if (!d) return {};
+    const out: AlbumMeta = {};
+    if (d.publishDate) out.publishDate = d.publishDate;
+    if (d.description) out.description = d.description;
+    return out;
+}
+
+/**
+ * 按平台补拉专辑元数据。**失败一律返回 `{}`，⛔ 不抛** ——
+ * 调用点是「点选曲库结果自动回填」，补拉失败不该让整个回填流程炸掉（用户面前表现为「这几个框没自动填」）。
+ *
+ * ⚠️ `netease` 恒返回 `{}`：其专辑接口实测 `code=-462` 被反爬拦下、`song/detail` 也给不出
+ *    `description`（`api/song/detail` 的 `al.publishTime` 是 `undefined`、`description` 是空串）。
+ *    ⇒ 网易云只有搜索级那个 `publishTime`（还常有 0 值），题材/简介**客观补不了**。
+ *    ⛔ 别为了「三平台统一」去填占位符或猜一个题材。
+ */
+export async function albumMetaFor(t: DlTransport, platform: string, albumKey: string): Promise<AlbumMeta> {
+    const key = (albumKey ?? '').trim();
+    if (!key) return {};
+    try {
+        if (platform === 'qq') return await qqAlbumMeta(t, key);
+        if (platform === 'kugou') return await kugouAlbumMeta(t, key);
+        return {};
+    } catch {
+        return {};
+    }
+}
+
 // ────────────────────────────── 平台连通性 ──────────────────────────────
 
 /** 「测试连接」：按平台校验 Cookie（正本同款文案，四态：未填 / 无效 / 有效 / 会员） */
@@ -651,12 +745,20 @@ export async function dlTestConnection(
         }
         if (source === 'qq') {
             if (!c) return { ok: false, message: '未粘贴 QQ Cookie' };
-            const res = await t.get(buildQqUserInfoUrl(extractQqUin(c)), { Referer: QQ_REFERER, Cookie: c });
-            if (!res || res.status < 200 || res.status >= 300) return { ok: false, message: '请求失败（网络或接口变更）' };
-            const info = parseQqUserInfo(res.text);
-            return info.ok
-                ? { ok: true, message: 'QQ Cookie 有效' }
-                : { ok: false, message: `QQ Cookie 无效或已过期（code=${info.code}），请重新登录复制` };
+            // 🔴🔴 2026-11-19 m12958（用户：「qq音乐获取的cookie在测试连接时为什么连接错误，我刚刚从
+            //    浏览器F12复制过来的」）—— 真因不在用户的 Cookie，在**端点已被官方关闭**：
+            //    原先打的是 `music.homepage.FcgiGetUserInfo.GetUserInfo`，而实测六个 `musicu.fcg`
+            //    用户模块（`FcgiGetUserInfo` / `GetLoginUserInfo` / `GetUserInfo` /
+            //    `UserInfoRead.GetUserInfo` / `VipInfo.GetVipInfo` / `PlaylistInfoServer.GetPlaylist`）
+            //    在「免登录 / 假 Cookie / 真实 Cookie」三种情况下**全部**返回
+            //    `req_1.code=500003, subcode=860100001`；备选三端点（`fcg_get_profile_order_asset`、
+            //    `fcg_user_created_diss`、`fcg_get_diss_by_tag`）对两者返回**逐字相同**的响应；
+            //    `vkey` 免登录 5 首不同 songmid 的 `purl` 全空（只能证「拿不到」不能证「有效」）。
+            //    ⇒ **QQ 已无任何能区分登录态的公开端点**，再拿任何接口判「有效」都必然误判。
+            //    修法：降级为**结构完整性检查**（`uin` + 票据键齐不齐），并在文案里如实说明
+            //    「无法在线确认有效期」——⛔ 别再改回任何在线校验（改回去 = 真实 Cookie 恒判失败）。
+            const shape = checkQqCookieShape(c);
+            return { ok: shape.ok, message: shape.message };
         }
         if (source === 'kugou') {
             if (!c) return { ok: false, message: '未粘贴酷狗 Cookie' };

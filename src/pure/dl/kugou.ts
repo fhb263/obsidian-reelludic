@@ -10,6 +10,7 @@
  * trackercdn v2 带 `key=MD5(hash+"kgcloudv2")` 签名做兜底。
  * 纯逻辑（URL/请求体构造、响应解析、MD5 签名）抽出以便单测。
  */
+import { normalizePublishDate } from 'pure/dl/utils'
 
 /** 酷狗搜索候选 */
 export interface KugouSong {
@@ -31,6 +32,16 @@ export interface KugouSong {
     size?: number
     /** 码率（kbps，由 size×8/duration 估算） */
     bitrate?: number
+    /**
+     * 发行日期（归一后的 `YYYY-MM-DD`）。酷狗搜索级给 `PublishDate` 现成字符串
+     * （如 `"2004-08-03"`），`PublishTime` 反而常为空串 ⇒ ⛔ 别用后者。
+     */
+    publishDate?: string
+    /**
+     * 专辑定位键（`AlbumID`）—— 补拉简介/发行日期要用它打 `api/v3/album/info`。
+     * ⛔ 别和 `album`（专辑**名**）混。
+     */
+    albumId?: string
 }
 
 /** 酷狗下载解析结果 */
@@ -107,6 +118,8 @@ export function parseKugouSearchResponse(raw: string): KugouSong[] {
             duration,
             size,
             bitrate,
+            publishDate: normalizePublishDate(it?.PublishDate),
+            albumId: it?.AlbumID ? String(it.AlbumID) : undefined,
         })
     }
     return out
@@ -145,8 +158,53 @@ export function buildKugouTrackercdnUrl(hash: string): string {
     return `https://trackercdn.kugou.com/i/v2/?cdnBackup=1&behavior=download&pid=1&cmd=21&appid=1001&hash=${encodeURIComponent(hash)}&key=${key}`
 }
 
-/** 解析 trackercdn v2 响应：url/backup_url 可能是字符串或数组，逐个取第一个有效直链 */
-export function parseKugouTrackercdnResponse(raw: string): KugouDownloadInfo {
+/**
+ * 构造专辑详情 URL（`mobilecdn` 免登录接口，实测 `七里香` 的专辑能拿到 2536 字简介与发行日期）。
+ * ⚠️ 必须带 `version=8000&plat=0`：不带会返 `errcode 20001`（实测）。
+ */
+export function buildKugouAlbumInfoUrl(albumId: string): string {
+    return `http://mobilecdn.kugou.com/api/v3/album/info?albumid=${encodeURIComponent(albumId)}&version=8000&plat=0`
+}
+
+/** 专辑详情（只取表单能用的三样） */
+export interface KugouAlbumDetail {
+    /** `YYYY-MM-DD`（`data.publishtime` 形如 `"2004-08-03 00:00:00"`） */
+    publishDate?: string
+    /** 简介正文（`data.intro`，实测 2536 字） */
+    description: string
+    /** 🔴 恒为空串 —— 酷狗没给题材。见 `parseKugouAlbumDetail` 注释 */
+    genre: string
+    /** 专辑名 */
+    name: string
+}
+
+/**
+ * 解析专辑详情：`errcode !== 0` 返 `null`。
+ *
+ * 🔴 酷狗**没有可用题材**：`data.category` 是**数字编号**（实测 `七里香` 是 `1`），不是
+ *    「流行 / 摇滚」这类词；`data.tag` 也没有。所以 `genre` 恒为空串 ——
+ *    ⛔ 别把 `category` 转字符串当题材（那会让表单里出现一个「1」）。
+ */
+export function parseKugouAlbumDetail(raw: string): KugouAlbumDetail | null {
+    let data: any
+    try {
+        data = JSON.parse(raw)
+    } catch {
+        return null
+    }
+    if (Number(data?.errcode ?? -1) !== 0) return null
+    const d = data?.data
+    if (!d) return null
+    const str = (v: unknown): string => String(v ?? '').trim()
+    return {
+        publishDate: normalizePublishDate(d.publishtime),
+        description: str(d.intro),
+        genre: '',
+        name: str(d.albumname),
+    }
+}
+
+/** 解析 trackercdn v2 响应：url/backup_url 可能是字符串或数组，逐个取第一个有效直链 */export function parseKugouTrackercdnResponse(raw: string): KugouDownloadInfo {
     let data: any
     try {
         data = JSON.parse(raw)

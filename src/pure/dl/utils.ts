@@ -111,6 +111,60 @@ export function isNeteaseDownloadable(fee: number | undefined): boolean {
     return !(fee && fee > 0)
 }
 
+/**
+ * 把各平台五花八门的「发行日期」归一成 `YYYY-MM-DD`；认不出就返 `undefined`。
+ *
+ * 三家给的形态完全不同（2026-11-19 实测）：
+ *  · 网易云 `publishTime` = **毫秒**时间戳（如 `1091548800000` → 2004-08-03），但**很多歌是 0**；
+ *  · QQ `pubtime` = **秒**时间戳（如 `1091462400` → 2004-08-02）；
+ *  · 酷狗 `PublishDate` = 现成字符串 `"2004-08-03"`。
+ *
+ * ⛔ 别只判「是不是数字」：秒和毫秒差 1000 倍，判错会得到 1970 或 50000 年。
+ *    本函数按量级分流 —— `> 1e11` 当毫秒（1e11 秒 ≈ 公元 5138 年，任何真实日期都到不了）。
+ * ⛔ 也别对 `0` / `''` / `null` 做特殊兜底「返回今天」：那会把「平台没给」伪装成「就是今天发行」。
+ *    归一失败一律 `undefined`，由上层决定留空。
+ */
+export function normalizePublishDate(raw: unknown): string | undefined {
+    if (raw === undefined || raw === null) return undefined
+    const pad = (n: number): string => String(n).padStart(2, '0')
+    /* 合法区间：1970-01-01 ~ 明年年底。超出说明是脏数据（`0`、`-1`、`99999999999999`）。 */
+    const maxYear = new Date().getFullYear() + 1
+    const inRange = (y: number): boolean => y >= 1970 && y <= maxYear
+
+    if (typeof raw === 'number' || (typeof raw === 'string' && /^\d+(\.\d+)?$/.test(raw.trim()))) {
+        const n = Number(raw)
+        if (!Number.isFinite(n) || n <= 0) return undefined
+        // 秒 vs 毫秒：> 1e11 必是毫秒（1e11 秒 = 5138 年，真实发行日期够不到）
+        const ms = n > 1e11 ? n : n * 1000
+        const d = new Date(ms)
+        if (Number.isNaN(d.getTime())) return undefined
+        const y = d.getFullYear()
+        if (!inRange(y)) return undefined
+        // 用 UTC 取值：三家时间戳都是「当天 00:00:00 本地时区」的性质，用本地 getMonth 会在
+        // 时区偏移下把 2004-08-03 读成 08-02（实测过）。
+        return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
+    }
+
+    if (typeof raw !== 'string') return undefined
+    // 字符串形态：`2004-08-03`、`2004-08-03 00:00:00`、`2004/8/3`、`2004.08.03` 都收
+    const m = raw.trim().match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/)
+    if (!m) return undefined
+    const y = Number(m[1])
+    const mo = Number(m[2])
+    const day = Number(m[3])
+    if (!inRange(y) || mo < 1 || mo > 12 || day < 1 || day > 31) return undefined
+    return `${y}-${pad(mo)}-${pad(day)}`
+}
+
+/** 从归一后的发行日期取年份（表单「发行年」只要 4 位数字）；认不出返 `undefined` */
+export function publishYearOf(date: string | undefined): number | undefined {
+    if (!date) return undefined
+    const m = date.match(/^(\d{4})-/)
+    if (!m) return undefined
+    const y = Number(m[1])
+    return y >= 1970 && y <= new Date().getFullYear() + 1 ? y : undefined
+}
+
 /** 时长格式化（秒 → MM:SS，如 269 → 4:29；≥1 小时 → H:MM:SS）；非法输入返回空串 */
 export function formatDuration(seconds: number | undefined): string {
     if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return ''

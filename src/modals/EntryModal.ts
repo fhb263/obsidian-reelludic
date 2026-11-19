@@ -259,6 +259,13 @@ export class EntryModal extends Modal {
                 //    ⚠️ 独立回调，⛔ 别塞进上面任何一条「详情」回调 —— 那些按 id 打的是别的端点。
                 onFetchSongCommentCount: (platform: string, songId: string) =>
                     this.plugin.fetchSongCommentCount(platform, songId),
+                // 🔴 m12958 ②（用户：「从三大平台搜索或同步得到的条目没有发行年、题材、简介」）：
+                //    曲库结果选中后补拉**专辑元数据**（题材 / 简介 / 发行年）。
+                //    ⚠️ 与上面那条评论数**不是同一件事**：那条按歌曲 id 打评论接口，
+                //    这条按**专辑键**打专辑详情接口（QQ `albummid` / 酷狗 `AlbumID`）；
+                //    ⛔ 别合并成一条 —— 两边的键与端点都不同。
+                onFetchSongAlbumMeta: (platform: string, albumKey: string) =>
+                    this.plugin.fetchSongAlbumMeta(platform, albumKey),
                 // 🔴 #609 微信读书书籍选中结果按需补全（/web/book/info → 出版年/出版社/ISBN/分类/完整简介/大图封面；
                 //    与「从微信读书同步书架」逐本补详情同一端点、同一解析、同一闸门；失败 null 静默）
                 onFetchWereadDetail: (bookId: string) => this.plugin.fetchWereadDetailForEntry(bookId),

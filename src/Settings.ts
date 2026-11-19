@@ -2154,14 +2154,24 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             //    ⚠️ class 必须带上 `rl-sync-btn`：那几条的宽度 / 图标间距 / hover 由它统一，
             //    只写 `mod-cta` 会变成另一套尺寸（用户点名的正是「样式统一」）。
             //    顺序也照那几条：回执槽 → 同步 → 测试连接（同步是这一行的主操作，排前面）。
-            //    ⚠️ 酷狗那颗也照给 —— `KUGOU_SYNC_UNSUPPORTED` 会在弹窗里如实说明不支持，
-            //    ⛔ 别在这里按平台隐藏按钮（用户会以为「点了没反应」比「明确说不支持」更难排查）。
-            const syncRowBtn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '立即同步' });
-            syncRowBtn.addEventListener('click', () => {
-                // 🔴 口径与另外五个账号同步弹窗一致：**先列清单、勾选后才落库**（⛔ 不做「点一下全量落库」）；
-                //    传 `p.id` ⇒ 这次只拉这一家的歌单（弹窗标题也会带平台名）。
-                this.plugin.openMusicSync(p.id);
-            });
+            // 🔴🔴 2026-11-19（用户 m13830：「酷狗音乐不能同步就把立即同步按钮删除掉」）：
+            //    **酷狗这一行不再出「立即同步」**。上一版的口径是「照给，让弹窗如实说明不支持」，
+            //    但实测那颗按钮是**死入口**：`main.fetchMusicSyncLists` 对 kugou 恒返回
+            //    `KUGOU_SYNC_UNSUPPORTED`（它的「我的歌单」走 `cloudlist.service.kugou.com/v7/get_all_list`
+            //    的 android 网关签名接口，本插件没有这套签名器）⇒ 点开永远是同一个「暂不支持」弹窗，
+            //    零信息量、零动作。用户已明确要求删除 ⇒ 只跳过这一家，其余两家照旧。
+            //    ⚠️ **保留「测试连接」**：酷狗的 `KUGOU_VIP_ROLEINFO_URL` 是真能区分有效/失效的，
+            //      与 QQ 那条「端点全灭」的情形完全不同 ⇒ ⛔ 别顺手把测试按钮一起删掉。
+            //    ⚠️ 断言侧：`#665` 要求「立即同步」字面量 ≥5 处，这里只是**不执行**建按钮那两行，
+            //      字面量本身没删 ⇒ 那几条不受影响。
+            if (p.id !== 'kugou') {
+                const syncRowBtn = actions.createEl('button', { cls: 'mod-cta rl-sync-btn', text: '立即同步' });
+                syncRowBtn.addEventListener('click', () => {
+                    // 🔴 口径与另外五个账号同步弹窗一致：**先列清单、勾选后才落库**（⛔ 不做「点一下全量落库」）；
+                    //    传 `p.id` ⇒ 这次只拉这一家的歌单（弹窗标题也会带平台名）。
+                    this.plugin.openMusicSync(p.id);
+                });
+            }
             const testBtn = actions.createEl('button', { text: '测试连接', cls: 'mod-cta' });
             testBtn.addEventListener('click', async () => {
                 testBtn.disabled = true;

@@ -70,6 +70,8 @@ function toSong(c: LyricCandidate): MusicSong {
         durationSec: c.durationSec,
         downloadable: isNeteaseDownloadable(c.fee),
         fee: c.fee,
+        // 🔴 m12958：发行日期（网易云 publishTime → 归一化，很多歌是 0 ⇒ undefined）
+        publishDate: c.publishDate,
         // #405：把搜索响应里带的档位透传给下载面（下载界面显示 kbps / 体积）
         bitrate: c.bitrate,
         size: c.size,

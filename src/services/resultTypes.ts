@@ -116,6 +116,15 @@ export interface MusicSearchResult {
      * ⚠️ 允许为 0（真·零热度）—— 判空一律 `!= null`，⛔ 别用真值判断。
      */
     reviewPercent?: number;
+    /**
+     * 🔴 m12958：**专辑定位键**（QQ `albummid` / 酷狗 `AlbumID`），用于点选后补拉题材与简介。
+     * 存在理由：搜索级只给发行日期，题材（QQ `genreNew`）与简介（QQ `desc` / 酷狗 `intro`）
+     * 要再打一次「专辑详情」才拿得到；而那个接口要的是**专辑键**。
+     * ⛔ **不能叫 `albumId`**：`album` 在本类型里已经是**专辑名**（见上），
+     *    再来一个 `albumId` 极易被当成「专辑名的 id」误用；`albumKey` 明确表达「这是个查询键」。
+     * ⚠️ 网易云**永远不带**这个键 —— 它的专辑接口实测 `code=-462` 被拦，填了只会白发一次必失败的请求。
+     */
+    albumKey?: string;
     /** 来源标识：douban */
     source?: string;
     /** 数据源官方页链接 */

@@ -243,3 +243,37 @@ describe('🔴 m10134 ② 平台热度 → 评分框（reviewPercent）', () => 
     });
 });
 
+/**
+ * 🔴 m12958（用户：「从三大平台搜索或同步得到的条目没有发行年、题材、简介」）：
+ * 曲库结果必须把**发行年**与**专辑键**带出来 —— 前者搜索级就有、后者用于后续补拉题材与简介。
+ */
+describe('songLibraryResults · 发行年与专辑键（m12958）', () => {
+    it('搜索级 `publishDate` → `year`（4 位数字，⛔ 不是日期原文）', () => {
+        const [r] = songLibraryResults([song({ source: 'qq', id: 'q1', publishDate: '2004-08-03' })]);
+        expect(r.year).toBe(2004);
+    });
+
+    it('🔴 `albumKey` 原样透传（QQ albummid / 酷狗 AlbumID），供 `albumMetaFor` 补拉题材与简介', () => {
+        const [r] = songLibraryResults([song({ source: 'qq', id: 'q1', albumKey: '0042pB7D2rGE4a' })]);
+        expect(r.albumKey).toBe('0042pB7D2rGE4a');
+    });
+
+    it('🔴 没有 `albumKey` ⇒ **不写该键**（表单用 `\'albumKey\' in r` 判断，写 undefined 会骗过它）', () => {
+        const [r] = songLibraryResults([song({ source: 'netease', id: 'n1' })]);
+        expect(Object.prototype.hasOwnProperty.call(r, 'albumKey')).toBe(false);
+        expect('albumKey' in r).toBe(false);
+    });
+
+    it('没有 `publishDate` / 脏值 ⇒ 不写 `year`（「不知道」与「1900 年」必须能分开）', () => {
+        for (const bad of [undefined, '', 'not-a-date', 0]) {
+            const [r] = songLibraryResults([song({ id: `y-${String(bad)}`, publishDate: bad as unknown as string })]);
+            expect(Object.prototype.hasOwnProperty.call(r, 'year'), String(bad)).toBe(false);
+        }
+    });
+
+    it('空白 `albumKey` 视为没有（trim 后为空就不写键）', () => {
+        const [r] = songLibraryResults([song({ id: 'blank', albumKey: '   ' })]);
+        expect('albumKey' in r).toBe(false);
+    });
+});
+

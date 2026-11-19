@@ -19,6 +19,7 @@
 // 🔴 酷狗的 URL 与解析**不在这里重写**：下载面 #399-D 已经把 `pure/dl/kugou` 整套移植进来了，
 //    歌词面只借用它的「歌词候选解析」并归一成 `LyricCandidate`（URL 常量同样只留一处）。
 import { parseKugouLyricSearch } from 'pure/dl/kugou';
+import { normalizePublishDate } from 'pure/dl/utils';
 
 /**
  * 默认歌词源（免配置；顺序 = 弹窗里的默认展示顺序）。
@@ -71,6 +72,14 @@ export interface LyricCandidate {
      * ⚠️ 只给网易云填；其余三源留 undefined（⛔ 不补 0 —— 0 分是「人人踩」，与「不知道」是两回事）。
      */
     pop?: number;
+    /**
+     * 🔴 m12958：**发行日期**（归一后的 `YYYY-MM-DD`）。
+     * 网易云搜索响应的 `publishTime` 是**毫秒**时间戳，⚠️ 但**很多歌是 0**（实测 8 条里 5 条为 0）
+     * ⇒ 归一失败一律 `undefined`，⛔ 不许兜底成「今天」。
+     * ⚠️ 网易云补不了题材/简介：`api/album/<id>` 实测 `code=-462` 被反爬拦，
+     *    `api/song/detail` 的 `al.publishTime` 是 undefined、`description` 是空串。
+     */
+    publishDate?: string;
 }
 
 const UA =
@@ -266,6 +275,8 @@ export function parseNeteaseSearch(raw: string): LyricCandidate[] {
             // 🔴 m10134：热度分（0~100）。脏值一律 undefined —— 它会被显示成「100%」，
             //    编不出来就别显示（⛔ 别回落 0）。
             pop: neteasePop(s),
+            // 🔴 m12958：发行日期（毫秒时间戳，很多歌为 0 ⇒ 归一失败即 undefined）
+            publishDate: normalizePublishDate((s as { publishTime?: unknown }).publishTime),
         });
     }
     return out;

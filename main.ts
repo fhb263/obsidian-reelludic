@@ -67,6 +67,7 @@ import { fetchLyric, searchLyrics, type LyricFetchOutcome, type LyricSearchOutco
 // 四平台下载面（#399-D 移植批）：搜索 / 歌单 / 下载 / 连通性测试全在 `services/dl`
 import {
     DL_SEARCH_ORDER,
+    albumMetaFor,
     dlDownloadSong,
     dlPlaylistSongs,
     dlPreviewAudio,
@@ -75,6 +76,7 @@ import {
     neteaseCoversByIds,
     neteaseCommentCount,
     dlTestConnection,
+    type AlbumMeta,
     type DlPreviewResult,
     type DlTransport,
     type DownloadProgressCallback,
@@ -2068,6 +2070,33 @@ export default class ReelLudicPlugin extends Plugin {
             return await neteaseCommentCount(this.dlTransport(), Number(songId));
         } catch {
             return undefined;
+        }
+    }
+
+    /**
+     * 🔴 m12958：曲库结果的**专辑元数据**补拉（题材 / 简介 / 发行年）。
+     *
+     * 用户原话：「从三大平台搜索或同步得到的条目没有发行年、题材、简介」。
+     * 取证结论（决定了本函数的形状）：
+     *   · **发行年**搜索级就有（QQ `pubtime` / 酷狗 `PublishDate`）⇒ 不需要联网，已在
+     *     `pure/songLibrary.songLibraryResults` 里由 `publishYearOf` 映射进 `year`。
+     *   · **题材 / 简介**要再打一次「专辑详情」：QQ `GetAlbumDetail`（免登录可用，
+     *     `basicInfo.desc` 实测 2862 字、`genreNew` 如 `Pop`）、酷狗 `api/v3/album/info`
+     *     （免登录可用，`intro` 实测 2536 字；⚠️ 它的 `category` 是**数字编号**，不是题材）。
+     *   · **网易云补不了**：`api/album/<id>` 实测 `code=-462` 被反爬拦下、
+     *     `api/song/detail` 给不出 `description` ⇒ 宿主侧直接回 `{}`（见 `albumMetaFor`）。
+     *
+     * ⚠️ 失败一律返回 `{}`（不抛）：调用点是「点选曲库结果自动回填」，
+     *    补拉失败只该表现为「这几个框没自动填」，⛔ 不该让整次回填炸掉。
+     */
+    async fetchSongAlbumMeta(platform: string, albumKey: string): Promise<AlbumMeta> {
+        const key = String(albumKey ?? '').trim();
+        if (!key) return {};
+        if (!this.canUseAudioDownload()) return {};
+        try {
+            return await albumMetaFor(this.dlTransport(), platform, key);
+        } catch {
+            return {};
         }
     }
 

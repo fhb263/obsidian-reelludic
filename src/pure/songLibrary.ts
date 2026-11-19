@@ -25,6 +25,9 @@ import type { MusicSearchResult } from 'services/resultTypes';
 import { platformCoverUrl } from 'pure/posterSources';
 // 平台名（网易云 / QQ音乐 / 酷狗 / 酷我）—— 叶子模块，⛔ 不 import `pure/musicSync`（那会循环依赖）。
 import { musicPlatformLabel } from 'pure/musicPlatform';
+// 发行日期 → 年份归一（`publishYearOf`）。⚠️ 只 import 这一个函数：`pure/dl/utils` 是零依赖叶子模块，
+// 把它拖进来不会成环（同样的用法见 `pure/lyricOnline` 与 `pure/dl/qq|kugou`）。
+import { publishYearOf } from 'pure/dl/utils';
 
 /**
  * 「在线曲库」的**栏 id + 结果 source**（一个常量两处用：结果区按它建栏、结果按它归栏）。
@@ -113,6 +116,18 @@ export function songLibraryResults(
         if (s?.pop != null && Number.isFinite(s.pop) && s.pop >= 0 && s.pop <= 100) {
             item.reviewPercent = Math.round(s.pop);
         }
+        // 🔴 m12958（用户：「从三大平台搜索或同步得到的条目没有发行年、题材、简介」）：
+        //    ① **发行年**：搜索级本来就带日期（QQ `pubtime` / 酷狗 `PublishDate` / 网易云 `publishTime`），
+        //       只是这条映射链没往下传 ⇒ 这里补上。⛔ 别直接塞 `publishDate` 字符串：
+        //       卡片/表单的「发行年」只要 4 位数字，走 `publishYearOf` 归一。
+        //    ② **专辑键**：题材与简介要再打一次「专辑详情」，而那接口要的是专辑键
+        //       （QQ `albummid` / 酷狗 `AlbumID`）。这里只透传，真补拉在 `services/dl.albumMetaFor`。
+        //    ⚠️ 两者都是「有值才写键」—— 本仓反复踩过的「空 vs 缺」：
+        //       写 `albumKey: undefined` 时 `'albumKey' in r` 仍为真，下游分不清「没产出」和「产出为空」。
+        const year = publishYearOf(s?.publishDate);
+        if (year != null) item.year = year;
+        const albumKey = String(s?.albumKey ?? '').trim();
+        if (albumKey) item.albumKey = albumKey;
         out.push(item);
     }
     return out;

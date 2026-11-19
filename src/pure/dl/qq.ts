@@ -3,7 +3,8 @@
  * 纯逻辑（搜索 URL / vkey 请求体 / 歌词与歌单解析），**零 obsidian 依赖** ⇒ 直接单测。
  * ⛔ 别把网络调用塞进来 —— HTTP 只在 `services/dl/` 里做（本仓分层：pure 只算不发）。
  */
-import { qqSearchUrl } from 'pure/lyricOnline';
+import { qqSearchUrl } from 'pure/lyricOnline'
+import { normalizePublishDate } from 'pure/dl/utils';
 /**
  * QQ 音乐接入（v1.4.1 多平台 Cookie 方案）。
  * 搜索免登录（client_search_cp）；下载需登录 Cookie（musicu.fcg vkey）。
@@ -27,6 +28,16 @@ export interface QqSong {
     coverUrl?: string
     /** 音频格式（v1.4.2 结果行格式胶囊）：按搜索档位推断 mp3/m4a/flac；无档位信息为 undefined */
     ext?: 'mp3' | 'm4a' | 'flac'
+    /**
+     * 发行日期（归一后的 `YYYY-MM-DD`）。QQ 搜索级给的是 `pubtime`（**秒**时间戳），
+     * 多数条目有值。⛔ 别直接把这串塞进表单 —— 表单「发行年」只要 4 位，走 `publishYearOf`。
+     */
+    publishDate?: string
+    /**
+     * 专辑定位键（`albummid`）—— 补拉题材/简介要用它打 `GetAlbumDetail`。
+     * ⛔ 别和 `album`（专辑**名**）混：名字不能当查询键用。
+     */
+    albumMid?: string
 }
 
 /** 构造 QQ 搜索 URL（免登录） */
@@ -76,6 +87,8 @@ export function parseQqSearchResponse(raw: string): QqSong[] {
                 bitrate: hasSize ? bitrate : undefined,
                 coverUrl: albummid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albummid}.jpg` : undefined,
                 ext,
+                publishDate: normalizePublishDate(s?.pubtime),
+                albumMid: albummid || undefined,
             }
         })
         .filter((s: QqSong) => s.songmid && s.name)
@@ -167,6 +180,130 @@ export function parseQqUserInfo(raw: string): { ok: boolean; code: number } {
         return { ok: false, code: -1 }
     }
 }
+
+/**
+ * 🔴 2026-11-19 QQ「测试连接」改判为 Cookie 结构检查（用户 m12958 报障）。
+ *
+ * 用户报的是：「qq音乐获取的cookie在测试连接时为什么连接错误，我刚刚从浏览器F12复制过来的」。
+ * 实测根因**不在 Cookie，在端点**：QQ 已关闭所有公开的登录态校验接口 ——
+ *   · 六个 `musicu.fcg` 用户模块（`music.homepage.FcgiGetUserInfo.GetUserInfo`、
+ *     `music.UserInfo.userInfo.GetLoginUserInfo`、`music.UserInfo.userInfo.GetUserInfo`、
+ *     `music.musicasset.UserInfoRead.GetUserInfo`、`music.vipinfo.VipInfo.GetVipInfo`、
+ *     `music.playlist.PlaylistInfoServer.GetPlaylist`）在**免登录 / 假 Cookie / 真实 Cookie**
+ *     三种情况下**全部**返回 `req_1.code = 500003 / subcode 860100001`；
+ *   · `fav/fcgi-bin/fcg_get_profile_order_asset.fcg` 两者都 `{code:4000,msg:"privacy"}`；
+ *   · `rsc/fcgi-bin/fcg_user_created_diss` 两者都 `{code:2000,message:"hostuin para invalid!"}`；
+ *   · `splcloud/fcgi-bin/fcg_get_diss_by_tag.fcg` 两者都 `{code:0,data:{uin:0}}`（本就是免登录推荐歌单）。
+ * `vkey` 也只能证「拿不到」（免登录 5 首不同 songmid 全空 purl），⛔ 不能证「有效」。
+ *
+ * ⇒ 「这个 Cookie 有效吗」客观上**不可在线判定**。继续用 `parseQqUserInfo` 判 `code===0` 的结果是：
+ *    **任何真实 Cookie 都被判成「连接失败」**，比不校验更糟。
+ * ⇒ 改问一个能答的问题：「Cookie 结构完整吗」。缺什么、去哪补，直接说清楚。
+ *
+ * ⛔ 别为了「让它显示通过」而把判据放宽成 `code !== 500003` —— 那是自欺，用户下次还是撞墙。
+ */
+export interface QqCookieShape {
+    /** 结构齐（uin + 票据）。⛔ 不等于「服务端认可」，见 message */
+    ok: boolean
+    uin: string
+    /** 有没有 `qm_keyst` / `qqmusic_key` / `p_skey` 三者之一（真正的登录态票据） */
+    hasTicket: boolean
+    message: string
+}
+
+/** QQ 登录态票据的三个键名（不同年代的浏览器给不同的那个，实测三种都存在过） */
+const QQ_TICKET_RE = /(?:^|;\s*)(?:qm_keyst|qqmusic_key|p_skey)=[^;\s]+/
+
+export function checkQqCookieShape(cookie: string): QqCookieShape {
+    const c = String(cookie ?? '').trim()
+    if (!c) {
+        return { ok: false, uin: '', hasTicket: false, message: 'QQ 需先粘贴登录 Cookie（浏览器 F12 → 网络 → 任一 y.qq.com 请求 → 复制 Cookie）' }
+    }
+    const uin = extractQqUin(c)
+    const hasTicket = QQ_TICKET_RE.test(c)
+    if (!uin) {
+        return {
+            ok: false,
+            uin: '',
+            hasTicket,
+            message: 'Cookie 里没有 uin —— 请在 y.qq.com 任意页面按 F12 复制**完整** Cookie（多半只复制了单个字段）',
+        }
+    }
+    if (!hasTicket) {
+        return {
+            ok: false,
+            uin,
+            hasTicket,
+            message: 'Cookie 里没有登录票据（qm_keyst / qqmusic_key / p_skey）—— 说明是未登录状态下复制的，请先在浏览器登录 y.qq.com 再复制',
+        }
+    }
+    return {
+        ok: true,
+        uin,
+        hasTicket,
+        message:
+            `Cookie 结构完整（uin=${uin}，含登录票据）。⚠️ QQ 已关闭公开的登录态校验接口，` +
+            '**无法在线确认**这枚 Cookie 是否仍然有效 —— 若下载时提示 500003 或拿不到直链，多半是已过期，重新复制一次即可。',
+    }
+}
+
+/** 构造专辑详情请求体（GetAlbumDetail：发行日期 / 简介 / 题材） */
+export function buildQqAlbumDetailBody(albumMid: string): string {
+    const data = {
+        comm: { ct: 24, cv: 0, format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', platform: 'yqq.json', needNewCode: 0 },
+        req_1: {
+            module: 'music.musichallAlbum.AlbumInfoServer',
+            method: 'GetAlbumDetail',
+            param: { albumMid },
+        },
+    }
+    return JSON.stringify(data)
+}
+
+/** 构造专辑详情 URL（免登录可用，实测 2004 年专辑也能拿到 2862 字简介） */
+export function buildQqAlbumDetailUrl(albumMid: string): string {
+    return `https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&data=${encodeURIComponent(buildQqAlbumDetailBody(albumMid))}`
+}
+
+/** 专辑详情（只取表单能用的三样） */
+export interface QqAlbumDetail {
+    /** `YYYY-MM-DD`（`basicInfo.publishDate`） */
+    publishDate?: string
+    /** 简介正文（`basicInfo.desc`，实测 2862 字） */
+    description: string
+    /** 题材（`basicInfo.genreNew`，如 `"Pop"`） */
+    genre: string
+    /** 专辑名 */
+    name: string
+}
+
+/**
+ * 解析专辑详情：`req_1.code !== 0` 返 `null`（多数单曲专辑返 104400，属正常情况）。
+ *
+ * 🔴 题材只认 `genreNew` —— 实测 `basicInfo.genre` 恒为空串，`genres[]` 数组里只有空 name
+ *    和一个 `qqmusic://` 协议链接（是跳转协议不是词），⛔ 别用那两个。`genreNew` 也常缺，
+ *    缺就留空（表单「题材」可手填），⛔ 不许拿语言/专辑类型冒充题材。
+ */
+export function parseQqAlbumDetail(raw: string): QqAlbumDetail | null {
+    let data: any
+    try {
+        data = JSON.parse(raw)
+    } catch {
+        return null
+    }
+    const req = data?.req_1
+    if (!req || Number(req.code) !== 0) return null
+    const b = req?.data?.basicInfo
+    if (!b) return null
+    const str = (v: unknown): string => String(v ?? '').trim()
+    return {
+        publishDate: normalizePublishDate(b.publishDate ?? b.publishTime),
+        description: str(b.desc ?? b.description),
+        genre: str(b.genreNew) || str(b.genre),
+        name: str(b.albumName ?? b.name ?? b.title),
+    }
+}
+
 
 // --- 推荐歌单（v1.4.2）：fcg_get_diss_by_tag 歌单广场（免登录）+ 歌单歌曲 ---
 
