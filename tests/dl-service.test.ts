@@ -11,6 +11,7 @@ import {
     dlRecommendedPlaylists,
     dlSearch,
     dlTestConnection,
+    neteaseCommentCount,
     type DlTransport,
     type DownloadSong,
 } from 'services/dl';
@@ -461,5 +462,52 @@ describe('dlPreviewAudio：不写盘 + 会话缓存', () => {
         });
         await dlPreviewAudio(t, song({ kuwoRid: 'p4' }), {});
         expect(dlPreviewCacheSize()).toBe(before + 1);
+    });
+});
+
+describe('🔴 m10134 neteaseCommentCount · 评价人数补拉', () => {
+    // 用户裁定（m10369）：「补拉网易云评论数当「评价人数」」。
+    // 实测端点：`/api/v1/resource/comments/R_SO_4_<songid>?limit=1&offset=0` ⇒ `{ total: 68308 }`。
+    it('取 `total` 作为评价人数', async () => {
+        const { t: tr } = fakeTransport({
+            'resource/comments/R_SO_4_347230': { text: JSON.stringify({ total: 68308, hotComments: [] }) },
+        });
+        expect(await neteaseCommentCount(tr, 347230)).toBe(68308);
+    });
+
+    it('🔴 `total: 0` 是**真实结论**（没人评论）⇒ 回 0，与「取不到」必须分开', async () => {
+        const { t: tr } = fakeTransport({
+            'resource/comments/R_SO_4_1': { text: JSON.stringify({ total: 0 }) },
+        });
+        expect(await neteaseCommentCount(tr, 1)).toBe(0);
+    });
+
+    it('非法 songid（0 / 负数 / NaN / undefined）⇒ undefined 且**不发请求**', async () => {
+        for (const bad of [0, -5, Number.NaN, undefined]) {
+            const { t: tr, calls } = fakeTransport({});
+            expect(await neteaseCommentCount(tr, bad as number)).toBeUndefined();
+            expect(calls).toEqual([]);
+        }
+    });
+
+    it('HTTP 非 2xx / JSON 坏 / 字段缺失 ⇒ undefined（⛔ 不抛，评价人数是锦上添花）', async () => {
+        const cases = [
+            { text: '', status: 500 },
+            { text: 'not json' },
+            { text: JSON.stringify({ code: 200 }) },
+        ];
+        for (const c of cases) {
+            const { t: tr } = fakeTransport({ 'resource/comments': c });
+            expect(await neteaseCommentCount(tr, 9)).toBeUndefined();
+        }
+    });
+
+    it('URL 形态锁死（`R_SO_4_` 前缀 + `limit=1&offset=0`，只要 21KB 不拉整页评论）', async () => {
+        const { t: tr, calls } = fakeTransport({ 'resource/comments': { text: '{"total":3}' } });
+        await neteaseCommentCount(tr, 42);
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toContain('resource/comments/R_SO_4_42');
+        expect(calls[0]).toContain('limit=1');
+        expect(calls[0]).toContain('offset=0');
     });
 });

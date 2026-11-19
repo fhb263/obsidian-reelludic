@@ -1,6 +1,7 @@
 // 在线曲库结果映射（pure/songLibrary）单测 —— #464
 import { describe, it, expect } from 'vitest';
 import { songLibraryResults, SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
+import { scoreIsPercentOf, scoreTextOf } from 'pure/scoreDisplay';
 import { POSTER_SOURCE_LABELS } from 'pure/posterSources';
 import type { DownloadSong } from 'services/dl';
 
@@ -196,6 +197,49 @@ describe('songLibraryResults 来源平台名', () => {
     it('平台名与下载窗口的平台档位同名（两处文案漂移会让用户以为换了家）', () => {
         const [r] = songLibraryResults([song({ source: 'qq', id: 'qq-1' })]);
         expect(r.platformLabel).toBe(POSTER_SOURCE_LABELS.qq);
+    });
+});
+
+describe('🔴 m10134 ② 平台热度 → 评分框（reviewPercent）', () => {
+    // 用户裁定（m10369）原话：「填「热度」到评分框，并补拉网易云评论数当「评价人数」」。
+    // 背景：实测四平台**搜索级都没有大众评分**，只有网易云的 `pop`（0~100）与 QQ 新端点的 `hotness`。
+    it('网易云带 pop ⇒ 写成 reviewPercent（百分制，不是 10 分制 rating）', () => {
+        const [r] = songLibraryResults([song({ pop: 100 })]);
+        expect(r.reviewPercent).toBe(100);
+        // ⛔ 别顺手也写 rating —— 那会让 scoreTextOf 之外的路把它当豆瓣星分
+        expect(r.rating).toBeUndefined();
+    });
+
+    it('pop=0 是**真实结论**（零热度）⇒ 仍要写 0，⛔ 别当成「没有」', () => {
+        const [r] = songLibraryResults([song({ pop: 0 })]);
+        expect(r.reviewPercent).toBe(0);
+        expect(Object.prototype.hasOwnProperty.call(r, 'reviewPercent')).toBe(true);
+    });
+
+    it('平台没给 pop ⇒ **不写该键**（「不知道」与「0 分」必须能分开）', () => {
+        for (const s of [{ source: 'kugou' as const, pop: undefined }, { source: 'kuwo' as const, pop: undefined }]) {
+            const [r] = songLibraryResults([song({ source: s.source, id: `p-${s.source}`, pop: s.pop })]);
+            expect(Object.prototype.hasOwnProperty.call(r, 'reviewPercent')).toBe(false);
+        }
+    });
+
+    it('脏值（越界 / NaN）一律不写 —— 它会被渲染成 `100%`，编不出来就别显示', () => {
+        for (const bad of [101, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+            const [r] = songLibraryResults([song({ id: `bad-${bad}`, pop: bad })]);
+            expect(Object.prototype.hasOwnProperty.call(r, 'reviewPercent')).toBe(false);
+        }
+    });
+
+    it('小数热度取整（`pop: 87.6` ⇒ 88）', () => {
+        const [r] = songLibraryResults([song({ pop: 87.6 })]);
+        expect(r.reviewPercent).toBe(88);
+    });
+
+    it('热度经 `scoreTextOf` 渲染成 `100%` 且**不画星号**（`scoreIsPercentOf` 为真）', () => {
+        const [r] = songLibraryResults([song({ pop: 100 })]);
+        const entry = { communityScore: undefined, reviewPercent: r.reviewPercent };
+        expect(scoreTextOf(entry)).toBe('100%');
+        expect(scoreIsPercentOf(entry)).toBe(true);
     });
 });
 

@@ -105,6 +105,14 @@ export function songLibraryResults(
             sourceUrl: String(s?.webUrl ?? '').trim() || undefined,
         };
         if (platform) item.platformLabel = platform;
+        // 🔴 m10134：**平台热度 → 评分框**（用户裁定「填「热度」到评分框」）。
+        //    实测四平台搜索级都**没有**「大众评分」，只有网易云的 `pop`（0~100）这一档热度分
+        //    ⇒ 写进 `reviewPercent`（百分制，`scoreTextOf` 会渲染成 `100%` 且不画 `★`）。
+        // ⚠️ `pop` 允许是 0（真·没人听）⇒ 用 `!= null` 判，⛔ 别写成 `if (s.pop)`。
+        // ⚠️ 其余三源没有这个值 ⇒ 不写该键（「不知道」与「0 分」必须能分开）。
+        if (s?.pop != null && Number.isFinite(s.pop) && s.pop >= 0 && s.pop <= 100) {
+            item.reviewPercent = Math.round(s.pop);
+        }
         out.push(item);
     }
     return out;

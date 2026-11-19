@@ -63,6 +63,14 @@ export interface LyricCandidate {
      */
     bitrate?: number;
     size?: number;
+    /**
+     * 🔴 m10134：网易云搜索响应里的 **`pop`（热度分，0~100）**。
+     * 存在理由：用户要「曲库结果的来源评分」—— 实测四平台**没有一家**在搜索级给「大众评分」
+     * （网易云只有 `pop` 热度、QQ 新版才有 `hotness`、酷狗/酷我什么都没有，取证见 m10134）。
+     * 用户裁定「填「热度」到评分框」⇒ 这里原样取回，**语义就是热度**，⛔ 别把它说成评分/星级。
+     * ⚠️ 只给网易云填；其余三源留 undefined（⛔ 不补 0 —— 0 分是「人人踩」，与「不知道」是两回事）。
+     */
+    pop?: number;
 }
 
 const UA =
@@ -255,6 +263,9 @@ export function parseNeteaseSearch(raw: string): LyricCandidate[] {
             fee: typeof row.fee === 'number' && Number.isFinite(row.fee) ? row.fee : undefined,
             bitrate: q.bitrate,
             size: q.size,
+            // 🔴 m10134：热度分（0~100）。脏值一律 undefined —— 它会被显示成「100%」，
+            //    编不出来就别显示（⛔ 别回落 0）。
+            pop: neteasePop(s),
         });
     }
     return out;
@@ -275,6 +286,19 @@ function neteaseAudioQuality(song: unknown): { bitrate?: number; size?: number }
         if (br || size) return { bitrate: br, size };
     }
     return {};
+}
+
+/**
+ * 取网易云搜索响应里的**热度分** `pop`（0~100）。
+ * 🔴 m10134：这是「热度」不是「大众评分」—— 实测网易云搜索级只有 `pop` 这个数值字段，
+ *    没有 `score` / `commentCount` / `popularity`（取证记录见 m10134 的接口实测表）。
+ * 脏值 / 缺失一律回 `undefined`：调用方会把它显示成 `100%`，编不出来就别显示。
+ */
+function neteasePop(song: unknown): number | undefined {
+    const row = song as { pop?: unknown };
+    const n = typeof row.pop === 'number' ? row.pop : Number.NaN;
+    if (!Number.isFinite(n) || n < 0 || n > 100) return undefined;
+    return Math.round(n);
 }
 
 /** 网易云歌词响应：`lrc.lyric`（无歌词 / 只有元数据时为 null —— 交给上层报「未找到」） */

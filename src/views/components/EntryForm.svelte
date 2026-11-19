@@ -236,6 +236,12 @@ export let initialBookKind: BookKind | undefined = undefined;
     /** Open Library 书籍详情按需补全（选中搜索书籍时调用：works.json → 简介/页数/出版社；失败返回 null 静默） */
     export let onFetchOpenLibraryDetail: (key: string) => Promise<Record<string, unknown> | null> = async () => null;
     /**
+     * 🔴 m10134 ② 拉**曲库结果的评价人数**（网易云评论接口的 `total`）。
+     * 只在点选一条曲库结果时调（每首一次请求，⛔ 不批量）；失败返回 `undefined` ＝ 保持空。
+     * ⚠️ 只有网易云给得出，其余平台宿主侧直接回 `undefined`（见 `main.fetchSongCommentCount`）。
+     */
+    export let onFetchSongCommentCount: (platform: string, songId: string) => Promise<number | undefined> = async () => undefined;
+    /**
      * 🔴 #609 拉**一本微信读书书的详情**（`/web/book/info?bookId=`）—— 与「从微信读书同步书架」逐本补详情
      * **同一个端点、同一份解析**（宿主 `main.fetchWereadBookInfo`）。
      * ⚠️ 需要已填 Cookie；没填 / 失败 ⇒ 返回 `null`，本组件**静默保留搜索级字段**（与豆瓣详情同款降级）。
@@ -2083,6 +2089,13 @@ export let initialBookKind: BookKind | undefined = undefined;
             // 🔴 复选换结果时百分比必须先清掉：新结果还没拉详情，留着上一条的 % 就是脏数据
             //    （Steam 详情分支会在拉回来后重新填它）。
             reviewPercent = '';
+            // 🔴 m10134 ②：曲库结果的**平台热度**（网易云 `pop`，0~100）走 `reviewPercent`。
+            //   用户裁定「填「热度」到评分框」—— 四平台搜索级都没有大众评分，只有这一档热度。
+            //   ⚠️ 判空用 `!= null`：0 是真实结论（没人听），⛔ 别用真值判断。
+            //   ⚠️ 必须写在这里（`reviewPercent = ''` 之后），否则刚清完又被清一次。
+            if ('reviewPercent' in r && r.reviewPercent != null) {
+                reviewPercent = String(r.reviewPercent);
+            }
             if ('author' in r) {
                 // 书籍：Douban 一次返回全部信息（含豆瓣详情字段；Open Library 搜索级字段见下 works.json 补全）
                 originalTitle = '';
@@ -2212,6 +2225,20 @@ export let initialBookKind: BookKind | undefined = undefined;
                 album = r.album ?? '';
                 summary = r.summary ?? '';
                 if (shouldAdoptCover(poster, r.cover)) poster = r.cover;
+                // 🔴 m10134 ②：曲库结果的**评价人数** —— 只有网易云给得出（评论接口的 `total`），
+                //   且每首一次请求 ⇒ 只在**点选这一条**时补拉，⛔ 不在列表阶段批量拉。
+                // ⚠️ 与 Bangumi/Steam 的补全同款：独立回调、失败静默、不覆盖用户已填的值。
+                // ⚠️ `r.source === SONG_LIB_ID` 才走：豆瓣/iTunes 的音乐结果自带 `ratingCount`，不需要这一跳。
+                if (r.source === SONG_LIB_ID && !ratingCount) {
+                    const libPlatform = ('platformLabel' in r ? String(r.platformLabel ?? '') : '').trim();
+                    const songId = String(r.id ?? '').split(':').pop() ?? '';
+                    try {
+                        const n = await onFetchSongCommentCount(libPlatform, songId);
+                        if (n != null) ratingCount = String(n);
+                    } catch {
+                        // 补拉失败静默：评价人数是锦上添花，⛔ 不该挡住回填
+                    }
+                }
                 // 豆瓣音乐兜底：搜索级缺歌手/专辑/年份时，点击时按需拉详情补全（#info 发行时间 → 发行年）
                 if (r.source === 'douban' && (!r.artist || !r.album || !r.year)) {
                     try {

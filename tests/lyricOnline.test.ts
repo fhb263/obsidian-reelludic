@@ -368,6 +368,31 @@ describe('parseNeteaseSearch · 音频档位（#405）', () => {
     });
 });
 
+describe('🔴 m10134 parseNeteaseSearch · 热度分 pop', () => {
+    // 用户裁定（m10369）：「填「热度」到评分框」—— 四平台搜索级都没有大众评分，
+    // 只有网易云的 `pop`（0~100）这一档热度 ⇒ 解析层原样取回，语义是热度不是评分。
+    const withPop = (pop: unknown) =>
+        JSON.stringify({ result: { songs: [{ id: 1, name: '晴天', ar: [{ name: '周杰伦' }], dt: 269000, fee: 0, pop }] } });
+
+    it('取 `pop` 原值（实测网易云热门歌给 100）', () => {
+        expect(parseNeteaseSearch(withPop(100))[0].pop).toBe(100);
+    });
+
+    it('`pop: 0` 是**真实结论**（零热度）⇒ 保留 0，⛔ 别当「没有」丢掉', () => {
+        expect(parseNeteaseSearch(withPop(0))[0].pop).toBe(0);
+    });
+
+    it('缺字段 / 越界 / 脏值 ⇒ undefined（⛔ 不补 0：0 分是「人人踩」，与「不知道」是两回事）', () => {
+        for (const bad of [undefined, 101, -1, '100', Number.NaN]) {
+            expect(parseNeteaseSearch(withPop(bad))[0].pop).toBeUndefined();
+        }
+    });
+
+    it('小数热度取整（`pop: 87.6` ⇒ 88）', () => {
+        expect(parseNeteaseSearch(withPop(87.6))[0].pop).toBe(88);
+    });
+});
+
 describe('kugouLyricQuery（#405）', () => {
     it('🔴 形态 = **歌手-歌名**（实测：空格形态在酷狗恒 0 条，短横线才有；且歌手的词序不能反）', () => {
         expect(kugouLyricQuery('七里香', '周杰伦')).toBe('周杰伦-七里香');

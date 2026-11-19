@@ -73,6 +73,7 @@ import {
     dlRecommendedPlaylists,
     dlSearch,
     neteaseCoversByIds,
+    neteaseCommentCount,
     dlTestConnection,
     type DlPreviewResult,
     type DlTransport,
@@ -2046,6 +2047,25 @@ export default class ReelLudicPlugin extends Plugin {
         const ids = (songs ?? []).filter((s) => s.source === 'netease' && s.neteaseId != null).map((s) => s.neteaseId);
         if (!ids.length) return new Map();
         return neteaseCoversByIds(this.dlTransport(), ids);
+    }
+
+    /**
+     * 🔴 m10134：曲库结果的**评价人数**补拉 —— 网易云按 songid 取评论总条数。
+     *
+     * 🔴 为什么是「点选后一跳」而不是搜索阶段批量拉：`songLibraryResults` 是**同步纯函数**
+     *    （三条链路共用，⛔ 不能改 async），而且四平台里**只有网易云**给得出这个数
+     *    ⇒ 列表阶段为它多发 N 次请求（10 首 = 10 跳）纯属替风控找事。
+     * ⚠️ 失败/非网易云一律 `undefined`（表单侧据此不写 `ratingCount`）。
+     * ⚠️ 返回 0 是真实结论（没人评论），与「取不到」必须分开。
+     */
+    async fetchSongCommentCount(platform: string, songId: string): Promise<number | undefined> {
+        if (platform !== 'netease') return undefined;
+        if (!this.canUseAudioDownload()) return undefined;
+        try {
+            return await neteaseCommentCount(this.dlTransport(), Number(songId));
+        } catch {
+            return undefined;
+        }
     }
 
     /**

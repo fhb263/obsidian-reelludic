@@ -40,6 +40,12 @@ export interface MusicSong {
      */
     bitrate?: number;
     size?: number;
+    /**
+     * 🔴 m10134：**热度分**（0~100，只网易云有 `pop`；其余源与老数据一律 undefined）。
+     * ⚠️ 语义是「热门程度」不是「大众评分」—— 用户裁定把它填进曲库结果的评分框，
+     *    展示走 `reviewPercent`（百分制），⛔ 别当星级用。
+     */
+    pop?: number;
     /** 歌曲网页地址（弹窗「打开歌曲页」用；空串 = 不可用） */
     pageUrl: string;
 }

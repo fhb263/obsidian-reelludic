@@ -73,6 +73,8 @@ function toSong(c: LyricCandidate): MusicSong {
         // #405：把搜索响应里带的档位透传给下载面（下载界面显示 kbps / 体积）
         bitrate: c.bitrate,
         size: c.size,
+        // 🔴 m10134：热度分原样透传（只有网易云有 `pop`；undefined = 平台没给）
+        pop: c.pop,
         pageUrl: neteaseSongPageUrl(c.id),
     };
 }

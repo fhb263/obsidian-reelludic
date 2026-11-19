@@ -255,6 +255,10 @@ export class EntryModal extends Modal {
                 onFetchBangumiDetail: (id: number) => this.plugin.fetchBangumiDetailForEntry(id),
                 // Open Library 书籍选中结果按需补全（works.json → 简介/页数/出版社；失败 null 静默）
                 onFetchOpenLibraryDetail: (key: string) => this.plugin.fetchOpenLibraryDetailForEntry(key),
+                // 🔴 m10134 ② 曲库结果选中时补拉评价人数（网易云评论接口 total；其余平台宿主直接回 undefined）。
+                //    ⚠️ 独立回调，⛔ 别塞进上面任何一条「详情」回调 —— 那些按 id 打的是别的端点。
+                onFetchSongCommentCount: (platform: string, songId: string) =>
+                    this.plugin.fetchSongCommentCount(platform, songId),
                 // 🔴 #609 微信读书书籍选中结果按需补全（/web/book/info → 出版年/出版社/ISBN/分类/完整简介/大图封面；
                 //    与「从微信读书同步书架」逐本补详情同一端点、同一解析、同一闸门；失败 null 静默）
                 onFetchWereadDetail: (bookId: string) => this.plugin.fetchWereadDetailForEntry(bookId),

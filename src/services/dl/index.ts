@@ -154,6 +154,13 @@ export interface DownloadSong {
      *    `pure/posterSources.kuwoAlbumCoverUrl`（实测 1000×1000）。append-only 字段。
      */
     albumPicPath?: string;
+    /**
+     * 🔴 m10134：**热度分**（0~100）。目前只有网易云给（搜索响应的 `pop`）；
+     * QQ 新端点（`musicu.fcg`）有 `hotness` 但仓内走的是旧端点、酷狗/酷我都没有 ⇒ 其余一律 undefined。
+     * ⚠️ 语义是「热门程度」不是「大众评分」，曲库结果把它填进 `reviewPercent` 展示成 `100%`。
+     * append-only 字段。
+     */
+    pop?: number;
 }
 
 /** 统一的推荐歌单项（各平台解析后归一化） */
@@ -255,6 +262,8 @@ function mapNeteaseSongs(out: MusicSearchOutcome): DownloadSong[] {
             bitrate: s.bitrate,
             // 可下载性口径由 `pure/songDownload.isNeteaseDownloadable` 在解析层定（`fee` 非 0 ⇒ VIP）
             vip: !s.downloadable,
+            // 🔴 m10134：热度分（只有网易云搜索响应带 `pop`）
+            pop: s.pop,
             ext: 'mp3' as const,
             webUrl: s.pageUrl || undefined,
         }));
@@ -352,6 +361,34 @@ export async function neteaseCoversByIds(
         /* 取不到就当没有：封面搜索不该被这一跳拖垮 */
     }
     return out;
+}
+
+/**
+ * 🔴 m10134：网易云**按 songid 取评论总条数**（`/api/v1/resource/comments/R_SO_4_<id>` 的 `total`）。
+ *
+ * 存在理由：用户要「曲库结果填来源评分 + 评价人数」，但实测四平台**搜索级都没有大众评分**，
+ *   只有网易云的 `pop` 热度分（已另走 `reviewPercent`）；「评价人数」只有网易云有这个接口能给。
+ * 🔴 **每首歌一次请求**（实测 `limit=1&offset=0` 只要 21KB）⇒ 只在**用户点选那条结果时**调，
+ *   ⛔ 别在列表阶段批量拉（10 首 = 10 次请求，风控风险白担）。
+ * ⚠️ 失败一律 `undefined`（评价人数是锦上添花，⛔ 不该因为它失败就让回填报错）。
+ * ⚠️ `total=0` 是**真实结论**（没人评论），与「取不到」必须分开 ⇒ 返回 0 而不是 undefined。
+ */
+export async function neteaseCommentCount(
+    t: DlTransport,
+    songId: number | undefined,
+): Promise<number | undefined> {
+    const id = Math.trunc(Number(songId));
+    if (!Number.isFinite(id) || id <= 0) return undefined;
+    try {
+        const url = `https://music.163.com/api/v1/resource/comments/R_SO_4_${id}?limit=1&offset=0`;
+        const res = await t.get(url, { 'User-Agent': UA, Referer: REFERER });
+        if (!res || res.status < 200 || res.status >= 300) return undefined;
+        const data = JSON.parse(res.text) as { total?: unknown };
+        const n = typeof data?.total === 'number' ? data.total : Number.NaN;
+        return Number.isFinite(n) && n >= 0 ? Math.round(n) : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 export async function dlSearch(    t: DlTransport,

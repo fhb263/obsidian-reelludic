@@ -107,6 +107,15 @@ export interface MusicSearchResult {
     rating?: number;
     /** 豆瓣评价人数 */
     ratingCount?: number;
+    /**
+     * 🔴 m10134：**平台热度分**（0~100，百分制），曲库结果专用。
+     * 存在理由：用户要「曲库结果的来源评分」，但实测四平台搜索级**都没有**大众评分，
+     * 只有网易云的 `pop` 热度分 ⇒ 用户裁定「填「热度」到评分框」。
+     * 落到 `MediaEntry.reviewPercent` 后由 `pure/scoreDisplay.scoreTextOf` 渲染成 `100%`
+     * （⛔ 不是星级：`scoreIsPercentOf` 会因此不画 `★`）。
+     * ⚠️ 允许为 0（真·零热度）—— 判空一律 `!= null`，⛔ 别用真值判断。
+     */
+    reviewPercent?: number;
     /** 来源标识：douban */
     source?: string;
     /** 数据源官方页链接 */
