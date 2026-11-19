@@ -42,3 +42,19 @@ export function playtimeFromSessions(sessions: PlaySession[] | undefined): numbe
 export function hoursToMinutes(hours: number): number {
     return Math.round(hours * 60);
 }
+
+/**
+ * 分钟 → 表单「统计时长（小时）」框的回显文本（🔴 m11594 ①，与 {@link hoursToMinutes} 互为往返）。
+ *
+ * 🔴 **1 位小数会吃掉短时长**：`Math.round((2 / 60) * 10) / 10` = `0` ⇒ 表单显示「0」，
+ *    提交时 `Math.round(0 * 60) || undefined` 把原本 **2 分钟**存成 undefined —— 真机实测的静默数据丢失。
+ *    ⇒ 改 2 位小数（`0.01h` ≈ 0.6min，往返误差 < 0.5min），`1..N` 分钟都能存回原值：
+ *      1min → `0.02` → 回到 1；2min → `0.03` → 回到 2；59min → `0.98` → 回到 59。
+ * ⚠️ 去掉尾随 0（`30min` → `「0.5」` 而不是 `「0.50」`），常规值与改版前逐字一致。
+ * ⚠️ `0 < minutes < 0.5` 会四舍五入成 0 ⇒ 兜底给 `0.01`，⛔ 不返回空串（空串 = 提交时清零）。
+ */
+export function minutesToHoursText(minutes: number | undefined): string {
+    if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) return '';
+    const hours = Math.round((minutes / 60) * 100) / 100;
+    return String(hours > 0 ? hours : 0.01);
+}

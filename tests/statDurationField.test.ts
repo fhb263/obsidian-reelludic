@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { hoursToMinutes, minutesToHoursText } from 'pure/playtime';
 
 const ROOT = resolve(__dirname, '..');
 const form = readFileSync(resolve(ROOT, 'src/views/components/EntryForm.svelte'), 'utf8');
@@ -92,12 +93,14 @@ describe('🔴 m11594 ① 五类型「统计时长（小时）」框', () => {
         }
     });
 
-    it('🔴 三个框都用 1 位小数回显（`Math.round(... * 10) / 10`）—— 整小时取整会让「玩了 1 分钟」显示成 0', () => {
-        expect(form).toMatch(/let playtimeHours = entry\?\.playtimeMinutes \? String\(Math\.round\(\(entry\.playtimeMinutes \/ 60\) \* 10\) \/ 10\) : '';/);
-        expect(form).toMatch(/let readHours = entry\?\.readMinutes \? String\(Math\.round\(\(entry\.readMinutes \/ 60\) \* 10\) \/ 10\) : '';/);
-        expect(form).toMatch(/let listenHours = entry\?\.listenMinutes \? String\(Math\.round\(\(entry\.listenMinutes \/ 60\) \* 10\) \/ 10\) : '';/);
-        // 反向守卫：`playtimeHours` 不许再用整小时取整
-        expect(stripComments(form)).not.toMatch(/playtimeHours = entry\?\.playtimeMinutes \? String\(Math\.round\(entry\.playtimeMinutes \/ 60\)\)/);
+    it('🔴 三个框都走 `minutesToHoursText` 回显（⛔ 不许再内联一位小数 —— 会把 2 分钟显示成 0）', () => {
+        expect(form).toMatch(/let playtimeHours = minutesToHoursText\(entry\?\.playtimeMinutes\);/);
+        expect(form).toMatch(/let readHours = minutesToHoursText\(entry\?\.readMinutes\);/);
+        expect(form).toMatch(/let listenHours = minutesToHoursText\(entry\?\.listenMinutes\);/);
+        expect(form).toContain("import { minutesToHoursText } from 'pure/playtime';");
+        // 🔴🔴 反向守卫：内联 `Math.round(x / 60) * 10 / 10` 会吃掉 <3 分钟的时长（真机实测 2min → 显示 0 → 存成空）。
+        const body = stripComments(form);
+        expect(body).not.toMatch(/(readHours|playtimeHours|listenHours)\s*=\s*entry\?\.\w+\s*\?\s*String\(Math\.round\(/);
     });
 
     it('🔴 音乐这次新接的落库口：`input.listenMinutes`（之前根本没有这个框，也就没有这一行）', () => {
@@ -118,6 +121,17 @@ describe('🔴 m11594 ① 五类型「统计时长（小时）」框', () => {
         const body = stripComments(form);
         expect(body).not.toMatch(/durationMin\s*=\s*listenHours/);
         expect(body).not.toMatch(/listenMinutes\s*=\s*durationMin/);
+    });
+
+    it('🔴 巡检一遍：`minutesToHoursText` 与 `hoursToMinutes` 必须互逆（2/59/90 分钟往返不丢）', () => {
+        // 这条守的是「真机实测到的静默数据丢失」：一位小数下 2min → 「0」→ 提交时被存成 undefined。
+        for (const m of [1, 2, 5, 30, 59, 60, 90, 600]) {
+            expect(hoursToMinutes(Number(minutesToHoursText(m))), `${m} 分钟往返丢了`).toBe(m);
+        }
+        expect(minutesToHoursText(undefined)).toBe('');
+        expect(minutesToHoursText(0)).toBe('');
+        expect(minutesToHoursText(30)).toBe('0.5');   // 去掉尾随 0，与改版前逐字一致
+        expect(minutesToHoursText(90)).toBe('1.5');
     });
 
     it('⛔ 不许做成 $: 响应式（逐键输入会被反复覆盖，用户打「12」只会剩「2」）', () => {

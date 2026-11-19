@@ -131,6 +131,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
     import type { RelatedLink } from 'data/types';
     import type { MediaEntry, BookKind, MusicKind, EntryLogKind } from 'data/types';
     import { buildEntryFormPlan, entryFormFieldHidden, entryFormFieldSpan, normalizeEntryFormFields, sortEntryFormKeys } from 'pure/entryFormFields';
+    import { minutesToHoursText } from 'pure/playtime';
     /**
      * 🔴 2026-11-15 用户 m04642 ②（逐字）：「这个所有输入框的占位字符应该引导用户填单个或多个的格式
      *    不然用户不知道填什么」。
@@ -1531,16 +1532,19 @@ export let initialBookKind: BookKind | undefined = undefined;
     $: bookFmtExts = bookKind === 'comic' ? 'cbz / cbt / zip / tar / pdf / epub' : 'txt / epub / pdf';
     $: bookFmtName = bookKind === 'comic' ? '漫画' : '书籍';
     /** 🔴 m11594 ① 五类型「统计时长（小时）」统一口径：三个 time 字段各自一个录入框，
-     *  小时录入 → 落库转分钟，**保留 1 位小数**（90 分钟 → 「1.5」），与海报墙「已读 1.5h」同一口径。
-     *  ⚠️ 三个都必须是 1 位小数：早先 `playtimeHours` 用的是 `Math.round`（整小时），
-     *     玩 1 分钟会显示成「0」—— 同一张表单里两个时长框精度不一致，属真 bug，本批一并修正。 */
-    let playtimeHours = entry?.playtimeMinutes ? String(Math.round((entry.playtimeMinutes / 60) * 10) / 10) : '';
+     *  小时录入 → 落库转分钟，回显与落库都走 `pure/playtime` 的 `minutesToHoursText` / `hoursToMinutes`
+     *  这一对**互逆**函数（90 分钟 → 「1.5」→ 90 分钟）。
+     *  🔴🔴 回显必须是 **2 位小数**、⛔ 不是 1 位：早先用 `Math.round(x * 10) / 10`，
+     *     真机实测 `readMinutes = 2`（2 分钟）会回显成「0」，提交时 `Math.round(0 * 60) || undefined`
+     *     把 2 分钟存成 undefined —— **静默数据丢失**（同一 bug 也影响 `playtimeMinutes`）。
+     *     2 位小数下 1min → 0.02 → 回到 1、2min → 0.03 → 回到 2、59min → 0.98 → 回到 59。 */
+    let playtimeHours = minutesToHoursText(entry?.playtimeMinutes);
     /** #537 书籍阅读时长（小时录入，落库转分钟）：内置阅读器读该条目时会自动累计（见 main.withReadTime），
-     *  这里手填 = **覆盖**总数。 */
-    let readHours = entry?.readMinutes ? String(Math.round((entry.readMinutes / 60) * 10) / 10) : '';
+     *  这里手填 = **覆盖**总数。回显精度见上面 `playtimeHours` 那段注释（2 位小数，⛔ 1 位会吃掉 <3 分钟的时长）。 */
+    let readHours = minutesToHoursText(entry?.readMinutes);
     /** 🔴 m11594 ① 音乐收听时长（小时录入，落库转分钟）：播放器播放时由 `bumpListenMinutes` 自动累计，
      *  这里手填 = **覆盖**总数（与书籍同一套语义）。⛔ 别把它接到 `durationMin`（那是单曲片长）。 */
-    let listenHours = entry?.listenMinutes ? String(Math.round((entry.listenMinutes / 60) * 10) / 10) : '';
+    let listenHours = minutesToHoursText(entry?.listenMinutes);
     let notes = entry?.notes ?? '';
     // 🔴 #668 关联功能已下线归档（见文件头 import 处的说明）：表单不再持有 `related` state。
     //    ⚠️ 提交时**不再带** `input.related` ⇒ `EntryService.update` 的浅合并会**保留 catalog 里原有的值**
