@@ -896,6 +896,11 @@ export let initialBookKind: BookKind | undefined = undefined;
         const next = applySearchTypeSel((ev.currentTarget as HTMLSelectElement).value as SearchTypeSel, bookKind);
         type = next.type;
         bookKind = next.bookKind;
+        // 🔴 m11317：总集数还是「自动给的默认值」时，跟着新类型重算 ——
+        //    切出电影 ⇒ 清空（让豆瓣详情查到的真实集数能落进来，`applyDoubanDetail` 的守卫是 `!totalEpisodes`）；
+        //    切回电影 ⇒ 恢复电影的单集语义 `'1'`。
+        //    ⚠️ 用户手填过的（`totalEpisodesAuto === false`）一律不动 —— 「切类型把我填的集数冲了」是更糟的 bug。
+        if (totalEpisodesAuto) totalEpisodes = next.type === 'movie' ? '1' : '';
         // 🔴 #535：切到网文 / 漫画后那枚在线检索按钮就没了 ⇒ 开着的候选浮层必须一并收起
         //    （⛔ 留着它会显示一个「当前分类根本不接」的检索结果，自相矛盾）。
         if (next.bookKind !== 'book') readUrlOpen = false;
@@ -1380,6 +1385,23 @@ export let initialBookKind: BookKind | undefined = undefined;
     }
     // 影视条目默认总集数：电影固定语义为单集（默认 1，编辑表单不显示总集数框；观看链接渲染单集 ▶ 播放钮，关联第 1 集）；剧集/动画由输入框决定
     let totalEpisodes = entry?.progress?.totalEpisodes ? String(entry.progress.totalEpisodes) : type === 'movie' ? '1' : '';
+    /**
+     * `totalEpisodes` 当前是**自动默认值**（而不是用户填的）。
+     *
+     * 🔴 m11317（用户反馈：搜索剧集和动画，显示的总集数都是 1 集）：
+     *    上面那行只在**组件初始化时求值一次**。从「添加条目」进来时 `type` 默认 `movie`
+     *    （`EntryModal` 传 `initialType ?? 'movie'`）⇒ `totalEpisodes` 被钉成 `'1'`；
+     *    用户随后在下拉里切到「电视剧 / 动画」，`onTypeSelEl` 只改 `type`、不碰这个值，
+     *    于是它一路带着 `'1'` 走到豆瓣详情回填 —— `applyDoubanDetail` 的守卫是
+     *    `!totalEpisodes`（`'1'` 为真）⇒ **豆瓣查到的真实集数被静默丢弃**，落库就是 1 集。
+     *    ⛔ 别把这行改成 `$:` 响应式：那会在用户逐键输入集数时反复覆盖输入框。
+     *    正确做法就是本标记 —— 只在「值还是自动给的」时随类型重算，用户一动手就松手。
+     */
+    let totalEpisodesAuto = !entry?.progress?.totalEpisodes && type === 'movie';
+    /** 用户手填总集数 ⇒ 收掉自动标记（此后切类型不再改写用户填的值） */
+    function markTotalEpisodesTouched(): void {
+        totalEpisodesAuto = false;
+    }
     /* 🔴 2026-10-23 用户：「填 1000 集会一次性铺开 1000 行，滚动困难」⇒ 集号网格**按每 10 行分区**、
        分区标题吸顶。真实分区大小要看**容器宽度**（一行能放几个 36px 按钮），量不到就回落 13 列
        ⇒ 纯算法在 `pure/episodeAssoc.ts`（含单测），这里只负责把宽度喂进去并渲染。
@@ -2408,6 +2430,9 @@ export let initialBookKind: BookKind | undefined = undefined;
     // 只扩不缩：总集数变小时保留数据（渲染按当前总集数截取、提交时截断写入），
     // 避免 on:input 逐键重填（如 52→"5"→"52"）中间值把数组截断导致数据永久丢失
     function resizeEpisodeFiles() {
+        // 🔴 m11317：这个函数是总集数输入框的 `on:input` 处理器 ⇒ 走到这里说明是**用户在打字**，
+        //    立刻收掉「自动默认值」标记，此后切类型不再改写他填的数。
+        markTotalEpisodesTouched();
         const n = totalEpisodes ? Number(totalEpisodes) : 0;
         if (n > episodeFiles.length) {
             episodeFiles = Array.from({ length: n }, (_, i) => (i < episodeFiles.length ? episodeFiles[i] : undefined));
