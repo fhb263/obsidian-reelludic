@@ -1227,7 +1227,33 @@ export let initialBookKind: BookKind | undefined = undefined;
             .join(' · ');
     }
 
-    /** 「填入」某条候选：取歌词正文 → 覆盖歌词框并关浮层（取不到时留在浮层里说明原因） */
+    /**
+     * 🔴 m14228 ①：点「填入」时同源顺延的**最大附加尝试数**（用户点的那条不算在内）。
+     *
+     * 为什么是 3：实测「同源同歌不同版本有没有歌词完全不同」（见 `applyLyrics` 头注释的取证），
+     *   而顺延是**串行**网络请求 —— 每条一次往返，用户盯着「获取中…」等。
+     *   上限 3 条 ⇒ 最坏 4 次请求（约 2~4 秒），既覆盖「前几条是翻唱/无词版」这个真实分布，
+     *   又不会在源真的挂了时把 20 条候选全打一遍（那种情况 `error` 分支已经先停了）。
+     */
+    const LYRIC_RETRY_MAX = 3;
+    /**
+     * 「填入」某条候选：取歌词正文 → 覆盖歌词框并关浮层（取不到时留在浮层里说明原因）。
+     *
+     * 🔴 m14228 ①（用户逐字：「为什么我明明搜索到出来源LRC歌词了，点击就说该源没有歌词」）：
+     *    原来只取**用户点的那一条**，取不到就报「该源没有这首歌的歌词」——
+     *    实测这不是源的错，是**同源不同版本有没有歌词完全不同**：
+     *      · 网易云《七里香》原版 `186016` 在 `limit=50` 下**排第 65 名、根本不在候选里**，
+     *        排前面的三条翻唱（王俊凯 MV 版 / 吉拉朵女声版 / BFH beats）`lyricLen` 全是 0；
+     *      · 酷我 `songinfoandlrc?musicId=…` 对部分 rid 恒返 `{"status":301,"msg":"音乐查询失败"}`
+     *        （连打 5 次都一样），同一接口对另一个 rid 却正常返 58 行。
+     *  ⇒ 修法 = **同源顺延**：这条没歌词（`text` 为空且**没有报错**）就静默试同源后续候选，
+     *    命中任一即填；试满 `LYRIC_RETRY_MAX` 条仍没有，才报「该源没有这首歌的歌词」。
+     *
+     * ⚠️ **只顺延、不跨源**：跨源换了供应商，填进来的歌词与用户点的那条对不上，属静默偷换。
+     * ⚠️ **有 error 不顺延**：`error` 意味着接口/网络层面失败（`HTTP 5xx`、缺 accesskey），
+     *    换候选照样失败，继续试只会把网络问题伪装成「没歌词」，而且成倍增加请求 —— 直接把错误原文给用户。
+     * ⚠️ 顺延成功后 `lrcFillError` 必须**清空**（否则用户会看到「明明填进来了却还挂着上一轮的红色报错」）。
+     */
     async function applyLyrics(source: LyricSourceId, c: LyricCandidate): Promise<void> {
         if (lrcLoadingKey) return;
         lrcLoadingKey = lrcKey(source, c);
@@ -1237,9 +1263,34 @@ export let initialBookKind: BookKind | undefined = undefined;
             if (r.text) {
                 lrc = r.text;
                 lrcOpen = false;
-            } else {
-                lrcFillError = r.error ? `该源获取失败（${r.error}）` : '该源没有这首歌的歌词';
+                return;
             }
+            // 接口层面就失败了 ⇒ 不换候选，如实报错（见函数头「有 error 不顺延」）
+            if (r.error) {
+                lrcFillError = `该源获取失败（${r.error}）`;
+                return;
+            }
+            // 本条确实没歌词 ⇒ 同源顺延（从**用户点的这条之后**开始，⛔ 不回头试已点过的）
+            const group = lrcResults.find((x) => x.source === source);
+            const all = group?.candidates ?? [];
+            const at = all.findIndex((x) => x.id === c.id);
+            const rest = at >= 0 ? all.slice(at + 1, at + 1 + LYRIC_RETRY_MAX) : [];
+            let tried = 1; // 用户点的那条已试过
+            for (const next of rest) {
+                tried += 1;
+                lrcLoadingKey = lrcKey(source, next);
+                const nr = await onLoadLyric(source, next.id);
+                if (nr.text) {
+                    lrc = nr.text;
+                    lrcOpen = false;
+                    new Notice(`这条版本没有歌词，已自动改用同源的另一版本（${group?.label ?? source}）`, 4000);
+                    return;
+                }
+                if (nr.error) break; // 网络/接口问题，立刻停，别把 4 条候选都打一遍
+            }
+            lrcFillError = tried > 1
+                ? `该源没有这首歌的歌词（已试过 ${tried} 个版本）`
+                : '该源没有这首歌的歌词';
         } catch (e) {
             lrcFillError = `获取失败：${e instanceof Error ? e.message : String(e)}`;
         } finally {

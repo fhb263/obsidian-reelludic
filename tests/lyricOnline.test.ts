@@ -58,8 +58,11 @@ describe('lyricOnline · 检索词与请求头', () => {
 describe('lyricOnline · URL 构造（字段名与参数照抄金标准）', () => {
     it('网易云搜索 / 歌词', () => {
         // 🔴 #475：搜索池由 20 放宽到 **50**（实测网易云/酷我 limit=50 就真给 50 条）
+        // 🔴 m14228 ①：网易云再放宽到 **100** —— 实测《七里香》原版 `186016` 在 `limit=50` 下排**第 65 名**
+        //    根本不在池子里，池里前三条翻唱 `lyricLen` 全是 0；提到 100 后精确匹配的 4 条全部有歌词。
+        //    ⚠️ 只动网易云，酷我/QQ 仍是 50（见下面两条用例）。
         expect(neteaseSearchUrl('七里香 周杰伦')).toBe(
-            'https://music.163.com/api/cloudsearch/pc?s=%E4%B8%83%E9%87%8C%E9%A6%99%20%E5%91%A8%E6%9D%B0%E4%BC%A6&type=1&limit=50',
+            'https://music.163.com/api/cloudsearch/pc?s=%E4%B8%83%E9%87%8C%E9%A6%99%20%E5%91%A8%E6%9D%B0%E4%BC%A6&type=1&limit=100',
         );
         expect(neteaseLyricUrl('186016')).toBe('https://music.163.com/api/song/lyric?id=186016&lv=1&kv=1&tv=-1');
     });

@@ -22,7 +22,7 @@ import type { MediaStatus } from './status';
 import type { SortBy } from './search';
 // 🔴 #472：组级进度**必须复用单卡那份取值口径**（`percent` 优先、无则按 `page/totalPage`）——
 //   卡面那行 `.rl-readrow` 用的是什么，这里就得是什么，⛔ 别在本文件里另写一套百分比判定。
-import { readPercent, entryDurationMinutes } from './mediaProgress';
+import { readPercent, totalDurationMinutes } from './mediaProgress';
 import { ENTRY_TYPE_LABELS } from 'data/types';
 
 /** 分组键里分隔「类型」与「系列名」的字符（不可打印 ⇒ 真实系列名不可能含它；与 pageKey 同款惯例） */
@@ -397,11 +397,16 @@ function groupAvg(items: readonly MediaEntry[], pick: (e: MediaEntry) => number 
     return sum / items.length;
 }
 
-/** 组内「统计时长」之和（分钟）—— 合集在 `duration-*` 档下的代表值（口径见 `compareSeriesGroups`） */
+/**
+ * 组内「统计时长」之和（分钟）—— 合集在 `duration-*` 档下的代表值（口径见 `compareSeriesGroups`）。
+ *
+ * 🔴 m14228 ② 起求和本体搬到 `pure/mediaProgress.totalDurationMinutes`：系列卡封面角标
+ *    （`mediaProgress.seriesPlaytimeBadge`）要显示的就是**这个数**，而 `mediaProgress` 是
+ *    本文件的上游叶子（本文件已 import 它的 `entryDurationMinutes` / `readPercent`），
+ *    反过来 import 会成环。⇒ 全仓**只有一份**求和实现，⛔ 别在这里再写一遍循环。
+ */
 function groupDuration(items: readonly MediaEntry[]): number {
-    let sum = 0;
-    for (const it of items) sum += entryDurationMinutes(it);
-    return sum;
+    return totalDurationMinutes(items);
 }
 
 /** 组内 `updatedAt`（ISO 串，可直接字典序比）的极值；组内全空 ⇒ 空串（排在最早） */

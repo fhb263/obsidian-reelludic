@@ -125,7 +125,18 @@ export function kugouLyricQuery(title: string, author?: string): string {
 
 // ────────────────────────────── URL 构造 ──────────────────────────────
 
-export function neteaseSearchUrl(query: string, limit = 50): string {
+/**
+ * 🔴 m14228 ①：默认 `limit` 从 **50 提到 100**。
+ *
+ * 取证（《七里香 / 周杰伦》实测）：`limit=50` 时**原版 `id=186016` 排第 65 名、根本不在结果里**，
+ * 排前面的三条是同名翻唱（王俊凯 MV 版 / 吉拉朵女声版 / BFH beats），而它们**全都没有歌词**
+ * ⇒ 用户「明明搜到了、点进去却说该源没有歌词」的根因就在这儿。
+ * 提到 100 后，精确匹配（歌名全等 + 歌手全等）的 4 条**全部有歌词**。
+ * ⚠️ 只调网易云：酷我 / QQ 实测没有这个「原版排到 50 名外」的现象，⛔ 别顺手一起放大（白多一倍流量）。
+ * ⚠️ 候选展示仍是 `LYRIC_CANDIDATES_PER_SOURCE = 20` 条（弹层行数不变）—— 这里放宽的是**搜索池**，
+ *   不是展示条数；池子大了才能让 `matchScore` 有原版可排。
+ */
+export function neteaseSearchUrl(query: string, limit = 100): string {
     return `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(query)}&type=1&limit=${limit}`;
 }
 
@@ -460,6 +471,9 @@ function matchScore(c: LyricCandidate, title: string, author: string): number {
  *    ⇒ **一直是「我们截得狠」，不是「源给得少」**（旧记「源只给 10 条」是错的）。
  *    搜索池随之 **20 → 50**：池子大了，排序后把**正确版本**顶进前 20 的机会才大 —— 《七里香》这种翻唱/现场版极多的歌，
  *    原版常被十几条翻唱挤到后面。面板可滚动 ⇒ 4 源 × 20 行不会顶爆。
+ * 🔴 m14228 ①：搜索池再 **50 → 100**（只动网易云，见 `neteaseSearchUrl` 的注释）——
+ *    实测 `limit=50` 时《七里香》原版排**第 65 名**、压根不在池子里，池里排前三条的翻唱**全都没有歌词**；
+ *    提到 100 后精确匹配的 4 条**全部有歌词**。⚠️ 本常量（**展示条数**）保持 20 不变，别跟着放大。
  */
 export const LYRIC_CANDIDATES_PER_SOURCE = 20;
 

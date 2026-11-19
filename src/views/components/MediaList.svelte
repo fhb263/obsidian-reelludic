@@ -136,7 +136,7 @@
     //    纯数据层在 `pure/listGrouping`（分桶 / 桶序 / 组卡汇总全都可单测），⛔ 别把分桶逻辑写进本文件。
     import { buildGroupCards, entriesInBucket, groupCardSub, groupDimOptionsFor, groupEntriesBy, normalizeGroupDim, type GroupDim, type ListGroupCard } from 'pure/listGrouping';
     // 进度 / 状态小字（#444c 下沉到纯模块）：卡片与弹窗**共用同一份口径**，⛔ 别在两处各写一套。
-    import { listProgress, readPercent, bookUnitOf, cardPlaytimeBadge, cardReadBadge, cardListenBadge } from 'pure/mediaProgress';
+    import { listProgress, readPercent, bookUnitOf, cardPlaytimeBadge, cardReadBadge, cardListenBadge, seriesPlaytimeBadge } from 'pure/mediaProgress';
     import { placeMenu } from 'pure/menuPlacement';
     // 🔴 #626 多带两样：`posterGridTemplateForWall`（墙的列模板 —— 自定义档的**间距比网格宽**，裁决收在 pure 层）、
     //    `POSTER_WALL_GAP`（墙的间距，必须与 `.rl-wall{gap}` 同值）。
@@ -3709,14 +3709,30 @@
                     <!-- 🔴 #558：折叠卡的组级阅读进度也搬进**封面底部悬浮区**（与普通卡同一截 markup / 同一块遮罩），
                          ⛔ 别只搬普通卡那一处（#472 报的就是「折叠卡与普通卡不一致」）。
                          🔴 #625：再加一道「海报墙收窄」—— 普通卡在那个视图里连封面遮罩都不渲染，
-                            折叠卡**同样**得收（不然又是「只改了一半」）。 -->
-                    {#if !wallView && g.type === 'book' && seriesReadPercent(g.items) !== undefined}
+                            折叠卡**同样**得收（不然又是「只改了一半」）。
+                         🔴 m14228 ②（用户逐字：「系列卡上要统计总共时长并显示」）：**总时长角标**也进这一块。
+                         结构与普通卡**逐字同款**：`.rl-cov-foot` > （可选）`.rl-cov-foot-top` 角标行 +
+                         （可选）`.rl-readrow` 进度行 —— ⛔ 别为时长再开第二块 `.rl-cov-foot`
+                         （两块都 `position:absolute; bottom:0` 会互相压住，普通卡早就没这个问题正是因为合在一块）。
+                         · 取值 = `seriesPlaytimeBadge`（内部 `totalDurationMinutes`，与排序档 `duration-*`
+                           的合集代表值**同一个求和**，⛔ 别在这里再求和一次）；
+                         · 口径 = 用户裁定的「统计时长之和：已读/已玩/已听累计相加」，
+                           ⛔ **不是** `durationMin` 片长之和（影视系列因此恒无角标，那是选定的口径，不是 bug）；
+                         · 两块各判各的：书籍系列「既有阅读进度、又有累计时长」时角标行与进度行**同时**出现。 -->
+                    {#if !wallView && (seriesPlaytimeBadge(g.items, g.type) || (g.type === 'book' && seriesReadPercent(g.items) !== undefined))}
                         <div class="rl-cov-foot">
-                            <div class="rl-readrow">
-                                <span class="rl-read-pct">{seriesReadPercent(g.items)}%</span>
-                                <div class="rl-readbar"><div class="rl-readbar-fill" style={`width:${seriesReadPercent(g.items)}%`}></div></div>
-                                <span class="rl-read-pages">{seriesReadDone(g.items)}/{g.items.length} 部</span>
-                            </div>
+                            {#if seriesPlaytimeBadge(g.items, g.type)}
+                                <div class="rl-cov-foot-top">
+                                    <span class="rl-cov-playtime" data-tip="系列总时长（各条统计时长累计）">{seriesPlaytimeBadge(g.items, g.type)}</span>
+                                </div>
+                            {/if}
+                            {#if g.type === 'book' && seriesReadPercent(g.items) !== undefined}
+                                <div class="rl-readrow">
+                                    <span class="rl-read-pct">{seriesReadPercent(g.items)}%</span>
+                                    <div class="rl-readbar"><div class="rl-readbar-fill" style={`width:${seriesReadPercent(g.items)}%`}></div></div>
+                                    <span class="rl-read-pages">{seriesReadDone(g.items)}/{g.items.length} 部</span>
+                                </div>
+                            {/if}
                         </div>
                     {/if}
                 </div>

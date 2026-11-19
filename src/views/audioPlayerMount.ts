@@ -42,8 +42,10 @@ import {
     cycleAudioPlayMode,
     decideTrack,
     normalizeAudioPlayMode,
+    shuffleWeightOfRating,
     type AudioPlayMode,
     type PlayerKind,
+    type ShuffleWeights,
 } from 'pure/audioQueue';
 import { lyricCenterDelta, resolveAudioLayout, type AudioLayoutTier } from 'pure/audioLayout';
 import { lrcIndexAt, parseLrc, wordIndexAt, type LrcLine } from 'pure/lrc';
@@ -131,6 +133,12 @@ export interface AudioPlayerTrack {    entryId: string;
     url: string;
     /** 封面资源 URL；`null` ⇒ 占位图标 */
     coverUrl: string | null;
+    /**
+     * 🔴 m14228 ③：个人评分（1~5，未评分 / 缺省 = 不参与加权）。
+     * 用途**仅**是乱序播放的权重（`pure/audioQueue.shuffleWeightOfRating`）——
+     * ⛔ 别在本层拿它做任何展示或写回：这是**只读快照**，改了它不会落到 catalog。
+     */
+    rating?: number;
 }
 
 export interface AudioPlayerMountOptions {
@@ -699,6 +707,27 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
     };
 
     // ── 队列推进（唯一真源：pure/audioQueue.decideTrack）──
+    /**
+     * 🔴 m14228 ③：把队列里每首的**个人评分**换算成乱序权重（星级 → 权重真源在
+     * `pure/audioQueue.shuffleWeightOfRating`，⛔ 别在这里另写一套曲线）。
+     *
+     * 三条口径：
+     *  ⑴ **全队都未评分 ⇒ 返回 `undefined`** —— 让 `buildShuffleBag` 走等概率老路径，
+     *     行为与加权前逐字一致（不是「权重都是 1 的加权洗牌」，那会让随机序列整体偏移）；
+     *  ⑵ 每次洗牌现算（`items` 可在播放中经 `updateQueue` 换掉）—— 不缓存，缓存了就必然出现
+     *     「换了队列还用旧权重」的鬼故事；
+     *  ⑶ 只读 `track.rating`，⛔ 不写回。
+     */
+    const shuffleWeights = (): ShuffleWeights | undefined => {
+        let any = false;
+        const out: Record<string, number> = {};
+        for (const t of items) {
+            const w = shuffleWeightOfRating(t.rating);
+            out[t.path] = w;
+            if (t.rating != null) any = true;
+        }
+        return any ? out : undefined;
+    };
     const applyDecision = (trigger: 'ended' | 'manual', direction: 'next' | 'prev'): void => {
         const target = idx >= 0 ? items[idx].path : '';
         const decision = decideTrack({
@@ -708,6 +737,9 @@ export function mountAudioPlayer(host: HTMLElement, opts: AudioPlayerMountOption
             trigger,
             direction,
             bag,
+            // 🔴 m14228 ③：乱序按个人评分加权（5★ 常出现、1★ 大幅降低）。
+            // ⚠️ 只在 `shuffle` 生效；`weights` 缺省时 `buildShuffleBag` 走等概率老路径。
+            weights: shuffleWeights(),
         });
         bag = decision.bag;
         if (decision.target === null) {

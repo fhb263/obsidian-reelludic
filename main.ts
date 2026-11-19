@@ -9162,6 +9162,8 @@ export default class ReelLudicPlugin extends Plugin {
                 notePath: e.notePath,
                 url,
                 coverUrl: this.resolvePoster(e) ?? null,
+                // 🔴 m14228 ③：乱序播放按个人评分加权（只读快照，⛔ 本层不写回）
+                rating: e.rating,
             });
         }
         if (!tracks.length) return null;

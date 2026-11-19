@@ -46,6 +46,52 @@ export const AUDIO_PLAY_MODE_LABELS: Record<AudioPlayMode, string> = {
 /** 随机源（0 ≤ x < 1）；注入 ⇒ 洗牌可断言、可复现 */
 export type Rng = () => number;
 
+/**
+ * 乱序的**权重表**：`路径 → 权重`（>0 的有限数；缺键 / 0 / 负数 / 非有限 ⇒ 用 {@link DEFAULT_SHUFFLE_WEIGHT}）。
+ *
+ * 🔴 m14228 ③（用户逐字：「给音乐乱序播放再加个如10星个人评分遇到的循环越高反之1星评分的音乐
+ *    权重要大大降低」）。用户选了「用现有 1~5 星个人评分当权重」这一档 ⇒ 本模块**只认权重**、
+ *    不认识星级 —— 星级 → 权重的换算在 {@link shuffleWeightOfRating}，⛔ 别把 `MediaEntry.rating`
+ *    搬进这里（`audioQueue` 是纯队列逻辑，不认识条目模型）。
+ */
+export type ShuffleWeights = Readonly<Record<string, number>>;
+
+/** 没有权重信息时每一首的权重（= 等概率，行为与加权前逐字一致） */
+export const DEFAULT_SHUFFLE_WEIGHT = 1;
+
+/**
+ * 个人评分（1~5 星）→ 乱序权重。**越高星越常出现、1 星大幅降低**。
+ *
+ * 🔴 实测曲线（`(r/3)^2.2` 保留两位小数，见 `tests/audioQueueWeight.test.ts` 逐档钉住）：
+ *    `1★ → 0.09`、`2★ → 0.41`、`3★ → 1.00`、`4★ → 1.88`、`5★ → 3.08`；未评分 → `1.00`。
+ *    ⇒ **3★ 恰为中性、与未评分等价**（「三星 = 没什么意见」是用户能直接理解的语义），
+ *      5★ 是 3★ 的 3 倍、是 1★ 的 **34 倍**。
+ *
+ * 五条口径（都有对应用例）：
+ *  ⑴ **未评分 = 中性 1.0**，⛔ 不给 0 —— 用户没表态的歌不该被变相惩罚（新歌全是未评分，
+ *     给 0 等于「导入的新歌永远排最后」）；
+ *  ⑵ **1★ 不是 0 而是 0.09**，⛔ **不做硬排除** —— 用户说的是「权重要大大降低」，
+ *     真排除是另一个需求（真排除了就再也听不到，用户改不回耳朵）；
+ *  ⑶ **越界值夹进 `[1, 5]`**：`0` / 负数 / 非整数脏值一律当未评分（`rating` 红线是 1~5，
+ *     但 data.json 可手改，⛔ 别让一个 99 把整轮洗牌压死）；
+ *  ⑷ 单调递增且**严格**（相邻档必有差），单测逐档钉住；
+ *  ⑸ 纯函数、无 `obsidian` 依赖。
+ */
+export function shuffleWeightOfRating(rating: number | undefined | null): number {
+    if (typeof rating !== 'number' || !Number.isFinite(rating)) return DEFAULT_SHUFFLE_WEIGHT;
+    const r = Math.round(rating);
+    if (r < 1 || r > 5) return DEFAULT_SHUFFLE_WEIGHT;
+    // 以 3★ 为中轴（= 1.0，与未评分等价），5★ ≈ 3.08、1★ ≈ 0.09 —— 指数 2.2 让「1 星 ≪ 5 星」
+    // 的差距足够大（34 倍），又不至于像线性那样 1★ 还剩 0.2（用户要的是「大大降低」）。
+    return Math.round(Math.pow(r / 3, 2.2) * 100) / 100;
+}
+
+/** 取某路径的权重（缺键 / 脏值 ⇒ {@link DEFAULT_SHUFFLE_WEIGHT}） */
+function weightOf(map: ShuffleWeights | undefined, path: string): number {
+    const v = map?.[path];
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : DEFAULT_SHUFFLE_WEIGHT;
+}
+
 /** 触发方式：`ended` = 曲终自动推进；`manual` = 用户点「上一首 / 下一首」 */
 export type AudioQueueTrigger = 'ended' | 'manual';
 
@@ -77,6 +123,13 @@ export interface AudioQueueInput {
     bag?: readonly string[];
     /** 随机源（缺省 `Math.random`） */
     rng?: Rng;
+    /**
+     * 🔴 m14228 ③：乱序的权重表（`路径 → 权重`，见 {@link ShuffleWeights}）。
+     * 缺省 / 空对象 ⇒ 等概率（行为与加权前逐字一致）。
+     * ⚠️ **只影响「新洗一轮」时的抽取顺序** —— 已有袋子不会因为权重变化而重排
+     * （否则用户改一次评分，正在放的那一轮会突然洗牌，观感像「跳歌」）。
+     */
+    weights?: ShuffleWeights;
 }
 
 /** 任意输入 ⇒ 合法模式（未知 / 脏值一律回落 `off`，⛔ 不抛错：设置文件可能被手改） */
@@ -140,20 +193,50 @@ function safeRandom(rng: Rng | undefined): number {
  * 正确语义：**一轮 = 除当前曲外每首恰好一次**。袋子取空（一轮放完）时重新洗，重洗时同样剔除
  * 「此刻正在播的那首」⇒ 相邻两轮的交界处也不会紧邻重复。代价是每轮少一首（N 首队列一轮 N-1 首），
  * 换来的是「N 首之内绝不重样」这个用户能直接感知到的性质。
+ *
+ * ## 🔴 m14228 ③：加权洗牌（`weights`）为什么不会破坏「一轮内不重复」
+ *
+ * 用户要的是「5 星常出现、1 星大幅降低」。实现上**⛔ 不能改成「每首歌独立按权重掷骰」**——
+ * 那样就回到了 m11034 修掉的病灶（同一首隔两首又回来），而且「一轮」这个概念直接消失。
+ *
+ * 正确做法（本函数）：**集合仍然是「除当前曲外每首恰好一次」，权重只决定抽取顺序** ——
+ * 每步按权重**无放回**抽一首（Efraimidis-Spirakis：键 = `rng^(1/w)`，降序排）。
+ * 权重 w 越大 ⇒ 键越容易排在前面；但每首**必然被抽到且只抽到一次** ⇒
+ * 「一轮内不重复」这条性质逐字保留，加权只改变「谁先谁后」。
+ *
+ * 为什么用 `rng^(1/w)` 而不是「重复加权抽样 + 去重」：后者要循环 N 次且每次都扫全池
+ * （O(N²)，还引入「抽到已选就重抽」的退化风险）；前者一次排序 O(N log N)，且
+ * `w` 全相等时**退化为均匀随机排列**（与老 Fisher-Yates 同分布，行为逐字等价）。
  */
 export function buildShuffleBag(
     paths: readonly string[],
     exclude: string = '',
     rng?: Rng,
+    weights?: ShuffleWeights,
 ): string[] {
-    // 剔除当前曲（⛔ 不是打乱后再挪位）：先把 pool 建好，再对它做 Fisher-Yates。
+    // 剔除当前曲（⛔ 不是打乱后再挪位）：先把 pool 建好，再对它做加权排序。
     const pool = exclude ? paths.filter((p) => p !== exclude) : [...paths];
-    const out = pool;
-    for (let i = out.length - 1; i > 0; i--) {
-        const j = Math.floor(safeRandom(rng) * (i + 1));
-        [out[i], out[j]] = [out[j], out[i]];
+    // 无权重表 ⇒ 走原来的 Fisher-Yates（⛔ 别让老路径也过一遍指数运算，行为要和改动前逐字一致）
+    if (!weights) {
+        const out = pool;
+        for (let i = out.length - 1; i > 0; i--) {
+            const j = Math.floor(safeRandom(rng) * (i + 1));
+            [out[i], out[j]] = [out[j], out[i]];
+        }
+        return out;
     }
-    return out;
+    // Efraimidis-Spirakis 加权无放回抽样：键 `rng^(1/w)` 降序。
+    // ⚠️ `rng` 可能是 0 ⇒ `0 ** (1/w)` = 0，键最小但不是 -Infinity，排序仍稳定安全。
+    const keyed = pool.map((p) => {
+        const w = weightOf(weights, p);
+        const r = safeRandom(rng);
+        // `Math.pow(0, x)` = 0；`Math.pow(r, 1/w)` 在 w 极大时趋近 1 —— 都在 (0,1] 内，无 NaN。
+        const key = Math.pow(r, 1 / w);
+        return { p, key };
+    });
+    // 降序；键相等时用路径字典序兜底，保证**同种子必然同结果**（否则 V8 排序在等键上不可复现）
+    keyed.sort((a, b) => (b.key === a.key ? (a.p < b.p ? -1 : a.p > b.p ? 1 : 0) : b.key - a.key));
+    return keyed.map((x) => x.p);
 }
 
 /** 顺序模式（`sequential`，也是 `off` 下**手动**切歌的口径）：环形前后步进；当前曲不在队列里时落到队列端点 */
@@ -217,7 +300,7 @@ export function decideTrack(input: AudioQueueInput): AudioQueueDecision {
             if (pick < 0) pick = (idx - 1 + paths.length) % paths.length;
             return { target: paths[pick], replay: paths[pick] === current, bag: bagIn };
         }
-        const bag = bagIn.length ? bagIn : buildShuffleBag(paths, current, input.rng);
+        const bag = bagIn.length ? bagIn : buildShuffleBag(paths, current, input.rng, input.weights);
         // 🔴 m11034：袋可能为空 —— 队列只有一首时，`buildShuffleBag` 把当前曲排除后什么都不剩。
         //    此时必须回 `replay: true`（等效单曲循环），⛔ 不能回 `target: null` 让单曲歌单戛然而止。
         if (!bag.length) return { target: current || paths[0], replay: true, bag };

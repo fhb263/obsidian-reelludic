@@ -6,7 +6,7 @@
 //    **共用同一份口径**。⛔ 别在两处各写一套：卡面与弹窗给出不一样的进度，用户一眼就看出「两个地方说的不是一回事」。
 //
 // ⚠️ 本模块**没有 obsidian、没有 DOM、没有 Svelte**，可单测（本仓「纯逻辑下沉」红线）。
-import type { MediaEntry } from 'data/types';
+import type { EntryType, MediaEntry } from 'data/types';
 import { statusLabel } from 'pure/labels';
 import { formatBadgeTime } from 'pure/playtime';
 
@@ -133,6 +133,50 @@ export function cardListenBadge(e: MediaEntry): string {
     if (e.type !== 'music' || !e.listenMinutes) return '';
     const t = formatBadgeTime(e.listenMinutes);
     return t ? `已听 ${t}` : '';
+}
+
+/**
+ * 🔴 m14228 ②：一组条目（系列 / 合集）的「统计时长」之和（分钟）。
+ *
+ * 用户逐字：「系列卡上要统计**总共时长**并显示」，当场选定的口径是
+ * 「**统计时长之和：已读/已玩/已听累计相加**」（否掉了「用 durationMin 片长相加」与「两者混用」）。
+ *
+ * 🔴 这是全仓**唯一**的求和实现，两个消费者必须共用它：
+ *    · `pure/seriesGroup.groupDuration`（排序档 `duration-asc`/`duration-desc` 的合集代表值）；
+ *    · `seriesPlaytimeBadge`（合集卡封面角标的显示值）。
+ *   ⛔ 别在任何一处再写一遍循环 —— 一旦漂移，「按统计时长排序」的顺序会和卡上写的数字互相矛盾，
+ *      而且这种矛盾没有任何报错，只能靠肉眼发现。
+ *
+ * ⚠️ 放在本文件而不是 `seriesGroup`：`seriesGroup` 已经 import 本文件的
+ *   `entryDurationMinutes` / `readPercent`，反过来引它会成运行期循环依赖；本文件是两边的公共叶子。
+ * ⚠️ 返回 **0** 表示「组内一条时长都没记」⇒ 调用方**不要显示**（⛔ 别渲染成「0min」，
+ *   那会被读成「我确实只看了 0 分钟」，与本仓「空值不留空槽」的纪律一致）。
+ */
+export function totalDurationMinutes(items: readonly MediaEntry[]): number {
+    let sum = 0;
+    for (const it of items) sum += entryDurationMinutes(it);
+    return sum;
+}
+
+/**
+ * 🔴 m14228 ②：系列 / 合集卡封面角标的文本（「已看 12h30min」那一档）。
+ *
+ * 🔴 复用 `.rl-cov-playtime` 那套角标（位置裁定 = 封面底部悬浮区，与单卡的「已玩/已读/已听」同一角落），
+ *    ⛔ 不新造类名、不搬到左上角、⛔ **不进卡片信息栏**（那会让系列卡行数与普通卡不一致 ——
+ *    `pure/cardMeta.seriesCardFieldValue` 的头注释专门警告过这件事）。
+ *
+ * 口径三条：
+ *  ⑴ **前缀按类型给动词**：影视三类「已看」、书籍「已读」、游戏「已玩」、音乐「已听」
+ *     —— 与单卡三枚角标的措辞同族（用户此前把「已读/已听/已玩统一」时定的调子）；
+ *  ⑵ 数值走 `formatBadgeTime`（`59min` / `1h` / `1h59min` / `2h`），与三个单卡角标**同一套格式化**；
+ *  ⑶ 合计为 0（一部都没记时长）⇒ **空串**（调用方据此不渲染，封面不留空槽）。
+ */
+export function seriesPlaytimeBadge(items: readonly MediaEntry[], type: EntryType): string {
+    const total = totalDurationMinutes(items);
+    const t = formatBadgeTime(total);
+    if (!t) return '';
+    const verb = type === 'book' ? '已读' : type === 'game' ? '已玩' : type === 'music' ? '已听' : '已看';
+    return `${verb} ${t}`;
 }
 
 /**
