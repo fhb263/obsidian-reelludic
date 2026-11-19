@@ -18,6 +18,7 @@ import {
     type AsrBundle,
     type AsrBundleFile,
 } from 'pure/asrBundles';
+import { createSpeedMeter, speedSuffix } from 'pure/speedMeter';
 
 /** 整包安装结果 */
 export interface InstallBundleResult {
@@ -109,6 +110,8 @@ export function installBundle(
     let current: DownloadHandle | null = null;
     const checkCancel = (): boolean => cancelled || isCancelled();
     const paths: Record<string, string> = {};
+    /** 🔴 m10754：速率计（每个文件的下载回调里 `reset()` 一次，跨文件不串味） */
+    const meter = createSpeedMeter();
 
     let resolveDone: ((r: InstallBundleResult) => void) | null = null;
     let settled = false;
@@ -173,13 +176,22 @@ export function installBundle(
             }
 
             onProgress?.(bundlePercent(bundle, index, 0), index, `正在下载${f.label}…`);
+            // 🔴 m10754：**每个文件一个独立速率基线** —— 换文件不 reset 会把上一个文件的
+            //    尾部斜率带到新文件首帧（界面开头就是「1.2 MB/s」，然后掉下来）。
+            //    压缩包解压阶段同样 reset，避免把「下载速度」留在「正在解压」那行。
+            meter.reset();
             const handle = deps.download(
                 { url: f.url, bytes: f.bytes },
                 targetPath,
                 f.mirrorUrl,
                 (pct, received) => {
                     if (checkCancel()) return;
-                    onProgress?.(bundlePercent(bundle, index, received), index, `正在下载${f.label}…`);
+                    const speed = meter.sample(received);
+                    onProgress?.(
+                        bundlePercent(bundle, index, received),
+                        index,
+                        `正在下载${f.label}…${speedSuffix(speed)}`,
+                    );
                     void pct;
                 },
             );

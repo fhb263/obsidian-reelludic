@@ -187,6 +187,9 @@ import { commonInstallDirs, ffmpegPathNames, locateOrder, splitPathList, whisper
 //    不引第三zip —main.js 已逼近 5MB 硬线，zip 中央目录格式二十年没变，zlib 就够。
 import { installSupported, installUnsupportedMessage } from 'pure/whisperRuntime';
 import { defaultWhisperRuntimeDeps, installWhisperRuntime as runWhisperInstall, type InstallHandle } from 'services/whisperRuntime';
+// 🔴 m10754：模型下载要显示实时速率 —— 三条安装链路的进度签名各不相同（有字节的/没字节的），
+//    统一在 `pure/speedMeter` 里做速率，这里只负责把 `received` 喂进去、把 ` · 1.2 MB/s` 拼回 label。
+import { createSpeedMeter, speedSuffix } from 'pure/speedMeter';
 // 🔴 m08030「可一键下载三家模型」：SenseVoice / Qwen3 的安装包清单（纯逻辑 整包安装器（执行层）。
 //    ⚠️ whisper 不走这套 —它的三档是「一ggml 文件一档」，既有实现`ASR_MODEL_PRESETS`。
 import {
@@ -6847,6 +6850,9 @@ export default class ReelLudicPlugin extends Plugin {
                 closeBall('dismiss');
                 onClosed?.();
             },
+            // 🔴 m10754：手动下载入口的跳转 —— 走宿主统一出口（系统浏览器），
+            //    ⛔ 别在弹窗里 `window.open`，Obsidian 里那会开一个失败的内部页签。
+            onOpenExternal: (url: string) => this.openExternalUrl(url),
         });
         modal.open();
     }
@@ -6898,11 +6904,19 @@ export default class ReelLudicPlugin extends Plugin {
                 return { ok: false, message: "无法创建模型目录，请检查该路径的写入权限。" };
             }
             onStep(1, 0, `正在下载 ${preset.title} 模型…`);
+            // 🔴 m10754：模型是 4MB~2952MB 的大头，界面上没有速度就像卡死了。
+            //    `downloadModel` 的回调本来就带 `received`，直接喂速率计 —— ⛔ 不改它的签名
+            //    （四平台/转写/试听十几处都在用那两个参数）。
+            //    换镜像源时 `downloadModel` 内部会重头下，进度回退 ⇒ meter 自己重立基线（返 null）。
+            const modelMeter = createSpeedMeter();
             const h2 = downloadModel(
                 defaultDownloadDeps(),
                 preset,
                 dest,
-                (pct) => onStep(1, pct ?? 0, `正在下载 ${preset.title} 模型…`),
+                (pct, received) => {
+                    const speed = modelMeter.sample(received);
+                    onStep(1, pct ?? 0, `正在下载 ${preset.title} 模型…${speedSuffix(speed)}`);
+                },
                 mirrorUrlFor(preset),
             );
             step2 = h2;

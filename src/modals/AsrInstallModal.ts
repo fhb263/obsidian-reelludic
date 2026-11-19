@@ -34,7 +34,7 @@ import {
     type AsrInstallItem,
     type AsrInstallPlan,
 } from 'pure/asrInstallPlan';
-import { formatBytes } from 'pure/asrModels';
+import { formatBytes, ASR_MODEL_SITE, ASR_MODEL_SITE_MIRROR } from 'pure/asrModels';
 
 /** 安装结果（与执行层的返回值同形） */
 export interface AsrInstallResult {
@@ -73,6 +73,15 @@ export interface AsrInstallModalOptions {
     run: (onStep: AsrInstallStepCallback, dirs: AsrInstallDirs) => AsrInstallHandle;
     /** 关窗时回调（成功/失败/取消/直接关掉都可能），设置页靠它重画卡片 */
     onClosed?: (result: AsrInstallResult | null) => void;
+    /**
+     * 🔴 m10754：用系统浏览器打开一个外部地址。
+     *
+     * 用户原文：「我没看到官网链接在哪里可点击跳转下载并关联各自框啊」——
+     * 原来那两块链接画在 `AsrEngineModal` 的「方式二」里，而那个弹窗自从设置页
+     * 改走 `openAsrInstall()` 之后就**没有任何调用方**（`main.ts` 里 `openAsrEngineModal()`
+     * 全仓 0 处引用），等于链接跟着一起失联。现在直接画在用户真正会看到的这个弹窗里。
+     */
+    onOpenExternal?: (url: string) => void;
 }
 
 /** 一行的可变件（⛔ 不重建节点，只改字与类） */
@@ -174,8 +183,47 @@ export class AsrInstallModal extends Modal {
             this.close();
         });
 
+        // ── ⑷ 手动下载入口（官网 / 国内镜像）──
+        this.renderManualLinks(contentEl);
+
         // 目录回填进清单行（首帧就要对上，⛔ 别等用户改一次才同步）
         this.syncRowPaths();
+    }
+
+    /**
+     * 画「自己下载」的两个入口：官网与国内镜像。
+     *
+     * 🔴 m10754：这两行原本只在 `AsrEngineModal` 的「方式二」里，而那个弹窗已无调用方
+     *    （设置页统一走 `openAsrInstall`）⇒ 用户完全看不到链接。现在搬进这个弹窗，
+     *    网址**原样可见可复制**，右边一颗「打开」交给宿主用系统浏览器跳。
+     *
+     * ⚠️ 不用 `<a target="_blank">`：Obsidian 里点击会在应用内开新页签再失败，
+     *    走 `onOpenExternal`（宿主 `openExternalUrl`）才是官方做法。
+     */
+    private renderManualLinks(host: HTMLElement): void {
+        const box = host.createDiv({ cls: 'rl-asr-install-manual' });
+        box.createDiv({ cls: 'rl-asr-install-manual-head', text: '方式二：自己下载后指定本地文件（不联网）' });
+        box.createDiv({
+            cls: 'rl-asr-install-manual-lead',
+            text: '从官网或国内镜像下载 .bin / .zip，放到安装目录后再点上面的「开始安装」，插件会自动认已有的文件。',
+        });
+        const items: { label: string; url: string }[] = [
+            { label: '官网', url: ASR_MODEL_SITE },
+            { label: '国内镜像', url: ASR_MODEL_SITE_MIRROR },
+        ];
+        for (const it of items) {
+            const row = box.createDiv({ cls: 'rl-asr-install-manual-row' });
+            row.createDiv({ cls: 'rl-asr-install-manual-tag', text: it.label });
+            // 网址原样显示：用户可以自己复制，⛔ 不做成截断的省略号
+            row.createDiv({ cls: 'rl-asr-install-manual-url', text: it.url });
+            const open = row.createEl('button', { cls: 'rl-btn', text: '打开' });
+            open.setAttribute('aria-label', `用系统浏览器打开${it.label}`);
+            open.addEventListener('click', () => {
+                const cb = this.opts.onOpenExternal;
+                if (cb) cb(it.url);
+                else window.open(it.url, '_blank');
+            });
+        }
     }
 
     /**

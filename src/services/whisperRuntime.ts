@@ -21,6 +21,7 @@ import {
     installPercent,
     runtimeFilePlan,
 } from 'pure/whisperRuntime';
+import { createSpeedMeter, speedSuffix } from 'pure/speedMeter';
 
 /** 一次安装的结果 */
 export interface InstallResult {
@@ -123,6 +124,8 @@ export function parseZipEntries(buf: Buffer): ZipEntry[] {
 export function installWhisperRuntime(deps: WhisperRuntimeDeps, binDir: string, onProgress?: InstallProgress): InstallHandle {
     let cancelled = false;
     let cancelDownload: (() => void) | null = null;
+    /** 🔴 m10754：实时速率（下载阶段才知道 `received`，转码阶段拿不到就自然停在旧值） */
+    const meter = createSpeedMeter();
 
     const done = (async (): Promise<InstallResult> => {
         if (!binDir) return { ok: false, message: '无法确定安装位置（拿不到用户主目录）' };
@@ -159,10 +162,14 @@ export function installWhisperRuntime(deps: WhisperRuntimeDeps, binDir: string, 
             for (let attempt = 0; attempt < 2; attempt += 1) {
                 if (cancelled) break;
                 onProgress?.(installPercent('download', 0), installLabel('download'));
+                // 🔴 m10754：换地址/重试都重新计数 —— 上一轮的斜率属于另一个连接，
+                //    接着用会算出「起手就是 3MB/s」这种假读数。
+                meter.reset();
                 const r = await deps.download(urls[i], tmp, (received, total) => {
                     const known = total > 0 ? total : WHISPER_RUNTIME_ZIP_BYTES;
                     const pct = known > 0 ? (received / known) * 100 : 0;
-                    onProgress?.(installPercent('download', pct), installLabel('download'));
+                    const speed = meter.sample(received);
+                    onProgress?.(installPercent('download', pct), `${installLabel('download')}${speedSuffix(speed)}`);
                 });
                 if (r.ok) {
                     lastMsg = '';

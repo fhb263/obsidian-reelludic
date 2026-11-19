@@ -2951,6 +2951,50 @@ input.rl-path-auto {
     gap: 8px;
     margin-top: 10px;
 }
+/* ── 手动下载入口（🔴 m10754：用户「我没看到官网链接在哪里可点击跳转下载」）──
+   原来这两行只在 `AsrEngineModal` 的「方式二」里，而那个弹窗已无任何调用方，
+   链接等于失联。现在搬进用户真正会看到的安装弹窗。
+   ⚠️ 网址**原样显示不省略**：用户的第二个动作往往是复制它。 */
+.rl-asr-install-manual {
+    margin-top: 12px;
+    padding: 8px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+}
+.rl-asr-install-manual-head {
+    font-size: var(--font-ui-small);
+    font-weight: 600;
+    color: var(--text-normal);
+}
+.rl-asr-install-manual-lead {
+    margin-top: 2px;
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+.rl-asr-install-manual-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+}
+.rl-asr-install-manual-tag {
+    flex: 0 0 auto;
+    min-width: 56px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+.rl-asr-install-manual-url {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-monospace);
+    color: var(--text-accent);
+    /* 网址长但不许省略：用换行保住全部字符，用户要能整段复制 */
+    word-break: break-all;
+    user-select: text;
+}
 /* ── 落点目录区（用户 m01935：装之前先把所有路径摊开给用户确认）──
    布局：标题 → 每个目录（标签 / 输入框+浏览 / 说明 / 只读文件清单）→ 确认勾选。
    ⚠️ 文件名**只读**：上游给的名字是固定的，改名后插件按原名去找必然「装好了还是红的」。 */
