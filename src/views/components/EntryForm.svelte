@@ -1530,11 +1530,17 @@ export let initialBookKind: BookKind | undefined = undefined;
     $: bookFmtTitle = bookKind === 'comic' ? '图片文件夹 / 压缩包' : 'TXT/EPUB/PDF';
     $: bookFmtExts = bookKind === 'comic' ? 'cbz / cbt / zip / tar / pdf / epub' : 'txt / epub / pdf';
     $: bookFmtName = bookKind === 'comic' ? '漫画' : '书籍';
-    /** 游戏游玩时长（小时录入，落库转分钟；有游玩记录明细时以明细累计为准） */
-    let playtimeHours = entry?.playtimeMinutes ? String(Math.round(entry.playtimeMinutes / 60)) : '';
+    /** 🔴 m11594 ① 五类型「统计时长（小时）」统一口径：三个 time 字段各自一个录入框，
+     *  小时录入 → 落库转分钟，**保留 1 位小数**（90 分钟 → 「1.5」），与海报墙「已读 1.5h」同一口径。
+     *  ⚠️ 三个都必须是 1 位小数：早先 `playtimeHours` 用的是 `Math.round`（整小时），
+     *     玩 1 分钟会显示成「0」—— 同一张表单里两个时长框精度不一致，属真 bug，本批一并修正。 */
+    let playtimeHours = entry?.playtimeMinutes ? String(Math.round((entry.playtimeMinutes / 60) * 10) / 10) : '';
     /** #537 书籍阅读时长（小时录入，落库转分钟）：内置阅读器读该条目时会自动累计（见 main.withReadTime），
-     *  这里手填 = **覆盖**总数。保留 1 位小数（90 分钟 → 「1.5」），与海报墙「已读 1.5h」同一口径。 */
+     *  这里手填 = **覆盖**总数。 */
     let readHours = entry?.readMinutes ? String(Math.round((entry.readMinutes / 60) * 10) / 10) : '';
+    /** 🔴 m11594 ① 音乐收听时长（小时录入，落库转分钟）：播放器播放时由 `bumpListenMinutes` 自动累计，
+     *  这里手填 = **覆盖**总数（与书籍同一套语义）。⛔ 别把它接到 `durationMin`（那是单曲片长）。 */
+    let listenHours = entry?.listenMinutes ? String(Math.round((entry.listenMinutes / 60) * 10) / 10) : '';
     let notes = entry?.notes ?? '';
     // 🔴 #668 关联功能已下线归档（见文件头 import 处的说明）：表单不再持有 `related` state。
     //    ⚠️ 提交时**不再带** `input.related` ⇒ `EntryService.update` 的浅合并会**保留 catalog 里原有的值**
@@ -1791,7 +1797,7 @@ export let initialBookKind: BookKind | undefined = undefined;
         'audioPath', 'audioUrl', 'gameLaunchPath', 'gameUrl', 'bookFileVal', 'readUrl',
         'summary', 'authorIntro', 'toc', 'aiText', 'communityScore', 'sourceName', 'sourceUrl',
         'watchedDate', 'plannedDate', 'lastWatchedDate', 'season', 'episode', 'totalEpisodes',
-        'readingPage', 'readingTotalPage', 'pageCountVal', 'readHours', 'playtimeHours',
+        'readingPage', 'readingTotalPage', 'pageCountVal', 'readHours', 'playtimeHours', 'listenHours',
         'episodeFiles', 'episodeUrls', 'episodeTitles', 'poster',
     ] as const;
     /** 打开表单那一刻的基线快照（`onMount` 取一次；切条目会重建组件 ⇒ 基线自动跟着换） */
@@ -1823,7 +1829,7 @@ export let initialBookKind: BookKind | undefined = undefined;
             audioPath, audioUrl, gameLaunchPath, gameUrl, bookFileVal, readUrl,
             summary, authorIntro, toc, aiText, communityScore, sourceName, sourceUrl,
             watchedDate, plannedDate, lastWatchedDate, season, episode, totalEpisodes,
-            readingPage, readingTotalPage, pageCountVal, readHours, playtimeHours,
+            readingPage, readingTotalPage, pageCountVal, readHours, playtimeHours, listenHours,
             episodeFiles, episodeUrls, episodeTitles, poster,
         };
     }
@@ -4403,6 +4409,11 @@ export let initialBookKind: BookKind | undefined = undefined;
             // 游玩时长：小时录入 → 落库分钟（游玩记录明细由弹窗即时落盘，submit 不再重复提交）
             input.playtimeMinutes = playtimeHours ? Math.round(Number(playtimeHours) * 60) || undefined : undefined;
         }
+        // 🔴 m11594 ① 音乐收听时长（小时录入 → 落库分钟）：手填 = 覆盖总数。
+        //    播放器播放时 `bumpListenMinutes` 仍会往后累计（用户要求「播放器再播放的要累计上去」）。
+        if (type === 'music') {
+            input.listenMinutes = listenHours ? Math.round(Number(listenHours) * 60) || undefined : undefined;
+        }
         // 🔴 #668 关联功能已下线归档：**刻意不带** `input.related`。
         //    `EntryService.update` 是浅合并 ⇒ 不带这个键 = 保留 catalog 里原有的关联数据，
         //    ⛔ 别为了「顺手清空」在这里写 `related: undefined`（那会把用户已有的关联静默删光）。
@@ -5147,16 +5158,11 @@ export let initialBookKind: BookKind | undefined = undefined;
                  数据层与笔记侧**未删除**：`MediaEntry.related` / `normalizeEntry` 白名单 / 笔记 `## 关联` 章节
                  与 `pure/relatedGraph.ts` 及单测都还在，既有数据原样保留。重新上线 = 把组件挂回这里。 -->
 
-            <!-- 🔴 #537 阅读时长（文学 / 网文 / 漫画三子类共用 —— 都是 `type === 'book'`）：位置在「内容简介」**上方**。
+            <!-- 🔴 #537 阅读时长（文学 / 网文 / 漫画三子类共用 —— 都是 `type === 'book'`）。
+                 🔴 m11594 ① 用户裁定：**五个类型的时长框统一重排到「启动路径」上方**，
+                 所以本框从原「内容简介上方」下移（同时标签统一为「统计时长（小时）」）。
                  数据两来源：① 内置阅读器阅读该条目时**自动累计**（宿主 main.withReadTime，扣后台 + 单次≥1 分钟）；
-                 ② 本框手填 = **覆盖**总数。海报墙封面左下角显示「已读 2h」（复用游戏 `.rl-cov-playtime` 那枚角标）。
-                 ⚠️ label 带 `for`/`id` —— 裸 label 会多报一条 A11y 告警、破 89 基线（同系列两框那条口径）。 -->
-            {#if type === 'book'}
-                <div data-fld="read-hours" style={fldStyle('read-hours')}>
-                    <label class="rl-lbl" for="rl-f-readhours">阅读时长（小时）</label>
-                    <input id="rl-f-readhours" class="rl-input" type="number" min="0" step="0.1" bind:value={readHours} placeholder="如 2.5" />
-                </div>
-            {/if}
+                 ② 本框手填 = **覆盖**总数。海报墙封面左下角显示「已读 2h」。 -->
             <div data-fld="summary" style={fldStyle('summary')}>
                 <label class="rl-lbl">{type === 'book' ? '内容简介' : '简介'}</label>
                 <textarea class="rl-input rl-summary" rows="6" bind:this={summaryEl} placeholder={type === 'book' ? '填写图书内容简介…' : '填写作品剧情简介…'} bind:value={summary}></textarea>
@@ -5264,9 +5270,11 @@ export let initialBookKind: BookKind | undefined = undefined;
             </div>
             {/if}
             {#if type === 'game'}
+                <!-- 🔴 m11594 ① 统计时长（小时）：用户裁定五类型统一文案 + 统一位置（启动路径上方）。
+                     ⚠️ label 带 `for`/`id` —— 裸 label 会多报一条 A11y 告警、破 89 基线。 -->
                 <div data-fld="playtime" style={fldStyle('playtime')}>
-                    <label class="rl-lbl">游玩时长（小时）</label>
-                    <input class="rl-input" type="number" min="0" step="0.1" bind:value={playtimeHours} placeholder="如 12" />
+                    <label class="rl-lbl" for="rl-f-playtime">统计时长（小时）</label>
+                    <input id="rl-f-playtime" class="rl-input" type="number" min="0" step="0.1" bind:value={playtimeHours} placeholder="如 12" />
                 </div>
                 <div>
                     <!-- 🔴 #523：标签统一「路径」（原「启动快捷方式」）；当时裁定「游戏类**不配**小图标按钮」。
@@ -5456,6 +5464,12 @@ export let initialBookKind: BookKind | undefined = undefined;
                 </div>
             {/if}
             {#if type === 'music'}
+                <!-- 🔴 m11594 ① 统计时长（小时）：音乐原先只有播放器自动累计、表单里没有录入框，
+                     用户要求五类型统一。手填 = 覆盖总数；播放器播放时仍由 `bumpListenMinutes` 往后累计。 -->
+                <div data-fld="listen-hours" style={fldStyle('listen-hours')}>
+                    <label class="rl-lbl" for="rl-f-listenhours">统计时长（小时）</label>
+                    <input id="rl-f-listenhours" class="rl-input" type="number" min="0" step="0.1" bind:value={listenHours} placeholder="如 2.5" />
+                </div>
                 <div>
                     <!-- 🔴 #523：标签统一叫「路径」（用户：「所有类型条目下的右键编辑条目的播放标题统一改成
                          『路径』标题」）。旁边按类型挂小图标按钮 —— 音乐 = 「检索本地」+「下载」；
@@ -5608,6 +5622,14 @@ export let initialBookKind: BookKind | undefined = undefined;
             {/if}
 
             {#if type === 'book'}
+                <!-- 🔴 m11594 ① 统计时长（小时）：用户裁定五类型统一文案 + 统一位置（启动路径上方）。
+                     数据两来源：① 内置阅读器阅读该条目时**自动累计**（宿主 main.withReadTime）；
+                     ② 本框手填 = **覆盖**总数。海报墙封面左下角显示「已读 2h」。
+                     ⚠️ label 带 `for`/`id` —— 裸 label 会多报一条 A11y 告警、破 89 基线。 -->
+                <div data-fld="read-hours" style={fldStyle('read-hours')}>
+                    <label class="rl-lbl" for="rl-f-readhours">统计时长（小时）</label>
+                    <input id="rl-f-readhours" class="rl-input" type="number" min="0" step="0.1" bind:value={readHours} placeholder="如 2.5" />
+                </div>
                 <div>
                     <!-- 🔴 #523：标签统一「路径」。旁边按用户裁定**只挂「检索本地」那一枚**
                          （「下载只保留音乐」⇒ 书籍那枚 `download` 与它要的两个 prop 一并撤除；⚠️ 下载实现本体
