@@ -1322,6 +1322,27 @@ const DL_COOKIE_ROWS: ReadonlyArray<{
 ];
 
 /**
+ * 「模型服务」三家凭据卡片展开后的**说明**（用户 m16150 逐字：「给AI集成配置的三个平台
+ * deespeek/GLM/硅基流动凭据行加个描述，开头要附上对应的API开放平台官网，超链接点击直达」）。
+ *
+ * 🔴 **文案必须以官网地址开头**：渲染走 `renderHintNote`，它内部用 `pure/sourceLink.splitHintLinks`
+ *    把「像域名的片段」切成 `<a>` ⇒ 不用（也不能）在文案里写 HTML/markdown。
+ *    ⛔ 因此这里**只写裸域名 + 路径**，前缀 `https://` 由 `splitHintLinks` 补。
+ * ⚠️ 路径不能带下划线之外的怪字符？—— 能带：`splitHintLinks` 的路径字符集含 `_` 与 `-`
+ *    （DeepSeek 的 `/api_keys` 就靠它才被识别成一条完整链接）。
+ *
+ * ⚠️ 三条都**以「控制台/API Keys 页」而不是站点首页**开头：用户的下一步动作是「去拿 Key」，
+ *    落到首页还要再找一层入口。三个地址 2026-11-20 实测均 HTTP 200。
+ * 🔴 硅基流动那句**不许**写成「与…共用这一个 Key」—— `#487` 有一条反向守卫专门钉死那句原话
+ *    （用户当年要求删掉），所以这里换了措辞。
+ */
+const AI_PROVIDER_NOTE: Readonly<Record<'zhipu' | 'deepseek' | 'siliconflow', string>> = {
+    zhipu: 'open.bigmodel.cn/usercenter/apikeys —— 智谱开放平台的「API Keys」页：新建密钥后整串复制（形如 xxx.yyy，中间那个点要带上）。',
+    deepseek: 'platform.deepseek.com/api_keys —— DeepSeek 开放平台的「API keys」页：创建后整串复制（sk- 开头）；余额用尽时接口会回 402。',
+    siliconflow: 'cloud.siliconflow.cn/account/ak —— 硅基流动控制台的「API 密钥」页：新建后整串复制（sk- 开头）；朗读的云端合成也用这把。',
+};
+
+/**
  * ④-A 音视频取流（yt-dlp）那行的行内说明 —— 与上面三条 `desc` 同款：**纯文本**
  * （`createDiv({ text })`，不解析 markdown）⇒ ⛔ 不许写 `**`。
  *
@@ -2732,11 +2753,14 @@ export class ReelLudicSettingTab extends PluginSettingTab {
     private renderProviderCards(body: HTMLDivElement): void {
         const list = body.createDiv({ cls: 'rl-prov-list' });
         // 各家 Key 始终都显示，不跟随用途里选了谁；翻译 / 总结 / 搜索三处共用前两家
-        this.renderTranslateKeyBlock(list, 'zhipu', '智谱清言', 'readerZhipuKey', '你的智谱 API Key');
-        this.renderTranslateKeyBlock(list, 'deepseek', 'DeepSeek', 'readerDeepseekKey', 'sk-…');
-        // #487（用户指令）：**删掉**这一行的说明文案「AI 翻译 / 总结 / 搜索与朗读云合成共用这一个 Key」
-        //     —— 因此这里退回**四参**调用（`note` 是可选的；组件能力保留，别的地方还用）。
-        this.renderTranslateKeyBlock(list, 'siliconflow', '硅基流动', 'readerSiliconflowKey', 'sk-…');
+        // 🔴 m16150（用户逐字）：「给AI集成配置的三个平台 deespeek/GLM/硅基流动凭据行加个描述，
+        //     开头要附上对应的API开放平台官网，超链接点击直达」⇒ 第 6 参 `note` 重新有人传了
+        //     （#487 当年删的是**另一句**「共用这一个 Key」，那条反向守卫照旧有效）。
+        this.renderTranslateKeyBlock(list, 'zhipu', '智谱清言', 'readerZhipuKey', '你的智谱 API Key', AI_PROVIDER_NOTE.zhipu);
+        this.renderTranslateKeyBlock(list, 'deepseek', 'DeepSeek', 'readerDeepseekKey', 'sk-…', AI_PROVIDER_NOTE.deepseek);
+        // #487（用户指令）：**删掉**那一句「AI 翻译 / 总结 / 搜索与朗读云合成共用这一个 Key」
+        //     —— 仍然不许回潮；现在这一行有**另一句**说明（m16150，官网开头）。
+        this.renderTranslateKeyBlock(list, 'siliconflow', '硅基流动', 'readerSiliconflowKey', 'sk-…', AI_PROVIDER_NOTE.siliconflow);
         // #478 + #634：自定义 OpenAI 兼容端点（**两个槽位**：base URL + Key + 显示名 + 测试连接）
         for (const slot of CUSTOM_SLOTS) this.renderCustomEndpointRow(list, slot);
     }
@@ -3583,7 +3607,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         label: string,
         keyField: 'readerZhipuKey' | 'readerDeepseekKey' | 'readerSiliconflowKey',
         placeholder: string,
-        /** #478 可选的一句话说明（展开后显示在输入框上方）；硅基流动用它点明「只服务朗读」 */
+        /** 可选的一句话说明（展开后显示在输入框上方）；m16150 起三家都传「官网开头」的那句，走 `renderHintNote` 链接化 */
         note?: string,
     ): void {
         const row = body.createDiv({ cls: 'rl-key-row rl-prov-card' });
@@ -3606,7 +3630,9 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         refreshBadge();
 
         const bodyEl = row.createDiv({ cls: 'rl-key-body' });
-        if (note) bodyEl.createDiv({ cls: 'rl-hint-note', text: note });
+        // 🔴 m16150：说明走 `renderHintNote`（它内部 `splitHintLinks` 把域名切成 `<a>`），
+        //    ⛔ 别退回 `createDiv({ cls: 'rl-hint-note', text: note })` —— 那样官网地址是死的纯文本。
+        if (note) this.renderHintNote(bodyEl, note);
         // Key 密文输入
         this.createSecretField(bodyEl, {
             placeholder,
