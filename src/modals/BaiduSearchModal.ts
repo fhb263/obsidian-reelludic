@@ -1,22 +1,27 @@
-// 「百度搜索」内嵌弹窗（用户 m17219）。
+// 「百度搜索」弹窗（用户 m17219；m17697 改成**优先独立窗口**）。
 //
 // 🔴 用户原话：「点击即可内弹窗百度搜索改条目名称」；裁定：「纯内嵌百度网页，不回填」。
-//    ⇒ 本弹窗**只承载一个浏览器视图**：把 `https://www.baidu.com/s?wd=<标题 作者>` 灌进内嵌容器，
+//    ⇒ 这里**只承载一个浏览器视图**：把 `https://www.baidu.com/s?wd=<标题 作者>` 灌进容器，
 //      用户在页面里自己看、自己点、自己改标题框。⛔ 不要加「点结果回填」这类注入脚本
-//      （用户明确否掉了那一档；且跨站注入在 `<webview>` 里要 `executeJavaScript`，
-//       目标页随时改版就会静默失效，属于「看着能用其实不牢」）。
+//      （用户明确否掉了那一档；且跨站注入要 `executeJavaScript`，目标页随时改版就会静默失效）。
 //
-// 🔴 为什么用 `mountEmbedHost` 而不是自己 `createEl('iframe')`：
-//    那是本仓唯一的承载层（`services/gameEmbedHost`）。它优先用 `<webview>`——**独立 webContents**，
-//    不是第三方上下文，浏览器特征完整。这一点对本弹窗是硬需求：
-//    实测裸 HTTP 请求百度 `/s?wd=…` 会被 302 到 `wappass.baidu.com/static/captcha/tuxing_v2.html`
-//    （图形验证码）或 `bioc-static.cdn.bcebos.com/pages/ds_svcp.html`（人机校验）。
-//    降级 iframe 时更可能撞验证码 ⇒ 界面上要**明说**当前是哪一档，别让用户以为功能坏了。
+// 🔴🔴 m17697 的根本性修正（用户：「内嵌弹窗不能拖动啊居中也不行挡住了，为什么不能改成
+//    微信读书式浏览器弹窗」）：**首选 `BrowserWindow` 独立窗口**（见文件末尾
+//    `openBaiduSearchModal`）。本 Modal 类降级为「非桌面端 / 拿不到 `@electron/remote`」的兜底
+//    —— 也就是微信读书那一档在桌面端**根本没有拖动代码**，因为系统标题栏白送；
+//    只有在拿不到真窗口时，才需要下面这套自写的拖动/缩放。
+//
+// ⚠️ Modal 兜底路径仍用 `mountEmbedHost`（`services/gameEmbedHost`，本仓唯一承载层）。
+//    它优先 `<webview>`——独立 webContents、浏览器特征完整。真窗口那条路更彻底：整页跑在
+//    独立 webContents 里，连内嵌标签都不需要。
+//    实测裸 HTTP 请求百度 `/s?wd=…` 会被 302 到验证码页，所以两条路都不能省"真浏览器特征"。
 //
 // ⚠️ `dispose()` 必须在本弹窗 `onClose` 里调：`<webview>` 是独立 webContents，
 //    元素从 DOM 摘掉后进程不一定立刻回收（`services/gameEmbedHost` 头注释记了这条实测）。
 import { App, Modal, Notice } from 'obsidian';
 import { mountEmbedHost, type EmbedHost } from 'services/gameEmbedHost';
+import { hostWindowAvailable, openHostWindow } from 'services/hostWindow';
+import { hostWindowTitle } from 'pure/hostWindow';
 import { baiduSearchQuery, baiduSearchUrlFor, baiduQueryIsEmpty } from 'pure/baiduSearch';
 import {
     clampDragOffset,
@@ -307,8 +312,38 @@ export class BaiduSearchModal extends Modal {
     }
 }
 
-/** 供宿主直接调：`new BaiduSearchModal(this.app, opts).open()`（统一出口，免得到处 new） */
+/**
+ * 供宿主直接调的统一出口。
+ *
+ * 🔴 **首选独立窗口**（用户 m17697 原话：「内嵌弹窗不能拖动啊居中也不行挡住了，
+ *    为什么不能改成微信读书式浏览器弹窗」）：
+ *    微信读书那一档走 `services/qrLogin.openWereadWindow()` 的 `new BrowserWindow(...)` ——
+ *    独立 OS 窗口，标题栏拖动 / 边缘缩放 / 最大化全是操作系统给的，插件一行拖拽代码都没有。
+ *    我先前把这条需求做成「Modal + 自写拖动缩放」，等于拿自制装置模仿系统窗口；
+ *    用户反馈「不能拖动、挡住了」正是那个选择的必然结果。
+ *    ⇒ 现在反过来：**能开真窗口就开真窗口**，`BaiduSearchModal` 只作为
+ *      「非桌面端 / 拿不到 `@electron/remote`」时的兜底（那时才需要自写拖动）。
+ *
+ * ⚠️ 兜底不是摆设：`hostWindowAvailable()` 在移动端、以及某些被裁掉 remote 的发行版里为 false，
+ *    那时静默什么都不做会让「点了没反应」变成猜谜 ⇒ 必须降级到 Modal 并照常工作。
+ */
 export function openBaiduSearchModal(app: App, opts: BaiduSearchOptions): void {
+    const query = baiduSearchQuery(opts.title ?? '', opts.author ?? '');
+    const url = baiduSearchUrlFor(opts.title ?? '', opts.author ?? '');
+
+    if (hostWindowAvailable()) {
+        const opened = openHostWindow({
+            url,
+            title: hostWindowTitle(query),
+            // 复用同站窗口：每点一次搜索开一个新窗，比「挡住半屏」更难受
+            reuse: true,
+        });
+        if (opened) {
+            // ⚠️ 页面里 `target=_blank` 由 `openHostWindow` 就地导航，这里不用再管
+            return;
+        }
+    }
+
     try {
         new BaiduSearchModal(app, opts).open();
     } catch (e) {
