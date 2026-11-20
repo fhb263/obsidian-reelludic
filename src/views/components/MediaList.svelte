@@ -154,7 +154,7 @@
      * 勾上后把封面 + 信息栏整体糊掉；系列卡只在**组内全部勾选**时才糊（否则一部就糊掉整扇门面）。
      * ⛔ 别把判据写进模板表达式（本仓模板里不许写 TS 断言，且两份实现必然漂移）。
      */
-    import { entryCardHidden, seriesCardHidden } from 'pure/cardHidden';
+    import { entryCardHidden, seriesCardHidden, maskCardText } from 'pure/cardHidden';
     // 🔴 #626 多带两样：`posterGridTemplateForWall`（墙的列模板 —— 自定义档的**间距比网格宽**，裁决收在 pure 层）、
     //    `POSTER_WALL_GAP`（墙的间距，必须与 `.rl-wall{gap}` 同值）。
     // 🔴 用户 2026-10-20 删除「海报墙列数」⇒ `POSTER_WALL_COLUMNS_MAX` 与 `wallColumns` prop 一并下线。
@@ -3353,6 +3353,11 @@
             </div>
         {:else if it.kind === 'card'}
             {@const e = it.entry}
+            <!-- 🔴 m19456 ①：信息栏打码标记。`{@const}` 必须是 `{#each}` / `{#if}` 的直接子节点
+                 ⇒ 与 `{@const e = it.entry}` 并排，⛔ 别挪进下面任何 div 里（会编译报错）。
+                 ⚠️ 判据走 `pure/cardHidden` 的 `entryCardHidden`，⛔ 别在这里内联 `e.cardHidden === true`
+                 （那是第二个真源，`tests/cardHidden.test.ts` 有反向守卫）。 -->
+            {@const ch = entryCardHidden(e)}
             <div
                 class="rl-card"
                 class:rl-sel-card={selectedIds.has(e.id)}
@@ -3544,10 +3549,10 @@
                          切片与判定都在 pure/titleHighlight（与 pure/search.matchesSearch 同口径：
                          大小写不敏感），⛔ 别在模板里再写一套 indexOf。
                          ⚠️ 只在高亮时走 `{#each}`，否则走单段分支：卡片数量大，多一层循环没必要。 -->
-                    {#if titleHasQuery(e.title, debouncedSearch)}
+                    {#if titleHasQuery(e.title, debouncedSearch) && !ch}
                         <div class="rl-ttl">{#each splitTitleByQuery(e.title, debouncedSearch) as seg}{#if seg.hit}<mark class="rl-hl">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</div>
                     {:else}
-                        <div class="rl-ttl">{e.title}</div>
+                        <div class="rl-ttl">{maskCardText(ch, e.title)}</div>
                     {/if}
                     <!-- 海报墙防错位：这几行**要么全渲染、要么全不渲染**（同一份配置作用于所有卡片）
                          ⇒ 同列卡片元信息行数恒定（卡片 #1 vs #2 vs #3 高度齐平）。
@@ -3570,11 +3575,11 @@
                                      ⛔ 不填「—」（那会伪装成一个真实存在的空字段）。 -->
                                 <div class="rl-sub rl-pad-row"></div>
                             {:else if row.f === 'creator'}
-                                <div class="rl-creator">{cardFieldValue(e, row.f)}</div>
+                                <div class="rl-creator">{maskCardText(ch, cardFieldValue(e, row.f))}</div>
                             {:else if row.f === 'genres'}
-                                <div class="rl-tags">{cardFieldValue(e, row.f)}</div>
+                                <div class="rl-tags">{maskCardText(ch, cardFieldValue(e, row.f))}</div>
                             {:else}
-                                <div class="rl-sub">{cardFieldValue(e, row.f)}</div>
+                                <div class="rl-sub">{maskCardText(ch, cardFieldValue(e, row.f))}</div>
                             {/if}
                         {/each}
                     {/if}
@@ -3587,14 +3592,20 @@
                     {#if !wallView}
                         <div class="rl-row1">
                             <span class="rl-badge rl-badge-{e.status}" on:click={(ev) => { ev.stopPropagation(); toggleMenu(e.id); }}>
-                                {statusIcon(e.status)} {statusLabel(e.type, e.status)}
+                                {statusIcon(e.status)} {maskCardText(ch, statusLabel(e.type, e.status))}
                             </span>
                             {#if e.rating > 0}
                                 <!-- 🔴 #619 半星：星**不用字符**渲染（U+2BE8 字体覆盖不稳，实测成残缺星形），
                                      改为恒排 5 个满星 + `--fill` 交给 CSS 按比例裁切填充（见 `.rl-my-inline`）。
                                      ⚠️ 图形是 `aria-hidden` 的装饰 ⇒ 真值走旁边的 `.rl-sr` 给读屏。 -->
-                                <span class="rl-my-inline" style={`--fill:${e.rating}`} aria-hidden="true">★★★★★</span>
-                                <span class="rl-sr">个人评分 {e.rating} 星</span>
+                                <!-- 🔴 m19456 ①：隐藏时星与读屏名一起打码（星星个数本身也是信息）。 -->
+                                {#if ch}
+                                    <span class="rl-masked-text">***</span>
+                                    <span class="rl-sr">个人评分已隐藏</span>
+                                {:else}
+                                    <span class="rl-my-inline" style={`--fill:${e.rating}`} aria-hidden="true">★★★★★</span>
+                                    <span class="rl-sr">个人评分 {e.rating} 星</span>
+                                {/if}
                             {/if}
                             <!-- 大众评分已搬到封面右上角常显（用户 2026-09-22 裁定：从这一行移走）——
                                  见 `.rl-cov-score`；这一行现在只剩「状态徽标 + 我的星」，窄卡挤压问题随之消失。
@@ -3629,6 +3640,10 @@
             {@const g = it.group}
             {@const cover = g.items[0]}
             {@const gStatus = seriesStatus(g.items)}
+            <!-- 🔴 m19456 ①：系列卡信息栏打码标记（判据 = 组内每一条都勾了，见 `pure/cardHidden`）。
+                 ⚠️ 必须放在**这个**分支（`it.kind === 'series'`）里 —— 上面 `grp`（组卡 / 分类桶）分支的
+                 `g` 是 `it.card`，与这里 `it.group` 不是同一个对象，放错分支 = `gch is not defined` 编译告警。 -->
+            {@const gch = seriesCardHidden(g.items)}
             <!-- 🔴 #502①（用户：「封面折叠系列卡**再多折，有多少折多少**」）：去掉 #501③ 的 `slice(0, 3)` 上限 ——
                  组里有几部就叠几层（只滤掉没封面图的）。
                  ⚠️ 层数一放开，**错位步长就不能再写死 8px**：10 部 × 8px = 累计让出 72px，主封面只剩 122px（被压扁）。
@@ -3829,7 +3844,7 @@
                         releaseCardFocus(ev);
                         onOpenSeriesProps(g);
                     }}>
-                    <div class="rl-ttl">{g.title}</div>
+                    <div class="rl-ttl">{maskCardText(gch, g.title)}</div>
                     <!-- 🔴🔴 #625（用户 2026-10-13 报障「系列卡不一致，视图里也空了一大块」）：
                          折叠卡的信息行**与普通卡同源同数** —— 同一份「按类型信息栏」配置、同一批行序与 class。
                          ⛔ 旧的「年份段 / 部数 / 题材」三行**写死**已整体退场，三个病灶都在它身上：
@@ -3846,11 +3861,11 @@
                                 <!-- 🔴 #640 ⑷：与普通卡同款补位（折叠卡也要跟同一排对齐） -->
                                 <div class="rl-sub rl-pad-row"></div>
                             {:else if row.f === 'creator'}
-                                <div class="rl-creator">{seriesCardFieldValue(g, row.f)}</div>
+                                <div class="rl-creator">{maskCardText(gch, seriesCardFieldValue(g, row.f))}</div>
                             {:else if row.f === 'genres'}
-                                <div class="rl-tags">{seriesCardFieldValue(g, row.f)}</div>
+                                <div class="rl-tags">{maskCardText(gch, seriesCardFieldValue(g, row.f))}</div>
                             {:else}
-                                <div class="rl-sub">{seriesCardFieldValue(g, row.f)}</div>
+                                <div class="rl-sub">{maskCardText(gch, seriesCardFieldValue(g, row.f))}</div>
                             {/if}
                         {/each}
                     {/if}
@@ -3864,7 +3879,7 @@
                         <div class="rl-row1">
                             {#if gStatus}
                                 <span class="rl-badge rl-badge-{gStatus}" data-tip={`系列状态：${statusLabel(g.type, gStatus)}`}>
-                                    {statusIcon(gStatus)} {statusLabel(g.type, gStatus)}
+                                    {statusIcon(gStatus)} {maskCardText(gch, statusLabel(g.type, gStatus))}
                                 </span>
                             {/if}
                             <!-- 🔴 用户 2026-10-27 裁定「加合集分 · 海报墙上同单卡同位」：
@@ -3873,8 +3888,13 @@
                                  ⚠️ 值来自 `seriesRatings[g.key]`（独立字段），⛔ **不是**组内平均 —— 见 `pure/seriesRating` 顶部注释。
                                  ⚠️ 用 `> 0` 判断而非 `truthy`：0 与缺键同义（都是未评分），不渲染空星。 -->
                             {#if seriesRatingOf(g) > 0}
-                                <span class="rl-my-inline" style={`--fill:${seriesRatingOf(g)}`} aria-hidden="true">★★★★★</span>
-                                <span class="rl-sr">合集评分 {seriesRatingOf(g)} 星</span>
+                                {#if gch}
+                                    <span class="rl-masked-text">***</span>
+                                    <span class="rl-sr">合集评分已隐藏</span>
+                                {:else}
+                                    <span class="rl-my-inline" style={`--fill:${seriesRatingOf(g)}`} aria-hidden="true">★★★★★</span>
+                                    <span class="rl-sr">合集评分 {seriesRatingOf(g)} 星</span>
+                                {/if}
                             {/if}
                         </div>
                     {/if}
@@ -4852,19 +4872,25 @@
     /* 卡片统一尺寸：列内 flex 等高，meta 区域最小高度保证各类型（电影/剧集/动画/书籍/游戏）
        的卡片在视觉上同高，进度行贴底对齐 */
     .rl-card { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-card-radius, var(--rl-t-radius-lg, 8px)); overflow: hidden; cursor: pointer; position: relative; display: flex; flex-direction: column; }
-    /* 🔴 m19210「隐藏此条目卡片」：勾上后把**封面 + 信息栏**整体糊掉。
-       用户原话：「勾选中后就把整个封面和信息栏都给我模糊化」。
-       · 只糊这两块（`.rl-cov-wrap` / `.rl-card-meta`），⛔ 别糊 `.rl-card` 本体 ——
-         那样会把边框和圆角一起糊软，卡片在网格里看着像「坏掉了」而不是「被遮住了」。
-       · 边缘溢出由 `.rl-card { overflow: hidden }` 兜住（blur 会把绘制范围外扩几个像素）。
-       · 只改视觉：点击 / 右键 / 键盘交互一律照旧（⛔ 别顺手加 pointer-events: none，
-         那样用户连「点进去取消勾选」都做不到）。 */
-    .rl-card.is-card-hidden .rl-cov-wrap,
-    .rl-card.is-card-hidden .rl-card-meta {
-        filter: blur(6px) saturate(0.55);
-        opacity: 0.6;
-        transition: filter 140ms ease, opacity 140ms ease;
+    /* 🔴 m19456 ①（用户逐字）：「隐藏条目卡片功能项（仅封面蒙板，信息栏信息全用*号替代）」
+       ⇒ 推翻 m19210 那版「封面 + 信息栏一起模糊」。现在两件事分开做：
+         · 封面：用 `::after` 盖一层半透明蒙板（图案照旧透出来，只是压暗）——
+           ⛔ 不用 `backdrop-filter`（一屏几十张卡会掉帧）；⛔ 也不用加模板节点（那是多一处 DOM）。
+           层级 8：要压过 hover 遮罩(6) 与播放钮(7)，否则鼠标一移上去蒙板就被按钮顶开，「藏」不住了。
+           点击穿透靠 `pointer-events: none` —— 蒙板是纯展示层，别吃掉卡片点击。
+         · 信息栏：文字在**模板里**换成星号（见 `pure/cardHidden.maskCardText`），
+           所以这里只剩「徽标内的图标也压暗一点」这一件事，⛔ 别在这里糊文字。
+       ⚠️ 边缘溢出由 `.rl-card { overflow: hidden }` 兜住（蒙板贴 `inset: 0`，本来也不外扩）。 */
+    .rl-card.is-card-hidden .rl-cov-wrap::after {
+        content: ''; position: absolute; inset: 0; z-index: 8;
+        background: repeating-linear-gradient(135deg, rgba(0, 0, 0, .58) 0 10px, rgba(0, 0, 0, .46) 10px 20px);
+        pointer-events: none;
     }
+    /* 信息栏里「非文字」的那点信息（状态图标、星）也压暗 —— 文字本身已经被星号替换了。 */
+    .rl-card.is-card-hidden .rl-card-meta .rl-badge,
+    .rl-card.is-card-hidden .rl-card-meta .rl-my-inline { opacity: .55; }
+    /* 打码后的星号占位文本（与 `.rl-sub` 同字号，避免这一行比平时高或矮）。 */
+    .rl-masked-text { font-size: 11px; color: var(--text-faint); letter-spacing: .5px; }
     .rl-card:hover { box-shadow: var(--rl-t-shadow-card-hover, 0 2px 8px rgba(0, 0, 0, .12)); transform: translateY(var(--rl-t-lift, 0px)) scale(var(--rl-t-scale, 1)); }
     .rl-card.rl-sel-card { border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
     .rl-type-bar { height: 4px; flex: none; }

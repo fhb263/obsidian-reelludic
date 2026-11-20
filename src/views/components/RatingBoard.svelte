@@ -345,7 +345,12 @@
     $: slotStyleStr = `grid-template-columns:repeat(auto-fill,minmax(${Math.round(cardPx)}px,1fr))`;
 </script>
 
-<div class="rl-board" style={`--rl-board-card-max:${cardMaxPx}px`} on:wheel={onWheel} role="region" aria-label="评分看板">
+<!-- 🔴 m19456 ③：`aria-label="评分看板"` 撤掉 —— Obsidian 会给带 `aria-label` 的元素自绘官方气泡
+     （用户：「统计页的各个整体模块鼠标 Hover 悬停不要轻提示…评分看板」）。
+     读屏名改走 `.rl-sb-sr` 隐藏文本。⚠️ 该类的**定义在 `StatsBoard.svelte` 的 scoped 样式里**，
+     跨组件用不到 ⇒ 这里改用全仓通用的 `.rl-sr`（定义在 `styles.css:131`，无作用域）。 -->
+<div class="rl-board" style={`--rl-board-card-max:${cardMaxPx}px`} on:wheel={onWheel} role="region">
+    <span class="rl-sr">评分看板</span>
     <div class="rl-board-head">
         <div class="rl-board-titlebar">评分看板</div>
         <!-- 🔴 2026-11-14（用户 m02498）：「也给评分看板加个系列卡堆叠和单卡平铺的循环切换图标按钮
@@ -369,7 +374,9 @@
         {/if}
     </div>
     <!-- 顶部分类 Tabs（选中高亮 + 实时计数 Badge） -->
-    <div class="rl-board-tabs" role="tablist" aria-label="内容分类">
+    <!-- 🔴 m19456 ③：同理撤掉 `aria-label="内容分类"`（悬停 tab 栏会弹那个气泡），读屏名走 `.rl-sr`。 -->
+    <div class="rl-board-tabs" role="tablist">
+        <span class="rl-sr">内容分类</span>
         {#each BOARD_TABS as t}
             <button
                 class="rl-board-tab"

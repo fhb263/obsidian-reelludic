@@ -127,7 +127,10 @@ describe('⑪ ③ 搜索结果标题关键词高亮', () => {
     });
 
     it('未命中时走单段分支（不为每张卡多套一层循环）', () => {
-        expect(mediaSrc).toMatch(/\{:else\}\s*<div class="rl-ttl">\{e\.title\}<\/div>/);
+        // 🔴 m19456 ① 起：单段分支的标题要走 `maskCardText`（隐藏卡片时打码成 `***`），
+        //    不再是裸 `{e.title}` ⇒ 本轮按新形态改判。
+        //    ⛔ 判据意图不变：**未命中走单段分支**（不套 `{#each}`），这条仍然钉死。
+        expect(mediaSrc).toMatch(/\{:else\}\s*<div class="rl-ttl">\{maskCardText\(ch, e\.title\)\}<\/div>/);
     });
 
     it('.rl-hl 用主题高亮底色，⛔ 不写死黄色 hex', () => {

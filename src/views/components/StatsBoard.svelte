@@ -589,8 +589,10 @@
          ⚠️ 为什么不再「趋势 + 概览并排」：一旦允许自由排序，并排就与"顺序"打架 ——
             排到后面的区块会被塞进别人旁边的空档，拖出来的顺序就不是看到的顺序（详见 `pure/statsLayout` 模块头）。 -->
     <!-- 🔴 #659：容器级拖放兜底（`drop` 从指针位置反推落点，见 `onContainerDrop`）。
-         补 `role="group"` 只是为了不新增 a11y 警告（本仓把 warning 数当基线守）。 -->
-    <div class="rl-sb-blocks" role="group" aria-label="统计区块" on:dragover={onContainerDragOver} on:drop={onContainerDrop}>
+         补 `role="group"` 只是为了不新增 a11y 警告（本仓把 warning 数当基线守）。
+         🔴 m19456 ③：**⛔ 不挂 `aria-label`** —— Obsidian 会给带它的元素自绘官方气泡
+         （用户：「统计页的各个整体模块鼠标 Hover 悬停不要轻提示」）。读屏名改走 `.rl-sb-sr` 隐藏文本。 -->
+    <div class="rl-sb-blocks" role="group" on:dragover={onContainerDragOver} on:drop={onContainerDrop}>
     {#each shownOrder as k (k)}
         <!-- 🔴🔴 #658：拖动**只从把手发起**（⛔ 不给整个区块挂 `draggable`）。
              上一版把 `draggable="true"` 挂在整块上：区块里有按钮 / 链接 / 可选中文本，
@@ -607,8 +609,14 @@
             on:dragover={(ev) => onBlockDragOverEvent(ev, k)}
             on:drop={onBlockDrop}
             role="group"
-            aria-label={STATS_BLOCK_LABELS[k]}
         >
+            <!-- 🔴 m19456 ③（用户逐字：「统计页的各个整体模块鼠标 Hover 悬停不要轻提示如
+                 "核心指标、动态、月度趋势、标签词云（…）、分类概览、评分看板"」）：
+                 那五个字串**正是** `aria-label={STATS_BLOCK_LABELS[k]}` 渲染出来的 ——
+                 Obsidian 会给带 `aria-label` 的悬停目标自绘官方气泡（本仓 `tests/tooltipSingleSource.ts`
+                 已把这条立成门禁）。⇒ 容器**不挂 `aria-label`**，读屏名改走 `.rl-sb-sr` 隐藏文本
+                 （⛔ 别为了消 a11y 警告把 `aria-label` 加回来，那会把气泡一起带回来）。 -->
+            <span class="rl-sb-sr">区块：{STATS_BLOCK_LABELS[k]}</span>
             <!-- 🔴 #661（用户：「悬停不要有轻提示」）：把手**不再挂 `data-tip`，也不挂 `aria-label`** ——
                  两者都会让 Obsidian 弹气泡（`aria-label` 也会，见 #659）。把手的可读语义由
                  `role="button"` + `title` 之外的**纯视觉**承担？⇒ 不：读屏仍需要名字，
@@ -672,7 +680,8 @@
                     <button class="rl-s-qbtn" on:click={randomPick}><Icon icon="shuffle" size={13} /> 随机推荐</button>
                     <button class="rl-s-qbtn" on:click={() => (wantOpen = true)}><Icon icon="list" size={13} /> 想看的清单（{wantList.length}）</button>
                 </span>
-                <span class="rl-feed-switch" role="group" aria-label="动态时间范围">
+                <span class="rl-feed-switch" role="group">
+                <span class="rl-sb-sr">动态时间范围</span>
                     {#each FEED_RANGES as r}
                         <button class="rl-feed-tab" class:on={feedRange === r.value} on:click={() => (feedRange = r.value)}>{r.label}</button>
                     {/each}
@@ -745,7 +754,11 @@
             {#if trendEmpty}
                 <div class="rl-s-empty">本年暂无完成记录 — 添加并标记观看/阅读/通关/收听后显示趋势</div>
             {:else}
-                <svg class="rl-trend" use:trendWidth viewBox={`0 0 ${trendW} ${TREND_H}`} preserveAspectRatio="none" role="img" aria-label="{year} 月度看完趋势折线图">
+                <!-- 🔴 m19456 ③：`aria-label` 会触发 Obsidian 官方气泡（悬停折线图就弹
+                     「2026 月度看完趋势折线图」一大堆）⇒ 改成 `role="presentation"` + 隐藏文本：
+                     图对读屏本来就该由下方那句结论（`momText`）承担，图里没有可操作元素。 -->
+                <span class="rl-sb-sr">{year} 月度看完趋势折线图</span>
+                <svg class="rl-trend" use:trendWidth viewBox={`0 0 ${trendW} ${TREND_H}`} preserveAspectRatio="none" role="presentation" aria-hidden="true">
                     {#each [0, 2, 4] as g}
                         <line class="rl-trend-grid" x1={TREND_PAD_X} y1={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} x2={trendW - TREND_PAD_X} y2={TREND_PAD_Y + (g * (TREND_H - 2 * TREND_PAD_Y)) / 4} />
                     {/each}
@@ -786,7 +799,10 @@
     {#if k === 'overview'}
             <!-- 第三层：分类概览（四宫格 → Tab，一次看一类） -->
         <section class="rl-s-panel rl-s-part">
-            <div class="rl-part-tabs" role="tablist" aria-label="分类概览">
+            <!-- 🔴 m19456 ③：`aria-label="分类概览"` 已撤（同一区块外面那圈 `.rl-sb-block` 也不带了，
+                 见上方注释）⇒ 读屏名走 `.rl-sb-sr`。 -->
+            <div class="rl-part-tabs" role="tablist">
+                <span class="rl-sb-sr">分类概览</span>
                 {#each CATEGORY_KEYS as k}
                     <button class="rl-part-tab" class:on={partTab === k} role="tab" aria-selected={partTab === k} style={`--rl-cat:${CATEGORY_COLORS[k]}`} on:click={() => (partTab = k)}>
                         <Icon icon={CATEGORY_ICONS[k]} size={13} /> {CATEGORY_LABELS[k]}
@@ -879,13 +895,17 @@
                  🔴 m18442 ①：改可点之后，词从 `<span>` 变成 `<button>` ⇒ 容器不能再是 `role="list"`、
                     子节点也不能再带 `role="listitem"` —— `<button>` 是非法的 listitem（svelte-check
                     报 `A11y: <button> cannot have role 'listitem'`，且会让「可点」的语义被列表角色盖掉）。
-                    改用 `role="group"` + `aria-label`：读屏仍播报「标签词云」并把按钮当成一组可操作项，
-                    且 DOM 顺序（频次降序）不变。⛔ 别为了消警告删掉 `aria-label`。 -->
+                    改用 `role="group"`：读屏仍把按钮当成一组可操作项，且 DOM 顺序（频次降序）不变。
+                 🔴 m19456 ③（用户逐字：「标签词云（字号表示使用频次，Ctrl +滚轮可缩放）」**不要**这个悬停轻提示）：
+                    上一版用 `role="group"` + `aria-label` 保读屏名 —— **但 `aria-label` 恰好就是气泡的来源**
+                    （Obsidian 会给带它的元素自绘官方气泡，见 `tests/tooltipSingleSource.ts`）。
+                    ⇒ 现在读屏名改走 `.rl-sb-sr` 隐藏文本，`aria-label` 撤掉。
+                    ⛔ 别为了消 a11y 警告把 `aria-label` 加回来（气泡会一起回来）。 -->
             <div class="rl-cloud-body" class:is-spiral={!!cloudLayout} role="group"
-                 aria-label="标签词云（字号表示使用频次，Ctrl + 滚轮可缩放）"
                  style={cloudLayout ? `height:${cloudLayout.height}px` : ''}
                  on:wheel={onCloudWheel}
                  use:cloudMeasure>
+                <span class="rl-sb-sr">标签词云（字号表示使用频次，Ctrl + 滚轮可缩放）</span>
                 {#if cloudLayout}
                     {#each cloudLayout.placed as w (w.text)}
                         <button type="button" class="rl-cloud-w is-abs lv-{w.level} hue-{cloudHueIndexOf(w.text)}"
@@ -1027,6 +1047,15 @@
         margin: 0; padding: 0; border: none; background: none;
         font: inherit; line-height: inherit; color: inherit;
         text-align: left;
+        /* 🔴 m19456 ②（用户逐字：「标签词云的标签显示不要有边框要透明化」）：
+           那条「方框」**不是 border** —— 真机 computed style 实测 `border-width: 0px`、
+           `border-style: none`，而 `box-shadow` 是
+           `rgba(0,0,0,.12) 0 0 0 1px inset, …`（Obsidian 主题给 `button` 的内阴影描边）
+           ＋ `border-radius: 5px`。⇒ 抹掉这两条，词才是纯文字。
+           ⛔ 别加 `!important`：同文件 scoped 规则特异性已经够压过主题。
+           ⚠️ `:focus-visible` 那条的 `border-radius: 3px` 是**键盘聚焦时**的轮廓圆角，保留。 */
+        box-shadow: none;
+        border-radius: 0;
     }
     .rl-cloud-w:focus-visible {
         outline: 2px solid var(--interactive-accent);

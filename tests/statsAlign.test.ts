@@ -187,3 +187,88 @@ describe('⑩ 统计页自适应 · 列宽必须把宽度**传参**给 spanOf（
         expect(code).not.toMatch(/is-span-\{boardWidth/);
     });
 });
+
+// 🔴 m19456 ②（用户逐字）：「标签词云的标签显示不要有边框要透明化」。
+//
+// 🔴 真机 computed style 实测（`probe-m19456.cjs`，三个样本一致）：
+//    `borderWidth: '0px'`、`borderStyle: 'none'`、`background: 'rgba(0, 0, 0, 0)'` —— **本来就没有 border**！
+//    那条「方框」来自 `boxShadow: 'rgba(0, 0, 0, 0.12) 0px 0px 0px 1px inset, …'`
+//    ＋ `borderRadius: '5px'` —— 也就是 Obsidian 主题给 `button` 的内阴影描边。
+// ⇒ 只删 `border` 是无效修复（它本来就是 none）；必须抹 `box-shadow` 与 `border-radius`。
+describe('⑪ 词云词去边框（用户 m19456 ②「不要有边框要透明化」）', () => {
+    const css = styleBody();
+    const rule = (): string => /\.rl-cloud-w\s*\{[\s\S]*?\}/.exec(css)?.[0] ?? '';
+
+    it('🔴 `.rl-cloud-w` 把主题给的 inset box-shadow 抹掉（那才是「边框」的真身）', () => {
+        expect(rule()).toContain('box-shadow: none;');
+        // 反向守卫：⛔ 别把 box-shadow 交回主题令牌（`var(--input-shadow)` 那套会画回方框）
+        expect(rule()).not.toMatch(/box-shadow:\s*var\(/);
+    });
+
+    it('🔴 圆角也归零（5px 圆角配内阴影才看得出「方框」）', () => {
+        expect(rule()).toContain('border-radius: 0;');
+    });
+
+    it('原先那批抹平项一条不少（删边框不能顺手把背景/内距的修复一起删了）', () => {
+        for (const decl of ['appearance: none;', 'margin: 0;', 'padding: 0;', 'border: none;', 'background: none;']) {
+            expect(rule()).toContain(decl);
+        }
+    });
+
+    it('键盘聚焦的轮廓仍保留（那是可访问性，不是装饰边框）', () => {
+        expect(css).toMatch(/\.rl-cloud-w:focus-visible\s*\{[\s\S]{0,200}?outline: 2px solid var\(--interactive-accent\)/);
+    });
+});
+
+// 🔴 m19456 ③（用户逐字）：「统计页的各个整体模块鼠标 Hover 悬停不要轻提示如
+//    "核心指标、动态、月度趋势、标签词云（字号表示使用频次、Ctrl +滚轮可缩放）、分类概览、评分看板"」。
+//
+// 🔴 根因：那五个字串**正是**各容器的 `aria-label` —— Obsidian 会给带 `aria-label` 的悬停目标
+//    自绘官方气泡（本仓 `tests/tooltipSingleSource.ts` 早把这条立成门禁，`RatingBoard` 的评分行
+//    此前也栽过一次）。⇒ 容器一律不挂 `aria-label`，读屏名改走隐藏文本。
+describe('⑫ 统计页容器 ⛔ 不挂 aria-label（用户 m19456 ③ 悬停不要轻提示）', () => {
+    const board = read('src/views/components/RatingBoard.svelte');
+    /** 取某个模板元素开标签的整段（从 `<` 到那个 `>`）。
+        ⚠️ `cls` 必须带上**起始引号**（`class="rl-trend` 而不是 `rl-trend`）——
+        否则 `rl-trend` 会先命中 `rl-trend-chips`（前缀相同），拿到的整段是错的（第一版就这么假红）。 */
+    const tagOf = (src: string, cls: string): string => {
+        const at = src.indexOf(`class="${cls}`);
+        if (at < 0) return '';
+        const start = src.lastIndexOf('<', at);
+        return src.slice(start, src.indexOf('>', at) + 1);
+    };
+
+    it('六个区块容器不再挂 aria-label', () => {
+        expect(tagOf(code, 'rl-sb-blocks')).not.toContain('aria-label');
+        expect(tagOf(code, 'rl-sb-block is-span-')).not.toContain('aria-label');
+    });
+
+    it('动态时间范围 / 分类概览 / 标签词云三个容器也撤了', () => {
+        expect(tagOf(code, 'rl-feed-switch')).not.toContain('aria-label');
+        expect(tagOf(code, 'rl-part-tabs')).not.toContain('aria-label');
+        expect(tagOf(code, 'rl-cloud-body')).not.toContain('aria-label');
+    });
+
+    it('趋势图改 role="presentation" + aria-hidden（图对读屏由下方结论句承担）', () => {
+        expect(tagOf(code, 'rl-trend"')).toContain('role="presentation"');
+        expect(tagOf(code, 'rl-trend"')).toContain('aria-hidden="true"');
+        expect(tagOf(code, 'rl-trend"')).not.toContain('aria-label');
+    });
+
+    it('评分看板与它的 tab 栏也撤了（跨组件，读屏名走全局 `.rl-sr`）', () => {
+        expect(tagOf(board, 'rl-board"')).not.toContain('aria-label');
+        expect(tagOf(board, 'rl-board-tabs')).not.toContain('aria-label');
+    });
+
+    it('🔴 读屏名不是「删了就完事」—— 每个容器都有对应的隐藏文本', () => {
+        // 气泡要去掉，但读屏不能因此变成哑巴。
+        const srs = (code.match(/class="rl-sb-sr"/g) ?? []).length;
+        expect(srs).toBeGreaterThanOrEqual(5); // 区块内 + 时间范围 + 分类概览 + 词云（+ 把手）
+        expect(code).toContain('<span class="rl-sb-sr">区块：{STATS_BLOCK_LABELS[k]}</span>');
+        expect(code).toContain('<span class="rl-sb-sr">动态时间范围</span>');
+        expect(code).toContain('<span class="rl-sb-sr">分类概览</span>');
+        expect(code).toContain('<span class="rl-sb-sr">标签词云（字号表示使用频次，Ctrl + 滚轮可缩放）</span>');
+        const boardSrs = (board.match(/class="rl-sr"/g) ?? []).length;
+        expect(boardSrs).toBeGreaterThanOrEqual(2); // 评分看板 + 内容分类
+    });
+});

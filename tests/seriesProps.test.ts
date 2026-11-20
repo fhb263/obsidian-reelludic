@@ -170,8 +170,10 @@ describe('SeriesPropsModal（壳）', () => {
 
 describe('两个入口（单击信息栏 / 悬停 ⋯ 菜单）', () => {
     it('🔴 系列卡信息栏照抄单卡那套三件套（同 `cardGridView` 门控 + 键盘回车/空格 + 焦点交还）', () => {
-        // 找出系列卡那一处（`{g.title}` 之前最近的 `.rl-card-meta`）
-        const ttl = LIST.indexOf('<div class="rl-ttl">{g.title}</div>');
+        // 找出系列卡那一处（`{g.title}` 之前最近的 `.rl-card-meta`）。
+        // 🔴 m19456 ① 起标题走 `maskCardText(gch, g.title)`（隐藏卡片时打码），不再是裸 `{g.title}`
+        //    ⇒ 锚点跟着换形态。⛔ 判据意图不变：仍然定位**系列卡**那一个信息栏，三件套一条不少。
+        const ttl = LIST.indexOf('<div class="rl-ttl">{maskCardText(gch, g.title)}</div>');
         expect(ttl).toBeGreaterThan(0);
         const a = LIST.lastIndexOf('class="rl-card-meta"', ttl);
         expect(a).toBeGreaterThan(0);

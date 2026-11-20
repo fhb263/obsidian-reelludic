@@ -8,7 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { entryCardHidden, seriesCardHidden } from 'pure/cardHidden';
+import { CARD_HIDDEN_TEXT, entryCardHidden, maskCardText, seriesCardHidden } from 'pure/cardHidden';
 import type { MediaEntry } from 'data/types';
 
 const ROOT = resolve(__dirname, '..');
@@ -128,20 +128,69 @@ describe('⑤ 卡片渲染与 CSS 边界', () => {
         expect(listCode).toContain('class:is-card-hidden={seriesCardHidden(g.items)}');
     });
 
-    it('🔴 模糊只作用于封面与信息栏两块', () => {
-        expect(listCode).toMatch(
-            /\.rl-card\.is-card-hidden \.rl-cov-wrap,\s*\n\s*\.rl-card\.is-card-hidden \.rl-card-meta \{[\s\S]{0,200}?filter: blur\(/,
-        );
-        // 反向守卫：不许直接糊 .rl-card 本体（会把边框圆角一起糊软）
-        expect(listCode).not.toMatch(/\.rl-card\.is-card-hidden \{[^}]*filter:/);
+    it('🔴 封面只盖蒙板（⛔ 不再模糊）—— 蒙板是 `::after`，压过 hover 遮罩与播放钮', () => {
+        // 🔴 m19456 用户改判：「仅封面蒙板，信息栏信息全用*号替代」。
+        //    上一版（m19210）的 `filter: blur(...)` 被推翻 ⇒ 这条判据跟着换形态，⛔ 不是放宽。
+        const rule = /\.rl-card\.is-card-hidden \.rl-cov-wrap::after\s*\{[\s\S]{0,400}?\}/.exec(listCode)?.[0] ?? '';
+        expect(rule).toContain('position: absolute');
+        expect(rule).toContain('inset: 0');
+        // 蒙板必须压过 hover 遮罩（z-index 6）与播放钮（7），否则鼠标一移上去就露馅
+        expect(rule).toMatch(/z-index:\s*[89]\d*;/);
+        // 纯展示层：不许吃掉卡片点击
+        expect(rule).toContain('pointer-events: none');
+        // 反向守卫：模糊那一整套必须彻底退场（含 saturate 与那条 transition）
+        expect(listCode).not.toMatch(/is-card-hidden[^{]*\{[^}]*filter:\s*blur\(/);
+        expect(listCode).not.toMatch(/is-card-hidden[^{]*\{[^}]*saturate\(/);
     });
 
-    it('🔴 不引入 pointer-events: none（否则用户点不进去取消勾选）', () => {
-        expect(listCode).not.toMatch(/is-card-hidden[^{]*\{[^}]*pointer-events:\s*none/);
+    it('🔴 信息栏文字全部走 `maskCardText`（全仓唯一打码出口）', () => {
+        // 标题 / 五行元信息 / 状态徽标 —— 三处都要打码，漏一处就漏文字。
+        expect(listCode).toContain('{maskCardText(ch, e.title)}');
+        expect(listCode).toContain('{maskCardText(ch, cardFieldValue(e, row.f))}');
+        expect(listCode).toContain('{maskCardText(ch, statusLabel(e.type, e.status))}');
+        // 系列卡同款三处
+        expect(listCode).toContain('{maskCardText(gch, g.title)}');
+        expect(listCode).toContain('{maskCardText(gch, seriesCardFieldValue(g, row.f))}');
+        expect(listCode).toContain('{maskCardText(gch, statusLabel(g.type, gStatus))}');
+        // 反向守卫：⛔ 别在模板里内联第二份打码逻辑（改文案时必漏一处）
+        expect(listCode).not.toMatch(/\?\s*'\*\*\*'/);
+    });
+
+    it('🔴 星级：隐藏时连星带读屏名一起换掉（星星个数本身也是信息）', () => {
+        expect(listCode).toContain('<span class="rl-masked-text">***</span>');
+        expect(listCode).toContain('<span class="rl-sr">个人评分已隐藏</span>');
+        expect(listCode).toContain('<span class="rl-sr">合集评分已隐藏</span>');
+    });
+
+    it('🔴 不引入 pointer-events: none 到卡片本体（否则用户点不进去取消勾选）', () => {
+        // 只允许**蒙板那一层**穿透（`.rl-cov-wrap::after`）；`.rl-card` 本体与信息栏必须照常可点。
+        // ⚠️ 判据要**排除 ::after** —— 否则会把蒙板合法的 `pointer-events: none` 当违规（第一版就这么假红了）。
+        expect(listCode).not.toMatch(/\.rl-card\.is-card-hidden\s*\{[^}]*pointer-events:\s*none/);
+        expect(listCode).not.toMatch(/\.rl-card\.is-card-hidden\s+\.rl-card-meta\s*\{[^}]*pointer-events:\s*none/);
+        expect(listCode).not.toMatch(/\.rl-card\.is-card-hidden\s+\.rl-cov-wrap\s*\{[^}]*pointer-events:\s*none/);
     });
 
     it('判据来自 pure 模块，模板里不内联第二个真源', () => {
-        expect(listCode).toContain("import { entryCardHidden, seriesCardHidden } from 'pure/cardHidden';");
+        expect(listCode).toContain(
+            "import { entryCardHidden, seriesCardHidden, maskCardText } from 'pure/cardHidden';",
+        );
         expect(listCode).not.toMatch(/class:is-card-hidden=\{[^}]*cardHidden === true/);
+    });
+});
+
+describe('⑥ `maskCardText` 打码出口（m19456）', () => {
+    it('隐藏时返定长星号，未隐藏时原样返回', () => {
+        expect(maskCardText(true, '三体')).toBe('***');
+        expect(maskCardText(false, '三体')).toBe('三体');
+    });
+
+    it('🔴 星号是定长的（⛔ 不按原文长度生成 —— 那会泄漏原文多长）', () => {
+        expect(maskCardText(true, 'a')).toBe(maskCardText(true, 'a'.repeat(40)));
+        expect(CARD_HIDDEN_TEXT).toBe('***');
+    });
+
+    it('空串 / 占位符也照常打码（藏的是「这一格有内容」这件事本身）', () => {
+        expect(maskCardText(true, '—')).toBe('***');
+        expect(maskCardText(true, '')).toBe('***');
     });
 });
