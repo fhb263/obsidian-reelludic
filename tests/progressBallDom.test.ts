@@ -174,6 +174,63 @@ describe('进度卡片更新', () => {
         expect(Number(arc())).toBeCloseTo(0, 6);
         expect(at50).toBeLessThan(at0);
     });
+
+    // 🔴 m20696（用户：「从B站下载音频那个进度浮球在转写成mp3时怎么不能循环转圈一周，这样观感会更好」）
+    //   转码 / 抽轨没有百分比，原来只是把弧停在 18% 弧长 —— 静止的短弧看起来是「卡死」。
+    describe('🔴 m20696 无百分比时环要连转', () => {
+        const ring = () => ballEl()?.querySelector('.rl-pball-ring');
+
+        it('起始（无百分比）⇒ 环挂 is-indet', () => {
+            startProgressBall('正在转写成 mp3');
+            expect(ring()?.classList.contains('is-indet')).toBe(true);
+        });
+
+        it('拿到百分比 ⇒ 退出 is-indet（转圈是「还在忙」，有数了就不该再转）', () => {
+            const ball = startProgressBall('正在转写成 mp3');
+            ball.update({ percent: 42 });
+            expect(ring()?.classList.contains('is-indet')).toBe(false);
+        });
+
+        it('百分比又变回 null（切到下一个无进度阶段）⇒ 重新连转', () => {
+            const ball = startProgressBall('下载中');
+            ball.update({ percent: 60 });
+            ball.update({ percent: null, label: '正在转写成 mp3' });
+            expect(ring()?.classList.contains('is-indet')).toBe(true);
+        });
+
+        it('🔴 收尾必须停转（任务结束了还转 = 骗人）', () => {
+            const ball = startProgressBall('正在转写成 mp3');
+            expect(ring()?.classList.contains('is-indet')).toBe(true);
+            ball.done('已完成');
+            expect(ring()?.classList.contains('is-indet')).toBe(false);
+        });
+
+        // ⚠️ 多任务走的是另一条路（`paintTasks`），必须先有百分比再灌任务，
+        //    否则起始态本来就是 is-indet，判不出 `paintTasks` 到底有没有更新环。
+        it('🔴 多任务路径也要更新环（`paintTasks` 里漏掉就只剩单任务会转）', () => {
+            const ball = startProgressBall('正在下载');
+            ball.update({ percent: 80 });
+            expect(ring()?.classList.contains('is-indet')).toBe(false);
+            ball.upsertTask?.({ id: 'a', title: 'A', percent: 50, phase: 'running' });
+            ball.upsertTask?.({ id: 'b', title: 'B', percent: 60, phase: 'running' });
+            expect(ring()?.classList.contains('is-indet')).toBe(false);
+            // 其中一行没有百分比 ⇒ 汇总是 null（口径见 pure/progressTasks）⇒ 环重新连转
+            ball.upsertTask?.({ id: 'b', title: 'B', percent: null, phase: 'running' });
+            expect(ring()?.classList.contains('is-indet')).toBe(true);
+        });
+
+        it('不定态时弧长恒定（转的是整圈，⛔ 别让 dashoffset 抖动）', () => {
+            const ball = startProgressBall('正在转写成 mp3');
+            const arc = () => ballEl()?.querySelector('.rl-pball-arc')?.getAttribute('stroke-dashoffset');
+            const first = arc();
+            ball.update({ label: '正在转写成 mp3（换文案）' });
+            expect(arc()).toBe(first);
+            // 且不是「走满」或「空」——18% 弧长的 dashoffset 应落在中间段
+            const c = 2 * Math.PI * 16;
+            expect(Number(first)).toBeGreaterThan(0);
+            expect(Number(first)).toBeLessThan(c);
+        });
+    });
 });
 
 describe('点击不再销毁（m10634）', () => {

@@ -12797,6 +12797,19 @@ body.rl-shot-dragging {
     stroke-linecap: round;
     transition: stroke-dashoffset 200ms ease;
 }
+/* 🔴 m20696（用户：「从B站下载音频那个进度浮球在转写成mp3时怎么不能循环转圈一周，这样观感会更好」）：
+   没有百分比的阶段（yt-dlp 转码 mp3 / ffmpeg 抽轨 / 等首字节）原来只是把弧停在 18% 长度上，
+   静止的短弧看起来是「卡死」而不是「在忙」⇒ 让整圈连转。
+   ⚠️ 转的是**外层的 svg**（见下一条），不是 SVG 内部的 `<circle>` —— `transform` 直接写在
+   `<circle>` 上会以元素自身包围盒为原点、且与 `rotate(-90deg)` 的起点补偿叠加，转起来偏心。
+   弧长在不定态下恒定（`INDET_ARC_RATIO`，js 侧写 `stroke-dashoffset`），所以整圈匀速转即可。 */
+.rl-pball-ring.is-indet .rl-pball-svg {
+    animation: rl-pball-spin 1.1s linear infinite;
+}
+@keyframes rl-pball-spin {
+    from { transform: rotate(-90deg); }
+    to { transform: rotate(270deg); }
+}
 .rl-pball-lbl {
     max-width: 96px;
     font-size: var(--font-ui-smaller);
@@ -12850,6 +12863,8 @@ body.rl-shot-dragging {
     .rl-pball-bar.is-indet .rl-pball-fill { width: 100%; opacity: 0.45; animation: none; }
     .rl-pball-fill { transition: none; }
     .rl-pball-arc { transition: none; }
+    /* m20696：不定态转圈也停 —— 保留 18% 短弧（形状还在，仍能看出「不是 0%」） */
+    .rl-pball-ring.is-indet .rl-pball-svg { animation: none; }
     /* ②-2 新加的两处悬停过渡也要一起关掉 */
     .rl-pball-card { transition: none; }
     .rl-pball-ring { transition: none; }

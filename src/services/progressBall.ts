@@ -54,6 +54,13 @@ const END_LINGER_MS = 2600;
 /** 收起态小球的环形半径与周长（`viewBox` 36×36，`r=16` ⇒ 周长 ≈ 100.53，直接用 2πr 算，⛔ 别手抄常数） */
 const RING_R = 16;
 const RING_C = 2 * Math.PI * RING_R;
+/**
+ * 无百分比（转码 / 抽轨 / 等首字节）时圆弧画多长。
+ *
+ * 🔴 m20696：这个值**同时**是「不定态转圈」的弧长 —— 转的是整圈，弧长恒定。
+ * 0.18 是原来就有的口径（短弧比满圈更像「在等」，转起来也不会显得太吵），⛔ 别随手改满。
+ */
+const INDET_ARC_RATIO = 0.18;
 
 export interface ProgressBallHandle {
     /** 更新阶段 / 百分比 / 细节（三项都可省，省的项保持原值） */
@@ -106,6 +113,14 @@ class ProgressBallImpl implements ProgressBallHandle {
     private txtEl: HTMLElement | null = null;
     /** 收起态小球**球心**的百分比（用户 m07854 ⑨）；与卡片里的 `txtEl` 同文案口径 */
     private ringPctEl: HTMLElement | null = null;
+    /**
+     * 收起态那个环的容器（36×36 的 grid）。
+     *
+     * 🔴 m20696（用户：「从B站下载音频那个进度浮球在转写成mp3时怎么不能循环转圈一周，这样观感会更好」）：
+     *    转码 / 抽轨这类**没有百分比**的阶段原来只把圆弧停在 18% 弧长上（`dashoffset` 写死），
+     *    看上去是「卡住了」而不是「在忙」。⇒ 无百分比时给环挂 `is-indet`，由 CSS 让整圈连转。
+     */
+    private ringEl: HTMLElement | null = null;
     private arcEl: SVGCircleElement | null = null;
     private cancelBtn: HTMLButtonElement | null = null;
     private minBtn: HTMLButtonElement | null = null;
@@ -204,6 +219,7 @@ class ProgressBallImpl implements ProgressBallHandle {
         const pill = el.createDiv({ cls: 'rl-pball-pill' });
         this.pillEl = pill;
         const ring = pill.createDiv({ cls: 'rl-pball-ring' });
+        this.ringEl = ring;
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('viewBox', '0 0 36 36');
         svg.setAttribute('class', 'rl-pball-svg');
@@ -334,6 +350,25 @@ class ProgressBallImpl implements ProgressBallHandle {
         srLabel(btn, tip);
     }
 
+    /**
+     * 画收起态那个环：有百分比就走弧长，没有百分比就让整圈连转。
+     *
+     * 🔴 m20696（用户：「从B站下载音频那个进度浮球在转写成mp3时怎么不能循环转圈一周，这样观感会更好」）：
+     *    原来无百分比时只是把 `dashoffset` 钉在 18% 弧长 —— 静止的短弧看起来像卡死。
+     *    ⇒ 抽成唯一出口，`paint` / `paintTasks` / `finish` 三处都从这里走，
+     *    ⛔ 别再各写一遍 `setAttribute('stroke-dashoffset', …)`（漏一处就会出现「卡片说 87%、小球停在 18%」）。
+     *
+     * ⚠️ `reduced` 为真（`prefers-reduced-motion`）时由 CSS 自己停转，这里不做分支 ——
+     *    用户偏好不该改数据、只该改表现，放 CSS 才有唯一的判定点。
+     */
+    private paintRing(pct: number | null): void {
+        if (!this.arcEl) return;
+        const indet = pct === null;
+        // 不定态时弧长固定（转的是整圈，不是弧长），⛔ 别让 dashoffset 在转圈时抖动
+        this.arcEl.setAttribute('stroke-dashoffset', String(RING_C * (1 - (indet ? INDET_ARC_RATIO : pct / 100))));
+        this.ringEl?.toggleClass('is-indet', indet);
+    }
+
     /** 把当前状态刷到 DOM（只改文本与属性，⛔ 不重建节点） */
     private paint(): void {
         if (!this.el) return;
@@ -348,7 +383,8 @@ class ProgressBallImpl implements ProgressBallHandle {
         const p = barPercent(this.percent);
         if (this.barEl) this.barEl.toggleClass('is-indet', p === null);
         if (this.barFillEl) this.barFillEl.style.width = p === null ? '' : `${p}%`;
-        if (this.arcEl) this.arcEl.setAttribute('stroke-dashoffset', String(RING_C * (1 - (p === null ? 0.18 : p / 100))));
+        // 环与条同一口径：无百分比 ⇒ 整圈连转（m20696）
+        this.paintRing(p);
         const lbl = this.pillEl?.querySelector('.rl-pball-lbl');
         if (lbl) lbl.setText(shortLabel(this.label));
         this.el.setAttribute('data-tip', ballTip(st));
@@ -479,7 +515,8 @@ class ProgressBallImpl implements ProgressBallHandle {
             }
         }
         // 球心的环与展开态的汇总条用同一个汇总百分比（口径见 `pure/progressTasks`⑶）
-        if (this.arcEl) this.arcEl.setAttribute('stroke-dashoffset', String(RING_C * (1 - (pct === null ? 0.18 : pct / 100))));
+        // ⇒ 多行里任一行没百分比时汇总也是 null，环照转（m20696）
+        this.paintRing(pct);
         const lbl = this.pillEl?.querySelector('.rl-pball-lbl');
         if (lbl) lbl.setText(shortLabel(title));
         this.el.setAttribute('data-tip', [title, detail].filter(Boolean).join(' · '));
@@ -570,6 +607,8 @@ class ProgressBallImpl implements ProgressBallHandle {
         //    清空会让用户看不到到底几个失败。单任务才按原口径清掉。
         if (this.detailEl && this.rows.length === 0) this.detailEl.setText('');
         if (this.barEl) this.barEl.toggleClass('is-indet', false);
+        // 🔴 m20696：收尾必须**停转** —— 转圈是「还在忙」的信号，任务已经结束还转就是在骗人
+        this.ringEl?.toggleClass('is-indet', false);
         if (this.rows.length === 0) {
             if (this.barFillEl) this.barFillEl.style.width = kind === 'done' ? '100%' : '0%';
             if (this.arcEl) this.arcEl.setAttribute('stroke-dashoffset', kind === 'done' ? '0' : String(RING_C));
@@ -577,7 +616,7 @@ class ProgressBallImpl implements ProgressBallHandle {
             // 多任务：汇总百分比按行算（有失败 ⇒ 不确定态，⛔ 别画满环掩盖失败）
             const multiPct = tasksPercent(this.rows);
             if (this.arcEl) {
-                const ratio = multiPct === null ? 0.18 : multiPct / 100;
+                const ratio = multiPct === null ? INDET_ARC_RATIO : multiPct / 100;
                 this.arcEl.setAttribute('stroke-dashoffset', String(RING_C * (1 - ratio)));
             }
             if (this.txtEl) this.txtEl.setText(multiPct === null ? '!' : `${multiPct}%`);
@@ -625,6 +664,7 @@ class ProgressBallImpl implements ProgressBallHandle {
         this.barFillEl = null;
         this.txtEl = null;
         this.ringPctEl = null;
+        this.ringEl = null;
         this.arcEl = null;
         this.cancelBtn = null;
         this.minBtn = null;
