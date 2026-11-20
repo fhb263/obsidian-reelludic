@@ -178,14 +178,21 @@ export const ENTRY_FORM_FIELDS: readonly EntryFormFieldDef[] = [
     { key: 'novel-chapters', label: '元数据章数', span: 3, types: ['book'], kinds: ['novel'] },
 
     // ── 漫画（`bookKind === 'comic'` 分支，互斥） ──
-    { key: 'comic-publisher', label: '出版社', span: 3, types: ['book'], kinds: ['comic'] },
+    // 🔴 m17819（用户：「把文学、漫画条目编辑属性表单把作者和出版社位置调换一下」）：
+    //    `comic-author` 提到 `comic-publisher` 之前。注册顺序 = 缺省布局顺序，改这里必须同时改
+    //    `views/components/EntryForm.svelte` 模板里这两个 `div` 的书写顺序 —— 首屏那一笔由模板决定，
+    //    `applyFieldOrder` 只在 `afterUpdate` 之后才把 DOM 重排到本数组的顺序，
+    //    两边不一致会看到「首屏一个样、眨眼变另一个样」。
     { key: 'comic-author', label: '作者', span: 3, types: ['book'], kinds: ['comic'] },
+    { key: 'comic-publisher', label: '出版社', span: 3, types: ['book'], kinds: ['comic'] },
     { key: 'comic-artist', label: '画师', span: 3, types: ['book'], kinds: ['comic'] },
     { key: 'comic-chapters', label: '总话数', span: 3, types: ['book'], kinds: ['comic'] },
 
     // ── 文学（`{:else}` 分支，互斥） ──
-    { key: 'book-publisher', label: '出版社', span: 3, types: ['book'], kinds: ['book'] },
+    // 🔴 m17819（用户：「把文学、漫画条目编辑属性表单把作者和出版社位置调换一下」）：
+    //    `book-author` 提到 `book-publisher` 之前。同样必须与 `EntryForm.svelte` 模板顺序一致。
     { key: 'book-author', label: '作者', span: 3, types: ['book'], kinds: ['book'] },
+    { key: 'book-publisher', label: '出版社', span: 3, types: ['book'], kinds: ['book'] },
 
     // ── 音乐 ──
     // 🔴 2026-11-09（第 16 轮，用户「这个专辑默认给我和题材调换一下（编辑属性框顺序）」）：

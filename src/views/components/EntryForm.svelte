@@ -147,6 +147,7 @@ import { shouldAdoptCover } from 'pure/posterPolicy';
      *   与本表 `sep` 一致，⛔ 别在模板里手写第二份格式说明。
      */
     import { placeholderOf } from 'pure/formFields';
+    import { firstPersonName } from 'pure/baiduSearch';
 import type { EntryFormFieldEntry } from 'pure/entryFormFields';
 
     type SearchResult = TmdbSearchResult | OmdbSearchResult | BookSearchResult | GameSearchResult | BangumiSearchResult | MusicSearchResult;
@@ -982,6 +983,24 @@ export let initialBookKind: BookKind | undefined = undefined;
     }
     /** 字段区右列容器（先后复排的落点） */
     let fieldsColEl: HTMLDivElement | null = null;
+
+    /**
+     * 百度搜索要拼进查询词的「那个人」——按类型挑，再取第一个。
+     *
+     * 🔴 用户 m17819：「电影百度搜索要和标题+导演（取第 1 个）搜索」。
+     *    影视的导演与编剧合并在一个输入框（`directorWriters` 形如「丹尼斯·维伦纽瓦 / 埃里克·罗斯」），
+     *    直接整串拿去搜会把编剧也算成关键词，百度对多段长词的召回明显更差 ⇒ 只取第一个。
+     *
+     * ⚠️ 六类型的「主创」字段各不相同（与 `pure/cardMeta.cardCreator` 的优先级口径一致）：
+     *    影视 → `director`；游戏 → `developer`；音乐 → `artist`；书籍 → `author`（漫画的作者框也是它）。
+     *    ⛔ 别统一用 `author`：影视/游戏根本没有这个字段，那样搜出来等同只搜标题。
+     */
+    function baiduSearchPerson(): string {
+        if (type === 'movie' || type === 'tv' || type === 'anime') return firstPersonName(directorWriters);
+        if (type === 'game') return firstPersonName(developer);
+        if (type === 'music') return firstPersonName(artist || author);
+        return firstPersonName(author);
+    }
 
     /**
      * 按 `fldPlan` 把受管块**在它们原本占据的那几个位置之间**重排。
@@ -4929,8 +4948,8 @@ export let initialBookKind: BookKind | undefined = undefined;
                             这里画放大镜（lucide `search` 同款轮廓），语义直白。 -->
                     <button
                         class="rl-ai-btn rl-baidu-btn"
-                        on:click={() => onOpenBaiduSearch(title, author || artist)}
-                        data-tip={'在弹窗里用百度搜索这个条目\n查询词 = 标题 + 作者\n只用来核对名称，不会自动改你的标题'}>
+                        on:click={() => onOpenBaiduSearch(title, baiduSearchPerson())}
+                        data-tip={'在弹窗里用百度搜索这个条目\n查询词 = 标题 + 作者（影视取导演、游戏取开发商）\n只用来核对名称，不会自动改你的标题'}>
                         <span class="rl-sr">百度搜索这个条目</span>
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
@@ -5146,8 +5165,8 @@ export let initialBookKind: BookKind | undefined = undefined;
                      作者简介框删除掉，加个画师框」）：出版社 / 作者（原作） / **画师** / 总话数。
                      ⚠️ 与文学分支的差别只有「画师」多一格 —— 下面 ISBN / 元数据页数 / 作者简介三处的
                         `{#if}` 已按 `bookKind` 把漫画排掉（⛔ 别用 `!== 'novel'` 那种粗条件，那会把漫画一起放进来）。 -->
-                <div data-fld="comic-publisher" style={fldStyle('comic-publisher')}><label class="rl-lbl" for="rl-f-comic-pub">出版社</label><input id="rl-f-comic-pub" class="rl-input" bind:value={publisher} placeholder={placeholderOf('publisher')} /></div>
                 <div data-fld="comic-author" style={fldStyle('comic-author')}><label class="rl-lbl" for="rl-f-comic-author">作者</label><input id="rl-f-comic-author" class="rl-input" bind:value={author} placeholder={placeholderOf('comic-author')} /></div>
+                <div data-fld="comic-publisher" style={fldStyle('comic-publisher')}><label class="rl-lbl" for="rl-f-comic-pub">出版社</label><input id="rl-f-comic-pub" class="rl-input" bind:value={publisher} placeholder={placeholderOf('publisher')} /></div>
                 <div data-fld="comic-artist" style={fldStyle('comic-artist')}><label class="rl-lbl" for="rl-f-comic-artist">画师</label><input id="rl-f-comic-artist" class="rl-input" bind:value={artist} placeholder={placeholderOf('comic-artist')} /></div>
                 <div data-fld="comic-chapters" style={fldStyle('comic-chapters')}>
                     <!-- 🔴 #445 总话数（用户：「漫画源界面加一个总话数框，与题材框并排在右」）：
@@ -5161,8 +5180,8 @@ export let initialBookKind: BookKind | undefined = undefined;
                      ⛔ 别把 `for`/`id` 删掉，也别让这几个 id 重名。 -->
                 {:else}
                 <!-- 文学：出版社 / 作者（文学口径不变） -->
-                <div data-fld="book-publisher" style={fldStyle('book-publisher')}><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} placeholder={placeholderOf('publisher')} /></div>
                 <div data-fld="book-author" style={fldStyle('book-author')}><label class="rl-lbl">作者</label><input class="rl-input" bind:value={author} placeholder={placeholderOf('book-author')} /></div>
+                <div data-fld="book-publisher" style={fldStyle('book-publisher')}><label class="rl-lbl">出版社</label><input class="rl-input" bind:value={publisher} placeholder={placeholderOf('publisher')} /></div>
                 {/if}
             {/if}
             {#if type === 'music'}

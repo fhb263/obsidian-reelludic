@@ -75,7 +75,9 @@ const TEMPLATE_ORDER: Record<string, string[]> = {
         'summary', 'lrc', 'ai-summary',
     ],
     'book:book': [
-        'book-year', 'meta', 'book-genres', 'tags', 'book-publisher', 'book-author',
+        // 🔴 m17819（用户：「把文学、漫画条目编辑属性表单把作者和出版社位置调换一下」）：
+        //    作者提到出版社之前，与 `entryFormFields.ts` 登记顺序、`EntryForm.svelte` 模板书写顺序三方一致。
+        'book-year', 'meta', 'book-genres', 'tags', 'book-author', 'book-publisher',
         'isbn', 'pages',
         'series', 'collection',
         'read-hours', 'summary', 'author-intro', 'toc', 'ai-summary', 'book-progress',
@@ -86,8 +88,9 @@ const TEMPLATE_ORDER: Record<string, string[]> = {
         'read-hours', 'summary', 'author-intro', 'toc', 'ai-summary', 'book-progress',
     ],
     'book:comic': [
+        // 🔴 m17819：漫画同文学一样把作者提到出版社之前。
         'comic-year', 'meta', 'comic-genres', 'tags',
-        'comic-publisher', 'comic-author', 'comic-artist', 'comic-chapters',
+        'comic-author', 'comic-publisher', 'comic-artist', 'comic-chapters',
         'series', 'collection',
         'read-hours', 'summary', 'book-progress',
     ],

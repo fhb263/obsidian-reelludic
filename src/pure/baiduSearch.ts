@@ -64,3 +64,23 @@ export function baiduSearchUrlFor(title: string | undefined | null, author: stri
 export function baiduQueryIsEmpty(query: string): boolean {
     return String(query ?? '').trim().length === 0;
 }
+
+/**
+ * 从「导演 / 编剧」这种多值框里取**第一个**导演名。
+ *
+ * 🔴 用户 m17819：「电影百度搜索要和标题+导演（取第 1 个）搜索」。
+ *    表单里导演与编剧合并在一个输入框（`directorWriters`），按 `/` 拼成
+ *    「丹尼斯·维伦纽瓦 / 埃里克·罗斯」——直接拿去搜会把编剧也算进关键词里，
+ *    而百度对多段长词的召回会明显变差。所以只取第一个。
+ *
+ * ⚠️ 分隔符与全仓多值字段口径一致（`formFields.ts` 的 `split(/[\/、,，]/)`）——
+ *    用户手填时可能写「、」或「,」，⛔ 只按 `/` 切会漏。
+ */
+export function firstPersonName(value: string | undefined | null): string {
+    const raw = String(value ?? '');
+    for (const part of raw.split(/[\/、,，;；]+/)) {
+        const s = part.replace(/[\s\u3000]+/g, ' ').trim();
+        if (s) return s;
+    }
+    return '';
+}

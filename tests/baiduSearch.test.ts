@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { baiduQueryIsEmpty, baiduSearchQuery, baiduSearchUrl, baiduSearchUrlFor } from 'pure/baiduSearch';
+import { baiduQueryIsEmpty, baiduSearchQuery, baiduSearchUrl, baiduSearchUrlFor, firstPersonName } from 'pure/baiduSearch';
 
 const ROOT = resolve(__dirname, '..');
 const formSrc = readFileSync(resolve(ROOT, 'src/views/components/EntryForm.svelte'), 'utf8');
@@ -118,6 +118,40 @@ describe('baiduQueryIsEmpty', () => {
     });
 });
 
+// 🔴 用户 m17819：「电影百度搜索要和标题+导演（取第 1 个）搜索」。
+//    表单里导演与编剧合并在一个框（「丹尼斯·维伦纽瓦 / 埃里克·罗斯」），
+//    整串拿去搜会把编剧也算成关键词 ⇒ 必须只取第一个。
+describe('firstPersonName（取第一个导演/作者）', () => {
+    it('斜杠分隔取第一个', () => {
+        expect(firstPersonName('丹尼斯·维伦纽瓦 / 埃里克·罗斯')).toBe('丹尼斯·维伦纽瓦');
+    });
+
+    it('顿号与逗号也认（用户手填不会只用斜杠）', () => {
+        expect(firstPersonName('宫崎骏、高畑勋')).toBe('宫崎骏');
+        expect(firstPersonName('宫崎骏,高畑勋')).toBe('宫崎骏');
+        expect(firstPersonName('宫崎骏；高畑勋')).toBe('宫崎骏');
+    });
+
+    it('单个值原样返回', () => {
+        expect(firstPersonName('刘慈欣')).toBe('刘慈欣');
+    });
+
+    it('折掉全角/半角空白', () => {
+        expect(firstPersonName('  刘慈欣\u3000 ')).toBe('刘慈欣');
+    });
+
+    it('空值/空串/全是分隔符 ⇒ 空串（拼词时会被跳过，退化成只搜标题）', () => {
+        expect(firstPersonName('')).toBe('');
+        expect(firstPersonName(undefined)).toBe('');
+        expect(firstPersonName(null)).toBe('');
+        expect(firstPersonName(' / 、 , ')).toBe('');
+    });
+
+    it('🔴 只取第一个非空段（前面有前导分隔符时不能返回空串）', () => {
+        expect(firstPersonName(' / 刘慈欣 / 某编剧')).toBe('刘慈欣');
+    });
+});
+
 // ── 装配判据（源码级，防「以后被挪走」） ───────────────────────────────────────
 describe('编辑属性表单装配（m17219）', () => {
     it('EntryForm 声明了 onOpenBaiduSearch 这个 prop', () => {
@@ -126,8 +160,10 @@ describe('编辑属性表单装配（m17219）', () => {
         );
     });
 
-    it('按钮点击把「标题 + 作者」交给宿主（artist 作为音乐的作者兜底）', () => {
-        expect(formSrc).toContain('on:click={() => onOpenBaiduSearch(title, author || artist)}');
+    it('按钮点击把「标题 + 该类型的主创」交给宿主（m17819：影视取导演的第一个）', () => {
+        expect(formSrc).toContain('on:click={() => onOpenBaiduSearch(title, baiduSearchPerson())}');
+        // 🔴 反向守卫：⛔ 不许退回「只认 author」——影视/游戏没有 author 字段，那样等于只搜标题
+        expect(formSrc).not.toContain('onOpenBaiduSearch(title, author || artist)');
     });
 
     it('🔴 百度按钮必须排在 AI 预填按钮 **之前**（用户要求「AI预填图标按钮左旁边」）', () => {
@@ -145,6 +181,22 @@ describe('编辑属性表单装配（m17219）', () => {
         expect(gate).toBeGreaterThan(0);
         expect(gate).toBeLessThan(iBaidu);
         expect(close).toBeGreaterThan(iBaidu);
+    });
+
+    it('🔴 影视取 directorWriters 的第一个，游戏取 developer（m17819）', () => {
+        const body = formSrc.slice(formSrc.indexOf('function baiduSearchPerson()'));
+        const fn = body.slice(0, body.indexOf('\n    }'));
+        // 影视三类走导演框
+        expect(fn).toContain("type === 'movie' || type === 'tv' || type === 'anime'");
+        expect(fn).toContain('firstPersonName(directorWriters)');
+        // 游戏走开发商、音乐走歌手
+        expect(fn).toContain("type === 'game'");
+        expect(fn).toContain('firstPersonName(developer)');
+        expect(fn).toContain("type === 'music'");
+        // 兜底是书籍作者
+        expect(fn).toContain('return firstPersonName(author);');
+        // 🔴 反向守卫：⛔ 影视那支不许退回裸 author（影视根本没有 author 字段）
+        expect(fn).not.toContain("type === 'movie') return firstPersonName(author)");
     });
 
     it('按钮有读屏名（`.rl-sr`）与 data-tip，且⛔ 不用 `aria-label`（会与 data-tip 叠成两层气泡）', () => {
