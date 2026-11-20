@@ -8876,7 +8876,7 @@ export class ReelLudicSettingTab extends PluginSettingTab {
                     line.createSpan({
                         cls: 'rl-bt-est-base',
                         text: `（本机内存 ${formatMb(hw.totalMemMb)}）`,
-                    }).setAttribute('data-tip', '内存与显存探测自本机真实数据；显存为 0 表示 CPU 模式不占显存。');
+                    }).setAttribute('data-tip', '本机真实内存与显存；0 表示 CPU 模式');
                 }
                 // 超限标红 + 给建议（用户原话：「超过实际显存标红并提示建议选择 INT8 精度或更换小档位」）
                 const warn = footprintWarning(fp, 'cpu', hw);
@@ -9053,8 +9053,11 @@ export class ReelLudicSettingTab extends PluginSettingTab {
              *    副标题不再画（170px 宽放不下，永远只剩半句带省略号，像坏掉），
              *    但信息不能丢 —— 挪进 `data-tip`（下面那行已经拼了 title + subtitle）。
              */
-            // 左栏只有 ~170px，名称之外的信息全靠悬浮
-            item.setAttribute('data-tip', group.title + '\n' + group.subtitle);
+            // 左栏只有 ~170px，名称之外的信息全靠悬浮。
+            // 🔴 m18062（用户：「悬停文案不要超过1行」）：原来用 `'\n'` 分隔 ⇒ 气泡里真的换行成两行。
+            //    改成 ` · ` 单行连接；仍保留副标题（删了这条信息就彻底看不到了），
+            //    过长时由 `services/globalTooltip` 的 `fitTipText` 统一按显示宽度截断。
+            item.setAttribute('data-tip', group.title + ' · ' + group.subtitle);
             // 这一家有几档装好了 —— 扫一眼就知道哪家不用再下
             const readyInGroup = group.tiers.filter((t) => this.plugin.asrPickStatus(group.engine, t.tier).ready).length;
             item.createSpan({

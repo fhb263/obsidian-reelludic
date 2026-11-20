@@ -64,7 +64,10 @@ describe('QuickAssociateModal：游戏入口要有 Flash 影片行', () => {
         expect(QA).toMatch(/if \(this\.cbs\.pickGameSwf\) \{/);
         expect(QA).toMatch(/if \(this\.cbs\.fetchGameSwf\) \{/);
         expect(QA).toMatch(/'选择本地 \.swf 影片'/);
-        expect(QA).toMatch(/自动找出真实 swf 并下载入库/);
+        // 🔴 m18062（用户：「悬停文案不要超过1行」）：原「填游戏详情页地址（4399 / 7k7k / 17yy 等），
+        //    自动找出真实 swf 并下载入库」425px 超一行预算 ⇒ 精简成下面这句。
+        //    判据意图不变：这枚「获取」按钮必须带一句说明它到底干什么。
+        expect(QA).toMatch(/自动找 swf 下载/);
     });
 
     it('输入框回填 entry.gameSwf，且值参与 collectResult', () => {

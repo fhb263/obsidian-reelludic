@@ -19,6 +19,8 @@
 //        即可（幂等，重复调不会重复绑定）。设置页就是这么接的，见 `Settings.display()`。
 //    ⚠️ ⛔ 别退回「全局只绑一个 document」—— 那等于只有主窗口能用，且**不会有任何报错**，
 //      下次只能在真机上盯着 hover 发愣才发现。
+import { fitTipText } from 'pure/tooltipText';
+
 export interface GlobalTooltip {
     destroy(): void;
 }
@@ -51,10 +53,18 @@ function tipDelayOf(el: HTMLElement): number {
     return Math.round(n);
 }
 
-/** 读取 data-tip 文案（去首尾空白；无文案不显示） */
+/**
+ * 读取 data-tip 文案（去首尾空白；无文案不显示）。
+ *
+ * 🔴 用户 m18062：「优化精简所有鼠标hover 交互悬停文案，不要超过1行」。
+ *    全仓 375 处 `data-tip`（静态 210 + 动态 165），靠人工逐条保证「一行」不可能持久 ——
+ *    所以在这里**统一压平**：`\n` 折成空格（CSS 是 `white-space: pre-line`，不折就真换行），
+ *    再按**显示宽度**截到一行预算（见 `pure/tooltipText` 的预算推导）。
+ *    ⛔ 别把折行/截断挪回各调用点：那样每新增一处 `data-tip` 都得记得写一遍，必漏。
+ */
 function tipTextOf(el: HTMLElement): string {
     const raw = el.getAttribute('data-tip');
-    return raw ? raw.trim() : '';
+    return raw ? fitTipText(raw) : '';
 }
 
 /** 一部 document 上的一套 hover 提示（每个窗口各一份，互不共享状态） */

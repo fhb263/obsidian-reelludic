@@ -673,7 +673,7 @@ export class QuickAssociateModal extends Modal {
             }
             if (this.cbs.fetchGameSwf) {
                 const get = swfRow.createEl('button', { cls: 'rl-btn rl-link-act', text: '获取' });
-                get.setAttribute('data-tip', '填游戏详情页地址（4399 / 7k7k / 17yy 等），自动找出真实 swf 并下载入库');
+                get.setAttribute('data-tip', '填详情页地址，自动找 swf 下载');
                 get.onclick = () => void this.fetchSwfInto(this.singleSwfInput!, get);
             }
         }
@@ -2138,7 +2138,7 @@ export class QuickAssociateModal extends Modal {
             // 🔴 #526：**整季合集专用**入口 —— 直接开这一条候选的分P 勾选表（锚 = 第 1 集）。
             if (canExpandParts(r)) {
                 const ex = acts.createEl('button', { cls: 'rl-bili-batch-toggle is-parts', text: '展开分P' });
-                ex.setAttribute('data-tip', '这条是整季合集：展开分P 勾选表，一次填多集（分P i ↔ 第 i 集）');
+                ex.setAttribute('data-tip', '整季合集：展开分P 勾选，一次填多集');
                 ex.onclick = () => void this.expandBatchParts(idx);
             }
             if (r.videos.length > 1) {

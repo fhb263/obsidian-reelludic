@@ -544,7 +544,7 @@ export class ComicReaderPanel {
         zoomRow.createSpan({ cls: 'rl-reader-menu-label', text: '缩放' });
         const slider = zoomRow.createEl('input', {
             cls: 'rl-reader-menu-slider',
-            attr: { type: 'range', min: String(ZOOM_MIN * 100), max: String(ZOOM_MAX * 100), step: String(ZOOM_STEP * 100), 'data-tip': '拖动调整页面缩放（Ctrl+滚轮也能缩放；←/→ 翻页，= / - 缩放）' },
+            attr: { type: 'range', min: String(ZOOM_MIN * 100), max: String(ZOOM_MAX * 100), step: String(ZOOM_STEP * 100), 'data-tip': '拖动调整缩放（Ctrl+滚轮也行）' },
         });
         this.menuZoomSlider = slider;
         slider.addEventListener('input', () => this.menuZoomVal?.setText(`${Math.round(Number(slider.value))}%`));

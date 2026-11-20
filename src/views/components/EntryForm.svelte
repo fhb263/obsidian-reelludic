@@ -4949,7 +4949,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                     <button
                         class="rl-ai-btn rl-baidu-btn"
                         on:click={() => onOpenBaiduSearch(title, baiduSearchPerson())}
-                        data-tip={'在弹窗里用百度搜索这个条目\n查询词 = 标题 + 作者（影视取导演、游戏取开发商）\n只用来核对名称，不会自动改你的标题'}>
+                        data-tip={'用百度搜索这个条目（标题 + 作者）'}>
                         <span class="rl-sr">百度搜索这个条目</span>
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
@@ -4964,7 +4964,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                         class="rl-ai-btn"
                         disabled={prefillBusy}
                         on:click={() => void runAiPrefill()}
-                        data-tip={'AI 按标题填写下方字段\n需要时会先查数据源 / 联网搜索，再把结果列出来\n确认后才写入'}>
+                        data-tip={'AI 按标题填写下方字段，确认后才写入'}>
                         <span class="rl-sr">AI 预填字段</span>
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M4 6h8" /><path d="M4 12h5" /><path d="M4 18h8" />
@@ -5345,7 +5345,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                             class="rl-ai-btn"
                             disabled={lrcBusy || !title.trim()}
                             on:click={() => void fetchOnlineLyrics()}
-                            data-tip={title.trim() ? `按「标题 作者」搜歌词（四源）\n选中即填入` : '先填写标题再获取歌词'}>
+                            data-tip={title.trim() ? '按「标题 作者」搜歌词，选中即填入' : '先填写标题再获取歌词'}>
                             <span class="rl-sr">获取歌词</span>
                             <Icon icon="scroll-text" size={13} />
                         </button>
@@ -6011,7 +6011,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                         <!-- 本地检索：选文件夹 → 识别文件名集号自动填入未关联集本地路径（已填跳过） -->
                         <button
                             class="rl-ai-btn"
-                            data-tip={'选文件夹批量填集（按文件名认集号补标题）\n已填的不覆盖'}
+                            data-tip={'选文件夹批量填集，已填的不覆盖'}
                             on:click={() => void batchScanLocalEps()}><Icon icon="folder-search" size={13} /><span class="rl-sr">从文件夹检索剧集</span></button>
                         {#if type === 'movie'}
                             <!-- 🔴 #534 电影的网络检索：复用**集内那套**（开第 0 集浮层 + B 站候选），⛔ 不另写检索逻辑 -->
