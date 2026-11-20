@@ -486,3 +486,37 @@ describe('CatalogStore 写前备份与自检（数据安全 · 单文件备份�
         expect(isCatalogTextConsistent('[]', 0)).toBe(false); // 非对象
     });
 });
+
+// 🔴 m20540（用户：「原来条目卡片的网易云热度怎么还有的」）：`reviewPercent` 是**双源共用**字段 ——
+//   Steam 好评率（histogram 百分比）必须留，网易云搜索级 `pop`（热度 0~100）必须清。
+//   m19924 只是删掉了**写入点**，用户库里修复前入库的旧值原封不动 ⇒ 卡片照旧渲成 `100%`。
+//   ⇒ 在读取侧按类型截断：音乐类永不保留，下次读写即自动净化（⛔ 不手改用户的 JSON）。
+describe('🔴 m20540 网易云热度不再进 reviewPercent（按条目类型截断）', () => {
+    it('音乐类：即使 catalog 里存着 pop 热度也读不出来', () => {
+        const e = normalizeEntry({ id: 'm1', type: 'music', title: '铁血丹心', reviewPercent: 100 });
+        expect(e.reviewPercent).toBeUndefined();
+    });
+
+    it('游戏类：Steam 好评率照旧保留（⛔ 别误伤）', () => {
+        const e = normalizeEntry({ id: 'g1', type: 'game', title: '缺氧', reviewPercent: 97 });
+        expect(e.reviewPercent).toBe(97);
+    });
+
+    it('影视 / 书籍 / 网文 / 动画同样保留（只有 music 被截断）', () => {
+        for (const t of ['movie', 'tv', 'anime', 'book'] as const) {
+            expect(normalizeEntry({ id: t + '1', type: t, title: 'X', reviewPercent: 88 }).reviewPercent).toBe(88);
+        }
+    });
+
+    it('取值口径不变：0 是真实结论、越界与 NaN 仍被拦', () => {
+        expect(normalizeEntry({ id: 'g2', type: 'game', title: 'X', reviewPercent: 0 }).reviewPercent).toBe(0);
+        expect(normalizeEntry({ id: 'g3', type: 'game', title: 'X', reviewPercent: 120 }).reviewPercent).toBeUndefined();
+        expect(normalizeEntry({ id: 'g4', type: 'game', title: 'X', reviewPercent: Number.NaN }).reviewPercent).toBeUndefined();
+        expect(normalizeEntry({ id: 'g5', type: 'game', title: 'X', reviewPercent: 96.6 }).reviewPercent).toBe(97);
+    });
+
+    it('音乐类即使取值合法也一律丢弃（四平台搜索级都没有真正的评分）', () => {
+        expect(normalizeEntry({ id: 'm2', type: 'music', title: 'X', reviewPercent: 0 }).reviewPercent).toBeUndefined();
+        expect(normalizeEntry({ id: 'm3', type: 'music', title: 'X', reviewPercent: 95.4 }).reviewPercent).toBeUndefined();
+    });
+});

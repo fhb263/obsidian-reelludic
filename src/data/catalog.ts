@@ -82,9 +82,12 @@ function isLinkLike(v: unknown): v is WatchLink {
 /** 缺字段兜底：保证条目落在 schema 契约内（只增不改 + 容错读取） */
 export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
     const now = new Date().toISOString();
+    // 类型先算出来：下面 `reviewPercent` 那段要按类型截断（见那条注释），⛔ 别在对象里直接引用 `type`
+    //（对象字面量的属性名不会成为同作用域的变量，写 `type !== 'music'` 会 TS2304）。
+    const type: MediaEntry['type'] = ENTRY_TYPES.includes(raw.type as MediaEntry['type']) ? (raw.type as MediaEntry['type']) : 'movie';
     return {
         id: isString(raw.id) && raw.id ? raw.id : createEntryId(),
-        type: ENTRY_TYPES.includes(raw.type as MediaEntry['type']) ? (raw.type as MediaEntry['type']) : 'movie',
+        type,
         title: isString(raw.title) ? raw.title : '',
         originalTitle: isString(raw.originalTitle) ? raw.originalTitle : undefined,
         status: (raw.status as string) === 'dropped' ? 'archived' : isMediaStatus(raw.status) ? raw.status : 'want', // 弃剧已移除：存量 dropped 迁移为存档（归档语义兼容）
@@ -245,8 +248,14 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
         // 🔴 2026-10-25 Steam 好评率百分比：append-only 可选字段 ⇒ ⚠️ 必须进这张白名单，否则**静默丢**
         //    （本仓已因漏白名单踩过多次；漏了的表现是「回填时明明有，存完再读就没了」）。
         //    只认 0-100 的有限数：脏数据（越界 / NaN）宁可不落，也别让它进排序与展示。
+        // 🔴 m20540（用户：「原来条目卡片的网易云热度怎么还有的」）：这个字段是**双源共用**的 ——
+        //    ① Steam 好评率（`services/steam.ts` 的 histogram 百分比）→ 必须留；
+        //    ② 网易云搜索级 `pop`（热度 0~100）→ m19924 已删掉写入点，但**存量 catalog 里的旧值还在**，
+        //       卡片照旧渲成 `100%`。⇒ 读入侧按类型截断：**音乐类永不保留**（下次读写即自动净化，
+        //       不必手改用户的 JSON）。⛔ 别改成「按 sourceName 含网易云判」—— 手填来源名可改、会漏；
+        //       ⛔ 也别删字段本身，Steam 那 19 条游戏好评率还要用它。
         reviewPercent:
-            typeof raw.reviewPercent === 'number' && Number.isFinite(raw.reviewPercent) && raw.reviewPercent >= 0 && raw.reviewPercent <= 100
+            type !== 'music' && typeof raw.reviewPercent === 'number' && Number.isFinite(raw.reviewPercent) && raw.reviewPercent >= 0 && raw.reviewPercent <= 100
                 ? Math.round(raw.reviewPercent)
                 : undefined,
         // 🔴 2026-11-08 Steam 详情补全标记（收敛用，见 types.ts 的说明）：非空字符串才落库。

@@ -2244,13 +2244,10 @@ export let initialBookKind: BookKind | undefined = undefined;
             // 🔴 复选换结果时百分比必须先清掉：新结果还没拉详情，留着上一条的 % 就是脏数据
             //    （Steam 详情分支会在拉回来后重新填它）。
             reviewPercent = '';
-            // 🔴 m10134 ②：曲库结果的**平台热度**（网易云 `pop`，0~100）走 `reviewPercent`。
-            //   用户裁定「填「热度」到评分框」—— 四平台搜索级都没有大众评分，只有这一档热度。
-            //   ⚠️ 判空用 `!= null`：0 是真实结论（没人听），⛔ 别用真值判断。
-            //   ⚠️ 必须写在这里（`reviewPercent = ''` 之后），否则刚清完又被清一次。
-            if ('reviewPercent' in r && r.reviewPercent != null) {
-                reviewPercent = String(r.reviewPercent);
-            }
+            // 🔴 m20540（用户：「原来条目卡片的网易云热度怎么还有的」）：这里原本还有一段把曲库结果的
+            //   `reviewPercent`（网易云 `pop` 热度）回填进评分框的逻辑 —— m19924 已删掉生产侧，这里一并拆除。
+            //   ⛔ 别再把它请回来：热度不是大众评分，四平台搜索级都没有真正的评分；
+            //   `reviewPercent` 只留给 Steam 好评率（从条目详情/同步链路来，不经这条 pick 通道）。
             if ('author' in r) {
                 // 书籍：Douban 一次返回全部信息（含豆瓣详情字段；Open Library 搜索级字段见下 works.json 补全）
                 originalTitle = '';
