@@ -7,6 +7,7 @@ type Call = AiPrefillHttpOptions;
 function harness(
     cfg: Partial<AiPrefillConfig>,
     reply: { status: number; text: string } | (() => { status: number; text: string }),
+    toolText?: string,
 ) {
     const calls: Call[] = [];
     const notes: string[] = [];
@@ -17,6 +18,9 @@ function harness(
             calls.push(opts);
             return typeof reply === 'function' ? reply() : reply;
         },
+        // 🔴 m16449：给了 `toolText` 就等于「这次检索真的查到了东西」——
+        //    事实闸口（`pure/prefillGrounding`）只留能在这段文本里对上的字段。
+        ...(toolText ? { runTool: async () => toolText } : {}),
     });
     return { svc, calls, notes };
 }
@@ -25,10 +29,22 @@ const okReply = (content: string) => ({ status: 200, text: JSON.stringify({ choi
 
 describe('AiPrefillService', () => {
     it('正常：POST 到该服务商端点，带 Bearer；返回字段表（解析走纯模块）', async () => {
-        const h = harness({}, okReply('{"year":"2021","cast":"甲 / 乙"}'));
+        // 🔴 m16449：事实字段必须能在**工具产出**里对上，所以让模型先查一次再收尾。
+        //    这不改变本用例的意图（仍是「发对端点、带对鉴权、解析成字段表」），
+        //    只是把「值从哪来」摆到台面上：不检索就没有事实可填。
+        let n = 0;
+        const replies = [
+            toolCall('lookup_metadata', { title: '沙丘', type: 'movie' }),
+            okReply('{"year":"2021","cast":"甲 / 乙"}'),
+        ];
+        const h = harness(
+            {},
+            () => replies[Math.min(n++, replies.length - 1)],
+            '命中 1 条：\n1. 沙丘 — 2021 · TMDB\n主演：甲 / 乙',
+        );
         const r = await h.svc.generate({ type: 'movie', title: '沙丘' });
-        expect(r).toEqual({ fields: { year: '2021', cast: '甲 / 乙' }, sources: [] });
-        expect(h.calls).toHaveLength(1);
+        expect(r).toEqual({ fields: { year: '2021', cast: '甲 / 乙' }, sources: ['元数据源'] });
+        expect(h.calls).toHaveLength(2);
         expect(h.calls[0].url).toBe(ZHIPU_CHAT_URL);
         expect(h.calls[0].method).toBe('POST');
         expect(h.calls[0].headers?.Authorization).toBe('Bearer k-1');
@@ -144,7 +160,7 @@ describe('AiPrefillService · agent 工具回路', () => {
     it('🔴 模型要工具 ⇒ 本地执行 ⇒ 结果按 `role:tool` 喂回 ⇒ 第 2 轮收尾成字段；来源被记账', async () => {
         const h = loopHarness({
             replies: [toolCall('web_search', { query: '沙丘 导演' }), okReply('{"year":"2021","directorWriters":"丹尼斯·维伦纽瓦"}')],
-            runTool: async () => '搜索「沙丘 导演」的前 2 条结果：\n1. 沙丘 - 维基百科 — 2021 年电影',
+            runTool: async () => '搜索「沙丘 导演」的前 2 条结果：\n1. 沙丘 - 维基百科 — 2021 年电影\n导演：丹尼斯·维伦纽瓦',
         });
         const r = await h.svc.generate({ type: 'movie', title: '沙丘' });
         expect(r).toEqual({ fields: { year: '2021', directorWriters: '丹尼斯·维伦纽瓦' }, sources: ['网络搜索'] });
@@ -159,12 +175,15 @@ describe('AiPrefillService · agent 工具回路', () => {
         expect(toolMsg.content).toContain('维基百科');
     });
 
-    it('模型不需要工具 ⇒ **只发一轮**，sources 空（= 纯凭记忆，界面会如实写出来）', async () => {
+    it('模型不需要工具 ⇒ **只发一轮**；没检索就没有事实 ⇒ 编的值一律丢弃（m16449）', async () => {
+        // ⚠️ 旧预期是「纯凭记忆也给 year=2021」——m16449 之后这正是用户抱怨的「模拟」：
+        //    没调工具 ⇒ 工具产出为空 ⇒ 闸口把 `year` 判无据丢掉 ⇒ 整体判成没有产出。
         const h = loopHarness({ replies: [okReply('{"year":"2021"}')], runTool: async () => 'x' });
         const r = await h.svc.generate({ type: 'movie', title: '沙丘' });
-        expect(r).toEqual({ fields: { year: '2021' }, sources: [] });
+        expect(r).toBeNull();
         expect(h.calls).toHaveLength(1);
         expect(h.steps).toEqual([]);
+        expect(h.notes.some((n) => n.includes('都没能在检索结果里对上'))).toBe(true);
     });
 
     it('🔴 没有工具执行器（宿主没接线 / 移动端）⇒ 请求体里**没有 tools**（#499 单轮形态原样保留）', async () => {
@@ -173,19 +192,21 @@ describe('AiPrefillService · agent 工具回路', () => {
         expect(JSON.parse(h.calls[0].body!).tools).toBeUndefined();
     });
 
-    it('🔴 工具**失败不打断回路**：把原因交回模型，用户仍能拿到字段', async () => {
+    it('🔴 工具**失败不打断回路**：把原因交回模型；没检索就没有事实 ⇒ 编的值丢弃（m16449）', async () => {
         const h = loopHarness({
             replies: [toolCall('web_search', { query: 'x' }), okReply('{"year":"2021"}')],
             runTool: async () => { throw new Error('HTTP 429'); },
         });
         const r = await h.svc.generate({ type: 'movie', title: 'x' });
-        expect(r?.fields).toEqual({ year: '2021' });
+        // ⚠️ 工具挂了 = 没检索到东西 ⇒ 模型写的 `year` 属「编的」，闸口丢掉 ⇒ 无产出。
+        //    回路本身没被打断这一点由下面两条 tool 消息断言守着。
+        expect(r).toBeNull();
         const toolMsg = JSON.parse(h.calls[1].body!).messages.find((m: { role: string }) => m.role === 'tool');
         expect(toolMsg.content).toContain('工具执行失败');
         expect(toolMsg.content).toContain('429');
     });
 
-    it('🔴 **能力回落**：端点把 tools 吞了（200 + 散文，既无工具调用也无字段）⇒ 去掉工具重发一次 + 如实提示', async () => {
+    it('🔴 **能力回落**：端点把 tools 吞了 ⇒ 去掉工具重发一次 + 如实提示（没检索就没事实，m16449）', async () => {
         const h = loopHarness({
             replies: [
                 { status: 200, text: '{"choices":[{"message":{"content":"抱歉，我无法调用 lookup_metadata 工具。"}}]}' },
@@ -194,7 +215,8 @@ describe('AiPrefillService · agent 工具回路', () => {
             runTool: async () => 'x',
         });
         const r = await h.svc.generate({ type: 'movie', title: 'x' });
-        expect(r).toEqual({ fields: { year: '2021' }, sources: [] });
+        // 回落本身仍必须发生（下面三条断言）；但工具一次都没跑成 ⇒ 闸口无据 ⇒ 无产出
+        expect(r).toBeNull();
         expect(h.calls).toHaveLength(2);
         expect(JSON.parse(h.calls[0].body!).tools).toHaveLength(3);
         expect(JSON.parse(h.calls[1].body!).tools).toBeUndefined(); // 第二次不再带
@@ -212,7 +234,9 @@ describe('AiPrefillService · agent 工具回路', () => {
             runTool: async () => '结果',
         });
         const r = await h.svc.generate({ type: 'movie', title: 'x' });
-        expect(r?.fields).toEqual({ year: '2021' });
+        // 🔴 m16449：`结果` 里没有 2021 这个值 ⇒ 强制收尾那轮编的 year 被闸口丢掉 ⇒ 无产出。
+        //    轮数控制本身由下面几条断言守着。
+        expect(r).toBeNull();
         expect(h.toolArgs.map((t) => (t.args as { query: string }).query)).toEqual(['a', 'b', 'c']);
         expect(h.calls).toHaveLength(4); // 3 轮 + 1 次强制收尾
         const finalBody = JSON.parse(h.calls[3].body!);
@@ -254,8 +278,8 @@ describe('AiPrefillService · 简介照搬', () => {
         const r = await h.svc.generate({ type: 'movie', title: '某冷门作' });
         // 用户 2026-11-18：「怎么AI搜索出来每个条目简介都是编的，我要的是原生原味的简介」
         // 查不到原文就一个字都不给 —— 这是「编的简介」进笔记的唯一通道，必须堵死。
-        expect(r!.fields.summary).toBeUndefined();
-        expect(r!.fields).not.toHaveProperty('summary');
+        // 🔴 m16449：堵死之后 `summary` 是唯一给出的字段 ⇒ 整份结果自然为空 ⇒ 判成「没有产出」。
+        expect(r).toBeNull();
     });
 
     it('🔴 简介原文**只认首个**：后一轮的搜索结果不能改写已锁定的那份', async () => {
@@ -291,6 +315,7 @@ describe('AiPrefillService · 简介照搬', () => {
         const r = await h.svc.generate({ type: 'movie', title: 'x' });
         // ⚠️ 旧标题是「不误伤模型写的简介」，m09330 之后这条预期反了：
         // 工具挂了确实拿不到原文，但**「拿不到原文」正是丢掉模型那版的条件**，不是保留它的理由。
-        expect(r!.fields).not.toHaveProperty('summary');
+        // 🔴 m16449：丢掉之后一个字段都不剩 ⇒ 判成「没有产出」（⛔ 不是交空表当成功）。
+        expect(r).toBeNull();
     });
 });

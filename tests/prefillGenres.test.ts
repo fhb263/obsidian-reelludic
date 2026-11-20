@@ -158,9 +158,14 @@ describe('服务层接线（消费端）', () => {
         expect(src).toContain('if (!toolGenres) toolGenres = extractToolGenres(text);');
     });
 
-    it('🔴 两处收尾都必须走 `finalize`（⛔ 不许有一处只做简介）', () => {
-        const hits = src.match(/return \{ fields: finalize\(fields \?\? \{\}\), sources \};/g) ?? [];
+    it('🔴 两处收尾都必须走同一个裁决函数（⛔ 不许有一处只做简介）', () => {
+        // m16449 之后两处收尾统一走 `deliver(...)`，`deliver` 内部才会调 `finalize`
+        // （简介照搬 + 题材照搬 + 事实闸口），并负责「一个字段都不剩 ⇒ 如实失败」。
+        const hits = src.match(/return deliver\(fields \?\? \{\}\);/g) ?? [];
         expect(hits).toHaveLength(2);
+        // `finalize` 只允许出现在 `deliver` 体内（两处返回点都不许自己拼字段表）
+        expect(src.match(/finalize\(/g) ?? []).toHaveLength(1);
+        expect(src).toContain('const out = finalize(f);');
         // 反向守卫：⛔ 不许再有裸 `preferToolSynopsis(` 出现在返回处
         expect(src).not.toMatch(/return \{ fields: preferToolSynopsis/);
     });

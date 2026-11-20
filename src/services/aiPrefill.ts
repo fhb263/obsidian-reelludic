@@ -28,6 +28,8 @@ import {
 } from 'pure/aiPrefill';
 // ⚠️ `AiPrefillOutcome` 定义在**纯模块**里（组件只认 `pure/*`）：这里只做转发引用
 import type { AiPrefillInput, AiPrefillOutcome, PrefillToolCall } from 'pure/aiPrefill';
+// 🔴 m16449：事实闸口（工具产出里找不到的字段一律丢弃，见 `pure/prefillGrounding`）
+import { droppedNotice, groundPrefillFields } from 'pure/prefillGrounding';
 export type { AiPrefillOutcome };
 
 /** 预填要模型一次给出七八个字段（还要走工具回路），比摘要长，超时给宽一点 */
@@ -124,13 +126,52 @@ export class AiPrefillService {
          * 一律清空会让「题材」永远填不上。查到就照搬覆盖，查不到就保留模型给的那份。
          */
         let toolGenres: string[] | null = null;
-        /** 收尾两处共用的最终裁决（简介照搬 + 题材照搬），⛔ 别在返回处各写一遍 */
-        const finalize = (f: Partial<Record<string, string>>): ReturnType<typeof preferToolSynopsis> =>
-            preferToolGenres(
+        /**
+         * 🔴 m16449（用户 2026-11-20：「优化AI预填真实每个类型返回模拟」，选定「修掉编造」）：
+         * **本次预填所有工具产出的拼接文本**。收尾时交给 `pure/prefillGrounding` 的
+         * `groundPrefillFields` 逐字段核对 —— 凡是这段文本里找不到的字段一律丢弃。
+         *
+         * 为什么必须有它：`lookup_metadata` 原先只交「标题/年份/来源/评分/题材/副标题」，
+         * 而 `prefillFieldsFor` 让它填的字段远多于这些（总集数/开发商/平台/页数/ISBN/主演/
+         * 导演/专辑/出版社…）。模型为了把表填满就会按印象写 —— 用户看到的「预填」因此不可信。
+         * 提示词里那句「不确定就省略」实测**不遵守**，只能靠结构保证。
+         *
+         * ⚠️ 没有工具产出（`runTool` 未注入 / 端点把 tools 吞了）⇒ 它是空串 ⇒
+         *    所有事实字段都会被丢光，只剩 `tags`。这是**正确**结果（没检索就没有事实），
+         *    调用方要用 `droppedNotice` 如实告诉用户，⛔ 别静默交出空表。
+         */
+        const toolTexts: string[] = [];
+        /** 收尾两处共用的最终裁决（简介照搬 + 题材照搬 + **事实闸口**），⛔ 别在返回处各写一遍 */
+        const finalize = (f: Partial<Record<string, string>>): Record<string, string> => {
+            const merged = preferToolGenres(
                 preferToolSynopsis(f as never, toolSynopsis, defs),
                 toolGenres,
                 defs,
+            ) as Record<string, string>;
+            // 🔴 m16449：事实闸口放在最后 —— 先让简介/题材按「查到就照搬」定下来，
+            //    再用工具产出核对每一个事实字段。简介与题材本身也在核对范围内（它们来自
+            //    工具产出，必然能对上）；`tags` 是唯一豁免（见 `PREFILL_PERSONAL_KEYS`）。
+            const grounded = groundPrefillFields(merged, toolTexts.join('\n'), defs);
+            const note = droppedNotice(grounded.dropped, defs);
+            if (note) this.deps.notify(note, 6000);
+            return grounded.fields;
+        };
+        /**
+         * 🔴 m16449：闸口之后**一个字段都不剩** ⇒ 如实失败。
+         *
+         * 用户要的是「只填真实查到的」。模型凭印象写的那一版被闸口全丢时，界面拿到空表
+         * 只会显示「没有可填的」而不知道原因；这里给一句人话，并把结果判成 `null`
+         * （= 这次预填没有产出），⛔ 别把 `{ fields: {} }` 交出去 —— 那会被当成「成功」。
+         */
+        const deliver = (f: Partial<Record<string, string>>): { fields: Record<string, string>; sources: string[] } | null => {
+            const out = finalize(f);
+            if (Object.keys(out).length > 0) return { fields: out, sources };
+            this.deps.notify(
+                'AI 预填失败：模型给的值都没能在检索结果里对上（查不到就不编），一个字段都没填',
+                6000,
             );
+            return null;
+        };
         /** 「端点不收 tools」的回落只做一次（⛔ 别在每轮都试） */
         let toolFallbackDone = false;
 
@@ -157,6 +198,8 @@ export class AiPrefillService {
                     // 🔴 m15796：题材同口径（首个命中即锁定）。两者在工具结果里是**两条独立的行**
                     //    （`PREFILL_GENRES_PREFIX` / `PREFILL_SYNOPSIS_PREFIX`），互不覆盖。
                     if (!toolGenres) toolGenres = extractToolGenres(text);
+                    // 🔴 m16449：工具产出全量留档（事实闸口的唯一依据）
+                    toolTexts.push(text);
                     messages.push(prefillToolMessage(c, text));
                 }
                 continue;
@@ -168,7 +211,7 @@ export class AiPrefillService {
             //    「照搬」的语义就是「查到了就该看得见」；⛔ 别因为模型偷懒（返回 `{}`）把它一起丢掉。
             //    ⚠️ 这一条也顺带说明「工具确实跑过」⇒ 不再走下面那条「端点把 tools 吞了」的回落。
             if (fields || toolSynopsis || toolGenres) {
-                return { fields: finalize(fields ?? {}), sources };
+                return deliver(fields ?? {});
             }
 
             // ③ 收不了尾：首轮又带着 tools ⇒ 很可能是**端点把 tools 吞了**（实测自定义端点会裸答）
@@ -203,7 +246,7 @@ export class AiPrefillService {
             this.deps.notify('AI 预填失败：查了资料但没能整理出字段，请再试或换个模型', 5000);
             return null;
         }
-        return { fields: finalize(fields ?? {}), sources };
+        return deliver(fields ?? {});
     }
 
     /** 发一次请求并解析外层（HTTP / JSON / 推理模型三态都收敛成一句人话） */

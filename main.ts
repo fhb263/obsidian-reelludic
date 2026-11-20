@@ -11605,6 +11605,25 @@ export default class ReelLudicPlugin extends Plugin {
                 return `${i + 1}. ${d.title}${bits.length ? ` · ${bits.join(' · ')}` : ''}`;
             });
             const head = `命中 ${hits.length} 条：\n${lines.join('\n')}`;
+            // 🔴 m16449（用户 2026-11-20：「优化AI预填真实每个类型返回模拟」）：
+            //    上面那几行只有「标题/年份/来源/评分/题材/副标题」，而 AI 预填要填的字段远多于这些
+            //    （总集数、开发商、平台、页数、ISBN、主演、导演、出版社、专辑、画师…）——
+            //    这些键**就在数据源里**（`describeSearchResult` 的 `facts`，真源见
+            //    `pure/searchDisplay` 的 `pushFact` 调用），但从没被交出去 ⇒ 模型只能按印象编。
+            //    ⇒ 把**同名命中**的已核实字段逐条列在标题行下面（最多 2 条，避免文本过长）。
+            //    ⚠️ 必须排在简介之前：`extractToolSynopsis` 取的是标记之后的串尾，事实行若排在
+            //    后面会被一起吞进简介正文。⛔ 别调顺序。
+            const factLines: string[] = [];
+            for (const h of hits) {
+                const d = describeSearchResult(h as never);
+                if (titleTierOf(d.title, title) === 0) continue;
+                if (!d.facts?.length) continue;
+                factLines.push(`「${d.title}」的已核实字段：`);
+                for (const f of d.facts) factLines.push(`  ${f}`);
+                if (factLines.length >= 24) break;
+            }
+            const factsBlock = factLines.length ? `\n${factLines.join('\n')}` : '';
+            const headWithFacts = `${head}${factsBlock}`;
             // 🔴 #499E：把**最佳命中的简介原文**一并交出去（用户 2026-10-03：「简介要搜索照搬真正作品的简介」）。
             //    服务层会照搬它去覆盖模型自己写的那一版 ⇒ 这段**必须带标记、且放在文本末尾**
             //    （标记与提取器是 `pure/aiPrefill` 的同一对常量，⛔ 别在这儿手写一遍字符串）。
@@ -11635,14 +11654,14 @@ export default class ReelLudicPlugin extends Plugin {
             //    后面那行「题材原文：…」会被一起吞进简介正文（用户拿到手就是
             //    「…小说。 / 题材原文：科幻」这种脏尾巴）。⛔ 别把顺序调回来。
             if (decision.pick) {
-                return `${head}${genresLine ? `\n${genresLine}` : ''}\n\n${PREFILL_SYNOPSIS_PREFIX}${decision.pick.synopsis}`;
+                return `${headWithFacts}${genresLine ? `\n${genresLine}` : ''}\n\n${PREFILL_SYNOPSIS_PREFIX}${decision.pick.synopsis}`;
             }
             // 没通过闸口时**要说清原因**，让模型自己决定是否换词重搜 —— ⛔ 别只丢个空结果。
             const why =
                 decision.sameNameNoSynopsis > 0
                     ? `（命中里有 ${decision.sameNameNoSynopsis} 条同名作品，但都没有简介原文；⛔ 不要凭记忆编简介，简介字段留空或换关键词再查）`
                     : `（${decision.total} 条命中里没有与「${title}」同名的作品，⛔ 不要拿别的作品的简介凑数，简介字段留空）`;
-            return `${head}${genresLine ? `\n${genresLine}` : ''}\n${why}`;
+            return `${headWithFacts}${genresLine ? `\n${genresLine}` : ''}\n${why}`;
         }
 
         // 🔴 m09330（用户：「怎么AI搜索出来每个条目简介都是编的，我要的是原生原味的简介」）：

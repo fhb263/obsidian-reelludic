@@ -62,6 +62,41 @@ export interface SearchDisplay {
      *    拼进提示词会多出「题材：」这种只有标签没有值的半句）。
      */
     genres?: string[];
+    /**
+     * **硬事实**（`标签：值` 的短行数组，如 `['总集数：12', '开发商：FromSoftware']`）。
+     * 🔴 m16449（用户 2026-11-20：「优化AI预填真实每个类型返回模拟」）新增。
+     *
+     * 存在理由：`describeSearchResult` 原先只输出 标题/年份/来源/评分/题材/副标题，
+     * 而 AI 预填要填的字段远多于这些（总集数、开发商、平台、页数、ISBN、主演、导演、
+     * 出版社、专辑、画师…）。**这些键明明就在数据源里**（`episodeCount` / `cast` /
+     * `pageCount` / `isbn` / `developer` / `platform` / `toc` / `authorIntro` 各有真源），
+     * 却没被交出去 ⇒ 模型只能按印象编。现在把它们逐条列出，配合
+     * `pure/prefillGrounding` 的闸口做到「查到就填、查不到就空着」。
+     *
+     * ⚠️ 拿不到 ⇒ `undefined`（⛔ 不返回 `[]`，与 `genres` 同口径）。
+     * ⚠️ 值一律转成字符串再放进来（数字/数组都要能被模型原样抄回去）。
+     */
+    facts?: string[];
+}
+
+/** 把「标签 + 可能为空的值」拼成硬事实行；空值直接跳过（⛔ 别输出「总集数：」这种半句） */
+function pushFact(out: string[], label: string, value: unknown): void {
+    if (Array.isArray(value)) {
+        const items = value.map((x) => str(x)).filter((x): x is string => !!x);
+        if (items.length) out.push(`${label}：${items.join(' / ')}`);
+        return;
+    }
+    if (typeof value === 'number') {
+        if (Number.isFinite(value)) out.push(`${label}：${value}`);
+        return;
+    }
+    const v = str(value);
+    if (v) out.push(`${label}：${v}`);
+}
+
+/** 空数组 ⇒ undefined（与 `genres` 同口径，⛔ 别把 `[]` 交出去） */
+function factsOf(items: string[]): string[] | undefined {
+    return items.length ? items : undefined;
 }
 
 /** 占位封面色相（0-359）：同一结果稳定同色，不同结果尽量区分 */
@@ -111,6 +146,17 @@ interface SourceRecord {
      * Steam/IGDB/Bangumi/AniList/TMDB 的 `genres` 都会归一到这里。
      */
     genres?: string[];
+    /**
+     * 🔴 m16449：AI 预填要填的**硬事实**（各源字段名不同，读取侧一律走 `pushFact` 转字符串）。
+     * 只声明真正会被读的键 —— 缺省的源安全跳过。
+     */
+    binding?: string;
+    series?: string;
+    authorIntro?: string;
+    toc?: string;
+    pageCount?: number;
+    episodeCount?: number;
+    cast?: string[];
     // 新源查表/封面种子字段（对齐 spec S2，缺省不崩）
     key?: string;
     cover_i?: number;
@@ -293,6 +339,18 @@ function musicView(o: SourceRecord, raw?: string): SearchDisplay {
         sourceUrl: buildSourceUrl(src, o),
         // m15796：曲库结果的题材恒缺（四大平台搜索级都不给流派）⇒ 这里恒 undefined，正合口径
         genres: strArray(o.genres),
+        // 🔴 m16449：音乐的真源比原先交出去的多（专辑名在 `album`、发行年在 `year`、
+        //    曲库还带时长）—— 逐条列成硬事实，让「专辑」这格有据可查而不是靠猜。
+        facts: (() => {
+            const f: string[] = [];
+            // 🔴 「作者」在音乐里是**歌手**（表单 `author` 键、值取 `artist`）——
+            //    不列它，闸口会把真歌手的名字判成「无据」（踩过：music 用例 author 被丢）。
+            pushFact(f, '作者', o.artist);
+            pushFact(f, '专辑', o.album);
+            pushFact(f, '发行年', o.year);
+            pushFact(f, '时长', o.duration);
+            return factsOf(f);
+        })(),
     };
 }
 
@@ -318,6 +376,24 @@ function bookView(o: SourceRecord, raw?: string): SearchDisplay {
         sourceUrl: buildSourceUrl(src, o),
         // m15796：豆瓣书籍 `#info` 没有「类型」行（实测），但 Google Books / OpenLibrary / 微信读书有
         genres: strArray(o.genres),
+        // 🔴 m16449：书籍的真源最全（`#info` 那 8 行全在 `BookSearchResult` 里）——
+        //    出版社 / 译者 / ISBN / 页数 / 装帧 / 作者简介 / 目录 全部照实交给模型。
+        facts: (() => {
+            const f: string[] = [];
+            pushFact(f, '作者', o.author);
+            pushFact(f, '译者', o.translator);
+            pushFact(f, '出版社', o.publisher);
+            pushFact(f, '出品方', o.producer);
+            pushFact(f, 'ISBN', o.isbn);
+            pushFact(f, '页数', o.pageCount);
+            pushFact(f, '装帧', o.binding);
+            pushFact(f, '丛书', o.series);
+            pushFact(f, '画师', o.artist);
+            pushFact(f, '出版年', o.year);
+            pushFact(f, '作者简介', o.authorIntro);
+            pushFact(f, '目录', o.toc);
+            return factsOf(f);
+        })(),
     };
 }
 
@@ -343,6 +419,16 @@ function gameView(o: SourceRecord, raw?: string): SearchDisplay {
         sourceUrl: buildSourceUrl(src, o),
         // m15796：Steam/IGDB 都带题材（Steam 的 genres 由 store 详情归一，IGDB 的 genres 自带）
         genres: strArray(o.genres),
+        // 🔴 m16449：游戏的「开发商 / 平台」是用户最常填错的两格（模型爱写个大概）——
+        //    Steam `developer` / `platforms` 与 IGDB `involved_companies` 都是硬数据，逐条列出。
+        facts: (() => {
+            const f: string[] = [];
+            pushFact(f, '开发商', o.developer);
+            pushFact(f, '发行商', o.publisher);
+            pushFact(f, '平台', o.platform);
+            pushFact(f, '发行年', o.year);
+            return factsOf(f);
+        })(),
     };
 }
 
@@ -366,6 +452,18 @@ function animeView(o: SourceRecord, raw?: string): SearchDisplay {
         sourceUrl: buildSourceUrl(src, o),
         // m15796：Bangumi / AniList 的搜索级结果都带题材（AniList 用 tag 归一）
         genres: strArray(o.genres),
+        // 🔴 m16449：动画的总集数 / 声优 / 制作公司都是硬数据（Bangumi `eps` + `persons`、
+        //    AniList `episodes` + `studios`）⇒ 逐条交出，防止「总集数」靠印象填一个。
+        facts: (() => {
+            const f: string[] = [];
+            pushFact(f, '原名', originalTitle);
+            pushFact(f, '总集数', o.episodeCount);
+            pushFact(f, '制作公司', o.studio);
+            pushFact(f, '导演', o.director);
+            pushFact(f, '主演（声优）', o.cast);
+            pushFact(f, '首播年', o.year);
+            return factsOf(f);
+        })(),
     };
 }
 
@@ -408,6 +506,20 @@ function movieView(o: SourceRecord, raw?: string): SearchDisplay {
         sourceUrl: buildSourceUrl(src, o),
         // m15796：TMDB/IMDb/豆瓣影视都带题材（豆瓣详情页现被登录墙挡，搜索级仍有「类型」）
         genres: strArray(o.genres),
+        // 🔴 m16449：影视的「导演 / 主演 / 总集数」是 AI 预填最容易编的三格 ——
+        //    TMDB `credits` / OMDb `Director|Actors` / 豆瓣详情 `cast` 都是硬数据，逐条列出。
+        facts: (() => {
+            const f: string[] = [];
+            pushFact(f, '原名', originalTitle);
+            pushFact(f, '导演', director);
+            pushFact(f, '主演', o.cast);
+            pushFact(f, '总集数', o.episodeCount);
+            pushFact(f, '国家', country);
+            pushFact(f, '语言', language);
+            pushFact(f, '片长（分钟）', o.durationMin);
+            pushFact(f, '发行年', o.year);
+            return factsOf(f);
+        })(),
     };
 }
 
