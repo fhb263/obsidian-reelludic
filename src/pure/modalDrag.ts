@@ -119,3 +119,62 @@ export function dragIgnored(target: Element | null | undefined): boolean {
 export function dragOffsetIsZero(offset: DragOffset): boolean {
     return offset.x === 0 && offset.y === 0;
 }
+
+// ── 改宽高（用户 m17616：「现在是全屏搜索窗口，不能拖动改宽度」）────────────────
+//
+// 🔴 为什么不能只加「拖动右下角」这一条路：
+//    用户要的是「和别的窗口并排看」。只有角上能拖的话，往右拉宽就必然同时拉高，
+//    并排时更挤。所以三条边都要能拉：右边（只改宽）、下边（只改高）、右下角（两者一起）。
+//
+// ⚠️ 下限不是「好看」，是「还能用」：百度页在 < 420px 宽时结果列表挤成一列看不清，
+//    高度 < 300 时连一行结果都放不下。下限写在这里，UI 层不许各写一份。
+
+/** 弹窗可缩到的最小宽度（再窄百度结果列表就挤成一列看不清） */
+export const MODAL_MIN_WIDTH = 420;
+/** 弹窗可缩到的最小高度（再矮连一行搜索结果都放不下） */
+export const MODAL_MIN_HEIGHT = 300;
+
+/**
+ * 单轴改尺寸后的尺寸（夹到 `[min, max]`）。
+ *
+ * ⚠️ 脏增量的两种语义要分开：
+ *   · `NaN`（算不出来）⇒ 按 0 处理，尺寸原地不动；
+ *   · `±Infinity`（指针拖到无穷远）⇒ 按**该方向的极值**处理，即顶到上限 / 下限。
+ *     ⛔ 别统一按 0 —— 那样「一口气拖到屏幕外」会变成「纹丝不动」，看着像卡死。
+ */
+export function resizeAxisSize(
+    startSize: number,
+    delta: number,
+    min: number,
+    max: number,
+): number {
+    if (!Number.isFinite(startSize)) return min;
+    // `max` 可能小于 `min`（视口比下限还小）⇒ 以 min 为准，否则会写出反向区间
+    const hi = Math.max(min, max);
+    const raw = startSize + delta;
+    if (Number.isNaN(raw)) return startSize;
+    if (raw === Number.POSITIVE_INFINITY) return hi;
+    if (raw === Number.NEGATIVE_INFINITY) return min;
+    const want = raw;
+    if (want < min) return min;
+    if (want > hi) return hi;
+    return want;
+}
+
+/**
+ * 某条边允许的最大尺寸 = 视口该轴 - 2×`margin`（左右各留一点，别顶到屏幕边）。
+ * ⚠️ 与 `min` 取 max：视口比下限还小时宁可溢出，也别缩成不可用。
+ * ⚠️ `min` 必须由调用方按轴传（宽传宽的下限、高传高的下限）——
+ *    早先这里写死 `MODAL_MIN_WIDTH`，高轴在小视口下会被抬到 420 而不是 300。
+ */
+export function resizeMaxSize(
+    viewportSize: number,
+    min: number,
+    margin = DRAG_MARGIN,
+): number {
+    if (!Number.isFinite(viewportSize)) return min;
+    return Math.max(min, viewportSize - margin * 2);
+}
+
+/** 是否是可改尺寸的边（`e` 右边只改宽 / `s` 下边只改高 / `se` 角上一起改） */
+export type ResizeEdge = 'e' | 's' | 'se';

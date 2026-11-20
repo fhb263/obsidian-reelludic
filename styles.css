@@ -15502,11 +15502,49 @@ body .rl-search-input::placeholder {
         · 百分比在 flex 容器遇到极窄/极宽尺寸时会取整到父级初始值，改视口那一下会看到跳动。
    ══════════════════════════════════════════════════════════════════════════ */
 .rl-baidu-modal-shell {
-    /* 弹窗装网页：宽高都按视口上限给，窄屏仍能收（不用固定 px，否则小窗口里会溢出） */
-    width: min(1120px, 92vw);
+    /* 🔴 用户 m17616：「现在是全屏搜索窗口，不能拖动改宽度，所有只能复制一个退出再搜索了」
+       ⇒ 默认给**能并排用的小窗**（约三分之二屏宽 / 不到半屏高），不再是近乎铺满。
+          想放大：拖右缘 / 下缘 / 右下角（见 `.rl-baidu-resize`），不再需要关掉重开。 */
+    width: min(760px, 72vw);
     max-width: 92vw;
-    height: min(820px, 88vh);
+    height: min(560px, 62vh);
     max-height: 88vh;
+    /* 抓手绝对定位在边上，需要它当定位上下文 */
+    position: relative;
+}
+/* ── 改尺寸抓手（用户 m17616：要和别的窗口并排）────────────────────────────
+   ⚠️ 用绝对定位的窄条而不是 padding：不占内容布局（`.rl-baidu-stage` 一寸都不让）。
+   ⚠️ 右缘 8px、下缘 8px 是「够得着但不误触」的取值；角上给 16px 见方更好抓。 */
+.rl-baidu-resize {
+    position: absolute;
+    z-index: 5;
+    /* 抓手本身不可选中，否则拖的时候会起文本选区 */
+    user-select: none;
+}
+.rl-baidu-resize.is-e {
+    top: 0;
+    right: -2px;
+    width: 8px;
+    height: 100%;
+    cursor: ew-resize;
+}
+.rl-baidu-resize.is-s {
+    left: 0;
+    bottom: -2px;
+    width: 100%;
+    height: 8px;
+    cursor: ns-resize;
+}
+.rl-baidu-resize.is-se {
+    right: -2px;
+    bottom: -2px;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+}
+/* 改尺寸期间关掉过渡（否则每帧都被过渡吃掉，拉起来发黏） */
+.rl-baidu-resizing {
+    transition: none;
 }
 .rl-baidu-modal {
     display: flex;

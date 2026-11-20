@@ -23,8 +23,13 @@ import {
     dragIgnored,
     dragOffsetAfter,
     dragOffsetIsZero,
+    MODAL_MIN_HEIGHT,
+    MODAL_MIN_WIDTH,
+    resizeAxisSize,
+    resizeMaxSize,
     type DragBox,
     type DragOffset,
+    type ResizeEdge,
 } from 'pure/modalDrag';
 
 export interface BaiduSearchOptions {
@@ -100,8 +105,111 @@ export class BaiduSearchModal extends Modal {
             });
         }
 
-        // 最后装拖动：此时 modalEl 已被 Obsidian 摆到最终位置，量出来的 rect 才可信
+        // 最后装拖动与改尺寸：此时 modalEl 已被 Obsidian 摆到最终位置，量出来的 rect 才可信
         this.attachDrag(head);
+        this.attachResize();
+    }
+
+    /**
+     * 改完尺寸后重新夹一次位移。
+     *
+     * 🔴 场景（真会踩）：用户把弹窗拖到贴右下角 → 再拉大宽度 → 右边缘立刻超出视口。
+     *    拖动那一刻是合法的（当时还小），变大的那一刻才越界。
+     *    ⇒ 尺寸一变就得按新盒子重算允许区间，⛔ 别只在 pointerdown 时夹一次。
+     */
+    private reclampOffset(): void {
+        const { modalEl } = this;
+        const rect = modalEl.getBoundingClientRect();
+        const box: DragBox = {
+            left: rect.left - this.offset.x,
+            top: rect.top - this.offset.y,
+            width: rect.width,
+            height: rect.height,
+        };
+        const viewport = { width: window.innerWidth, height: window.innerHeight };
+        const clamped = clampDragOffset(this.offset, box, viewport);
+        this.offset = clamped;
+        if (dragOffsetIsZero(clamped)) {
+            modalEl.style.removeProperty('transform');
+            return;
+        }
+        modalEl.style.transform = `translate(${clamped.x}px, ${clamped.y}px)`;
+    }
+
+    /**
+     * 三条可改尺寸的边（右 / 下 / 右下角）。
+     *
+     * 🔴 为什么三条都要（用户 m17616 原话「现在是全屏搜索窗口，不能拖动改宽度，
+     *    所有只能复制一个退出再搜索了」）：他要的是**和别的窗口并排**。
+     *    只给角上一条路的话，往右拉宽必然同时拉高，并排时更挤 ⇒ 右边必须能单独改宽。
+     * ⚠️ 抓手是绝对定位在 modalEl 边上的窄条，不占内容布局（不挤压 `.rl-baidu-stage`）。
+     */
+    private attachResize(): void {
+        const { modalEl } = this;
+        const add = (edge: ResizeEdge, cls: string, tip: string): void => {
+            const grip = modalEl.createDiv({ cls: `rl-baidu-resize ${cls}` });
+            grip.setAttribute('aria-hidden', 'true');
+            grip.setAttribute('data-tip', tip);
+            grip.addEventListener('pointerdown', (ev: PointerEvent) => {
+                if (ev.button !== 0) return;
+                ev.preventDefault();
+                ev.stopPropagation();
+                const rect = modalEl.getBoundingClientRect();
+                const startW = rect.width;
+                const startH = rect.height;
+                const startX = ev.clientX;
+                const startY = ev.clientY;
+                const vp = { width: window.innerWidth, height: window.innerHeight };
+
+                modalEl.addClass('rl-baidu-resizing');
+                try {
+                    grip.setPointerCapture(ev.pointerId);
+                } catch {
+                    /* 捕获失败不影响拖动 */
+                }
+
+                const onMove = (m: PointerEvent): void => {
+                    if (m.pointerId !== ev.pointerId) return;
+                    if (edge === 'e' || edge === 'se') {
+                        modalEl.style.width = `${resizeAxisSize(
+                            startW,
+                            m.clientX - startX,
+                            MODAL_MIN_WIDTH,
+                            resizeMaxSize(vp.width, MODAL_MIN_WIDTH),
+                        )}px`;
+                    }
+                    if (edge === 's' || edge === 'se') {
+                        modalEl.style.height = `${resizeAxisSize(
+                            startH,
+                            m.clientY - startY,
+                            MODAL_MIN_HEIGHT,
+                            resizeMaxSize(vp.height, MODAL_MIN_HEIGHT),
+                        )}px`;
+                    }
+                };
+                const onUp = (): void => {
+                    grip.removeEventListener('pointermove', onMove);
+                    grip.removeEventListener('pointerup', onUp);
+                    grip.removeEventListener('pointercancel', onUp);
+                    try {
+                        grip.releasePointerCapture(ev.pointerId);
+                    } catch {
+                        /* 已被系统释放 */
+                    }
+                    modalEl.removeClass('rl-baidu-resizing');
+                    // 🔴 改完尺寸必须重新夹一次位移：窗变高/变宽后，原来的 offset 可能把
+                    //    右下角顶出视口（拖的时候没超，拉大之后超了）。
+                    this.reclampOffset();
+                };
+                grip.addEventListener('pointermove', onMove);
+                grip.addEventListener('pointerup', onUp);
+                grip.addEventListener('pointercancel', onUp);
+            });
+        };
+
+        add('e', 'is-e', '拖动改宽度（不影响高度）');
+        add('s', 'is-s', '拖动改高度（不影响宽度）');
+        add('se', 'is-se', '拖动同时改宽高');
     }
 
     /**

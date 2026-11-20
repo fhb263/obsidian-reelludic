@@ -10,11 +10,15 @@ import { resolve } from 'node:path';
 import {
     DRAG_IGNORE_SELECTOR,
     DRAG_MARGIN,
+    MODAL_MIN_HEIGHT,
+    MODAL_MIN_WIDTH,
     clampDragOffset,
     dragAxisRange,
     dragIgnored,
     dragOffsetAfter,
     dragOffsetIsZero,
+    resizeAxisSize,
+    resizeMaxSize,
 } from '../src/pure/modalDrag';
 
 const ROOT = resolve(__dirname, '..');
@@ -163,8 +167,85 @@ describe('弹窗装配（把手 / transform / 解绑）', () => {
     });
 });
 
-describe('拖动样式（可拖的视觉提示）', () => {
-    it('把手有 grab / grabbing 光标且禁选中（不然拖时会选中标题文字）', () => {
+describe('改尺寸（用户 m17616：要和别的窗口并排，不能只能关掉重开）', () => {
+    it('尺寸夹到 [min, max]，超下限就停在 min（不是 0、不是负数）', () => {
+        expect(resizeAxisSize(800, -5000, MODAL_MIN_WIDTH, 2000)).toBe(MODAL_MIN_WIDTH);
+        expect(resizeAxisSize(800, 5000, MODAL_MIN_WIDTH, 2000)).toBe(2000);
+        expect(resizeAxisSize(800, 120, MODAL_MIN_WIDTH, 2000)).toBe(920);
+    });
+
+    it('脏增量（NaN / Infinity）不让窗口塌成 NaNpx', () => {
+        expect(resizeAxisSize(800, Number.NaN, MODAL_MIN_WIDTH, 2000)).toBe(800);
+        expect(resizeAxisSize(800, Number.POSITIVE_INFINITY, MODAL_MIN_WIDTH, 2000)).toBe(2000);
+        expect(resizeAxisSize(Number.NaN, 100, MODAL_MIN_WIDTH, 2000)).toBe(MODAL_MIN_WIDTH);
+    });
+
+    it('🔴 视口比下限还小时，max 不许低于 min（否则 setter 拿到反向区间）', () => {
+        // 视口宽度只有 300，比 MODAL_MIN_WIDTH=420 还小
+        const max = resizeMaxSize(300, MODAL_MIN_WIDTH);
+        expect(max).toBeGreaterThanOrEqual(MODAL_MIN_WIDTH);
+        // 此时 resizeAxisSize 用 max=max(300-24,420)=420 ⇒ 结果仍是 420，不会比 min 小
+        expect(resizeAxisSize(420, 100, MODAL_MIN_WIDTH, max)).toBe(420);
+    });
+
+    it('max = 视口 - 2×margin，且不低于该轴自己的下限', () => {
+        expect(resizeMaxSize(1400, MODAL_MIN_WIDTH)).toBe(1400 - DRAG_MARGIN * 2);
+        // 高轴传高的下限：小视口下不能把高抬到宽的 420
+        expect(resizeMaxSize(200, MODAL_MIN_HEIGHT)).toBe(MODAL_MIN_HEIGHT);
+    });
+
+    it('宽高下限是「还能用」而不是好看：百度结果列表窄了就挤成一列', () => {
+        expect(MODAL_MIN_WIDTH).toBeGreaterThanOrEqual(400);
+        expect(MODAL_MIN_HEIGHT).toBeGreaterThanOrEqual(280);
+    });
+
+    it('装配：三条边都建了抓手（右/下/角），且只认左键', () => {
+        const code = stripComments(modalSrc);
+        expect(code).toContain("add('e', 'is-e',");
+        expect(code).toContain("add('s', 'is-s',");
+        expect(code).toContain("add('se', 'is-se',");
+        // 🔴 右边只改宽、下边只改高 —— 并排时用户要的是「只改宽不拉高」
+        expect(code).toContain("if (edge === 'e' || edge === 'se')");
+        expect(code).toContain("if (edge === 's' || edge === 'se')");
+    });
+
+    it('改完尺寸重新夹位移（拉大后右下角会被顶出视口）', () => {
+        const code = stripComments(modalSrc);
+        const iResize = code.indexOf('private attachResize()');
+        const iReclamp = code.indexOf('this.reclampOffset();', iResize);
+        expect(iReclamp).toBeGreaterThan(iResize);
+        expect(code).toContain('private reclampOffset(): void {');
+    });
+
+    it('抓手绝对定位、不占内容布局，且三种光标各对应各的边', () => {
+        const css = stripComments(cssSrc);
+        expect(css).toMatch(/\.rl-baidu-resize\s*\{[^}]*position:\s*absolute/);
+        expect(css).toMatch(/\.rl-baidu-resize\.is-e\s*\{[^}]*cursor:\s*ew-resize/);
+        expect(css).toMatch(/\.rl-baidu-resize\.is-s\s*\{[^}]*cursor:\s*ns-resize/);
+        expect(css).toMatch(/\.rl-baidu-resize\.is-se\s*\{[^}]*cursor:\s*nwse-resize/);
+    });
+
+    it('🔴 默认尺寸不再是近乎全屏（用户抱怨的原始症状）', () => {
+        const css = stripComments(cssSrc);
+        const block = css.match(/\.rl-baidu-modal-shell\s*\{[^}]*\}/)?.[0] ?? '';
+        // 旧的 min(1120px, 92vw) / min(820px, 88vh) 必须消失
+        expect(block).not.toContain('1120px');
+        expect(block).not.toContain('820px');
+        // 新值必须是「小窗」档：宽度上限 ≤ 800，高度上限 ≤ 600
+        const w = Number(block.match(/min\((\d+)px,\s*72vw\)/)?.[1] ?? '9999');
+        const h = Number(block.match(/min\((\d+)px,\s*62vh\)/)?.[1] ?? '9999');
+        expect(w).toBeLessThanOrEqual(800);
+        expect(h).toBeLessThanOrEqual(600);
+    });
+
+    it('弹窗是抓手的定位上下文（否则 absolute 会跑到视口外）', () => {
+        const css = stripComments(cssSrc);
+        const block = css.match(/\.rl-baidu-modal-shell\s*\{[^}]*\}/)?.[0] ?? '';
+        expect(block).toContain('position: relative');
+    });
+});
+
+describe('拖动样式（可拖的视觉提示）', () => {    it('把手有 grab / grabbing 光标且禁选中（不然拖时会选中标题文字）', () => {
         const css = stripComments(cssSrc);
         expect(css).toMatch(/\.rl-baidu-drag\s*\{[^}]*cursor:\s*grab/);
         expect(css).toMatch(/\.rl-baidu-drag\s*\{[^}]*user-select:\s*none/);
