@@ -3707,7 +3707,9 @@
                     {#if !wallView}
                         <div class="rl-row1">
                             <span class="rl-badge rl-badge-{e.status}" on:click={(ev) => { ev.stopPropagation(); toggleMenu(e.id); }}>
-                                {statusIcon(e.status)} {maskCardText(ch, statusLabel(e.type, e.status))}
+                                <!-- 🔴 m20436：状态**不打码**（用户：「信息栏的状态就不要隐藏了」）——
+                                     状态决定「要不要点开」，属于导航信息，不是内容剧透。 -->
+                                {statusIcon(e.status)} {statusLabel(e.type, e.status)}
                             </span>
                             {#if e.rating > 0}
                                 <!-- 🔴 #619 半星：星**不用字符**渲染（U+2BE8 字体覆盖不稳，实测成残缺星形），
@@ -3994,7 +3996,8 @@
                         <div class="rl-row1">
                             {#if gStatus}
                                 <span class="rl-badge rl-badge-{gStatus}" data-tip={`系列状态：${statusLabel(g.type, gStatus)}`}>
-                                    {statusIcon(gStatus)} {maskCardText(gch, statusLabel(g.type, gStatus))}
+                                <!-- 🔴 m20436：状态徽标不打码（同上；且 `data-tip` 本来就写着状态，打码只会自相矛盾）。 -->
+                                    {statusIcon(gStatus)} {statusLabel(g.type, gStatus)}
                                 </span>
                             {/if}
                             <!-- 🔴 用户 2026-10-27 裁定「加合集分 · 海报墙上同单卡同位」：
@@ -5037,22 +5040,22 @@
     /* 卡片统一尺寸：列内 flex 等高，meta 区域最小高度保证各类型（电影/剧集/动画/书籍/游戏）
        的卡片在视觉上同高，进度行贴底对齐 */
     .rl-card { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-card-radius, var(--rl-t-radius-lg, 8px)); overflow: hidden; cursor: pointer; position: relative; display: flex; flex-direction: column; }
-    /* 🔴 m19456 ①（用户逐字）：「隐藏条目卡片功能项（仅封面蒙板，信息栏信息全用*号替代）」
-       ⇒ 推翻 m19210 那版「封面 + 信息栏一起模糊」。现在两件事分开做：
-         · 封面：用 `::after` 盖一层半透明蒙板（图案照旧透出来，只是压暗）——
-           ⛔ 不用 `backdrop-filter`（一屏几十张卡会掉帧）；⛔ 也不用加模板节点（那是多一处 DOM）。
-           层级 8：要压过 hover 遮罩(6) 与播放钮(7)，否则鼠标一移上去蒙板就被按钮顶开，「藏」不住了。
-           点击穿透靠 `pointer-events: none` —— 蒙板是纯展示层，别吃掉卡片点击。
-         · 信息栏：文字在**模板里**换成星号（见 `pure/cardHidden.maskCardText`），
-           所以这里只剩「徽标内的图标也压暗一点」这一件事，⛔ 别在这里糊文字。
-       ⚠️ 边缘溢出由 `.rl-card { overflow: hidden }` 兜住（蒙板贴 `inset: 0`，本来也不外扩）。 */
-    .rl-card.is-card-hidden .rl-cov-wrap::after {
-        content: ''; position: absolute; inset: 0; z-index: 8;
-        background: repeating-linear-gradient(135deg, rgba(0, 0, 0, .58) 0 10px, rgba(0, 0, 0, .46) 10px 20px);
-        pointer-events: none;
+    /* 🔴 m20436（用户逐字）：「这隐藏该条目笔记的封面蒙板怎么这么清晰改成原来模糊的效果，
+       另外信息栏的状态就不要隐藏了」⇒ 推翻 m19456 ① 那版「斜纹蒙板」，两件事分开做：
+         · 封面：回到 **m19210 的模糊**（`blur(6px) saturate(.55)` + `opacity: .6`）。
+           上一版的 `repeating-linear-gradient` 斜纹虽然「盖住了」，但图案边缘极清晰 ——
+           用户要的是「糊掉」不是「盖住」。⛔ 别再加 `::after` 蒙板（两层叠起来更脏）。
+           过渡只列 `filter`/`opacity`：写 `all` 会让 hover 的 `box-shadow`/`transform` 也拖帧。
+         · 信息栏：**只模糊封面、不打码信息栏** —— 文字仍由模板 `pure/cardHidden.maskCardText` 换成 `***`。 */
+    .rl-card.is-card-hidden .rl-cov-wrap {
+        filter: blur(6px) saturate(0.55);
+        opacity: 0.6;
+        transition: filter 140ms ease, opacity 140ms ease;
     }
-    /* 信息栏里「非文字」的那点信息（状态图标、星）也压暗 —— 文字本身已经被星号替换了。 */
-    .rl-card.is-card-hidden .rl-card-meta .rl-badge,
+    /* 🔴 m20436：**状态徽标不藏**（用户：「信息栏的状态就不要隐藏了」）——
+       状态是「我想不想看」的首要判断依据，藏了这张卡就没法判断要不要点开。
+       ⚠️ 所以这条**只压暗星**，⛔ 别把 `.rl-badge` 加回来。
+       ⚠️ 信息栏本体**不整块 `filter: blur()`**：那会把 `***` 一起糊成墨点，比打码更难看。 */
     .rl-card.is-card-hidden .rl-card-meta .rl-my-inline { opacity: .55; }
     /* 打码后的星号占位文本（与 `.rl-sub` 同字号，避免这一行比平时高或矮）。 */
     .rl-masked-text { font-size: 11px; color: var(--text-faint); letter-spacing: .5px; }

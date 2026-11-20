@@ -128,32 +128,41 @@ describe('⑤ 卡片渲染与 CSS 边界', () => {
         expect(listCode).toContain('class:is-card-hidden={seriesCardHidden(g.items)}');
     });
 
-    it('🔴 封面只盖蒙板（⛔ 不再模糊）—— 蒙板是 `::after`，压过 hover 遮罩与播放钮', () => {
-        // 🔴 m19456 用户改判：「仅封面蒙板，信息栏信息全用*号替代」。
-        //    上一版（m19210）的 `filter: blur(...)` 被推翻 ⇒ 这条判据跟着换形态，⛔ 不是放宽。
-        const rule = /\.rl-card\.is-card-hidden \.rl-cov-wrap::after\s*\{[\s\S]{0,400}?\}/.exec(listCode)?.[0] ?? '';
-        expect(rule).toContain('position: absolute');
-        expect(rule).toContain('inset: 0');
-        // 蒙板必须压过 hover 遮罩（z-index 6）与播放钮（7），否则鼠标一移上去就露馅
-        expect(rule).toMatch(/z-index:\s*[89]\d*;/);
-        // 纯展示层：不许吃掉卡片点击
-        expect(rule).toContain('pointer-events: none');
-        // 反向守卫：模糊那一整套必须彻底退场（含 saturate 与那条 transition）
-        expect(listCode).not.toMatch(/is-card-hidden[^{]*\{[^}]*filter:\s*blur\(/);
-        expect(listCode).not.toMatch(/is-card-hidden[^{]*\{[^}]*saturate\(/);
+    it('🔴 封面用**模糊**（m20436 推翻 m19456 的斜纹蒙板）', () => {
+        // 🔴 m20436 用户逐字：「隐藏该条目笔记的封面蒙板怎么这么清晰改成原来模糊的效果」。
+        //    m19456 那版斜纹蒙板（`::after` + 重复斜向渐变）虽然盖住了，但图案边缘极清晰 ——
+        //    用户要的是「糊掉」而不是「盖住」⇒ 回到 m19210 的 blur。⛔ 这条不是放宽，是口径翻面。
+        const rule = /\.rl-card\.is-card-hidden \.rl-cov-wrap\s*\{[\s\S]{0,400}?\}/.exec(listCode)?.[0] ?? '';
+        expect(rule).toContain('filter: blur(6px) saturate(0.55)');
+        expect(rule).toContain('opacity: 0.6');
+        // 过渡只列两个属性（写 all 会让 hover 的 box-shadow / transform 也拖帧）
+        expect(rule).toContain('transition: filter 140ms ease, opacity 140ms ease');
+        // 反向守卫：斜纹蒙板那一整套必须彻底退场（两层叠起来更脏）
+        expect(listCode).not.toContain('repeating-linear-gradient');
+        expect(listCode).not.toMatch(/\.rl-card\.is-card-hidden \.rl-cov-wrap::after/);
     });
 
-    it('🔴 信息栏文字全部走 `maskCardText`（全仓唯一打码出口）', () => {
-        // 标题 / 五行元信息 / 状态徽标 —— 三处都要打码，漏一处就漏文字。
+    it('🔴 信息栏文字走 `maskCardText`，但**状态徽标除外**（m20436）', () => {
+        // 标题 / 元信息行 —— 打码。
         expect(listCode).toContain('{maskCardText(ch, e.title)}');
         expect(listCode).toContain('{maskCardText(ch, cardFieldValue(e, row.f))}');
-        expect(listCode).toContain('{maskCardText(ch, statusLabel(e.type, e.status))}');
-        // 系列卡同款三处
+        // 系列卡同款
         expect(listCode).toContain('{maskCardText(gch, g.title)}');
         expect(listCode).toContain('{maskCardText(gch, seriesCardFieldValue(g, row.f))}');
-        expect(listCode).toContain('{maskCardText(gch, statusLabel(g.type, gStatus))}');
+        // 🔴 m20436 用户逐字：「信息栏的状态就不要隐藏了」⇒ 状态**必须**直出明文，两种卡都一样。
+        expect(listCode).toContain('{statusIcon(e.status)} {statusLabel(e.type, e.status)}');
+        expect(listCode).toContain('{statusIcon(gStatus)} {statusLabel(g.type, gStatus)}');
+        // 反向守卫：⛔ 别把状态再包回 maskCardText（藏了状态就没法判断这张卡要不要点开）
+        expect(listCode).not.toMatch(/maskCardText\([^)]*statusLabel/);
         // 反向守卫：⛔ 别在模板里内联第二份打码逻辑（改文案时必漏一处）
         expect(listCode).not.toMatch(/\?\s*'\*\*\*'/);
+    });
+
+    it('🔴 状态徽标不压暗（m20436）—— 只有星还被压暗', () => {
+        // 用户：「信息栏的状态就不要隐藏了」⇒ `.rl-badge` 不许出现在 is-card-hidden 的压暗规则里。
+        expect(listCode).not.toMatch(/is-card-hidden[^{]*\.rl-badge[^{]*\{[^}]*opacity/);
+        // 星仍然压暗（星已被打码成 ***，压暗只是让这一行更弱化）
+        expect(listCode).toContain('.rl-card.is-card-hidden .rl-card-meta .rl-my-inline { opacity: .55; }');
     });
 
     it('🔴 星级：隐藏时连星带读屏名一起换掉（星星个数本身也是信息）', () => {
