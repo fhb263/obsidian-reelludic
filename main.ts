@@ -33,6 +33,8 @@ import type { AiPrefillOutcome } from 'services/aiPrefill';
 import type { AiPrefillInput } from 'pure/aiPrefill';
 import { PREFILL_GENRES_PREFIX, PREFILL_SYNOPSIS_PREFIX, PREFILL_TOOL_FETCH_PAGE, PREFILL_TOOL_METADATA, PREFILL_TOOL_WEB_SEARCH } from 'pure/aiPrefill';
 import { BING_SEARCH_UA, bingResultsToText, buildBingRssUrl, compactBingQuery, parseBingRss } from 'pure/bingSearch';
+// 🔴 m16766：平台原生联网检索（DeepSeek / 智谱），不可用时回落必应 —— 见 `runNativeWebSearch`。
+import { aiSearchLabel, aiSearchProviderOf, aiSearchResultsToText, buildAiSearchRequest, nativeSearchHttpIssue, parseAiSearch, type AiSearchProvider } from 'pure/aiWebSearch';
 // 🔴 m15796：`extractPageGenres`（题材）与「按小节切简介」一并接进来
 import { PAGE_TEXT_MAX, extractPageGenres, extractPageSynopsis, pageReadableText } from 'pure/pageText';
 import { describeSearchResult, synopsisOf, type SearchResult } from 'pure/searchDisplay';
@@ -11551,10 +11553,72 @@ export default class ReelLudicPlugin extends Plugin {
     }
 
     /**
+     * 🔴 m16766：本次预填该用哪家的**原生联网检索**（`null` ⇒ 走必应 RSS）。
+     *
+     * 判据只有两条：这家有官方搜索接口（`aiSearchProviderOf` 唯一真源）且**真的填了 Key**。
+     * ⚠️ Key 与聊天共用同一把（`aiKeyField`）—— 不新开字段（#480 口径：同一账号不重复要凭据）。
+     */
+    private nativeWebSearchProvider(): AiSearchProvider | null {
+        const provider = aiSearchProviderOf(normalizeProvider(this.settings.readerPrefillProvider));
+        if (!provider) return null;
+        const key = (this.settings as unknown as Record<string, unknown>)[aiKeyField(provider)];
+        return typeof key === 'string' && key.trim() ? provider : null;
+    }
+
+    /**
+     * 🔴 m16766：调平台原生检索。
+     *
+     * 返回 `{ text }` = 成功（给模型看的文本）；`{ issue }` = 拿不到（**必须回落必应**，且把原因带进文本）。
+     *
+     * 为什么不抛异常：`web_search` 是「顺便查个资料」的工具，额度用完 / 网络抖动都属常态，
+     * 抛出去会把整条预填回路打断（用户拿到「失败」而不是「一个差一点的答案」）。与
+     * `runPrefillTool` 头注释那条「工具失败不抛」同口径。
+     *
+     * 🔴🔴 为什么**一定要把降级原因说出来**（而不是静默回落）：实测用户那把智谱 Key
+     *  `POST /api/paas/v4/web_search` 返回 **HTTP 429 / `{"error":{"code":"1113","message":"余额不足或无可用资源包,请充值。"}}`**
+     *  ⇒ 原生检索一次都没成功、全部静默落到必应两行摘要，而用户完全无从知道「为什么我的 AI 还在编」。
+     *  原因写进工具结果，模型会转述给用户（也让设置页之外多一个能自证的口子）。
+     *
+     * ⚠️ 返回文本里**必须标出检索通道**（`（来源：DeepSeek 官方检索）`）：模型据此知道自己
+     *    拿到的是带权威性排序的结果还是必应的两行摘要 —— 两者可信度不同，它会据此决定要不要再抓页面。
+     */
+    private async runNativeWebSearch(
+        provider: AiSearchProvider,
+        query: string,
+    ): Promise<{ text: string } | { issue: string }> {
+        const key = String((this.settings as unknown as Record<string, unknown>)[aiKeyField(provider)] ?? '').trim();
+        const req = buildAiSearchRequest(provider, query, key);
+        if (!req) return { issue: '没给搜索词或没填这把 Key' };
+        try {
+            const res = await requestUrl({
+                url: req.url,
+                method: req.method,
+                contentType: req.contentType,
+                headers: req.headers,
+                body: req.body,
+                throw: false,
+            });
+            if (res.status !== 200) return { issue: nativeSearchHttpIssue(res.status, res.text) };
+            const hits = parseAiSearch(provider, res.text);
+            if (!hits.length) return { issue: '接口通了但没有返回任何结果' };
+            const text = aiSearchResultsToText(hits);
+            if (!text) return { issue: '返回的结果都缺标题与链接' };
+            return {
+                text:
+                    `搜索「${query}」（来源：${aiSearchLabel(provider)}）的前 ${hits.length} 条结果：\n${text}\n` +
+                    '（〔权威 x/4 · 相关 x.x〕是该平台给出的可信度评估：权威 ≥3 基本是官方/权威站点，' +
+                    '相关 ≥1.5 算优质命中。要读正文用 `' + PREFILL_TOOL_FETCH_PAGE + '`。）',
+            };
+        } catch (e) {
+            return { issue: `请求异常：${e instanceof Error ? e.message : String(e)}` };
+        }
+    }
+
+    /**
      * 🔴 #499D：AI 预填的**工具执行器**（agent 回路的「本地那一半」）。
      *
      * · `lookup_metadata` ⇒ 复用**插件自己的**类型搜索链（各源客户端早就在跑，⛔ 不另写一份 HTTP）
-     * · `web_search` ⇒ **必应 RSS**（`pure/bingSearch`；实测 200 + 10 条结构化结果、免费无需 Key）
+     * · `web_search` ⇒ **平台原生检索**（DeepSeek / 智谱）；不可用或空手时回落**必应 RSS**（`pure/bingSearch`）
      *
      * ⚠️ 返回的是**给模型看的短文本**（不是给界面用的对象）：工具输出越短越准，
      *    这里每条只留「标题 / 年份 / 来源 / 评分 / 类型」这一档信息。
@@ -11566,6 +11630,27 @@ export default class ReelLudicPlugin extends Plugin {
 
         if (name === PREFILL_TOOL_WEB_SEARCH) {
             const query = str('query');
+            // 🔴🔴 m16766（用户 2026-11-20：「AI生成的元数据从哪里来，为什么不能像网页正常AI搜索
+            //    那样获取权威元数据」）：`web_search` 原先**只有必应 RSS 一条路** —— 每条结果只有
+            //    标题 + 两行摘要，中文多段查询还会被逐字拆词。而「网页版 AI 搜索」给的是平台侧
+            //    深度检索 + 权威性排序 + 长摘要（600~800 字）⇒ 两者不是同一量级，用户体感自然是
+            //    「你这像在编」。现在**先走平台原生检索**，拿不到才回落必应。
+            //
+            // 分流口径（见 `pure/aiWebSearch.aiSearchProviderOf`，唯一真源）：
+            //   · DeepSeek ⇒ `POST /v1/tools/search`（带 `authority` 0~4 / `rerank_score` 0~3）
+            //   · 智谱     ⇒ `POST /api/paas/v4/web_search`（`search_pro` 多引擎、长片段）
+            //   · 硅基流动 / 自定义槽位 ⇒ **没有第一方搜索接口** ⇒ 直接走必应
+            // ⚠️ 任何失败（没 Key / HTTP 非 200 / 解析不出结果）**都必须回落**必应：
+            //    这条回路是「预填时顺便查个资料」，⛔ 不能因为搜索额度用完就整条预填失败。
+            // 🔴 但回落**不能静默**：把失败原因原样带进结果文本（`nativeIssue`），模型会转述给用户。
+            //    实测用户那把智谱 Key 一直是 429/余额不足，静默降级会让他完全看不出「为什么还在编」。
+            const native = this.nativeWebSearchProvider();
+            let nativeIssue = '';
+            if (native) {
+                const nativeRes = await this.runNativeWebSearch(native, query);
+                if ('text' in nativeRes) return nativeRes.text;
+                nativeIssue = nativeRes.issue;
+            }
             const url = buildBingRssUrl(query);
             if (!url) return '（没给搜索词）';
             const res = await requestUrl({
@@ -11580,7 +11665,15 @@ export default class ReelLudicPlugin extends Plugin {
             //    不说清楚它会拿「修饰词被忽略」的旧认知继续往下走。⛔ 别把这段提示删掉。
             const used = compactBingQuery(query);
             const note = used !== query ? `（只保留了作品名「${used}」，修饰词会被搜索引擎忽略）` : '';
-            return `搜索「${query}」${note}的前 ${items.length} 条结果：\n${bingResultsToText(items)}`;
+            // 🔴 降级说明放在**标题行之后**（摘要正文之前）：既让模型第一眼看到「这批结果不可信」，
+            //    又不会破坏 `bingResultsToText` 的行结构。
+            const warn = nativeIssue
+                ? `\n⚠️ 平台原生检索没成功（${nativeIssue}）⇒ 下面这些只是必应 RSS 的标题+短摘要，` +
+                  '可信度明显低一档：⛔ 别把它们当权威依据去补全字段，能抓正文就交给 `' +
+                  PREFILL_TOOL_FETCH_PAGE +
+                  '`。\n'
+                : '';
+            return `搜索「${query}」${note}的前 ${items.length} 条结果：${warn}${bingResultsToText(items)}`;
         }
 
         if (name === PREFILL_TOOL_METADATA) {
