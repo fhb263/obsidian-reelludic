@@ -15524,6 +15524,30 @@ body .rl-search-input::placeholder {
     flex: 0 0 auto;
     flex-wrap: wrap;
 }
+
+/* ── 拖动（用户 m17476：「要像微信扫码登录弹出的那个界面一样可拖动」）───────────
+   🔴 参照物是独立 OS 窗口（`openWereadWindow` 的 `new BrowserWindow`），拖动由系统标题栏提供；
+      内嵌 Modal 没有标题栏 ⇒ 头部当把手，见 `modals/BaiduSearchModal.attachDrag`。
+   ⚠️ `user-select: none` 是硬要求：拖动时若允许选字，会先起一个文本选区、再跟着移动，
+      表现是「拖着拖着标题被选中一大片、指针还变成 I 形」。
+   ⚠️ 拖动期间动的是 `transform`（不参与布局），所以这里**只加过渡**、不加 `left/top` 过渡。 */
+.rl-baidu-drag {
+    cursor: grab;
+    user-select: none;
+}
+.rl-baidu-drag:active {
+    cursor: grabbing;
+}
+/* 拖动中关掉过渡：留着会让弹窗「黏」在指针后面追，松手还多滑一小段 */
+.rl-baidu-dragging {
+    transition: none;
+}
+/* 把手靠边那一侧的按钮不该继承 grab 光标（它们仍是普通按钮） */
+.rl-baidu-drag button,
+.rl-baidu-drag a,
+.rl-baidu-drag input {
+    cursor: pointer;
+}
 .rl-baidu-query {
     font-size: var(--font-ui-small);
     color: var(--text-muted);

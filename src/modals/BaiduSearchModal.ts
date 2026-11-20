@@ -18,6 +18,14 @@
 import { App, Modal, Notice } from 'obsidian';
 import { mountEmbedHost, type EmbedHost } from 'services/gameEmbedHost';
 import { baiduSearchQuery, baiduSearchUrlFor, baiduQueryIsEmpty } from 'pure/baiduSearch';
+import {
+    clampDragOffset,
+    dragIgnored,
+    dragOffsetAfter,
+    dragOffsetIsZero,
+    type DragBox,
+    type DragOffset,
+} from 'pure/modalDrag';
 
 export interface BaiduSearchOptions {
     /** 条目标题（可能为空 —— 新条目还没填） */
@@ -31,6 +39,10 @@ export interface BaiduSearchOptions {
 export class BaiduSearchModal extends Modal {
     private host: EmbedHost | null = null;
     private url = '';
+    /** 当前拖动位移（相对布局位置的附加位移） */
+    private offset: DragOffset = { x: 0, y: 0 };
+    /** 拖动中解绑指针监听用（`onClose` 兜底清掉，防拖到一半关窗留下悬挂监听） */
+    private detachDrag: (() => void) | null = null;
 
     constructor(app: App, private readonly opts: BaiduSearchOptions) {
         super(app);
@@ -54,7 +66,6 @@ export class BaiduSearchModal extends Modal {
                 ? '标题与作者都是空的 —— 已打开百度首页，直接在里面搜就行'
                 : `正在百度搜索：${query}`,
         });
-
         const acts = head.createDiv({ cls: 'rl-baidu-acts' });
 
         const reload = acts.createEl('button', { cls: 'rl-btn', text: '重新加载' });
@@ -88,9 +99,95 @@ export class BaiduSearchModal extends Modal {
                 text: '当前环境不支持内嵌窗口（webview），已降级为 iframe —— 百度可能要求人机验证，可点右上「在浏览器打开」。',
             });
         }
+
+        // 最后装拖动：此时 modalEl 已被 Obsidian 摆到最终位置，量出来的 rect 才可信
+        this.attachDrag(head);
+    }
+
+    /**
+     * 让整个弹窗能被「按住头部拖动」。
+     *
+     * 🔴 参照物是独立窗口（用户 m17476）：微信读书扫码那一档走 `openWereadWindow()` 的
+     *    `new BrowserWindow(...)`，拖动由系统标题栏提供。内嵌 Modal 没有标题栏 ⇒ 用头部当把手。
+     * ⚠️ 头部里的按钮由 `dragIgnored` 放行（否则 `preventDefault()` 会把 click 吞掉）。
+     * ⚠️ 用 `transform` 而非 `left/top`：`.modal` 是 flex 居中，写死 left/top 会与居中规则打架。
+     */
+    private attachDrag(handle: HTMLElement): void {
+        const { modalEl } = this;
+        handle.addClass('rl-baidu-drag');
+        handle.setAttribute('data-tip', '按住这一行可以拖动整个窗口');
+
+        handle.addEventListener('pointerdown', (ev: PointerEvent) => {
+            // 左键 / 单指才拖；中键、右键放行给宿主
+            if (ev.button !== 0) return;
+            if (dragIgnored(ev.target as Element | null)) return;
+
+            ev.preventDefault();
+            const start = { ...this.offset };
+            const startX = ev.clientX;
+            const startY = ev.clientY;
+            // 🔴 每次拖动现量一次：窗口尺寸可能在两次拖动之间变了（用户拉过 Obsidian 窗口）
+            const rect = modalEl.getBoundingClientRect();
+            // ⚠️ 必须是「未位移」的盒子：rect 已含上次 transform，直接拿来算会越拖越偏
+            const box: DragBox = {
+                left: rect.left - start.x,
+                top: rect.top - start.y,
+                width: rect.width,
+                height: rect.height,
+            };
+            const viewport = { width: window.innerWidth, height: window.innerHeight };
+
+            modalEl.addClass('rl-baidu-dragging');
+            try {
+                handle.setPointerCapture(ev.pointerId);
+            } catch {
+                /* 捕获失败不影响拖动（move 仍会在元素上触发） */
+            }
+
+            const apply = (next: DragOffset): void => {
+                const clamped = clampDragOffset(next, box, viewport);
+                this.offset = clamped;
+                if (dragOffsetIsZero(clamped)) {
+                    modalEl.style.removeProperty('transform');
+                    return;
+                }
+                modalEl.style.transform = `translate(${clamped.x}px, ${clamped.y}px)`;
+            };
+
+            const onMove = (m: PointerEvent): void => {
+                if (m.pointerId !== ev.pointerId) return;
+                apply(dragOffsetAfter(start, m.clientX - startX, m.clientY - startY));
+            };
+            const onUp = (): void => {
+                detach();
+                modalEl.removeClass('rl-baidu-dragging');
+            };
+            const detach = (): void => {
+                handle.removeEventListener('pointermove', onMove);
+                handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
+                try {
+                    handle.releasePointerCapture(ev.pointerId);
+                } catch {
+                    /* 已被系统释放 */
+                }
+                this.detachDrag = null;
+            };
+            this.detachDrag = detach;
+            handle.addEventListener('pointermove', onMove);
+            handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
+        });
     }
 
     onClose(): void {
+        // 拖到一半关窗（Esc / 点遮罩）必须解绑，否则监听留在已销毁的头部节点上
+        try {
+            this.detachDrag?.();
+        } catch {
+            /* 已解绑 */
+        }
+        this.detachDrag = null;
         // 🔴 先释放内嵌容器再清 DOM（顺序别反：先 empty 会让 webview 的 dispose 摸到已脱离的节点）
         try {
             this.host?.dispose();
