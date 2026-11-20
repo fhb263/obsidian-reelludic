@@ -102,6 +102,13 @@
     export let unfoldSeries = false;
     /** 切「系列卡堆叠 ⟷ 全部单卡平铺」；未注入 ⇒ `RatingBoard` 那枚按钮不渲染 */
     export let onToggleUnfoldSeries: ((next: boolean) => void) | null = null;
+    /**
+     * 🔴 m18442 ①：点词云里的一个标签（用户逐字「点击对应的标签直接回首页筛选出对应的条目卡片」）。
+     * 由宿主负责「切回库列表 + 套上临时标签筛选」，本组件只上报标签文本。
+     * ⚠️ 未注入时按钮仍然渲染（词云本身是统计内容，不该因为少一个回调就消失），
+     *   只是点了没反应 —— 所以 `onPickTag` 必须有缺省空函数，⛔ 别写成 `null` 再加 `?.`。
+     */
+    export let onPickTag: (tag: string) => void = () => {};
     /** 🔴 #657：统计页区块顺序（`settings.statsOrder` 归一后的值；缺省 = 原视觉顺序） */
     export let order: StatsBlockKey[] = [...STATS_BLOCK_DEFAULTS];
 
@@ -844,8 +851,11 @@
     {#if k === 'cloud'}
     <!-- 🔴 ②-3（用户 m00353「增强统计页（如词云）」）：标签词云。
          词源 = `MediaEntry.tags`（用户选定），聚合/排序/分档在 `pure/wordCloud` —— 本处只渲染。
-         ⛔ 每个词不做点击跳转：标签在库内没有对应的可打开对象（不像条目/笔记），
-            挂成按钮会给人「点了会有事发生」的错觉。 -->
+         🔴🔴 m18442 ①（用户逐字：「点击对应的标签直接回首页筛选出对应的条目卡片展示出来」）：
+           **每个词现在是按钮**，点击 → 回库列表并按该标签临时筛选。
+           ⚠️ 这条**推翻了**旧注释「⛔ 每个词不做点击跳转：标签在库内没有对应的可打开对象」——
+             旧裁定的前提是「点了也没有落点」，现在有了落点（标签筛选），前提已不成立。
+           ⛔ 别再按「点了会有事发生是错觉」把它改回纯 span：现在点了**真的有事发生**。 -->
     <section class="rl-s-panel rl-s-cloud">
         <div class="rl-s-panel-title">
             标签词云
@@ -865,22 +875,32 @@
             <!-- 🔴 m04642 ①（用户：「在有限空间内"见缝插针"」）：从 `flex-wrap` 行内流式改为
                  **绝对定位 + 螺旋摆放**（`pure/wordCloudLayout`）。每个词的 left/top/字号都由纯函数算好，
                  这里只写样式。⛔ 别再退回 flex-wrap —— 那是"排版"不是"词云"。
-                 `role="list"` 保留：读屏仍按 DOM 顺序（= 频次降序）播报，与视觉位置无关。 -->
-            <div class="rl-cloud-body" class:is-spiral={!!cloudLayout} role="list"
+                 `role="list"` 保留：读屏仍按 DOM 顺序（= 频次降序）播报，与视觉位置无关。
+                 🔴 m18442 ①：改可点之后，词从 `<span>` 变成 `<button>` ⇒ 容器不能再是 `role="list"`、
+                    子节点也不能再带 `role="listitem"` —— `<button>` 是非法的 listitem（svelte-check
+                    报 `A11y: <button> cannot have role 'listitem'`，且会让「可点」的语义被列表角色盖掉）。
+                    改用 `role="group"` + `aria-label`：读屏仍播报「标签词云」并把按钮当成一组可操作项，
+                    且 DOM 顺序（频次降序）不变。⛔ 别为了消警告删掉 `aria-label`。 -->
+            <div class="rl-cloud-body" class:is-spiral={!!cloudLayout} role="group"
                  aria-label="标签词云（字号表示使用频次，Ctrl + 滚轮可缩放）"
                  style={cloudLayout ? `height:${cloudLayout.height}px` : ''}
                  on:wheel={onCloudWheel}
                  use:cloudMeasure>
                 {#if cloudLayout}
                     {#each cloudLayout.placed as w (w.text)}
-                        <span class="rl-cloud-w is-abs lv-{w.level} hue-{cloudHueIndexOf(w.text)}" role="listitem"
+                        <button type="button" class="rl-cloud-w is-abs lv-{w.level} hue-{cloudHueIndexOf(w.text)}"
                               style="left:{Math.round(w.x)}px; top:{Math.round(w.y)}px; font-size:{Math.round(w.fontPx)}px;"
-                        >{w.text}<span class="rl-cloud-n">{w.weight}</span></span>
+                              data-tip="只看带「{w.text}」标签的条目"
+                              on:click={() => onPickTag(w.text)}
+                        >{w.text}<span class="rl-cloud-n">{w.weight}</span></button>
                     {/each}
                 {:else}
                     <!-- 首帧 / 容器不可见时的回落：与改前同一套流式渲染，保证不闪空 -->
                     {#each cloudWords as w (w.text)}
-                        <span class="rl-cloud-w lv-{w.level} hue-{cloudHueIndexOf(w.text)}" role="listitem">{w.text}<span class="rl-cloud-n">{w.weight}</span></span>
+                        <button type="button" class="rl-cloud-w lv-{w.level} hue-{cloudHueIndexOf(w.text)}"
+                                data-tip="只看带「{w.text}」标签的条目"
+                                on:click={() => onPickTag(w.text)}
+                        >{w.text}<span class="rl-cloud-n">{w.weight}</span></button>
                     {/each}
                 {/if}
             </div>
@@ -996,9 +1016,21 @@
     .rl-cloud-body.is-spiral .rl-cloud-w.is-abs .rl-cloud-n {
         position: absolute; left: 100%; top: 0; margin-left: 3px;
     }
+    /* 🔴 m18442 ①：词云每个词改成 `<button>`（可点筛选）⇒ 必须把浏览器默认的
+      button 外观（边框 / 背景 / padding / 字体 / 行高）全部抹平，否则词云会变成一片方框按钮。
+      ⛔ `background: none` 不能省：Obsidian 主题给 `button` 设了 `--interactive-normal` 底色。
+      ⚠️ `cursor: pointer` 是「这里能点」的唯一视觉信号（词云没有其他修饰）。 */
     .rl-cloud-w {
         display: inline-flex; align-items: baseline; gap: 3px;
-        white-space: nowrap; cursor: default;
+        white-space: nowrap; cursor: pointer;
+        appearance: none; -webkit-appearance: none;
+        margin: 0; padding: 0; border: none; background: none;
+        font: inherit; line-height: inherit; color: inherit;
+        text-align: left;
+    }
+    .rl-cloud-w:focus-visible {
+        outline: 2px solid var(--interactive-accent);
+        outline-offset: 2px; border-radius: 3px;
     }
     /* 频次角标：只在悬停时显示，平时不占视觉重量 */
     .rl-cloud-n {
@@ -1006,6 +1038,9 @@
         opacity: 0; transition: opacity var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
     }
     .rl-cloud-w:hover .rl-cloud-n { opacity: 1; }
+    /* m18442 ①：可点之后补一条悬停下划线，强化「这个能点」的信号
+       （`text-decoration` 不会影响螺旋摆放的绝对定位坐标，纯视觉） */
+    .rl-cloud-w:hover { text-decoration: underline; text-underline-offset: 2px; }
     /* 🔴 m05266（用户逐字）：「标签词云加更多的颜色」。
        改前五档颜色全是灰阶（`--text-faint` / `--text-muted` / `--text-normal`），
        只有明暗差别，一屏看过去还是一坨灰。现在：

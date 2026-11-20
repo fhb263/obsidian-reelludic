@@ -71,6 +71,10 @@
         visibleViews,
         type MediaView,
     } from 'pure/mediaViews';
+    // 🔴 m18442 ①：统计页词云点标签 → 回库列表并**临时**按该标签筛。
+    //    它与视图筛选（`filterForView`）是**叠加**关系：视图先筛、标签再筛。
+    //    ⛔ 别改成「新建一个 custom 视图」—— 那是往用户设置里写持久配置，点一下脏一条。
+    import { filterEntriesByTag, tagFilterLabel, toggleTagFilter } from 'pure/tagFilter';
     // 🔴 2026-11-26（m05012）：「N 个媒体」的量词在书籍子分类视图下要更具体（本网文 / 本漫画），
     //    量词真源仍是 `pure/bookKind.BOOK_KIND_TOP_UNITS`，⛔ 别在模板里写字面量。
     import { BOOK_KIND_TOP_UNITS } from 'pure/bookKind';
@@ -331,6 +335,22 @@
     let activeViewId: string = DEFAULT_VIEW_ID;
 
     /**
+     * 🔴 m18442 ①：**临时**标签筛选（会话内状态，⛔ 不落盘、不进 settings）。
+     *
+     * 用户逐字：「点击对应的标签直接回首页筛选出对应的条目卡片展示出来」。
+     * 由统计页词云里的按钮上报标签 → 这里切回库列表并套上筛选。
+     *
+     * ⚠️ 与 `activeView` 的两层关系：
+     *    · 视图筛选（`filterForView`）是**持久配置**，先筛；
+     *    · 这里是**一次性动作**，后筛（叠加）。
+     *    ⛔ 别把它实现成「新建一个 custom 视图」—— 点一下词云就往用户设置里塞一条视图，
+     *       既脏又删不掉；用户下次打开还带着，语义完全不对。
+     * ⚠️ 空串 = 未筛选。`toggleTagFilter` 保证「点同一个标签再点一次 = 取消」。
+     */
+    let tagFilter = '';
+
+
+    /**
      * 首页真正露出来的那几条（🔴 **唯一**的「哪些视图上首页」判断，见 `visibleViews`）。
      *
      * 🔴🔴 2026-11-15 用户 m05159 问题二（逐字）：
@@ -371,6 +391,55 @@
      *    后面页签/合并视图那套三维筛选照旧在 MediaList 内部跑（两层是**叠加**关系）。
      */
     $: viewEntries = activeView ? filterForView(entries, activeView) : entries;
+    /**
+     * 🔴 m18442 ①：视图筛完再叠一层**临时**标签筛选（`tagFilter` 为空时原样返回同一引用）。
+     * ⚠️ 必须接在 `viewEntries` 之后、`listEntries`（页签筛选）之前 ——
+     *    三层是叠加关系：视图 → 标签 → 页签。顺序换了结果一样，但语义要写清楚。
+     * ⚠️ 词云本身读的是**全库** `entries`（见 `StatsBoard` 的 `{entries}`），不受这里影响 ——
+     *    否则点一个标签后词云自己就只剩一个词了。
+     */
+    $: taggedEntries = filterEntriesByTag(viewEntries, tagFilter);
+    /** 顶部「标签筛选：X ✕」那一条的文案（空串 = 不渲染） */
+    $: tagFilterText = tagFilterLabel(tagFilter);
+    /** 词云回调：点标签 → 切回库列表 + 套上筛选（再点一次同一个 = 取消） */
+    function pickTag(tag: string): void {
+        const next = toggleTagFilter(tagFilter, tag);
+        tagFilter = next;
+        if (!next) return;
+        // 会切回库列表：统计页那一档没有列表，必须让用户看到筛选结果
+        if (activeTab === 'stats' || activeTab === 'tracking') switchTab(tabWithTaggedEntries(next));
+    }
+    /**
+     * 🔴 m18442 真机复验抓到的真缺陷：只按「当前视图第一个类型页签」挑落脚点，
+     * 点到「喜剧」（条目全在影视）时却落到阅读页签 ⇒ 提示条写着「标签筛选：喜剧」、
+     * 列表却是 0 张卡，用户看到的是「点了没反应，还挑空了」。
+     *
+     * ⇒ 落脚页签必须**真有这个标签的条目**：先找第一个「挂载后能筛出卡片」的页签；
+     * 一个都没有（标签只存在于被当前视图排掉的条目里）再退回旧的 `mainListTab()`。
+     * ⚠️ 判据用**已按标签筛过的集合** `taggedEntries`，⛔ 别用全库 `entries`
+     *   （那样会在被视图排除的条目上误判「这个页签有货」）。
+     */
+    function tabWithTaggedEntries(tag: string): HomeTab {
+        const hitPool = filterEntriesByTag(viewEntries, tag);
+        const hit = navTabs.find((t) => t !== 'stats' && t !== 'tracking' && hitPool.some((e) => tabMatchesEntry(t, e)));
+        return hit ?? mainListTab();
+    }
+    /** 回库列表要落在哪个页签：优先当前视图第一个可见的类型页签，否则第一个非附属页签 */
+    function mainListTab(): HomeTab {
+        const pool = activeViewPool;
+        if (pool && pool.length > 0) {
+            const hit = navTabs.find((t) => {
+                const lock = tabLockType(t);
+                return lock !== null && pool.includes(lock);
+            });
+            if (hit) return hit;
+        }
+        return navTabs.find((t) => t !== 'stats' && t !== 'tracking') ?? 'kind:book';
+    }
+    /** 清掉标签筛选（顶部那枚 ✕） */
+    function clearTagFilter(): void {
+        tagFilter = '';
+    }
     /**
      * 统计页词云要**整体排除**的标签 = 所有自定义视图的归属标签并集。
      *
@@ -536,7 +605,7 @@
      *    ⇒ 整条删除，模板直接用 `listLockType`。⛔ 别再把「归 null」这层搬回组件里 ——
      *      那是页签语义的一部分，属于 `pure/homeTabs`。
      */
-    $: listEntries = mergedOn ? viewEntries : viewEntries.filter((e) => tabMatchesEntry(activeTab, e));
+    $: listEntries = mergedOn ? taggedEntries : taggedEntries.filter((e) => tabMatchesEntry(activeTab, e));
     /**
      * 🔴 2026-11-13 用户口径：骰子的候选池跟着**当前页签**走，只有合并视图才回退全库。
      *    ⇒ 这一处判据是唯一真源（`mergedOn`），⛔ 别在模板里再写一遍 `navLayout === 'merged'`。
@@ -991,6 +1060,21 @@
             <span class="rl-sr" id="rl-coll-view-label">{activeView?.name ?? ''}</span>
         {/if}
         <!-- 🔴 #544：内容区那枚 19px 大标题**已按用户要求删除** —— 页名改由浮现面板里的文字承担。 -->
+        <!-- 🔴 m18442 ①：临时标签筛选的提示条（只在库列表页显示）。
+             ⚠️ 必须有显式的「取消」入口 —— 筛选态是会话内的，用户切走再切回仍生效，
+                没有 ✕ 就只能靠「再点一次同一个词」来解除，属于藏起来的操作。
+             ⚠️ 词云本身读全库，不受这里影响 ⇒ 点完标签词云不会只剩一个词。 -->
+        {#if tagFilterText && effPage === 'library'}
+            <div class="rl-tag-filter">
+                <span class="rl-tag-filter-txt">{tagFilterText}</span>
+                <!-- ⚠️ 只挂 `aria-label`、⛔ 不再加 `data-tip`：本仓「悬停提示单一真源」守卫
+                     （`tests/tooltipSingleSource.test.ts`）禁止同一元素两种气泡属性；
+                     而 Obsidian 本来就会把 `aria-label` 渲染成原生悬停气泡 ⇒ 视觉上一样有提示。 -->
+                <button type="button" class="rl-tag-filter-x" aria-label="取消标签筛选" on:click={clearTagFilter}>
+                    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M6 6l12 12M18 6L6 18" /></svg>
+                </button>
+            </div>
+        {/if}
         {#if mergedOn && effPage !== 'library'}
             <!-- 🔴 #550：追更 / 统计两页**没有筛选行** ⇒ 「更多」在这里自占一行（右对齐，与库列表页那枚
                  同一条右缘）。⛔ 这行不能省：合并视图下没有别的回程入口，省了就「进得去出不来」。 -->
@@ -1053,7 +1137,7 @@
                  ⛔ 反过来也别把 `StatsBoard` / `RatingBoard` 收窄成 `string | null`（那会逼着这里包一层）。 -->
             <!-- ⚠️ 新增 prop 一律**追加在 `{ctrlWheelZoom}` 之后**，⛔ 别插进 `coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom}`
                  这段里面 —— 产物断言 `#635 ③` 锚的就是这三者**连续字面**相邻的形态。 -->
-            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} {seriesRatings} {onSetSeriesRating} order={statsOrder} onOrderChange={onStatsOrderChange} {unfoldSeries} {onToggleUnfoldSeries} discardTags={cloudDiscardTags} />
+            <StatsBoard {entries} {excerptCounts} {activityLog} {onAdd} {onOpenEntry} {onGenerateReport} {yearReports} {onOpenReport} {onRecordJournal} coverUrlOf={posterUrl} {onSetRating} {ctrlWheelZoom} {seriesRatings} {onSetSeriesRating} order={statsOrder} onOrderChange={onStatsOrderChange} {unfoldSeries} {onToggleUnfoldSeries} discardTags={cloudDiscardTags} onPickTag={pickTag} />
         {:else}
             {#if viewIsCollection}
                 <!-- 🔴 2026-11-23 合集视图：换的是**整页骨架**（IP 卡片 → 类型分段卡片网格），不走 MediaList。
@@ -1230,6 +1314,25 @@
        ⚠️ 库列表页那枚「更多」不在这儿 —— 它经工具栏的 `nav-entry` 插槽落在与搜索框并排的右端。
        本行只服务**没有筛选行**的两页（右对齐，与库列表页那枚同一条右缘）。 */
     .rl-more-bar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+
+    /* 🔴 m18442 ①：临时标签筛选提示条 —— 与页签切换条同一条视觉语气（细边、小字、圆角），
+       但**用中性色**：它是「当前生效的一次性筛选」，不是一级导航，别抢页签的强调色。 */
+    .rl-tag-filter {
+        display: flex; align-items: center; gap: 6px; width: fit-content;
+        margin-bottom: 8px; padding: 2px 4px 2px 10px;
+        border: 1px solid var(--background-modifier-border); border-radius: 999px;
+        background: var(--background-secondary); color: var(--text-muted);
+        font-size: 12px; line-height: 1.6; max-width: 100%;
+    }
+    .rl-tag-filter-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* ⚠️ 按钮外观必须抹平：Obsidian 主题给 button 设了底色与内边距，不重置会出现一枚灰方块。 */
+    .rl-tag-filter-x {
+        appearance: none; -webkit-appearance: none; display: flex; align-items: center; justify-content: center;
+        margin: 0; padding: 2px; border: none; border-radius: 50%; background: none;
+        color: inherit; cursor: pointer; box-shadow: none;
+    }
+    .rl-tag-filter-x:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+    .rl-tag-filter-x:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
 
     .rl-tracking-switch { display: flex; gap: 0; margin-bottom: 10px; border: 1px solid var(--background-modifier-border); border-radius: 7px; overflow: hidden; width: fit-content; }
     .rl-tracking-switch button { font-family: inherit; font-size: 12px; border: none; background: var(--background-primary); color: var(--text-muted); padding: 4px 16px; cursor: pointer; }

@@ -138,6 +138,17 @@
     // 进度 / 状态小字（#444c 下沉到纯模块）：卡片与弹窗**共用同一份口径**，⛔ 别在两处各写一套。
     import { listProgress, readPercent, bookUnitOf, cardPlaytimeBadge, cardReadBadge, cardListenBadge, seriesPlaytimeBadge } from 'pure/mediaProgress';
     import { placeMenu } from 'pure/menuPlacement';
+    /**
+     * 🔴 m18442 ②：封面「已显示过」的**模块级**缓存（跨组件实例存活）。
+     * ⛔ 别改回组件内 `new Set<string>()` —— 那样进出统计页会清零、封面重新占位闪一次。
+     */
+    import { coverLoadedSnapshot, rememberCoverLoaded } from 'pure/coverLoaded';
+    /**
+     * 🔴 m18442 ② 第二层：系列折叠卡「入场动画已播过」的**模块级**缓存。
+     * 真机实测切页签会重建 DOM 且 12 张卡动画全部重放 ⇒ 命中即加 `.is-animated` 掐掉重播。
+     * ⛔ 别改成组件内 `new Set<string>()`（那就等于没有这条修剪）。
+     */
+    import { stackAnimatedSnapshot, rememberStackAnimated } from 'pure/stackAnimated';
     // 🔴 #626 多带两样：`posterGridTemplateForWall`（墙的列模板 —— 自定义档的**间距比网格宽**，裁决收在 pure 层）、
     //    `POSTER_WALL_GAP`（墙的间距，必须与 `.rl-wall{gap}` 同值）。
     // 🔴 用户 2026-10-20 删除「海报墙列数」⇒ `POSTER_WALL_COLUMNS_MAX` 与 `wallColumns` prop 一并下线。
@@ -447,11 +458,57 @@
      *    按 id 判 ⇒ 类由「当前这张是谁」决定，天然免疫。
      * ⚠️ 加载**失败**时 `load` 不触发 ⇒ 那一张一直停在 2:3 占位（比塌成 0 好，也不会跳）。
      * ⚠️ 集合只增不减：条目被删/换页后残留几个死 id，代价是一次 `has()` 查表，不值得为它写清理。
+     *
+     * 🔴🔴 m18442 ②（用户逐字：「优化加载缓存封面刷新，不想每次换页签然后就要重新刷新封面展示」）：
+     *    这个集合原本是**组件实例内**的 `let` ⇒ `HomeView` 进出统计页时 `<MediaList>` 被
+     *    整块卸载再挂载，集合清零、每张封面又回到 2:3 占位再交回比例 = 用户看到的「重新刷新」。
+     *    ⇒ 初始快照与写入都改走 `pure/coverLoaded` 的**模块级**缓存（与组件生命周期解绑）。
+     *    ⛔ 别改回 `new Set<string>()`：那样跨页签的「已加载」信息就丢了，症状立刻复发。
+     *    ⚠️ 仍要在实例上保留一份 `loadedCovers`：Svelte 只追踪**赋值**，直接改模块级 Set
+     *       不会触发重渲染 ⇒ 命中时手动 `loadedCovers = new Set(...)`。
      */
-    let loadedCovers = new Set<string>();
+    let loadedCovers = coverLoadedSnapshot();
     function markCoverLoaded(id: string): void {
+        rememberCoverLoaded(id);
         if (loadedCovers.has(id)) return;
         loadedCovers = new Set(loadedCovers).add(id);
+    }
+
+    /**
+     * 🔴🔴 m18442 ② 第二层（用户逐字同上：「…不想每次换页签然后就要重新刷新封面展示」）。
+     *
+     * 为什么封面缓存还不够：真机实测（`probe-anim2.cjs`，给 12 张 `.rl-cov-stack-extra` 打
+     * `data-probe` 后切走再切回）`probeKept = 0` ⇒ DOM 是**整体重建**，而同一帧
+     * `animRunning = 12`、动画名全是 `rl-stk-in` ⇒ **折叠卡的入场动画每轮重播**。
+     * 封面字节本身早就在进程内位图缓存里（实测 1~4ms），所以「重新刷新」的视觉来源
+     * 就是这条入场动画：每换一次页签，一整墙封面又重新「抽出来」一遍。
+     *
+     * ⇒ 把「这个系列卡已经播过入场动画」提到模块级（`pure/stackAnimated`），
+     *   实例挂载时快照命中就给卡片根节点加 `.is-animated` ⇒ CSS 里 `animation: none`
+     *   ⇒ 第一帧就是终态，不再补播。
+     *
+     * ⚠️ 只能在 `animationend` 时记，**⛔ 不许在渲染时记**：那样 `.is-animated` 会在同一帧就生效，
+     *   第一次的入场动画被当场掐掉（等于把这条动效删了）。
+     * ⚠️ 与 `loadedCovers` 同样的取舍：只增不减，残留几个死 key 不值当写清理。
+     */
+    let stackAnimated = stackAnimatedSnapshot();
+    function markStackAnimated(key: string): void {
+        rememberStackAnimated(key);
+        if (stackAnimated.has(key)) return;
+        stackAnimated = new Set(stackAnimated).add(key);
+    }
+    /**
+     * 🔴 为什么要在 script 里写这个函数，而不是把判断内联进模板：
+     *   模板表达式被 Svelte 4 当**纯 JS** 解析 ⇒ 里面出现 TS 类型断言（`as HTMLElement | null`）
+     *   会直接 `Unexpected token` 解析失败，还连带把引用本组件的 HomeView 打成一堆
+     *   「no default export / implicitly has any」。实测 `svelte-check` 从 0 errors 变成 5 errors。
+     * ⚠️ 只认 `.rl-cov-stack-extra` 的 `animationend`：主封面（`.rl-cov-stack-main`）不带动画，
+     *   正常不会冒泡到这里，但把判据收窄能防止将来给主封面加动效时被误记账。
+     */
+    function onStackAnimationEnd(ev: AnimationEvent, key: string): void {
+        const target = ev.target as HTMLElement | null;
+        if (!target || !target.classList || !target.classList.contains('rl-cov-stack-extra')) return;
+        markStackAnimated(key);
     }
 
     /**
@@ -3611,11 +3668,13 @@
                  ⇒ 唯一可靠防线 = **组件级探针**（真 Svelte 编译 + jsdom 挂载），见 `_probe_series512.cjs`。 -->
             <div
                 class="rl-card rl-series-card"
+                class:is-animated={stackAnimated.has(g.key)}
                 role="button"
                 tabindex="0"
                 data-tip={`只看「${g.title}」（${g.items.length} 部）`}
                 on:click={() => openSeries(g.key)}
                 on:keydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openSeries(g.key); } }}
+                on:animationend={(ev) => onStackAnimationEnd(ev, g.key)}
                 on:contextmenu={(ev) => openGroupCtx(g, ev)}
                 use:stackGate={g.key}>
                 {#if colorTheme === 'colorful'}
@@ -4927,6 +4986,15 @@
        ⚠️ 别只删规则体留着 transition（也不必留着 `animation` 里的 `backwards` —— 那个是入场动画的，
        它仍需要，`animation-delay` 的错峰也仍需要）。
        ⚠️ 「入场」与「悬停」是**两条独立动效**（见上面 ⑴ 与这里的 ⑵），删 ⑵ 不许碰 ⑴。 */
+    /* 🔴🔴 m18442 ② 第二层（用户逐字：「不想每次换页签然后就要重新刷新封面展示」）：
+       **入场动画只播一次**。真机实测（`probe-anim2.cjs`）切走再切回时 `probeKept = 0`（DOM 重建）
+       且 `animRunning = 12`（12 张折叠卡全部重放 `rl-stk-in`）—— 这就是「封面重新刷新」的视觉来源。
+       `.is-animated` 由组件在 `animationend` 之后打上（模块级 `pure/stackAnimated` 记着，
+       所以换页签重建 DOM 后第一帧就带着它）⇒ 这里把动画摘掉，直接呈现终态。
+       ⚠️ 特异性 (0,3,0) 必须比上面那条 (0,2,0) 高，⛔ 别降到同级（同级会按源码顺序被前者压回）。
+       ⚠️ 只摘 `animation`，⛔ 别顺手动 `transform`/`opacity`：终态由动画的 `to` 帧给出，
+         摘掉动画后元素自然停在 `translate(0,0); opacity: 1`（那是规则里的静息值）。 */
+    .rl-series-card.is-animated .rl-cov-stack-extra { animation: none; }
     /* ⚠️ 尊重系统「减少动效」：入场动画关掉（本仓 spinner 同款纪律） */
     @media (prefers-reduced-motion: reduce) {
         .rl-series-card .rl-cov-stack-extra { animation: none; }
