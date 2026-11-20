@@ -27,6 +27,8 @@ export interface EmptyStateInput {
     kindLabel?: string;
     /** 已选题材的显示名（如「推理+1」；未选任何题材 → 不传） */
     genreLabel?: string;
+    /** 已选标签的显示名（如「治愈+1」；未选任何标签 → 不传）。m19924 ① 新增，与题材并列 */
+    tagLabel?: string;
     statusLabel?: string;
     /** 搜索关键词原文 */
     query?: string;
@@ -75,6 +77,8 @@ export function describeFilters(input: EmptyStateInput): string | undefined {
     if (input.kindLabel) parts.push(`分类：${input.kindLabel}`);
     // 题材紧挨分类（同属「分类维度」的收窄项）：只回显已选，未选不占位
     if (input.genreLabel) parts.push(`题材：${input.genreLabel}`);
+    // m19924 ①：标签紧挨题材 —— 两者在筛选栏里就是并排的两个胶囊，回显顺序与之一致
+    if (input.tagLabel) parts.push(`标签：${input.tagLabel}`);
     if (input.statusLabel) parts.push(`状态：${input.statusLabel}`);
     const q = input.query?.trim();
     if (q) parts.push(`关键词：${q}`);

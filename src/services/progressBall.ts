@@ -182,6 +182,13 @@ class ProgressBallImpl implements ProgressBallHandle {
          * 多任务列表（🔴 m09805）。
          * ⚠️ 与下面的单条 `barEl` **互斥**：有行时隐藏单条 bar，没有行时用单条 bar。
          *    两者同时显示会出现「一条总进度 + 三条明细」的双份百分比。
+         *
+         * 🔴 m19946（用户逐字：「下载B站音频的那个进度框只下载一个时怎么显示了两个标题和两个进度」）：
+         *    **只有多于一行时才进多行形态**。原来判的是 `rows.length > 0`，于是单首歌下载
+         *    （`biliDownloadService` 对每首歌都会 `upsertTask`）也走多行分支 ⇒ 卡片头写一次标题、
+         *    行里再写一次标题；卡片底写一次百分比、行里再写一次百分比 —— 就是用户看到的「两个」。
+         *    现在的口径：`rows.length === 1` 时**不渲染行**，把那一行的事实画回卡片头/底/单条 bar
+         *    （标题与百分比各只有一处）。⛔ 别改回 `rows.length > 0`。
          */
         this.taskListEl = card.createDiv({ cls: 'rl-pball-tasks' });
         this.taskListEl.classList.add('is-hidden');
@@ -419,7 +426,13 @@ class ProgressBallImpl implements ProgressBallHandle {
     private paintTasks(): void {
         const list = this.taskListEl;
         if (!list || !this.el) return;
-        const multi = this.rows.length > 0;
+        /**
+         * 🔴 m19946：**一行不算多任务**。见 `mount()` 里的长注释 ——
+         * 单行时卡片头/底本身就承载那个任务的标题与百分比，再渲染一行就是两份。
+         * ⚠️ 但汇总仍走 `tasksTitle`/`tasksPercent`/`tasksDetail`（它们在 `rows.length === 1`
+         *    时返回的就是那一行的值），所以「单行」与「无行 + update()」两种来源画出来完全一致。
+         */
+        const multi = this.rows.length > 1;
         list.classList.toggle('is-hidden', !multi);
         // 单条 bar 与多行互斥（见 mount 里的注释）
         if (this.barEl) this.barEl.classList.toggle('is-hidden', multi);
@@ -431,14 +444,17 @@ class ProgressBallImpl implements ProgressBallHandle {
                 this.taskNodes.delete(id);
             }
         }
-        for (const row of this.rows) {
-            let node = this.taskNodes.get(row.id);
-            if (!node) {
-                node = this.buildTaskRow(row);
-                this.taskNodes.set(row.id, node);
-                list.appendChild(node);
+        // 单行 ⇒ 不建行节点（建了就得多藏一个，藏漏一处又是一份重复）
+        if (multi) {
+            for (const row of this.rows) {
+                let node = this.taskNodes.get(row.id);
+                if (!node) {
+                    node = this.buildTaskRow(row);
+                    this.taskNodes.set(row.id, node);
+                    list.appendChild(node);
+                }
+                this.paintTaskRow(node, row);
             }
-            this.paintTaskRow(node, row);
         }
 
         // 空掉单行 bar 的宽度，否则切回单任务时会残留上一条的百分比
@@ -451,6 +467,17 @@ class ProgressBallImpl implements ProgressBallHandle {
         if (this.txtEl) this.txtEl.setText(pct === null ? '…' : `${pct}%`);
         if (this.ringPctEl) this.ringPctEl.setText(pct === null ? '…' : `${pct}%`);
         if (this.detailEl) this.detailEl.setText(detail);
+        // 单行时把那一行的进度画进**单条 bar**（这是单任务形态的唯一进度条）
+        if (!multi && this.barFillEl) {
+            const only = this.rows[0];
+            if (only) {
+                const p = taskBarPercent(only.percent);
+                this.barEl?.toggleClass('is-indet', only.phase === 'running' && p === null);
+                this.barFillEl.style.width = only.phase === 'done' ? '100%' : p === null ? '' : `${p}%`;
+                this.el?.toggleClass('is-done', only.phase === 'done');
+                this.el?.toggleClass('is-fail', only.phase === 'fail');
+            }
+        }
         // 球心的环与展开态的汇总条用同一个汇总百分比（口径见 `pure/progressTasks`⑶）
         if (this.arcEl) this.arcEl.setAttribute('stroke-dashoffset', String(RING_C * (1 - (pct === null ? 0.18 : pct / 100))));
         const lbl = this.pillEl?.querySelector('.rl-pball-lbl');

@@ -1,9 +1,14 @@
 // 在线曲库结果映射（pure/songLibrary）单测 —— #464
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { songLibraryResults, SONG_LIB_ID, SONG_LIB_LABEL } from 'pure/songLibrary';
 import { scoreIsPercentOf, scoreTextOf } from 'pure/scoreDisplay';
 import { POSTER_SOURCE_LABELS } from 'pure/posterSources';
 import type { DownloadSong } from 'services/dl';
+
+/** 仓库根（`vitest.config.ts` 里 `root` 就是它；这里按 test 文件位置回退两级） */
+const ROOT = join(__dirname, '..');
 
 /** 造一条四平台歌曲（默认：网易云《海阔天空》/ BEYOND） */
 function song(over: Partial<DownloadSong> = {}): DownloadSong {
@@ -200,46 +205,43 @@ describe('songLibraryResults 来源平台名', () => {
     });
 });
 
-describe('🔴 m10134 ② 平台热度 → 评分框（reviewPercent）', () => {
-    // 用户裁定（m10369）原话：「填「热度」到评分框，并补拉网易云评论数当「评价人数」」。
-    // 背景：实测四平台**搜索级都没有大众评分**，只有网易云的 `pop`（0~100）与 QQ 新端点的 `hotness`。
-    it('网易云带 pop ⇒ 写成 reviewPercent（百分制，不是 10 分制 rating）', () => {
+describe('🔴 m19924 ② 平台热度**不再写进评分框**（推翻 m10134 那条裁定）', () => {
+    // m10134（用户原话）：「填「热度」到评分框，并补拉网易云评论数当「评价人数」」。
+    // m19924（用户原话，**本轮推翻上一轮**）：「网易云那个热度值毫无用处，不要展示了删除掉」。
+    // 背景：`pop` 是播放热度不是大众评分，渲染成 `100%` 会被当成「好评率 100%」——用户看穿了。
+    // 🔴 这组用例守的是**删除**：任何一条回潮（哪怕只对网易云）都会让它变红。
+    it('网易云带 pop ⇒ **不写** reviewPercent（热度不是评分，已按用户要求删除展示）', () => {
         const [r] = songLibraryResults([song({ pop: 100 })]);
-        expect(r.reviewPercent).toBe(100);
-        // ⛔ 别顺手也写 rating —— 那会让 scoreTextOf 之外的路把它当豆瓣星分
+        expect(Object.prototype.hasOwnProperty.call(r, 'reviewPercent')).toBe(false);
+        // ⛔ 也不许改成写 rating —— 那是豆瓣 10 分制星分，热度不是评分
         expect(r.rating).toBeUndefined();
     });
 
-    it('pop=0 是**真实结论**（零热度）⇒ 仍要写 0，⛔ 别当成「没有」', () => {
+    it('pop=0 同样不写（整条链路删掉，不因值为 0 而漏出）', () => {
         const [r] = songLibraryResults([song({ pop: 0 })]);
-        expect(r.reviewPercent).toBe(0);
-        expect(Object.prototype.hasOwnProperty.call(r, 'reviewPercent')).toBe(true);
+        expect(Object.prototype.hasOwnProperty.call(r, 'reviewPercent')).toBe(false);
     });
 
-    it('平台没给 pop ⇒ **不写该键**（「不知道」与「0 分」必须能分开）', () => {
-        for (const s of [{ source: 'kugou' as const, pop: undefined }, { source: 'kuwo' as const, pop: undefined }]) {
-            const [r] = songLibraryResults([song({ source: s.source, id: `p-${s.source}`, pop: s.pop })]);
-            expect(Object.prototype.hasOwnProperty.call(r, 'reviewPercent')).toBe(false);
-        }
-    });
-
-    it('脏值（越界 / NaN）一律不写 —— 它会被渲染成 `100%`，编不出来就别显示', () => {
-        for (const bad of [101, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    it('小数 / 越界 / NaN 一律不写（删除后不存在任何数值路径）', () => {
+        for (const bad of [87.6, 101, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
             const [r] = songLibraryResults([song({ id: `bad-${bad}`, pop: bad })]);
             expect(Object.prototype.hasOwnProperty.call(r, 'reviewPercent')).toBe(false);
         }
     });
 
-    it('小数热度取整（`pop: 87.6` ⇒ 88）', () => {
-        const [r] = songLibraryResults([song({ pop: 87.6 })]);
-        expect(r.reviewPercent).toBe(88);
+    it('🔴 反向守卫：源码里不许再有 `pop` → `reviewPercent` 的赋值（⛔ 别为了「好看」加回来）', () => {
+        const src = readFileSync(join(ROOT, 'src/pure/songLibrary.ts'), 'utf8');
+        // 判「赋值形态」而不是「出现字段名」—— 注释里说明「已删除 reviewPercent」是合法的，
+        // 真正要守的是「又把它写进结果对象」（`item.reviewPercent = …`）。
+        expect(src).not.toMatch(/\.\s*reviewPercent\s*=/);
+        // 连读数也不许：只要还在摸 `pop`，就说明这条链路又活过来了
+        expect(src).not.toMatch(/s\?\.pop\b/);
+        expect(src).not.toMatch(/\bpop\s*:/);
     });
 
-    it('热度经 `scoreTextOf` 渲染成 `100%` 且**不画星号**（`scoreIsPercentOf` 为真）', () => {
-        const [r] = songLibraryResults([song({ pop: 100 })]);
-        const entry = { communityScore: undefined, reviewPercent: r.reviewPercent };
-        expect(scoreTextOf(entry)).toBe('100%');
-        expect(scoreIsPercentOf(entry)).toBe(true);
+    it('🔴 守卫：`reviewPercent` 字段本身**必须保留**（Steam 好评率还在用它）', () => {
+        const types = readFileSync(join(ROOT, 'src/data/types.ts'), 'utf8');
+        expect(types).toMatch(/reviewPercent\?: number;/);
     });
 });
 

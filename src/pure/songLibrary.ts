@@ -108,14 +108,12 @@ export function songLibraryResults(
             sourceUrl: String(s?.webUrl ?? '').trim() || undefined,
         };
         if (platform) item.platformLabel = platform;
-        // 🔴 m10134：**平台热度 → 评分框**（用户裁定「填「热度」到评分框」）。
-        //    实测四平台搜索级都**没有**「大众评分」，只有网易云的 `pop`（0~100）这一档热度分
-        //    ⇒ 写进 `reviewPercent`（百分制，`scoreTextOf` 会渲染成 `100%` 且不画 `★`）。
-        // ⚠️ `pop` 允许是 0（真·没人听）⇒ 用 `!= null` 判，⛔ 别写成 `if (s.pop)`。
-        // ⚠️ 其余三源没有这个值 ⇒ 不写该键（「不知道」与「0 分」必须能分开）。
-        if (s?.pop != null && Number.isFinite(s.pop) && s.pop >= 0 && s.pop <= 100) {
-            item.reviewPercent = Math.round(s.pop);
-        }
+        // 🔴 m19924 ②（用户逐字：「网易云那个热度值毫无用处，不要展示了删除掉」）：
+        //    这里原本会把网易云搜索级的 `pop`（热度 0~100）写进 `reviewPercent`，
+        //    卡片上渲染成「100%」看着像评分，其实是播放热度 —— **已整块删除**。
+        //    ⛔ 不要改成写别的字段（`rating` 也不行：那是「大众评分」，热度不是评分）；
+        //    ⛔ 也不要顺手删掉 `reviewPercent` 字段本身 —— Steam 好评率还在用它
+        //       （`services/steam.ts` 的 histogram 百分比），删字段会把 Steam 分数一起弄丢。
         // 🔴 m12958（用户：「从三大平台搜索或同步得到的条目没有发行年、题材、简介」）：
         //    ① **发行年**：搜索级本来就带日期（QQ `pubtime` / 酷狗 `PublishDate` / 网易云 `publishTime`），
         //       只是这条映射链没往下传 ⇒ 这里补上。⛔ 别直接塞 `publishDate` 字符串：

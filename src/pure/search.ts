@@ -5,6 +5,9 @@ import type { MediaStatus } from 'pure/status';
 import { MEDIA_STATUSES } from 'pure/status';
 import { matchesBookKind } from 'pure/bookKind';
 import { matchesGenres } from 'pure/genreFilter';
+// 🔴 m19924 ①：标签是**另一个字段**（用户手填自由词），池与命中判定都在 `pure/tagOptions`。
+//    ⛔ 别把它并进 `matchesGenres` —— 那会让「题材：科幻」与「标签：科幻」共用一行选项。
+import { matchesTags } from 'pure/tagOptions';
 // 🔴 m07854 ⑮「待补」漏斗的判据（缺关联 或 缺个人评分）—— 单一真源在 `pure/incomplete`，
 //    ⛔ 别在本文件里内联条件（本仓反复栽过的「同一件事两份真源」）。
 import { isIncomplete } from 'pure/incomplete';
@@ -137,6 +140,10 @@ export function filterAndSort(
         /** 题材（视图级题材筛选，用户 2026-09-22）：已选题材值数组（含「未分类」保留键）；缺省/空数组不过滤。
          *  多选内部是 OR；与状态/类型/分类/关键词是 AND。判定见 pure/genreFilter.matchesGenres */
         genres?: readonly string[];
+        /** 标签（视图级标签筛选，用户 m19924 ①）：已选标签的**比较键**数组（含「无标签」保留键）；
+         *  缺省/空数组不过滤。多选内部是 OR；与状态/类型/分类/题材/关键词是 AND。
+         *  判定见 pure/tagOptions.matchesTags */
+        tags?: readonly string[];
         /**
          * 🔴 m07854 ⑮「待补」漏斗：只留**缺关联 或 缺个人评分**的条目；缺省/`false` 不过滤。
          *
@@ -153,6 +160,7 @@ export function filterAndSort(
             .filter((e) => matchesType(e, opts.type))
             .filter((e) => matchesBookKind(e, opts.bookKind ?? 'all'))
             .filter((e) => matchesGenres(e, opts.genres ?? []))
+            .filter((e) => matchesTags(e, opts.tags ?? []))
             .filter((e) => matchesSearch(e, opts.query))
             .filter((e) => (opts.incompleteOnly ? isIncomplete(e) : true)),
         opts.sortBy,

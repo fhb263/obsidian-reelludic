@@ -171,6 +171,9 @@
         buildGenreOptions, genrePillLabel, matchesGenreScope,
         resolveGenreScope, seriesGenreScope, genreScopeKeyOf,
     } from 'pure/genreFilter';
+    // 🔴 m19924 ①：标签筛选（与题材并列的第二维）。两套类名刻意不共用（`rl-genre-*` / `rl-tagf-*`）——
+    //    题材那套在产物断言里有二十多条锚，复用会让那些判据被标签面板满足而变成永真。
+    import { buildTagOptions, tagPillLabel } from 'pure/tagOptions';
     // 数据源展示名（封面评分角标与它的 data-tip 共用；单一真源 = pure/sourceRegistry 的 PROVIDER_META.label）
     // #430 封面角标的来源名（手填优先 / 回落数据源中文名）—— 唯一裁决入口
     // ⚠️ `pure/sourceRegistry` 的旧助手在这里**已无消费者**（角标改走 `entrySourceLabel`）⇒ 不再 import，
@@ -629,6 +632,7 @@
         searchText = '';
         debouncedSearch = ''; // 立即生效，不等 300ms 防抖
         genreSel = []; // 题材也是筛选条件之一：清除筛选必须一并清掉，否则空态按钮形同虚设
+        tagSel = []; // m19924 ①：标签同理 —— 少清一个，空态按钮就又形同虚设
         // 🔴 #550：合并视图下「媒体类型 / 状态」是**宿主受控**的 ⇒ 清筛选必须一并回推。
         //    只清本地会被下一帧宿主的重推抹掉（症状 = 点了「清除筛选」页面纹丝不动）。
         if (scope !== null) {
@@ -761,6 +765,19 @@
     let genreOpen = false;
     /** 已选题材值（题材名本身 / 未分类保留键）；空数组 = 不筛（胶囊显示「全部」） */
     let genreSel: string[] = [];
+    // ── 视图级**标签**筛选（用户 m19924 ①：「再在首页视图筛选栏题材旁边加个筛选的"标签"
+    //    （样式和交互逻辑和题材筛选一样）」）──
+    /**
+     * 🔴 标签与题材是**两个不同字段**：题材 = frontmatter `genres`（受控词表），
+     *    标签 = frontmatter `tags`（用户手填自由词）⇒ 两个独立池、两个独立已选集合。
+     *    纯逻辑在 `pure/tagOptions`（比较口径复用 `pure/tagFilter.normalizeTagFilter`）。
+     *
+     * ⚠️ 与题材同样，这几条必须写在 `filtered` 之前（Svelte 4 的 `$:` 按源码顺序求值）。
+     */
+    /** 标签面板开合 */
+    let tagOpen = false;
+    /** 已选标签的**比较键**；空数组 = 不筛（胶囊显示「全部」） */
+    let tagSel: string[] = [];
     /**
      * 作用域**复位键**（与 `genreScope.key` 同一口径，但**不经过 `filtered`** —— 见 `genreScopeKeyOf`）。
      * 🔴 #444 为什么要抽这一层：系列视图下 `genreScope` 依赖 `activeGroup`，而 `activeGroup` 是
@@ -784,6 +801,10 @@
         genreScopeKeyPrev = genreScopeKey;
         genreSel = [];
         closeGenre();
+        // 🔴 m19924 ①：标签池与题材池同属「当前子视图」⇒ 作用域一切换两者一起清。
+        //    ⛔ 别只清题材：那会让「文学页签选的标签」漏进网文页签（两个池不同）。
+        tagSel = [];
+        closeTag();
     }
 
     /** 筛选栏状态 chips：全部/想看/在看/已看/存档（弃剧已移除） */
@@ -880,6 +901,7 @@
         sortBy,
         bookKind: lockType === 'book' ? kindFilter : undefined,
         genres: genreSel,
+        tags: tagSel,
         incompleteOnly,
     });
 
@@ -896,6 +918,7 @@
             sortBy,
             bookKind: lockType === 'book' ? kindFilter : undefined,
             genres: genreSel,
+            tags: tagSel,
             incompleteOnly: false,
         }),
     );
@@ -1219,6 +1242,20 @@
     $: allGenresSelected = genreOptions.length > 0 && genreOptions.every((o) => genreSel.includes(o.key));
 
     /**
+     * 🔴 m19924 ①：标签池 = **与题材同一份视图池**（类型 / 分类收窄之后、状态与搜索之前）。
+     *
+     * ⚠️ 复用 `genrePool` 而不是另算一遍：两者都是「当前子视图的全部条目」，
+     *   各算一次不只是浪费 —— 将来任一侧的池口径变了，两行下拉的计数就会互相矛盾。
+     * ⚠️ 但 `genreScope` 为 null 的视图（阅读-全部 / 影视-全部）**题材不提供**，标签呢？
+     *   用户说的是「在筛选栏题材旁边加」——题材不渲染时它旁边没有东西可加。
+     *   ⇒ **标签与题材同门控**（`{#if genreScope}`），保持「一条筛选栏一种形态」。
+     */
+    $: tagOptions = buildTagOptions(genrePool);
+    $: tagPill = tagPillLabel(tagOptions, tagSel);
+    /** 池内是否已全选（含「无标签」；空池不算全选） */
+    $: allTagsSelected = tagOptions.length > 0 && tagOptions.every((o) => tagSel.includes(o.key));
+
+    /**
      * 🔴 #444：**系列序号排序档只在系列视图里出现**（用户：「默认全类型视图下不显示系列序号排序状态」）。
      * ⚠️ 系列视图**默认**就是 `series-asc`（`openSeries` 切的）⇒ 下拉里必须有它，
      *    否则 `bind:value` 匹配不到任何选项、下拉会显示成空白。
@@ -1425,6 +1462,8 @@
         kindLabel: lockType === 'book' && kindFilter !== 'all' ? BOOK_KIND_LABELS[kindFilter] : undefined,
         // 题材只在真选了之后回显（未选时不占位、不写「题材：全部」这种废话）
         genreLabel: genreSel.length > 0 ? genrePill : undefined,
+        // m19924 ①：标签同口径 —— 只在真选了之后回显
+        tagLabel: tagSel.length > 0 ? tagPill : undefined,
         statusLabel: statusFilter !== 'all' ? statusLabel(lockType ?? 'movie', statusFilter) : undefined,
         query: debouncedSearch,
     });
@@ -1777,6 +1816,42 @@
     function toggleGenreOption(key: string) {
         genreSel = genreSel.includes(key) ? genreSel.filter((k) => k !== key) : [...genreSel, key];
     }
+    // ── 标签面板（m19924 ①）：与题材**逐条同构**，只是换了一套类名与状态变量。──
+    let tagOnDown: ((ev: MouseEvent) => void) | null = null;
+    let tagOnKey: ((ev: KeyboardEvent) => void) | null = null;
+    function unbindTagWindow() {
+        if (tagOnDown) { window.removeEventListener('mousedown', tagOnDown); tagOnDown = null; }
+        if (tagOnKey) { window.removeEventListener('keydown', tagOnKey); tagOnKey = null; }
+    }
+    function closeTag() {
+        unbindTagWindow();
+        tagOpen = false;
+    }
+    function toggleTagPanel() {
+        if (tagOpen) {
+            closeTag();
+            return;
+        }
+        // 与题材同款：手写面板要显式广播一次「别的下拉请收起」（共享组名见 MiniSelect）
+        broadcastClosePeers('rl-toolbar-filters');
+        tagOpen = true;
+        tagOnDown = (ev: MouseEvent) => {
+            const el = ev.target as HTMLElement | null;
+            if (el?.closest('.rl-tagf-panel') || el?.closest('.rl-tagf-btn')) return;
+            closeTag();
+        };
+        tagOnKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') closeTag(); };
+        window.addEventListener('mousedown', tagOnDown);
+        window.addEventListener('keydown', tagOnKey);
+    }
+    /** 勾选 / 取消一个标签（按比较键存取，⛔ 不用显示名 —— 大小写会漂） */
+    function toggleTagOption(key: string) {
+        tagSel = tagSel.includes(key) ? tagSel.filter((k) => k !== key) : [...tagSel, key];
+    }
+    /** 全选 ⇄ 清空（与题材同一交互口径：已全选时再点 = 清空） */
+    function selectAllTags() {
+        tagSel = allTagsSelected ? [] : tagOptions.map((o) => o.key);
+    }
     /**
      * 全选 ⇄ 清空（用户 2026-09-22：「题材筛选点全选后再点可以清空全选」）：
      * 已全选时再点 = 清空；否则 = 全选本视图池里的全部题材（**含「未分类」**，D-5）。
@@ -1791,6 +1866,7 @@
         stackObserver = null;
     });
     onDestroy(unbindGenreWindow);
+    onDestroy(unbindTagWindow);
     // 🔴 #598：视图菜单那对窗口监听也要摘（同题材面板那条）
     onDestroy(unbindViewWindow);
     // 卸载兜底：系列视图的 Esc 监听（同上纪律 —— 系列视图开着时整个组件被卸载，监听不能留在 window 上）
@@ -3048,6 +3124,45 @@
                                         <input type="checkbox" checked={genreSel.includes(o.key)} on:change={() => toggleGenreOption(o.key)} />
                                         <span class="rl-genre-name">{o.label}</span>
                                         <span class="rl-genre-cnt">{o.count}</span>
+                                    </label>
+                                {/each}
+                            {/if}
+                        </div>
+                    </div>
+                {/if}
+            </span>
+        {/if}
+        <!-- 标签（视图级，用户 m19924 ①：「样式和交互逻辑和题材筛选一样」）：
+             与题材**同门控**（`genreScope` 为 null 的视图即题材不渲染时，它旁边没有东西可加）。
+             ⚠️ 类名用独立的 `rl-tagf-*` 而不是复用 `rl-genre-*` —— 那套类名在产物断言里
+             有十几条锚（`:5901`–`:6142`），复用会让「题材面板」的判据被标签面板满足，
+             等于把守卫变成永真。两套同构、各自被钉。 -->
+        {#if genreScope}
+            <span class="rl-vb-select rl-tagf-wrap" class:is-open={tagOpen}>
+                <span class="rl-sel-label">标签</span>
+                <button
+                    class="rl-tagf-btn"
+                    class:is-on={tagSel.length > 0}
+                    aria-label="标签筛选"
+                    aria-expanded={tagOpen}
+                    on:click={toggleTagPanel}>
+                    {tagPill}<span class="rl-tagf-caret" aria-hidden="true">▾</span>
+                </button>
+                {#if tagOpen}
+                    <div class="rl-tagf-panel">
+                        <div class="rl-tagf-head">
+                            <span>标签</span>
+                            <button class="rl-tagf-all" on:click={selectAllTags}>{allTagsSelected ? '清空' : '全选'}</button>
+                        </div>
+                        <div class="rl-tagf-body">
+                            {#if tagOptions.length === 0}
+                                <div class="rl-tagf-none">该视图下的条目暂无标签</div>
+                            {:else}
+                                {#each tagOptions as o (o.key)}
+                                    <label class="rl-tagf-opt">
+                                        <input type="checkbox" checked={tagSel.includes(o.key)} on:change={() => toggleTagOption(o.key)} />
+                                        <span class="rl-tagf-name">{o.label}</span>
+                                        <span class="rl-tagf-cnt">{o.count}</span>
                                     </label>
                                 {/each}
                             {/if}
@@ -4736,6 +4851,56 @@
     .rl-genre-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rl-genre-cnt { margin-left: auto; font-size: 10px; color: var(--text-faint); flex: none; min-width: 18px; text-align: right; font-variant-numeric: tabular-nums; }
     .rl-genre-none { padding: 8px 10px; font-size: 11px; color: var(--text-faint); }
+    /* ── 标签筛选（用户 m19924 ①：「样式和交互逻辑和题材筛选一样」）──
+       🔴 与上面 `.rl-genre-*` 是**两套同构样式**、⛔ 不是同一套：
+          `rl-genre-*` 在产物断言里有二十多条锚（`:5901`–`:6142`）钉着，复用类名会让那些锚
+          被标签面板满足 ⇒ 守卫退化成永真。所以这里逐条复制、只换类名 —— 改任一侧都要问
+          「另一侧要不要跟着改」（视觉一致性是用户明确要求的一半）。
+       🔴 规则同样一律**两级前缀**：单类 (0,1,0) 会被核心 `button:not(.clickable-icon)` (0,1,1)
+          压出主题灰底 + `--input-shadow`。 */
+    .rl-tagf-wrap { position: relative; }
+    .rl-tagf-wrap .rl-tagf-btn {
+        font-family: inherit; font-size: 12px; color: var(--text-normal);
+        border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px);
+        background: var(--background-primary); box-shadow: var(--input-shadow); padding: 2px 8px; cursor: pointer;
+        display: inline-flex; align-items: center; gap: 4px; height: var(--input-height);
+    }
+    .rl-tagf-wrap .rl-tagf-btn:hover { color: var(--interactive-accent); box-shadow: var(--input-shadow-hover); }
+    .rl-tagf-wrap.is-open .rl-tagf-btn { color: var(--interactive-accent); box-shadow: var(--input-shadow-hover); }
+    .rl-tagf-wrap.is-open .rl-tagf-caret { color: var(--interactive-accent); }
+    .rl-tagf-wrap .rl-tagf-btn:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
+    .rl-tagf-wrap .rl-tagf-btn.is-on { color: var(--interactive-accent); }
+    .rl-tagf-caret { font-size: 9px; opacity: .7; }
+    .rl-tagf-panel {
+        position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
+        min-width: 190px; max-width: 260px; max-height: 280px;
+        display: flex; flex-direction: column; overflow: hidden;
+        background: var(--background-primary); border: 1px solid var(--background-modifier-border);
+        border-radius: var(--rl-t-radius-lg, 8px); box-shadow: var(--rl-t-shadow-menu, 0 4px 14px rgba(0, 0, 0, .15));
+        cursor: default;
+    }
+    .rl-tagf-head {
+        flex: none;
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 6px 10px; border-bottom: 1px solid var(--background-modifier-border);
+        font-size: 11px; color: var(--text-faint);
+    }
+    .rl-tagf-head .rl-tagf-all {
+        font-family: inherit; font-size: 11px; color: var(--interactive-accent);
+        background: transparent; border: none; box-shadow: none; padding: 0; height: auto;
+        cursor: pointer;
+    }
+    .rl-tagf-head .rl-tagf-all:hover { text-decoration: underline; }
+    .rl-tagf-body { flex: 1 1 auto; overflow: auto; padding: 4px 0; }
+    .rl-tagf-opt { display: flex; align-items: center; gap: 8px; margin: 0 4px; padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+    .rl-tagf-opt:hover { background: var(--background-modifier-hover); }
+    .rl-tagf-opt input[type="checkbox"] {
+        --checkbox-size: 13px; --checkbox-radius: 3px;
+        width: 13px; height: 13px; margin: 0; flex: none;
+    }
+    .rl-tagf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rl-tagf-cnt { margin-left: auto; font-size: 10px; color: var(--text-faint); flex: none; min-width: 18px; text-align: right; font-variant-numeric: tabular-nums; }
+    .rl-tagf-none { padding: 8px 10px; font-size: 11px; color: var(--text-faint); }
     /* 🔴🔴 #598 **翻面**：视图切换由「分段控制器」改成**单枚下拉菜单**（原来那套
        「浅灰外容器 + 白滑块 + 三枚 Unicode 几何符号 ▦☷▥」整体退场 —— 用户：「还是太丑了，有什么其他方案切换」）。
        闭合框与筛选栏那几个下拉**同款盒模型**（`--input-height` 定高 + `--input-shadow` 内描边环）⇒
