@@ -149,6 +149,12 @@
      * ⛔ 别改成组件内 `new Set<string>()`（那就等于没有这条修剪）。
      */
     import { stackAnimatedSnapshot, rememberStackAnimated } from 'pure/stackAnimated';
+    /**
+     * 🔴 m19210：「隐藏此条目卡片」的判定真源。
+     * 勾上后把封面 + 信息栏整体糊掉；系列卡只在**组内全部勾选**时才糊（否则一部就糊掉整扇门面）。
+     * ⛔ 别把判据写进模板表达式（本仓模板里不许写 TS 断言，且两份实现必然漂移）。
+     */
+    import { entryCardHidden, seriesCardHidden } from 'pure/cardHidden';
     // 🔴 #626 多带两样：`posterGridTemplateForWall`（墙的列模板 —— 自定义档的**间距比网格宽**，裁决收在 pure 层）、
     //    `POSTER_WALL_GAP`（墙的间距，必须与 `.rl-wall{gap}` 同值）。
     // 🔴 用户 2026-10-20 删除「海报墙列数」⇒ `POSTER_WALL_COLUMNS_MAX` 与 `wallColumns` prop 一并下线。
@@ -3350,6 +3356,7 @@
             <div
                 class="rl-card"
                 class:rl-sel-card={selectedIds.has(e.id)}
+                class:is-card-hidden={entryCardHidden(e)}
                 role="link"
                 tabindex="0"
                
@@ -3669,6 +3676,7 @@
             <div
                 class="rl-card rl-series-card"
                 class:is-animated={stackAnimated.has(g.key)}
+                class:is-card-hidden={seriesCardHidden(g.items)}
                 role="button"
                 tabindex="0"
                 data-tip={`只看「${g.title}」（${g.items.length} 部）`}
@@ -4844,6 +4852,19 @@
     /* 卡片统一尺寸：列内 flex 等高，meta 区域最小高度保证各类型（电影/剧集/动画/书籍/游戏）
        的卡片在视觉上同高，进度行贴底对齐 */
     .rl-card { background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-card-radius, var(--rl-t-radius-lg, 8px)); overflow: hidden; cursor: pointer; position: relative; display: flex; flex-direction: column; }
+    /* 🔴 m19210「隐藏此条目卡片」：勾上后把**封面 + 信息栏**整体糊掉。
+       用户原话：「勾选中后就把整个封面和信息栏都给我模糊化」。
+       · 只糊这两块（`.rl-cov-wrap` / `.rl-card-meta`），⛔ 别糊 `.rl-card` 本体 ——
+         那样会把边框和圆角一起糊软，卡片在网格里看着像「坏掉了」而不是「被遮住了」。
+       · 边缘溢出由 `.rl-card { overflow: hidden }` 兜住（blur 会把绘制范围外扩几个像素）。
+       · 只改视觉：点击 / 右键 / 键盘交互一律照旧（⛔ 别顺手加 pointer-events: none，
+         那样用户连「点进去取消勾选」都做不到）。 */
+    .rl-card.is-card-hidden .rl-cov-wrap,
+    .rl-card.is-card-hidden .rl-card-meta {
+        filter: blur(6px) saturate(0.55);
+        opacity: 0.6;
+        transition: filter 140ms ease, opacity 140ms ease;
+    }
     .rl-card:hover { box-shadow: var(--rl-t-shadow-card-hover, 0 2px 8px rgba(0, 0, 0, .12)); transform: translateY(var(--rl-t-lift, 0px)) scale(var(--rl-t-scale, 1)); }
     .rl-card.rl-sel-card { border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
     .rl-type-bar { height: 4px; flex: none; }

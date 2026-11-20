@@ -270,6 +270,10 @@ export function normalizeEntry(raw: Partial<MediaEntry>): MediaEntry {
         notePath: isString(raw.notePath) ? raw.notePath : undefined,
         noteFingerprint: isString(raw.noteFingerprint) ? raw.noteFingerprint : undefined, // 笔记指纹（G 双写冲突）
         excerptCount: typeof raw.excerptCount === 'number' ? raw.excerptCount : undefined, // 摘抄数（P1 性能缓存）
+        // m19210 隐藏此条目卡片（只模糊卡片外观，不进筛选/排序/统计口径）。
+        // 🔴 只在 `true` 时落值：`false` / undefined 一律存 undefined —— 否则「取消勾选」会留一个
+        //   永远为假的字段在 catalog.json 里，`'cardHidden' in e` 之类的存在性判断全被带偏。
+        cardHidden: raw.cardHidden === true ? true : undefined,
         createdAt: isString(raw.createdAt) ? raw.createdAt : now,
         updatedAt: isString(raw.updatedAt) ? raw.updatedAt : now,
     };

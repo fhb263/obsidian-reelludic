@@ -1359,6 +1359,12 @@ export let initialBookKind: BookKind | undefined = undefined;
      * ⚠️ 存储形态仍是 `MediaEntry.tags: string[]`；这里用**逗号分隔的文本**承载，提交时 split 成数组。
      */
     let tagsText = (entry?.tags ?? []).join(', ');
+    /**
+     * 「隐藏此条目卡片」勾选态（用户 m19210）。
+     * 🔴 语义 = **只把卡片外观模糊掉**，不是 archived、不影响筛选/排序/统计/进度。
+     * ⚠️ `cardHidden` 必须是 `normalizeEntry` 白名单里的字段，否则保存即静默丢弃（本仓踩过多次）。
+     */
+    let cardHidden = entry?.cardHidden === true;
     let platform = entry?.platform ?? '';
     let developer = entry?.developer ?? '';
     let poster = entry?.poster ?? '';
@@ -4409,6 +4415,10 @@ export let initialBookKind: BookKind | undefined = undefined;
         // 🔴 2026-11-24「合集」：合集视图**唯一**的收录依据（`pure/mediaViews.ipKeyOf` 只读它）。
         //    空串 ⇒ 显式 `undefined`（**清得掉**旧值，用户把合集名删掉就该退出合集视图）。
         input.collection = collection.trim() || undefined;
+        // 🔴 m19210 隐藏此条目卡片：**全类型**都写（勾上 = 卡片模糊）。
+        //    取消勾选写 `undefined` 而不是 `catalog.ts` 里的 `false` —— 归一器只认 `=== true`，
+        //    显式 `undefined` 能真正把旧值清掉（与 publisher / isbn 那几条同一条纪律）。
+        input.cardHidden = cardHidden ? true : undefined;
         // 🔴 2026-11-24「标签」：自定义视图按标签收人（`viewMatchesEntry`）。
         //    ⚠️ 逗号分隔（中英文逗号都收），去空去重；全空 ⇒ `[]`（不是 undefined —— tags 是必填数组字段）。
         input.tags = tagsText
@@ -4856,7 +4866,17 @@ export let initialBookKind: BookKind | undefined = undefined;
     {#if picked}
         <div class="rl-fields">
             <!-- 1. 作品基础信息（左封面边栏 + 右字段区，两列布局） -->
-            <div class="rl-section">作品基础信息</div>
+            <!-- 🔴 m19210：标题右边挂「隐藏此条目卡片」复选框 —— 勾上后库列表里这张卡的封面
+                 与信息栏整体模糊（`MediaList` 的 `.rl-card.is-card-hidden`）。
+                 用户原话：「作品基础信息顶部行右边显示一个『[复选框]隐藏此条目卡片』功能项，
+                 勾选中后就把整个封面和信息栏都给我模糊化」。 -->
+            <div class="rl-section rl-section-row">
+                <span class="rl-section-txt">作品基础信息</span>
+                <label class="rl-cardhidden">
+                    <input type="checkbox" bind:checked={cardHidden} />
+                    隐藏此条目卡片
+                </label>
+            </div>
             <div class="rl-basic-grid">
                 <!-- 左：封面边栏（右键弹菜单更换 / 拖入本地图片） -->
                 <div class="rl-poster-col">
@@ -6929,6 +6949,19 @@ export let initialBookKind: BookKind | undefined = undefined;
         border-bottom: 1px solid var(--background-modifier-border); /* 仅一条线（章节标题下方），与上方"作品基础信息"下线对齐 */
     }
     .rl-section:first-child { margin-top: 4px; }
+    /* 🔴 m19210：「作品基础信息」这一条的标题行右侧要挂复选框 ⇒ 只有这一条改成横向 flex
+       （⛔ 别把 `.rl-section` 本体改默认 flex：其余五个分区标题都只有纯文字，
+         改全局会让它们多出一个空的右槽位，与既有对齐判据打架） */
+    .rl-section-row { display: flex; align-items: center; gap: 8px; }
+    .rl-section-txt { flex: 0 0 auto; }
+    .rl-cardhidden {
+        display: inline-flex; align-items: center; gap: 5px;
+        margin-left: auto; /* 贴右 */
+        font-size: 11px; font-weight: 400; color: var(--text-muted);
+        cursor: pointer; user-select: none;
+    }
+    .rl-cardhidden input { margin: 0; }
+    .rl-cardhidden:hover { color: var(--text-normal); }
     /* 章节标题左移对齐"作品基础信息"首字（弹窗最左）：负 margin 抵消 cover 列宽(100px)+gap(12px) */
     .rl-section-left { margin-left: -112px; }
     /* 基础信息两列布局：左封面边栏 + 右字段区 */

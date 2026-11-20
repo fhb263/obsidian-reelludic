@@ -497,6 +497,12 @@ export interface MediaEntry {
     noteFingerprint?: string;
     /** 摘抄数（P1 性能缓存）：addExcerpt 时更新，书架徽标/年度总结读 catalog 不读笔记（老数据惰性迁移一次） */
     excerptCount?: number;
+    /**
+     * 隐藏此条目卡片（m19210）：勾选后库列表里这张卡的封面与信息栏整体模糊。
+     * ⚠️ 必须进 `normalizeEntry` 白名单，否则保存即被静默丢弃（本仓踩过多次）。
+     * 🔴 只是「遮一下」，不参与任何筛选/排序/统计口径 —— ⛔ 别拿它当 archived 用。
+     */
+    cardHidden?: boolean;
     createdAt: string;
     updatedAt: string;
 }
