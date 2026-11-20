@@ -209,31 +209,66 @@ export function aiSearchLabel(provider: AiSearchProvider): string {
 }
 
 /**
+ * 结果行的「可读标题」—— 标题为空时逐级降级，⛔ 不要出现 `(无标题)`。
+ *
+ * 🔴 由来（m17001 真机实测，2026-11-20）：DeepSeek 官方检索对**图书馆 OPAC / 题库**这类页面
+ *    经常返回 `title: ""`（例：国防科技大学 `libopac.nudt.edu.cn/opac/book/437042`，
+ *    `site_name = "国防科技大学"`、`authority = 4`、`summary` 里反而是完整的书名/作者/ISBN/出版社/页数）。
+ *    原实现在这里兜 `(无标题)`，模型一次拿到 8 条里有 5 条写着「(无标题)」，根本判断不出该点哪条
+ *    ⇒ 退而求其次去编。降级顺序：`title` → `site_name`（站点名本身就有辨识度）→ 摘要首句 → 链接。
+ *
+ * ⛔ 别把这里改成返回空串：空标题行会被模型当成「这条没有信息」直接跳过，等于白搜。
+ */
+function searchHitTitle(it: AiSearchHit): string {
+    const title = String(it.title ?? '').trim();
+    if (title) return title;
+    const site = String(it.site ?? '').trim();
+    if (site) return site;
+    const lead = String(it.snippet ?? '')
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .find((s) => s.length > 0);
+    if (lead) return lead;
+    return String(it.url ?? '').trim() || '未命名结果';
+}
+
+/**
  * 结果 → 喂给模型的文本块。
  *
- * 形态：`1. 标题 — 摘要（链接）〔权威 3/4 · 相关 2.4〕`
+ * 形态：**每条严格一行** `1. 标题 — 摘要（链接）〔权威 3/4 · 相关 2.4〕`
  * · **权威性/相关性必须显示**：用户要的正是「权威元数据」，模型得知道哪条更可信
  *   （`authority >= 3` 是官方口径的「极权威」，`rerank_score >= 1.5` 是「优质」）。
  * · 摘要按余量截断：`AI_SEARCH_TEXT_MAX` 是总上限，逐条累加，装不下就停（⛔ 别整页塞进去）。
+ * · 🔴 **摘要与标题必须先折成单行**（m17001 真机实测）：DeepSeek 的 `summary`/`snippet` 来自网页抓取，
+ *   自带 `\n`（图书馆 OPAC 的 `| 三体 / 刘慈欣著 ,\n...\n出版发行:\n | 出版地：…`）。
+ *   不折行的话一条结果会被打散成五六行，模型靠行首的 `N. ` 数结果条数就会数错，
+ *   也容易把某条的中段当成新的一条 ⇒ ⛔ 别把原始换行直接拼进输出。
  */
 export function aiSearchResultsToText(hits: readonly AiSearchHit[]): string {
     const lines: string[] = [];
     let used = 0;
     for (const [i, it] of hits.entries()) {
-        const head = `${i + 1}. ${(it.title || '(无标题)').slice(0, AI_SEARCH_TITLE_MAX)}`;
+        const head = `${i + 1}. ${oneLine(searchHitTitle(it)).slice(0, AI_SEARCH_TITLE_MAX)}`;
         const mark: string[] = [];
         if (it.authority >= 0) mark.push(`权威 ${it.authority}/4`);
         if (it.score > 0) mark.push(`相关 ${it.score.toFixed(1)}`);
         if (it.site) mark.push(it.site);
         if (it.date) mark.push(it.date.slice(0, 10));
         const tail = `${mark.length ? `〔${mark.join(' · ')}〕` : ''}${it.url ? `（${it.url}）` : ''}`;
-        const body = it.snippet ? ` — ${it.snippet}` : '';
+        const body = it.snippet ? ` — ${oneLine(it.snippet)}` : '';
         const line = head + body + tail;
         if (used + line.length > AI_SEARCH_TEXT_MAX) break;
         lines.push(line);
         used += line.length;
     }
     return lines.join('\n');
+}
+
+/** 折成单行：所有空白（含 `\r\n`、`\t`、全角空格）压成一个半角空格并去首尾。 */
+function oneLine(raw: unknown): string {
+    return String(raw ?? '')
+        .replace(/[\s\u3000]+/g, ' ')
+        .trim();
 }
 
 /**

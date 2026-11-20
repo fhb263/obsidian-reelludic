@@ -224,11 +224,64 @@ describe('aiSearchResultsToText', () => {
         expect(text).toContain('百科');
     });
 
-    it('无标题时给占位（⛔ 不留空行首）', () => {
+    // 🔴 m17001（真机实测）：DeepSeek 对图书馆 OPAC / 题库这类页面常返回 `title: ""`，
+    //    原实现兜 `(无标题)` ⇒ 一次 8 条里 5 条写着「(无标题)」，模型判断不出该点哪条，只能去编。
+    //    ⇒ 改判成**逐级降级**：站点名 → 摘要首句 → 链接。⛔ 不许再出现 `(无标题)`。
+    it('🔴 无标题时退到站点名（⛔ 不再出现「(无标题)」）', () => {
         const text = aiSearchResultsToText([
-            { title: '', url: 'u', snippet: '', site: '', date: '', authority: -1, score: 0 },
+            { title: '', url: 'u', snippet: '', site: '国防科技大学', date: '', authority: 4, score: 1.8 },
         ]);
-        expect(text.startsWith('1. (无标题)')).toBe(true);
+        expect(text.startsWith('1. 国防科技大学')).toBe(true);
+        expect(text).not.toContain('(无标题)');
+    });
+
+    it('🔴 无标题且无站点名 ⇒ 退到摘要首句', () => {
+        const text = aiSearchResultsToText([
+            { title: '', url: 'u', snippet: '\n  三体 / 刘慈欣著\n出版社：重庆出版社', site: '', date: '', authority: 4, score: 1.8 },
+        ]);
+        expect(text.startsWith('1. 三体 / 刘慈欣著')).toBe(true);
+        expect(text).not.toContain('(无标题)');
+    });
+
+    it('🔴 全空 ⇒ 退到链接（仍然不出现「(无标题)」）', () => {
+        const text = aiSearchResultsToText([
+            { title: '', url: 'https://libopac.nudt.edu.cn/opac/book/437042', snippet: '', site: '', date: '', authority: 4, score: 1.8 },
+        ]);
+        expect(text).toContain('libopac.nudt.edu.cn/opac/book/437042');
+        expect(text).not.toContain('(无标题)');
+    });
+
+    it('🔴 反向守卫：源码里不许再出现「(无标题)」这个占位', () => {
+        const src = require('node:fs').readFileSync(
+            require('node:path').resolve(__dirname, '../src/pure/aiWebSearch.ts'),
+            'utf8',
+        );
+        expect(src).not.toContain("'(无标题)'");
+    });
+
+    // 🔴 m17001 真机实测：DeepSeek 的 summary/snippet 是网页抓取来的，自带换行
+    //    （图书馆 OPAC：`| 三体 / 刘慈欣著 ,\n...\n出版发行:\n | 出版地：…`）。
+    //    不折行的话一条结果被打散成五六行，模型靠行首 `N. ` 数条数就会数错 ⇒ 必须严格一条一行。
+    it('🔴 摘要里的换行必须折成单行（否则一条结果被打散、模型数错条数）', () => {
+        const text = aiSearchResultsToText([
+            {
+                title: '国防科技大学',
+                url: 'https://libopac.nudt.edu.cn/opac/book/437042',
+                snippet: '| 三体 / 刘慈欣著 ,\n...\n出版发行:\n | 出版地： 重庆 出版社： 重庆出版社',
+                site: '国防科技大学',
+                date: '',
+                authority: 4,
+                score: 1.9,
+            },
+            { title: '第二条', url: 'u2', snippet: 'a\r\nb\tc\u3000d', site: '', date: '', authority: 3, score: 1.5 },
+        ]);
+        const lines = text.split('\n');
+        expect(lines).toHaveLength(2);
+        expect(lines.every((l) => /^\d+\. /.test(l))).toBe(true);
+        expect(text).not.toMatch(/\r/);
+        expect(text).not.toMatch(/\u3000/);
+        expect(lines[0]).toContain('三体 / 刘慈欣著');
+        expect(lines[1]).toContain('a b c d');
     });
 
     it(`总长不超过 AI_SEARCH_TEXT_MAX=${AI_SEARCH_TEXT_MAX}（装不下就停）`, () => {
@@ -350,8 +403,13 @@ describe('宿主装配（main.ts）—— 分流与回落必须同时存在', ()
         expect(body).toContain("typeof key === 'string' && key.trim()");
     });
 
-    it('给模型的文本要标出检索通道（否则模型分不清权威检索与必应摘要）', () => {
-        expect(src).toContain('（来源：${aiSearchLabel(provider)}）');
+    // 🔴 m17001：提示词按「原生 / 必应回落」两条通道分流查询词口径 ⇒ 模型必须能**从结果文本里认出通道**。
+    //    两个标记都是契约（`pure/aiPrefill.ts` 的提示词逐字引用），⛔ 别改名、别只留一个。
+    it('🔴 给模型的文本要标出检索通道（原生 / 必应回落两条都必须有）', () => {
+        expect(src).toContain('${aiSearchLabel(provider)} · 平台原生检索');
+        expect(src).toContain('（来源：必应 RSS · 回落通道）');
+        // ⛔ 反向守卫：不许退回到「只报服务商名、不说是哪条通道」
+        expect(src).not.toContain('（来源：${aiSearchLabel(provider)}）的前');
     });
 });
 

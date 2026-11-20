@@ -11605,7 +11605,7 @@ export default class ReelLudicPlugin extends Plugin {
             if (!text) return { issue: '返回的结果都缺标题与链接' };
             return {
                 text:
-                    `搜索「${query}」（来源：${aiSearchLabel(provider)}）的前 ${hits.length} 条结果：\n${text}\n` +
+                    `搜索「${query}」（来源：${aiSearchLabel(provider)} · 平台原生检索）的前 ${hits.length} 条结果：\n${text}\n` +
                     '（〔权威 x/4 · 相关 x.x〕是该平台给出的可信度评估：权威 ≥3 基本是官方/权威站点，' +
                     '相关 ≥1.5 算优质命中。要读正文用 `' + PREFILL_TOOL_FETCH_PAGE + '`。）',
             };
@@ -11673,7 +11673,10 @@ export default class ReelLudicPlugin extends Plugin {
                   PREFILL_TOOL_FETCH_PAGE +
                   '`。\n'
                 : '';
-            return `搜索「${query}」${note}的前 ${items.length} 条结果：${warn}${bingResultsToText(items)}`;
+            // 🔴 m17001：**必须标出「回落通道」**——提示词教模型「原生通道用多段词、必应通道只能用单段」，
+            //    模型得从工具结果里认出这批结果到底来自哪条通道，否则它会按上一条的原生习惯继续拼多段词。
+            //    ⛔ 别把这个标记合并进 `note`：`note` 只在「查询被截断」时出现，通道标记是**恒有**的。
+            return `搜索「${query}」（来源：必应 RSS · 回落通道）${note}的前 ${items.length} 条结果：${warn}${bingResultsToText(items)}`;
         }
 
         if (name === PREFILL_TOOL_METADATA) {
