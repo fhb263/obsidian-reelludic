@@ -15490,3 +15490,90 @@ body .rl-search-input::placeholder {
         flex-wrap: wrap;
     }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   m17219 百度搜索内嵌弹窗（`.rl-baidu-*`）
+
+   🔴 承载层是 `services/gameEmbedHost`（`<webview>` 优先 / 降级 `<iframe>`）。
+      下面那条 `display: flex; flex: 1 1 auto` 是**实测换来的**，⛔ 别改成 `display: block`
+      或 `width/height: 100%`：
+        · `display: block` 时 `<webview>` 的访客进程只拿到 150px 高（Chromium 内建默认高度），
+          元素本身却是满高 ⇒ 百度页面按「宽屏 × 150px」排版，看起来就是整页被压成一条。
+        · 百分比在 flex 容器遇到极窄/极宽尺寸时会取整到父级初始值，改视口那一下会看到跳动。
+   ══════════════════════════════════════════════════════════════════════════ */
+.rl-baidu-modal-shell {
+    /* 弹窗装网页：宽高都按视口上限给，窄屏仍能收（不用固定 px，否则小窗口里会溢出） */
+    width: min(1120px, 92vw);
+    max-width: 92vw;
+    height: min(820px, 88vh);
+    max-height: 88vh;
+}
+.rl-baidu-modal {
+    display: flex;
+    flex-direction: column;
+    /* 头 + 舞台两段；`min-height: 0` 让舞台能真正被压缩（否则 flex 子项按内容撑、溢出不滚动） */
+    height: 100%;
+    min-height: 0;
+    gap: 8px;
+}
+.rl-baidu-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+}
+.rl-baidu-query {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    /* 长标题不要撑破头行 */
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+.rl-baidu-acts {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+.rl-baidu-stage {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 网页底部与弹窗边留一点缝，圆角不会被页面白底顶穿 */
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--background-secondary);
+}
+.rl-baidu-stage .rl-baidu-frame {
+    /* 🔴 见本段头注释：`display: flex` + `flex: 1 1 auto` 是 webview 尺寸正确的唯一形态 */
+    display: flex;
+    flex: 1 1 auto;
+    align-self: stretch;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    border: 0;
+    background: var(--background-primary);
+}
+.rl-baidu-warn {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+    color: var(--text-warning, var(--text-normal));
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    /* 降级提示浮在网页上方，不参与布局（否则会把舞台挤矮） */
+    pointer-events: none;
+}
+.rl-baidu-stage:has(.rl-baidu-warn) {
+    position: relative;
+}
+

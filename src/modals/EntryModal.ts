@@ -384,6 +384,9 @@ export class EntryModal extends Modal {
                  *  #499D 第二参 `onStep`：agent 工具回路里每次调工具的进度回执（宿主执行工具，表单只显示） */
                 onAiPrefill: (input: AiPrefillInput, onStep?: (label: string) => void) =>
                     this.plugin.aiPrefillEntry(input, onStep),
+                /** m17219 标题行「百度搜索」：弹内嵌百度网页的窗口（纯展示、不回填，查询词 = 标题 + 作者） */
+                onOpenBaiduSearch: (title: string, author: string) =>
+                    this.plugin.openBaiduSearch(title, author),
                 /** 编辑表单游戏「启动快捷方式」：系统文件选择器选 .lnk，返回 vault 相对路径（库外绝对路径） */
                 onPickGameLaunch: () => this.plugin.pickGameLaunchPath(),
                 /** 2026-11-16 编辑表单游戏「Flash 影片」：系统文件选择器选 .swf（插件内用 Ruffle 播） */

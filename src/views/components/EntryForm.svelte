@@ -294,6 +294,13 @@ export let initialBookKind: BookKind | undefined = undefined;
         input: AiPrefillInput,
         onStep?: (label: string) => void,
     ) => Promise<AiPrefillOutcome | null> = async () => null;
+    /**
+     * m17219：标题行「百度搜索」按钮 —— 弹一个**内嵌百度网页**的窗口（纯展示、不回填）。
+     * 🔴 用户裁定（逐字）：「标题、作者、实际就是仿AI预填的网络搜索版」⇒ 两参就是拼查询词用的，
+     *    弹窗只负责把 `标题 作者` 灌进百度，用户在页面里自己核对名称。
+     * ⛔ 组件不拼 URL、不开窗（与 AI 预填同口径：组件只发意图，宿主决定怎么做）。
+     */
+    export let onOpenBaiduSearch: (title: string, author: string) => void = () => {};
     /** 「本地音频」系统文件选择器选音乐文件（返回 vault 相对路径，库外绝对路径） */
     export let onPickLocalAudio: (ev?: MouseEvent) => Promise<string | undefined> = async () => undefined;
     /** #462 「播放」按钮悬停提示：探关联音频的体积 + 时长（宿主实现；两项都可缺 —— 拿不到就不显示那一段） */
@@ -4914,6 +4921,21 @@ export let initialBookKind: BookKind | undefined = undefined;
                         <label class="rl-lbl">标题</label>
                     {/if}
                     {#if entry || manualFill}
+                    <!-- 🔴 m17219 百度搜索 —— 用户逐字：「在所有类型编辑属性表单中标题旁就是AI预填图标按钮
+                         左旁边加个百度搜索的按钮，点击即可内弹窗百度搜索改条目名称」。
+                         ⛔ 位置固定在 ✨ 之前（「左旁边」），且同样只在 `entry || manualFill` 时出现 ——
+                            点选搜索结果那条路客观字段已经填好，再摆一枚「去百度搜」没有意义。
+                         ⛔ 图标别用星形/sparkles：那是 AI 预填与总结摘要的家族（会撞「重复」）。
+                            这里画放大镜（lucide `search` 同款轮廓），语义直白。 -->
+                    <button
+                        class="rl-ai-btn rl-baidu-btn"
+                        on:click={() => onOpenBaiduSearch(title, author || artist)}
+                        data-tip={'在弹窗里用百度搜索这个条目\n查询词 = 标题 + 作者\n只用来核对名称，不会自动改你的标题'}>
+                        <span class="rl-sr">百度搜索这个条目</span>
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
+                        </svg>
+                    </button>
                     <!-- 🔴 #499 AI 预填 —— 点它**只列预览、不落库**，确认后才写回（口径见 `applyPrefill`）。
                          🔴 m03052：图标必须与「总结摘要」的 sparkle 双星**明显不同** ——
                             用户：「AI预填图标按钮和总结摘要按钮图标样式重复了，把AI预填图标按钮样式改了」。

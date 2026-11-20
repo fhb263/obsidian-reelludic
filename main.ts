@@ -258,6 +258,7 @@ import { ShotAnnotateModal } from 'modals/ShotAnnotateModal';
 // 🔴 2026-11-08：笔记反向导入（用户报「手写的条目上海报墙不出现」）扫库判据pure，勾UI modal
 import { NoteImportModal } from 'modals/NoteImportModal';
 import { NoteImportGuideModal, type NoteImportGuideScan } from 'modals/NoteImportGuideModal';
+import { openBaiduSearchModal } from 'modals/BaiduSearchModal';
 import { scanImportableNotes, writeIdIntoNote, posterFromBanner, type NoteImportCandidate } from 'pure/noteImport';
 // 🔴 2026-11-08 用户指令：「给从笔记导入条目项加个『生成模板』按钮，可在仓库根目录生成笔记模板」
 //   模板内容（六类型可复制区块）pure/noteTemplate，IO main.writeNoteTemplate()
@@ -11534,6 +11535,21 @@ export default class ReelLudicPlugin extends Plugin {
 
     /** #499D：本次预填的「工具进度」回调（服务是单例 ⇒ 每次调用前挂上、结束即清；按钮忙时不会再发第二次） */
     private prefillStepCb: ((label: string) => void) | null = null;
+
+    /**
+     * m17219：编辑属性表单标题行的「百度搜索」按钮 —— 弹一个**内嵌百度网页**的窗口。
+     *
+     * 🔴 用户裁定：「纯内嵌百度网页，不回填」「标题、作者、实际就是仿AI预填的网络搜索版」
+     *    ⇒ 查询词 = 标题 + 作者（拼法真源 `pure/baiduSearch.baiduSearchQuery`），
+     *      窗口里就是真百度页面，用户自己核对名称后再改标题框 —— ⛔ 本方法不回填、不落库。
+     */
+    openBaiduSearch(title: string, author: string): void {
+        openBaiduSearchModal(this.app, {
+            title,
+            author,
+            onOpenExternal: (url) => this.openExternalUrl(url),
+        });
+    }
 
     /**
      * AI 预填条目字段（新增条目 · 手动填写界面的 ✨）：失败返回 null（服务内部已 Notice）。
