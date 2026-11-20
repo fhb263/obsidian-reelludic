@@ -12,9 +12,11 @@ import type { TranslateProvider } from 'pure/translate';
 import {
     MAX_PREFILL_ROUNDS,
     buildPrefillRequest,
+    extractToolGenres,
     extractToolSynopsis,
     parseAiPrefillResult,
     parsePrefillToolCalls,
+    preferToolGenres,
     preferToolSynopsis,
     prefillAssistantTurn,
     prefillFieldsFor,
@@ -114,6 +116,21 @@ export class AiPrefillService {
          * 收尾时由 `preferToolSynopsis` **照搬**进 `summary`：用户点名「简介要搜索照搬真正作品的简介」。
          */
         let toolSynopsis: string | null = null;
+        /**
+         * 🔴 m15796 工具查到的**题材**（同样是首个命中即锁定）。
+         *
+         * 为什么不跟简介用同一套「查不到就清空」：题材不像简介那样容易被模型编错，
+         * 而且各数据源的缺失率极高（豆瓣图书 `#info` 就没有「类型」行）——
+         * 一律清空会让「题材」永远填不上。查到就照搬覆盖，查不到就保留模型给的那份。
+         */
+        let toolGenres: string[] | null = null;
+        /** 收尾两处共用的最终裁决（简介照搬 + 题材照搬），⛔ 别在返回处各写一遍 */
+        const finalize = (f: Partial<Record<string, string>>): ReturnType<typeof preferToolSynopsis> =>
+            preferToolGenres(
+                preferToolSynopsis(f as never, toolSynopsis, defs),
+                toolGenres,
+                defs,
+            );
         /** 「端点不收 tools」的回落只做一次（⛔ 别在每轮都试） */
         let toolFallbackDone = false;
 
@@ -137,6 +154,9 @@ export class AiPrefillService {
                     if (!sources.includes(src)) sources.push(src);
                     // 🔴 #499E：工具结果里带简介原文就收下（照搬用）—— ⛔ 只认首个，别被后一轮的覆盖
                     if (!toolSynopsis) toolSynopsis = extractToolSynopsis(text);
+                    // 🔴 m15796：题材同口径（首个命中即锁定）。两者在工具结果里是**两条独立的行**
+                    //    （`PREFILL_GENRES_PREFIX` / `PREFILL_SYNOPSIS_PREFIX`），互不覆盖。
+                    if (!toolGenres) toolGenres = extractToolGenres(text);
                     messages.push(prefillToolMessage(c, text));
                 }
                 continue;
@@ -147,8 +167,8 @@ export class AiPrefillService {
             // 🔴 #499E：工具查到了简介原文时，**即使模型一个字段都没给出**也让「简介」这一行立住 ——
             //    「照搬」的语义就是「查到了就该看得见」；⛔ 别因为模型偷懒（返回 `{}`）把它一起丢掉。
             //    ⚠️ 这一条也顺带说明「工具确实跑过」⇒ 不再走下面那条「端点把 tools 吞了」的回落。
-            if (fields || toolSynopsis) {
-                return { fields: preferToolSynopsis(fields ?? {}, toolSynopsis, defs), sources };
+            if (fields || toolSynopsis || toolGenres) {
+                return { fields: finalize(fields ?? {}), sources };
             }
 
             // ③ 收不了尾：首轮又带着 tools ⇒ 很可能是**端点把 tools 吞了**（实测自定义端点会裸答）
@@ -178,11 +198,12 @@ export class AiPrefillService {
         }
         const fields = parseAiPrefillResult(replyTextOf(last), defs);
         // 🔴 #499E：同上 —— 收尾轮模型没整理出字段，但工具查到过简介原文，那就只带这一行走
-        if (!fields && !toolSynopsis) {
+        // 🔴 m15796：题材同理（只查到题材也要让它立住）
+        if (!fields && !toolSynopsis && !toolGenres) {
             this.deps.notify('AI 预填失败：查了资料但没能整理出字段，请再试或换个模型', 5000);
             return null;
         }
-        return { fields: preferToolSynopsis(fields ?? {}, toolSynopsis, defs), sources };
+        return { fields: finalize(fields ?? {}), sources };
     }
 
     /** 发一次请求并解析外层（HTTP / JSON / 推理模型三态都收敛成一句人话） */

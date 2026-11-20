@@ -7,11 +7,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+    PAGE_GENRES_MAX,
     PAGE_SYNOPSIS_MAX,
     PAGE_TEXT_MAX,
     decodePageEntities,
+    extractPageGenres,
     extractPageSynopsis,
     pageReadableText,
+    sectionHtmlByHeading,
 } from 'pure/pageText';
 
 describe('decodePageEntities（实体还原）', () => {
@@ -119,5 +122,116 @@ describe('extractPageSynopsis（简介原文提取）', () => {
         expect(out).not.toContain('<b>');
         expect(out).not.toContain('</b>');
         expect(out).toContain('粗体');
+    });
+});
+
+/**
+ * 🔴🔴 m15796（用户 2026-11-19：「AI预填的根据搜索书名给出该书的简介，而不是什么作者的简介啊」）：
+ * 豆瓣图书页的小节顺序是 `内容简介 → XXX的创作者 → 作者简介 → 目录 → 丛书信息`。
+ * 旧实现只在**扁平文本**里 `exec` 一次就端走 800 字 ⇒ 作者简介整段被当成作品简介落进笔记。
+ * 下面这几条钉住「按小节边界切」这件事 —— 它们红了就说明用户又该看到作者的履历了。
+ */
+describe('extractPageSynopsis · 按小节切（m15796 书的简介不许变成作者简介）', () => {
+    /** 仿豆瓣图书页：`内容简介` 后面紧跟 `XXX的创作者` / `作者简介` / `目录` */
+    const DOUBAN_LIKE =
+        '<div class="related_info">' +
+        '<h2><span>内容简介</span>&nbsp;&middot;&middot;&middot;&middot;&middot;</h2>' +
+        '<div class="indent" id="link-report"><div><style type="text/css" media="screen">.intro p{text-indent:2em}</style>' +
+        '<div class="intro"><p>文化大革命如火如荼进行的同时，军方探寻外星文明的绝秘计划「红岸工程」取得了突破性进展。</p>' +
+        '<p>但在按下发射键的那一刻，历经劫难的叶文洁没有意识到，她彻底改变了人类的命运。</p></div></div></div>' +
+        '<h2><span>三体的创作者</span>&nbsp;&middot;&middot;</h2><div class="indent">刘慈欣 作者</div>' +
+        '<h2><span>作者简介</span>&nbsp;&middot;&middot;&middot;</h2>' +
+        '<div class="indent"><p>刘慈欣，祖籍河南，长于山西，中国科普作家协会会员，山西省作家协会副主席。</p></div>' +
+        '<h2><span>目录</span>&nbsp;&middot;&middot;</h2><div class="indent">第一章 科学边界</div>' +
+        '</div>';
+
+    it('🔴 简介只含「内容简介」那一节 —— ⛔ 不许吃进作者简介 / 创作者 / 目录', () => {
+        const out = extractPageSynopsis(DOUBAN_LIKE)!;
+        expect(out).toBeTruthy();
+        expect(out).toContain('红岸工程');
+        // 这三条是「吃进别的节」的直接症状
+        expect(out).not.toContain('祖籍河南');
+        expect(out).not.toContain('山西省作家协会');
+        expect(out).not.toContain('科学边界');
+        expect(out).not.toContain('创作者');
+    });
+
+    it('🔴 `&middot;` 一族必须还原并剔除 —— ⛔ 不许让简介以「&middot; &middot;」开头', () => {
+        const out = extractPageSynopsis(DOUBAN_LIKE)!;
+        expect(out).not.toContain('&middot;');
+        expect(out).not.toContain('·');
+        expect(out.startsWith('文化大革命')).toBe(true);
+    });
+
+    it('🔴 页面只有「作者简介」没有作品简介 ⇒ 不许把作者简介当回事（宁可按兜底走也不给它）', () => {
+        const html =
+            '<h2><span>作者简介</span></h2><div>刘慈欣，祖籍河南，长于山西，中国科普作家协会会员，山西省作协会副主席。</div>' +
+            '<h2><span>目录</span></h2><div>第一章</div>';
+        const out = extractPageSynopsis(html);
+        // 兜底可能抽到那段作者简介（它是唯一够长的段落），但**绝不能走「简介小节」这条路**
+        // ⇒ 判据落在「sectionHtmlByHeading 没有认领它」上（下面那条测试专门钉这个）
+        expect(sectionHtmlByHeading(html)).toBeNull();
+        if (out) expect(out).not.toContain('创作者');
+    });
+
+    it('`sectionHtmlByHeading` 认「内容简介」，不认「作者简介」', () => {
+        expect(sectionHtmlByHeading(DOUBAN_LIKE)).toContain('红岸工程');
+        expect(sectionHtmlByHeading('<h2>作者简介</h2><p>甲的履历</p>')).toBeNull();
+        expect(sectionHtmlByHeading('<h2>目录</h2><p>x</p>')).toBeNull();
+        expect(sectionHtmlByHeading('')).toBeNull();
+        expect(sectionHtmlByHeading(null)).toBeNull();
+    });
+
+    it('🔴 豆瓣 meta 模板串「图书X 介绍、书评、论坛及推荐」不许当简介', () => {
+        const html =
+            '<meta name="description" content="图书三体 介绍、书评、论坛及推荐">' +
+            '<h2><span>内容简介</span></h2><div>军方探寻外星文明的绝秘计划取得了突破性进展，人类命运就此改变。</div>';
+        const out = extractPageSynopsis(html)!;
+        expect(out).not.toContain('书评、论坛及推荐');
+        expect(out).toContain('绝秘计划');
+    });
+});
+
+/**
+ * 🔴 m15796（用户 2026-11-19：「这个也要搜索能该条目的题材、标签」）：
+ * 数据源搜索级常不带题材、豆瓣图书页连标签区块都没了 ⇒ 页面上的结构化题材是最后一条可靠来源。
+ */
+describe('extractPageGenres（页面题材抽取）', () => {
+    it('JSON-LD 的 `genre` 字符串形式', () => {
+        const html = '<script type="application/ld+json">{"@type":"Book","name":"三体","genre":"科幻"}</script>';
+        expect(extractPageGenres(html)).toEqual(['科幻']);
+    });
+
+    it('JSON-LD 的 `genre` 数组形式（多个题材全收）', () => {
+        const html = '<script type="application/ld+json">{"@type":"Movie","genre":["科幻","冒险","悬疑"]}</script>';
+        expect(extractPageGenres(html)).toEqual(['科幻', '冒险', '悬疑']);
+    });
+
+    it('微数据 `property="v:genre"`（豆瓣影视/游戏）', () => {
+        const html = '<span property="v:genre">剧情</span><span property="v:genre">爱情</span>';
+        expect(extractPageGenres(html)).toEqual(['剧情', '爱情']);
+    });
+
+    it('`itemprop="genre"`（部分百科镜像）', () => {
+        expect(extractPageGenres('<a itemprop="genre">奇幻</a>')).toEqual(['奇幻']);
+    });
+
+    it('去重 + 截到 PAGE_GENRES_MAX', () => {
+        const many = Array.from({ length: 12 }, (_, i) => `类型${i}`);
+        const html = `<script type="application/ld+json">${JSON.stringify({ genre: many })}</script>`;
+        expect(extractPageGenres(html)).toHaveLength(PAGE_GENRES_MAX);
+        const dup = '<span property="v:genre">剧情</span><span property="v:genre">剧情</span>';
+        expect(extractPageGenres(dup)).toEqual(['剧情']);
+    });
+
+    it('⛔ 抽不到 ⇒ `[]`（不返回 undefined —— 调用方直接判 length）', () => {
+        expect(extractPageGenres('')).toEqual([]);
+        expect(extractPageGenres(null)).toEqual([]);
+        expect(extractPageGenres('<p>没有题材信息</p>')).toEqual([]);
+    });
+
+    it('坏 JSON-LD 不许抛（整页作废比少抽一个题材严重得多）', () => {
+        const html = '<script type="application/ld+json">{这不是 JSON</script><span property="v:genre">科幻</span>';
+        expect(extractPageGenres(html)).toEqual(['科幻']);
     });
 });

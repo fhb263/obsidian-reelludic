@@ -31,12 +31,13 @@ import type { LrcBilingualMerge } from 'pure/lrcBilingual';
 import { AiPrefillService } from 'services/aiPrefill';
 import type { AiPrefillOutcome } from 'services/aiPrefill';
 import type { AiPrefillInput } from 'pure/aiPrefill';
-import { PREFILL_SYNOPSIS_PREFIX, PREFILL_TOOL_FETCH_PAGE, PREFILL_TOOL_METADATA, PREFILL_TOOL_WEB_SEARCH } from 'pure/aiPrefill';
+import { PREFILL_GENRES_PREFIX, PREFILL_SYNOPSIS_PREFIX, PREFILL_TOOL_FETCH_PAGE, PREFILL_TOOL_METADATA, PREFILL_TOOL_WEB_SEARCH } from 'pure/aiPrefill';
 import { BING_SEARCH_UA, bingResultsToText, buildBingRssUrl, compactBingQuery, parseBingRss } from 'pure/bingSearch';
-import { PAGE_TEXT_MAX, extractPageSynopsis, pageReadableText } from 'pure/pageText';
+// 🔴 m15796：`extractPageGenres`（题材）与「按小节切简介」一并接进来
+import { PAGE_TEXT_MAX, extractPageGenres, extractPageSynopsis, pageReadableText } from 'pure/pageText';
 import { describeSearchResult, synopsisOf, type SearchResult } from 'pure/searchDisplay';
 // 🔴 m14816：AI 预填的「简介相关性闸口」（用户：「这个AI预填搜索的简介完全不相干都填进来了」）
-import { decideSynopsis, textMentionsTitle } from 'pure/prefillRelevance';
+import { decideSynopsis, textMentionsTitle, titleTierOf } from 'pure/prefillRelevance';
 import { createVaultIO } from 'services/vaultIO';
 import { TmdbClient, posterUrl as tmdbPosterUrl, type TmdbDetail, type TmdbSearchResult } from 'services/tmdb';
 import type { BookSearchResult, GameSearchResult, MusicSearchResult, OmdbSearchResult } from 'services/resultTypes';
@@ -11590,7 +11591,17 @@ export default class ReelLudicPlugin extends Plugin {
             if (!hits.length) return `（本地元数据源没有查到「${title}」）${title}」）`;
             const lines = hits.slice(0, 3).map((r, i) => {
                 const d = describeSearchResult(r as never);
-                const bits = [d.year, d.source, d.rating != null ? `★${d.rating}` : '', d.sub].filter(Boolean);
+                // 🔴 m15796（用户 2026-11-19：「这个也要搜索能该条目的题材、标签」）：
+                //    原先这里只拼 年份/来源/评分/副标题 —— **题材被结构性地丢掉了**。
+                //    各源明明都带 `genres`（`SearchDisplay.genres` 见 `pure/searchDisplay`），
+                //    但模型在这段文本里看不见它 ⇒ 「题材」永远靠印象编。
+                const bits = [
+                    d.year,
+                    d.source,
+                    d.rating != null ? `★${d.rating}` : '',
+                    d.genres?.length ? `题材：${d.genres.join(' / ')}` : '',
+                    d.sub,
+                ].filter(Boolean);
                 return `${i + 1}. ${d.title}${bits.length ? ` · ${bits.join(' · ')}` : ''}`;
             });
             const head = `命中 ${hits.length} 条：\n${lines.join('\n')}`;
@@ -11607,15 +11618,31 @@ export default class ReelLudicPlugin extends Plugin {
             //    ⇒ 现在统一走 `pure/prefillRelevance` 的 `decideSynopsis`：先按标题判同（全等 > 包含），
             //      再用年份/作者择优；**标题对不上一律不许提供简介**（宁可空着，也不许填别人的）。
             const decision = decideSynopsis(hits, { title });
+            // 🔴 m15796：题材单独抠一条「同名的、带题材的」命中，以 `题材原文：` 独占一行交给模型，
+            //    服务层拿到标记就**照搬**（与简介同口径）。⛔ 别只靠上面那几行里的「题材：」——
+            //    实测模型会把行内信息当成「参考」而自己重写一遍（`preferToolSynopsis` 的教训）。
+            const genresLine = ((): string => {
+                for (const h of hits) {
+                    const d = describeSearchResult(h as never);
+                    if (!d.genres?.length) continue;
+                    if (titleTierOf(d.title, title) === 0) continue;
+                    return `${PREFILL_GENRES_PREFIX}${d.genres.join(' / ')}`;
+                }
+                return '';
+            })();
+            // 🔴🔴 顺序铁律：**题材行必须排在简介之前**。
+            //    `extractToolSynopsis` 取的是「标记之后的串尾」⇒ 简介若不在最后，
+            //    后面那行「题材原文：…」会被一起吞进简介正文（用户拿到手就是
+            //    「…小说。 / 题材原文：科幻」这种脏尾巴）。⛔ 别把顺序调回来。
             if (decision.pick) {
-                return `${head}\n\n${PREFILL_SYNOPSIS_PREFIX}${decision.pick.synopsis}`;
+                return `${head}${genresLine ? `\n${genresLine}` : ''}\n\n${PREFILL_SYNOPSIS_PREFIX}${decision.pick.synopsis}`;
             }
             // 没通过闸口时**要说清原因**，让模型自己决定是否换词重搜 —— ⛔ 别只丢个空结果。
             const why =
                 decision.sameNameNoSynopsis > 0
                     ? `（命中里有 ${decision.sameNameNoSynopsis} 条同名作品，但都没有简介原文；⛔ 不要凭记忆编简介，简介字段留空或换关键词再查）`
                     : `（${decision.total} 条命中里没有与「${title}」同名的作品，⛔ 不要拿别的作品的简介凑数，简介字段留空）`;
-            return `${head}\n${why}`;
+            return `${head}${genresLine ? `\n${genresLine}` : ''}\n${why}`;
         }
 
         // 🔴 m09330（用户：「怎么AI搜索出来每个条目简介都是编的，我要的是原生原味的简介」）：
@@ -11641,17 +11668,25 @@ export default class ReelLudicPlugin extends Plugin {
                 if (res.status !== 200) return `（抓取失败：HTTP ${res.status}）`;
                 const body = pageReadableText(res.text, PAGE_TEXT_MAX);
                 if (!body) return '（这个页面没有可读正文，换一个来源试试）';
-                // ⚠️ 简介原文**必须放在末尾**（提取器取标记之后的串尾），正文太长时只留前半段，
-                //    免得把简介挤出上下文预算。
+                // 🔴 m15796：题材从页面里单独抽一遍（认 JSON-LD `genre` / `v:genre` / `itemprop="genre"`）。
+                //    为什么非它不可：豆瓣图书页**已经没有标签区块**（实测三体/活着页「标签」0 次），
+                //    而数据源搜索级也不一定带题材 ⇒ 页面上这几个结构化字段是最后一条可靠来源。
+                const pageGenres = extractPageGenres(res.text);
+                // ⚠️ 简介原文**必须放在末尾**（提取器取标记之后的串尾）⇒ 题材行只能排在它之前。
                 const syn = extractPageSynopsis(res.text);
                 const head = `页面正文（${target}）：\n${body.slice(0, Math.min(body.length, 2400))}`;
-                if (!syn) return head;
                 // ⚠️ 只有「模型给了标题」时才做这道校验：没给标题就无法判断页面属于谁，
                 //    不能凭空判「不相干」（那会把正常调用全废掉）。
-                if (wantTitle && !textMentionsTitle(body, wantTitle) && !textMentionsTitle(syn, wantTitle)) {
-                    return `${head}\n（⚠️ 这个页面里没有出现「${wantTitle}」，它很可能不是这部作品的条目页 ⇒ 没有附简介原文。⛔ 不要把这个页面的内容当简介，换个权威条目页再抓）`;
+                // 🔴 m15796：题材与简介**同生死** —— 页面没自证是这部作品时，
+                //    错页上的「题材」和错页上的「简介」一样是脏数据（把《三体》的题材填给《活着》）。
+                const trusted =
+                    !wantTitle || textMentionsTitle(body, wantTitle) || (!!syn && textMentionsTitle(syn, wantTitle));
+                if (wantTitle && !trusted) {
+                    return `${head}\n（⚠️ 这个页面里没有出现「${wantTitle}」，它很可能不是这部作品的条目页 ⇒ 没有附简介原文，也没有附题材。⛔ 不要把这个页面的内容当简介，换个权威条目页再抓）`;
                 }
-                return `${head}\n\n${PREFILL_SYNOPSIS_PREFIX}${syn}`;
+                const genresLine = trusted && pageGenres.length ? `${PREFILL_GENRES_PREFIX}${pageGenres.join(' / ')}` : '';
+                if (!syn) return genresLine ? `${head}\n${genresLine}` : head;
+                return `${head}${genresLine ? `\n${genresLine}` : ''}\n\n${PREFILL_SYNOPSIS_PREFIX}${syn}`;
             } catch (e) {
                 return `（抓取失败：${e instanceof Error ? e.message : String(e)}）`;
             }

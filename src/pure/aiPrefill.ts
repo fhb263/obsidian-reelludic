@@ -186,6 +186,22 @@ export function prefillFieldsFor(type: EntryType, bookKind?: BookKind): PrefillF
 }
 
 /**
+ * 🔴 m15796 工具结果里**题材原文**的行首标记（生产端 = 宿主 `runPrefillTool`，消费端 = 服务层共用）。
+ *
+ * 为什么要有它（用户 2026-11-19：「这个也要搜索能该条目的题材、标签」）：
+ * 各数据源其实都带题材（豆瓣 `类型`/`流派`、Google Books `categories`、OpenLibrary `subject`、
+ * Steam / IGDB / Bangumi / AniList / TMDB 的 `genres`），但 `lookup_metadata` 交给模型的文本
+ * 原先只拼 标题/年份/来源/评分/副标题 ⇒ **模型在文本里根本看不见题材**，只能凭印象写。
+ *
+ * 形态：独占一行，值是 ` / ` 连接的题材串（与表单「题材」框的分隔符一致）。
+ * ⛔ 与 `PREFILL_SYNOPSIS_PREFIX` 一样，两端必须共用一个常量 —— 各写一份就会静默失联。
+ *
+ * ⚠️ 声明位置必须在 `DEFAULT_PREFILL_PROMPT` **之前**：提示词里直接引用了它
+ *    （`const` 有 TDZ，写在后面会报 `TS2448: used before its declaration`）。
+ */
+export const PREFILL_GENRES_PREFIX = '题材原文：';
+
+/**
  * 默认 system 提示词（设置页「AI集成 › 用途 · 预填服务」可改写；留空/改回默认即用本串）。
  * 设计要点：**允许省略**（⛔ 不许编造）、统一分隔符、只输出 JSON —— 三条都是为了解析侧稳定。
  */
@@ -212,6 +228,14 @@ export const DEFAULT_PREFILL_PROMPT =
     '  一轮没查到就**换个说法再搜**（换外文原名、换别名、换出版社/开发商名），别空手收工。\n' +
     '· 🔴 简介：**只照抄**工具结果里给出的「简介原文」（一字不改地搬过来，跨行的折成一行），' +
     '⛔ 不要缩写、不要润色、不要改写成自己的话。\n' +
+    // 🔴 m15796（用户 2026-11-19：「这个也要搜索能该条目的题材、标签」）：
+    //    题材原先在提示词里**一个字都没提** ⇒ 模型只能凭印象写（常把「小说」「电影」这种载体当题材）。
+    //    现在明确三条来源与优先级，并写明「工具给了「题材原文：」就照抄」，⛔ 别退回「凭印象」。
+    '· 🔴 题材：工具结果里给了以「' +
+    PREFILL_GENRES_PREFIX +
+    '」开头的行就**照抄那一行**（`/` 分隔，一字不改）；' +
+    '没给就看 `lookup_metadata` 回报行里的「题材：…」，再没有才凭条目本身写；' +
+    '⛔ 不要把「小说 / 电影 / 游戏」这种**载体**当题材，也不要写「其他」「未知」。\n' +
     '· 🔴🔴 **没有拿到「简介原文」就【绝不写简介】**：这个字段留空、直接从 JSON 里省掉。' +
     '⛔ 严禁凭记忆、凭印象、凭常识编一段——用户要的是作品原本的简介，编的等于错。' +
     '需要简介就先 `web_search` 找权威条目页、再 `fetch_page` 抓它的原文，' +
@@ -367,6 +391,23 @@ export function extractToolSynopsis(text: unknown): string | null {
 }
 
 /**
+ * 从一段工具结果里抠出题材（没有标记 ⇒ `null`；标记后为空也判 `null`）。
+ * ⚠️ 与 `extractToolSynopsis` 同口径：只取**首个**标记。
+ */
+export function extractToolGenres(text: unknown): string[] | null {
+    const s = String(text ?? '');
+    const i = s.indexOf(PREFILL_GENRES_PREFIX);
+    if (i < 0) return null;
+    const line = s.slice(i + PREFILL_GENRES_PREFIX.length).split(/\r?\n/)[0] ?? '';
+    const out: string[] = [];
+    for (const part of line.split('/')) {
+        const g = part.replace(/\s+/g, ' ').trim();
+        if (g && !out.includes(g)) out.push(g);
+    }
+    return out.length ? out : null;
+}
+
+/**
  * 🔴 #499E **简介照搬裁决**（用户 2026-10-03：「不应该是搜索照搬真正作品的简介吗」）：
  * 工具查到了原文 ⇒ **无条件覆盖**模型给出的 `summary`（⛔ 不比较、不择优 —— 实测模型会顺手润色，
  * 让它自己拿主意就回到了「客观概述」那条老路）。
@@ -397,6 +438,35 @@ export function preferToolSynopsis(
     return { ...fields, summary: clip(s, MAX_CHARS.summary) };
 }
 
+/**
+ * 🔴 m15796 **题材照搬裁决**（用户 2026-11-19：「这个也要搜索能该条目的题材、标签」）。
+ *
+ * 与 `preferToolSynopsis` 同族但**方向相反**：
+ *  - 简介是「查不到就不许有」（宁可空着也不许编）；
+ *  - 题材是多值列表，工具查到就**照搬覆盖**模型写的那份（模型常把「小说」这种载体当成题材，
+ *    或把标签混进题材里）；查不到时**保留模型写的那份**（题材不像简介那么容易被编错，
+ *    而且各源缺失率极高，一律清空会让「题材」永远填不上）。
+ *
+ * @param fields   模型给出的字段
+ * @param genres   工具结果里抠出的题材（`extractToolGenres`；`null`/空 ⇒ 不动）
+ * @param defs     本轮字段清单（没有 `genres` 字段的类型直接原样返回）
+ */
+export function preferToolGenres(
+    fields: Partial<Record<PrefillFieldKey, string>>,
+    genres: unknown,
+    defs: PrefillFieldDef[],
+): Partial<Record<PrefillFieldKey, string>> {
+    if (!defs.some((d) => d.key === 'genres')) return fields;
+    const list = Array.isArray(genres)
+        ? genres.map((g) => String(g ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean)
+        : [];
+    if (!list.length) return fields;
+    // 去重（各源经常重复给「剧情 / 剧情」），再用表单口径的「 / 」拼
+    const uniq: string[] = [];
+    for (const g of list) if (!uniq.includes(g)) uniq.push(g);
+    return { ...fields, genres: clip(uniq.join(' / '), MAX_CHARS.genres) };
+}
+
 /** 当前轮该发给模型的工具清单（⛔ 与宿主执行器 `runTool` 认的名字必须一致） */
 export function prefillTools(): AiToolDef[] {
     return [
@@ -406,9 +476,10 @@ export function prefillTools(): AiToolDef[] {
                 name: PREFILL_TOOL_METADATA,
                 description:
                     '按标题查询本机收藏库配置的元数据源（TMDB / Bangumi / 豆瓣 / Open Library / OMDb 等），' +
-                    '返回命中条目的标题、年份、评分、类型；命中时**末尾还会附上该作品的官方简介原文' +
+                    '返回命中条目的标题、年份、评分、**题材**；命中时**末尾还会附上该作品的官方简介原文' +
                     `（以「${PREFILL_SYNOPSIS_PREFIX}」开头）` +
-                    '——填「简介」字段时**照抄那一段，不要改写**。适合先确认这是哪一部作品。',
+                    `与题材原文（以「${PREFILL_GENRES_PREFIX}」开头）` +
+                    '——填「简介」字段时**照抄那一段，不要改写**；「题材」也以那行为准。适合先确认这是哪一部作品。',
                 parameters: {
                     type: 'object',
                     properties: {
@@ -447,8 +518,9 @@ export function prefillTools(): AiToolDef[] {
                 description:
                     '抓取一个网页的正文（🔴 拿**作品简介原文**的主要途径）。传一个权威页面地址' +
                     '（豆瓣 / Bangumi / Wikipedia / 官网 / IGDB 等条目页），返回该页可读正文；' +
-                    '若页面里能识别出简介段落，**末尾会以「' + PREFILL_SYNOPSIS_PREFIX + '」开头附上原文** ——' +
-                    '填「简介」字段时照抄那一段，⛔ 不要改写。' +
+                    '若页面里能识别出简介段落，**末尾会以「' + PREFILL_SYNOPSIS_PREFIX + '」开头附上原文**；' +
+                    '页面上有结构化题材（JSON-LD genre / v:genre）时会以「' + PREFILL_GENRES_PREFIX + '」附一行 ——' +
+                    '填「简介」字段时照抄那一段，⛔ 不要改写；「题材」也以那行为准。' +
                     '⚠️ 请把**要查的作品标题**一并填进 `title`：工具会核对页面里是否真的出现了这个标题，' +
                     '对不上就**不会附简介**（避免把搜索结果页/导航页的正文当成作品简介）。',
                 parameters: {

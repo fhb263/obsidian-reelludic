@@ -48,6 +48,20 @@ export interface SearchDisplay {
     source?: string;
     /** 数据源官方页直达 URL（点击来源徽标打开新标签） */
     sourceUrl?: string;
+    /**
+     * 题材 / 类型（如 `['科幻', '冒险']`）。
+     * 🔴 m15796（用户 2026-11-19：「这个也要搜索能该条目的题材、标签」）新增。
+     *
+     * 为什么必须放在这里：AI 预填的 `lookup_metadata` 工具把搜索结果拼成文本喂给模型
+     * （见 `main.ts` 的 `runPrefillTool`），**原先只拼 标题/年份/来源/评分/副标题**——
+     * 各数据源明明带 `genres`（豆瓣 `类型`/`流派`、Google Books `categories`、
+     * OpenLibrary `subject`、Steam/IGDB/Bangumi/AniList/TMDB 的 `genres`），
+     * 但模型**在文本里根本看不见**，于是「题材」永远填不上。
+     *
+     * ⚠️ 拿不到 ⇒ `undefined`（⛔ 不返回 `[]`，否则调用方 `join()` 出来是空串，
+     *    拼进提示词会多出「题材：」这种只有标签没有值的半句）。
+     */
+    genres?: string[];
 }
 
 /** 占位封面色相（0-359）：同一结果稳定同色，不同结果尽量区分 */
@@ -91,6 +105,12 @@ interface SourceRecord {
     year?: number;
     rating?: number;
     ratingCount?: number;
+    /**
+     * 题材 / 类型（各源字段名各异，但**值类型统一是 `string[]`**）。
+     * 🔴 m15796：豆瓣 `类型`/`流派`、Google Books `categories`、OpenLibrary `subject`、
+     * Steam/IGDB/Bangumi/AniList/TMDB 的 `genres` 都会归一到这里。
+     */
+    genres?: string[];
     // 新源查表/封面种子字段（对齐 spec S2，缺省不崩）
     key?: string;
     cover_i?: number;
@@ -130,6 +150,20 @@ interface SourceViewEntry {
 // ── 兜底形状用的辅助提取（保证缺字段不崩）──
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+/**
+ * 字符串数组的安全读取（m15796）：去空、去非字符串、折空白。
+ * 拿不到 / 空数组 ⇒ `undefined`（口径见 `SearchDisplay.genres` 的注释）。
+ */
+const strArray = (v: unknown): string[] | undefined => {
+    if (!Array.isArray(v)) return undefined;
+    const out: string[] = [];
+    for (const x of v) {
+        if (typeof x !== 'string') continue;
+        const s = x.trim();
+        if (s && !out.includes(s)) out.push(s);
+    }
+    return out.length ? out : undefined;
+};
 const isStr = (o: SourceRecord, k: string): boolean => k in o;
 function idStr(o: SourceRecord): string | undefined {
     const v = o.id;
@@ -257,6 +291,8 @@ function musicView(o: SourceRecord, raw?: string): SearchDisplay {
         //    （`EntryForm.pick()` 用 `'platform' in r` 认游戏），音乐结果不能沾。
         source: str(o.platformLabel) || label,
         sourceUrl: buildSourceUrl(src, o),
+        // m15796：曲库结果的题材恒缺（四大平台搜索级都不给流派）⇒ 这里恒 undefined，正合口径
+        genres: strArray(o.genres),
     };
 }
 
@@ -280,6 +316,8 @@ function bookView(o: SourceRecord, raw?: string): SearchDisplay {
         meta: metaParts.join(' · '),
         source: label,
         sourceUrl: buildSourceUrl(src, o),
+        // m15796：豆瓣书籍 `#info` 没有「类型」行（实测），但 Google Books / OpenLibrary / 微信读书有
+        genres: strArray(o.genres),
     };
 }
 
@@ -303,6 +341,8 @@ function gameView(o: SourceRecord, raw?: string): SearchDisplay {
         meta: str(o.platform),
         source: label,
         sourceUrl: buildSourceUrl(src, o),
+        // m15796：Steam/IGDB 都带题材（Steam 的 genres 由 store 详情归一，IGDB 的 genres 自带）
+        genres: strArray(o.genres),
     };
 }
 
@@ -324,6 +364,8 @@ function animeView(o: SourceRecord, raw?: string): SearchDisplay {
         meta: studio,
         source: label,
         sourceUrl: buildSourceUrl(src, o),
+        // m15796：Bangumi / AniList 的搜索级结果都带题材（AniList 用 tag 归一）
+        genres: strArray(o.genres),
     };
 }
 
@@ -364,6 +406,8 @@ function movieView(o: SourceRecord, raw?: string): SearchDisplay {
         meta: metaParts.length ? metaParts.join(' · ') : undefined,
         source: label,
         sourceUrl: buildSourceUrl(src, o),
+        // m15796：TMDB/IMDb/豆瓣影视都带题材（豆瓣详情页现被登录墙挡，搜索级仍有「类型」）
+        genres: strArray(o.genres),
     };
 }
 
