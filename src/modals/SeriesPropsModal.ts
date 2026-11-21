@@ -25,6 +25,7 @@
 import { Modal, Notice, type App } from 'obsidian';
 import type ReelLudicPlugin from '../../main';
 import { normalizeSeriesName, planSeriesReindexAll, type SeriesGroup } from 'pure/seriesGroup';
+import { seriesGroupHidden } from 'pure/seriesHidden';
 import SeriesProps from 'views/components/SeriesProps.svelte';
 import { applyScrollPref } from 'services/scrollPref';
 import { ConfirmModal } from 'modals/ConfirmModal';
@@ -46,6 +47,8 @@ export class SeriesPropsModal extends Modal {
     private curName: string;
     /** 窗口内实时改动的合集分 */
     private curRating = 0;
+    /** 窗口内实时改动的「隐藏此系列卡片」态（m03458；落库失败会回滚到此值的前一态） */
+    private curHidden = false;
 
     constructor(
         app: App,
@@ -80,6 +83,14 @@ export class SeriesPropsModal extends Modal {
             // 读分失败不该让整个窗口打不开 —— 按未评分展示，用户重新打分即可。
             this.curRating = 0;
         }
+        // 隐藏态：与合集分同批读（同一份 catalog，分两次读会白多一次磁盘往返）。
+        // ⚠️ 读失败按「未隐藏」展示：窗口先能打开比态精确更重要，用户重勾一次即可。
+        try {
+            const hiddenTable = await this.plugin.service.seriesHidden();
+            this.curHidden = seriesGroupHidden(hiddenTable, this.group.key);
+        } catch {
+            this.curHidden = false;
+        }
         if (!this.contentEl.isConnected) return; // 读分期间用户已关窗 ⇒ 别再往上挂
 
         const tags = Array.from(new Set(this.group.items.flatMap((e) => e.tags ?? []))).filter((t) => !!t);
@@ -98,10 +109,12 @@ export class SeriesPropsModal extends Modal {
                 })),
                 name: this.curName,
                 rating: this.curRating,
+                hiddenCard: this.curHidden,
                 collection: this.group.items.map((e) => e.collection).find((c) => !!c && c.trim().length > 0) ?? '',
                 tagsHint: tags.slice(0, 12).join('、'),
                 onRename: (next: string) => void this.doRename(next),
                 onRate: (next: number) => void this.doRate(next),
+                onToggleHidden: (next: boolean) => void this.doSetHidden(next),
                 onSetCollection: (next: string) => void this.doSetCollection(next),
                 onAddTags: (raw: string) => void this.doAddTags(raw),
                 onReorder: (ids: string[]) => void this.doReorder(ids),
@@ -111,9 +124,31 @@ export class SeriesPropsModal extends Modal {
                     this.close();
                     this.plugin.openSeriesAssociate(this.group);
                 },
-                onClose: () => this.close(),
             },
         });
+    }
+
+    /**
+     * 勾/取消「隐藏此系列卡片」（m03458）。
+     *
+     * 🔴 与 `doRate` 同一条纪律：**先 `$set` 让界面立刻响应，再落库；失败回滚到落库前的值**。
+     *    反过来的写法（等磁盘写完再刷 UI）会让复选框「点了不动」几百毫秒。
+     * 🔴 只写 `catalog.seriesHidden`，⛔ **不碰组内任何一条的 `cardHidden`** ——
+     *    用户明确要求「里面的系列条目不受影响」，改了就是把整个系列打码。
+     * ⚠️ 不关窗口、不弹多余提示：卡片本身变模糊就是最好的回执（用户回头就能看见）。
+     */
+    private async doSetHidden(next: boolean): Promise<void> {
+        const prev = this.curHidden;
+        if (next === prev) return;
+        this.curHidden = next;
+        this.instance?.$set({ hiddenCard: next });
+        try {
+            await this.plugin.service.setSeriesHidden(this.group.key, next);
+        } catch (e) {
+            this.curHidden = prev;
+            this.instance?.$set({ hiddenCard: prev });
+            new Notice(`改不了隐藏状态：${e instanceof Error ? e.message : String(e)}`);
+        }
     }
 
     /**

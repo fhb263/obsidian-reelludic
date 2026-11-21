@@ -139,7 +139,7 @@ export class HomeView extends ItemView {
     }
 
     private async render(): Promise<void> {
-        const [entries, excerptCounts, yearReports, activityLog, seriesRatings, views] = await Promise.all([
+        const [entries, excerptCounts, yearReports, activityLog, seriesRatings, views, seriesHidden] = await Promise.all([
             this.plugin.service.list(),
             this.plugin.excerptCounts(),
             this.plugin.listYearReports(),
@@ -150,6 +150,9 @@ export class HomeView extends ItemView {
             // 🔴 分类视图（用户 2026-11-23）：同样是 catalog 顶层字段 ⇒ 与上面同一趟里取。
             //    归一器恒返回 ≥1 条（默认视图永远在）⇒ 这里不需要兜底。
             this.plugin.service.views(),
+            // 🔴 系列卡隐藏表（m03458）：同样是 catalog 顶层字段 ⇒ 同一趟里取。
+            //    缺省 = 空表（老 catalog 照常读，行为与改动前逐字一致）。
+            this.plugin.service.seriesHidden(),
         ]);
         this.entries = entries;
         // 🔴 #630：隐藏插件内滚动条（外观设置）—— 走 `services/scrollPref` 那一处真源（跟随开关）
@@ -170,7 +173,7 @@ export class HomeView extends ItemView {
             //    ⇒ 走到**这条增量路径**，而这里没列这两个 prop ⇒ 组件里的卡片行序仍是旧值，
             //    表现为「设置里改了、卡片纹丝不动，重开视图才对」。这是 #621 / #626 / #660 / #678 之后**第五次**。
             //    ⚠️ 两个都要传：只传 byType 会让书籍三个子分类格继续吃旧值。
-            this.component.$set({ entries, tableColumnsByType: resolveTableColumnsByType(this.plugin.settings.tableColumnsByType), cardFieldsByType: resolveCardFieldsByType(this.plugin.settings.cardFieldsByType), cardFieldsByKind: resolveCardFieldsByKind(this.plugin.settings.cardFieldsByType, this.plugin.settings.cardFieldsByKind), colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), navLayout: normalizeNavLayout(this.plugin.settings.navLayout), tabAxis: normalizeTabAxis(this.plugin.settings.tabAxis), defaultViewMode: this.plugin.settings.defaultViewMode, posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity), posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns), ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom, statsOrder: normalizeStatsOrder(this.plugin.settings.statsOrder), viewOrder: this.plugin.settings.viewOrder, timelineZoom: this.plugin.settings.timelineZoom, listGrouping: this.plugin.settings.listGrouping !== false, unfoldSeries: this.plugin.settings.unfoldSeries === true, excerptCounts, yearReports, activityLog, seriesRatings, views });
+            this.component.$set({ entries, tableColumnsByType: resolveTableColumnsByType(this.plugin.settings.tableColumnsByType), cardFieldsByType: resolveCardFieldsByType(this.plugin.settings.cardFieldsByType), cardFieldsByKind: resolveCardFieldsByKind(this.plugin.settings.cardFieldsByType, this.plugin.settings.cardFieldsByKind), colorTheme: this.plugin.settings.colorTheme, uiTheme: normalizeUiTheme(this.plugin.settings.uiTheme), navLayout: normalizeNavLayout(this.plugin.settings.navLayout), tabAxis: normalizeTabAxis(this.plugin.settings.tabAxis), defaultViewMode: this.plugin.settings.defaultViewMode, posterDensity: normalizePosterDensity(this.plugin.settings.posterDensity), posterColumns: normalizePosterColumns(this.plugin.settings.posterColumns), ctrlWheelZoom: !!this.plugin.settings.ctrlWheelZoom, statsOrder: normalizeStatsOrder(this.plugin.settings.statsOrder), viewOrder: this.plugin.settings.viewOrder, timelineZoom: this.plugin.settings.timelineZoom, listGrouping: this.plugin.settings.listGrouping !== false, unfoldSeries: this.plugin.settings.unfoldSeries === true, excerptCounts, yearReports, activityLog, seriesRatings, views, seriesHidden });
             // 🔴 2026-11-27（m06545）：原这里还有 `this.syncAiChatContext()`
             //    （切页签/切视图时把语境推给 AI 挂件）。挂件整体删除后一并删了。
             return;
@@ -187,6 +190,9 @@ export class HomeView extends ItemView {
                 //    漏这里 ⇒ 首次挂载拿到空表，「视图切换条」上只剩默认视图（存档里的自定义视图读不回来）。
                 //    ⚠️ 这是 #678 那条坑的镜像面，判据同上：新增响应式 prop 两处都加。
                 views,
+                // 🔴 系列卡隐藏表（m03458）：同样**初始 props 与增量 `$set` 两处都要传**（#678 那条坑的镜像面）。
+                //    漏这里 ⇒ 首屏系列卡永远是「没隐藏」的样子，用户勾完看不出变化。
+                seriesHidden,
                 // 🔴🔴 2026-11-26（用户 m04553）：「新视图只能在插件高级设置页里加，首页不显示加按钮」
                 //    ⇒ 2026-11-24 加的那颗首页「＋ 新建视图」及其 `onViewsChange` 写出口**已整体删除**。
                 //    ⛔ 别再往这两处传 `onViewsChange`：组件那边已无此 prop，传过去是死参数。

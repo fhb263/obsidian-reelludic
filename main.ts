@@ -527,7 +527,7 @@ import { extractLrcBlock, parseLrcBlock, parseLrcRef, pickLyrics, siblingLrcPath
 // 🔴 m08028：歌词整体时间戳偏移（写回笔记时逐条重写时间标签；纯模块，与播放器实时偏移同源）
 import { shiftLrcText } from 'pure/lrcShift';
 import { readEmbeddedLyrics } from 'pure/embeddedLyrics';
-import { normalizeAudioPlayMode, playersToPause, type PlayerKind } from 'pure/audioQueue';
+import { normalizeAudioPlayMode, playersToPause, type AudioPlayMode, type PlayerKind } from 'pure/audioQueue';
 import { clampAudioVolume } from 'pure/audioVolume';
 import { fileDisplayName } from 'pure/libraryDir';
 import { mergeBySource, sortByRelevance } from 'pure/searchMerge';
@@ -4205,12 +4205,59 @@ export default class ReelLudicPlugin extends Plugin {
     openSeriesPicker(group: SeriesGroup): void {
         const items = group.items ?? [];
         if (items.length === 0) return;
+        // 🔴 2026-11-21 用户逐字（m03288）：「音乐系列卡封面加个播放按钮，点击即仅播放该系列的音乐，
+        //    顺序乱序播放该系列的音乐（原来选系列中的一首音乐条目播放的窗口删除掉）」
+        // ⇒ 音乐分组**不再弹选季窗**：这一组就是一张歌单，点播放 = 直接乱序播整组。
+        //    ⛔ 别把 `SeriesPickerModal` 留在音乐路径上 —— 它列出的是「系列里的单体条目」，
+        //    对音乐而言等于让用户在歌单里挑一首，正是用户要删掉的那一步。
+        //    ⚠️ 其它类型（影视/动画）保持原样：多季要挑季，替用户选一季等于把选择权收走（2026-11-06 裁定）。
+        if (group.type === 'music') {
+            void this.playSeriesMusic(group);
+            return;
+        }
         // 只有一部时弹窗没有意义（弹出来只有一张卡，还多一次点击）直接进那一。
         if (items.length === 1) {
             void this.openEpisodePageFor(items[0]);
             return;
         }
         new SeriesPickerModal(this.app, this, group).open();
+    }
+
+    /**
+     * 🔴 m03288：把**一个音乐系列**当成一张歌单来播 —— 只收该组成员、乱序、立即起播。
+     *
+     * 三条口径：
+     *  ⑴ **只收本组成员**（`onlyEntryIds`）：播放器的队列来源本来是「全库所有带 audioPath 的音乐」，
+     *     用户点系列卡却听到别的专辑串进来，那是明显的越界 ⇒ 必须把队列裁到本组。
+     *  ② **乱序是初始模式，不是强制模式**：用户逐字「顺序乱序播放该系列的音乐」——
+     *     这里的「乱序」是**起播时**的队列口径。传 `initialMode: 'shuffle'` 之后用户仍能在播放器里
+     *     手动切回列表循环（⛔ 不要把模式写死成不可改，也不要把 `audioPlayMode` 设置项改掉）。
+     *  ③ 起始曲 = 组内**第一首可播**的（`items` 已由 `sortSeriesItems` 排好序，
+     *     即用户给该系列设的排序号）；组内一首都不可播时给明确提示，⛔ 不要静默什么都不发生。
+     */
+    private async playSeriesMusic(group: SeriesGroup): Promise<void> {
+        const items = group.items ?? [];
+        const ids = new Set(items.map((it) => it.id));
+        if (!ids.size) return;
+        const opts = await this.buildAudioPlayerOptions(items[0] ?? null, {
+            onlyEntryIds: ids,
+            initialMode: 'shuffle',
+        });
+        if (!opts) {
+            new Notice(`「${group.title || group.name}」里没有可播放的音频`, 4000);
+            return;
+        }
+        this.lastAudioEntry = items.find((it) => it.id === opts.items[opts.startIndex]?.entryId) ?? items[0] ?? null;
+        // 与 `playAudioEntry` 同一条落点口径（#474）：侧边栏已有播放器就地切歌，⛔ 不另起一个实例。
+        const side = this.findSidebarAudioPlayer();
+        if (side) {
+            this.pauseOtherAudioInstances(side.leaf);
+            const rightSplit = this.app.workspace.rightSplit as unknown as { collapsed?: boolean } | null;
+            if (rightSplit?.collapsed) this.app.workspace.revealLeaf(side.leaf);
+            side.view.openWith(opts);
+            return;
+        }
+        await this.openAudioPlayer('tab', opts);
     }
 
     /**
@@ -9420,12 +9467,23 @@ export default class ReelLudicPlugin extends Plugin {
      * 🔴 这里**不按扩展名再筛一遍**（`pure/audioQueue.normalizeAudioQueue` 的口径：会静默丢 `.opus`/`.ape`）；
      *    扩展名白名单只用于系统文件选择器。
      * ⚠️ 解析不出可播 URL 的曲目**不进队列** —— 否则用户切到它时只有一片安静、还以为播放器坏了。
+     *
+     * 🔴 m03288 新增两个可选参数（默认行为与改前**逐字一致**，⛔ 别把默认值改掉）：
+     *   · `only`：`onlyEntryIds` 非空时**只收这些条目** —— 系列卡「只播这个系列」要它。
+     *     空/不传 ⇒ 全库口径（老路径：卡片播放、命令面板、侧边栏恢复）。
+     *   · `mode`：`initialMode` 覆盖默认的「读设置里的 audioPlayMode」——
+     *     系列卡要的是「起播即乱序」，但**不写回设置**（用户自己的默认模式不该被一次点击改掉）。
      */
-    private async buildAudioPlayerOptions(entry: MediaEntry | null): Promise<AudioPlayerOptions | null> {
+    private async buildAudioPlayerOptions(
+        entry: MediaEntry | null,
+        only?: { onlyEntryIds?: ReadonlySet<string>; initialMode?: AudioPlayMode },
+    ): Promise<AudioPlayerOptions | null> {
+        const onlyIds = only?.onlyEntryIds ?? null;
         const all = await this.service.list();
         const tracks: AudioPlayerTrack[] = [];
         for (const e of all) {
             if (e.type !== 'music' || !e.audioPath) continue;
+            if (onlyIds && !onlyIds.has(e.id)) continue;
             const url = this.resolveEmbedUrl(e.audioPath);
             if (!url) continue;
             tracks.push({
@@ -9455,7 +9513,9 @@ export default class ReelLudicPlugin extends Plugin {
             autoplay: true,
             wordHighlight: this.settings.lyricsWordHighlight !== false,
             loadLyrics: (t) => this.loadEntryLyrics(t),
-            initialMode: normalizeAudioPlayMode(this.settings.audioPlayMode),
+            // 🔴 m03288：系列卡「只播这个系列」要求起播即乱序 ⇒ 允许覆盖，但**只影响本次队列**，
+            //    ⛔ 不写回 `settings.audioPlayMode`（一次点击不该改掉用户的默认模式）。
+            initialMode: only?.initialMode ?? normalizeAudioPlayMode(this.settings.audioPlayMode),
             initialVolume: clampAudioVolume(this.settings.audioVolume ?? 1),
             onSaveMode: (mode) => void this.persistAudioSetting('mode', mode),
             onSaveVolume: (volume) => void this.persistAudioSetting('volume', volume),

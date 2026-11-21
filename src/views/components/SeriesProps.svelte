@@ -55,7 +55,17 @@
     export let onReorder: (ids: string[]) => void = () => {};
     /** 跳「批量关联」逐条清单（那是逐条操作，不在本窗口内做） */
     export let onAssociate: () => void = () => {};
-    export let onClose: () => void = () => {};
+    /**
+     * 当前是否「隐藏此系列卡片」（m03458，用户 2026-11-21 逐字：
+     * 「在右上角加个『[复选框]隐藏此系列卡片』就只隐藏该系列封面和此信息栏，里面的系列条目不受影响」）。
+     * ⚠️ 这是**系列级**标记（`Catalog.seriesHidden`），⛔ 与单条 `MediaEntry.cardHidden` 无关。
+     */
+    export let hiddenCard = false;
+    /** 勾/取消「隐藏此系列卡片」（落库在宿主，组件只回传意图） */
+    export let onToggleHidden: (next: boolean) => void = () => {};
+    // ⚠️ m03458：原有的 `onClose` prop 已删除 —— 底部那枚「关闭」按钮与宿主 Modal 自带的关闭钮
+    //    逻辑重复（`SeriesPropsModal.ts` 文件头第 19 行早已立规「⛔ 别自绘第二枚关闭钮」）。
+    //    ⛔ 别因为「组件不该知道怎么关自己」就把它加回来：关窗由宿主 `Modal` 全权负责。
 
     // ── 表单本地状态 ──
     let nameDraft = name;
@@ -201,7 +211,17 @@
     $: listCollapsible = members.length > 8;
 </script>
 
-<h2 class="rl-sp-title">编辑系列属性</h2>
+<!-- 🔴 m03458（用户 2026-11-21 逐字）：「再在右上角加个『[复选框]隐藏此系列卡片』就只隐藏该系列
+     封面和此信息栏，里面的系列条目不受影响」⇒ 复选框挂在标题行**右侧**（与本弹窗无关的其它控件都往下走）。
+     ⚠️ 语义只是**模糊化**（用户追加澄清「就像单卡那样」）：模糊封面 + 信息栏打码，
+        ⛔ 不是把卡片藏掉，也⛔ 不碰组内条目自己的卡片。 -->
+<div class="rl-sp-head">
+    <h2 class="rl-sp-title">编辑系列属性</h2>
+    <label class="rl-sp-hidecard" title="只把这张系列卡的封面打模糊、信息栏打码；里面的条目照常显示">
+        <input type="checkbox" bind:checked={hiddenCard} on:change={() => onToggleHidden(hiddenCard)} />
+        隐藏此系列卡片
+    </label>
+</div>
 <div class="rl-sp-sub">{title}{typeLabel ? ` · ${typeLabel}` : ''} · 共 {members.length} 部</div>
 
 <!-- 🔴 用户 2026-11-21（逐字）：「系列卡编辑属性窗口把改成两两并排，依次是改系列名、改合集评分、
@@ -364,19 +384,41 @@
     {/if}
 </div>
 
-<div class="rl-sp-actions">
-    <button class="rl-sp-btn" on:click={onClose}>关闭</button>
-</div>
+<!-- 🔴 m03458：底部「关闭」按钮已删除（用户逐字：「底部的『关闭』按钮删除掉（逻辑重复了）」）。
+     宿主 `Modal` 自带关闭钮 + Esc + 点遮罩三条路，本组件再画一枚纯属重复。
+     ⛔ 别以「组件自给自足」为理由加回来，也别新增 `onClose` prop —— 关窗是宿主的职责。 -->
 
 <style>
     /* 本组件挂在宿主 `Modal` 里（DOM-API 弹窗），但它是 Svelte 组件 ⇒ scoped 样式照常生效
        （与 `SeriesPicker.svelte` 同款）。⛔ 别搬到 styles.css 做全局兜底。 */
-    .rl-sp-title {
+    /* 标题行：标题在左、「隐藏此系列卡片」复选框在右（m03458，用户要求「右上角」）。 */
+    .rl-sp-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
         margin: 0 0 2px;
+    }
+    .rl-sp-title {
+        margin: 0;
         font-size: 15px;
         font-weight: 600;
         color: var(--text-normal);
     }
+    /* 复选框皮肤照抄 `EntryForm.svelte` 的 `.rl-cardhidden`（11px / `--text-muted` / 悬停转正常色），
+       ⛔ 别另造一套尺寸，那就是「与单卡编辑属性 UI 风格一致」这条纪律要挡的漂移。 */
+    .rl-sp-hidecard {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex: 0 0 auto;
+        font-size: 11px;
+        color: var(--text-muted);
+        cursor: pointer;
+        user-select: none;
+    }
+    .rl-sp-hidecard input { margin: 0; }
+    .rl-sp-hidecard:hover { color: var(--text-normal); }
     .rl-sp-sub { font-size: 11.5px; color: var(--text-muted); margin-bottom: 12px; }
     /* 🔴 用户 2026-11-21：「改成两两并排」⇒ 前四段 2×2。阅读顺序（先行后列）= 用户点名的次序：
        系列名 / 合集评分 / 归属合集 / 追加标签。
@@ -449,8 +491,7 @@
         color: var(--text-on-accent);
     }
     /* 两级选择器：单类 (0,1,0) 压不过核心 `button:not(.clickable-icon)` 的 (0,1,1) 灰底 */
-    .rl-sp-row .rl-sp-btn,
-    .rl-sp-actions .rl-sp-btn {
+    .rl-sp-row .rl-sp-btn {
         flex: none;
         font-family: inherit;
         font-size: 12.5px;
@@ -462,10 +503,8 @@
         color: var(--text-muted);
         cursor: pointer;
     }
-    .rl-sp-row .rl-sp-btn:hover,
-    .rl-sp-actions .rl-sp-btn:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
-    .rl-sp-row .rl-sp-btn:disabled,
-    .rl-sp-actions .rl-sp-btn:disabled { opacity: .45; cursor: default; }
+    .rl-sp-row .rl-sp-btn:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+    .rl-sp-row .rl-sp-btn:disabled { opacity: .45; cursor: default; }
     .rl-sp-row .rl-sp-btn.mod-cta {
         background: var(--interactive-accent);
         border-color: var(--interactive-accent);
@@ -569,5 +608,4 @@
         color: var(--text-muted);
         font-variant-numeric: tabular-nums;
     }
-    .rl-sp-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 </style>

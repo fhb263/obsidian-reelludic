@@ -12,6 +12,7 @@ import { BOOK_KINDS } from 'pure/bookKind';
 import { MUSIC_KINDS } from 'pure/musicKind';
 import { normalizeRelatedList } from 'pure/relatedGraph';
 import { normalizeSeriesRatings } from 'pure/seriesRating';
+import { normalizeSeriesHidden } from 'pure/seriesHidden';
 import { normalizeViews, viewsForStorage } from 'pure/mediaViews';
 import {
     BACKUP_FILE,
@@ -315,6 +316,9 @@ export function parseCatalog(text: string): Catalog {
     // 空表也保持 undefined —— ⛔ 别给每个存量文件凭空添一个 `"seriesRatings": {}`
     const seriesRatings = normalizeSeriesRatings(obj.seriesRatings);
     if (Object.keys(seriesRatings).length > 0) out.seriesRatings = seriesRatings;
+    // 系列「隐藏此系列卡片」标记（m03458）：只认 `true`、空表不写键（同 seriesRatings 口径）
+    const seriesHidden = normalizeSeriesHidden(obj.seriesHidden);
+    if (Object.keys(seriesHidden).length > 0) out.seriesHidden = seriesHidden;
     // 分类视图（用户 2026-11-23 裁定「存进媒体库」）：归一器**恒造出默认视图**，
     // 所以这里只把「用户真建了视图」的那张表写回；默认视图不占 JSON 一行（同 seriesRatings 口径）。
     const views = viewsForStorage(obj.views);
@@ -345,6 +349,9 @@ export function serializeCatalog(c: Catalog): string {
     // 系列（合集）评分：同样归一后再写（0 / 脏值不进盘）；空表不写键
     const seriesRatings = normalizeSeriesRatings(c.seriesRatings);
     if (Object.keys(seriesRatings).length > 0) clean.seriesRatings = seriesRatings;
+    // 系列隐藏标记（m03458）：同样的「归一后再写、空表不写键」
+    const seriesHidden = normalizeSeriesHidden(c.seriesHidden);
+    if (Object.keys(seriesHidden).length > 0) clean.seriesHidden = seriesHidden;
     // 分类视图：同样归一后再写；只剩默认视图时不写键（见 `pure/mediaViews.viewsForStorage`）
     const views = viewsForStorage(c.views);
     if (views) clean.views = views;
@@ -388,6 +395,7 @@ export class CatalogStore {
         //    本仓已踩过：`seriesRatings` 曾漏搬 ⇒ 合集分能存、一读就没了。
         //    ⚠️ 新增任何 Catalog 顶层字段（append-only）都必须同步这两行，否则静默丢失。
         if (parsed.seriesRatings) out.seriesRatings = parsed.seriesRatings;
+        if (parsed.seriesHidden) out.seriesHidden = parsed.seriesHidden;
         if (parsed.views) out.views = parsed.views;
         return out;
     }

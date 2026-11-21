@@ -921,6 +921,39 @@
 .rl-views-empty { font-size: 12px; color: var(--text-muted); padding: 8px 0; }
 .rl-views-list { display: flex; flex-direction: column; gap: 8px; }
 
+/* 「已隐藏的系列」清单（m03458，挂在「高级设置 › 卡片信息栏」组末尾）。
+   皮肤照抄 `.rl-views-*`：同一页里的两组不能长得像两个插件。
+   ⚠️ 每行用 `.rl-hidden-series-row` 包住 `Setting`（它自带 `.setting-item` 的上下 padding），
+      这里只负责行内的「名字 ... 取消隐藏」横向对齐。 */
+.rl-hidden-series {
+    display: flex; flex-direction: column; gap: 8px;
+    margin-top: 16px; padding-top: 14px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+.rl-hidden-series-head { display: flex; align-items: baseline; gap: 8px; }
+.rl-hidden-series-title { font-size: 13px; font-weight: 600; color: var(--text-normal); }
+.rl-hidden-series-count { font-size: 11.5px; color: var(--text-muted); }
+.rl-hidden-series-intro { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+.rl-hidden-series-list { display: flex; flex-direction: column; gap: 2px; }
+.rl-hidden-series-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 2px 0;
+}
+/* 名字占满剩余宽度、过长省略 —— 系列名可能很长（「XX系列 第1-9部合集」），
+   不省略会把「取消隐藏」按钮挤出可视区。 */
+.rl-hidden-series-name {
+    flex: 1 1 auto; min-width: 0;
+    font-size: 12.5px; color: var(--text-normal);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* `Setting` 行在本清单里不参与布局（它的 `.setting-item` 自带分隔线与内边距），
+   只留按钮；⛔ 别删掉这个类，否则 Obsidian 会给空 `.setting-item` 撑出 40px 空白。 */
+.rl-hidden-series-row .setting-item {
+    border: none; padding: 0; margin: 0;
+    display: flex; flex: 0 0 auto; min-height: 0;
+}
+.rl-hidden-series-row .setting-item-control { padding: 0; }
+
 /* 内置视图 / 自定义视图之间的那条 `---`。
    用 `<div role="separator">` 而不是 `<hr>`：`hr` 在设置页里会被主题的默认
    margin 顶出一大段空白，且拿不到 `--background-modifier-border` 的语义色。 */

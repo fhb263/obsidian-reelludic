@@ -88,9 +88,15 @@ describe('⑵ 服务层：只加收听分钟', () => {
 
 describe('⑶ 宿主：两条构造路径都接上', () => {
     it('🔴 标签页 / 侧边栏 / 命令面板共用的 `buildAudioPlayerOptions` 接了', () => {
-        const at = MAIN.indexOf('buildAudioPlayerOptions');
+        // ⚠️ 必须锚「定义」而不是首次出现 —— 2026-11-21 m03288 给音乐系列卡加了「播整个系列」，
+        //    新方法 `playSeriesMusic` 里就有 `this.buildAudioPlayerOptions(...)` **调用点**，
+        //    而它定义在文件更前面 ⇒ `indexOf('buildAudioPlayerOptions')` 先命中调用点，
+        //    `at + 6000` 的窗口根本够不到真正的定义（这条断言就是这样假红的）。
+        const at = MAIN.indexOf('private async buildAudioPlayerOptions(');
         expect(at).toBeGreaterThan(-1);
-        const body = MAIN.slice(at, at + 6000);
+        // 窗口用「下一个方法定义」当边界，⛔ 不再用硬编码字符数（注释一长就又滑出去）
+        const end = MAIN.indexOf('private async loadEntryLyrics(', at);
+        const body = MAIN.slice(at, end > at ? end : at + 8000);
         expect(body).toContain('onListen:');
         expect(body).toContain('bumpListenMinutes(');
     });

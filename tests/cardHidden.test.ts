@@ -125,7 +125,12 @@ describe('④ 表单装配', () => {
 describe('⑤ 卡片渲染与 CSS 边界', () => {
     it('普通卡按条目判定，系列卡按组判定', () => {
         expect(listCode).toContain('class:is-card-hidden={entryCardHidden(e)}');
-        expect(listCode).toContain('class:is-card-hidden={seriesCardHidden(g.items)}');
+        // 🔴 m03458：系列卡的隐藏判据从「组内全部勾选」升级成**两源取或** ——
+        //    条目级 `gch = seriesCardHidden(g.items)`（组内全勾才糊）仍保留，
+        //    再纳一条系列自己的 `catalog.seriesHidden` 标记（只糊这张卡、不动成员）。
+        //    ⛔ 判据意图不变：仍然是「系列卡按组判定」，只是组的判据多了一源。
+        expect(listCode).toContain('{@const gHidden = gch || seriesGroupHidden(seriesHidden, g.key)}');
+        expect(listCode).toContain('class:is-card-hidden={gHidden}');
     });
 
     it('🔴 封面用**模糊**（m20436 推翻 m19456 的斜纹蒙板）', () => {
@@ -146,9 +151,9 @@ describe('⑤ 卡片渲染与 CSS 边界', () => {
         // 标题 / 元信息行 —— 打码。
         expect(listCode).toContain('{maskCardText(ch, e.title)}');
         expect(listCode).toContain('{maskCardText(ch, cardFieldValue(e, row.f))}');
-        // 系列卡同款
-        expect(listCode).toContain('{maskCardText(gch, g.title)}');
-        expect(listCode).toContain('{maskCardText(gch, seriesCardFieldValue(g, row.f))}');
+        // 系列卡同款（🔴 m03458：打码条件从 `gch` 换成 `gHidden`，多纳系列级隐藏）
+        expect(listCode).toContain('{maskCardText(gHidden, g.title)}');
+        expect(listCode).toContain('{maskCardText(gHidden, seriesCardFieldValue(g, row.f))}');
         // 🔴 m20436 用户逐字：「信息栏的状态就不要隐藏了」⇒ 状态**必须**直出明文，两种卡都一样。
         expect(listCode).toContain('{statusIcon(e.status)} {statusLabel(e.type, e.status)}');
         expect(listCode).toContain('{statusIcon(gStatus)} {statusLabel(g.type, gStatus)}');

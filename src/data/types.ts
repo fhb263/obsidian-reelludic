@@ -528,6 +528,21 @@ export interface Catalog {
      */
     seriesRatings?: Record<string, number>;
     /**
+     * **系列卡隐藏标记**：`分组键 → true`（用户 2026-11-21 裁定「隐藏此系列卡片」，
+     * 追加澄清「模糊化，就像单卡那样」）。
+     *
+     * 🔴 语义**只到外观**：该系列那张**卡**的封面模糊 + 信息栏打码，
+     *    ⛔ **不影响组内条目**（它们各自的卡片照常显示）——这正是用户的原话约束。
+     * 🔴 与单条 `MediaEntry.cardHidden` 是**两个独立概念**，⛔ 别互相推算：
+     *    `pure/cardHidden.seriesCardHidden` 的判据是「组内每一条都勾了」，
+     *    想让它为真就得把成员全勾上，与「成员不受影响」直接冲突
+     *    ⇒ 所以系列级必须有自己的字段（收口点 `pure/seriesHidden`）。
+     * 🔴 键 = `pure/seriesGroup.seriesKeyOf` 产出的 `type\u0001归一化系列名`（同 `seriesRatings`）。
+     * ⚠️ **值只存 `true`**：取消隐藏 = 删键（同「0 不落库」口径）。
+     * ⚠️ append-only 可选字段：老 catalog 没有它照常读（缺省 = 没有任何系列被隐藏）。
+     */
+    seriesHidden?: Record<string, true>;
+    /**
      * **分类视图**（用户 2026-11-23 裁定「按场景/项目分类」，即「事本位」）。
      *
      * 🔴 存这里而不是插件设置：视图就是**分类维度本身**，跟库走才能保证

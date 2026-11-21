@@ -38,6 +38,7 @@
     //    ⛔ 别改成从 `data/types` 拿：那样 svelte-check 报「declares MediaStatus locally, but it is not exported」，
     //    而 tsc 因为 `include` 不含 `.svelte` 看不见这条错（P1-4 债）。全仓其余 13 处都走 `pure/status`。
     import type { MediaStatus } from 'pure/status';
+    import type { SeriesHiddenMap } from 'pure/seriesHidden';
     // 🔴 #635：评分看板「拖入即改评分」的载荷类型（与存储口径同源 `pure/rating`）
     import type { Rating } from 'pure/rating';
     import type { FeedRange } from 'pure/activityFeed';
@@ -154,6 +155,13 @@
      *    （真实数据组内分歧极大，平均会被未评分条目稀释成一个谁也不认得的数）。
      */
     export let seriesRatings: Record<string, number> = {};
+    /**
+     * 系列卡隐藏表：`分组键 → true`（m03458，用户「隐藏此系列卡片」+「模糊化，就像单卡那样」）。
+     * ⚠️ 与 `seriesRatings` 同构：catalog **顶层字段**，宿主 `render()` 的 `Promise.all` 里取，
+     *    初始 props 与增量 `$set` 两处都要传（漏一处 = 首屏看不出隐藏效果）。
+     * 🔴 只管**系列卡外观**，⛔ 不参与筛选/排序/统计，也不影响组内条目。
+     */
+    export let seriesHidden: SeriesHiddenMap = {};
     /** 写某个系列的合集分（宿主落盘 + 刷视图；组件只报告，不碰磁盘） */
     export let onSetSeriesRating: (key: string, rating: Rating) => Promise<void> = async () => {};
     /**
@@ -1215,6 +1223,7 @@
                 {onOpenEntryTextModal}
                 {onBulkRating}
                 {seriesRatings}
+                {seriesHidden}
                 {onBulkTags}
                 {onConfirmBulk}
                 lockType={listLockType}

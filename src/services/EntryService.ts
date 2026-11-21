@@ -3,6 +3,7 @@
 import type { ActivityEvent, BookKind, Catalog, EntryType, MediaEntry } from 'data/types';
 import { CatalogStore, normalizeEntry, type VaultIO } from 'data/catalog';
 import { writeSeriesRating, type SeriesRatingMap } from 'pure/seriesRating';
+import { writeSeriesHidden, type SeriesHiddenMap } from 'pure/seriesHidden';
 import { normalizeViews, type MediaView } from 'pure/mediaViews';
 import { canTransition, type MediaStatus } from 'pure/status';
 import { entryFrontmatter, entryNotePath, generateNoteMarkdown, hashNoteContent } from 'data/noteGenerator';
@@ -234,6 +235,34 @@ export class EntryService {
         const c = await this.load();
         const next = writeSeriesRating(c.seriesRatings, key, rating);
         c.seriesRatings = next;
+        await this.save(c);
+        return next;
+    }
+
+    /**
+     * 系列卡隐藏表：`分组键 → true`（用户 2026-11-21「隐藏此系列卡片」）。
+     * 缺省 / 老 catalog ⇒ 空表（视图据此判「没有系列被隐藏」）。
+     */
+    async seriesHidden(): Promise<SeriesHiddenMap> {
+        return (await this.load()).seriesHidden ?? {};
+    }
+
+    /**
+     * 写某系列的隐藏标记（**只有这一条出口** —— 视图不碰磁盘，与 `setSeriesRating` 同架构）。
+     *
+     * 🔴 归一 + 「取消隐藏即删键」全部委托给 `pure/seriesHidden.writeSeriesHidden`，
+     *    ⛔ 别在这里再判一次（两份口径必然漂）。
+     * 🔴 只写 catalog 顶层 `seriesHidden`，⛔ **别去动组内任何一条的 `cardHidden`** ——
+     *    用户明确要求「里面的系列条目不受影响」，改了就变成把整个系列打码。
+     * 🔴 值没变化时不落盘（`writeSeriesHidden` 返回同一引用即为「无变化」信号）——
+     *    拖一下复选框就全量重写几百 KB 的 catalog 不值得。
+     */
+    async setSeriesHidden(key: string, hidden: unknown): Promise<SeriesHiddenMap> {
+        const c = await this.load();
+        const prev = c.seriesHidden ?? {};
+        const next = writeSeriesHidden(prev, key, hidden);
+        if (next === prev && c.seriesHidden) return next;
+        c.seriesHidden = next;
         await this.save(c);
         return next;
     }

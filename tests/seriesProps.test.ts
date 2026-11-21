@@ -116,8 +116,10 @@ describe('SeriesProps 组件（窗口本体）', () => {
     });
 
     it('🔴 按钮必须用**两级选择器**（单类 (0,1,0) 压不过核心 button:not(.clickable-icon) 的 (0,1,1)）', () => {
-        expect(COMP).toMatch(/\.rl-sp-row \.rl-sp-btn,/);
-        expect(COMP).toMatch(/\.rl-sp-actions \.rl-sp-btn \{/);
+        expect(COMP).toMatch(/\.rl-sp-row \.rl-sp-btn \{/);
+        // ⚠️ m03458：底部那枚「关闭」按钮已删 ⇒ `.rl-sp-actions` 容器与它的样式一并退场，
+        //    不要再钉这一条（钉了就是要求留一段没有元素的死 CSS）。
+        expect(COMP).not.toContain('rl-sp-actions');
         // 反向守卫：⛔ 不许出现裸 `.rl-sp-btn {` 单类规则
         expect(COMP).not.toMatch(/^\s*\.rl-sp-btn\s*\{/m);
     });
@@ -201,7 +203,9 @@ describe('两个入口（单击信息栏 / 悬停 ⋯ 菜单）', () => {
         // 找出系列卡那一处（`{g.title}` 之前最近的 `.rl-card-meta`）。
         // 🔴 m19456 ① 起标题走 `maskCardText(gch, g.title)`（隐藏卡片时打码），不再是裸 `{g.title}`
         //    ⇒ 锚点跟着换形态。⛔ 判据意图不变：仍然定位**系列卡**那一个信息栏，三件套一条不少。
-        const ttl = LIST.indexOf('<div class="rl-ttl">{maskCardText(gch, g.title)}</div>');
+        // 🔴 m03458：判据变量从 `gch` 换成 `gHidden`（= `gch || seriesGroupHidden(...)`，多纳一条
+        //    系列级隐藏）⇒ 锚点随之更新。⛔ 判据意图仍不变，只是打码条件的真源换了名。
+        const ttl = LIST.indexOf('<div class="rl-ttl">{maskCardText(gHidden, g.title)}</div>');
         expect(ttl).toBeGreaterThan(0);
         const a = LIST.lastIndexOf('class="rl-card-meta"', ttl);
         expect(a).toBeGreaterThan(0);

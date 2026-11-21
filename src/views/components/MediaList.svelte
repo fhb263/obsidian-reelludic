@@ -155,6 +155,7 @@
      * ⛔ 别把判据写进模板表达式（本仓模板里不许写 TS 断言，且两份实现必然漂移）。
      */
     import { entryCardHidden, seriesCardHidden, maskCardText } from 'pure/cardHidden';
+    import { seriesGroupHidden, type SeriesHiddenMap } from 'pure/seriesHidden';
     // 🔴 #626 多带两样：`posterGridTemplateForWall`（墙的列模板 —— 自定义档的**间距比网格宽**，裁决收在 pure 层）、
     //    `POSTER_WALL_GAP`（墙的间距，必须与 `.rl-wall{gap}` 同值）。
     // 🔴 用户 2026-10-20 删除「海报墙列数」⇒ `POSTER_WALL_COLUMNS_MAX` 与 `wallColumns` prop 一并下线。
@@ -260,6 +261,15 @@
      *    （Svelte 4 会给未使用的 export 报 unused 警告，被 `npm run check` 记为基线之上）。
      */
     export let seriesRatings: Record<string, number> = {};
+    /**
+     * 系列卡隐藏表：`分组键 → true`（m03458，用户「隐藏此系列卡片」+ 澄清「模糊化，就像单卡那样」）。
+     *
+     * 🔴 与 `seriesRatings` 同为 catalog **顶层字段**，由宿主单独取一次再传进来（视图不碰 service）。
+     * 🔴 判据 = `pure/seriesHidden.seriesGroupHidden`（⛔ 别在模板里内联 `map[key] === true`：
+     *    外部 JSON 可被手改，原型链上的 `constructor` 会让内联写法误判成真）。
+     * ⚠️ 只影响**系列卡**外观，⛔ 不参与筛选 / 排序 / 统计，也不影响组内条目自己的卡片。
+     */
+    export let seriesHidden: SeriesHiddenMap = {};
     /** 批量追加标签（合并去重） */
     export let onBulkTags: (ids: string[], tags: string[]) => Promise<void> = async () => {};
     /**
@@ -3761,6 +3771,14 @@
                  ⚠️ 必须放在**这个**分支（`it.kind === 'series'`）里 —— 上面 `grp`（组卡 / 分类桶）分支的
                  `g` 是 `it.card`，与这里 `it.group` 不是同一个对象，放错分支 = `gch is not defined` 编译告警。 -->
             {@const gch = seriesCardHidden(g.items)}
+            <!-- 🔴 m03458：**系列级**隐藏标记（用户「隐藏此系列卡片」，追加澄清「模糊化，就像单卡那样」）。
+                 与上一行是**两个独立判据**，满足其一就打码 —— ⛔ 别把两者合并成一个函数：
+                   · `seriesCardHidden(g.items)`：由成员推出（每条都勾了 `cardHidden`）⇒ 会连带影响成员卡；
+                   · `seriesGroupHidden(seriesHidden, g.key)`：系列自己的 `catalog.seriesHidden` 标记
+                     ⇒ **只糊这张系列卡**，组内条目各自照常显示（这正是用户要的）。
+                 ⚠️ 打码动作（封面 `blur` + 文案 `***`）全部沿用下面既有的 `is-card-hidden` / `maskCardText`，
+                    ⛔ 不新增第二套视觉。 -->
+            {@const gHidden = gch || seriesGroupHidden(seriesHidden, g.key)}
             <!-- 🔴 #502①（用户：「封面折叠系列卡**再多折，有多少折多少**」）：去掉 #501③ 的 `slice(0, 3)` 上限 ——
                  组里有几部就叠几层（只滤掉没封面图的）。
                  ⚠️ 层数一放开，**错位步长就不能再写死 8px**：10 部 × 8px = 累计让出 72px，主封面只剩 122px（被压扁）。
@@ -3808,7 +3826,7 @@
             <div
                 class="rl-card rl-series-card"
                 class:is-animated={stackAnimated.has(g.key)}
-                class:is-card-hidden={seriesCardHidden(g.items)}
+                class:is-card-hidden={gHidden}
                 role="button"
                 tabindex="0"
                 data-tip={`只看「${g.title}」（${g.items.length} 部）`}
@@ -3895,15 +3913,23 @@
                     </div>
                     <!-- 系列操作按钮（#438）：右下角、与普通卡那枚 `▶` **同位置同动效同语义**
                          （hover/聚焦浮现、32px 圆形、`actionIcon` 定图标 ⇒ 动画=播放、书籍=阅读）。
-                         🔴 点它**不进系列视图**（`stopPropagation`），而是弹出「季列表」——
-                         每一部/每一季一行，各带一枚同样语义的动作按钮，可切着播。
+                         🔴 点它**不进系列视图**（`stopPropagation`）。
+                         🔴 2026-11-21 m03288 用户改口径（逐字）：「音乐系列卡封面加个播放按钮，
+                            点击即仅播放该系列的音乐，顺序乱序播放该系列的音乐（原来选系列中的一首
+                            音乐条目播放的窗口删除掉）」——
+                            · **音乐**：不再弹「选系列里一首」的窗，点它 = 直接把整个系列当歌单**乱序**播
+                              （宿主 `openSeriesPicker` 分流出 `playSeriesMusic`）。故提示词不能再写
+                              「可切换 N 部/季」—— 那描述的是已经不存在的选季窗。
+                            · **影视/动画**：仍是弹季列表挑一季（多季必挑，2026-11-06 裁定），提示词照旧。
                          ⚠️ 组的每一部都**没有可用入口**时不渲染（与普通卡的规则一致：没得播就别给按钮）。 -->
                     {#if g.items.some((it) => hasActionEntry(it))}
                         <button
                             class="rl-watch-btn rl-series-play"
                             class:rl-watch-play={actionIcon(g.type) === 'play'}
-                            data-tip={`${actionAriaLabel(g.type)}（可切换 ${g.items.length} 部/季）`}
-                            on:click={(ev) => openSeriesFromCard(g, ev)}><Icon icon={actionIcon(g.type)} size={14} /><span class="rl-sr">{actionAriaLabel(g.type)}</span></button>
+                            data-tip={g.type === 'music'
+                                ? `乱序播放整个系列（${g.items.length} 首）`
+                                : `${actionAriaLabel(g.type)}（可切换 ${g.items.length} 部/季）`}
+                            on:click={(ev) => openSeriesFromCard(g, ev)}><Icon icon={actionIcon(g.type)} size={14} /><span class="rl-sr">{g.type === 'music' ? '乱序播放整个系列' : actionAriaLabel(g.type)}</span></button>
                     {/if}
                     <!-- 🔴 #558：折叠卡的组级阅读进度也搬进**封面底部悬浮区**（与普通卡同一截 markup / 同一块遮罩），
                          ⛔ 别只搬普通卡那一处（#472 报的就是「折叠卡与普通卡不一致」）。
@@ -3961,7 +3987,7 @@
                         releaseCardFocus(ev);
                         onOpenSeriesProps(g);
                     }}>
-                    <div class="rl-ttl">{maskCardText(gch, g.title)}</div>
+                    <div class="rl-ttl">{maskCardText(gHidden, g.title)}</div>
                     <!-- 🔴🔴 #625（用户 2026-10-13 报障「系列卡不一致，视图里也空了一大块」）：
                          折叠卡的信息行**与普通卡同源同数** —— 同一份「按类型信息栏」配置、同一批行序与 class。
                          ⛔ 旧的「年份段 / 部数 / 题材」三行**写死**已整体退场，三个病灶都在它身上：
@@ -3978,11 +4004,11 @@
                                 <!-- 🔴 #640 ⑷：与普通卡同款补位（折叠卡也要跟同一排对齐） -->
                                 <div class="rl-sub rl-pad-row"></div>
                             {:else if row.f === 'creator'}
-                                <div class="rl-creator">{maskCardText(gch, seriesCardFieldValue(g, row.f))}</div>
+                                <div class="rl-creator">{maskCardText(gHidden, seriesCardFieldValue(g, row.f))}</div>
                             {:else if row.f === 'genres'}
-                                <div class="rl-tags">{maskCardText(gch, seriesCardFieldValue(g, row.f))}</div>
+                                <div class="rl-tags">{maskCardText(gHidden, seriesCardFieldValue(g, row.f))}</div>
                             {:else}
-                                <div class="rl-sub">{maskCardText(gch, seriesCardFieldValue(g, row.f))}</div>
+                                <div class="rl-sub">{maskCardText(gHidden, seriesCardFieldValue(g, row.f))}</div>
                             {/if}
                         {/each}
                     {/if}
@@ -4006,7 +4032,7 @@
                                  ⚠️ 值来自 `seriesRatings[g.key]`（独立字段），⛔ **不是**组内平均 —— 见 `pure/seriesRating` 顶部注释。
                                  ⚠️ 用 `> 0` 判断而非 `truthy`：0 与缺键同义（都是未评分），不渲染空星。 -->
                             {#if seriesRatingOf(g) > 0}
-                                {#if gch}
+                                {#if gHidden}
                                     <span class="rl-masked-text">***</span>
                                     <span class="rl-sr">合集评分已隐藏</span>
                                 {:else}

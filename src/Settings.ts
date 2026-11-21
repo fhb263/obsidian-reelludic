@@ -146,7 +146,8 @@ import {
     resolveAllKindOrders,
     resolveAllOrders,
 } from 'pure/fieldOrder';
-import { moveItem } from 'pure/seriesGroup';
+import { foldSeries, moveItem } from 'pure/seriesGroup';
+import type { SeriesHiddenMap } from 'pure/seriesHidden';
 // 🔴 第二期 ⑤：本地音频转文字（ASR）语言码归一 —— 与本页工具栏同一把尺，⛔ 别在设置页自己判
 import { normalizeAsrLang } from 'pure/asrEngine';
 import { ASR_ENGINES, engineDefOf } from 'pure/asrEngines';
@@ -6309,6 +6310,85 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         });
 
         this.renderCardFieldsPanel(panelHost.el);
+
+        // 🔴 m03458：本组末尾追加「已隐藏的系列」清单 —— 它是取消隐藏的**唯一入口**
+        //    （系列卡上勾了之后，卡片变模糊，若不从设置里撤就只能去手改 catalog.json）。
+        void this.renderSeriesHiddenRows(body);
+    }
+
+    /**
+     * 「已隐藏的系列」清单（m03458）。
+     *
+     * 🔴 为什么必须有这一块：勾选入口在**系列卡自己的编辑属性窗口**里，而那张卡一旦隐藏就模糊了 ——
+     *    用户想撤销时，卡片上已看不出「可以点」，所以取消隐藏必须有第二个、与卡片状态无关的入口。
+     *    用户 2026-11-21 答复也明确要了这个：「设置 › 海报墙卡片 里加一份『已隐藏的系列』清单，可逐条取消」。
+     *
+     * 🔴 键 → 可读名：catalog 里存的是 `type\u0001归一化系列名`（不可读），
+     *    这里用 `foldSeries(entries)` 把条目折叠成组，再按 `group.key` 反查 `group.title`。
+     *    ⚠️ 查不到（条目全被删了，只剩孤儿键）也要列出来 —— 那种键正是最该被清掉的，
+     *       给它显示原始键并标注「条目已不在库中」。
+     *
+     * ⚠️ 全部走 `service.setSeriesHidden` 那一条出口；⛔ 别在这里直接改 `catalog.seriesHidden`。
+     */
+    private async renderSeriesHiddenRows(parent: HTMLElement): Promise<void> {
+        let table: SeriesHiddenMap;
+        let groups: Map<string, string>;
+        try {
+            const [hiddenTable, entries] = await Promise.all([
+                this.plugin.service.seriesHidden(),
+                this.plugin.service.list(),
+            ]);
+            table = hiddenTable;
+            groups = new Map();
+            for (const row of foldSeries(entries)) {
+                if (row.kind === 'series') groups.set(row.group.key, row.group.title);
+            }
+        } catch {
+            // 读失败就不画这一块（它只是撤销入口，别把整组设置搞成红的）
+            return;
+        }
+
+        const keys = Object.keys(table).filter((k) => table[k] === true);
+        const wrap = parent.createDiv({ cls: 'rl-hidden-series' });
+        const head = wrap.createDiv({ cls: 'rl-hidden-series-head' });
+        head.createSpan({ cls: 'rl-hidden-series-title', text: '已隐藏的系列' });
+        head.createSpan({
+            cls: 'rl-hidden-series-count',
+            text: keys.length > 0 ? `${keys.length} 个` : '无',
+        });
+        const intro = wrap.createDiv({ cls: 'rl-hidden-series-intro' });
+        intro.setText(
+            keys.length > 0
+                ? '这些系列卡在海报墙/卡片网格上是模糊的（封面打模糊、信息栏显示 ***），里面的条目不隐藏。点右侧「取消隐藏」恢复。'
+                : '在系列卡的编辑属性窗口右上角勾「隐藏此系列卡片」后，被隐藏的系列会列在这里。',
+        );
+
+        const list = wrap.createDiv({ cls: 'rl-hidden-series-list' });
+        for (const key of keys) {
+            const rowEl = list.createDiv({ cls: 'rl-hidden-series-row' });
+            rowEl.createSpan({
+                cls: 'rl-hidden-series-name',
+                text: groups.get(key) ?? `${key.split('\u0001').pop() ?? key}（条目已不在库中）`,
+            });
+            new Setting(rowEl)
+                .setName('')
+                .setDesc('')
+                .addButton((b) =>
+                    b.setButtonText('取消隐藏').onClick(() => {
+                        void (async () => {
+                            try {
+                                await this.plugin.service.setSeriesHidden(key, false);
+                                this.plugin.refreshViews();
+                                // 原地重画：先摘掉本块再重画（⛔ 别只 `empty()` —— 那样 parent 里会残留一个空壳）
+                                wrap.remove();
+                                void this.renderSeriesHiddenRows(parent);
+                            } catch (e) {
+                                new Notice(`取消隐藏失败：${e instanceof Error ? e.message : String(e)}`);
+                            }
+                        })();
+                    }),
+                );
+        }
     }
 
     /**
