@@ -114,7 +114,8 @@ describe('🔴 m08028 歌词偏移 · 播放器装配', () => {
     it('m08754 ① 高亮只归 `is-on`：`.is-var` 不许再带配色', () => {
         expect(css).not.toContain('.rl-ap-btn-offset.is-var');
         // 图标尺寸必须继承 `.rl-ap-btn`（⛔ 不许给偏移按钮单写文字按钮度量）
-        const seg = sliceAfter(css, 'm08754 改判高亮语义', 2400);
+        // ⚠️ 锚点用**选择器**而不是注释文字：注释会被清理/改写，选择器是稳定的结构真源。
+        const seg = sliceAfter(css, '.rl-ap-root .rl-ap-offset-head {', 2400);
         expect(seg.length).toBeGreaterThan(0);
         expect(seg).not.toMatch(/\.rl-ap-btn-offset\s*\{/);
         // 反向守卫：这一段的声明区（剥掉注释）里不许再出现这个选择器

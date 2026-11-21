@@ -138,7 +138,7 @@
 }
 /* #380：媒体库目录输入框的即时提示复用上面的排版，出错时转红（走语义变量，六档主题/明暗都自动适配） */
 .rl-hint-note.is-error { color: var(--text-error); }
-/* 本轮：提示文案里的「获取官网」由纯文本改成可点链接（`pure/sourceLink.splitHintLinks` 切段后建的 <a>）。
+/* 提示文案里的「获取官网」是可点链接（`pure/sourceLink.splitHintLinks` 切段后建的 <a>）。
    只用语义变量 + accent 色，不写死颜色；下划线常亮（一眼看得出可点），hover 只提亮。
    `overflow-wrap: anywhere` 让 `steamcommunity.com/dev/apikey` 这种长串在窄面板里能折行，不外溢。 */
 .rl-hint-note .rl-hint-link {
@@ -150,28 +150,7 @@
 }
 .rl-hint-note .rl-hint-link:hover { color: var(--text-accent-hover); }
 /* ══════════════════════════════════════════════════════════════════════════
-   #479 AI集成页整页重排· **#480 六条修正** · **#481 第三轮三条**
-
-   #480 四件事：① 服务商 = 「不启用」时**不再亮着模型名**（合并后连模型段都不显示）
-                ② 服务商 + 模型 = **一个**拣选控件（点开是「左服务商 / 右模型」的大面板）
-                ③ 提示词入口改**笔形图标**挪进控件区；标题与副标题拉开 4px
-                ④ 朗读音源 = **音源 + 音色 + 试听**三件（与其它服务行同款观感）
-                ⑤ API凭据：徽标前加绿实心点、箭头更细小更浅
-                （⑥「去掉默认边框」**不做** —— 保持与全仓控件一致）
-
-   #481 三条（第三轮反馈）：
-     ① **撤回** 480-③ 的笔形图标，所以提示词回到**名称行尾的文字按钮「提示词 ›」**
-     ② 拣选控件宽度**固定** `--rl-ai-ctl-w`（上下几行对齐）+ 超长省略号 + `data-tip` 全称
-     ③ 图标波形 改为 **喇叭**；边框 / 圆角与拣选控件**同一条规则**
-        （③ 里的「音源 + 音色合并成一格」已被 **#482 撤回**，所以拆回两格，改走「窄 + 宽」分工）
-
-   #482 四步（「高级感爆改」，弹窗 `AiPickerModal` 整节重做）：
-     ① 弹窗内边距 24px + 标题 16px/600 + 关闭钮圆形浅灰底（scoped 到 `.rl-pick-modal`，不改全局）
-     ② 左栏铺极浅灰底 + 圆角、**去掉垂直分割线**；左栏项 padding 12/16 + 悬停底 + 选中「浅底 + 竖线指示器」
-     ③ 列表项**卡片化**：删蓝色 API 签，所以名字 + 小字（`modelNote`，**只写真信息**）+ 灰小签 + 选中 达标；圆角 8px / 行高 ≥48px
-     ④ 搜索框浅灰底无边框（聚焦才出主题色边 + 轻阴影）；两颗动作降级成**灰色文字按钮**
-     色值全部走主题变量（指定 hex 已映射到 `--text-normal` / `--background-secondary` /
-        `--background-modifier-hover` / `--text-muted`）
+   AI 集成页布局与控件。以下是这一节必须守住的几条约束。
 
    **配色只有两条通道**（主题色 + 已配置那个绿）：
       图标 / 选中 / 强调 = `--interactive-accent`；「已配置」徽标 = `--color-green`（见 `.rl-key-badge-on`）。
@@ -182,6 +161,9 @@
    **`<button>` 规则一律两级前缀**：宿主核心 `button:not(.clickable-icon)` 是 (0,1,1)，
       单类 (0,1,0) **压不过它**（宿主那条还把 `height` 写死成 `var(--input-height)`）
       所以本节的按钮规则一律写 `.父容器 .rl-xxx-btn`（0,2,0）；带 `.clickable-icon` 的交给宿主那套。
+   **控件宽度与对齐**：拣选控件固定 `--rl-ai-ctl-w`，上下几行才左右对齐；超长名走省略号 + `data-tip` 全称。
+   **色值全部走主题变量**（`--text-normal` / `--background-secondary` /
+      `--background-modifier-hover` / `--text-muted`），不写任何 hex。
    ══════════════════════════════════════════════════════════════════════════ */
 
 /* ── 服务商图标（四处共用：拣选按钮 / 下拉项 / API凭据行头 / 朗读音源） ── */
@@ -194,8 +176,8 @@
 }
 .rl-ai-icon svg { width: 14px; height: 14px; display: block; }
 
-/* ── ③ 标题与副标题拉开 4px ──
-   只加**下边距**、不动字号 —— 虽然要求「保持在 16px 粗体」，但设置页的字号阶梯是宿主定的
+/* ── 标题与副标题拉开 4px ──
+   只加**下边距**、不动字号。设置页的字号阶梯是宿主定的
    （标题 13px/600、副标题 12px），单独把一页放大成 16px 会与数据源页 / 基本设置页明显割裂。
    口径：保持 13px，只拉开间距。 */
 .rl-ai-svc .setting-item-description { margin-top: 4px; }
@@ -238,16 +220,16 @@
     justify-content: flex-end;
 }
 
-/* ── ② 控件格外观：**拣选控件（服务商 + 模型）与「选择音色」共用同一条规则** ──
-   #481 ②：模型名过长（如 BAAI/bge-large-en-v1.5）会把右侧空间撑满、上下几行下拉框宽度不一致，所以宽度**固定** `--rl-ai-ctl-w`：三行（翻译 / 总结 / 搜索）左右都对齐；
+/* ── 控件格外观：**拣选控件（服务商 + 模型）与「选择音色」共用同一条规则** ──
+   模型名过长（如 BAAI/bge-large-en-v1.5）会把右侧空间撑满、上下几行下拉框宽度不一致，
+   所以宽度**固定** `--rl-ai-ctl-w`：三行（翻译 / 总结 / 搜索）左右都对齐；
    超长文本走省略号，完整名称走 `data-tip` 悬停气泡（见 `renderAiServiceRow`）。
-   **#494 修「控件区被挤窄时 picker 不缩」**（真 bug，仿真实测：设置组宽 ≲460px 时控件区缩到 252，
-      而 picker 仍硬 300，所以**凸出控件区 48px**，与第四行右缘错开 48px —— 实测现象）：
-      根因是按钮那句 `max-width: 100%` 的**包含块是 `.rl-ai-pick` 自己**（它 `display:inline-flex; width:auto`
-      所以 100% = 内容宽，等于没写）。所以上限必须加在**包装层** `.rl-ai-pick` 上。
+   **上限必须加在包装层**：按钮自身那句 `max-width: 100%` 的包含块是 `.rl-ai-pick` 自己
+   （它 `display:inline-flex; width:auto`，所以 100% = 内容宽，等于没写），
+   控件区被挤窄时 picker 不会跟着缩、会凸出控件区。
    固定宽度仍须配 `max-width: 100%`：窄窗 / 移动端把 `.setting-item` 折成上下两段时不许横向溢出。
-   ③ 还要求圆角和边框颜色与上方模型选择器完全一致，所以两者写成**同一条规则的两个选择器**，
-      不许各写一份（两份外观 = 迟早分叉，本仓在「同一个数字两份真源」上栽过）。 */
+   圆角与边框颜色必须与上方模型选择器完全一致，所以两者写成**同一条规则的两个选择器**，
+   不许各写一份（两份外观 = 迟早分叉，本仓在「同一个数字两份真源」上栽过）。 */
 .rl-ai-pick { display: inline-flex; max-width: 100%; min-width: 0; }
 .rl-ai-pick .rl-ai-pick-btn,
 .rl-ai-tts .rl-ai-dd-btn {
@@ -281,12 +263,12 @@
    它让同一列三行颜色不一致（「一个蓝一个黑的不同」）—— 文字一律 `--text-normal`。
    别再加回来：要表达「这不是本仓写死的候选」，请用弹窗里的小字（`modelNote` 已写明来源）。 */
 
-/* ── ④ 朗读音源：**一格**「选择音色」+ 试听（#481 ③ 把「音源 / 音色」两个下拉合并了） ──
-   两个下拉框挤在一起，且 Microsoft Huihui… 被截断，所以
-    ⑴ 合并成一格：段标题（「系统语音 · 中文」/「硅基流动 · 女声」）承担「这句是谁念的」；
-    ⑵ 原来两格共 380px、现在一格 300px + 试听按钮，总宽**更窄**，反而给长音色名留出了更多字位；
-    ⑶ 外观（边框 / 圆角 / 固定宽度）与上方拣选控件**同一条规则**（见 ②）。
-   图标：系统语音 = 喇叭 `volume-2`（#481 从波形 `audio-lines` 改过来 ——波形标与试听 ▶ 长得像）。 */
+/* ── 朗读音源：**一格**「选择音色」+ 试听 ──
+   两个下拉框挤在一起且长音色名会被截断，所以
+     ⑴ 合并成一格：段标题（「系统语音 · 中文」/「硅基流动 · 女声」）承担「这句是谁念的」；
+     ⑵ 合并后总宽更窄，反而给长音色名留出更多字位；
+     ⑶ 外观（边框 / 圆角 / 固定宽度）与上方拣选控件**同一条规则**（见 ②）。
+   图标用喇叭 `volume-2`，不用波形 `audio-lines` —— 波形标与试听 ▶ 长得像。 */
 .rl-ai-tts { display: flex; align-items: center; gap: 6px; width: auto; max-width: 100%; }
 .rl-ai-dd { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
 .rl-ai-dd .rl-ai-dd-btn.rl-open { border-color: var(--interactive-accent); }
@@ -382,17 +364,17 @@
     padding: 0;
 }
 
-/* ── ② 拣选弹窗（AiPickerModal）：**顶部服务商 chip + 全宽模型列表**（#482「高级感」建立 / **#484 重做**）──
+/* ── 拣选弹窗（AiPickerModal）：**顶部服务商 chip + 全宽模型列表** ──
 
-   #484 重做（针对观感差、缺少实时点击反馈）：
-     ① **布局**：左栏（吃掉 200px、长模型名只能截断），所以**顶部横向 chip 行**，列表吃满宽度。
-     ② **就地反馈**：`.rl-pick-status` 承载 loading / 报错 / 空态说明（不再「关弹窗 改为 只剩一行 Notice」）。
-     ③ **选中可见**：`.is-picking`（点中先亮一瞬再关）；`.is-active`（键盘上下键 高亮）。
-     ④ **收口 97 个模型**：`.rl-pick-fchip` 能力筛选 + 置顶段（判定在 `pure/aiPick`，这里不判）。
-     ⑤ **弹窗加宽**：列表全宽才放得下 `Qwen/Qwen3-235B-A22B-Instruct-2507`（实测 271px）。
+   左栏会吃掉 200px、长模型名只能截断，所以改成**顶部横向 chip 行**，列表吃满宽度。
+   配套四件事：
+     ① `.rl-pick-status` 承载 loading / 报错 / 空态说明（反馈留在弹窗内，不再靠关弹窗 + Notice）；
+     ② `.is-picking`（点中先亮一瞬再关）、`.is-active`（键盘上下键高亮）；
+     ③ `.rl-pick-fchip` 能力筛选 + 置顶段（判定在 `pure/aiPick`，这里不判）；
+     ④ 列表要放得下 `Qwen/Qwen3-235B-A22B-Instruct-2507`（实测 271px）。
 
    **色值一律主题变量**（本仓 UI 规范 §2：不硬编码 hex）。
-   **标题与关闭钮是宿主元素**（`.modal-title` / `.modal-close-button`，已用 `_probe_modal_cls.cjs` 在 app.js 核实）
+   **标题与关闭钮是宿主元素**（`.modal-title` / `.modal-close-button`）
      所以只 scoped 到 `.rl-pick-modal`，不许改全局那两条（会影响全仓所有弹窗）。 */
 
 /* 弹窗加宽：列表要吃满宽度才放得下长模型名 */
@@ -523,7 +505,7 @@
 .rl-pick-filters .rl-pick-action:hover,
 .rl-pick-status .rl-pick-action:hover { color: var(--text-normal); }
 
-/* ④ 就地状态条（loading / 报错 / 空态说明）—— #484 ② 的核心：反馈留在**弹窗内** */
+/* ④ 就地状态条（loading / 报错 / 空态说明）—— 反馈留在**弹窗内**，不靠关窗 + Notice */
 .rl-pick-status {
     display: flex;
     align-items: center;
@@ -612,7 +594,7 @@
 .rl-pick-list .rl-pick-item:hover { background: var(--background-modifier-hover); }
 /* 键盘上下键 高亮（与 hover 同一档底色，避免两套观感） */
 .rl-pick-list .rl-pick-item.is-active { background: var(--background-modifier-hover); }
-/* #484 ③：点中先亮一瞬再关 —— 得看见自己选了谁（原来瞬间 close，等于没反馈） */
+/* 点中先亮一瞬再关 —— 得看见自己选了谁（否则瞬间 close，等于没有反馈） */
 .rl-pick-list .rl-pick-item.is-picking {
     background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
     border-color: var(--interactive-accent);
@@ -722,10 +704,9 @@
 }
 .rl-prov-card .rl-key-head { padding: 10px 12px; }
 .rl-prov-card .rl-key-body { padding: 0 12px 12px; }
-/* #485 测试搬回折叠体内**（「把测试按钮放在折叠项下，像其他 cookie 测试那样」）
-   所以行头不再有按钮，那一套 `.rl-prov-test` 样式与「把箭头 auto 摘掉」的补丁**一并删除**：
-     尾元素重新只剩箭头，所以宿主 `.rl-key-caret { margin-left: auto }` 就是它要的（别再摘）。
-   按钮与结果现在走**全仓通用的** `.rl-key-actions` + `mod-cta`（与 Cookie 那处逐字同款）。 */
+/* 测试按钮在折叠体内，行头不再有按钮，所以「把箭头 auto 摘掉」的补丁已不需要：
+   尾元素重新只剩箭头，宿主 `.rl-key-caret { margin-left: auto }` 就是它要的（别再摘）。
+   按钮与结果走**全仓通用的** `.rl-key-actions` + `mod-cta`（与 Cookie 那处逐字同款）。 */
 
 /* ── 「用途」= **主从布局**（从十版方案里选定「I 主从」；本段对应
       `renderAiServiceRows` / `renderAiServiceDetail`）──
@@ -735,8 +716,8 @@
       主从形态下右栏本来就只装一屏内容，提示词可以常驻，不必再折叠。
    两栏**各自是一张卡**（描边 + 圆角，与「模型服务」的 `.rl-prov-card` 同观感），
       别给外层再套一层卡（「卡中卡」——本仓在 `.rl-key-row.rl-prov-card` 上栽过一次，见上段注释）。 */
-/* #718（第⑦条）「用途两个框高度对齐」：
-   原来是 `align-items: flex-start` —— 两栏各按自身内容撑高，右栏换条时高度随内容跳，
+/* 用途两个框高度必须对齐。
+   用 `align-items: flex-start` 时两栏各按自身内容撑高，右栏换条时高度随内容跳、
    左栏又固定 7 行，于是**右栏短了左栏下面空一截、右栏长了左栏上面留白**，两框永远不一样高。
    改 `stretch`：行高由最高的那一栏决定，另一栏拉平，所以两框永远等高、且换条时不再抖动。
    左栏拉高后内部条目不能被拉伸（`.rl-ai-mitem` 是不可伸缩的行），所以给 master 加
@@ -840,10 +821,9 @@
 .rl-ai-dfoot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 .rl-ai-dfoot[hidden] { display: none; }
 .rl-ai-dhint { font-size: var(--font-ui-smaller); color: var(--text-muted); }
-/* `.rl-btn.rl-ai-dreset` 已随按钮搬去标题行而**整体删除**（#722）：
-   现在用的是 `.rl-group-reset`，别再给 AI 页单独写一套按钮样式 —— 那正是要消掉的「两处观感不一致」。
-   但「应用到全部服务」（`.rl-ai-dapply`）仍在右栏底部，它原来与 `-dreset` **共用**一条尺寸规则；
-   删 reset 时必须把它单独接住，否则会退回 `.rl-btn` 的默认厚度（一次误伤，别再来第二次）。
+/* 按钮样式统一走 `.rl-group-reset`，别再给 AI 页单独写一套 —— 那正是要消掉的「两处观感不一致」。
+   「应用到全部服务」（`.rl-ai-dapply`）在右栏底部，与 reset 按钮共用同一条尺寸规则；
+   任何一侧被删时都必须把另一侧单独接住，否则会退回 `.rl-btn` 的默认厚度。
    两级选择器照旧：`.rl-btn` 定义在本文件更靠后，同为 (0,1,0) 时后出现者胜，所以裸类名会被整条盖掉。 */
 .rl-btn.rl-ai-dapply { flex: 0 0 auto; padding: 3px 12px; font-size: var(--font-ui-smaller); }
 /* 「全局默认模型」的铺开区：与上面几格拉开，用一条发丝线表达「这是另一件事」 */
@@ -869,13 +849,12 @@
     border-radius: var(--rl-t-radius-md, 6px);
     margin: 2px 0;
 }
-/* 服务集成分组（设置页）—— 服务集成样式整体重做：
-   ① **一级标题（数据源管理 / AI集成）改用原生 `setHeading`** —— 官方 Plugin guidelines 明文要求
-      「Use `setHeading` instead of a `<h2>`」，理由是自造标题元素会造成**跨插件样式不一致**；
-      自造的 `.rl-svc-section-title`（13px、贴容器左缘）已删除 改为「上级比下级还小」的层级倒挂消失。
+/* 服务集成分组（设置页）—— 三级视觉阶梯：
+   ① **一级标题（数据源管理 / AI集成）必须用原生 `setHeading`** —— 官方 Plugin guidelines 明文要求
+      「Use `setHeading` instead of a `<h2>`」，理由是自造标题元素会造成**跨插件样式不一致**。
    ② **子分组标题行** = 原生设置行的**左缘与字号**：容器内距 48 + 内距 16 = **文字左缘 64px**
       （与 `.setting-item` / `.setting-item-heading` 完全齐平），13px / 600 / `--text-normal`；
-      ▸ 箭头**紧贴标题文字**（不再 `margin-left: auto` 顶到容器最右缘 —— 那会让箭头离标题 400+px、
+      ▸ 箭头**紧贴标题文字**（不许 `margin-left: auto` 顶到容器最右缘 —— 那会让箭头离标题 400+px、
       hover 时铺出一条横跨整页的色带）；hover 底色只铺「标题 + 箭头」这一小段（`width: fit-content`）。
    ③ 组内容再缩进一档（48 + 32 = 80px），形成「一级标题 64、子分组标题 64、内容 80」的稳定阶梯。 */
 .rl-svc-group { margin: var(--size-4-2) 0; }
@@ -897,10 +876,9 @@
       `.rl-key-row` 这一套（见下方），**不是**这里 —— 本节这套仍然保持「不折叠」。 */
 .rl-svc-group-icon { display: flex; align-items: center; flex: 0 0 auto; color: var(--text-faint); }
 .rl-svc-group-icon svg { width: 1em; height: 1em; }
-/* #490：这里原来有一条给「实验性功能」组标题用的灰小字规则（#477 加的那句风险提示）——
-    已删除，**规则整体删掉**（连带 `createGroupSection` 的可选第 4 参一起退场：
-   只有一个使用者 = 死码）。别加回来；本页的偏好是「少字」（#422 书源那组两行灰字也被嫌丑删过）。
-   注释里**不写那条规则的选择器全称** —— 本批的反向守卫锚的就是它的规则体，写了会自撞红（本仓 #422 的既定做法）。 */
+/* 这里**不许**再给「实验性功能」组标题加灰小字规则（那句风险提示已删，`createGroupSection`
+   的可选第 4 参也已退场 —— 只有一个使用者就是死码）。本页的偏好是「少字」。
+   注释里**不写那条规则的选择器全称** —— 有反向守卫锚的就是它的规则体，写了会自撞红。 */
 .rl-svc-group-body {
     display: flex;
     flex-direction: column;
@@ -921,7 +899,7 @@
 .rl-views-empty { font-size: 12px; color: var(--text-muted); padding: 8px 0; }
 .rl-views-list { display: flex; flex-direction: column; gap: 8px; }
 
-/* 「已隐藏的系列」清单（m03458，挂在「高级设置 › 卡片信息栏」组末尾）。
+/* 「已隐藏的系列」清单（挂在「高级设置 › 卡片信息栏」组末尾）。
    皮肤照抄 `.rl-views-*`：同一页里的两组不能长得像两个插件。
    ⚠️ 每行用 `.rl-hidden-series-row` 包住 `Setting`（它自带 `.setting-item` 的上下 padding），
       这里只负责行内的「名字 ... 取消隐藏」横向对齐。 */
@@ -1002,9 +980,9 @@
 .rl-view-row-hint.is-warn { color: var(--text-error); }
 .rl-view-row-tagin { flex: 1; min-width: 160px; }
 
-/* 🔴 2026-11-15 用户 m05159 问题一：「仅剩最后一个勾选项时再取消，应拦截并显示红色提示」
-   ⇒ 拦截时在那一行里闪一条红字。它挂在 `.rl-view-row` 里（`head` 之后），
-     默认 `is-hidden` 收起，⛔ 别做成常驻 —— 常驻会让人以为这行一直有问题。 */
+/* 视图列表拦截红字：勾到最后一项还想取消时，在那一行里闪一条红字提示。
+   它挂在 `.rl-view-row` 里（`head` 之后），默认 `is-hidden` 收起，⛔ 别做成常驻
+   —— 常驻会让人以为这行一直有问题。 */
 .rl-view-row-warn {
     font-size: 11.5px;
     line-height: 1.5;
@@ -1031,12 +1009,12 @@
 .rl-views-add { display: flex; align-items: center; gap: 8px; }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   设置页导航（#354）：**固定顶栏 Tab + 内容区独立滚动**（4 个平级 Tab）
+   设置页导航：**固定顶栏 Tab + 内容区独立滚动**（4 个平级 Tab）
 
    **结构（shell 是 flex 列 / height:100%）**：
       .rl-set-shell > .rl-set-bar（flex:0 0 auto，天然固定）+ .rl-set-content（唯一滚动区）
       不碰 Obsidian 设置外框 —— 它本身就是 `height:100%; overflow-y:auto`（实测 app.css），
-        所以 shell 拿得到定高；「固定栏」不再靠 `position: sticky`（那是整面板滚动时代的替代方案）。
+        所以 shell 拿得到定高；「固定栏」不靠 `position: sticky`。
       `.rl-set-content` 的 `min-height: 0` 是这条公式里**必须**的一行：flex 项默认
         `min-height:auto`，所以会被内容撑高、`overflow` 永不生效，整页又变回「外框在滚」。
 
@@ -1045,33 +1023,31 @@
       激活走 `--interactive-accent`，所以主题切换自动跟随，一个字面色值都不写。
    **必须写兜底 var(--nav-item-x, 后备值)**：老版本 Obsidian 或第三方主题可能没定义这套变量，
       没有兜底就会出现「文字变透明」这种最难查的故障。
-   **悬停铺浅底 + 激活「强调色字 + 2px 下划线」**（#354 明确要求「悬停浅灰底」）：
+   **悬停铺浅底 + 激活「强调色字 + 2px 下划线」**：
       两条视觉通道分离，所以「悬停」与「我在这一页」不会互相冒充。
-      这**推翻了 #353 的「悬停只变色不铺底」**（那条的判据是 的「并排切换只变色」）——
-        两者在本轮不冲突：底色**逐项铺**（带圆角 + 4px 项间距，不会连成色带），
-        且**激活不靠底色**承载。判据以本轮为准。
-      另外**不要照抄核心** `.horizontal-tab-nav-item`：它桌面激活态**就是**铺
+      底色**逐项铺**（带圆角 + 4px 项间距，不会连成色带），且**激活不靠底色**承载。
+      **不要照抄核心** `.horizontal-tab-nav-item`：它桌面激活态**就是**铺
         `--background-modifier-hover`，所以悬停与激活长得一模一样，分不出自己在哪页。
    Tab 是 `<button>`，所以**规则必须两级前缀**（≥0,2,0）：核心 `button:not(.clickable-icon)`（0,1,1）
-      会压过单类（0,1,0），出灰底 + `--input-shadow` 内阴影 = #351 那版「厚重感」（§3 v15 老坑）。
+      会压过单类（0,1,0），出灰底 + `--input-shadow` 内阴影。
    ══════════════════════════════════════════════════════════════════════════ */
 
-/* 全宽度**只有这一个形态**：#352 那套「宽屏左栏 / 窄屏手风琴」双形态已整体退场
-   （窄屏改由 Tab 栏自己横向滚动承接），所以这里不再有任何「布局切换」的余地。
-   #357：**退回「外框滚 + 栏 sticky」**（#354 那版「内容区独立滚动」已撤）——
-      原因是要「滚动条像别的插件那样贴**界面边缘**」，而这条**只有让外框来滚**才能做到：
+/* 全宽度**只有这一个形态**：没有「宽屏左栏 / 窄屏手风琴」的切换
+   （窄屏由 Tab 栏自己横向滚动承接），所以这里不留任何「布局切换」的余地。
+
+   **「外框滚 + 栏 sticky」是唯一能满足「滚动条贴界面边缘」的形态**：
       外框的横向内距是 `max(var(--size-4-8), var(--setting-group-center-offset))`，
       其中 `--setting-group-center-offset: calc((100% - var(--setting-group-max-width)) / 2)`
       所以**面板越宽、内容越往里缩**（动态值，纯 CSS 拿不到），所以任何「自己滚的内容区」
         滚动条都会被画在**内容盒右缘**（离面板边缘 32px 起步、面板越宽越靠里）。
-      这是两条**互斥**的要求：「内容区独立滚动」与「滚动条贴界面边缘」只能选一个 ——
-        以本轮口径为准（后者），栏的固定改由 `position: sticky` 承担，观感不变。
-   #358：**外框那 48px 上内距的补偿方式改了**（实机截图：Tab 上方多出一大块空白）——
-      #357 把补偿写成栏的 `padding-top`，可外框**自己也有** `padding-top: var(--size-4-12)`，
-      两段是**叠加**的，所以静止时 Tab 被顶到 96px 处（截图里那块空白）。
-      改成：**用 shell 的负 `margin-top` 把外框那段抵消掉**，再由栏自己的 `padding-top` 补回来
-      所以静止时只有一段 48px（与原生一致）、滚动时栏的 padding box 正好盖住 [面板顶, Tab 顶] 这一段。
-      两处必须**成对**出现（负 margin 少一处，所以顶部多一条正文；padding 少一处，所以 Tab 顶到面板边）。 */
+      这是两条**互斥**的要求：「内容区独立滚动」与「滚动条贴界面边缘」只能选一个。
+
+   **外框那 48px 上内距必须用负 `margin-top` 抵消**：
+      外框**自己也有** `padding-top: var(--size-4-12)`，若只把补偿写成栏的 `padding-top`，
+      两段是**叠加**的，静止时 Tab 会被顶到 96px 处（实机截图里那块空白）。
+      改成用 shell 的负 `margin-top` 把外框那段抵消掉，再由栏自己的 `padding-top` 补回来
+      —— 静止时只有一段 48px（与原生一致）、滚动时栏的 padding box 正好盖住 [面板顶, Tab 顶] 这一段。
+      负 margin 与 `padding-top` 必须**成对**出现（少负 margin ⇒ 顶部多一条正文；少 padding ⇒ Tab 顶到面板边）。 */
 .rl-set-shell {
     display: block;
     /* 抵消外框的 `padding-top: var(--size-4-12)`：让 shell 从**面板顶**开始算，
@@ -1094,28 +1070,28 @@
 /* 顶栏 = Tab 栏（4 项，可横向滚动）。#354 起「关于」已回归为平级 Tab
    所以栏里只有这一个滚动容器，不再有「右上角常驻按钮」那套例外。 */
 .rl-set-bar {
-    /* 栏由 `sticky` 固定（外框在滚）。**这里是本轮最反直觉的一处，实测数据在下面**：
-       sticky 的吸附参照边**不是**滚动口的 border box，而是**内容盒边 + `top` 偏移**
-       —— 外框自带 `padding-top: 48`，所以 `top: 0` 会把栏**按回内容盒顶端（= 面板顶下 48px）**，
-       再叠加栏自己的 `padding-top: 48`，所以 Tab 被顶到 **96px**（截图里那块空白就是这么来的）。
-       所以必须写 **`top: -48`**（吸附边抬到面板顶）**并且**让 shell 用负 `margin-top` 把自然位置也抬到面板顶；
-         两者缺一：只给负 top，所以静止时 Tab 跑到面板最上沿（没留 48px）；只给负 margin，所以 sticky 把栏按回去（本次踩的坑）。 */
+    /* 栏由 `sticky` 固定（外框在滚）。**这是本节最反直觉的一处**：
+      sticky 的吸附参照边**不是**滚动口的 border box，而是**内容盒边 + `top` 偏移**
+      —— 外框自带 `padding-top: 48`，所以 `top: 0` 会把栏**按回内容盒顶端（= 面板顶下 48px）**，
+      再叠加栏自己的 `padding-top: 48`，于是 Tab 被顶到 **96px**（截图里那块空白就是这么来的）。
+      所以必须写 **`top: -48`**（吸附边抬到面板顶）**并且**让 shell 用负 `margin-top` 把自然位置也抬到面板顶；
+        两者缺一：只给负 top ⇒ 静止时 Tab 跑到面板最上沿（没留 48px）；只给负 margin ⇒ sticky 把栏按回去。 */
     position: sticky;
     top: calc(-1 * var(--size-4-12));
-    /* #654 滚动时属性顺序对比表格的表头会盖住 Tab 栏。
-       根因不在栏（栏本来就是 sticky + 不透明底），而在**表格自己**：
-          `.rl-fo-cmp-scroll` 写的是 `overflow-x:auto; overflow-y:visible`，所以它**不是 y 向滚动口**，
-          于是表头 `th{position:sticky; top:0}` 的吸附参照一路跳到了外层真正的滚动口
-          （`.rl-set-content` / 外框），表头就这样"逃"出了表格区，凭空贴到滚动口顶端 = Tab 栏上面。
-       所以双保险，缺一不可：
-          ⑴ **本处把栏从 1 提到 40** —— 层级上压过逃逸出来的表头（表头是 2、首位次列是 3）；
-          ⑵ `.rl-fo-cmp-scroll` 上加 `isolation: isolate`（见下方该段）—— 让它自建层叠上下文，
-             把内部 z-index 全部圈进这一层，从根上不再向外冲。
-       为什么恰好是 40：它要**高于**内容区一切自增层级（本文件内容区最大到 3，另有 20/30 的浮层族），
-       又要**低于** Obsidian 自己的 `--layer-modal: 50` / `--layer-menu: 65` ——
-       否则设置页的栏会盖到弹窗与菜单上（在遮罩之上画一条 Tab 栏，比原来的问题更糟）。
-       不要改成 `overflow-y:auto` 消根因：那会把整张对比表关进一个矮滚动框里，
-          破坏这一屏「一整个表格滑动并览」的体验；也不要降 `th` 的 z-index：横向滚动时表头必须盖住数据行。 */
+    /* 滚动时字段映射对比表的表头会盖住 Tab 栏。
+      根因不在栏（栏本来就是 sticky + 不透明底），而在**表格自己**：
+         `.rl-fo-cmp-scroll` 写的是 `overflow-x:auto; overflow-y:visible`，所以它**不是 y 向滚动口**，
+         于是表头 `th{position:sticky; top:0}` 的吸附参照一路跳到了外层真正的滚动口
+         （`.rl-set-content` / 外框），表头就这样「逃」出了表格区，凭空贴到滚动口顶端 = Tab 栏上面。
+      所以双保险，缺一不可：
+         ⑴ **本处把栏从 1 提到 40** —— 层级上压过逃逸出来的表头（表头是 2、首位次列是 3）；
+         ⑵ `.rl-fo-cmp-scroll` 上加 `isolation: isolate`（见下方该段）—— 让它自建层叠上下文，
+            把内部 z-index 全部圈进这一层，从根上不再向外冲。
+      为什么恰好是 40：它要**高于**内容区一切自增层级（本文件内容区最大到 3，另有 20/30 的浮层族），
+      又要**低于** Obsidian 自己的 `--layer-modal: 50` / `--layer-menu: 65` ——
+      否则设置页的栏会盖到弹窗与菜单上（在遮罩之上画一条 Tab 栏，比原来的问题更糟）。
+      不要改成 `overflow-y:auto` 消根因：那会把整张对比表关进一个矮滚动框里，
+         破坏「一整个表格滑动并览」的体验；也不要降 `th` 的 z-index：横向滚动时表头必须盖住数据行。 */
     z-index: 40;
     /* 栏是固定的，正文会从栏下穿过，所以必须给不透明底（外框底色同为一处，观感无缝） */
     background: var(--background-primary);
@@ -1237,10 +1213,10 @@
    所以不收掉它，页顶会平白空出一段（看起来像"内容没对齐"）。 */
 .rl-set-page-body > .rl-svc-group:first-child { margin-top: 0; }
 
-/* ── 单页渲染失败时的兜底（2026-11-14，用户 m05673 手机实测报「点页签后内容一片空白」）
+/* ── 单页渲染失败时的兜底 ──
    真因是 `Settings.display()` 的建页循环没有围栏：一页抛异常就中断，后面的页全没建，
-   连 `setActivePage()` 都没执行到 ⇒ 页签在、内容区是空的。已在 `display()` 里逐页 try/catch，
-   这里负责把失败那一页**写清楚**，⛔ 别再退回「什么都不显示」。 */
+   连 `setActivePage()` 都没执行到 ⇒ 页签在、内容区是空的。
+   所以 `display()` 里逐页 try/catch，这里负责把失败那一页**写清楚**，⛔ 别再退回「什么都不显示」。 */
 .rl-set-pagefail {
     padding: var(--size-4-4);
     border: 1px solid var(--background-modifier-border);
@@ -1267,13 +1243,12 @@
     -webkit-user-select: text;
 }
 
-/* ── 1.3.1 ①「高级设置」页：字段映射（rl-fieldmap-* / rl-fm-*）
-   #613 翻面：输入方式由 textarea 改为「逐字段一行」的表格，原来的只读清单表已合并进本表。
+/* ── 「高级设置」页：字段映射（rl-fieldmap-* / rl-fm-*）
+   输入方式是**逐字段一行**的表格，不是 textarea；原来的只读清单表已合并进本表。
    全部走主题变量（不写死 hex），圆角与间距对齐本仓设置页既有口径。
 
-   #644 —— **先量再改**（`_shot/fm644.html` + `_probe_fm644.cjs`：
-   真核心 `input`/`button`/`table` 规则 + 本文件真规则 + `META_FIELDS` 真数据；改前快照 `_shot/rl-fm-644-old.css`）。
-   **列对齐本来就没问题**：表头「新属性名」与表体第三格左缘只差 **1.4px**（#640 的拆两表 + 同 colgroup 是有效的）
+   **先量再改**（仿真页：真核心 `input`/`button`/`table` 规则 + 本文件真规则 + `META_FIELDS` 真数据）。
+   **列对齐本来就没问题**：表头「新属性名」与表体第三格左缘只差 **1.4px**
    —— 别把「丑」错记成「错位」再去拆一遍结构。量出来的三处「土」：
      ⑴ **同一格画两层框**：格 296.9 / 输入框 280.9（左右各被吃掉 8px），而框自己还有 1px 描边 + 8px 内距；
         「原属性名」也裹着一层 `<code>` 药丸 —— 全表 84 个框，是最花的一处；
@@ -1314,9 +1289,10 @@
     border: 1px solid var(--background-modifier-border);
     border-bottom: none;
     border-radius: var(--radius-m) var(--radius-m) 0 0;
-    /* #647：这里原来有 `padding-right: 12px`（补上表体滚动条的占宽，好让两张表列宽一致）。
-       现在滚动条已隐藏、槽位也撤了，所以再补 12px 反而让表头比表体窄、右列错位 12px，所以删掉。
-       若将来恢复显示滚动条，这里必须把 12px 补回来（与 `scrollbar-gutter: stable` 成对出现）。 */
+    /* 这里**不许**加 `padding-right: 12px`。
+   它原本是补表体滚动条的占宽、好让两张表列宽一致；现在滚动条已隐藏、槽位也撤了，
+   再补 12px 反而让表头比表体窄、右列错位 12px。
+   若将来恢复显示滚动条，这里必须把 12px 补回来（与 `scrollbar-gutter: stable` 成对出现）。 */
 }
 .rl-fieldmap-wrap {
     /* #644⑶：视野 380 改为 **440px**（42 行共 1469px）。不无条件拉更高 —— 小屏上它仍受
@@ -1343,7 +1319,7 @@
 /* 两张表共用几何：`table-layout: fixed`，所以列宽只认 `<colgroup>`，两张表算出来的列宽逐像素相同 */
 .rl-fieldmap-table { width: 100%; margin: 0; border-collapse: collapse; table-layout: fixed; font-size: var(--font-ui-smaller); }
 /* 表头（在滚动容器**外**，不再需要 sticky —— 它根本不滚）。
-   #644⑶：内距 4 改为 8px、字号与表体同档（原来表头比输入框里的字还小半档，读着像「附注」而不是列名）。 */
+   内距 8px、字号与表体同档（表头若比输入框里的字还小半档，读着像「附注」而不是列名）。 */
 .rl-fieldmap-head th {
     /* #649：居中会让边缘参差不齐、缺乏扫读基准线，所以表头与所有列**统一左对齐**，
        左内距 **12px** 与下方各列的格内距同值，所以表头文字、字段名、原属性名、输入框文字落在同一条竖线上。
@@ -1414,7 +1390,7 @@
 /* #645：格内距 8 + 这里 8 = **16px**，与表头 `padding-left: 16px` 是同一个数（断言钉等式）。
    加的是 `padding-inline-start` 而不是 `margin-inline-start`：后者会让 `<code>` 的背景/下划线跟着走，
       而这里要的是「文字起点」，且值格子里的输入框也用内距 —— 两列必须同一种手段才对得齐。 */
-/* #649 ①：与表头同一条 12px 左缘（原来那 8px 内缩是给「左缘对齐」补的，现在格内距已统一） */
+/* 与表头同一条 12px 文字左缘（格内距已统一，这里不再需要额外内缩） */
 .rl-fm-key code { background: none; padding: 0; color: var(--text-faint); font-size: 11px; }
 /* 列宽改由 colgroup 独占（`table-layout: fixed`），所以这里 不再写 `width: 42%`，
    否则会与 col 宽度打架（fixed 布局下 td 的 width 只在 col 缺失时才生效）。 */
@@ -1474,17 +1450,15 @@
    `pure/metaFields.dataviewAligned` 字段**保留**（语义仍在、只是不再渲染），将来要提示还能用；
    别把这条规则加回样式表 —— 没有 DOM 再用那个类名了，留着就是死样式。 */
 
-/* ══ #651「字段映射」**第二次改观**：表格语汇换成 Obsidian **属性面板（Bases）**那一套 ══
-   这UI太丑了，改改。前五轮（#644~#650）都在**同一个框里挪像素**（改对齐 / 改内距 / 改描边），
-   所以越改越挤。这一轮改的是**语汇**，量测见 `_shot/fm651-*.png`（#651 仿真页：真核心 app.css 变量 +
-   真规则 + `META_FIELDS` 真数据）：
+/* ══ 「字段映射」表格语汇对齐 Obsidian **属性面板（Bases）**那一套 ══
+   反复在**同一个框里挪像素**（改对齐 / 改内距 / 改描边）只会越改越挤；改的是**语汇**。
 
-   | | #650 现状（实测） | #651 目标（实测） |
+   | | 改前（实测） | 改后（实测） |
    |---|---|---|
    | 行高 | **42.5px**（30px 输入框把行撑满） | **29.5px** |
    | 42 行总高 | 1805px（滚 4 屏） | **1267px**（滚 2.8 屏） |
    | 输入框 | 每个格子都画一个白框（42 个框） | **没值就没有框**（占位即灰字） |
-   | 表头 | 700 字重、`--text-normal`（比表体抢眼） | 600 / `--text-muted` / 11 改为 12px |
+   | 表头 | 700 字重、`--text-normal`（比表体抢眼） | 600 / `--text-muted` / 12px |
    | 已映射的行 | 与未映射**长得一样** | 名字前一枚主题色小点 + 600 字重 |
 
    **三处语义翻面**（都有 `renderFieldMapRows` 的接线配套）：
@@ -1531,11 +1505,11 @@
    别把这条规则加回来：没有 DOM 再用那个类名了（留着就是死样式）。 */
 
 /* ── #652 三组的「恢复默认」（挂在组标题行右侧，只有**有配置时**才渲染）────────────── */
-/* #722：外观规则必须**同时**覆盖「高级设置的组标题」与「AI集成右栏的详情标题」两处 ——
+/* 外观规则必须**同时**覆盖「高级设置的组标题」与「AI集成右栏的详情标题」两处 ——
    要把 AI 页那枚的样式统一到高级设置这套。只写 `.rl-group-reset`（0,1,0）不够：
    Obsidian 核心那条 `button:not(.clickable-icon) { background-color: var(--interactive-normal) }`
    是 (0,1,1)，会把它压掉（真机实测底色 rgb(230,230,230)），所以这里必须是**两条类**前缀。
-   别再给 AI 页另写一份按钮样式，那正是本轮要消掉的不一致。 */
+   别再给 AI 页另写一份按钮样式，那正是要消掉的不一致。 */
 .rl-svc-group-title .rl-group-reset,
 .rl-ai-dtitlerow .rl-group-reset {
     display: inline-flex; align-items: center; gap: 4px;
@@ -1571,8 +1545,7 @@
 }
 .rl-group-hint.is-on { opacity: 1; }
 
-/* ── 2026-11-14（用户 m05673 手机实测）「仅桌面端」组徽标 ────────────────────────────
-   用户原话：「……有的分两行有的一行显示空白一片**应该给个提示不支持**」。
+/* ── 「仅桌面端」组徽标 ────────────────────────────
    那些组在移动端整组控件根本没建（`main.ts` 里 `Platform.isDesktopApp` 的门面提前返回），
    只留一片空白 ⇒ 用户分不清「不支持」和「插件坏了」。这枚徽标就挂在组标题行右侧说清楚。
    ⚠️ 只由 `pure/platformGates.shouldMarkDesktopOnly` 决定挂不挂，那个名单必须与
@@ -1594,13 +1567,12 @@
     user-select: none;
 }
 
-/* ── #652「卡片信息栏」条目类型：下拉 改为 分段 chips
-   🔴 ③-5（2026-11-12）：这四条规则**已迁走** ——
-     `.rl-cf-typerow` / `.rl-cf-typerow-cap` / `.rl-cf-typebar` / `.rl-cf-type`（含 `:hover` / `.is-on`
-     / `:focus-visible`）全部由 `src/ui/components.ts` 的 `chipBar()` 接管，样式在 `.rl-ui-chiprow`
-     / `.rl-ui-chipcap` / `.rl-ui-chipbar` / `.rl-ui-chip` 那一段（见文件末尾「全局 UI 组件基座」）。
-   为什么迁：这两组（卡片信息栏 / 条目属性）原先是**逐字复制的两份** DOM 构造 + 两套类名，
-   改一处尺寸要改两遍、忘一遍就长出两种长相 —— 用户 ③-5 说的「视觉上的东拼西凑」正指此处。
+/* ── 「卡片信息栏」条目类型：下拉 改为 分段 chips
+   这四条规则**已迁走** —— `.rl-cf-typerow` / `.rl-cf-typerow-cap` / `.rl-cf-typebar` / `.rl-cf-type`
+   （含 `:hover` / `.is-on` / `:focus-visible`）全部由 `src/ui/components.ts` 的 `chipBar()` 接管，
+   样式在 `.rl-ui-chiprow` / `.rl-ui-chipcap` / `.rl-ui-chipbar` / `.rl-ui-chip` 那一段（见文件末尾「全局 UI 组件基座」）。
+   为什么迁：卡片信息栏 / 条目属性两组原先是**逐字复制的两份** DOM 构造 + 两套类名，
+   改一处尺寸要改两遍、忘一遍就长出两种长相。
    ⛔ 别再按 `.rl-cf-type*` 这几个类名建控件：它们现在没有任何 DOM 会产生，写了就是死样式。 */
 
 /* ── 1.3.1 ①「海报墙卡片」组（#616 改版）：卡片预览 + 信息栏字段选择 ─────────────────
@@ -1635,7 +1607,7 @@
 .rl-cf-toast svg { width: 12px; height: 12px; }
 .rl-cf-toast.is-on { opacity: 1; }
 
-/* #640 ⑴：**已选**独立成区（可拖拽排序）。原来选中/未选混在一堆 chip 里 ——
+/* **已选**独立成区（可拖拽排序）。原来选中/未选混在一堆 chip 里 ——
    分不清「哪几行已经在卡上」，更没法说清「拖谁、往哪儿拖」。 */
 .rl-cf-subcap { color: var(--text-faint); font-size: var(--font-ui-smaller); margin: var(--size-4-1) 0 var(--size-4-1); }
 .rl-cf-subcap.is-hidden { display: none; }
@@ -1758,16 +1730,15 @@
     align-items: stretch;
     padding: var(--size-4-2);
     background: var(--background-primary);
-    /* 🔴 2026-11-14 用户指令「让它们看起来像一整个无缝的网格」：
-       虚线是「占位示意」的语义，这里已经是成品排版 ⇒ 改成实线；块本身不带边框（见 `.rl-ef-blk`），
-       于是整个网格只有**一层**外框，内部靠 gap 分隔，视觉上才是一整块。 */
+    /* 虚线是「占位示意」的语义，这里已经是成品排版 ⇒ 用实线；块本身不带边框（见 `.rl-ef-blk`），
+   于是整个网格只有**一层**外框，内部靠 gap 分隔，视觉上才是一整块。 */
     border: 1px solid var(--background-modifier-border);
     border-radius: var(--rl-t-radius-md, 6px);
 }
 /* 块占几列：`span` 由 TS 写在 `data-span` 上（6/3/2/1），**逐档写显式规则**。
    不用 `grid-column: span attr(data-span)` —— `attr` 取值在 Electron 里不可靠。
    默认（`--rl-ef-cols` 缺省 6，或 `data-cols="6"`）= 6 列：6 改为 6、3 改为 3、2 改为 2。
-   🔴 m06404 补 `1`：年份块在真表单里已压成 1 栅格（给右侧绝对定位的只读评分簇腾位置），
+   `1` 必须有：年份块在真表单里已压成 1 栅格（给右侧绝对定位的只读评分簇腾位置），
    面板预览必须同口径，否则用户看到的占位与真表单不一致。 */
 .rl-ef-canvas > [data-span="6"] { grid-column: 1 / -1; }
 .rl-ef-canvas > [data-span="3"] { grid-column: span 3; }
@@ -1800,11 +1771,10 @@
 .rl-ef-canvas:empty { display: none; }
 
 /* 一个属性块。
-   🔴🔴 2026-11-14 用户指令（布局编辑区观感）：原话「去掉所有多余的边框，让它们看起来像一整个无缝的网格」。
-   上一版每块都是一张独立小卡（自带 `1px solid` 边框 + 4px 圆角 + 自身底色），11 张卡在网格里各描一圈，
-   看上去是「一堆小方块」而不是「一个网格」。现在改成：
+   每块若都自带 `1px solid` 边框 + 4px 圆角 + 自身底色，11 张卡在网格里各描一圈，
+   看上去是「一堆小方块」而不是「一个网格」。所以：
      · **块本身不带边框、不带圆角、不带底色** —— 边界只由网格的 `gap` 与画布外框提供；
-     · 画布外框由虚线改成实线（虚线是「占位示意」的语义，这里已经是成品排版，不该再虚）；
+     · 画布外框用实线（虚线是「占位示意」的语义，这里已经是成品排版，不该再虚）；
      · 交互态仍要有反馈，但只改**底色**（hover）或加一圈 inset 高亮（拖到此处），⛔ 不再改变布局尺寸
        （加 border 会让块变宽 1px、整行错位，这是这类「无缝网格」最容易踩的坑）。
    ⚠️ 三种底色全部走官方变量，没有任何 hex/rgb/px 字面量。 */
@@ -1841,12 +1811,9 @@
 .rl-ef-blk:hover .rl-cf-grip,
 .rl-ef-blk.is-dragging .rl-cf-grip,
 .rl-ef-blk:focus-visible .rl-cf-grip { opacity: 1; }
-/* 🔴 2026-11-15 用户 m07047（逐字）：「高级设置-条目属性排序**不要显示第一行了**，
-   如标题、年份、评分来源都不要显示，都是固定的不能改换顺序」
-   ⇒ 固定项（`ENTRY_FORM_FIXED_KEYS` = 五个年份键 + `meta`）**一个都不画**，
-     `Settings.ts` 那边直接把它们从 `allDefs` 里滤掉。
-   ⚠️ 本节**推翻**上一轮 m06462 的「灰块占位」（`.rl-ef-blk.is-fixed`，已删除）——
-     用户现在认为「既然改不了顺序，画出来只会让人以为能拖」。⛔ 别把 `.is-fixed` 加回来。 */
+/* 固定项（`ENTRY_FORM_FIXED_KEYS` = 五个年份键 + `meta`）**一个都不画**，
+   `Settings.ts` 那边直接把它们从 `allDefs` 里滤掉。
+   ⚠️ 也**不许**改成「灰块占位」：既然改不了顺序，画出来只会让人以为能拖。⛔ 别把 `.is-fixed` 加回来。 */
 
 /* 块内字段：**标签在上、控件在下**（= 真弹窗 `EntryForm.svelte` 的形态，D 方案的核心） */
 .rl-ef-fld {
@@ -1935,9 +1902,7 @@
 /* 块底工具行：跨度分段器 + 隐藏。
    #720：从「行右侧」挪到「块底」—— 块宽随 span 变化，1⁄3 宽的块只剩约 120px，
    右栏塞不下三枚按钮 + ×；独立一行后窄块里也能放下（必要时自己换行）。 */
-/* 🔴 ③-5（用户 m00353）：「去掉每个输入框下面那排紫色胶囊按钮，改为输入框右上角
-   一个极小图标，点击才弹出下拉选 1/1、1/2、1/3」。
-   ⇒ 工具行不再占块内一整行：改成**绝对定位到块右上角**，两块图标（宽度 + 隐藏）
+/* 工具行不再占块内一整行：**绝对定位到块右上角**，两块图标（宽度 + 隐藏）
    在 hover / focus-within 时才浮出（默认 `opacity: 0`，但仍可 Tab 到 —— 用 opacity 不用 display）。
    块内因此多出一整行的高度，这正是「视觉降噪」要的效果。 */
 .rl-ef-tools {
@@ -1983,27 +1948,26 @@
 .rl-ef-toast svg { width: 12px; height: 12px; }
 .rl-ef-toast.is-on { opacity: 1; }
 
-/* ── 1.3.1 ① 第 3 件「笔记属性顺序」（rl-fo-*）：按类型配置属性的写出顺序 ───────────────
-   #640（1.4.0）形态翻面：六列并排 改为 **左主右从**。目前展示为 6 列并排导致横向空间严重不足，改成主从视图……还有当前列列都显示了几个
-       完全相同的属性（条目ID、类型、标题、状态...），这是一种视觉浪费。
-   旧形态（#619）是 `grid-template-columns: repeat(6, …)` —— 每列只有约 1/6 宽度，
+/* ── 「笔记属性顺序」（rl-fo-*）：按类型配置属性的写出顺序 ───────────────
+   形态是 **左主右从**，不是六列并排：六列并排时横向空间严重不足，
+   且每列都重复显示几个完全相同的属性（条目ID、类型、标题、状态…），那是视觉浪费。
+   旧形态 `grid-template-columns: repeat(6, …)` —— 每列只有约 1/6 宽度，
    中文标签 + 键名挤成两行仍然放不下；而六个类型里**前 8 个字段逐字相同**，六列重复显示同一份。
    所以左 = 属性分组导航（全局 + 六类型），右 = 当前组的有序列表。
 
-   #643（高级设置-笔记属性顺序 UI 观感差，需重做）—— **两块各滚各的 改为 一块封顶**。
-      #640 留下四件丑：
-      ⑴ **左栏高、右栏矮**：左 = 10 枚按钮**无上限**（≈308px），右 = 表头 + **340px 的框** + 脚注（≈400px），
-         两者又都是 `align-items: flex-start`，所以左边拖到底、右边框外留一截，两块看着像没对齐的拼贴；
-      ⑵ 每行自带 `border-bottom`，所以框里是**一排排横杠**（列表被切成条纹）；
-      ⑶ 当前分组是**实心主题色块** —— 设置页里最抢眼的元素成了导航；
-      ⑷ 键名带 `<code>` 底片，每行一个灰药丸。
-      所以改成**一个 400px 封顶的整块**：左栏 `background-secondary`、右栏 `background-primary`，
-        中间 1px 分隔线；右栏三段（表头 / 列表 / 脚注）用 flex 撑满同一高度；
-        当前分组 = **凸起的白底 + 细描边**（不是色块）；行内发丝线全撤，键名去掉底片。
-      观感与本页下方「卡片信息栏」那组对齐（`background-primary` + 1px `background-modifier-border` + `radius-m`）
-        —— 同一页两块控件不该长着两套脸。
-      色值只用变量 / `color-mix` 回调，不写死任何主题色（深色主题下由 `--background-primary` / `--background-secondary`
-        自然翻转，实测见 `_shot/fo643.html` 的 C 帧）。 */
+   **两块各滚各的 改为 一块封顶**。各滚各时留下四件丑：
+     ⑴ **左栏高、右栏矮**：左 = 10 枚按钮**无上限**（≈308px），右 = 表头 + **340px 的框** + 脚注（≈400px），
+        两者又都是 `align-items: flex-start`，所以左边拖到底、右边框外留一截，两块看着像没对齐的拼贴；
+     ⑵ 每行自带 `border-bottom`，所以框里是**一排排横杠**（列表被切成条纹）；
+     ⑶ 当前分组是**实心主题色块** —— 设置页里最抢眼的元素成了导航；
+     ⑷ 键名带 `<code>` 底片，每行一个灰药丸。
+     所以改成**一个 400px 封顶的整块**：左栏 `background-secondary`、右栏 `background-primary`，
+       中间 1px 分隔线；右栏三段（表头 / 列表 / 脚注）用 flex 撑满同一高度；
+       当前分组 = **凸起的白底 + 细描边**（不是色块）；行内发丝线全撤，键名去掉底片。
+     观感与本页下方「卡片信息栏」那组对齐（`background-primary` + 1px `background-modifier-border` + `radius-m`）
+       —— 同一页两块控件不该长着两套脸。
+     色值只用变量 / `color-mix` 回调，不写死任何主题色（深色主题下由 `--background-primary` / `--background-secondary`
+       自然翻转）。 */
 /* 🔴 ③-5：本选择器的基础声明（margin / color / font-size / line-height）已并入文件末尾
    「全局 UI 组件基座」那条 `.rl-ui-help, .rl-fieldmap-help, .rl-fo-help`。⛔ 别再在这里重写一遍。 */
 
@@ -2013,10 +1977,10 @@
       Obsidian 核心有 `.is-hidden { display: none }`，但本仓 `.rl-fo-view` 没写 display，默认即可；
       这里显式写一遍是为了让「哪档可见」只有一处真源（别在 JS 里手改 style.display）。 */
 .rl-fo-view.is-hidden { display: none; }
-/* 🔴 ③-5：「编辑 / 对比预览」分段条已迁走，由全局组件 `chipBar()` 接管（类名 `.rl-ui-chip*`，
+/* 「编辑 / 对比预览」分段条由全局组件 `chipBar()` 接管（类名 `.rl-ui-chip*`，
    见文件末尾「全局 UI 组件基座」）。原先这里还有 `.rl-fo-modebar` / `.rl-fo-mode` /
    `:hover` / `.is-on` / `:focus-visible` 五条 —— 那是**第三份**手写分段条实现
-   （另两份在「卡片信息栏」「条目属性」两组），三份逐字重复正是用户说的「东拼西凑」。
+   （另两份在「卡片信息栏」「条目属性」两组），三份逐字重复就是「东拼西凑」。
    ⛔ 别再按 `.rl-fo-mode*` 建控件：现在没有任何 DOM 会产生它们，写了也不会生效。 */
 
 .rl-fo-cmp-cap { margin: 0 0 var(--size-4-2); color: var(--text-faint); font-size: var(--font-ui-smaller); }
@@ -2203,17 +2167,16 @@
 /* 组内容器贴到卡片内缘：那 32px（`--size-4-4 * 2`）缩进是给「无边框长列表 + 子分组」那套层级用的，
    原生卡里只会显得右倾；而核心 `.setting-items` 自带 `--setting-items-padding-*`，所以我们清零，别叠加。 */
 .rl-set-page[data-page="basic"] .rl-svc-group-body { padding: 0; }
-/* 本轮问题：前面空了一块——
+/* 这里必须把左内距归零，否则「前面空了一大块」：
    播放阅读页的「媒体载体」也传了 `nativeGroup=true`（与基本设置页同款原生卡），
-   但这里**漏了上面那条归零**，所以组的 `.rl-svc-group-body` 仍带基础规则的 32px 左内距
-   （`calc(--size-4-4 * 2)`），再叠核心 `.setting-item` 自带的 20px，行左缘共缩进 52px，
-   看起来就是「前面空了一大块」。真机量测：basic body `pl=0` / immersive body `pl=32px`。
+   但若漏了上面那条归零，组的 `.rl-svc-group-body` 仍带基础规则的 32px 左内距
+   （`calc(--size-4-4 * 2)`），再叠核心 `.setting-item` 自带的 20px，行左缘共缩进 52px。
+   真机量测：basic body `pl=0` / immersive body `pl=32px`。
    只收 `nativeGroup` 那一支（`.setting-items`）：语音服务组**不是**原生组，
-      里面是 `.rl-voice-card`，它需要右侧那条缩进维持层级 —— 一起归零会让语音卡贴到页边。
+     里面是 `.rl-voice-card`，它需要右侧那条缩进维持层级 —— 一起归零会让语音卡贴到页边。
    别改 `.rl-svc-group-body` 的基础规则（数据源页 / AI 集成页仍靠那 32px 做层级）。 */
 .rl-set-page[data-page="immersive"] .rl-svc-group-body.setting-items { padding: 0; }
-/* 🔴 2026-11-11 用户报「统一一下宽度，对齐上面的媒体载体」：
-   播放阅读页现在有三种组，body 的左内距必须一致，否则卡片与上面的原生组错位：
+/* 播放阅读页现在有三种组，body 的左内距必须一致，否则卡片与上面的原生组错位：
      · 「媒体载体」= 原生组（nativeGroup=true）⇒ body 是 `.setting-items`，已由上面那条清零；
      · 「语音转文字 / 文字转语音 / 字幕面板学习模式」= 非原生组（nativeGroup=false）
        ⇒ body 是普通 div、**不是** `.setting-items`，那条选择器管不到，
@@ -2241,15 +2204,11 @@
    现在统一成：同一边框色、同一圆角 6px、同一左右内距 8px、同一行间距 6px。
    **行高刻意不统一**：`.rl-view-row` 是多行信息卡（8px 纵向内距），
       另外三张是单行条目（26px / 30px 纵向居中），语义不同不该硬凑 —— 要的是「圆角与内距」一致，不是把内容压成同高。 */
-/* #719 / #720（改为）——「条目属性」这一组**不在**这条统一规则里，
-   理由不是「忘了同步」，是它跟本页另外三组语义不同：另外三组是「一行 = 一个对象」
-   （一个视图 / 一个字段 / 一个属性），所以一行一张卡是对的；而「条目属性」是**同一个对象的
-   11 个槽位**，一行一张卡会变成 11 个互不相干的框（太丑了）。
-   #719 先改成「整列一张卡 + 行间发丝线」，随后要求结构重构，所以 #720 进一步改成
-   **6 列栅格 + 每块按真实占位**（`.rl-ef-canvas` / `.rl-ef-blk`，见上方那一段）。
-   两者的共同点：本组的行**不套**这条「统一外壳」规则。
-   别为了「一致」把 `.rl-ef-blk` 加进下面的选择器 —— 它是栅格格子，不是列表行。
-   （本条覆盖更早的「高级设置五组外壳与行统一」口径；那条对其余四组仍有效。） */
+/* 「条目属性」这一组**不在**这条统一规则里，理由不是「忘了同步」，是语义不同：
+   另外三组是「一行 = 一个对象」（一个视图 / 一个字段 / 一个属性），所以一行一张卡是对的；
+   而「条目属性」是**同一个对象的 11 个槽位**，一行一张卡会变成 11 个互不相干的框。
+   所以它是 **6 列栅格 + 每块按真实占位**（`.rl-ef-canvas` / `.rl-ef-blk`，见上方那一段）。
+   别为了「一致」把 `.rl-ef-blk` 加进下面的选择器 —— 它是栅格格子，不是列表行。 */
 .rl-set-page[data-page="advanced"] .rl-view-row,
 .rl-set-page[data-page="advanced"] .rl-cf-sel,
 .rl-set-page[data-page="advanced"] .rl-fo-item {
@@ -2269,10 +2228,10 @@
 .rl-set-page[data-page="advanced"] .rl-view-row.is-default:hover { background: var(--background-modifier-hover); }
 
 /* 组外壳：五组一律「组标题 + 内容」，内容区不再额外缩进一档
-   （原来那 32px 缩进是给基本设置页「无边框长列表 + 子分组」的层级用的，
-     放进高级设置这五组卡片里只会让右侧留一条空带）。 */
+   （那 32px 缩进是给基本设置页「无边框长列表 + 子分组」的层级用的，
+    放进高级设置这五组卡片里只会让右侧留一条空带）。 */
 .rl-set-page[data-page="advanced"] .rl-svc-group-body { padding: 2px 0 6px; gap: 8px; }
-/* 卡片面板原来自带 `margin-top: var(--size-4-2)`，与上面 body 的 gap 叠成两段空白，所以归零。 */
+/* 卡片面板自带的 `margin-top: var(--size-4-2)` 与上面 body 的 gap 会叠成两段空白，所以归零。 */
 .rl-set-page[data-page="advanced"] .rl-cf-panel,
 .rl-set-page[data-page="advanced"] .rl-ef-panel { margin-top: 0; }
 /* 四张卡片列表的行间距统一 6px。
@@ -2293,16 +2252,16 @@
     padding: 0;
 }
 
-/* ── #561 外观与体验：**原生「左文右控」标准布局**（撤销 #546 的卡片式勾选）─────────────────
-    要求把外观与体验重构返回为**原生的开关项式和下拉框式**、标准布局（左文右控），
-   如果副标题描述很长、文字换行时，**开关应该依然保持在行的最右侧**。
+/* ── 外观与体验：**原生「左文右控」标准布局**（不用卡片式勾选）─────────────────
+   要**原生的开关项式和下拉框式**标准布局（左文右控），
+   副标题描述很长、文字换行时，**开关应该依然保持在行的最右侧**。
    核心 `.setting-item` 本来就是 flex（info 左 / control 右），但只靠它**不够**：
-      ⑴ `setting-item-info` 缺 `min-width: 0` 时，一条长描述会把整行撑宽、把控件**顶出容器**；
-      ⑵ 描述换行后 info 变高，控件若没 `align-self` 会跟着被拉高或被压到底部 改为 看着像「跑了」。
+     ⑴ `setting-item-info` 缺 `min-width: 0` 时，一条长描述会把整行撑宽、把控件**顶出容器**；
+     ⑵ 描述换行后 info 变高，控件若没 `align-self` 会跟着被拉高或被压到底部，看着像「跑了」。
    所以三条一起写（info 允许收缩 / control 不收缩且贴右 / 控件在行内**垂直居中**），
-      不写死任何宽度（窄窗 / 宽窗都成立）。
+     不写死任何宽度（窄窗 / 宽窗都成立）。
    只作用于**本组**（`renderAppearanceRows` 给组体加的 `.rl-appearance-rows`）——
-      其它组的行有自己的排版（数据源 / AI 页组内是卡片），别全局改 `.setting-item`。 */
+     其它组的行有自己的排版（数据源 / AI 页组内是卡片），别全局改 `.setting-item`。 */
 .rl-appearance-rows .setting-item { align-items: center; }
 .rl-appearance-rows .setting-item-info { flex: 1 1 auto; min-width: 0; }
 .rl-appearance-rows .setting-item-control { flex: 0 0 auto; margin-left: auto; align-self: center; }
@@ -2314,42 +2273,37 @@
    （本仓「死码不留」）。别再把它们加回来。
    与**阅读器**那套分段控件无关（`.rl-seg` / `.rl-seg-item` 仍在，也不归本批管）。 */
 
-/* ── #562「实验性功能」可折叠分组行（参考 obsidian-agent-client）─────────────
-   #564 按参考实现重写内核（`obsidian-agent-client-master` 的 `renderCollapsibleAgentSection`）：
+/* ── 「实验性功能」可折叠分组行（参考 obsidian-agent-client）─────────────
    摘要行 = **一个真实 `<button>`**（名称 + 说明两个 span），**开关是它的兄弟节点**（在核心 `controlEl` 里）。
    所以键盘可用（Tab / Enter / Space）+ `aria-expanded`/`aria-controls` 语义正确；
-     **开关的点击到不了展开处理器**（不同子树），那条「排除开关」的守卫因此整条删掉。
-   #565（照上手截图 ③ 的效果做）：**这一行本身读作一个「框」** ——
-      边框 + 圆角 + 内距（像一枚输入框），框内左「名称 + 说明」、框内右「箭头」，**开关挂在框外**右侧。
-      所以三件事一起：⑴ `.rl-exp-head` 带边框与内距；⑵ 箭头进到按钮内部当尾随 `span`
-        （`justify-content: space-between` 把它顶到框的右缘内侧）；⑶ 摘要按钮 `justify-content: space-between`。
-      `.rl-exp-row`（核心 `.setting-item`）自身的框要**拍平**：否则主题给的框 + 我们画的框 = **卡中卡**
-        （#551/#553 那条老账）。这是**定点**拍平（只作用于这 3 行），不是全局改 `.setting-item`。
-      hover 走 `--interactive-accent`（参考实现的手感：整行文字与框线一起变强调色）——
-        别铺底色（本仓「切换类只变色」同口径）。
-   箭头**旋转**而不是换图标名：`chevron-right` 展开时转 90°，所以朝下（与参考实现同法）。
-      换图标名（`chevron-right` 对应 `chevron-down`）会让「旋转」这个连续动作变成**瞬间替换**，
-      的是闪一下 —— 而要求的观感正是「展开时箭头向下旋转」。
-   子面板**体现层级**：左侧一条竖线 + 缩进（要求「视觉上要体现层级关系」），
-      而不是换个背景色（组内本来就有核心给的卡片底色，再叠一层会糊成一团）。
+     **开关的点击到不了展开处理器**（不同子树），所以不需要「排除开关」的守卫。
 
-   #567 两条：
-   ⑴ **三项各自成卡**（原为一个卡片里，要求分开）——
-      做法是**不再给这一组套核心的 `.setting-group` 卡**（见 `Settings.ts 改为 renderBasicPage`）：
-      核心给**裸** `.setting-item` 的规则本身就是一张卡（bg + border + radius + padding + 8px 外边距）
-      所以不套 = 三项各自一张卡、项间自动留缝。**零手写卡片样式**（别第三次去手写卡片）。
-      于是 `.rl-exp-row` 那条「定点拍平」的语义变了：它当年拍的是**组卡里的行**，
-        现在拍的是**卡本身的边/底**（我们要的卡画在里面的摘要框上，别两层都画）。
-   ⑵ **说明（小标题）整体去掉**，所以框内只剩名称；`.rl-exp-desc` 那两条规则**一并退场**
-      （不再需要如『启用后播放本地视频文件』这类小标题）。
-   ⑶ 顺手修的真 bug：摘要按钮上同时挂着 `data-tip` 与 `aria-label`，所以 Obsidian 会为
-      `aria-label` **自绘官方气泡**，与插件自绘的 `data-tip` **叠成两层**（已在 `Settings.ts` 里撤掉
-      `aria-label`，本处只留痕 —— UI-GUIDE §3 v3 的既定禁令）。
-   #574 **翻面上面两条**（改为**无缝列表组**：去掉投影和较大圆角，
-      改为**底部分割线**（如 iOS 设置列表）」）：
-      ⑴ **#565 那个「像输入框」的框退场** —— `.rl-exp-head` 的 `border / border-radius / padding`
-         **一并归零**（整行读作一条列表项，容器才是那张卡）；
-      ⑵ **#567 的「三项各自成卡」退场** —— 改为**一个容器卡 + 行间 hairline 分割线**（见下一条注释）。 */
+   **这一行本身读作一个「框」** —— 边框 + 圆角 + 内距（像一枚输入框），
+   框内左「名称」、框内右「箭头」，**开关挂在框外**右侧。三件事一起：
+     ⑴ `.rl-exp-head` 带边框与内距；⑵ 箭头进到按钮内部当尾随 `span`
+       （`justify-content: space-between` 把它顶到框的右缘内侧）；⑶ 摘要按钮 `justify-content: space-between`。
+   `.rl-exp-row`（核心 `.setting-item`）自身的框要**拍平**：否则主题给的框 + 我们画的框 = **卡中卡**。
+     这是**定点**拍平（只作用于这几行），不是全局改 `.setting-item`。
+   hover 走 `--interactive-accent`（整行文字与框线一起变强调色）—— 别铺底色（本仓「切换类只变色」同口径）。
+
+   箭头**旋转**而不是换图标名：`chevron-right` 展开时转 90°，所以朝下。
+     换图标名（`chevron-right` 对应 `chevron-down`）会让「旋转」这个连续动作变成**瞬间替换**、闪一下。
+   子面板**体现层级**：左侧一条竖线 + 缩进，而不是换个背景色
+     （组内本来就有核心给的卡片底色，再叠一层会糊成一团）。
+
+   **三项各自成卡**：做法是**不再给这一组套核心的 `.setting-group` 卡**：
+     核心给**裸** `.setting-item` 的规则本身就是一张卡（bg + border + radius + padding + 8px 外边距）
+     所以不套 = 三项各自一张卡、项间自动留缝。**零手写卡片样式**。
+     于是 `.rl-exp-row` 那条「定点拍平」拍的是**卡本身的边/底**（我们要的卡画在里面的摘要框上，别两层都画）。
+   **说明（小标题）整体去掉**，所以框内只剩名称；`.rl-exp-desc` 那两条规则**一并退场**。
+
+   ⚠️ 真 bug：摘要按钮上**不许**同时挂 `data-tip` 与 `aria-label` —— Obsidian 会为
+     `aria-label` **自绘官方气泡**，与插件自绘的 `data-tip` **叠成两层**（UI-GUIDE §3 v3 的既定禁令）。
+
+   **最终形态是「无缝列表组」**：去掉投影和较大圆角，改为**底部分割线**（如 iOS 设置列表）：
+     ⑴ 上面那个「像输入框」的框退场 —— `.rl-exp-head` 的 `border / border-radius / padding`
+       **一并归零**（整行读作一条列表项，容器才是那张卡）；
+     ⑵ 「三项各自成卡」退场 —— 改为**一个容器卡 + 行间 hairline 分割线**（见下一条注释）。 */
 /* 编号备注（收口时补）：本批（设置页 UX 改版 + 关于页「未来规划」）在注释里沿用
    **`#655`** 这个号，但 `#655` 在 `Project-Rule/CHANGELOG.md:593` 已是 **的 Steam 单**
    （「steam 同步和测试按钮调换位置 / steamid 的显示按钮点击无反应」）。两处撞号：
@@ -2377,12 +2331,11 @@
    同一套 DOM 链吃同一套核心规则，天然相同。
    别再写回 `padding: 10px 0`：水平 0 的初衷是"卡没了就别留卡的内衬"，
       卡回来后它会让文字贴到卡片边缘（统一卡片底色与**边距**）。 */
-/* #588（ 实机截图：「现状」里**三行各自长出一圈细框**，「想实现」没有）
-   —— 行自身的「框三件」原来写在**单类** `.rl-exp-row`（0,1,0）上，与核心 `.setting-item`（0,1,0）
-   **同特异性**，所以全靠「插件样式表排在核心之后」赢，换个版本/主题就可能翻车。
-   所以一律改走两级 `.rl-exp-list > .rl-exp-row`（0,2,0），与书写顺序无关。
+/* 行自身的「框三件」**不许**写在**单类** `.rl-exp-row`（0,1,0）上：它与核心 `.setting-item`（0,1,0）
+   **同特异性**，那就全靠「插件样式表排在核心之后」赢，换个版本/主题就可能翻车（实机出现过三行各长一圈细框）。
+   所以一律走两级 `.rl-exp-list > .rl-exp-row`（0,2,0），与书写顺序无关。
    行间那条上分割线（`.rl-exp-list > .rl-exp-row:not(:first-child)`，0,3,0）比本条更高，所以不受影响。
-   起这三条同时是「核心已给的值」的兜底（核心 `.setting-group .setting-item:not(
+   这三条同时是「核心已给的值」的兜底（核心 `.setting-group .setting-item:not(
       .setting-item-heading)` 同样是无框/透明底），保留它们只为抗主题与版本 —— 别顺手删。 */
 .rl-exp-list > .rl-exp-row { border: none; background: transparent; box-shadow: none; border-radius: 0; }
 .rl-exp-row {
@@ -2391,10 +2344,9 @@
     /* #588：摘要框与开关之间恒定 12px（可折叠项开关组的对齐与间距） */
     gap: var(--size-4-3, 12px);
 }
-/* 二轮（要求：列表分隔线不要 100% 撑满容器、左右各留缩进，
-   （Inset），且与『外观与体验』『数据与备份』视觉统一）：
-   **那条自己画的行间分割线已整条删除** ——
-     ⑴ 它画在**行的 border box** 上（`border-top` 一格宽都缩不了），而卡片左右内距是核心的
+/* 列表分隔线不要 100% 撑满容器、左右各留缩进（Inset），且与「外观与体验」「数据与备份」视觉统一。
+   **所以本组不自己画行间分割线** ——
+     ⑴ 画在**行的 border box** 上（`border-top`）一格都缩不了，而卡片左右内距是核心的
         `--setting-items-padding-x`（20px），所以线两头必然顶到卡片边缘，正是撑满；
      ⑵ 核心**本来就有一条带了缩进的分割线**：`.setting-group .setting-item:not(.setting-item-heading)::before`
         的 `left/right` 都是 `var(--setting-items-padding-x)`（真实 `app.css:4986-4993`），
@@ -2428,18 +2380,17 @@
     color: var(--text-normal); cursor: pointer;
     transition: color var(--rl-t-dur, .18s) var(--rl-t-ease, ease);
 }
-/* #588 **摘要按钮的「框」的真根因**（ 实机截图「现状」里那一圈框）：
-   不是 border，是**核心给 `button` 的 `box-shadow`** ——
+/* 摘要按钮那圈「框」的真根因：不是 border，是**核心给 `button` 的 `box-shadow`** ——
      · 核心 `button:not(.clickable-icon) { box-shadow: var(--input-shadow) }` 是 **(0,1,1)**；
      · 亮色主题的 `--input-shadow` 第一段就是 `inset 0 0 0 1px rgba(0,0,0,.12)`
        —— 一条 **1px 内描边环**，画出来正是那个「框」（第二段那颗 0/1px 的淡影也在）；
-     · 我们原来把 `box-shadow: none` 写在**单类** `.rl-exp-head`（0,1,0）上，所以**压不过 (0,1,1)**，所以环一直在。
+     · 把 `box-shadow: none` 写在**单类** `.rl-exp-head`（0,1,0）上**压不过 (0,1,1)**，所以环一直都在。
    所以「框四件」（`border / border-radius / padding / box-shadow`）**一律两级**
      （`.rl-exp-row .rl-exp-head`，0,2,0）：既压核心的环，也压核心的灰底
      （`background-color: var(--interactive-normal)`，同为 (0,1,1)），与书写顺序、与主题都无关。
    同族老账：`MergedPageMenu` 那枚按钮也吃过核心这套灰底 + 内阴影（当时只解决了底色，没解决框）。
    仿真页口径：作用域前缀**必须 `:where(...)`**（零特异性），别写 `.fB .rl-exp-head`
-     —— 那会把它抬成 (0,2,0)，反过来压过核心 (0,1,1)，所以**「现状」那一帧的框复现不出来**（本批先栽了一次）。 */
+     —— 那会把它抬成 (0,2,0)，反过来压过核心 (0,1,1)，所以「现状」那一帧的框复现不出来。 */
 .rl-exp-row .rl-exp-head {
     border: none; border-radius: 0; padding: 0; box-shadow: none;
     margin: 0; height: auto;
@@ -2447,8 +2398,8 @@
 }
 .rl-exp-head:hover { color: var(--interactive-accent); }
 .rl-exp-head:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
-/* 框内左半：名称 + 副标题（#640 起说明**回来了** —— #567 曾整体去掉，阅读器等那几条副标题没显示，所以以最新指令为准，desc 文本搬进这一列，见 `Settings.makeCollapsible`）。
-   本节顶部注释 ⑴ 记的是 #567 当时的形态，已被 #640 翻面；别照着旧注释把它删回去。 */
+/* 框内左半：名称 + 副标题。说明**要留着** —— 阅读器等那几条副标题不显示就少了信息，
+   desc 文本进这一列，见 `Settings.makeCollapsible`。 */
 .rl-exp-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .rl-exp-name { font-size: 13px; font-weight: 600; line-height: 1.4; }
 /* 副标题：与设置页其余行的 `.setting-item-description` 同档（`--font-ui-smaller` + 弱色）——
@@ -2464,8 +2415,8 @@
 .rl-exp-head:hover .rl-exp-chev { color: inherit; }
 .rl-exp-chev svg { width: 14px; height: 14px; }
 .rl-exp-row.is-open .rl-exp-chev { transform: rotate(90deg); }
-/* #588：展开时**箭头也随名称一起变强调色**（悬停/箭头/展开线索）——
-   原来只有名称变色，箭头仍是 `--text-muted`，所以线索偏弱。仍不铺底色（本仓「只变色」口径）。 */
+/* 展开时**箭头也随名称一起变强调色**（悬停/箭头/展开线索）——
+   若只有名称变色、箭头仍是 `--text-muted`，线索偏弱。仍不铺底色（本仓「只变色」口径）。 */
 .rl-exp-row.is-open .rl-exp-chev { color: var(--interactive-accent); }
 /* #574：展开态的「框线变强调色」随那个框一起退场，所以改为**名称变强调色**
    （纯文字线索，与 `.rl-exp-head:hover` 同一口径；不铺底色 —— 本仓「只变色」）。 */
@@ -2537,7 +2488,7 @@
     min-width: 0;
 }
 
-/* 本轮（需求①）：目录行是**折叠项下的从属项**，缩进区分折叠项主次。
+/* 目录行是**折叠项下的从属项**，缩进区分折叠项主次。
    归属：`src/Settings.ts` 的 `createLocalDirRow` / `createLibraryDirRow` 给 `.setting-item` 加 `.rl-dir-sub`。
    为什么只缩进左边：右边是控件区（输入框 + 浏览按钮），缩右边会让输入框变短、且与上方的折叠行头
    对不齐 —— 诉求是「看得出这行从属于上面那个折叠项」，靠左缩进就够，别再动 padding-right。
@@ -2567,9 +2518,9 @@
     color: var(--text-muted);
     padding: 0 0 10px;
 }
-/* 手动下载区（2026-11-13 首次加入；2026-11-14 用户 m03072 ⑥ 升级为「方式二」）。
+/* 手动下载区。
    ⛔ 网址用可选中文本而不是只做按钮 —— 用户常常先复制网址，再回来选文件。
-   🔴 「方式一 / 方式二」分段标题：用户要求「区分一键下载和手动点链接下载并配置」，
+   🔴 「方式一 / 方式二」分段标题必须留着：
       没有这两行标题，两条路在视觉上是同一坨。 */
 .rl-asr-way {
     margin: 10px 0 6px;
@@ -2613,7 +2564,7 @@
 }
 .rl-asr-manual-file { font-family: var(--font-monospace); user-select: text; -webkit-user-select: text; }
 /* 「选择本地模型文件…」的落点：紧跟在文件清单之后，用户下完文件正好在这里接着点。
-   ⛔ 别再藏进「展开高级配置」—— 用户找不到就等于没有这个功能（m03072 ⑥）。 */
+   ⛔ 别再藏进「展开高级配置」—— 找不到就等于没有这个功能。 */
 .rl-asr-manual-ops { display: flex; gap: 8px; margin-top: 4px; }
 .rl-asr-manual-tip { font-size: var(--font-ui-smaller); color: var(--text-faint); line-height: 1.5; }
 .rl-asr-card {
@@ -2744,11 +2695,10 @@
     padding-bottom: 6px;
 }
 /* ── 语音转文字 / 文字转语音 / 字幕面板学习模式：三个独立组 ─────────
-   🔴 2026-11-10 用户逐字（m03321）：「将设置页语音服务组下两个项语音转文字、文字转语音
-      移出来为单独组」⇒ 旧的 `.rl-voice-sec`（组内小节：小标题 + 一张卡）**整体退场**，
-      小标题由组本身承载（`.rl-svc-group-title`），这里只剩两样东西：
-        · `.rl-voice-group-desc` —— 组名下面那句人话（有 desc 才建）；
-        · `.rl-voice-card` —— 组内的重画容器（不加边框版见 `.is-bare`）。
+   所以旧的 `.rl-voice-sec`（组内小节：小标题 + 一张卡）**整体退场**，
+   小标题由组本身承载（`.rl-svc-group-title`），这里只剩两样东西：
+     · `.rl-voice-group-desc` —— 组名下面那句人话（有 desc 才建）；
+     · `.rl-voice-card` —— 组内的重画容器（不加边框版见 `.is-bare`）。
    ⛔ 别再给组内补一层 `.rl-voice-sec`：那会让组卡里再套一层外边距，看起来像卡中卡。
    ⚠️ 卡片**不复用** `.rl-ai-svc-card`：那个带 `> .setting-item { padding: 10px 14px }`，
       套过来会让卡内的三勾与 details 贴着卡边。这里只用同样的配色与圆角口径。 */
@@ -2792,9 +2742,8 @@
     align-items: flex-start;
     margin-top: 2px;
 }
-/* 🔴 2026-11-11 用户：「UI 不要这么多边框按钮改成透明化高审美点」。
-   「一键补齐缺失文件」原来用核心 `mod-cta`（实心主色方块），六个引擎各一份、一屏五六块蓝。
-   改成轻量文字按钮：平时只有 accent 文字，悬停才浮淡底。
+/* 「一键补齐缺失文件」用轻量文字按钮，不用核心 `mod-cta`（实心主色方块）——
+   六个引擎各一份、一屏五六块蓝。平时只有 accent 文字，悬停才浮淡底。
    ⚠️ 必须 (0,2,1)+ —— 核心 `.theme-light button:not(.clickable-icon)` 是 (0,2,1)，
       单类名会被它塞回 padding/border/background，重新变回灰方块。 */
 .rl-asr-fix > button.rl-asr-fixbtn {
@@ -2851,7 +2800,7 @@
 }
 /* 路径框里显示的是「插件自己探测到的」而不是填入的。
    用弱一点的文字色 + 斜体区分：不让人误以为「这是我配过的」，
-   同时也让他看得见实际在用的是哪个文件（原来框里空着，看起来没生效）。 */
+   同时也让人看得见实际在用的是哪个文件（否则框里空着，看起来没生效）。 */
 input.rl-path-auto {
     color: var(--text-faint);
     font-style: italic;
@@ -2984,9 +2933,8 @@ input.rl-path-auto {
     gap: 8px;
     margin-top: 10px;
 }
-/* ── 手动下载入口（🔴 m10754：用户「我没看到官网链接在哪里可点击跳转下载」）──
-   原来这两行只在 `AsrEngineModal` 的「方式二」里，而那个弹窗已无任何调用方，
-   链接等于失联。现在搬进用户真正会看到的安装弹窗。
+/* ── 手动下载入口 ──
+   这两行必须出现在用户**真正会看到**的安装弹窗里，不能只留在无人调用的弹窗中（那样链接等于失联）。
    ⚠️ 网址**原样显示不省略**：用户的第二个动作往往是复制它。 */
 .rl-asr-install-manual {
     margin-top: 12px;
@@ -3028,7 +2976,7 @@ input.rl-path-auto {
     word-break: break-all;
     user-select: text;
 }
-/* ── 落点目录区（用户 m01935：装之前先把所有路径摊开给用户确认）──
+/* ── 落点目录区（装之前先把所有路径摊开给用户确认）──
    布局：标题 → 每个目录（标签 / 输入框+浏览 / 说明 / 只读文件清单）→ 确认勾选。
    ⚠️ 文件名**只读**：上游给的名字是固定的，改名后插件按原名去找必然「装好了还是红的」。 */
 .rl-asr-install-dirs {
@@ -3174,10 +3122,8 @@ input.rl-path-auto {
     border-radius: var(--radius-s);
     background: var(--background-secondary);
 }
-/* 🔴 2026-11-11 用户报「统一一下宽度，对齐上面的媒体载体」：
-   `.rl-asr-sec` 当年是「卡内分段」（整块语音区里画三段），所以自带 border + 底色 + `9px 11px` 内距。
-   现在它所在的外层已经是**组**（`.rl-svc-group` 给外框）、里面又包了 `.rl-asr-pick2`（也画自己的外框），
-   这层再画就是**卡中卡**，而且那 11px 左右内距把 `.rl-asr-pick2` 从 524 挤到 500，
+/* `.rl-asr-sec` 所在的外层已经是**组**（`.rl-svc-group` 给外框）、里面又包了 `.rl-asr-pick2`（也画自己的外框），
+   这层再画就是**卡中卡**；而且那 11px 左右内距把 `.rl-asr-pick2` 从 524 挤到 500，
    与上面「媒体载体」组的行左缘（232）对不齐。
    现在只剩 sec1（选择模型）一处用它 ⇒ 直接改成透明无框容器，内距归零。
    ⛔ 别把整条删掉：`display:flex/column` 与 `gap` 仍被段头 + 说明 + pick2 的纵向排布依赖。 */
@@ -3240,11 +3186,9 @@ input.rl-path-auto {
     color: var(--text-muted);
 }
 
-/* ① 环境三块：**固定一列三行**（识别程序、识别模型、音频工具
-   改成各自一行显示，不并排了）。
-   旧写法是 `flex-wrap: wrap` + `flex: 1 1 180px`（宽了并排、窄了落行）—— 在环境配置
-   面板 285px 宽时**恰好塞得下两张**，真机看到的就是「前两块并排、第三块单独一行」的参差，
-   正是原来的那处参差。
+/* ① 环境三块：**固定一列三行**（识别程序、识别模型、音频工具各自一行，不并排）。
+   用 `flex-wrap: wrap` + `flex: 1 1 180px` 时，环境配置面板 285px 宽**恰好塞得下两张**，
+   真机看到的就是「前两块并排、第三块单独一行」的参差。
    别再退回 wrap 并排：这三块横着比没有意义（一个是「程序在不在」、一个是「模型在不在」、
    一个是「ffmpeg 在不在」），各占一行才读得顺。
    `flex-basis` 在 column 方向指的是**高度**，所以 tile 必须从 `1 1 180px` 改成
@@ -3253,24 +3197,21 @@ input.rl-path-auto {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    /* 🔴🔴 用户 m07854 ④（2026-11-13）：「将语音与识别组的高度限制一下」。
-       组名实际是「语音转文字」（`SETTING_GROUP_ICONS` 里没有「语音与识别」这个键）。
-       高度来源：环境体检一屏最多 7 项（X-ASR）+ whisper 工具链 2 行 + 资产凭证 + 运行参数，
-       整列不限高 ⇒ 真机上这一组轻松破千像素，把同一页的「文字转语音」「字幕面板学习模式」
-       全挤到折叠线以下。
-       ⇒ 限定可视高度 + 内部滚动（当场问过用户，用户**选择这一档**）。
-       ⚠️ 这推翻了 2026-11-11 m05717 的「不要滚动条、全部默认展开」—— 那条已被 m07854 ④ 覆盖；
-          `渲染端` 那边对应的注释也要同步（别只改 CSS，读代码的人会以为仍是旧口径）。
-       ⚠️ 用 `max-height` 而不是固定 `height`：只有 1~2 项时不该撑出一片空白。
-       ⚠️ `overscroll-behavior: contain`：滚到底别把整页一起带着滚（设置页外层也有滚动）。 */
+    /* 组名是「语音转文字」（`SETTING_GROUP_ICONS` 里没有「语音与识别」这个键）。
+   高度来源：环境体检一屏最多 7 项（X-ASR）+ whisper 工具链 2 行 + 资产凭证 + 运行参数，
+   整列不限高 ⇒ 真机上这一组轻松破千像素，把同一页的「文字转语音」「字幕面板学习模式」
+   全挤到折叠线以下。
+   ⇒ 限定可视高度 + 内部滚动。
+   ⚠️ `渲染端` 那边对应的注释也要同步（别只改 CSS，读代码的人会以为仍是旧口径）。
+   ⚠️ 用 `max-height` 而不是固定 `height`：只有 1~2 项时不该撑出一片空白。
+   ⚠️ `overscroll-behavior: contain`：滚到底别把整页一起带着滚（设置页外层也有滚动）。 */
     max-height: 240px;
     overflow-y: auto;
     overscroll-behavior: contain;
     /* 细滚动条贴容器右缘，不挤占 tile 的内容宽度 */
     scrollbar-gutter: stable;
 }
-/* 🔴 2026-11-11 用户：「UI 不要这么多边框按钮改成透明化高审美点」。
-   原先每一行都是一张带边框的白卡（6~7 张叠在一起像表格），现在改成**无框行**：
+/* 每一行都不做成带边框的白卡（6~7 张叠在一起像表格），改成**无框行**：
    只留行间距与左侧 2px 状态条（缺失项用虚线色块而不是整卡虚线框）。 */
 .rl-asr-tile {
     flex: 0 0 auto;
@@ -3297,7 +3238,7 @@ input.rl-path-auto {
     gap: 5px;
     min-width: 0;
 }
-/* 🔴 2026-11-11：标记从 emoji 换成主题同色 SVG（`check-circle` / `alert-circle`）。
+/* 标记用主题同色 SVG（`check-circle` / `alert-circle`），不用 emoji。
    必须给 svg 定尺寸 —— `safeSetIcon` 插入的是 24×24 视图的图标，
    不给宽高会被行高撑到 24px，整行比文字高一倍。 */
 .rl-asr-tile-mark {
@@ -3360,7 +3301,7 @@ input.rl-path-auto {
     cursor: pointer;
 }
 /* 有行内档位下拉时整行不是 role=button（因为里面还有真按钮/下拉，套 role 会让读屏念错），
-   但整行**仍可点**（点一下 = 选中该引擎，本轮第②条），所以 cursor 与悬停由 is-clickable 给。 */
+   但整行**仍可点**（点一下 = 选中该引擎），所以 cursor 与悬停由 is-clickable 给。 */
 .rl-asr-model.is-clickable {
     cursor: pointer;
 }
@@ -3377,15 +3318,15 @@ input.rl-path-auto {
     outline-offset: -1px;
 }
 /* 行内档位下拉（Whisper.cpp 的各档收进一个下拉，不再一行一档）。
-   要求：下拉框改成独立设计风格的市面主流方案 —— 原生 `<select>` 已换成自绘面板（renderDropdown，`.rl-ai-dd` 那一套），
+   不用原生 `<select>`，改用自绘面板（renderDropdown，`.rl-ai-dd` 那一套），
    所以这里只剩「把这个面板塞进名字下方、并让它别撑破行」的几何约束。
-   不再有 .rl-asr-model-pick（原生 select 的选择器）—— 那套样式已随控件一起删掉。
+   不再有 `.rl-asr-model-pick`（原生 select 的选择器）—— 那套样式已随控件一起删掉。
 
-   **真缺陷（真渲染抓到，量测 `ddCursor=default`）**：`.rl-ai-dd-btn` 的外框 / 底色 /
+   **必须把外框那一套补全**：`.rl-ai-dd-btn` 的外框 / 底色 /
    圆角 / `cursor:pointer` **全部写在 `.rl-ai-tts .rl-ai-dd-btn` 与 `.rl-ai-pick .rl-ai-pick-btn`
    这两条作用域选择器里**（见本文件上方 ② 段）。新容器 `.rl-asr-pickwrap` 不在那两条的作用域内，
-   于是按钮继承了核心 `button` 的基础样式 —— 无边框、无圆角、默认光标，看起来就是个光秃秃的文字。
-   所以这里**必须把外框那一套补全**（不能只写高度和字号就以为万事大吉）。 */
+   于是按钮会继承核心 `button` 的基础样式 —— 无边框、无圆角、默认光标（真渲染量测 `ddCursor=default`），
+   看起来就是个光秃秃的文字。不能只写高度和字号就以为万事大吉。 */
 .rl-asr-pickwrap {
     display: inline-flex;
     min-width: 0;
@@ -3514,13 +3455,13 @@ input.rl-path-auto {
     white-space: nowrap;
 }
 
-/* ── #718「选择模型」每行可收放自己的环境配置 ────────────────────────────
+/* ── 「选择模型」每行可收放自己的环境配置 ────────────────────────────
 环境配置不再单独占一段平铺，而是**跟着模型行走**——点 whisper.cpp 那行就展开
    它自己的程序/模型/ffmpeg 三件套；点 Qwen3 那行展开 Python 解释器与桥接脚本。
    于是「选哪家」和「配哪家」在视觉上合成一件事，屏幕上也不再多出一段与列表并排的长表单。
 
    行的两种点击语义必须分清：
-     · `is-foldable`（有 env）改为 行**可点**（点一下 = 选中该引擎，本轮第②条改回），
+     · `is-foldable`（有 env）改为 行**可点**（点一下 = 选中该引擎），
        收放入口是行尾那枚箭头（`.rl-asr-chev`）；
      · `is-clickable`（无 env）改为 点行 = 选中该引擎（老行为）。
        `is-open` 时边框与底色会变 —— 否则「选中」和「展开」在视觉上分不出来。
@@ -3529,8 +3470,8 @@ input.rl-path-auto {
     border-color: var(--background-modifier-border);
     background: var(--background-secondary);
 }
-/* #720：「选择模型和环境配置不要 1/2 挤在一起」
-   —— 真 bug：环境配置面板是**行的子元素**，而 `.rl-asr-model` 是 `display:flex` 横排，
+/* 「选择模型和环境配置不要 1/2 挤在一起」
+   —— 环境配置面板是**行的子元素**，而 `.rl-asr-model` 是 `display:flex` 横排，
       面板就成了 row 里的**第二个弹性项**，被挤到右半边（实测 行 x=289/w=442，
       面板 x=444/w=311 —— 正好是「左 1/2 文字、右 1/2 浮表单」的画面）。
    修法：折叠面板那一段允许换行，并让面板 `flex-basis:100%` 独占一整行。
@@ -3550,12 +3491,11 @@ input.rl-path-auto {
     min-width: 0;
 }
 
-/* 本轮第②条（把这个下拉箭头透明化无边框化并始终在模型家行不变动位置）
-   —— 箭头的三条硬约束：
+/* 下拉箭头必须透明化、无边框化并始终在行内位置不变 —— 三条硬约束：
      ① **透明化**：平时只有 `chevron-right` 图标本身，背景完全透明；悬停才给一层极浅底色
         （`--background-modifier-hover`），聚焦给 `--interactive-accent` 描边 —— 否则键盘操作时看不见焦点。
      ② **无边框化**：`border:none; box-shadow:none` 显式写死。核心主题对 `button` 有默认
-        `box-shadow: 0 0 0 1px`（Obsidian 的按钮外观），不消掉就是一圈灰边。
+        `box-shadow: 0 0 0 1px`，不消掉就是一圈灰边。
      ③ **位置固定**：`margin-left:auto` 推到行尾 + `flex:0 0 auto` 不让它被挤压；
         且它在 DOM 里必须排在折叠面板**之前**（见 `src/Settings.ts` 里 `rl-asr-chev` 的注释）——
         否则面板换行到下一行时箭头会跟着被推到面板下面，展开/收起时上下跳。
@@ -3600,7 +3540,7 @@ input.rl-path-auto {
     transform: rotate(90deg);
     color: var(--text-muted);
 }
-/* 行的悬停反馈由上面的 `.rl-asr-model.is-clickable:hover` 统一给 —— 本轮第②条之后
+/* 行的悬停反馈由上面的 `.rl-asr-model.is-clickable:hover` 统一给 ——
    有面板的行也带 `is-clickable`（点一下 = 选中），别再为 `.is-foldable` 单列一条，
    否则同一行会有两条同等优先级的背景规则，调试时看不出谁生效。 */
 /* 折叠面板：**独立圆角块**，不是行的子行 —— 它要比行缩进一档、浅一档底色，
@@ -3658,13 +3598,13 @@ input.rl-path-auto {
     min-width: 0;
     width: auto;
 }
-/* 圆点 / 胶囊现在是「切到这个引擎」的入口（点行被收放占用），所以得看起来可点。
+/* 圆点 / 胶囊是「切到这个引擎」的入口（点行被收放占用），所以得看起来可点。
    只给 hover 反馈，不做成按钮外观 —— 它们仍是行内状态指示。
-   🔴 m07546 需求②：`border-radius` **必须排除圆点**。
-      原写法 `.rl-asr-select { border-radius: 4px }` 会覆盖 `.rl-asr-radio` 的 `border-radius: 50%`
+   🔴 `border-radius` **必须排除圆点**：
+      `.rl-asr-select { border-radius: 4px }` 会覆盖 `.rl-asr-radio` 的 `border-radius: 50%`
       （同类名、同优先级、后写者胜），而 `.rl-asr-select` **只加给「未选中」行**
       （`Settings.ts` 的 `selectable = !!opts.onUse && !opts.current`）⇒ 未选中被压成 4px 方块、
-      选中(`.rl-asr-model.is-on`)仍是圆圈 —— 正是用户说的「未选中呈现为复选框」。
+      选中(`.rl-asr-model.is-on`)仍是圆圈 —— 看着就像「未选中呈现为复选框」。
       ⚠️ 圆角只属于胶囊（`.rl-asr-pill` 自己已有 999px）；圆点的形状归 `.rl-asr-radio` 管，这里不许碰。 */
 .rl-asr-select:not(.rl-asr-radio) {
     cursor: pointer;
@@ -3684,10 +3624,9 @@ input.rl-path-auto {
 }
 
 /* ── 「选择模型」两栏：左 = 按家分组的平铺单选，右 = 当前选中项的配置面板 ──────────────
-   🔴 用户 m00002 逐字要求：
-     「按大类分组的平铺单选框，但绝对不能让每个档位下面都跟着这一大坨环境配置，
-       改成左侧是清爽的平铺列表，右侧是专门用于配置当前选中项的面板。
-       这样用户能随时看到所有模型的体积和参数，同时配置区有充足的空间。」
+   不能让每个档位下面都跟着一大坨环境配置：
+   左侧是清爽的平铺列表，右侧是专门用于配置当前选中项的面板 ——
+   这样用户能随时看到所有模型的体积和参数，同时配置区有充足的空间。
    ⇒ 旧结构（一行一引擎 + 行尾箭头就地展开，见上方 `.rl-asr-model.is-foldable` 那一节）
      **仍在 CSS 里保留**但已无人使用：`renderAsrModelRow` 还在（别的地方可能引用），
      只是「选择模型」这段不再调用它。⛔ 别把旧规则删掉又忘了这里的新规则 —— 两套并存不冲突。
@@ -3697,20 +3636,20 @@ input.rl-path-auto {
    满足线框 A（展开态，落在右面板右上角）与线框 B（收起态，落在左列表右上角）。 */
 .rl-asr-pick2 {
     position: relative;
-    /* 🔴🔴 2026-11-11 用户 m05717 ① 线框图改版后**又变回纵向**，但纵向的内容换了：
+    /* 这一层是纵向两段：
        第一段 = `.rl-asr-row`（左导航 + 右上档位，横向并排），
        第二段 = `.rl-asr-bt`（AI 运行管家三模块，占满整行）。
        外面这一层必须是 column —— 只有「上段横排、下段整行」两层分开，
-       左导航才不会跟着下面那个高高的管家区一起被拉长（那是 m03661 的空白事故）。 */
+       左导航才不会跟着下面那个高高的管家区一起被拉长（那会留出一大片空白）。 */
     display: flex;
     flex-direction: column;
-    /* 🔴 `flex-start` 而不是 `stretch`（2026-11-10 用户 m03661「怎么拉长空白了」）：
-       两栏高度天然不等。用 stretch 会让**矮的那一栏被拉齐到高的那一栏**
+    /* 必须用 `flex-start` 而不是 `stretch`：两栏高度天然不等，
+       用 stretch 会让**矮的那一栏被拉齐到高的那一栏**
        ⇒ 左侧下面挂一大片空白。外框画在 `.rl-asr-pick2` 自己身上，不等高也不会有「半个框」。 */
     align-items: flex-start;
     gap: 10px;
     margin-top: 6px;
-    /* 🔴 用户 2026-11-10（m03035）：「要和选择模型行同框」⇒ 左右两栏共用**这一个**外框，
+    /* 要和选择模型行同框 ⇒ 左右两栏共用**这一个**外框，
        右面板不再自带边框/底色（否则看着是两个独立卡片拼在一起）。 */
     padding: 8px 10px 10px;
     border: 1px solid var(--background-modifier-border);
@@ -3721,11 +3660,11 @@ input.rl-path-auto {
     width: 100%;
     box-sizing: border-box;
 }
-/* ── 上段：左导航 + 右上档位（用户 m05717 ①「左侧高度跟随右上对齐」）── */
-/* 🔴 用户 m05717 ① + m06406 ①：`172px 导航 | 右列`，右列再分「档位 / 三模块」两行。
+/* ── 上段：左导航 + 右上档位（左侧高度跟随右上对齐）── */
+/* `172px 导航 | 右列`，右列再分「档位 / 三模块」两行。
    用 **Grid** 而不是 flex：
      · 第 1 行高度 = max(导航内容, 右上内容)，两个子项都 stretch ⇒ **自动等高**
-       （用户「左侧列表容器高度自动跟随右侧上半部对齐」）；
+       （左侧列表容器高度自动跟随右侧上半部对齐）；
      · 三模块落在 (2,2)，正好在档位格下面，不再横铺到左导航下方。
    ⛔ 别改回 flex：flex 下要么 nav 被三模块一起撑高（stretch），
       要么各按内容高错位（flex-start），两条路都试过、都不达标。 */
@@ -3756,7 +3695,7 @@ input.rl-path-auto {
     flex-direction: column;
     gap: 2px;
     padding-right: 10px;
-    /* 用户原话：「两个分组之间要有明显的分割线」。竖分割线放在这里，
+    /* 两个分组之间要有明显的分割线。竖分割线放在这里，
        高度由 Grid 第 1 行决定 = max(导航, 右上) ⇒ 正好与右上齐平。 */
     border-right: 1px solid var(--background-modifier-border);
     /* ⚠️ 不写 max-height：高度交给 Grid 行高。以前写过 264px 上限 +
@@ -3764,7 +3703,7 @@ input.rl-path-auto {
        否则导航会被压在 264px 里滚、和右上错位。 */
     overflow-y: auto;
     min-width: 0;
-    /* 🔴 2026-11-11 用户报「语音转文字怎么拉长空白了出了这么多」：
+    /* 左栏不能被撑出空白：
        原先是「导航占 (1,1) + 右上占 (1,2) + 三模块占 (2,2)」三块，
        而导航有 7 项（约 296px）、某些引擎右上只有 2 个档位格（约 120px）
        ⇒ Grid 第 1 行的 auto 高度取导航的 max-content，右上被强行拉到 296px，
@@ -3790,7 +3729,7 @@ input.rl-path-auto {
 .rl-asr-nav-head:first-child {
     padding-top: 0;
 }
-/* 「云端接入」这一组前面拉一条横线 —— 用户要的「明显分割线」 */
+/* 「云端接入」这一组前面拉一条横线 —— 明显的分割线 */
 .rl-asr-nav-head.is-cloud {
     margin-top: 6px;
     padding-top: 8px;
@@ -3838,7 +3777,7 @@ input.rl-path-auto {
    上底色/边框/**文字色** ⇒ 自绘的导航按钮必须用 (0,3,0) 以上的选择器把外观夺回来，
    单类名会被压过（本仓 `.rl-asr-confchev` 踩过一次）。
    🔴 真机实测：只写单类名 `.rl-asr-navi { color: #999 }` 时，未选中项与选中项
-      算出来都是 `rgb(15,15,15)` —— 用户要的「未选中整体变灰」完全没生效。 */
+      算出来都是 `rgb(15,15,15)` —— 「未选中整体变灰」完全没生效。 */
 .rl-asr-nav > button.rl-asr-navi {
     background: transparent;
     border: none;
@@ -3854,15 +3793,15 @@ input.rl-path-auto {
     outline: 2px solid var(--interactive-accent);
     outline-offset: -2px;
 }
-/* 选中：正常色 + 左侧 accent 竖线（🔴 2026-11-11 用户「按钮改成透明化」：
-   去掉选中项的灰底块，只留竖线 + 字重，视觉更安静，也让「未选中变灰」更清楚）。 */
+/* 选中：正常色 + 左侧 accent 竖线（不铺灰底块 —— 只留竖线 + 字重，
+   视觉更安静，也让「未选中变灰」更清楚）。 */
 .rl-asr-nav > button.rl-asr-navi.is-on {
     color: var(--text-normal);
     opacity: 1;
     background: transparent;
     box-shadow: inset 2px 0 0 var(--interactive-accent);
 }
-/* 未选中的整体变灰（用户：「未选中的文字/图标/背景整体变灰，如 #999」）。
+/* 未选中的文字/图标/背景整体变灰（如 #999）。
    ⚠️ 顺手让图标一起继承 —— `currentColor` 是 svg 默认取色的来源。 */
 .rl-asr-nav > button.rl-asr-navi:not(.is-on) .rl-asr-navi-name {
     color: #999;
@@ -3884,7 +3823,7 @@ input.rl-path-auto {
     width: 14px;
     height: 14px;
 }
-/* 🔴 m07854 ⑤：这两处图标改成品牌标后走的是 `renderAiIcon`，它会带 `.rl-ai-icon` 的
+/* 这两处图标走 `renderAiIcon`，它会带 `.rl-ai-icon` 的
    `color: var(--interactive-accent)`（主题蓝）。但左栏图标必须**跟文字同色**：
    未选中的行整行是灰的（`#999`），图标单独发蓝会让人以为那一行已被选中。
    ⇒ 用 `color: inherit` 让品牌标跟着行文字色走（与本文件 `.rl-pick-chips .rl-pick-chip
@@ -3908,7 +3847,7 @@ input.rl-path-auto {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-/* ⛔ `.rl-asr-navi-sub` 已退场（2026-11-11 用户：「左侧栏的描述被截断干脆只显示名称」）。
+/* ⛔ `.rl-asr-navi-sub` 已退场（左侧栏的描述被截断，干脆只显示名称）。
    副标题挪进了 `data-tip`，TS 侧不再产出该节点 —— 规则留着就是死样式。 */
 .rl-asr-navi-count {
     flex: 0 0 auto;
@@ -3982,10 +3921,10 @@ input.rl-path-auto {
     color: var(--text-muted);
     line-height: 1.45;
 }
-/* 🔴 当前档位的三项硬信息（用户 m09565 ①-1）：准确度 / 核心定位 / 适用场景。
-   为什么单独一块而不是塞进 data-tip：气泡要悬停才出来，用户明确说「没看到」。
+/* 当前档位的三项硬信息：准确度 / 核心定位 / 适用场景。
+   单独一块而不是塞进 data-tip：气泡要悬停才出来，等于看不到。
    ⚠️ 视觉上要**比副标题更轻**（它是补充信息，不是标题），所以只给左侧一条淡竖线 +
-      小字号，⛔ 别加边框/底色（本轮主线是「视觉降噪」）。 */
+      小字号，⛔ 别加边框/底色（本页主线是「视觉降噪」）。 */
 .rl-asr-meta {
     display: flex;
     flex-direction: column;
@@ -4031,8 +3970,7 @@ input.rl-path-auto {
        空档位底部挂空白（本仓已踩四次同类） */
     align-items: start;
 }
-/* 🔴 2026-11-11 用户：「UI 不要这么多边框按钮改成透明化高审美点」。
-   档位格原先是「一格格带边框的白卡」，6 档铺开就是一排方框。现在改成**无框格**：
+/* 档位格不用「一格格带边框的白卡」（6 档铺开就是一排方框），改成**无框格**：
    平时只剩文字（名称 + 体积），悬停才浮一层淡底；
    选中态用**左侧 accent 竖线 + 淡 accent 底**表达，不再画整圈描边。 */
 .rl-asr-tg {
@@ -4057,7 +3995,7 @@ input.rl-path-auto {
     outline: 2px solid var(--interactive-accent);
     outline-offset: 1px;
 }
-/* 未选中且没装的档位：整体淡化（用户：选中当前档，其余变灰）。
+/* 未选中且没装的档位：整体淡化（选中当前档，其余变灰）。
    ⚠️ 选中态 `.is-on` 排在后面且权重更高，保证「选中即全亮」。 */
 .rl-asr-tg.is-off {
     opacity: .62;
@@ -4081,11 +4019,11 @@ input.rl-path-auto {
     line-height: 1.2;
     color: var(--text-faint);
 }
-/* 🔴 TTS 的音色格专用变体（`.rl-asr-tiergrid.is-voice`）。
-   为什么不能沿用 STT 的 104px 窄格：ASR 档位名是 `tiny` / `int8` / `1920ms` 这类 4~7 字符，
+/* TTS 的音色格专用变体（`.rl-asr-tiergrid.is-voice`）。
+   不能沿用 STT 的 104px 窄格：ASR 档位名是 `tiny` / `int8` / `1920ms` 这类 4~7 字符，
    而系统音色名是 `Microsoft Huihui - Chinese (Simplified, PRC)`（40+ 字符）——
    窄格 + nowrap + ellipsis 会把三种中文音色全部截成同一个「Microsoft Huihui - C…」，
-   用户根本分不出点哪个。⇒ 列宽抬到 190px、名字允许换两行并保留全名（⛔ 别改成单行省略）。 */
+   根本分不出点哪个。⇒ 列宽抬到 190px、名字允许换两行并保留全名（⛔ 别改成单行省略）。 */
 .rl-asr-tiergrid.is-voice {
     grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr));
 }
@@ -4116,11 +4054,10 @@ input.rl-path-auto {
     color: var(--color-green, #3ba55c);
     line-height: 1;
 }
-/* 🔴 未装档位的下载按钮（2026-11-11 用户：「各自下载按钮去哪了找不到入口」）。
+/* 未装档位的下载按钮必须能被看见 —— 找得到入口才好装。
    必须是 (0,3,1)+ 的复合选择器：核心有 `.theme-light button:not(.clickable-icon)`(0,2,1)
    会塞给它 padding/border/background/shadow，单类名压不住，会变成一颗灰方块。
-   🔴 2026-11-11 再改：用户嫌「按钮太多」⇒ 常驻态**去掉边框**，只留一行浅色小字，
-      悬停才显出 accent；形状仍可点（视觉更轻，功能不减）。 */
+   常驻态**去掉边框**，只留一行浅色小字，悬停才显出 accent；形状仍可点（视觉更轻，功能不减）。 */
 .rl-asr-tg > .rl-asr-tg-foot > button.rl-asr-tg-dl {
     flex: 0 0 auto;
     display: inline-flex;
@@ -4155,18 +4092,17 @@ input.rl-path-auto {
     gap: 8px;
     width: 100%;
     box-sizing: border-box;
-    /* 用户：「右侧上下独立滚动」—— 上段自己滚到 264px 封顶，这一段吃剩下的 */
+    /* 右侧上下独立滚动 —— 上段自己滚到 264px 封顶，这一段吃剩下的 */
     max-height: 420px;
     overflow-y: auto;
 }
-/* ────────── AI 运行管家（用户 m05717 ①「右侧下部」三个模块）──────────
+/* ────────── AI 运行管家（右侧下部三个模块）──────────
  * 三块：① 环境体检  ② 资产与凭证  ③ 运行参数与资源预估
  * 每块一个 `.rl-bt-mod`（自带标题行 + 内容），块与块之间靠父容器 gap 分隔。
  * ⚠️ 这里所有自绘带 `display` 的类，凡是要被 `hidden` 藏的，都必须同步写
  *    `X[hidden] { display: none }`（本仓已踩四次：主题的 display 会压过浏览器默认规则）。
  */
-/* 🔴 2026-11-11 用户：「UI 不要这么多边框按钮改成透明化高审美点」。
-   三个模块原先是三张带边框的白卡，现在改成**无框分段**：
+/* 三个模块不用带边框的白卡，改成**无框分段**：
    只靠一条极浅的分隔线 + 段标题的小字号/字距区分层级，整块更透气。 */
 .rl-bt-mod {
     display: flex;
@@ -4185,9 +4121,9 @@ input.rl-path-auto {
     border-top: 1px solid var(--background-modifier-border);
     opacity: .99;
 }
-/* 🔴 模块内的「路径 + 浏览」行必须改成单栏（用户 m06406 ① 之后三模块被塞进 264px 窄列，
+/* 🔴 模块内的「路径 + 浏览」行必须改成单栏：三模块在 264px 窄列里时，
    核心 `.setting-item` 的 `flex row` 把「名称」与「控件」并排 ⇒ 真机实测一行被撑到
-   **1581px / 1718px** 高，路径文字逐字竖排、模块底部冒出横向滚动条）。
+   **1581px / 1718px** 高，路径文字逐字竖排、模块底部冒出横向滚动条。
    这一套与 `.rl-asr-confbody .setting-item`（styles.css:4447）同理，⛔ 别再删。 */
 .rl-bt-mod .setting-item {
     flex-direction: column;
@@ -4250,7 +4186,7 @@ input.rl-path-auto {
     color: var(--text-muted);
     white-space: nowrap;
 }
-/* 徽标改成**纯文字色**，不再铺色块（用户：不要这么多按钮/边框） */
+/* 徽标用**纯文字色**，不铺色块（不要这么多按钮/边框） */
 .rl-bt-mod-badge {
     font-size: 10px;
     padding: 0;
@@ -4456,8 +4392,7 @@ input.rl-path-auto {
     width: 12px;
     height: 12px;
 }
-/* 高级参数：🔴 2026-11-11 用户「包括高级参数也展开」⇒ 不再是折叠区，
-   这里只留一枚小小的段落标题（无按钮、无边框、无底色）。
+/* 高级参数：这里只留一枚小小的段落标题（无按钮、无边框、无底色），不是折叠区。
    ⛔ `.rl-bt-adv-toggle` / `.rl-bt-adv-chev` 两条已随折叠一起退场，
       别按老样子补回来 —— TS 侧已无对应节点，补了就是死样式（会多报一条 Unused CSS）。 */
 .rl-bt-adv-title {
@@ -4510,10 +4445,10 @@ input.rl-path-auto {
     align-self: stretch;
     width: 100%;
     box-sizing: border-box;
-    /* 🔴 D 版（2026-11-10 用户 m03883）：一家一卡，用网格排。
+    /* 一家一卡，用网格排。
        ⚠️ `auto-fill + minmax(min(190px, 100%), 1fr)` 而不是写死 `1fr 1fr`：
           真机量测左栏收起 436px（两列）、展开只剩 156px（必须退回一列），
-          写死两列会在展开态挤成一团 —— 而用户是**边点胶囊边看右面板**，展开态才是主场景。
+          写死两列会在展开态挤成一团 —— 而「边点胶囊边看右面板」时展开态才是主场景。
        ⚠️ `min(190px, 100%)` 里的 `100%` 不能省：只写 `minmax(190px, 1fr)` 时，
           容器窄到 156px 仍会算出 190px 的轨道 ⇒ 横向溢出 34px（真机实测 `scrollWidth 190 > clientWidth 156`）。
           `min()` 让下限随容器缩，窄容器才真的退回「一列 + 不溢出」。 */
@@ -4521,7 +4456,7 @@ input.rl-path-auto {
     grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr));
     gap: 8px;
     align-content: start;
-    /* 🔴 `align-items: start` 必须写（2026-11-10 用户 m03661「怎么拉长空白了」第四次踩同款）：
+    /* 🔴 `align-items: start` 必须写：
        grid 默认 `align-items: stretch` ⇒ 同一行里的卡被拉齐到最高的那张。
        Whisper 有 6 枚胶囊（126px），Qwen3 只有 2 枚（66px），却一起被拉到 126px，
        Qwen3 卡底部挂 60px 空白 —— 真机截图一眼就看出来。
@@ -4535,16 +4470,14 @@ input.rl-path-auto {
     grid-column: 1 / -1;
     justify-self: start;
 }
-/* ── D 版（2026-11-10 用户 m03883 定版）：一家一卡 + 档位缩胶囊 ──
+/* ── 一家一卡 + 档位缩胶囊 ──
  *
- * 🔴 为什么要换：用户 m03661「语音转文字怎么拉长空白了出了这么多」。
- *    旧结构「一行一档」共 15 档 × 三行文字（名字+体积+准确度 / 标签 / 场景句），整组 732px。
- *    D 版把「标签 + 场景句」让给右侧配置面板与胶囊悬浮提示，卡片里只留「档位名 + 体积 + 状态」，
+ * 🔴 为什么要这样：旧结构「一行一档」共 15 档 × 三行文字（名字+体积+准确度 / 标签 / 场景句），整组 732px。
+ *    现在把「标签 + 场景句」让给右侧配置面板与胶囊悬浮提示，卡片里只留「档位名 + 体积 + 状态」，
  *    同样的 15 档压到 570px（原型页内探针实测，间隙 6px）。
  *
  * ⚠️ 网格必须自适应，**不能写死两列**：真机量测设置页 popout 只有 800px 宽，
  *    左栏收起配置时 436px、展开配置时只剩 **156px**（右面板固定 280 + gap 10）。
- *    原型图那是 800px 宽单元格里画的，照搬两列会挤成一团。
  *    `auto-fill + minmax(190px, 1fr)`：≥400px 自动两列，156px 时退回一列，两端都不破。 */
 .rl-asr-card {
     display: flex;
@@ -4670,7 +4603,7 @@ input.rl-path-auto {
 }
 
 /* ── 旧的「一行一档」样式（`.rl-asr-tier*` / `.rl-asr-group*`）──
- * 🔴 2026-11-10 D 版落地后**已无任何调用方**（`renderAsrEngineRows` 不再生成这两组类名）。
+ * 🔴 现在**已无任何调用方**（`renderAsrEngineRows` 不再生成这两组类名）。
  *    ⚠️ 但不删：`tests/detailsState.test.ts` 与若干历史断言仍按 `.rl-asr-more` 系列匹配，
  *    而 `.rl-asr-tier[hidden]` 一条在 `tests/asrPickLayout.test.ts` 里被当作
  *    「自绘带 display 的按钮必须补 [hidden]」的代表性守卫之一钉着。
@@ -4768,7 +4701,7 @@ input.rl-path-auto {
     font-size: 10px;
 }
 
-/* ── 折叠：默认只摊前 3 家 / 每组前 3 档（用户 m01935「感觉太多模型了只留三个」）── */
+/* ── 折叠：默认只摊前 3 家 / 每组前 3 档 ── */
 /*
  * ⚠️ `.rl-asr-tier` / `.rl-asr-group` 自己带 `display: flex` / `display: block`，
  *    会**压过**浏览器默认的 `[hidden] { display: none }`。
@@ -4816,7 +4749,7 @@ input.rl-path-auto {
     align-items: center;
 }
 /* 「展开其余 N 项（含 M 项缺失）」——折起来的项里有缺的时候按钮变警示色，
-   否则用户看见前 6 个绿钩就以为装齐了（用户 m03035 要的是「限定高度」，不是「藏问题」） */
+   否则用户看见前 6 个绿钩就以为装齐了（要的是「限定高度」，不是「藏问题」） */
 .rl-asr-more.has-miss {
     color: var(--text-warning, #c98a00);
 }
@@ -4825,16 +4758,15 @@ input.rl-path-auto {
     height: 12px;
 }
 
-/* 右：配置面板。收起时宽度归 0（⛔ 不用 display:none，那样过渡不生效）
-   🔴 用户 2026-11-10（m03035）两处裁定：
+/* 右：配置面板。收起时宽度归 0（⛔ 不用 display:none，那样过渡不生效）。
+   两条口径：
      ⑴ 「和选择模型行同框」⇒ 这里**不再**画自己的边框/圆角/底色，视觉上属于 `.rl-asr-pick2` 那个框；
      ⑵ 「不要滚动条」⇒ 去掉 `max-height` + `overflow-y:auto`。内容变长时不再出现内嵌滚动条，
-        整页跟着 Obsidian 设置页一起滚（用户随后选了「限定高度 + 折叠细节项」，高度由
-        `.rl-asr-confbody` 的折叠项控制，见下方 `.rl-asr-confmore`）。 */
+        整页跟着 Obsidian 设置页一起滚（高度由 `.rl-asr-confbody` 的折叠项控制，见下方 `.rl-asr-confmore`）。 */
 .rl-asr-confpane {
     position: relative;
     flex: 0 0 auto;
-    /* 🔴 D 版（2026-11-10 用户 m03883）改成纵向布局 ⇒ 面板**铺满整行**，不再固定 280px。
+    /* 纵向布局下面板**铺满整行**，不再固定 280px。
        ⚠️ 宽度用 `align-self: stretch` + `width: 100%` 双保险：
           父容器 `align-items: flex-start` 会让子项按内容宽收缩，不 stretch 就只剩半行宽。 */
     align-self: stretch;
@@ -4847,7 +4779,7 @@ input.rl-path-auto {
     background: transparent;
     transition: max-height 180ms ease, padding 180ms ease, opacity 180ms ease;
 }
-/* 🔴🔴 收起态必须**同时把 height 归 0**（2026-11-10 用户 m03661「怎么拉长空白了」的真凶）：
+/* 🔴🔴 收起态必须**同时把 height 归 0**：
    只写 `width: 0` 时，面板内的文字（`.rl-asr-confbody .setting-item-name` 带
    `overflow-wrap: anywhere`）会在 0 宽下**逐字换行**，于是内容高度炸到 4167px；
    而 `.rl-asr-pick2` 是 flex 行、`align-items` 默认 stretch ⇒ 整行高度按最高的子项算，
@@ -4858,7 +4790,7 @@ input.rl-path-auto {
 .rl-asr-pick2.is-conf-closed .rl-asr-confpane {
     /* 🔴 纵向布局后收起态用 `height: 0` + `max-height: 0` 双保险。
        ⚠️ 仍然必须有 `visibility: hidden` —— 内容在 0 高下照样参与命中测试与朗读。
-       ⛔ 别再退回只写宽度：上一版横向布局时只写 `width:0` 导致文字逐字换行、内容高炸到
+       ⛔ 别再退回只写宽度：只写 `width:0` 会导致文字逐字换行、内容高炸到
           4167px，真机量测 `{"p2H":4189,"catH":4167,"sum":554}`（子项合计 554，容器 4167）。 */
     height: 0;
     max-height: 0;
@@ -4933,16 +4865,15 @@ input.rl-path-auto {
     min-width: 0;
     width: auto;
 }
-/* 🔴 收放按钮：无文字、透明、无边框、只有一枚 chevron —— 用户 m00002 逐字要求
-   「`[收起 >]` 和 `[< 展开]` 无文字透明无边框小图标按钮应该固定在左右两侧的顶部边缘，
-     不要随着内容滚动而消失」。
+/* 🔴 收放按钮：无文字、透明、无边框、只有一枚 chevron，且必须固定在顶部边缘，
+   不随内容滚动而消失。
    为什么 `position: absolute` 而不是 `fixed`：`fixed` 相对**视口**，会随着设置页整体滚动
    飘到屏幕别处（甚至盖住别的设置项）。这里要的是「相对这一块不动」，而滚动的只是
    右面板内部（`overflow-y:auto` 在 `.rl-asr-confpane` 上），所以 absolute 恰好满足。 */
 /* 🔴 选择器必须写到 `(0,3,1)` 这个量级：Obsidian 核心有
    `.theme-light button:not(.clickable-icon)` 之类 `(0,2,1)` 的规则会给
    所有按钮铺 `--interactive-normal` 底色，单类名 `.rl-asr-confchev` 根本压不住 ——
-   真机实测底色变成 rgb(230,230,230) 的灰块，与用户「透明」要求直接冲突。
+   真机实测底色变成 rgb(230,230,230) 的灰块，与「透明」要求直接冲突。
    用 `.rl-asr-pick2 > button.rl-asr-confchev` 才稳定取胜，⛔ 别退回单类名。 */
 .rl-asr-pick2 > button.rl-asr-confchev {
     position: absolute;
@@ -5171,8 +5102,8 @@ input.rl-path-auto {
 .rl-key-result-ok { color: var(--color-green); }
 .rl-key-result-bad { color: var(--color-red); }
 
-/* ── ③-1「统一周期管理」：13 条凭据的生命周期状态面板（2026-11-12 用户 m00353） ──
-   设计约束（用户 ③-5 的总方针：视觉降噪、向 Obsidian 原生看齐、**禁用写死颜色与像素**）：
+/* ── 「统一周期管理」：13 条凭据的生命周期状态面板 ──
+   设计约束（总方针：视觉降噪、向 Obsidian 原生看齐、**禁用写死颜色与像素**）：
    ① 颜色一律走 Obsidian 原生变量 / 本仓 `--rl-t-*` 令牌，⛔ 不写 hex / rgb；
    ② 尺寸走 `--size-4-*` / `--font-ui-*`，仅有**列宽比例**用 `fr`（比例不是像素）；
    ③ 表头与行用同一套 grid 模板 —— 两处写两份必然在某次改动后错位（本仓栽过）。 */
@@ -5191,7 +5122,7 @@ input.rl-path-auto {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-/* 「一键检测」= **纯小图标**、无边框透明化（用户 `m05813` 逐字：「一键检测改成纯小图标（无边框透明化）」）。
+/* 「一键检测」= **纯小图标**、无边框透明化。
    它仍是真按钮：保留键盘可达与 hover 回执，只把**文字、边框、底色**都去掉 ——
    ⛔ 别连 hover 一起删，看不见回执等于看不见按钮。
    🔴 这类「长得不像按钮的按钮」必须同时带宿主的 `clickable-icon` 类（DOM 侧已加）：
@@ -5232,7 +5163,7 @@ input.rl-path-auto {
 @media (max-width: 420px) {
     /* 窄屏收列：只剩「名称 / 配置 / 失效」三列（「上次检测」那列先让位 —— 它是补充信息，
        且日期串最长，留着会把名称挤成省略号）。
-       ⚠️ 检测列已按用户 `m05813` 整列删除，所以这里的模板是三列不是四列。 */
+       ⚠️ 检测列已整列删除，所以这里的模板是三列不是四列。 */
     .rl-cred-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) !important; }
     .rl-cred-cell-when { display: none !important; }
 }
@@ -5241,7 +5172,7 @@ input.rl-path-auto {
 .rl-cred-cell-when { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 /* 名称 = 真按钮（要能点着跳转）；外观按链接处理，⛔ 不加下划线常驻（13 行全下划线太吵）。
    🔴 必须带 `clickable-icon`（DOM 侧已加），否则宿主 `button:not(.clickable-icon)`（0,1,1）
-      会把它压成一枚带灰框的普通按钮 —— 用户 `m05813` 说的「名称列项把边框去掉」就是这条。 */
+      会把它压成一枚带灰框的普通按钮 —— 「名称列项把边框去掉」就是这条。 */
 .rl-cred-name {
     max-width: 100%;
     padding: 0;
@@ -5259,13 +5190,12 @@ input.rl-path-auto {
 }
 .rl-cred-name:hover { color: var(--text-accent); background: transparent; }
 .rl-cred-name:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
-/* 族名（`rl-cred-family`）已按用户 `m05813` 删除：一列里「豆瓣 元数据源 / 网易云音乐 音乐平台」
+/* 族名（`rl-cred-family`）已删除：一列里「豆瓣 元数据源 / 网易云音乐 音乐平台」
    重复了表头已经说清的事，还把名称列宽挤掉一半。⛔ 别再建这个类。 */
-/* 续期提示（`rl-cred-hint`）已按用户 `m07505` 删除：他逐字要求「把上次检测的提示描述
-   『登录超时可续期』删除掉」。那一格现在只有「上次检测：YYYY-MM-DD HH:mm」这个可核查的事实。
+/* 续期提示（`rl-cred-hint`）已删除：那一格现在只有「上次检测：YYYY-MM-DD HH:mm」这个可核查的事实。
    ⛔ 别为「给某列补一句说明」把它加回来 —— 要说明就写进表头（那处只出现一次）。 */
 
-/* 未配置 ⇒ 整行变灰（用户逐字要求），但**名称仍可点**（正是要去填它）⇒ 只降不透明度，不 disabled。
+/* 未配置 ⇒ 整行变灰，但**名称仍可点**（正是要去填它）⇒ 只降不透明度，不 disabled。
    ⚠️ 选择器必须跟着组件走：格子类现在是 `.rl-ui-tbl-td`（`statusTable.cell()` 产出），
       还写 `.rl-cred-cell` 就会**静默失效** —— 不报错、不告警，只是整行不变灰。 */
 .rl-cred-row.is-unconfigured .rl-ui-tbl-td,
@@ -5273,7 +5203,7 @@ input.rl-path-auto {
 .rl-cred-row.is-unconfigured .rl-cred-name:hover { color: var(--text-accent); }
 /* 失效 ⇒ 那一列标红：只染「是否失效」这一格，⛔ 别整行标红（会让用户以为整条凭据废了） */
 .rl-cred-row.is-expired .rl-ui-tbl-td:nth-child(3) { color: var(--color-red); }
-/* 单条检测按钮（`rl-cred-testone`）与「检测」整列已按用户 `m05813` 删除：
+/* 单条检测按钮（`rl-cred-testone`）与「检测」整列已删除：
    13 行各挂一枚刷新图标是整张表最吵的一层，做的事和顶上那颗「一键检测」完全重复。
    ⛔ 别把这一列加回来 —— 真要单条重测，一键检测本来就是串行逐条刷新。 */
 /* 点名称跳转后的落点高亮：让用户一眼看见「跳到了这一行」（1.2s 后由 JS 摘掉） */
@@ -5309,12 +5239,10 @@ input.rl-path-auto {
     padding: 5px 8px;
 }
 .rl-secret-input:focus { outline: none; border-color: var(--interactive-accent); }
-/* 输入框下方的就地校验提示（占位说明也是后新增）。
+/* 输入框下方的就地校验提示。
    必须放在 .rl-secret 行**之外**：那一行是 flex（输入框 + 显示/隐藏），塞进去会把输入框挤窄。
    **高度恒定预留**（`min-height: 1.4em`），不用 `display: none` 收起：
-      那是同一类「提示一出就把下面的按钮顶走」的毛病 —— 上一轮刚为这条提过要求
-      （「立即同步按钮后出来的提示文字也不要更改同步和连接按钮的位置」），
-      输入框下方这条若随打字闪现，会把整个动作行（立即同步 / 测试连接）上下推。
+      否则提示一出/一没就会把下面的动作行（立即同步 / 测试连接）上下推。
       预留一行的代价 = 固定 1.4em 空白；收益 = 提示出现/消失时**零位移**。
    只在传了 `issue` 校验器的行才有这个元素（当前仅 TMDB 两格），其余源不受影响。 */
 .rl-secret-issue {
@@ -5326,9 +5254,9 @@ input.rl-path-auto {
     overflow-wrap: anywhere;
 }
 /* TMDB 行的「立即同步 / 测试连接」按钮与上方输入框的间距必须和其他行一致 ——
-   这条挂在**动作行之后**（`mountAfter`），于是「最后一格输入框 改为 按钮行」之间**只剩**
+   这条挂在**动作行之后**（`mountAfter`），于是「最后一格输入框 → 按钮行」之间**只剩**
    `.rl-key-body` 的 gap 6px + `.rl-key-actions` 的 margin-top 2px = 8px，
-   与 IGDB / Steam 等所有单格源**逐像素一致**（改前 TMDB 因为这里夹着一条 16.8px 的槽，是 32.8px）。
+   与 IGDB / Steam 等所有单格源**逐像素一致**（否则这里会夹一条 16.8px 的槽，变成 32.8px）。
    它是这一行的**最后一个子项**，所以提示出现只把「下面的内容」往下推，**按钮一个像素都不动**
       （按钮在它上方，这是两条要求能同时满足的唯一摆法）。
    空态 `display:none`（不是保留高度）：它下面没有东西要护，保留高度反而让 TMDB 行常年比别的行高一截。 */
@@ -5364,7 +5292,7 @@ input.rl-path-auto {
     margin: 2px 0;
 }
 .rl-srcchk-head { display: flex; align-items: baseline; gap: 10px; flex: 0 0 auto; }
-/* 🔴 2026-11-12（用户 m00353 ①-14）：组名前那枚类型图标。
+/* 🔴 组名前那枚类型图标。
    ⚠️ 三点口径：
    ⑴ **颜色不在这里**：色值由渲染端内联注入（真源 `data/types.TYPE_COLORS`）——
       CSS 里再写一份 hex 就造出第二个色源，本仓明令禁止。
@@ -5710,10 +5638,10 @@ input.rl-path-auto {
 .rl-nc-desc { font-size: var(--font-ui-medium); color: var(--text-muted); margin: 8px 0 16px; line-height: 1.6; text-align: center; }
 .rl-nc-ops { display: flex; justify-content: flex-end; gap: 8px; }
 
-/* ── m07854 ⑭「今天看什么」全屏抽卡（modals/WhatToWatchModal） ────────────────────
+/* ── 「今天看什么」全屏抽卡（modals/WhatToWatchModal） ────────────────────
    🔴 为什么没有遮罩层：本仓 Modal 由 Obsidian 挂在 body 下、自带遮罩，
-      自己再画一层 `position: fixed` 遮罩会被视图的 transform 祖先偏移（#610 同款坑，
-      见 `MediaList.svelte:2228` / `:4053` / `:5121` 三处注释）。⛔ 别加 `.rl-wtw-mask`。
+      自己再画一层 `position: fixed` 遮罩会被视图的 transform 祖先偏移
+      （见 `MediaList.svelte:2228` / `:4053` / `:5121` 三处注释）。⛔ 别加 `.rl-wtw-mask`。
    ⚠️ 全部用主题变量，⛔ 无 hex / rgb()（除封面兜底占位那层极淡的叠加）。 */
 .rl-wtw-modal { width: min(760px, 92vw); }
 .rl-wtw-body { display: flex; flex-direction: column; gap: 14px; }
@@ -5762,8 +5690,7 @@ input.rl-path-auto {
     line-height: 1.5;
 }
 .rl-wtw-rating { color: var(--text-accent); }
-/* ── 🔴 m12298 ③：卡面补充的两块信息（简介 / 个人状态与评价）──────────────────────
-   用户原话：「优化布局样式添加更多的信息（简介要有、个人状态与评价也要放上去）」。
+/* ── 卡面补充的两块信息（简介 / 个人状态与评价）──────────────────────
    两块是**同一种板块形态**（小标题 + 内容），所以共用 `.rl-wtw-block` 一套几何，
    只在语义类名上分开（`.rl-wtw-summary` / `.rl-wtw-feel`）—— ⛔ 别各写一套间距。
    ⚠️ 简介限高三行：卡面高度要留给「就它了」，长简介滚不了会把按钮顶出视口（Modal 整体
@@ -5804,15 +5731,14 @@ input.rl-path-auto {
 }
 .rl-wtw-chip.rl-wtw-rating { color: var(--text-accent); }
 .rl-wtw-notes { color: var(--text-muted); }
-/* ── 🔴 m12298 ③：封面**右下角**那枚入口 ─────────────────────────────────────
-   用户原话：「同时封面右下角加个播放按钮如有（如没有给加个未关联封面右下角标）」。
+/* ── 封面**右下角**那枚入口 ─────────────────────────────────────
    两种形态互斥（判据走 `actionLabel.hasActionEntry`）：
      · 有入口 ⇒ `.rl-wtw-cover-play` 圆钮，可点，点了直接播；
      · 没入口 ⇒ `.rl-wtw-cover-none` 不可点的角标（⛔ 别做成灰按钮 —— 灰按钮会被当成「点了没反应」）。
    几何照抄 `MediaList.svelte` 封面角标那套（6px 内距 / 黑底胶囊 / 11.5px）——
    ⚠️ 那是**压在图片上**的角标，所以颜色用 rgba 黑底白字（主题变量在图片上会看不清），
       ⛔ 别改成 `var(--background-primary)`。
-   ⚠️ `z-index` 低于列表卡片的 hover 遮罩（这里没有遮罩，给 2 只是保证压在 img 之上）。 */
+   ⚠️ `z-index` 只需压在 img 之上（这里没有列表卡片的 hover 遮罩）。 */
 .rl-wtw-cover-play,
 .rl-wtw-cover-none {
     position: absolute; right: 6px; bottom: 6px; z-index: 2;
@@ -5840,13 +5766,13 @@ input.rl-path-auto {
     cursor: default;
     user-select: none;
 }
-/* 🔴 m12298 ③：「换一个 / 就它了」整组贴**右下角**（用户点名）。
-   原来「改属性」用 `margin-left: auto` 占住右下，删掉它之后必须由整组接管 ——
-   ⛔ 别只写 `justify-content: flex-end` 就完事：`.rl-wtw-ops` 是 `flex-wrap: wrap`
-   的独立块，宽度默认撑满（`display: flex` 块级），`flex-end` 已经够；这里显式写
-   `justify-content` 是为了让「窄到换行时」也保持右对齐（否则换行后第二行会回左）。 */
+/* 「换一个 / 就它了」整组贴**右下角**。
+   「改属性」那枚按钮删除后由整组接管右下 ——
+   ⛔ 别以为只写 `justify-content: flex-end` 就够：`.rl-wtw-ops` 是 `flex-wrap: wrap`
+   的独立块，宽度默认撑满（`display: flex` 块级）；这里显式写 `justify-content`
+   是为了让「窄到换行时」也保持右对齐（否则换行后第二行会回左）。 */
 .rl-wtw-ops { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-/* 「就它了」是主按钮（用户点名：「『就它了』为主按钮」）—— 用主题 accent 实心，与「换一个」拉开层级。
+/* 「就它了」是主按钮 —— 用主题 accent 实心，与「换一个」拉开层级。
    ⚠️ 需要 `!important` 压过宿主 `.modal button` 的重置（与 `.rl-nc-danger` 同一套处理）。 */
 .rl-wtw-modal .rl-wtw-take.mod-cta {
     background: var(--interactive-accent) !important;
@@ -5856,27 +5782,27 @@ input.rl-path-auto {
     order: 2;
 }
 .rl-wtw-modal .rl-wtw-again { order: 1; }
-/* 🔴 m12298 ③：`.rl-wtw-edit`（「改属性」按钮）那条 `order: 3; margin-left: auto` **已删除** ——
-   用户点名「把右下角的改属性按钮删除」，按钮与样式一起退场（⛔ 别只删模板留死样式：
+/* 🔴 `.rl-wtw-edit`（「改属性」按钮）那条 `order: 3; margin-left: auto` **已删除** ——
+   按钮与样式一起退场（⛔ 别只删模板留死样式：
    本仓有「Unused CSS selector 会顶破 89 warnings 基线」那条门禁）。 */
 .rl-wtw-empty { font-size: var(--font-ui-medium); color: var(--text-normal); line-height: 1.6; }
 .rl-wtw-empty-hint { font-size: var(--font-ui-smaller); color: var(--text-muted); line-height: 1.6; }
-/* 窄窗（本轮新增的最小响应式）：两张牌并排会挤成窄条 ⇒ 改上下堆叠、封面收窄居中。
-   🔴 m12298 ③：堆叠后封面居中收窄，封面右下角那枚入口**跟着封面走**（它定位在 `.rl-wtw-cover`
-   内，封面一收窄就自动落到新封面的右下角）；这里只需保证窄窗下播放钮别把封面压太满
+/* 窄窗：两张牌并排会挤成窄条 ⇒ 改上下堆叠、封面收窄居中。
+   堆叠后封面右下角那枚入口**跟着封面走**（它定位在 `.rl-wtw-cover` 内，封面一收窄就自动
+   落到新封面的右下角）；这里只需保证窄窗下播放钮别把封面压太满
    —— 160px 宽的封面上 32px 圆钮仍占 20%，视觉合适，⛔ 别再缩小（小于 28px 点不准）。 */
 @media (max-width: 560px) {
     .rl-wtw-card { grid-template-columns: minmax(0, 1fr); gap: 12px; }
     .rl-wtw-cover { max-width: 160px; margin: 0 auto; }
-    /* 窄窗下按钮组仍是右下角，但两枚按钮可能换行 —— 换行后第二行也要贴右（用户点名「右下角」） */
+    /* 窄窗下按钮组仍是右下角，但两枚按钮可能换行 —— 换行后第二行也要贴右 */
     .rl-wtw-ops { justify-content: flex-end; }
     /* 简介在窄窗下多给一行：卡面变高，三行会把「个人状态与评价」挤到视口外 */
     .rl-wtw-summary .rl-wtw-block-text { -webkit-line-clamp: 4; }
 }
 
-/* ── 截图批注弹窗（用户 m07854 ⑰：右键截图按钮 = 画圈 / 箭头 / 马赛克）────────────
+/* ── 截图批注弹窗（右键截图按钮 = 画圈 / 箭头 / 马赛克）────────────
    为什么是弹窗而不是画在播放器上：本仓 `position: fixed` 会被视图的 transform 祖先整体偏移
-   （`src/views/components/MediaList.svelte:2228` 等三处注释，#610）。宿主 Modal 挂在 body 下。
+   （`src/views/components/MediaList.svelte:2228` 等三处注释）。宿主 Modal 挂在 body 下。
    ⚠️ 画布本身**不做** CSS transform / scale —— 形状坐标已按「显示尺寸 → 画布内部分辨率」换算好了，
       再叠一层 transform 会让指针命中与绘制错位。预览大小靠 `width/height` 属性 + style 尺寸。 */
 .rl-anno-modal { width: min(940px, 94vw); }
@@ -5929,9 +5855,8 @@ input.rl-path-auto {
     min-height: 1.5em;
 }
 .rl-anno-tools { display: flex; gap: var(--size-4-2, 8px); margin-top: var(--size-4-2, 8px); flex-wrap: wrap; }
-/* 🔴 2026-11-14 用户指令：「不要标注文字，直接图标显示横排就行了」——
-   工具按钮**只留图标**（文字退到 `data-tip` / `aria-label`）。
-   图标走 setIcon 注入 svg，尺寸跟着字号走，⛔ 不写死 px——主题改字号时图标要一并缩放。
+/* 工具按钮**只留图标**（文字退到 `data-tip` / `aria-label`）。
+   图标走 setIcon 注入 svg，尺寸跟着字号走，⛔ 不写死 px —— 主题改字号时图标要一并缩放。
    ⚠️ 已删 `.rl-anno-tool-label`（模板里不再有那个 span；留 CSS 会顶破 Unused CSS 门禁）。 */
 .rl-anno-modal .rl-anno-tool {
     display: inline-flex;
@@ -6100,15 +6025,15 @@ input.rl-path-auto {
 }
 .rl-wshelf-modal h2 { font-size: 15px; margin: 0 0 8px; }
 .rl-wshelf-hint { font-size: var(--font-ui-smaller); color: var(--text-muted); line-height: 1.7; margin-bottom: 10px; }
-/* 🔴 2026-11-11 用户 m05717 ②：「这三个词用加粗或者主题色显示，后面跟一个全角冒号」。
-   三段（同步数据 / 冲突处理 / 前置条件）各占一行，行间留 3px —— 不留太多，
+/* 三段标题（同步数据 / 冲突处理 / 前置条件）用加粗或主题色显示，后面跟一个全角冒号。
+   三段各占一行，行间留 3px —— 不留太多，
    因为这段整体是「说明」不是「正文」，占太高会把下面的清单推下去。 */
 .rl-wshelf-hint-line { display: block; }
 .rl-wshelf-hint-line + .rl-wshelf-hint-line { margin-top: 3px; }
 /* 标签同时给加粗和主题色：加粗给语义（读屏会念强调），主题色给视觉。
    ⚠️ 别只留颜色 —— 深色主题下 `--text-accent` 与正文对比度接近，纯靠颜色分不出来。 */
 .rl-wshelf-hint-label { font-weight: 700; color: var(--text-accent); }
-/* 正文里的行内强调（用户原文自带的「**不影响**」这类）也要真的加粗 */
+/* 正文里的行内强调（原文自带的「**不影响**」这类）也要真的加粗 */
 .rl-wshelf-hint strong { font-weight: 700; color: var(--text-normal); }
 .rl-wshelf-status { min-height: 18px; font-size: var(--font-ui-smaller); color: var(--interactive-accent); margin: 6px 0; }
 .rl-wshelf-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
@@ -6150,7 +6075,7 @@ input.rl-path-auto {
     background: var(--interactive-accent); border-color: var(--interactive-accent);
     color: var(--text-on-accent); font-weight: 600;
 }
-/* 🔴 2026-11-10 第 17 轮：`.rl-music-sync-actions` 随「同步全部平台」那颗按钮一起删除 ——
+/* 🔴 `.rl-music-sync-actions` 随「同步全部平台」那颗按钮一起删除 ——
    组头已不再有动作行，同步入口只留每行那颗「立即同步」（与另外五个账号同步行同款 `.mod-cta.rl-sync-btn`）。
    ⛔ 别再为组头同步条新增样式：同一动作两处入口，用户已经点错过一次。 */
 /* ── 统一按钮体系（rl-btn 唯一基准，紧凑 Obsidian 尺寸）：rl-ex-btn/rl-day-btn 等历史别名并入；danger 危险操作统一红边红字 改为 hover 红底白字 ── */
@@ -6234,10 +6159,10 @@ input.rl-path-auto {
     flex: 1 1 auto;
     min-height: 0;
 }
-/* #655 与上一段的**冲突提醒**（改 `.rl-pc-*` 时必读）：
+/* 与上一段的**冲突提醒**（改 `.rl-pc-*` 时必读）：
    `> * { min-height: 0 }` 让**所有**兄弟都可压缩 —— 列表吃饱时会把 `.rl-pc-hint` / `.rl-pc-foot`
-   一起压扁（= 原来的「footer 被截断」）。解药在 `.rl-pc-foot` / `.rl-pc-hint` 上写了
-   `flex: 0 0 auto`（见上方 #655 那段注释），别把 `flex: 0 0 auto` 当成"多余的一条"删掉。 */
+   一起压扁（= 「footer 被截断」）。解药在 `.rl-pc-foot` / `.rl-pc-hint` 上写了
+   `flex: 0 0 auto`（见上方那段注释），别把 `flex: 0 0 auto` 当成"多余的一条"删掉。 */
 
 /* ── 观看来源选择弹窗（LinkPickerModal） ── */
 .rl-linkpick-title { font-weight: 600; color: var(--text-normal); }
@@ -6315,7 +6240,7 @@ input.rl-path-auto {
 .rl-qa { font-family: var(--font-text); }
 .rl-qa-title { font-weight: 600; color: var(--text-normal); }
 .rl-qa-lbl { display: block; font-size: var(--font-ui-smaller); color: var(--text-muted); margin: 10px 0 4px; }
-/* #454：标签与小图标按钮**同行**（「本地文件路径」+ 下载 / 检索）—— 与编辑表单 `.rl-lbl-row` 同款口径
+/* 标签与小图标按钮**同行**（「本地文件路径」+ 下载 / 检索）—— 与编辑表单 `.rl-lbl-row` 同款口径
    （flex 横排 + 标签自身下边距清零；行容器接管原来那条 `margin: 10px 0 4px`）。
    表单那份是 Svelte scoped，弹窗走 DOM API 拿不到哈希类名，所以这里必须有一份全局的（同 `.rl-ai-btn` 的理由）。
    别把按钮塞回 `.rl-qa-row`（输入框那行）—— 那正是要改掉的旧位置。 */
@@ -6355,7 +6280,7 @@ input.rl-path-auto {
 .rl-ai-btn:hover { color: var(--interactive-accent); background: var(--background-modifier-hover); }
 .rl-ai-btn:disabled { opacity: .45; cursor: not-allowed; }
 .rl-ai-btn:disabled:hover { color: var(--text-muted); background: transparent; }
-/* 🔴 m03052 ③：标题**标签行**里那枚 ✨ 的垂直对齐。
+/* 🔴 标题**标签行**里那枚 ✨ 的垂直对齐。
    `.rl-lbl-row { align-items: center }` 居中的是**外边距盒**，而里面的 `.rl-lbl` 仍带
    `margin: 9px 0 4px`（块间距真源）的**上**外边距；✨ 是 18px 高、label 文字行只有 15px
    ⇒ 按钮相对文字中心**上抬 4.5px**（无头 Chrome 实测：label.cy=76.9 / btn.cy=72.4；
@@ -6372,13 +6297,12 @@ input.rl-path-auto {
    ⛔ 也**不许**把这条挪回 `EntryForm.svelte` 的 scoped 样式：Svelte 会给「被新增子选择器命中的
      元素」的同组既有规则**再叠一层 `.svelte-xxxx`** ⇒ 产物里那些规则从双 hash 变三段
      （实测 `.rl-prefill-old.svelte-x.svelte-x.svelte-x`），而 `assert-symbols.cjs` 里十余条
-     旧断言钉的是双 hash 形态 ⇒ 当场 12 条红。`.rl-ai-btn` 自 #406 起就是全局类，落这里才对。 */
+     旧断言钉的是双 hash 形态 ⇒ 当场 12 条红。`.rl-ai-btn` 一直是全局类，落这里才对。 */
 .rl-title-col > .rl-lbl-row .rl-ai-btn { position: relative; top: 4.5px; }
-/* 🔴 m06404（用户：「这还是来源评分占中间啊不是绝对定位放在最右边啊」）：
-   标题行里的**只读评分簇**（`.rl-ro-meta`，编辑已有条目时出现）整体脱离文档流，贴到**整个字段栅格**的最右端。
+/* 🔴 标题行里的**只读评分簇**（`.rl-ro-meta`，编辑已有条目时出现）整体脱离文档流，
+   贴到**整个字段栅格**的最右端。
 
-   🔴 m03052：原规则同时包含 **AI 预填按钮**（`.rl-title-row > .rl-ai-btn`），已**撤掉那个选择器** ——
-   用户裁定「给所有类型编辑属性表单都加AI预填图标按钮，位置放在书名标题的右旁边不是框旁边」⇒
+   🔴 原规则同时包含 **AI 预填按钮**（`.rl-title-row > .rl-ai-btn`），已**撤掉那个选择器** ——
    那枚 ✨ 已搬进标题**标签行**（`.rl-lbl-row`，与「总结摘要 / 重新解析」同槽），不再在标题输入行里，
    自然也不需要「贴最右」的绝对定位。⛔ 别把这个选择器加回来：标题行里已没有 `.rl-ai-btn` 子节点，
    留着只会是一条永不命中的死规则（而且会误导后来人以为按钮还在那儿）。
@@ -6386,12 +6310,12 @@ input.rl-path-auto {
    `assert-symbols.cjs:6605` 与 `:6754` 钉死产物里 `"rl-btn rl-btn-src"` **恰好 1 处** ——
    所以这组规则**只能放在全局**：一旦 `EntryForm.svelte` 的 scoped 样式里出现 `.rl-btn-src`
    选择器，Svelte 会给那枚按钮追加 `svelte-xxxx` 哈希类，字面串就变成
-   `"rl-btn rl-btn-src svelte-1pz2g1l"` ⇒ 计数归零、门禁当场红（本轮实测踩到）。
-   这与上面 `.rl-ai-btn`「#406 起全局化」是同一条理由，⛔ 别为了就近管理挪回组件。
+   `"rl-btn rl-btn-src svelte-1pz2g1l"` ⇒ 计数归零、门禁当场红。
+   这与上面 `.rl-ai-btn`「全局化」是同一条理由，⛔ 别为了就近管理挪回组件。
 
    定位锚点 = `.rl-fields-col` 的 `position: relative`（在 `EntryForm.svelte` 里）。
    ⛔ 别给 `.rl-title-row` 加 `position: relative` —— 那样锚点会退化成标题那一格
-      （271px 宽），`right: 0` 只贴到标题框右边缘，正是用户说的「占中间」。
+      （271px 宽），`right: 0` 只贴到标题框右边缘，正是「占中间」那个毛病。
 
    `top/left/bottom` 一律 `auto`：此时垂直位置取**静态位置**，而 `.rl-title-row` 是
    `display: flex; align-items: center` ⇒ 绝对定位子元素的静态位置按 `align-items` 居中，
@@ -6530,7 +6454,7 @@ input.rl-path-auto {
    否则两个入口会一个 6px 一个 8px） */
 .rl-bili-row-bar { display: flex; margin-bottom: 6px; }
 
-/* #501②：原来的 `.rl-bili-act`（带文字「B站」那枚）已撤 —— 入口收成 `.rl-ai-btn` 纯图标、
+/* `.rl-bili-act`（带文字「B站」那枚）已撤 —— 入口收成 `.rl-ai-btn` 纯图标、
    挪到「网络地址」标签行，所以这条样式**没有再挂着的元素**（别留着当孤儿规则）。 */
 .rl-bili-list {
     display: flex; flex-direction: column; gap: 2px;
@@ -6698,9 +6622,9 @@ input.rl-path-auto {
 /* 中间列：标题在上、Tags 在下（纵向两行）。
    `min-width: 0` 必须留 —— 否则 `ellipsis` 不生效（flex 子项的默认 min-width 是内容宽） */
 .rl-bili-batch-hit { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1 1 auto; }
-/* 标题：14px / 600 / **单行溢出隐藏**（标题字号 14px 加粗「标题单行溢出隐藏」）。
-   这**翻掉了 #520 的「完整换行」**：当时要的是「不展示链接、把标题展示全」，
-      现在明确要 `溢出隐藏`（三列栅格下换行会把行高撑得参差）。别按旧注释改回 `white-space: normal`。 */
+/* 标题：14px / 600 / **单行溢出隐藏**。
+   这**不许**改回「完整换行」：三列栅格下换行会把行高撑得参差。
+   ⛔ 别按旧注释改回 `white-space: normal`。 */
 .rl-bili-batch-name {
     font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text-normal);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -6725,7 +6649,7 @@ input.rl-path-auto {
 }
 /* 集号是行标，所以权重略高（600 + 等宽数字），但底色仍是中性浅色 */
 .rl-bili-batch-ep { font-weight: 600; }
-/* 分P 胶囊退化成普通 Tag（原来是 accent 底色，与本版「去灰底/去重色」相冲） */
+/* 分P 胶囊退化成普通 Tag（不用 accent 底色，与本版「去灰底/去重色」相冲） */
 .rl-bili-batch-parts { font-family: var(--font-monospace); }
 /* 告示 Tag：浅红底深红字（告示要能被一眼分出，但不该像错误日志） */
 .rl-bili-batch-warn {
@@ -6941,7 +6865,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-pc-desc { font-size: var(--font-ui-medium); color: var(--text-muted); margin: 8px 0 12px; line-height: 1.6; }
 .rl-pc-empty { font-size: var(--font-ui-medium); color: var(--text-faint); padding: 20px 0; text-align: center; }
 
-/* #655 病灶三「滚动条贴边」：右侧 16px = 滚动条自己的呼吸位（原来只有 1px 描边，
+/* 病灶「滚动条贴边」：右侧 16px = 滚动条自己的呼吸位（只有 1px 描边时
    滚动条紧贴文字，长路径与滚动条糊在一起）；`scrollbar-gutter: stable` 让滚动条槽常驻，
    开关列表（条目数变化导致有无滚动条）时行宽不跳。左侧 8px 比右侧窄，是给行内已有内距让位。 */
 .rl-pc-list {
@@ -6953,11 +6877,11 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     margin-bottom: 14px;
 }
 .rl-pc-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--background-modifier-border); }
-/* 批量重命名弹窗（m07854 ⑱）：列表行是「条目名 + 逐文件 旧→新」，跳过项单独一列
+/* 批量重命名弹窗：列表行是「条目名 + 逐文件 旧→新」，跳过项单独一列
    ⚠️ 用的是 `rl-rename-*` 而不是 `rl-pc-*`：两者长得像但语义不同（这边每条是**成对改名**，
    不是可勾选删除的孤儿文件），⛔ 别为了省样式把两套类名合并 —— 合并后任一处调间距都会误伤另一处。 */
-/* 关联媒体重命名弹窗（2026-11-13 改版）：列表行是「条目名 + 逐文件 旧→新」，
-   底部是七类规则模板说明。⛔ 不再有「跳过项」区域 —— 用户口径「只显示关联的文件」。 */
+/* 关联媒体重命名弹窗：列表行是「条目名 + 逐文件 旧→新」，
+   底部是七类规则模板说明。⛔ 不再有「跳过项」区域 —— 只显示关联的文件。 */
 .rl-rename-desc { font-size: var(--font-ui-small); color: var(--text-muted); margin-bottom: 10px; line-height: 1.6; }
 .rl-rename-list {
     max-height: 260px; overflow-y: auto;
@@ -6981,9 +6905,9 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     word-break: break-all;
 }
 .rl-rename-empty { font-size: var(--font-ui-small); color: var(--text-muted); margin-bottom: 10px; }
-/* 🔴🔴 2026-11-14 用户指令：「这两个主次按钮都被截断了」。
+/* 🔴🔴 主次按钮会被截断，必须两层保险。
    机制：弹窗内容 = 标题 + 说明 + 列表(max 320) + 底排按钮，总高超过 Modal 视口时，底排正好被切掉。
-   修法两层保险：⑴ 列表自己滚、把高度上限压到 260（给底排留出至少一行按钮的空间）；
+   修法：⑴ 列表自己滚、把高度上限压到 260（给底排留出至少一行按钮的空间）；
    ⑵ 底排 `position: sticky; bottom: 0` + 实心底色，即使外层再往下滚也钉在可视底边。
    ⛔ 别把 ops 放进任何 `overflow: auto` 容器（那会重新变成「滚到最底才看得见」）。 */
 .rl-rename-ops {
@@ -7054,7 +6978,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-about-desc { color: var(--text-muted); font-size: var(--font-ui-small); margin-top: 2px; }
 /* #490：作者 · 许可证那一行（再淡一档，与简介拉开层级） */
 .rl-about-meta { color: var(--text-faint); font-size: var(--font-ui-smaller); margin-top: 2px; display: flex; align-items: center; gap: 4px; }
-/* 🔴 2026-11-12（用户 m00353 ①-11）：作者行前面那枚 B 站 logo，点它跳作者主页。
+/* 作者行前面那枚 B 站 logo，点它跳作者主页。
    ⚠️ 四点口径：
    ⑴ **颜色不写死、也不抢镜**：默认继承 `.rl-about-meta` 的 `--text-faint`（与「作者 · 许可证」同级），
       hover 才升到 `--text-accent` —— 这一行的作用只是「认识作者」，不该跟页脚的「爱发电」抢注意力。
@@ -7079,13 +7003,13 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-about-bili .rl-ai-icon svg { width: var(--icon-xs); height: var(--icon-xs); display: block; }
 .rl-about-buttons { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
 
-/* ══ 新手引导（GuideModal）已整段删除 ═══════════════════════════════════════════════════
-   #655（需求 ⑥）：`src/modals/GuideModal.ts` 被删除，所以这套以 `rl-` + `guide-` 开头的样式
-   （原 18 条规则）成了死代码，**已 grep 确认 0 引用后整段删除**（唯一使用点 GuideModal.ts:143-191 随文件一起没了）。
-   所以引导的语义位置改由「关于」页的**「未来规划」九宫格**承载（`.rl-rm-*`，见下方同名前缀段）。
-   这留下的是**有意为之的墓碑**，不是漏删：留着这句是为了让后来者知道
+/* ══ 新手引导弹窗已整段删除 ═══════════════════════════════════════════════
+   对应的 modal 文件整体删除后，以 `rl-` 加上那个单词开头的样式（原 18 条规则）成了死代码，
+   **已 grep 确认 0 引用后整段删除**（唯一使用点随文件一起没了）。
+   引导的语义位置改由「关于」页的**「未来规划」九宫格**承载（`.rl-rm-*`，见下方同名前缀段）。
+   这留下的是**有意为之的墓碑**，不是漏删：留这段是为了让后来者知道
       「这里曾经有一套引导样式、是主动删的」，而不是在 git 历史里翻半天也找不到线索。
-   这里只描述、不写死那个类名前缀 —— `assert-symbols.cjs` 有一条 `absent('css', '引导卡样式残留')`
+   这里只描述、不写死那个类名前缀 —— `assert-symbols.cjs` 有一条 `absent('css', …)`
       守卫（判据就是那个前缀串），写进注释会把它判红。
    紧邻下方的 `.rl-tbl-colmenu` 与引导**无关**（表格列菜单），别连带当成遗留物删掉。 */
 /* 列表工具栏那枚「批量管理」按钮处于开启态时的样子（与「列」按钮同款，只多一个主题色提示） */
@@ -7114,7 +7038,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════
-   #655 本轮新增的四个弹窗 / 一格九宫格（类名由**弹窗包**与**设置页包**产出，此处只出样式）
+   四个弹窗 / 一格九宫格（类名由**弹窗包**与**设置页包**产出，此处只出样式）
 
    共同骨架（四弹窗一致，细则不再逐段重复）：
      ① 根类 `.<prefix>-modal` 挂在 `modalEl` 上 —— 与既有 `.rl-dl-modal-shell`、
@@ -7124,7 +7048,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
         而是三条老病灶（标题重叠 / footer 截断 / 滚动条贴边）的**共同解药**：
         只有变成 flex 列，「列表吃满剩余高度、头尾各按内容高」这件事才成立。
      ③ 头部两件（标题 + 副标题）= **两个块级兄弟 + 显式 `margin: 0`**。
-        重叠从来不是"离得不够远"，而是两段文字挤在同一个可压缩的盒子里（见 `.rl-pc` 段 #655 注释）。
+        重叠从来不是"离得不够远"，而是两段文字挤在同一个可压缩的盒子里（见 `.rl-pc` 段注释）。
      ④ 列表区 `flex:1 1 auto` + `max-height` + **`padding-right: 16px`**：
         右侧 16px 是滚动条自己的呼吸位（「滚动条贴边」就是这么治的）；
         `scrollbar-gutter: stable` 让滚动条槽常驻，所以条目数变化导致有无滚动条时行宽不跳。
@@ -7171,9 +7095,9 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
       本仓与核心 app.css 都没有裸 `summary` 规则会干扰它。 */
 .rl-am-list > * { flex: 0 0 auto; }
 
-/* 同时要求「增大弹窗整体高度以展示更多内容」：真正封顶的是宿主
-   `.modal { max-height: var(--dialog-max-height) }`（85vh），列表自身的 max-height 在本弹窗
-   里已被 `.rl-scroll-inside` 改成 `none`，所以调列表没用 —— 只能抬**这一个**弹窗的天花板。
+/* 真正封顶的是宿主 `.modal { max-height: var(--dialog-max-height) }`（85vh），
+   列表自身的 max-height 在本弹窗里已被 `.rl-scroll-inside` 改成 `none`，所以调列表没用
+   —— 只能抬**这一个**弹窗的天花板。
    不许改全局 `.modal`（会连带影响确认框/选择器）。 */
 .modal.rl-am-modal { max-height: 92vh; }
 
@@ -7394,9 +7318,9 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     overflow-wrap: anywhere;
 }
 
-/* ── 失效链接弹窗 · 2026-11-17 新增（用户报障 ⑥-A：「按一下后误退出仍显示检测中、最终无结果」）──
-   根因是全库扫描没有超时也没有中途出口，用户只能按 ✕ 关窗、关了结果就全丢。
-   所以补了三样「让状态可见」的东西：进度条、终态横幅、停止按钮。
+/* ── 失效链接弹窗的渐进态三件套 ──
+   病根是全库扫描既没有超时也没有中途出口：用户只能按 ✕ 关窗，一关结果就全丢。
+   所以补三样「让状态可见」的东西：进度条、终态横幅、停止按钮。
    ⚠️ 三者都是**只在渐进态**出现（快照态没有扫描过程，画进度条只会骗人）。 */
 
 /* 进度条：文字 + 细轨。只在 `scanning && total > 0` 时由 `syncProgress()` 建出来，
@@ -7428,7 +7352,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 
 /* 终态横幅：完成 / 已停止 两态用色区分，空态不画。
    为什么必须要有：跑完时弹窗外观与跑之前**几乎一样**（只有副标题一行小字变了），
-   用户会当成「没跑完」—— 这正是本次报障的观感来源。 */
+   用户会当成「没跑完」—— 这正是「误以为仍显示检测中、最终无结果」那个观感的来源。 */
 .rl-lc-banner { display: none; }
 .rl-lc-banner.is-done,
 .rl-lc-banner.is-stopped { display: block; }
@@ -7451,7 +7375,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     border-left: 3px solid var(--color-orange);
 }
 
-/* ── 从笔记导入 · 引导弹窗（2026-11-17 用户报障 ⑥-B：「导入按钮要弹引导弹窗说明笔记需满足什么条件」）──
+/* ── 从笔记导入 · 引导弹窗 ──
    旧实现点「导入」直接扫描，扫不到只丢一句 Notice ⇒ 用户既不知扫哪个目录、也不知笔记要满足什么。
    这里只负责**把条件说清楚**；判据文案由 `noteImportRequirements()` 派生，⛔ 不在 CSS 侧表达语义。 */
 
@@ -7784,8 +7708,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
    只 scoped 到 `.rl-notes-modal`：不许改全局 `.modal` / `.modal-content`（会影响全仓所有弹窗）。 */
 .modal.rl-notes-modal { width: min(720px, 92vw); }
 .rl-notes-modal .modal-content { padding: 20px 24px 16px; }
-/* ── 一键展开 / 收起（用户 m04478：「加个一键展开和收起的按钮（透明化无边框）」；
-       用户 m05024 追加：「改成**小图标按钮**放在更新日志**标题的旁边**」）──
+/* ── 一键展开 / 收起（小图标按钮，放在更新日志**标题的旁边**）──
    位置：`.modal-title` 里紧挨标题文字（由 `ReleaseNotesModal.onOpen` 直接建在 `titleEl` 上），
    所以这里只管「一枚图标按钮」本身，不再需要外层 `.rl-notes-actions` 容器（已随改造删除 ——
    ⛔ 别把通栏 flex 那套加回来：那会让按钮跑到标题行之外的第二行）。
@@ -7839,7 +7762,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-notes-body blockquote { margin: 0 0 0.8em; padding-left: 10px; border-left: 2px solid var(--background-modifier-border); color: var(--text-muted); }
 .rl-notes-body code { font-size: var(--font-ui-smaller); }
 .rl-notes-body table { font-size: var(--font-ui-smaller); }
-/* ── 按版本折叠（本轮默认只展开最新版，旧版本点标题或右侧 v 箭头才展开） ──
+/* ── 按版本折叠（默认只展开最新版，旧版本点标题或右侧 v 箭头才展开） ──
    用原生 `<details>/<summary>`：焦点、空格/回车展开、读屏「已折叠」全由浏览器提供，
    别为省两行 CSS 换成自绘状态机（`modals/ReleaseNotesModal` 的注释里有同一条口径）。
    箭头用 `▾` 字符 + `rotate` 而不是两条 SVG：这里是纯装饰，`aria-hidden="true"` 已挡住读屏。 */
@@ -8047,9 +7970,9 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 }
 /* 勾选标记 mask（自绘 checkbox 用；口径同 Obsidian 的 达标，黑色描边 改为 alpha 通道即图形） */
 .rl-reader {
-    /* 勾形：图形（含 round 端帽）在 24×24 视区里**几何精确居中**，否则勾会在框内偏左上（ 反馈「勾在框中不居中」）。
-       算式：本 points「20 6.5 9 17.5 4 12.5」+ stroke 3.6，含 round 端帽的包络 x 2.2..21.8（中心 12 达标）/ y 4.7..19.3（中心 12 达标），与 24×24 视区中心重合。
-       改坐标或 stroke-width 后必须重算包络中心，别凭肉眼定。 */
+    /* 勾形：图形（含 round 端帽）在 24×24 视区里**几何精确居中**，否则勾会在框内偏左上。
+        算式：本 points「20 6.5 9 17.5 4 12.5」+ stroke 3.6，含 round 端帽的包络 x 2.2..21.8（中心 12 达标）/ y 4.7..19.3（中心 12 达标），与 24×24 视区中心重合。
+        改坐标或 stroke-width 后必须重算包络中心，别凭肉眼定。 */
     --rl-check-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6.5 9 17.5 4 12.5'/%3E%3C/svg%3E");
     /* 侧栏水平栅格（#345 报「标题 / 指示条 / 正文 / 右侧操作区没对齐」）：
        安全边距 8px；类型指示条占 8–13px 槽位，所以**所有文本线统一到左 16 / 右 16**。
@@ -8061,8 +7984,8 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 /* 阅读器（TXT / EPUB / PDF）改为工作区标签页视图：
    Modal 时代的软件式沉浸骨架（去标题栏/圆角/阴影 + 遮罩透明）随宿主一并撤除 —— 视图本就没有弹窗骨架，
    只剩两件事：隐藏该视图页头、内容区去内距并撑满。
-   曾改过视图又因「空白」回退弹窗（进度表 #147~#150）：当时的两个坑（state 传大对象、
-   容器 0 高时 mount）现已在 views/ReaderViews.ts 里各设一道防线，勿把 options 改回经 state 传递。 */
+   ⚠️ 曾改过视图又因「空白」回退弹窗：当年两个坑（state 传大对象、容器 0 高时 mount）
+   现已在 `views/ReaderViews.ts` 里各设一道防线，勿把 options 改回经 state 传递。 */
 .rl-reader-view .view-header { display: none; }
 .view-content.rl-reader {
     padding: 0;
@@ -8359,7 +8282,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-reader-toc.rl-toc-resizing { transition: none !important; }
 .rl-reader .rl-reader-toc-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 .rl-reader .rl-reader-toc-item.active { background: var(--interactive-accent); color: var(--text-on-accent); }
-/* 🔴 m03052 ②：目录树「卷 → 章」两层（用户原话：「阅读器关联txt目录显示的没有区分卷做文件夹啊」）。
+/* 🔴 目录树「卷 → 章」两层。
    卷头是本层新增的分组头，**不可切章**（点它只折叠/展开），所以不带 `.rl-reader-toc-item` 类
    —— 两枚按钮共用类会让「当前章高亮」的样式串到卷头上。
    层级靠「卷头更粗更淡 + 卷体左缩进 10px + 卷体左缘一条竖线」表达，⛔ 不用背景色块（会和 hover/active 打架）。 */
@@ -8377,7 +8300,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     border-radius: 4px;
     font-size: var(--font-ui-smaller);
     line-height: 1.4;
-    /* m03052 ②：卷头是**分组标题**，不是次要说明 ⇒ 用 --text-muted。
+    /* 卷头是**分组标题**，不是次要说明 ⇒ 用 --text-muted。
        ⛔ 别用 --text-faint：深色主题下它和列表底色的对比度只有 3.5:1 左右，
        「第几卷」在深色皮肤里几乎看不清（截图核对时肉眼发现）。 */
     color: var(--text-muted);
@@ -8923,7 +8846,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
 .rl-reader-bm-item.no-quote .rl-reader-bm-quote { display: none; }
 .rl-reader-bm-item.no-quote .rl-reader-bm-loc { max-width: 100%; }
 
-/* ── 标注分区多选勾选框（#345）──
+/* ── 标注分区多选勾选框 ──
    仅在选择模式显示：`.rl-anno-sel` 同时挂在**分区头**与**列表容器**上（头管按钮显隐，列表管勾选框）。
    占位策略：勾选框**接管类型指示条那一列**（左起 8px），并把正文整体右移 ——
       16px 方框塞不进原来 5px 的槽位，不动 padding 就会把正文顶出行宽。指示条在模式内隐藏
@@ -9287,7 +9210,7 @@ body.theme-light .rl-tip { background: rgba(38, 38, 40, 0.96); }
     font-size: var(--font-ui-smaller);
     color: var(--text-faint);
 }
-/* #351e 朗读右键设置把音源和音色选择都改成下拉选择器——
+/* 朗读右键设置把音源和音色选择都改成下拉选择器 ——
    原来两套控件样式**整体退场**：语音列表项（`.rl-reader-pop-item` / `-name`）与音源 chips
    （`.rl-reader-pop-chips` / `-chip`）对应的 DOM 已不再产出，所以不留死规则。
    分组信息改用 `<optgroup>` 的原生分组标题，`.rl-reader-pop-group` 一并退场。 */
@@ -10122,8 +10045,7 @@ body.rl-shot-dragging {
 .rl-shot-handle-s  { left: 50%; top: 100%; cursor: ns-resize; }
 .rl-shot-handle-sw { left: 0; top: 100%; cursor: nesw-resize; }
 .rl-shot-handle-w  { left: 0; top: 50%; cursor: ew-resize; }
-/* 🔴 2026-11-14 用户指令（bug 修复）：「阅读器截图批注模式下根本没有显示对应的批注图标按钮，
-   也无法点击截图」。框选落定后浮出两颗实体按钮（批注 / 取消）。
+/* 🔴 阅读器截图批注模式：框选落定后浮出两颗实体按钮（批注 / 取消）。
    定位：`position: fixed` + 由 `paintOps()` 逐次写 top/left（跟着选框走，下方放不下就翻上方）。
    ⛔ 不能放进 `.rl-shot-box`：那个是 `pointer-events: none`，按钮会点不动。
    ⛔ 颜色一律用主题变量。 */
@@ -11044,7 +10966,7 @@ body.rl-shot-dragging {
    ⇒ 「未关联」空态里 `spin.hidden=true` 却照旧转圈（真机实测 computed display 仍是 flex）。 */
 .rl-vp-emptystage-spin[hidden] { display: none; }
 .rl-vp-emptystage-title { font-size: 15px; font-weight: 600; color: #fff; }
-/* 「未关联」空态：不转圈、不给「正在加载」的假承诺（用户 m03035） */
+/* 「未关联」空态：不转圈、不给「正在加载」的假承诺 */
 .rl-vp-emptystage.is-unlinked .rl-vp-emptystage-title { color: rgba(255, 255, 255, .78); }
 .rl-vp-emptystage.is-unlinked { cursor: default; }
 /* 操作反馈 toast（快进 / 音量 / 字幕挂载 / 续播提示） */
@@ -11061,12 +10983,12 @@ body.rl-shot-dragging {
     pointer-events: none;
 }
 .rl-vp-toast.hidden { display: none; }
-/* ── 🔴 m04435 ① 右键「时间戳笔记」浮层 ─────────────────────────
-   用户原话：「右键：弹出"时间戳笔记"浮层（鼠标自动聚焦），附有一个笑脸表情图标
-   （点击后展开六档心情emoji图标），附预览窗」。
+/* ── 右键「时间戳笔记」浮层 ─────────────────────────
+   含笑脸表情图标（点开展开六档心情 emoji）、预览窗与时间戳输入。
    ⚠️ 定位是 **absolute + 由 TS 算 left/top**（相对 `.rl-vp-root`），⛔ 不是 `position: fixed` ——
-      本仓 `position: fixed` 会被视图的 transform 祖先整体偏移（`src/views/components/MediaList.svelte:2228`
-      等三处注释，来自 #610）；浮层是 `.rl-vp-root` 的子元素，跟着播放器一起走才是对的。
+      本仓 `position: fixed` 会被视图的 transform 祖先整体偏移
+      （`src/views/components/MediaList.svelte:2228` 等三处注释）；
+      浮层是 `.rl-vp-root` 的子元素，跟着播放器一起走才是对的。
    ⚠️ `.hidden` 必须 `display: none`（而不是 opacity/visibility）—— TS 在挂上去之前先打 hidden，
       量尺寸那一步用 `is-measuring`（`visibility: hidden`）保证用户看不见定位过程。 */
 .rl-vp-stampnote {
@@ -11094,7 +11016,7 @@ body.rl-shot-dragging {
     background: transparent; color: var(--rl-vp-fg-2); cursor: pointer;
 }
 .rl-stampnote-close:hover { color: var(--rl-vp-fg); background: rgba(255, 255, 255, .1); }
-/* 笑脸 + 六档：笑脸在左、档位在右；档位默认收起（用户：「点击后展开六档心情emoji图标」） */
+/* 笑脸 + 六档：笑脸在左、档位在右；档位默认收起，点笑脸才展开 */
 .rl-stampnote-mood { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rl-stampnote-smile {
     flex: none; display: inline-flex; align-items: center; justify-content: center;
@@ -11477,9 +11399,9 @@ body.rl-shot-dragging {
        两处必须一致，否则上下两排的左右分界线错位（见下方 `.rl-epp-top, .rl-epp-below`）。 */
     grid-template-columns: minmax(0, 1fr) minmax(240px, 30%);
     align-content: start;
-    /* 第二轮反馈：全部边框整体偏粗，须对照参考站点收细。
+    /* 四边描边观感偏粗的根因与修法（实测依据，⛔ 别凭肉眼改 border）。
        实测（tools/probe-border-gaps.cjs）证明四个大面板 `border-width` 恒为 0、
-       `box-shadow: none` —— 粗边框不是描边，而是**面板 padding**
+       `box-shadow: none` —— 看起来的粗边框不是描边，而是**面板 padding**
        在深色视频四周镶出的那圈浅灰：左/右/底各实测 **10px**。
        所以把三层留白全部收窄：面板 padding 10 改为 6、网格 gap 14 改为 10、页 padding 16 改为 12。
        别再靠调 `border` 去修「边框粗」：描边早就是 0，那一路是死胡同。 */
@@ -11620,13 +11542,12 @@ body.rl-shot-dragging {
     min-height: 0;
 }
 
-/* ── 两个框：把新页面做成三个框，所以三个区域各自是**可见的面板**，
-   不是原来那种「无边框三块内容堆着」。
+/* ── 两个框：三个区域各自是**可见的面板**，不是「无边框三块内容堆着」。
    ① 上排左：播放器框（标题 + 16:9 舞台）
    ② 上排右：信息栏框（封面/评分/简介 + 字幕节 + 选集节 + 系列节）
-窄屏下页尾系列会悬空，播放器须保持第一视觉权重。
+   窄屏下页尾系列会悬空，播放器须保持第一视觉权重。
       所以第三个框（页尾季带）撤掉，系列收进②做折叠节。现在只剩两个框，
-        窄屏时页尾不会再吊着一条跟播放器抢眼球的横带。
+       窄屏时页尾不会再吊着一条跟播放器抢眼球的横带。
    面板底色用 `--background-secondary`，里面的小节再降一档到 `--background-secondary-alt`，
       否则三层同色会糊成一片（浅色主题尤其明显）。
    网格化后这里**没有** `flex: 0 0 auto`：原属性是为「`.rl-epp` 是
@@ -11738,8 +11659,7 @@ body.rl-shot-dragging {
     z-index: 3;
 }
 /* 原 `.rl-epp-netbar` / `.rl-epp-nettitle` / `.rl-epp-netbar.is-peek` /
-   `@keyframes rl-epp-netbar-autohide` 整块删除（用户 2026-11-08 逐字：
-   「播放器上的两个标识(B站官方播放器)给我删除掉」，追问后裁定只删这枚胶囊、
+   `@keyframes rl-epp-netbar-autohide` 整块删除（那枚「B站官方播放器」标识胶囊已按要求退场，
    iframe 的 `title` 属性保留）。
 
    ⚠️ 删它之前这里记着一条**仍然有效**的教训，搬到这儿别丢：
@@ -11785,7 +11705,7 @@ body.rl-shot-dragging {
 }
 .rl-epp-net.is-fail .rl-epp-netfail { display: block; }
 
-/* ── 网络流「正在载入」遮罩（「点关联网络的第一集还要再次点击播放」）──
+/* ── 网络流「正在载入」遮罩 ──
    病根：预取那 3 秒 `src` 还没设，所以画面纯黑、零反馈，看起来没反应，于是会再点一次。
    所以盖一层半透明黑底 + 转圈 + 一行字，起播（`playing` / `loadeddata`）即摘。
    `pointer-events: none`：不拦事件 —— 想点画面暂停时不该被这层吃掉。
@@ -11828,8 +11748,8 @@ body.rl-shot-dragging {
 }
 .rl-epp-netbuffer .rl-spinner {
     /* 居中之后它不再是「陪跑」：整屏就这一处反馈，小到看不见等于没做
-       所以从 13px 提到 15px（仍小于起播遮罩的 `.rl-spinner-lg` 16px，
-       两层同时出现时主次仍分得开）。 */
+        所以从 13px 提到 15px（仍小于起播遮罩的 `.rl-spinner-lg` 16px，
+        两层同时出现时主次仍分得开）。 */
     width: 15px;
     height: 15px;
     border-width: 2px;
@@ -11890,10 +11810,9 @@ body.rl-shot-dragging {
 .rl-epp-side .rl-epp-sec[data-open='0'] { flex: 0 0 auto; }
 /* 展开的节：`secbody` 是列表的滚动容器，所以必须把节分到的高度**继续往下传**
    （节 `overflow:hidden`，secbody 不 flex:1 的话列表就贴着顶部、下面留白）。
-   这里原来是 `flex: 0 1 auto`（「字幕和选集两个都展开时字幕下拉不能看到全览」的修法），
-      那是「节自然高、整栏自己滚」版式的口径；现在改成平分栏高，所以必须 `1 1 0` 撑满节身，
-      否则列表还是按 `--rl-epp-listh` 抢高、secbody 却被压。
-   别改回 `0 1 auto`：配合平分会产生「分到 200px 却只画 50vh 列表」的错位。 */
+   ⛔ 别用 `flex: 0 1 auto`：那是「节自然高、整栏自己滚」版式的口径；
+      现在改成平分栏高，必须 `1 1 0` 撑满节身，否则列表还是按 `--rl-epp-listh` 抢高、secbody 却被压
+      —— 会产生「分到 200px 却只画 50vh 列表」的错位。 */
 .rl-epp-side .rl-epp-sec[data-open='1'] { display: flex; flex-direction: column; }
 .rl-epp-side .rl-epp-secbody { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; overflow: hidden; }
 /* 右栏列表高度真源：**撑满 secbody**，不再是 `--rl-epp-listh`。
@@ -11916,12 +11835,12 @@ body.rl-shot-dragging {
       类型与题材改成胶囊 chips（见 .rl-epp-info-chips）。
    封面 84px 不动：它是 2:3 竖版缩略图，再大就会把文字区挤成一条窄带（窄屏先炸）。 */
 .rl-epp-info { display: flex; gap: 13px; padding: 12px; border-radius: 8px; background: var(--background-secondary-alt); }
-/* 封面右键出条目菜单（用户 2026-11-08）。光标给上下文菜单的暗示，否则用户不知道这里能右键。 */
+/* 封面右键出条目菜单。光标给上下文菜单的暗示，否则用户不知道这里能右键。 */
 /* ⚠️ `position: relative` 现在**只是**给封面自身的裁切 / 悬停提亮留一个定位基准，
-   m02759（2026-11-17）已删掉封面右上角的评分角标，所以这里不再是谁的「角标定位基准」。
+   封面右上角的评分角标已删除，所以这里不再是谁的「角标定位基准」。
    ⛔ 别因为「反正没角标了」就删 —— `overflow: hidden` + 圆角裁切仍依赖它自成一层。 */
 .rl-epp-info-cov { position: relative; flex: 0 0 84px; width: 84px; aspect-ratio: 2 / 3; border-radius: 5px; overflow: hidden; background: var(--background-modifier-border); cursor: context-menu; }
-/* 🔴 用户 2026-11-14：「播放器详情页简介封面加左键单击进笔记」⇒ 可点击封面要有「能点」的光标。
+/* 🔴 播放器详情页的简介封面可左键单击进笔记 ⇒ 可点击封面要有「能点」的光标。
    两条规则并存：`.is-clickable` 只在宿主注入 `onOpenNote` 时才加（见 `EpisodePageView.buildInfoCard`），
    没注入时仍然是纯右键封面（`cursor: context-menu`），⛔ 不要把它写进基础类 ——
    那会让「点了没反应」的封面显示成可点击，就是假功能。 */
@@ -11929,10 +11848,9 @@ body.rl-shot-dragging {
 .rl-epp-info-cov.is-clickable:hover { filter: brightness(1.08); }
 .rl-epp-info-cov.is-clickable:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
 .rl-epp-info-cov img { width: 100%; height: 100%; object-fit: cover; display: block; }
-/* 🔴 m02759（2026-11-17 用户逐字）：「还有这封面上的评分角标去掉，把来源评分放到简介栏右上角横排」
-   ⇒ 这里原有的 `.rl-epp-cov-score`（封面右上角评分胶囊）**整条规则已删除**。
+/* 🔴 封面右上角的评分胶囊（`.rl-epp-cov-score`）**整条规则已删除**。
    分数现在由 `.rl-epp-info-top` 里的 `.rl-epp-info-src` 画在简介栏第一行右侧。
-   ⛔ 别再把它加回来：用户已经明确否掉「封面角标」这个位置，两处同源文案也是他点名要去的重复。
+   ⛔ 别再把它加回来：「封面角标」这个位置已被明确否掉，两处同源文案也是点名要去的重复。
    ⚠️ 卡片网格视图的 `.rl-cov-score`（`MediaList.svelte` 的 scoped 样式）**不受影响**，
       那是海报墙的角标，与本文件这块无关。 */
 /* 条目右键菜单的挂载壳：挂在 `document.body` 上（**不能**挂 `.rl-epp` 里 ——
@@ -11944,8 +11862,7 @@ body.rl-shot-dragging {
 .rl-epp-ctxhost .rl-ctx { pointer-events: auto; }
 /* 行内间距收紧到 3px（同一「段」内部），段与段之间由各块的 margin-top 拉开，所以有节奏 */
 .rl-epp-info-txt { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 3px; }
-/* 🔴 m02759（2026-11-17 用户逐字）：「把来源评分放到简介栏右上角横排，还有加个大标题在简介栏」
-   ⇒ 简介栏**第一行**是「大标题（左）+ 来源评分（右）」的横排。
+/* 简介栏**第一行**是「大标题（左）+ 来源评分（右）」的横排。
    `align-items: baseline` 让标题和右侧那串小字落在同一条基线上（不是顶对齐，顶对齐会让
    小字浮在大标题的额头位置，读起来像两个不相关的块）。
    `gap` 是标题与来源行之间的**最小**间距：标题很长时会挤压来源行，这时靠
@@ -11956,30 +11873,30 @@ body.rl-shot-dragging {
 .rl-epp-info-top {
     display: flex; align-items: baseline; gap: 10px; min-width: 0;
 }
-/* 大标题：全块**唯一**的 17px。m02759 之前是 15px/650（那一档现在留给元信息），
-   用户要求「加个大标题」⇒ 字重 700、字距 0.2px、行高 1.3（大字号下行高再放宽会显得松散）。
-   ⚠️ 页头还有一份 `.rl-epp-title`（用户裁定「简介栏加，页头那个也保留」）——
+/* 大标题：全块**唯一**的 17px（那一档 15px/650 现在留给元信息），
+   字重 700、字距 0.2px、行高 1.3（大字号下行高再放宽会显得松散）。
+   ⚠️ 页头还有一份 `.rl-epp-title`（两份都要保留）——
       那份是**整页首行**的定位标题，这份是滚到下排时的就地标识，两者不是重复渲染：
       用户从播放器往下滚到简介时，页头已经滚出视口了。⛔ 别为了「避免重复」删掉任何一份。 */
 .rl-epp-info-name {
     font-size: 17px; font-weight: 700; line-height: 1.3; letter-spacing: 0.2px;
     min-width: 0;
 }
-/* 来源行顶到第一行最右（用户要的「右上角横排」）。`flex: 0 0 auto` 让它按内容宽，
+/* 来源行顶到第一行最右。`flex: 0 0 auto` 让它按内容宽，
    `margin-left: auto` 吃掉剩余空间 ⇒ 标题短时它靠右，标题长时它自动被推着折行。 */
 .rl-epp-info-top .rl-epp-info-src { flex: 0 0 auto; margin-left: auto; margin-top: 0; }
 /* 元信息（年份 · 作者）：11.5px / faint —— 它排在标题下面，是「补充说明」这一档。 */
 .rl-epp-info-meta { font-size: 11.5px; color: var(--text-faint); }
-/* 🔴 m02759（2026-11-17）：`.rl-epp-info-rating` / `.rl-epp-info-rating-stars` 两条规则
-   已随「个人评分」那行一起下线（那行在 2026-11-10 就被用户点名删除，只是 CSS 残留到现在）。
+/* 🔴 `.rl-epp-info-rating` / `.rl-epp-info-rating-stars` 两条规则
+   已随「个人评分」那行一起下线（那行本身早已删除，只是 CSS 残留到更晚才清）。
    ⛔ 别再把个人评分塞回简介栏：评分在卡片 / 表格 / 笔记三处都有，这一栏是简介。 */
-/* 🔴 m02759（2026-11-17 用户裁定）：「只留标签那一排，第一排整排去掉（含『类型』胶囊）」
-   ⇒ 原先「类型 + 题材」那排的容器 `.rl-epp-info-chips` 与「首枚高亮」规则
-      `.rl-epp-info-chip:first-child` **整块删除**（那两处规则随 JS 侧一起下线）。
+/* 🔴 原先「类型 + 题材」那排的容器 `.rl-epp-info-chips` 与「首枚高亮」规则
+   `.rl-epp-info-chip:first-child` **整块删除**（只留标签那一排，含『类型』胶囊的那排整体去掉；
+   那两处规则随 JS 侧一起下线）。
    `.rl-epp-info-chip` 本体保留 —— 标签胶囊（`.is-tag`）仍在用它。
    ⛔ 别因为「看不出这是什么类型」又把 chips 容器加回来：类型在页头标题旁与标签里都能读到。 */
 
-/* 标签胶囊（用户自建分类法，`.is-tag` 区分）。m07813③ 时它与题材同行，现在题材那排没了，
+/* 标签胶囊（用户自建分类法，`.is-tag` 区分）。它曾与题材同行，现在题材那排没了，
    所以容器 `.rl-epp-info-tags` 自己带 `margin-top` 与元信息行拉开「段间距」（见下方规则）。 */
 .rl-epp-info-chip {
     font-size: 10.5px; line-height: 1; padding: 4px 7px; border-radius: 999px;
@@ -11994,14 +11911,13 @@ body.rl-shot-dragging {
     display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
 }
 
-/* ── 🔴 m07813③（2026-11-15 用户逐字：「给播放器详情页的简介栏优化一下如加评分来源、标签、
-   简介可通过省略号展开完整」）：来源行 / 标签胶囊 / 简介展开。 ── */
+/* ── 简介栏三件：来源行 / 标签胶囊 / 简介省略号展开。 ── */
 
-/* 来源行：「豆瓣 8.3 · 232425 人评价 ↗」（用户 2026-11-15 裁定的文案形态）。
-   ⚠️ 只在有 `sourceName` 时才画（JS 侧判的）—— 无出处的裸分数正是老注释里骂的那种
+/* 来源行：「豆瓣 8.3 · 232425 人评价 ↗」。
+   ⚠️ 只在有 `sourceName` 时才画（JS 侧判的）—— 无出处的裸分数是那种
    「读起来像大众评分」的孤儿数字，⛔ 别为了凑满一行给它补个假来源。
    ⚠️ 行高、字号都比简介正文小一档：它是一行**出处说明**，不该跟简介正文抢视觉。
-   🔴 m02759：这条行现在**在 `.rl-epp-info-top` 里靠右**（来源评分放简介栏右上角横排），
+   🔴 这条行现在**在 `.rl-epp-info-top` 里靠右**（来源评分放简介栏右上角横排），
       所以 `margin-top: 5px` 去掉了 —— 它不再是「正文里另起一段」，而是第一行的右半截。
       靠右由 `.rl-epp-info-top .rl-epp-info-src { margin-left: auto; margin-top: 0 }` 接管。 */
 .rl-epp-info-src {
@@ -12024,10 +11940,10 @@ body.rl-shot-dragging {
 .rl-epp-info-src.is-link:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 1px; }
 .rl-epp-info-src-go { color: var(--text-faint); font-size: 11px; }
 
-/* 标签胶囊（m07813③，用户裁定「只展示，不可点」）。
+/* 标签胶囊（**只展示，不可点**）。
    🔴 与题材胶囊共用 `.rl-epp-info-chip` 的骨架，只把底色/字重压弱一档：
-     题材是「这作品客观上属于什么」，标签是用户自建的分类法，后者不该压过前者。
-   ⛔ 别给 `.is-tag` 加 hover 效果或 `cursor: pointer` —— 用户明确说只展示不可点。 */
+      题材是「这作品客观上属于什么」，标签是用户自建的分类法，后者不该压过前者。
+   ⛔ 别给 `.is-tag` 加 hover 效果或 `cursor: pointer` —— 定位就是只展示不可点。 */
 .rl-epp-info-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
 .rl-epp-info-chip.is-tag {
     background: transparent; border: 1px solid var(--background-modifier-border);
@@ -12088,9 +12004,9 @@ body.rl-shot-dragging {
 .rl-epp-sec[data-open='0'] .rl-epp-secarrow { transform: rotate(-90deg); }
 .rl-epp-secbody { padding: 0 12px 10px; }
 .rl-epp-sec[data-open='0'] .rl-epp-secbody { display: none; }
-/* 不可折叠的常显节（用户 2026-11-08：「简介、系列不再可收起，默认展开」）。
+/* 不可折叠的常显节（简介、系列不再可收起，默认展开）。
    JS 侧见 `EpisodePageView.buildSection` 的第 4 参 `collapsible = false`：那边已经
-   **不建箭头、不挂点击监听**，这里只需要把「可点」的视觉承诺一并撤掉 —— 
+   **不建箭头、不挂点击监听**，这里只需要把「可点」的视觉承诺一并撤掉 ——
    ⛔ 少了这两条就会出现「光标是手型、悬停还变色，但点下去什么都不发生」的假按钮。
    ⚠️ 只由 `.is-static` 驱动，⛔ 别按 `data-open` 判：右栏「字幕 / 选集」展开时同样是
    `data-open='1'`，用状态值当选择器会把可折叠节也一起锁成不可点。 */
@@ -12165,7 +12081,7 @@ body.rl-shot-dragging {
     /* 默认（本地/B站上传）：低调灰，不跟内容抢注意力 */
     color: var(--text-muted); background: var(--background-modifier-hover);
 }
-/* AI 字幕不再单独上色：2026-11-08 用户 m04478 裁定「来源标识统一显示 B站，AI 信息挪到悬停提示」。
+/* AI 字幕不再单独上色：来源标识统一显示 B站，AI 信息挪到悬停提示。
    原先这里用强调色 + 内描边区分 AI 与人工上传，现在版面文案两者都是「B站」——
    文案相同却仍是两种颜色，读起来像「有个 B站 标签坏了」，所以颜色一并统一。
    ⚠️ `data-src='ai'` 这个属性**保留**（仍是全仓唯一的 AI/人工判别位，将来要分色/统计时用它），
@@ -12193,7 +12109,7 @@ body.rl-shot-dragging {
     overscroll-behavior: contain; /* 滚到底别把整页带走（不与该页主滚动耦合） */
     scrollbar-width: thin;
     scrollbar-color: var(--background-modifier-border) transparent;
-    /* 🔴 用户 2026-11-08：「字幕面板上的字最后一行被截断了」。
+    /* 🔴 字幕面板最后一行曾被「截断」。
        正文本身**没有**任何 `line-clamp` / `overflow: hidden`（`.rl-epp-cuetext` 只做折行），
        所以「被截断」的观感来自**滚动视野**：最后一句的 `top` 被 `Math.min(max, …)` 夹住，
        它只能贴到容器底沿，而底部 `padding` 原来只有 2px ⇒ 字形下缘像被刀刃切掉一条。
@@ -12284,7 +12200,7 @@ body.rl-shot-dragging {
 .rl-epp-asrbar-detail.is-off {
     display: none;
 }
-/* 系统开启「减少动态效果」时，所以停掉扫描动画，保留文字反馈（那条才是真信息） */
+/* 系统开启「减少动态效果」时停掉扫描动画，保留文字反馈（那条才是真信息） */
 @media (prefers-reduced-motion: reduce) {
     .rl-epp-asrbar.is-indet .rl-epp-asrbar-fill {
         animation: none;
@@ -12299,9 +12215,8 @@ body.rl-shot-dragging {
    它必须是 flex 纵向容器：列表的 `flex: 1 1 0; height: auto`（见 `.rl-epp-side .rl-epp-cuelist`）
    只有在父元素是 flex 容器时才拿得到确定高度，否则 `height:auto` + 列表自己的
    `container-type: size`（忽略内容尺寸）会直接落到 0px。
-   要求去掉滚动条，追问后选定「整条 mini-map 全部去掉」
-   所以原来这里的 `padding-right: 10px` 是给绝对定位的导航条让位，导航条删了之后它就是白丢的宽度，
-      所以两处 padding/隐藏滚动条的覆盖规则一并删掉。
+   原来这里的 `padding-right: 10px` 是给绝对定位的 mini-map 导航条让位；
+      整条 mini-map 已去掉，它就是白丢的宽度，所以两处 padding/隐藏滚动条的覆盖规则一并删掉。
    原生滚动条回到 `.rl-epp-cuelist` 自己那条 6px 细条（见文件上方）：
       内容不超出时它根本不出现，截图里那种「没有滚动条」的观感照样成立；
       真超出时有一条细条反而是最符合直觉的出口。别再把它藏死。 */
@@ -12430,21 +12345,19 @@ body.rl-shot-dragging {
 }
 .rl-epp-cueai .rl-epp-cueai-mini:active { transform: scale(.94); }
 /* Context Card 见下方（原 `.rl-epp-cueai-acts` 已随「收起总结」按钮一起删除 ——
-    要求把重新生成挪到标题旁、去掉关闭钮，靠右动作区不再有内容） */
+   重新生成已挪到标题旁、关闭钮去掉，靠右动作区不再有内容） */
 
 /* ── Context Card（上下文气泡卡片）──
-    拿截图否决了第一版：上下文气泡卡片应按截图形态做
-   所以第一版做成「上下文＋三枚 pill」= 信息标签墙，要的是截图里那样的**一条对话气泡**：
+   形态是截图里那样的**一条对话气泡**，而不是「上下文＋三枚 pill」的信息标签墙：
      首行加粗（问的那句）+ 次行灰色截断（答的开头）。
    边框**只有 1px 细边**、不带底色填充 —— 这是它与下面「问答历史」区分开的唯一手段：
      历史那条是左细线的裸文本，这条是**有壳**的（有壳 = 「最近一轮的摘要」）。
    不加可点态（并未要求可展开），别让 hover 看起来像一个能点开的控件。 */
-/* 右侧「会话细条」导轨 —— 要求（第三版否掉后的最终口径）：
+/* 右侧「会话细条」导轨 —— 最终口径：
       上下文气泡是定位的细条显示，鼠标 hover 对应的细条只显示每个会话问题、不显示 AI 回答
-    改形态：细条导轨改成横条
-      附图 = 一列**右对齐的短横条**，最后一条（最新）更粗更深，其余是细浅横条。
+     形态：一列**右对齐的短横条**，最后一条（最新）更粗更深，其余是细浅横条。
    所以一列**横条**（不是竖条），一轮会话一条，贴 AI 总结面板右缘；hover 那条只浮出**问题**。
-   前三版全作废，别再回头：① 信息标签墙 ② 单张靠右卡片 ③ 问题+答案两行预览。
+   三个更早的形态全作废，别再回头：① 信息标签墙 ② 单张靠右卡片 ③ 问题+答案两行预览。
       **答案不该出现在这里** —— 下面的问答历史里本来就有。 */
 .rl-epp-cueai-rail {
     position: absolute;
@@ -12473,7 +12386,7 @@ body.rl-shot-dragging {
     flex-wrap: nowrap;
 }
 /* 单条横条：一小段圆角横线。别加文字（文字在 hover 的 tip 里）。
-   本轮它从 `<div>` 变成 `<button>`（因为要可点跳转），于是**必须抬到两级选择器**：
+   它从 `<div>` 变成 `<button>`（要可点跳转），于是**必须抬到两级选择器**：
       宿主核心 `button:not(.clickable-icon)` 是 (0,1,1)，单类 (0,1,0) 压不过 ——
       底色会被铺回 `--interactive-normal`（灰块）、还会带上 `padding`/`margin`/`min-height`
       和焦点光圈，横条直接胖成一颗小按钮。这三条 `background/border/padding/margin/box-shadow`
@@ -12570,16 +12483,16 @@ body.rl-shot-dragging {
 .rl-epp-cueai-sum {
     font-size: 12.5px; line-height: 1.65; color: var(--text-normal);
     padding: 0 0 0 11px;
-    /* 去掉了原来的灰底块：透明浮层里再叠一块灰底会显得脏，
-       改成一根左侧强调竖线 —— 同样是「一眼看出这是结论」，但更轻 */
+    /* 透明浮层里再叠一块灰底会显得脏，所以去掉灰底块，
+        改成一根左侧强调竖线 —— 同样是「一眼看出这是结论」，但更轻 */
     border-left: 2px solid var(--interactive-accent);
 }
 /* ── 打字机（已下线）──
-   历史：这里曾有 `.rl-tw` / `.rl-tw-shown` / `.rl-tw-rest` 三条规则，配合
+   这里曾有 `.rl-tw` / `.rl-tw-shown` / `.rl-tw-rest` 三条规则，配合
    `EpisodePageView.buildCueTypewriter()` 把总结逐字吐出来（`.rl-tw-rest` 是透明占位，
    用来从一开始就把容器撑到最终高度，免得下面的输入框被一路往下推）。
-   用户 2026-11-13 明确要求「AI 总结输出动效不要打字机，一次输出完毕」⇒ 方法、纯模块
-   （`pure/typewriter`）与本段样式一并删除，⛔ 别再加回来。 */
+   AI 总结输出改成**一次输出完毕**后 ⇒ 方法、纯模块（`pure/typewriter`）与本段样式一并删除，
+   ⛔ 别再加回来。 */
 /* ── 悬浮进度卡片（「转写需要几分钟」时切走笔记也要能看到进度
 原问题：点一下卡片就消失，且应参考主流方案的悬浮球进度框。）──
    挂 `document.body`、`position: fixed` —— 挂在视图里会随视图卸载而消失，
@@ -12599,7 +12512,7 @@ body.rl-shot-dragging {
     opacity: 0;
     /* 入场淡入：突然弹出来会吓人（切笔记时视线正在别处） */
     animation: rl-pball-in 180ms ease forwards;
-    /* 🔴 2026-11-12（②-2）：卡片与小球同宽约束在这里统一声明一次。
+    /* 🔴 卡片与小球同宽约束在这里统一声明一次。
        两边各自用 vw 计算会算出不同结果（小球没有内边距），收放切换时横向跳一下。 */
     max-width: calc(100vw - var(--size-4-5, 20px) * 2);
 }
@@ -12610,10 +12523,10 @@ body.rl-shot-dragging {
 /* ── 展开态：卡片 ── */
 .rl-pball-card {
     display: none;
-    /* 🔴 2026-11-12（用户 m00353 ②-2）：
+    /* 🔴 浮出卡片的四条几何口径：
        ⑴ 宽度改成 min()：原来 236px 定死，只能靠 420px 断点救，分栏很窄时仍会顶到边上。
           现在 `calc(100vw - 2 * right)` 是真正的可用宽度，236px 只当上限。
-       ⑵ 圆角从前一档的 md 提到 lg —— 它是浮出卡片，和全站卡片同一档语言。
+       ⑵ 圆角用 lg —— 它是浮出卡片，和全站卡片同一档语言。
        ⑶ 阴影原来写死 `0 4px 16px rgba(0,0,0,.28)`：比全站任何卡片都重，且不吃主题覆盖
           （暗色下糊成一团、modern 主题下跟别处不像一家人）。改用 `--rl-t-shadow-menu`，
           理由见下方「为什么是 menu 不是 card」。
@@ -12662,7 +12575,7 @@ body.rl-shot-dragging {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    /* 🔴 2026-11-12（②-2）：18px 裸值改 `--icon-l`（18px，Obsidian 自己的图标档位）。
+    /* 🔴 18px 裸值改 `--icon-l`（18px，Obsidian 自己的图标档位）。
        ⛔ 别换成 `--icon-size`：那是「当前容器希望图标多大」的**结果变量**，
        在这个按钮上没被设过，读出来是空值，按钮会塌成 0 高。 */
     height: var(--icon-l, 18px);
@@ -12721,7 +12634,7 @@ body.rl-shot-dragging {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(390%); }
 }
-/* ── 多任务列表（🔴 m09805 用户：「列出三个下载进度条，要区分每个下载的是什么标题，再加个如1MB/s等展示速度」） ──
+/* ── 多任务列表 ──
    一球多行：每行 = 标题 + 百分比 / 细进度条 / 细节 + 速度。
    ⚠️ 行与单任务的 `.rl-pball-bar` **互斥**（服务层用 `is-hidden` 切），⛔ 不要两套同时显示。 */
 .rl-pball-tasks {
@@ -12729,7 +12642,7 @@ body.rl-shot-dragging {
     flex-direction: column;
     gap: var(--size-4-2, 8px);
     margin: var(--size-4-1, 4px) 0;
-    /* 三个任务是用户举的例子；再多就滚动，⛔ 别让卡片长到盖住半屏正文 */
+    /* 三个任务只是举例；再多就滚动，⛔ 别让卡片长到盖住半屏正文 */
     max-height: 200px;
     overflow-y: auto;
 }
@@ -12804,7 +12717,7 @@ body.rl-shot-dragging {
 .rl-pball-detail {
     flex: 1 1 auto;
     min-width: 0;
-    /* 🔴 2026-11-12（②-2）：10px/11px 这种裸字号在 100% 缩放的原生主题下比全站正文小一档还发虚。
+    /* 🔴 10px/11px 这种裸字号在 100% 缩放的原生主题下比全站正文小一档还发虚。
        统一到 Obsidian 自己的字号档 `--font-ui-smaller`（本仓已用 178 处），
        ⛔ 别再往回写 10px —— 那是 1.0.x 硬编码时代的遗留。 */
     font-size: var(--font-ui-smaller);
@@ -12870,8 +12783,7 @@ body.rl-shot-dragging {
     stroke-linecap: round;
     transition: stroke-dashoffset 200ms ease;
 }
-/* 🔴 m20696（用户：「从B站下载音频那个进度浮球在转写成mp3时怎么不能循环转圈一周，这样观感会更好」）：
-   没有百分比的阶段（yt-dlp 转码 mp3 / ffmpeg 抽轨 / 等首字节）原来只是把弧停在 18% 长度上，
+/* 🔴 没有百分比的阶段（yt-dlp 转码 mp3 / ffmpeg 抽轨 / 等首字节）不能只把弧停在 18% 长度上：
    静止的短弧看起来是「卡死」而不是「在忙」⇒ 让整圈连转。
    ⚠️ 转的是**外层的 svg**（见下一条），不是 SVG 内部的 `<circle>` —— `transform` 直接写在
    `<circle>` 上会以元素自身包围盒为原点、且与 `rotate(-90deg)` 的起点补偿叠加，转起来偏心。
@@ -12894,7 +12806,7 @@ body.rl-shot-dragging {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-/* 球心百分比（用户 m07854 ⑨「球内显示百分比波动」）。
+/* 球心百分比。
    环是 36×36、描边 3px ⇒ 内圈可用直径约 30px，字号必须压到 `--font-ui-smaller` 以下，
    `100%` 四个字符要能完整落进去。`tabular-nums` 是关键：不加的话 1→8 宽度会跳，
    数字每 200ms 变一次，整颗球看着在发抖。 */
@@ -12936,7 +12848,7 @@ body.rl-shot-dragging {
     .rl-pball-bar.is-indet .rl-pball-fill { width: 100%; opacity: 0.45; animation: none; }
     .rl-pball-fill { transition: none; }
     .rl-pball-arc { transition: none; }
-    /* m20696：不定态转圈也停 —— 保留 18% 短弧（形状还在，仍能看出「不是 0%」） */
+    /* 不定态转圈也停 —— 保留 18% 短弧（形状还在，仍能看出「不是 0%」） */
     .rl-pball-ring.is-indet .rl-pball-svg { animation: none; }
     /* ②-2 新加的两处悬停过渡也要一起关掉 */
     .rl-pball-card { transition: none; }
@@ -12963,7 +12875,7 @@ body.rl-shot-dragging {
     font-size: 12px; color: var(--text-muted); padding: 4px 2px;
 }
 .rl-epp-cueai-loading .rl-spinner { width: 13px; height: 13px; border-width: 2px; }
-/* 🔴 流式态（用户 m09565 ①-8）：模型边吐边显示那一行，布局要从「一行居中」变成「块级可换行」，
+/* 🔴 流式态：模型边吐边显示那一行，布局要从「一行居中」变成「块级可换行」，
    否则长文本会一直往右挤、把面板撑出横向滚动条。 */
 .rl-epp-cueai-loading.is-streaming {
     display: block;
@@ -13107,12 +13019,11 @@ body.rl-shot-dragging {
 }
 .rl-epp-cuetext {
     flex: 1 1 auto; min-width: 0;
-    /* 🔴 用户 2026-11-08：「字幕面板上的字最后一行被截断了把字幕给给放大点不要显示被截断文字」
-       12px → 13px：12px 在 100% 缩放的窄右栏里，中文末笔（如「）」的下半弧、拼音的 g）会贴着行盒下沿，
+    /* 🔴 字幕正文基准 13px（不是 12px）：
+       12px 在 100% 缩放的窄右栏里，中文末笔（如「）」的下半弧、拼音的 g）会贴着行盒下沿，
          视觉上像被切掉一条。放大一档 + 行高 1.5 → 1.6 给下行留出实际的字形空间。
        ⛔ 别再往 14px 加：右栏一屏只放得下 8 行左右，再大字幕就变成「一句一屏」，跟读反而变慢。
-       🔴 2026-11-21 用户 m02829：「字幕面板和字幕面板学习模式都要支持 ctrl 鼠标滚轮缩放」
-          ⇒ 13px 是**基准**，实际字号 = 13px × `--rl-epp-cue-scale`（默认 1，即保持 13px 不变）。
+       🔴 13px 是**基准**，实际字号 = 13px × `--rl-epp-cue-scale`（默认 1，即保持 13px 不变）。
           变量由 `applyCueScale` 写到 `.rl-epp-cuesbox` 上，两档字号都乘它 ⇒ 缩放对两档同时生效。
           用 `calc` 而不是改内联 `font-size`：内联会盖掉下面学习档那条 16px，切学习模式时就不放大了。 */
     font-size: calc(13px * var(--rl-epp-cue-scale, 1)); line-height: 1.6; color: var(--text-normal);
@@ -13128,10 +13039,9 @@ body.rl-shot-dragging {
 .rl-epp-cuerow.is-on .rl-epp-cuetext { color: var(--text-normal); font-weight: 600; }
 
 /* ── 词级 span（只剩「学习模式悬停查词」这一个用途）──
-   要求：去掉仅高亮当前句的单字高亮。
-      所以原来这里还有一条 `.rl-epp-cueword.is-on { color: var(--rl-progress-now) }` 做逐词高亮，
-        已删除。中文会被 `splitTimingUnits` 切成单字，一行只点亮一个字，看起来像几处错字被染色；
-        而「读到哪」这件事由上面那条 `.rl-epp-cuerow.is-on` 的整行高亮已经讲清楚了。
+   ⛔ 这里曾有 `.rl-epp-cueword.is-on { color: var(--rl-progress-now) }` 做逐词高亮，已删除：
+     中文会被 `splitTimingUnits` 切成单字，一行只点亮一个字，看起来像几处错字被染色；
+     而「读到哪」这件事由上面那条 `.rl-epp-cuerow.is-on` 的整行高亮已经讲清楚了。
    span 本身**必须保留**：学习模式的悬停查词靠 `.rl-epp-cueword` 命中，
       `mouseover` 里判 `classList.contains('rl-epp-cueword')`。别为了「干净」把 span 拆掉。
    只在学习模式下才拆 span（`rebuildCueWords` 里 `!cueLearnOn` 会直接回落纯文本），
@@ -13140,7 +13050,7 @@ body.rl-shot-dragging {
     /* 行内 span 的默认基线对齐就够，这里只保证不产生额外盒模型影响 */
     transition: color .12s ease;
 }
-/* 🔴 2026-11-21 用户 m02554：「每个单词鼠标划过都显示一条线」。
+/* 🔴 悬停即出虚线（每个单词鼠标划过都显示一条线）。
    用纯 CSS `:hover` 而不是等 JS 加 `.is-hover`：
    `showWordTip` 要等 `mouseover` 派发、还要过 `lookupKey`/`isLookupable` 两道判，
    中间那一下若查不到（标点片段、超短词），线就不会出现 —— 用户看到的是
@@ -13152,9 +13062,8 @@ body.rl-shot-dragging {
     cursor: help;
 }
 /* 悬停中的词（学习模式下 `showWordTip` 加、`hideWordTip` 撤）：
-   用 `text-decoration: underline dotted` 是**明确要求**的
-      （ §3.1「单词下方出现虚线下划线」），它与行内盒模型的关系只是「下划线画在下方」，
-      不会像 `border` / `padding` / `font-weight` 那样改变折行位置 —— 提词器定位不受影响。 */
+   用 `text-decoration: underline dotted` 是刻意的 —— 它与行内盒模型的关系只是「下划线画在下方」，
+   不会像 `border` / `padding` / `font-weight` 那样改变折行位置 ⇒ 提词器定位不受影响。 */
 .rl-epp-cueword.is-hover {
     text-decoration: underline dotted var(--interactive-accent);
     text-underline-offset: 3px;
@@ -13167,10 +13076,9 @@ body.rl-shot-dragging {
    提词器要「放大、加宽」，但面板宽度由布局给，这里只把行高拉大、字号提到 15px：
      再大就会一屏只看到一句，反而不好跟读。 */
 .rl-epp-cuesbox.is-learn .rl-epp-cuetext {
-    /* 🔴 用户 2026-11-08：「把字幕给给放大点不要显示被截断文字」
-       15px → 16px、1.75 → 1.85：学习模式本来就是提词器，字距越松越好读；
-       上面的普通档已经 +1px，这里同步 +1px 保持两档之间仍有 3px 的明显落差。
-       🔴 2026-11-21 m02829：16px 同样是**基准**，乘同一个 `--rl-epp-cue-scale`
+    /* 🔴 学习模式正文 16px / 行高 1.85：学习模式本来就是提词器，字距越松越好读；
+       上面的普通档是 13px，这里保持 3px 的明显落差。
+       🔴 16px 同样是**基准**，乘同一个 `--rl-epp-cue-scale`
           ⇒ Ctrl+滚轮在普通档调到 150%，切进学习模式就是 16×1.5 = 24px，比例不重置。 */
     font-size: calc(16px * var(--rl-epp-cue-scale, 1));
     line-height: 1.85;
@@ -13191,7 +13099,7 @@ body.rl-shot-dragging {
 .rl-epp-cuesbox.is-learn .rl-epp-cuerow.is-on.is-loop {
     box-shadow: inset 2px 0 0 var(--interactive-accent);
 }
-/* 单句循环锁定行：左侧 标记（要求该句左侧出现一个循环图标）。
+/* 单句循环锁定行：左侧标记。
    用 `::before` 而不是插节点 —— 行会被重画/复排，class 天然跟着行走，
       插进去的节点要额外搬迁（`markCueLoopRow` 的注释里有同样的话）。 */
 .rl-epp-cuerow.is-loop {
@@ -13286,9 +13194,9 @@ body.rl-shot-dragging {
     font-size: 11px;
 }
 .rl-epp-wordtip-def { color: var(--text-muted); word-break: break-word; }
-/* 🔴 2026-11-21 用户 m02829：查词气泡上的 🔊 发声按钮已删除（`.rl-epp-wordtip-say` 两条规则一并删）。
+/* 🔴 查词气泡上的 🔊 发声按钮已删除（`.rl-epp-wordtip-say` 两条规则一并删）。
    理由：它直接调 `window.speechSynthesis`，**不读任何设置**（音色/语速/音量/语言全默认），
-   与设置页那套带配置的朗读引擎是两条独立通路 ⇒ 用户找不到任何可调项。
+   与设置页那套带配置的朗读引擎是两条独立通路 ⇒ 找不到任何可调项。
    ⛔ 别把这段样式加回来「备用」：样式在而按钮不在，会让人以为按钮只是被藏起来了。 */
 
 /* ── 官方内嵌态的静态字幕列表（「还是两个内嵌都拿不到字幕」）──
@@ -13597,7 +13505,7 @@ body.rl-shot-dragging {
 .rl-epp-cell:hover { background: var(--background-modifier-hover); }
 .rl-epp-cell.is-dead { opacity: .45; cursor: default; }
 .rl-epp-cell.is-dead:hover { background: transparent; }
-/* 正在转码的选集格（2026-11「格式兼容」）：
+/* 正在转码的选集格（「格式兼容」链路）：
    🔴 为什么不复用 `.is-dead`：那个是「这一集播不了」的终态（`cursor: default` 明摆着让人放弃），
       而 `.is-busy` 恰恰是「正在努力让它能播」，两者语义相反 —— 共用一个类会让用户直接放弃点击。
    ⚠️ 用呼吸动效而不是 spinner：格子上（尤其列表档 76px 封面槽旁）没有空间塞转圈，
@@ -13651,7 +13559,7 @@ body.rl-shot-dragging {
 /* 按钮档里**不存在**封面槽和标题（`buildCell` 不建），这里不用写 display:none —— 写了反而
    说明 JS 在偷偷建了再藏，那是两条真源。 */
 
-/* ── ③ 单集评价快捷条（用户 m01782：「做成一个悬浮快捷条，放在播放器正下方」） ──
+/* ── ③ 单集评价快捷条 ──
    版式：播放器舞台下方**独立一行**、与播放器同宽；内部是「标题 + 一行四组控件」。
    四组（状态 / 标签 / 心情 / 短评）压在同一行里，窄屏自动换行，⛔ 不再一组占一整行。
    ⚠️ 心情那一组**只在已看时由 JS 建**（`syncReviewPanel`），CSS 里不写 display:none ——
@@ -13674,7 +13582,7 @@ body.rl-shot-dragging {
     display: flex; align-items: center; gap: 8px;
     margin-bottom: 4px; min-width: 0;
 }
-/* 标题只留面板名（用户 m01474：⛔ 不带「第 N 集」「已评 N」） */
+/* 标题只留面板名（⛔ 不带「第 N 集」「已评 N」） */
 .rl-epp-rvbar-title {
     font-size: 11.5px; font-weight: 600; line-height: 1.3;
     color: var(--text-muted); letter-spacing: .02em;
@@ -13696,7 +13604,7 @@ body.rl-shot-dragging {
     font-size: 11px; line-height: 1.3; color: var(--text-faint);
     white-space: nowrap;
 }
-/* 定位失败时的说明行（用户 m01474 报障后的兜底）：
+/* 定位失败时的说明行：
    宁可占一行说清楚「为什么点不动」，也不要让 chip 摆在那儿装可点。 */
 .rl-epp-rv-warn {
     margin: 0 0 5px; padding: 5px 8px;
@@ -13706,10 +13614,9 @@ body.rl-shot-dragging {
     border-radius: 4px;
 }
 .rl-epp-rv-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
-/* 🔴 用户 m01474：「这个选择标签太丑，改成现代化统一的」——
-   旧版是 secondary 实底 + 硬边框 + 逐档不同描边，三行 chip 颜色各说各话。
-   现在统一成同一套胶囊：**透明底 + 一层淡描边**，只有选中态才上色，
-   这样「状态 / 标签 / 心情」三行看起来是同一个控件族，而不是三套拼贴。 */
+/* 🔴 三行 chip（状态 / 标签 / 心情）必须是同一套胶囊形态：
+   **透明底 + 一层淡描边**，只有选中态才上色。
+   旧版是 secondary 实底 + 硬边框 + 逐档不同描边，三行颜色各说各话，看起来像三套拼贴。 */
 .rl-epp-rv-chip {
     display: inline-flex; align-items: center; gap: 4px;
     padding: 3px 9px; border-radius: 999px; cursor: pointer;
@@ -13765,7 +13672,7 @@ body.rl-shot-dragging {
     background: color-mix(in srgb, var(--color-orange) 21%, transparent);
 }
 /* 一句话短评：单行起步、可手动拉高（`resize: vertical`），⛔ 不设 maxlength ——
-   「一句话」是引导不是硬限制，用户想写两句也不该被截断。 */
+   「一句话」是引导不是硬限制，想写两句也不该被截断。 */
 .rl-epp-rv-note {
     flex: 1 1 auto; min-width: 0; width: 100%;
     padding: 4px 8px; border-radius: 6px;
@@ -13787,7 +13694,7 @@ body.rl-shot-dragging {
     .rl-epp-rv-chip, .rl-epp-rv-note { transition: none; }
 }
 
-/* ── ③ 选集格特效：高光=流光、槽点=崩坏（用户 m00002 逐字要求） ──
+/* ── ③ 选集格特效：高光=流光、槽点=崩坏 ──
    ⚠️ 只用伪元素叠层，⛔ 不动格子本体的 background/color ——
       否则会和 `.is-cur`（当前集 accent 实心）与 `.is-dead`（失效压暗）打架，
       当前集恰好有高光标签时就认不出「我正在看这一集」了。 */
@@ -13851,8 +13758,8 @@ body.rl-shot-dragging {
 .rl-epp-seasons.is-empty { display: none; }
 /* 节壳藏起来时，`.rl-epp-sec` 的标题行也不该留一个点开没内容的空壳 */
 .rl-epp-sec.is-empty { display: none; }
-/* 「全部 N 部」入口：**挂在系列标题行右侧**（用户 2026-11-08：「移动到系列标题旁边」）。
-   曾在横带体内（`align-self: flex-end`），季数一多就被横向滚动带走 ⇒ 搬到节级操作位。
+/* 「全部 N 部」入口：**挂在系列标题行右侧**。
+   它曾放在横带体内（`align-self: flex-end`），季数一多就被横向滚动带走 ⇒ 搬到节级操作位。
    `.rl-epp-sechead` 是 `display: flex` ⇒ `margin-left: auto` 把它顶到最右。 */
 .rl-epp-seasonsmore {
     margin-left: auto; font-size: 11.5px;
@@ -13919,21 +13826,21 @@ body.rl-shot-dragging {
 .rl-epp-seasonord { font-size: 10.5px; color: var(--text-faint); }
 
 /* ── 下排右：轻量微件本体（观看进度卡）──
-    观看进度保持独立，不随简介收起而收起
+   观看进度保持独立，不随简介收起而收起，
    所以微件**不再**用 `position:absolute; inset:0` 铺满 `.rl-epp-widcell`。
 
-   为什么必须改（真机实测）：改前微件是绝对定位子节点，所以**不参与网格行高计算**
-   所以下排行高只由左列 `.rl-epp-low` 内容撑起，所以一折「简介」，左列从 202.3px 塌到
-   46.3px，微件同步塌到 46.3px（探针 `tools/probe-widget-indep.mjs` 实测 Δ=-156px，
-   1440×900 与 1100×800 两个尺寸都一样）。这正是原来的「跟着简介一起收起」。
+   为什么必须改（真机实测）：改前微件是绝对定位子节点，所以**不参与网格行高计算**，
+   下排行高只由左列 `.rl-epp-low` 内容撑起 ⇒ 左列一塌，微件同步塌
+   （探针 `tools/probe-widget-indep.mjs` 实测 Δ=-156px，1440×900 与 1100×800 两个尺寸都一样）。
+   这正是「跟着简介一起收起」的成因。
 
    现在的机制：`.rl-epp-widcell` 改 `align-self: start`（见上方空壳格注释处的覆写），
    微件退回**静态定位**、高度由**自身内容**决定，所以左列怎么折都与它无关。
-   ⚠️ 2026-11-08 起「简介 / 系列」已经**不能折叠**（用户裁定），所以「一折简介」这个
-      复现路径不存在了；但这条解耦**照样必须留着** —— 换片时简介长短不同，左列高度
-      本来就会变（有的片简介只有一行、有的三屏），`stretch` 一样会把微件拉成左列那么高。
+   ⚠️ 「简介 / 系列」现在已**不能折叠**，所以「一折简介」这个复现路径不存在了；
+      但这条解耦**照样必须留着** —— 换片时简介长短不同，左列高度本来就会变
+      （有的片简介只有一行、有的三屏），`stretch` 一样会把微件拉成左列那么高。
       判据是「与左列内容高度解耦」，不是「与折叠动作解耦」。
-   这条**推翻了 的旧口径**「微件高度严格等于简介+系列的高度」——
+   ⛔ 别回到旧口径「微件高度严格等于简介+系列的高度」——
       那条只在「简介永远展开」的前提下成立；现在明确要求解耦，以本条为准。
    外框（radius/背景）给**本体自己**，不给 `.rl-epp-widcell` ——
       空壳格有 padding/border 会让本体与 `.rl-epp-low` 的外框对不齐。 */
@@ -14284,7 +14191,7 @@ body.rl-shot-dragging {
 [data-tier="compact"] .rl-ap-lyrics   { grid-area: lyrics; min-height: 0; border-top: 1px solid var(--background-modifier-border); margin-top: 10px; padding-top: 6px; }
 [data-tier="compact"] .rl-ap-right { display: contents; }
 [data-tier="compact"] .rl-ap-title { font-size: 14px; }
-/* 🔴 m04435 ③：紧档基准字号 13px，但仍要**乘以缩放比例** —— 否则在紧档里 Ctrl+滚轮全然无效
+/* 🔴 紧档基准字号 13px，但仍要**乘以缩放比例** —— 否则在紧档里 Ctrl+滚轮全然无效
    （这条选择器比 `.rl-ap-lyr-line` 更特异，会盖掉主规则里的 calc）。 */
 [data-tier="compact"] .rl-ap-lyr-line { font-size: calc(13px * var(--rl-ap-lyric-scale, 1)); line-height: 1.85; }
 /* 紧档没有位置放状态位（标题已占满一行） */
@@ -14305,9 +14212,8 @@ body.rl-shot-dragging {
     aspect-ratio: 1 / 1;
     border-radius: var(--radius-m, 6px);
     border: 1px solid var(--background-modifier-border);
-    /* #411（色度统一到主题色，原为一个灰一个白）：
-       占位块**不填自己的底色**（`transparent`），所以永远与所在面板同底；原来写的是
-       `--background-secondary`，浅色主题下与 `.rl-ap-root` 的 `--background-primary` 一灰一白，
+    /* 占位块**不填自己的底色**（`transparent`），所以永远与所在面板同底。
+       原来写的是 `--background-secondary`，浅色主题下与 `.rl-ap-root` 的 `--background-primary` 一灰一白，
        看着像两块拼起来；内联卡片（`--background-primary-alt`）里也不会再出现第二种白。
        别再给这块填 `secondary` / `primary` —— 也别假定 secondary 比页面亮（极性陷阱）。 */
     background: transparent;
@@ -14385,7 +14291,7 @@ body.rl-shot-dragging {
 .rl-ap-root .rl-ap-btn.rl-ap-btn-play svg { width: 18px; height: 18px; }
 
 /* —— 歌词 —— */
-/* 🔴 m04435 ③：歌词字号比例（Ctrl+滚轮调整，真源 `pure/lyricZoom`）。
+/* 🔴 歌词字号比例（Ctrl+滚轮调整，真源 `pure/lyricZoom`）。
    ⚠️ 必须定义在**容器**上、由行 `font-size` 用 `em` 继承 —— ⛔ 别改成给每行算 px：
       缩放改了行高后 `centerCurLine` 要按真实盒量测，行自己的 `em` 正好跟随。 */
 .rl-ap-lyrics { min-height: 0; overflow: hidden; --rl-ap-lyric-scale: 1; }
@@ -14396,7 +14302,7 @@ body.rl-shot-dragging {
 .rl-ap-lyr-line {
     position: relative;
     flex: none;
-    /* 🔴 m04435 ③：14px × 比例（缺省 1 ⇒ 原样 14px，零行为变化） */
+    /* 🔴 14px × 比例（缺省 1 ⇒ 原样 14px，零行为变化） */
     font-size: calc(14px * var(--rl-ap-lyric-scale, 1));
     line-height: 1.95;
     color: var(--text-muted);
@@ -14410,7 +14316,7 @@ body.rl-shot-dragging {
 }
 .rl-ap-lyr-line:hover { color: var(--text-normal); }
 .rl-ap-lyr-line.is-cur { color: var(--text-accent); font-weight: 600; }
-/* 🔴 m04435 ③：`[Gold]` 高光句（用户逐字：「Gold 未高亮行：**暗金**；Gold 当前高亮行：**亮金**」）。
+/* 🔴 `[Gold]` 高光句：**未高亮行取暗金、当前高亮行取亮金**。
    ⚠️ 顺序与特异性都是刻意的：
      · `.is-gold` 放在 `.is-cur` **之后**，两者同特异性 ⇒ 非当前行取暗金（盖掉 `--text-muted`）；
      · `.is-gold.is-cur` 双类更高 ⇒ 当前行取亮金（盖掉 `.is-cur` 的 `--text-accent`）。
@@ -14424,12 +14330,12 @@ body.rl-shot-dragging {
 .theme-dark .rl-ap-lyr-line.is-gold:hover { color: #dcae42; }
 /* 当前句的 ▸ 标记：**行内**跟着文字走（绝对定位贴左边缘在居中排版下会与文字脱节） */
 .rl-ap-lyr-line.is-cur::before { content: "\25B8"; margin-right: 4px; font-weight: 400; }
-/* 逐字高亮（#406）：当前行里**已唱到**的字点亮、未唱到的压暗。
+/* 逐字高亮：当前行里**已唱到**的字点亮、未唱到的压暗。
    开关在「设置页 › 外观与体验 › 歌词逐字高亮」；时间真源 `pure/lrc.wordIndexAt`。
    未拆词元的行（没开开关 / 该行无逐字时间）不含 `.rl-ap-lyr-w`，这两条规则自然不生效。 */
 .rl-ap-lyr-line.is-cur .rl-ap-lyr-w { color: var(--text-faint); }
 .rl-ap-lyr-line.is-cur .rl-ap-lyr-w.is-on { color: var(--text-accent); }
-/* 🔴 m07623（用户：「LRC `[Gold]`格式下，被逐字滚动效果覆盖成主题色了啊」）：
+/* 🔴 LRC `[Gold]` 与逐字高亮的特异性冲突：
    金句一旦被拆成词元 span，上面那两条逐字规则会把**行色**整段盖掉 ——
    `.is-cur .rl-ap-lyr-w` 是 (0,3,0)、`.is-cur .rl-ap-lyr-w.is-on` 是 (0,4,0)，
    都压过 `.is-gold` (0,2,0) 与 `.is-gold.is-cur` (0,3,0) ⇒ 金句当前行变主题色/灰。
@@ -14442,8 +14348,8 @@ body.rl-shot-dragging {
 .rl-ap-lyr-line.is-gold.is-cur .rl-ap-lyr-w.is-on { color: #f5c451; }
 .theme-dark .rl-ap-lyr-line.is-gold.is-cur .rl-ap-lyr-w { color: #c79a35; }
 .theme-dark .rl-ap-lyr-line.is-gold.is-cur .rl-ap-lyr-w.is-on { color: #f5c451; }
-/* #508：双语译文**单独一行**（更小 + 更灰），**不参与逐字高亮**。
-   LRC双语歌词呈现渲染作两行（原文参与逐字高亮，译文作第二行变小变灰不参与逐字高亮）。
+/* 双语译文**单独一行**（更小 + 更灰），**不参与逐字高亮**。
+   LRC 双语歌词在渲染侧作两行：原文参与逐字高亮，译文作第二行变小变灰、不参与逐字高亮。
    它之所以天然不参与高亮：词元 span 只覆盖**原文**（解析侧 `pure/lrc.splitAnnotation` 拆的），
       译文根本不在 `wordSpans` 里，所以别去给它加 `.rl-ap-lyr-w`。
    `.is-cur`（当前行 = accent + 600）**不许**被译文继承 —— 那正是「变小变灰」的反面。 */
@@ -14493,15 +14399,14 @@ body.rl-shot-dragging {
 }
 /* 非 1×，所以强调色提示（不复用 `is-on`：那个语义是「浮层开着」） */
 .rl-ap-root .rl-ap-btn-speed.is-var { color: var(--interactive-accent); font-weight: 600; }
-/* —— 🔴 m08028 歌词偏移按钮 / m08545 改判为**铅笔图标** / m08754 改判高亮语义 ——
-   m08545：「在音乐播放器工具栏倍速按钮旁加编辑铅笔样式的图标点击展开可调整偏移值实时调整」。
-   m08754 ①（用户原话）：「调整偏移值图标按钮要和其他工具栏图标大小一致**且仅在保持点击时高亮
-   显示图标（取消后正常显示灰色图标）**」。
-   ⛔ 这里**不写任何度量** —— 原来的 `width:auto / padding:0 8px / font-size:12px` 是文字按钮的，
-      套到图标按钮上会让它比左侧那排 16px 图标的方形按钮更宽（用户报的「大小不一致」就是它）。
+/* —— 🔴 歌词偏移按钮：**铅笔图标**、高亮只表示「浮层开着」 ——
+   形态：在音乐播放器工具栏倍速按钮旁，一枚编辑铅笔样式的图标，点开展开可实时调整的偏移值。
+   语义：图标要和其它工具栏图标大小一致，**且仅在浮层打开时高亮**（关掉后恢复正常灰色图标）。
+   ⛔ 这里**不写任何度量** —— `width:auto / padding:0 8px / font-size:12px` 是文字按钮的度量，
+      套到图标按钮上会让它比左侧那排 16px 图标的方形按钮更宽（那正是「大小不一致」的成因）。
       完全继承 `.rl-ap-btn` 的 `padding:5px` + `svg 16×16` 方形度量。
-   ⛔ 也**不再给 `.is-var` 上色**：m08545 那一版是「偏移非 0 就常亮强调色」，与 m08754 的
-      「取消后正常显示灰色图标」直接冲突（用户看到的是没开浮层图标也一直亮着）。
+   ⛔ 也**不再给 `.is-var` 上色**：「偏移非 0 就常亮强调色」与「关掉后恢复灰色图标」直接冲突
+      （用户看到的是没开浮层图标也一直亮着）。
       ⇒ 高亮只由 `.is-on` 承担（只在 `openPop`/`closePop` 里翻转，与倍速/音量同款）。
       `.is-var` 退化为纯数据标记，本文件不再为它写配色规则。
    📌 真源：`src/views/audioPlayerMount.ts` 的 `syncOffsetButton()` 注释。 */
@@ -14530,7 +14435,7 @@ body.rl-shot-dragging {
 }
 .rl-ap-root .rl-ap-offset-row {
     display: grid;
-    /* 🔴 m08754 ①：五段一行 `<<  <  读数  >  >>` —— 两头的粗调固定宽（`<<`/`>>` 比单字符宽），
+    /* 🔴 五段一行 `<<  <  读数  >  >>` —— 两头的粗调固定宽（`<<`/`>>` 比单字符宽），
        中间读数吃掉剩余空间，细调贴读数 ⇒ 用 `auto auto 1fr auto auto` 而不是等分 5 份：
        等分会让读数（`0s` / `+12.3s`）在窄空格里换行，而粗调按钮又过宽。 */
     grid-template-columns: auto auto minmax(52px, 1fr) auto auto;
@@ -14567,9 +14472,9 @@ body.rl-shot-dragging {
     border-top: 1px solid var(--background-modifier-border);
     margin-top: 4px;
 }
-/* 🔴 m08754 ①（用户：「重置和写入笔记文字按钮都改成图标按钮」）：
-   两颗按钮现在都是 `iconButton()` 造的**图标按钮** ⇒ 度量按方形图标按钮来（同 `.rl-ap-btn` 的 padding:5px
-   + `svg 16×16`），⛔ 别再留 `padding: 0 8px; font-size: 12px` 那套文字按钮度量（图标会被挤歪）。
+/* 🔴 两颗按钮都是 `iconButton()` 造的**图标按钮** ⇒ 度量按方形图标按钮来（同 `.rl-ap-btn` 的
+   padding:5px + `svg 16×16`），⛔ 别再留 `padding: 0 8px; font-size: 12px` 那套文字按钮度量
+   （图标会被挤歪）。
    `flex: 1 1 0` 仍均分宽度 —— 让两颗按钮各占一半、底部对齐，而不是各按自己内容宽。 */
 .rl-ap-root .rl-ap-offset-act {
     flex: 1 1 0;
@@ -14701,9 +14606,9 @@ body.rl-shot-dragging {
 .rl-series-modal .modal-title { display: none; }
 .rl-series-modal .modal-content { padding: 16px 18px 18px; }
 
-/* ── `.rl-input` 的基础外观**上移成全局**（#456）──────────────────────────────
+/* ── `.rl-input` 的基础外观**必须上移成全局** ──────────────────────────────
    根因：它的边框 / 圆角 / 内距 / 字号原先**只写在 `EntryForm` 的 scoped 样式里**，而
-   `BookDownload` / `MusicDownload` / `ImportBangumiModal` 同样写 `class="rl-input"` 却拿不到
+   `BookDownload` / `MusicDownload` / `ImportBangumiModal` 同样写 `class="rl-input"` 却拿不到，
    所以这几处的输入框落回**宿主原生 input** 外观（另一种边框、另一种内距、另一种字号）
    = 同一个插件里两套输入框（下载弹窗观感差）。
    这里补一份**全局**的，取值与 EntryForm 那份**逐字一致**。
@@ -14720,7 +14625,7 @@ body .rl-input {
     padding: 5px 9px;
 }
 body .rl-input:focus { outline: none; border-color: var(--interactive-accent); }
-/* ── 数字框与文本框**同高**（m06052 用户：「全表单统一高度」）────────────────────
+/* ── 数字框与文本框**同高**（全表单统一高度）────────────────────
    🔴 根因（真机逐条比对规则集才找到，⛔ 别按直觉猜成「微调按钮撑高」——那是错的）：
      宿主核心 css 有一条 `input[type="text"], input[type="search"], input[type="email"],
      input[type="password"], input[type="number"] { height: var(--input-height); }`，
@@ -14732,7 +14637,7 @@ body .rl-input:focus { outline: none; border-color: var(--interactive-accent); }
    修法：把数字框的 `height` 也改回 `auto` —— 让数字框表现得跟文本框一样。
      两边的行高都来自同一套 padding + 字号，将来改字号时**自动同步**，不会一半高一半矮。
    ⛔ 别写 `height: 27px` 这种定值：字号一改就脱节（本规则选择器带 `[type='number']`，
-     不碰 `body .rl-input` 主规则，故不撞 assert-symbols #456 那条「主规则里不许有 height」）。
+     不碰 `body .rl-input` 主规则，故不撞 assert-symbols 那条「主规则里不许有 height」）。
    ⛔ 也别给文本框补 `height: var(--input-height)`：那会把全插件所有 `.rl-input`
      一起涨到 32px，牵连下载弹窗等本来正确的布局。
    顺带把微调按钮也去掉（个别平台它会额外占宽；这几个框都是手输语义）。
@@ -14767,31 +14672,29 @@ body .rl-search-input::placeholder {
 
 
 /* ── AI 悬浮挂件宿主层：已整体删除
-   不做AI挂件了，删除全部AI挂件相关代码。
    这里原来有两条规则，服务于挂在媒体库内容区里的 AI 悬浮球：
      `.view-content:has(> .rl-ai-host) { position: relative }` —— 给宿主 contentEl 补定位上下文
      `.rl-ai-host { position:absolute; inset:0; z-index:20; pointer-events:none }` —— 铺满内容区的空壳层
-   挂件（AiChatWidget.svelte + pure/aiChat + services/aiChat）已整体删除
+   挂件（AiChatWidget.svelte + pure/aiChat + services/aiChat）已整体删除，
    所以再没有任何 DOM 会带 `rl-ai-host` 这个类名，规则成了死 CSS，一并删掉。
-   别再补回来；也别写 `position: fixed` 那套（那是更早的「全局挂件」形态，此前被明确否掉过）。 */
+   别再补回来；也别写 `position: fixed` 那套（那是更早的「全局挂件」形态，已被明确否掉）。 */
 
 
-/* ── 全局 UI 组件基座（③-5）：`src/ui/components.ts` 的样式真源 ────────────────────
-   用户 m00353 ③-5 原话：「高级设置页所有组项审美极不统一……建立全局 UI 组件库
-   `src/ui/components.ts` 并据此重构设置页」，并用三条硬约束兜住：
+/* ── 全局 UI 组件基座：`src/ui/components.ts` 的样式真源 ────────────────────
+   组件库的三条硬约束：
      ⑴ 绝对禁用写死的颜色和像素 —— 所有颜色必须使用 Obsidian 原生变量；
      ⑵ 强制使用原生 API，不要手搓 `<input>` / `<select>`；
      ⑶ 核心诉求是**视觉降噪**，向 Obsidian 原生看齐（苹果极简 / Notion 克制）。
 
    ⇒ 本段三条自检（改这里之前先看）：
-     · 颜色只允许 `var(--text-*)` / `var(--background-*)` / `var(--interactive-*)`
-       / `var(--color-*)` / 本仓形态令牌 `--rl-t-*`。⛔ 不写 hex、rgb()、hsl()、颜色名。
-     · 尺寸只允许 `var(--size-*)` / `var(--icon-*)` / `var(--font-*)` / `var(--radius-*)`
+     · 颜色只允许 `--text-*` / `--background-*` / `--interactive-*`
+       / `--color-*` / 本仓形态令牌 `--rl-t-*`。⛔ 不写 hex、rgb()、hsl()、颜色名。
+     · 尺寸只允许 `--size-*` / `--icon-*` / `--font-*` / `--radius-*`
        / 本仓圆角令牌 `--rl-t-radius-*` / `em` / `fr` / `%`。⛔ 不写 px。
-       ⚠️ 引用令牌**必须带 fallback 原值**（如 `var(--rl-t-radius-md, 6px)`）——
+       ⚠️ 引用令牌**必须带 fallback 原值**（如圆角档位令牌后接逗号再给原值）——
           本仓门禁用平衡括号扫全文，任何 `--rl-t-` 令牌的 var 引用少逗号都算门禁红。
-          ⛔ 也别在注释里把令牌写成「var 加括号、里面没有逗号」的样子：扫描器不看注释，
-             它会把注释里的例子当成真实引用（本轮实测踩到，多出的第 1 条就是它）。
+          ⛔ 也别在注释里写出「var 加括号、里面没有逗号」的实际样子：扫描器不看注释，
+             它会把注释里的例子当成真实引用（实测踩到过，多出的第 1 条就是它）。
      · **默认静默**：常态无边框、无背景、无阴影；只有 hover / focus-visible 才浮出来。
        这是「降噪」的全部含义 —— ⛔ 不是把边框调浅，是不画。
 
@@ -14825,10 +14728,10 @@ body .rl-search-input::placeholder {
 .rl-ui-fb.is-ok { color: var(--color-green); }
 .rl-ui-fb.is-warn { color: var(--text-error); }
 
-/* 🔴 ③-5：带字按钮**不在这里另起一套** —— 本仓已有 `.rl-btn` 唯一基准
-   （`styles.css:5655` 起，`.rl-btn-primary` / `.rl-btn-danger`，全仓 33 处使用、断言锚了 54 处）。
-   曾短暂存在过 `.rl-ui-btn`（③-5 第一版组件库自带），实测外部引用数 = 0
-   ⇒ 那正是用户说的「组件规范不统一」：同一手势两套类名。已删除，⛔ 别再建第三套。
+/* 🔴 带字按钮**不在这里另起一套** —— 本仓已有 `.rl-btn` 唯一基准
+   （`.rl-btn-primary` / `.rl-btn-danger`，全仓 33 处使用、断言锚了 54 处）。
+   曾短暂存在过 `.rl-ui-btn`（第一版组件库自带），实测外部引用数 = 0
+   ⇒ 那正是「组件规范不统一」：同一手势两套类名。已删除，⛔ 别再建第三套。
    要带字的按钮请直接用 `.rl-btn`（语义变体用 `.rl-btn-primary` / `.rl-btn-danger`）。 */
 
 /* 分段 chips：**一种手势只有一份实现** */
@@ -14922,7 +14825,7 @@ body .rl-search-input::placeholder {
 .rl-ui-tbl-th.is-end,
 .rl-ui-tbl-td.is-end { text-align: end; }
 
-/* 无边框透明图标动作（③-1 用户逐字：「最右表头为一键检测按钮（无边框透明化）」） */
+/* 无边框透明图标动作（最右表头的一键检测按钮：无边框透明化） */
 .rl-ui-ghost {
     background: transparent;
     border-color: transparent;
@@ -14943,14 +14846,12 @@ body .rl-search-input::placeholder {
     .rl-ui-chip { transition: none; }
 }
 
-/* ────────────────────────────── 扫码登录（③-3 / ③-4） ──────────────────────────────
-   用户 m00353 ③-3「参考 dsh@bili-agent-kit/core」/ ③-4「参考 obsidian-weread」；
-   方案按 m05505 重做（原话：「删除豆瓣的扫码登录……扫码登录按钮改成二维码小图标按钮
-   放在输入框的右侧旁边（紧挨着"显示"按钮的左侧）……原来的输入框区域替换为
-   『当前账号: 微信读书用户』」）。
+/* ────────────────────────────── 扫码登录 ──────────────────────────────
+   扫码登录按钮是**二维码小图标按钮**，放在输入框右侧（紧挨着「显示」按钮的左侧）；
+   登录成功后原来的输入框区域替换为「当前账号: 微信读书用户」。
 
    🔴 三条口径（同 `.rl-ui-*` 段）：
-     ⑴ 颜色只 `var(--…)`、尺寸只 `var(--size-*)` / `em`；
+     ⑴ 颜色只走 `--…` 变量、尺寸只走 `--size-*` / `em`；
      ⑵ B 站的码是**插件内自绘 SVG**（`pure/qrcode`），微信读书才开窗口；
      ⑶ 默认静默 —— 没有边框没有底色，只有按钮和一行回执。
 */
@@ -14988,7 +14889,7 @@ body .rl-search-input::placeholder {
 /**
  * 二维码画布（B 站）。
  *
- * 🔴 尺寸用 `em` 而不是 px：跟着 Obsidian 界面字号走（用户可能把字号调到 130%）。
+ * 🔴 尺寸用 `em` 而不是 px：跟着 Obsidian 界面字号走（界面字号可能被调到 130%）。
  * 🔴 `line-height: 0`：SVG 是 inline 元素，默认行高会在下方留一条空白（看起来像"码没居中"）。
  * ⚠️ 白底由 SVG 内部的 `<rect fill="#ffffff">` 提供，⛔ 别在这里加 `background` ——
  *    那样深色主题下会出现「白色方块 + 外面一圈主题色」，而 SVG 内部的白底才是扫码真正依赖的。
@@ -15012,7 +14913,7 @@ body .rl-search-input::placeholder {
  *
  * ⚠️ 它住在 `.rl-secret` 行内（输入框与「显示」之间），⛔ 不是动作行的成员 ——
  *    所以**不写** `.rl-btn` 那套底色/内距，只保证尺寸与垂直居中。
- * 🔴 用 `--icon-size` 而不是写死 px（用户 ③-5「绝对禁用写死的颜色和像素」）。
+ * 🔴 用 `--icon-size` 而不是写死 px。
  */
 .rl-qr-open {
     flex: 0 0 auto;
@@ -15035,7 +14936,7 @@ body .rl-search-input::placeholder {
     border-radius: var(--radius-s);
 }
 /**
- * 已登录形态：`当前账号 <名字> [扫码图标] [退出登录]`（用户 m05505 逐字要求）。
+ * 已登录形态：`当前账号 <名字> [扫码图标] [退出登录]`。
  *
  * 🔴 这一行**替代**输入框，不是加在它下面 —— 所以高度与 `.rl-secret` 对齐（同 `min-height`），
  *    否则切形态时下面的动作行会跳一格。
@@ -15063,14 +14964,14 @@ body .rl-search-input::placeholder {
 /* 账户行的宿主：切形态时只清它自己的子节点，⛔ 动作行不跟着跑位 */
 .rl-acct-host { display: block; min-width: 0; }
 
-/* ── 笔记条目卡（2026-11-14 用户 m04138：#778/#779 之后的新载体）────────────────
- * 用户在笔记里写 ` ```reelludic ` + 条目 id，插件就地渲染成「和表单同一套字段」的卡片。
+/* ── 笔记条目卡 ────────────────────────────────────────────────
+ * 在笔记里写围栏块 + 条目 id，插件就地渲染成「和表单同一套字段」的卡片。
  * 🔴 前缀必须是 `rl-notecard-*`，⛔ 别用 `rl-nc-*` —— 那套已经被截图/确认弹窗占用
  *    （`.rl-nc-title` 是居中 15px 的弹窗标题，套到笔记卡片上会整块跑偏）。
  * ⚠️ 颜色/尺寸一律走主题变量（禁 hex / 禁裸 px 字号），行高与分隔沿用 Obsidian 设置项口径。
  *
- * 🔴 2026-11-14 用户 m07593 翻面：**纯详情视图**（卡内不再有输入框）。
- *    用户原话：「这个占地面太大了，改成显示详情为主，另一个加个编辑按钮在组件标题旁」。
+ * 🔴 形态是**纯详情视图**（卡内不再有输入框）。
+ *    「占地面太大」的解法是「以显示详情为主，编辑入口另放一枚按钮在组件标题旁」。
  *    ⇒ 下面是「密排键：值」的行样式；⛔ 别把上一版的 `.setting-item-*` 覆盖段搬回来
  *    （那是官方 `Setting` 的内部结构，本卡已经不用 `Setting` 了，留着就是死规则）。
  */
@@ -15082,10 +14983,10 @@ body .rl-search-input::placeholder {
     border: 1px solid var(--background-modifier-border);
     border-radius: var(--radius-m);
 }
-/* 🔴 2026-11-16 用户 m01057：「笔记条目卡能不能分两栏就不会太长」。
+/* 🔴 整卡分两栏以免过长。
    版式见 `noteCardMount.ts` 的 `renderInto` 注释 —— 整卡是**上下两段**：
    `head`（封面 + 标题，通栏）在上，`body`（七组属性，CSS 多栏）在下。
-   ⛔ 旧的「封面独占左栏 / 详情全挤右栏」已废：组一多右栏就长得离谱，正是用户说的「太长」。 */
+   ⛔ 旧的「封面独占左栏 / 详情全挤右栏」已废：组一多右栏就长得离谱，正是「太长」的成因。 */
 .rl-notecard-split {
     display: flex;
     flex-direction: column;
@@ -15173,7 +15074,7 @@ body .rl-search-input::placeholder {
     font-size: var(--font-ui-small);
     padding: var(--size-4-2) 0;
 }
-/* 详情区：七组属性**多栏流式**（2026-11-16 用户 m01057「分两栏就不会太长」）。
+/* 详情区：七组属性**多栏流式**（分两栏以免过长）。
    🔴 用 CSS 多栏（`column-count`）而不是 flex 两列：多栏会把组**按高度自动**填满第一栏再流进第二栏，
       而 flex 两列必须由 TS 侧手工决定「哪组放哪列」——组数随类型变化（游戏/书籍各有专属组），
       手工配平必然有的类型一边空一边挤。改栏数（1/2/3）只改这一个数。
@@ -15195,7 +15096,7 @@ body .rl-search-input::placeholder {
 .rl-notecard-group:last-child {
     margin-bottom: 0;
 }
-/* 分组标题：靠一条发丝线分隔，⛔ 不画卡片边框（用户要「一整个」而不是一堆盒子） */
+/* 分组标题：靠一条发丝线分隔，⛔ 不画卡片边框（要「一整个」而不是一堆盒子） */
 .rl-notecard-group-head {
     color: var(--text-muted);
     font-size: var(--font-ui-smaller);
@@ -15298,9 +15199,9 @@ body .rl-search-input::placeholder {
 .rl-notecard-line.is-empty .rl-notecard-val {
     color: var(--text-faint);
 }
-/* ── 行内快捷编辑（2026-11-16 第三次裁定）──
+/* ── 行内快捷编辑 ──
    平时是纯文本；只有可编辑行在**悬停聚焦**时才显出「可点」的暗示，
-   ⛔ 不做常驻边框/底色（那又变成 m07593 嫌占地方的常驻输入框了）。 */
+   ⛔ 不做常驻边框/底色（那又变成占地方的常驻输入框了）。 */
 .rl-notecard-val.is-editable {
     cursor: text;
     border-radius: var(--rl-t-radius-sm, 4px);
@@ -15355,10 +15256,10 @@ body .rl-search-input::placeholder {
 .rl-notecard-star-clear:hover { color: var(--text-normal); }
 
 /* ════════════════════════════════════════════════════════════════════════════════════
-   Flash 游戏播放页（`src/views/FlashGameView.ts`，2026-11-16）
+   Flash 游戏播放页（`src/views/FlashGameView.ts`）
 
    口径：
-     · 容器是**工作区独立标签页**（用户 m02472 逐字「要独立标签页运行而不是弹窗运行」）
+     · 容器是**工作区独立标签页**（不是弹窗）
        ⇒ 几何按「页内可用区」算：`.rl-fg-page` 撑满 `.view-content`，舞台吃掉剩余高度。
        ⛔ 别退回弹窗那套 `height: min(68vh, 640px)`：在标签页里它会留一大片空白，
        而页本来就该尽量大 —— flash 是定尺舞台，靠 Ruffle 的 `scale` 适配而不是靠容器缩。
@@ -15388,9 +15289,9 @@ body .rl-search-input::placeholder {
     white-space: nowrap;
 }
 .rl-fg .rl-fg-tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
-/* 🔴 工具按钮 = 无边框透明图标按钮（用户 m04298 逐字要求）。
+/* 🔴 工具按钮 = 无边框透明图标按钮。
    与 srcdoc 里那套浮层完全不是一回事：这四枚在**宿主页工具栏**上，点一下向 iframe 发指令。
-   ⛔ 别退回带字/带边框的 `.rl-fg-btn`（那两个文字按钮已被用户判为「逻辑重复和没必要」）。 */
+   ⛔ 别退回带字/带边框的 `.rl-fg-btn`（那两个文字按钮已被判为「逻辑重复和没必要」）。 */
 .rl-fg .rl-fg-icon {
     display: inline-flex;
     align-items: center;
@@ -15418,7 +15319,7 @@ body .rl-search-input::placeholder {
     white-space: pre-wrap;
 }
 .rl-fg .rl-fg-status.is-on { display: block; }
-/* 进度表（用户 m02844「做进度表」）：首次安装 Flash 运行时（10MB / 实测 278 秒）时出现。
+/* 进度表：首次安装 Flash 运行时（10MB / 实测 278 秒）时出现。
    口径：① 只有 `.is-on` 才占位（装好即收起，不预留空行，同状态行那套思路）；
         ② 轨道与填充都走 accent 色系 —— 进度是「正在进行」而不是错误，别用警示色；
         ③ 文字用 tabular-nums，否则 3.2 → 10.0 的数字宽度变化会让整行抖动。 */
@@ -15472,7 +15373,7 @@ body .rl-search-input::placeholder {
     background: #000;
     border-radius: var(--rl-t-radius-md, 6px);
     overflow: hidden;
-    /* 🔴 2026-11-16 用户报障「不能随全屏半屏分别平均调整位置」：
+    /* 🔴 iframe 全屏/半屏切换时位置会跑偏：
        iframe 是**替换元素**，默认按内联基线对齐，父容器尺寸变化时它不会重新居中，
        表现就是「半屏时舞台贴一边、全屏时位置又变一下」。
        ⇒ 用 flex 居中 + 明确 stretch，让 iframe 每次都跟着容器重新布局。 */
@@ -15481,7 +15382,7 @@ body .rl-search-input::placeholder {
     justify-content: center;
 }
 .rl-fg .rl-fg-frame {
-    /* 🔴 2026-11-16 用户报障「内嵌的整个屏宽度都变窄了」：
+    /* 🔴 内嵌 webview 会导致「整个屏宽度都变窄」：
        这条规则同时命中 `<webview>` 与降级 `<iframe>`。写 `display: block` 时，
        `<webview>` 的访客进程只拿到 150px 高（Chromium webview 的内建默认高度），
        元素本身却是满高的 ⇒ 页面按 800×150 排版，看起来就是「整屏被压窄/只露出一条」。
@@ -15501,8 +15402,8 @@ body .rl-search-input::placeholder {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════════════
-   🔴 手机 / 平板窄屏适配（2026-11-14，用户 m05195 提需求、m05299 拍板「只做设置页与首页的展示适配」）
-   
+   🔴 手机 / 平板窄屏适配
+
    口径：
      · 只做**展示层**适配 —— 不改交互模型、不搬桌面专属功能（ASR / 下载 / B站解析要 Node 运行时，
        移动端由 `main.ts` 那 64 处 `Platform.isDesktopApp` 门面提前返回挡住，见各命令的守卫）。
@@ -15567,7 +15468,7 @@ body .rl-search-input::placeholder {
     .rl-fo-cmp-scroll { overflow-x: auto; }
 }
 
-/* ── 设置页 · 行布局统一（用户 m05673：「有的分两行、有的 一行，还有大块空白」） ──────
+/* ── 设置页 · 行布局统一（消除「有的分两行、有一行，还有大块空白」） ──────
    真因：Obsidian 原生 `.setting-item` 是**单行 flex**（info 左、control 右），
    窄屏下 control 里的下拉/输入框宽度不一，撑不下时**各自**换行 ⇒ 同一页里行高参差，
    且 control 被 `justify-content: flex-end` 顶到右下角，左边留出一大片空白。
@@ -15612,7 +15513,7 @@ body .rl-search-input::placeholder {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   m17219 百度搜索内嵌弹窗（`.rl-baidu-*`）
+   百度搜索内嵌弹窗（`.rl-baidu-*`）
 
    🔴 承载层是 `services/gameEmbedHost`（`<webview>` 优先 / 降级 `<iframe>`）。
       下面那条 `display: flex; flex: 1 1 auto` 是**实测换来的**，⛔ 别改成 `display: block`
@@ -15620,11 +15521,10 @@ body .rl-search-input::placeholder {
         · `display: block` 时 `<webview>` 的访客进程只拿到 150px 高（Chromium 内建默认高度），
           元素本身却是满高 ⇒ 百度页面按「宽屏 × 150px」排版，看起来就是整页被压成一条。
         · 百分比在 flex 容器遇到极窄/极宽尺寸时会取整到父级初始值，改视口那一下会看到跳动。
-   ══════════════════════════════════════════════════════════════════════════ */
+   ══════════════════════════════════════════════════════════════════════════════════════ */
 .rl-baidu-modal-shell {
-    /* 🔴 用户 m17616：「现在是全屏搜索窗口，不能拖动改宽度，所有只能复制一个退出再搜索了」
-       ⇒ 默认给**能并排用的小窗**（约三分之二屏宽 / 不到半屏高），不再是近乎铺满。
-          想放大：拖右缘 / 下缘 / 右下角（见 `.rl-baidu-resize`），不再需要关掉重开。 */
+    /* 🔴 默认给**能并排用的小窗**（约三分之二屏宽 / 不到半屏高），不再是近乎铺满。
+       想放大：拖右缘 / 下缘 / 右下角（见 `.rl-baidu-resize`），不再需要关掉重开。 */
     width: min(760px, 72vw);
     max-width: 92vw;
     height: min(560px, 62vh);
@@ -15632,7 +15532,7 @@ body .rl-search-input::placeholder {
     /* 抓手绝对定位在边上，需要它当定位上下文 */
     position: relative;
 }
-/* ── 改尺寸抓手（用户 m17616：要和别的窗口并排）────────────────────────────
+/* ── 改尺寸抓手（为了能和别的窗口并排）────────────────────────────
    ⚠️ 用绝对定位的窄条而不是 padding：不占内容布局（`.rl-baidu-stage` 一寸都不让）。
    ⚠️ 右缘 8px、下缘 8px 是「够得着但不误触」的取值；角上给 16px 见方更好抓。 */
 .rl-baidu-resize {
@@ -15683,7 +15583,7 @@ body .rl-search-input::placeholder {
     flex-wrap: wrap;
 }
 
-/* ── 拖动（用户 m17476：「要像微信扫码登录弹出的那个界面一样可拖动」）───────────
+/* ── 拖动（像微信扫码登录弹出的那个界面一样可拖动）───────────
    🔴 参照物是独立 OS 窗口（`openWereadWindow` 的 `new BrowserWindow`），拖动由系统标题栏提供；
       内嵌 Modal 没有标题栏 ⇒ 头部当把手，见 `modals/BaiduSearchModal.attachDrag`。
    ⚠️ `user-select: none` 是硬要求：拖动时若允许选字，会先起一个文本选区、再跟着移动，
