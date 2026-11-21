@@ -21,9 +21,14 @@
  *    YouTube 不是 `canEmbedBili` 的子集，这就是本模块存在的理由。
  *
  * ⚠️ 返回 `false` 不代表「打不开」—— 只代表「插件里播不了，交宿主开浏览器」。
+ *
+ * 🔴 2026-11（本次）新增**第三条路**：`canPlayDirectLink`（见下）。
+ *    网盘直链（mp4/webm/mov/ogv）不挂 iframe，而是灌进现成的 `<video>`。
+ *    它与本模块的主判据**各自独立**，理由写在 `canPlayDirectLink` 的注释里。
  */
 
 import { biliEmbedUrl, canEmbedBili } from 'pure/biliEmbed';
+import { isDirectPlayableVideoUrl } from 'pure/webdav';
 import { isYouTubeUrl, youTubeIdOf } from 'pure/youtube';
 
 /**
@@ -35,6 +40,25 @@ export function canPlayNetInline(url: unknown): boolean {
     const s = typeof url === 'string' ? url : '';
     if (!s) return false;
     return canEmbedBili(s) || isYouTubeUrl(s);
+}
+
+/**
+ * 这条网络地址能不能**直接灌进内置 `<video>`**（第三条路：http(s) 直链）。
+ *
+ * 🔴 与 `canPlayNetInline` 是**两条独立的路，⛔ 别合并**：
+ *    - `canPlayNetInline` = 「有官方 iframe 可挂」（B 站 / YouTube），挂的是 `<iframe>`；
+ *    - `canPlayDirectLink` = 「有个能解的直链」（mp4/webm/mov/ogv），灌的是现成 `<video>`。
+ *    合并的后果很具体：`canPlayNetInline` 被四个闸门共用（见文件头），
+ *    往里加一条「随便什么 .mp4 都算能内嵌」，会让选集格点击、宿主单集兜底
+ *    全都改道去挂 `<iframe>` —— 而 mp4 直链挂 iframe 就是一块**空白页**。
+ *
+ * 与 2026-11-24 裁定不冲突的那一半：裁掉的是自取流（DASH/MSE/yt-dlp 合流），
+ * 直链 `<video>` 没有取流逻辑；用户在本次会话重新拍板选了「可解码的直链内置」。
+ * ⚠️ 判据只是**必要条件**（扩展名）：HEVC 编码的 mp4 照样解不了，
+ *    所以 `VideoPlayerView` 的 `error` 兜底那条路必须留着。
+ */
+export function canPlayDirectLink(url: unknown): boolean {
+    return isDirectPlayableVideoUrl(url);
 }
 
 /** 官方内嵌播放器的一条路：地址 + 工具条上该显示的来源名。 */

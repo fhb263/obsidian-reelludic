@@ -5471,8 +5471,16 @@
        ⚠️ 用 `--text-highlight-bg`（宿主主题的高亮底色，深色主题下自动变成暗黄）而不是写死 hex，
        与本仓「⛔ 不存品牌/主题色值」的纪律一致；文字色用 `inherit`，否则会与标题的 700 字重打架。
        ⚠️ `<mark>` 默认有 `background-color: mark` 与 `color: marktext` 两条 UA 样式，必须一起覆盖。 */
+    /* 🔴 m03036：浅色主题下「不明显」。根因是主题给的 --text-highlight-bg 本身就很淡
+       （Minimal 的 --hl2 是 rgba(..., .3~.5) 半透明淡黄），叠在接近白色的卡片底上只剩
+       几个色阶差；再叠 color: inherit 就没有任何第二重对比手段。
+       修法 = 以主题高亮色为底、混一档 --text-normal 提不透明度与深浅：
+         · 浅色主题：--text-normal 是深色 ⇒ 淡黄被压深、变实；
+         · 深色主题：--text-normal 是浅色 ⇒ 暗黄被提亮、变实。
+       两个方向都自动跟主题走，⛔ 不写死任何 hex（本仓「不存品牌/主题色值」纪律）。
+       ⚠️ 注释必须写在选择器**上方**：测试按选择器起向后截 300 字符做断言。 */
     .rl-ttl .rl-hl {
-        background: var(--text-highlight-bg);
+        background: color-mix(in srgb, var(--text-highlight-bg) 60%, var(--text-normal) 40%);
         color: inherit;
         border-radius: var(--rl-t-radius-sm, 3px);
         padding: 0 1px;

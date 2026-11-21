@@ -24,11 +24,17 @@ import {
 import { parseWereadShelf, type WereadShelfParse } from 'pure/wereadShelf';
 import {
     buildWereadBookmarkUrl,
+    buildWereadGatewayBody,
     buildWereadReviewUrl,
     mergeWereadNotes,
+    parseWereadApiKey,
     parseWereadBookmarks,
     parseWereadReviews,
+    WEREAD_APIKEY_URL,
+    WEREAD_GATEWAY_BOOKMARKS,
+    WEREAD_GATEWAY_URL,
     type WereadNote,
+    type WereadNotesParse,
 } from 'pure/wereadNotes';
 import type { BookSearchResult } from 'services/resultTypes';
 import type { DlTransport } from 'services/dl';
@@ -225,9 +231,8 @@ export async function fetchWereadNotes(
         }
     };
 
-    const hb = await pull(buildWereadBookmarkUrl(id));
-    if (hb.error) return { ok: false, notes: [], error: hb.error };
-    const hp = parseWereadBookmarks(hb.raw);
+    // ① 先用 API Key 换 Gateway 通道（划线数据在那边；老 REST 对任何 bookId 恒回 `{}`）
+    const hp = await pullBookmarksViaGateway(t, ck, id, pull);
     if (hp.error) return { ok: false, notes: [], error: hp.error };
 
     const rv = await pull(buildWereadReviewUrl(id));
@@ -239,6 +244,90 @@ export async function fetchWereadNotes(
         return { ok: true, notes: mergeWereadNotes(hp.notes, []), warning: `想法拉取失败：${rp.error}` };
     }
     return { ok: true, notes: mergeWereadNotes(hp.notes, rp.notes) };
+}
+
+/**
+ * 走 Agent Gateway 拉划线（2026-11-21 新增，这是**唯一**能拿到划线的通道）。
+ *
+ * 流程：`apikeyGet`（带 Cookie）换 Key → `POST gateway` 带 `Authorization: Bearer`。
+ * 失败时**逐层降级**，并且每层都留下可读原因（⛔ 不许把失败折成「这本书没划线」）：
+ *   ⑴ 换不到 Key ⇒ 回 `error`（连带说明老接口已废弃，别让用户以为是自己没划线）；
+ *   ⑵ Gateway 401 / `errcode: -2013` ⇒ 回 `error`（Key 失效，提示去重连）；
+ *   ⑶ Gateway 通了但 `{}`/无 `updated` ⇒ 由 `parseWereadBookmarks` 报「接口变更」；
+ *   ⑷ 全都没成时**再试一次老 REST**：万一是微信读书对少数账号回退了老接口，白捡。
+ * 🔴 不抛：全部折进 `{ notes, error }`，与 `fetchWereadNotes` 其余分支同款。
+ */
+async function pullBookmarksViaGateway(
+    t: DlTransport,
+    cookie: string,
+    bookId: string,
+    pull: (url: string) => Promise<{ raw?: unknown; error?: string }>,
+): Promise<WereadNotesParse> {
+    const legacy = async (): Promise<WereadNotesParse> => {
+        const hb = await pull(buildWereadBookmarkUrl(bookId));
+        if (hb.error) return { notes: [], error: hb.error };
+        return parseWereadBookmarks(hb.raw);
+    };
+
+    // ① 换 Key
+    let keyRes: { raw?: unknown; error?: string };
+    try {
+        const r = await t.get(WEREAD_APIKEY_URL, {
+            'User-Agent': WEREAD_UA,
+            Referer: WEREAD_REFERER,
+            Accept: WEREAD_ACCEPT,
+            Cookie: cookie,
+        });
+        if (!r || r.status < 200 || r.status >= 300) {
+            keyRes = { error: `换取 API Key 失败（HTTP ${r?.status ?? '错误'}）` };
+        } else {
+            try {
+                keyRes = { raw: JSON.parse(r.text) };
+            } catch {
+                keyRes = { error: 'API Key 响应无法解析' };
+            }
+        }
+    } catch {
+        keyRes = { error: '换取 API Key 时网络失败' };
+    }
+    const apiKey = keyRes.error ? '' : parseWereadApiKey(keyRes.raw);
+    if (!apiKey) {
+        // Key 拿不到还有一线希望：老接口也许对这台账号仍旧可用，先试它，再决定报什么
+        const lg = await legacy();
+        if (!lg.error) return lg;
+        return {
+            notes: [],
+            error: `${keyRes.error || '未能取得微信读书 API Key'}（划线已迁到新版接口，老接口不再返回数据）`,
+        };
+    }
+
+    // ② 打 Gateway
+    let gw: { status: number; text: string } | undefined;
+    try {
+        gw = await t.post(WEREAD_GATEWAY_URL, buildWereadGatewayBody(WEREAD_GATEWAY_BOOKMARKS, { bookId }), {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+        });
+    } catch {
+        const lg = await legacy();
+        if (!lg.error) return lg;
+        return { notes: [], error: '调用微信读书新版接口时网络失败' };
+    }
+    if (!gw || gw.status < 200 || gw.status >= 300) {
+        const lg = await legacy();
+        if (!lg.error) return lg;
+        if (gw && gw.status === 401) {
+            return { notes: [], error: '微信读书 API Key 鉴权失败（-2013），请到设置页重新「测试连接」' };
+        }
+        return { notes: [], error: `微信读书新版接口返回 ${gw?.status ?? '错误'}` };
+    }
+    let raw: unknown;
+    try {
+        raw = JSON.parse(gw.text);
+    } catch {
+        return { notes: [], error: '新版接口返回内容无法解析' };
+    }
+    return parseWereadBookmarks(raw);
 }
 
 /**

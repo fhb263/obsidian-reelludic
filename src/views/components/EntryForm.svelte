@@ -410,6 +410,24 @@ export let initialBookKind: BookKind | undefined = undefined;
     });
 
     /**
+     * 🔴 网盘导入（2026-11 新增）：打开 WebDAV 选片弹窗，勾选视频文件 → 按序填进集网络地址。
+     *
+     * · 宿主侧实现 = 弹 `WebdavPickerModal`，返回 `[集下标, 地址][]`；**不在这里判平台/发请求**
+     *   （与 `onBiliParts` / `onSearchWeread` 同一条纪律：组件是纯 UI）。
+     * · ⚠️ 返回 `null` = 用户取消 / 没配网盘 ⇒ 组件什么都不做（⛔ 不要弹「操作失败」）。
+     * · ⚠️ 未注入时默认返回 `null`：没配 WebDAV 的用户根本不会看到那枚按钮
+     *   （按钮的显示由 `showDavImport` 控制，见宿主注入的 `davReady`）。
+     */
+    export let onDavPick: (
+        anchor: number,
+        urls: (string | undefined)[],
+        total: number,
+    ) => Promise<{ pairs: [number, string][] } | null> = async () => null;
+
+    /** 网盘是否已配置（决定要不要显示那枚「从网盘导入」按钮）——默认 false = 不显示 */
+    export let davReady = false;
+
+    /**
      * 🔴「网络集可搜索 YouTube」（用户 2026-10-31：「网络集可搜索油管」）。
      *
      * 把 `网络地址` 行那枚 globe 浮层从「只能搜 B 站」扩成「B站 / YouTube 两源切换」：
@@ -682,15 +700,6 @@ export let initialBookKind: BookKind | undefined = undefined;
     let title = entry?.title ?? '';
     /** 添加模式点选结果后回显的标题（fhd 头部「添加条目：xx」用；手动填写时保持默认文案） */
     let pickedTitle = '';
-    /**
-     * 🔴 #499B：本次字段区是**从「手动填写」进来的**吗（用户：「预填功能只在手动填写界面出现」）。
-     * 新增态有两条路进字段区：① 点「手动填写」（`manualFill = true`）② 点搜索结果 `pick()`
-     *    （`manualFill = false`）。**只有 ① 才摆 AI 预填 ✨** —— ② 那一路客观字段已由真实数据源填好，
-     *    再让模型凭记忆猜一遍既多余、又会把数据源给的值覆盖掉。
-     * ⚠️ 别用 `pickedTitle` 兼职当这个判据：那个只记「点过结果」，⛔ 语义不同（且点选后再点「手动填写」
-     *    它也不会复位 ⇒ 会把这个按钮永久藏起来）。编辑态恒 false（无意义 —— 那条路上字段大多已有值）。
-     */
-    let manualFill = false;
     /** 标题输入框引用：点选结果后自动聚焦（tick 等待字段区渲染） */
     let titleInput: HTMLInputElement | null = null;
     let originalTitle = entry?.originalTitle ?? '';
@@ -839,7 +848,7 @@ export let initialBookKind: BookKind | undefined = undefined;
      * **单卡编辑属性表单窗口**显示】」⇒ 结果列表里那颗按钮连同这个只为它服务的函数一起退场。
      *
      * ⚠️ **AI 预填能力本身没删**：`runAiPrefill()` 还在，入口是**单卡编辑属性表单**里
-     *    书名标签右侧那颗 ✨（`.rl-title-col > .rl-lbl-row`，条件 `{#if entry || manualFill}`）——
+     *    书名标签右侧那颗 ✨（`.rl-title-col > .rl-lbl-row`，**无条件渲染**，见 m01755）——
      *    这正是用户说的「仅在单卡编辑属性表单窗口显示」。
      * ⛔ 别再为「搜索结果」造第三条预填入口：两轮下来用户已经把它从表头挪到卡片、又从卡片删干净了。
      */
@@ -884,9 +893,11 @@ export let initialBookKind: BookKind | undefined = undefined;
      *
      * 🔴 与字段区那份**只差一步**：这里回填完必须把用户**送进字段区**
      *    （`picked = true`），否则写了十几个变量、屏幕上却什么都没变 —— 结果区还在原地，
-     *    用户只会以为按钮没生效。`manualFill = true` 是照「手动填写」那条路的既定口径：
-     *    这条路进字段区时标题行那颗 ✨ 仍在（#499B 的判据就是这个变量），
-     *    ⛔ 不要写成 `false`（那是「点选搜索结果」那条路，见 `pick()`）。
+     *    用户只会以为按钮没生效。
+     *
+     * 🔴 m01755：原来这里还有一句 `manualFill = true;`（当年用来让标题行的 ✨ 在这条路上也出现）。
+     *    现在那层 `{#if entry || manualFill}` 门已整层撤除（用户「要做，统一显示」），
+     *    变量本身也连根删了 —— ⛔ 别再加回来，加回来等于把「添加条目看不到按钮」那个 bug 复原。
      *
      * ⚠️ 顺序：先 `applyPrefill()`（它内部会 `clearPrefill()` 并给回执），再切视图 ——
      *    反过来的话 `applyPrefill` 里那句 `new Notice` 会盖在被切的这一步之后，看不出因果。
@@ -894,7 +905,6 @@ export let initialBookKind: BookKind | undefined = undefined;
     function applyPrefillFromResults(): void {
         applyPrefill();
         picked = true;
-        manualFill = true;
     }
 
     /** 简介类 textarea 引用（auto-grow：高度随文字多少自动伸缩） */
@@ -2212,7 +2222,6 @@ export let initialBookKind: BookKind | undefined = undefined;
         lastPicked = r;
         try {
             picked = true;
-            manualFill = false; // #499B：点选结果这条路**不摆** AI 预填（客观字段已由数据源填好）
             refetchOpen = false; // 重新拉取选中结果后收起搜索区
             // 数据源决定表单 UI 模式：douban → 豆瓣版（全类型）；tmdb/bangumi → 对应版
             formMode = r.source === 'douban' ? 'douban' : 'studio' in r ? 'bangumi' : 'tmdb';
@@ -3173,6 +3182,33 @@ export let initialBookKind: BookKind | undefined = undefined;
     //  🔴 与「在 B 站搜索这一集」那枚的分工：那枚 = **单集、交互式**（点候选 → 分P 勾选表）；
     //     本视图 = **批量、表格式**（把未填集全搜一遍 → 逐行确认 → 一次填入）。
     //  🔴 循环 / 限速 / 遇错即停 / 行模型**全在 `pure/biliBatch`**（与快捷关联弹窗共用同一份）。
+
+    /**
+     * 🔴 从网盘导入（2026-11 新增）：打开 WebDAV 选片弹窗，把勾中的文件按序写进集网络地址。
+     *
+     * 口径（三条，与「批量搜索未填集」那套填表纪律保持一致）：
+     *  ⑴ **只写勾中的**（弹窗里已有链接的集默认不勾 ⇒ 不覆盖用户手填的）；
+     *  ⑵ 锚 = 用户当前编辑的那一集（`editEp`），没在编辑就是第 1 集
+     *     —— 「我现在正在看第 12 集，这批文件是从第 12 集开始的」是最常见的情形；
+     *  ⑶ 写的是**表单状态**，仍要点「保存」才落库（与「粘贴 / 点候选填入」完全同一条纪律）。
+     * ⚠️ 返回 `null`（取消 / 没配网盘）⇒ 什么都不做，⛔ 不弹「操作失败」。
+     */
+    async function importFromDav() {
+        const anchor = typeof editEp === 'number' && editEp >= 0 ? editEp : 0;
+        let picked: { pairs: [number, string][] } | null = null;
+        try {
+            picked = await onDavPick(anchor, episodeUrls, Number(totalEpisodes) || 0);
+        } catch (e) {
+            new Notice(`打开网盘失败：${e instanceof Error ? e.message : String(e)}`);
+            return;
+        }
+        if (!picked || picked.pairs.length === 0) return;
+        resizeEpisodeFiles();
+        const byIndex = new Map(picked.pairs);
+        episodeUrls = episodeUrls.map((v, idx) => (byIndex.has(idx) ? byIndex.get(idx) : v));
+        // 落库仍靠「保存」（与 `applyEpBiliParts` 同一条纪律），这里只说清填了几条
+        new Notice(`已从网盘填入 ${byIndex.size} 集的网络地址（点「保存」生效）`);
+    }
 
     /**
      * 打开批量确认表（🔴 #520：**只开卡、不自动跑** —— 用户裁定「选了才跑」）。
@@ -4669,7 +4705,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                 {searching ? '搜索中…' : '搜索'}
             </button>
             <!-- 手动填写：跳过搜索直接进入字段区手填；编辑模式「重新拉取」时点此收起搜索区保留现状 -->
-            <button class="rl-btn" on:click={() => { results = []; searchError = ''; picked = true; refetchOpen = false; manualFill = true; }}>手动填写</button>
+            <button class="rl-btn" on:click={() => { results = []; searchError = ''; picked = true; refetchOpen = false; }}>手动填写</button>
         </div>
     {/if}
 
@@ -4759,7 +4795,7 @@ export let initialBookKind: BookKind | undefined = undefined;
                                              ⇒ m02288 在这里放的那颗「每条结果标题旁 ✨」**整颗退场**（本轮再翻面）。
                                              ⚠️ m03052 的裁定仍然有效、且与本条不冲突：那颗 ✨ 保留在
                                                 **单卡编辑属性表单**的书名标签右侧（`.rl-title-col > .rl-lbl-row`，
-                                                条件 `{#if entry || manualFill}`），⛔ 别把两处混为一谈。
+                                                m01755 起**无条件渲染**），⛔ 别把两处混为一谈。
                                              ⛔ 别再往结果列表加回任何 ✨ —— 用户点名这里「不显示」，理由是不想让
                                                 「挑一条结果」和「让 AI 填这条」两个动作在同一屏抢注意力。 -->
                                     </span>
@@ -4945,22 +4981,28 @@ export let initialBookKind: BookKind | undefined = undefined;
                          ⇒ 标签行包一层 `.rl-lbl-row`，✨ 紧跟 label —— 与「总结摘要 / 重新解析 /
                            检索本地音频」那几枚**同款同槽**（该范式见本文件「重新解析」那段的注释）。
                          ⛔ 别再放回下面那行标题输入行（那是「框旁边」＝输入框右侧，用户明确否掉了）。
-                         🔴 出现条件从 `manualFill` 放宽成 `entry || manualFill`：
-                            · 编辑已有条目（`entry` 非空）⇒ **要**有 —— 用户要的正是「所有类型编辑属性表单」；
-                            · 添加条目「手动填写」⇒ 保留（用户裁定「手动填写表单里的 ✨ 保留」）；
-                            · 添加条目「点选搜索结果」⇒ `entry === null && manualFill === false` ⇒ **不出现**
-                              （那条路客观字段已由数据源填好，再摆一枚「让 AI 猜」会覆盖好数据）。 -->
+                         🔴 出现条件：**无条件恒显示**（用户 m01755 逐字：「要做，统一显示」）。
+                            沿革（⛔ 别按旧注释把条件加回来）：
+                            · 旧口径是 `{#if entry || manualFill}` —— 编辑已有条目、或添加条目点「手动填写」
+                              才出现；添加条目「点选搜索结果」（`pick()` 把 `manualFill` 置 false）⇒ 看不到。
+                            · 用户 m01755 就此提问「编辑属性窗口的AI预填按钮和百度搜索图标按钮为什么在
+                              添加条目窗口上没有显示」⇒ 推翻旧限制，两条路一律可见。
+                            · ⚠️ 与「搜索结果列表里不摆 ✨ / 入库」（m04435 ②，见本文件 `:4802`）**不冲突**：
+                              那条管的是**结果列表那一条**，本条管的是**单卡编辑属性表单**，两个位置互不相干。
+                            · ⚠️ 代价（用户已知悉并接受）：点选搜索结果那条路客观字段本已由数据源填好，
+                              此时再点 AI 预填＝让模型凭记忆重猜一遍，可能覆盖好数据（预览里旧值有删除线，
+                              确认前能看到差异）。 -->
                     <div class="rl-lbl-row">
                     {#if type === 'book'}
                         <label class="rl-lbl">书名</label>
                     {:else}
                         <label class="rl-lbl">标题</label>
                     {/if}
-                    {#if entry || manualFill}
                     <!-- 🔴 m17219 百度搜索 —— 用户逐字：「在所有类型编辑属性表单中标题旁就是AI预填图标按钮
                          左旁边加个百度搜索的按钮，点击即可内弹窗百度搜索改条目名称」。
-                         ⛔ 位置固定在 ✨ 之前（「左旁边」），且同样只在 `entry || manualFill` 时出现 ——
-                            点选搜索结果那条路客观字段已经填好，再摆一枚「去百度搜」没有意义。
+                         ⛔ 位置固定在 ✨ 之前（「左旁边」）。
+                         🔴 显示条件＝无条件（m01755 用户「要做，统一显示」）；旧注释里那句
+                            「只在 `entry || manualFill` 时出现」已被推翻，⛔ 别照它加回 `{#if}`。
                          ⛔ 图标别用星形/sparkles：那是 AI 预填与总结摘要的家族（会撞「重复」）。
                             这里画放大镜（lucide `search` 同款轮廓），语义直白。 -->
                     <button
@@ -4988,7 +5030,6 @@ export let initialBookKind: BookKind | undefined = undefined;
                             <path d="M16 8.5l3.5 3.5-3.5 3.5" /><path d="M19.5 12H14" />
                         </svg>
                     </button>
-                    {/if}
                     </div>
                     <div class="rl-title-row">
                         <input class="rl-input" bind:value={title} bind:this={titleInput} placeholder="作品名称" />
@@ -6043,6 +6084,16 @@ export let initialBookKind: BookKind | undefined = undefined;
                                 class="rl-ai-btn"
                                 data-tip="批量搜索未填的集（可选集数区间，搜完给一张确认表）"
                                 on:click={openBiliBatch}><Icon icon="list-video" size={13} /><span class="rl-sr">批量搜索未填集</span></button>
+                        {/if}
+                        {#if davReady}
+                            <!-- 🔴 网盘导入（2026-11 新增）：只有**配了 WebDAV** 才出现（`davReady` 由宿主注入）。
+                                 点它 = 列网盘目录 → 勾选视频文件 → 按序对号填进集网络地址（**不覆盖已填的**）。
+                                 ⚠️ 与「批量搜索未填集」并列而非合并：那条是**去网上找**，这条是**我已经有文件了**。
+                                 ⇒ 放在最后一枚，因为它是「有网盘库的人」才用得上的补充入口。 -->
+                            <button
+                                class="rl-ai-btn"
+                                data-tip="从网盘导入：浏览 WebDAV 目录，勾选文件按序填进集网络地址"
+                                on:click={() => void importFromDav()}><Icon icon="folder-down" size={13} /><span class="rl-sr">从网盘导入剧集</span></button>
                         {/if}
                         <!-- 🔴 #531：原在**本行**的「检测失效链接」按钮已按用户指令**撤除**，改成
                              「设置 › 基本设置 › 封面与清理 › 失效链接检测」一键扫**全库**；

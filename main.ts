@@ -126,7 +126,7 @@ import { collectLinkScanTargets, clearDeadEpisodeUrls, summarizeLinkStatus, bvid
 import type { DeadLinkItem } from 'modals/LinkCheckModal';
 // 「第 N 集」文案真源（失效明细里的集标签与编辑表单的集按钮**同一份**，⛔ 别手写第二份）
 import { episodeHintLabel } from 'pure/episodeAssoc';
-import { canPlayNetInline } from 'pure/netInline';
+import { canPlayNetInline, canPlayDirectLink } from 'pure/netInline';
 import { biliIdsOf, isBiliShortUrl } from 'pure/biliEmbed';
 // 🔴 2026-11-24：网络集改回**官方 iframe 内嵌**后，这里只需要「取 cid」与「Cookie 归一」这一。
 //    取流专用的一半（BILI_QUALITY / biliPlayUrl / pickBiliStream / BILI_PREFETCH_WINDOW /
@@ -245,6 +245,11 @@ import { TextPromptModal } from 'modals/TextPromptModal';
 // 🔴 2026-11-25：通用「输一行文本」弹窗（系列折叠卡右键的「批量填归属合集 / 归属标签」用它）。
 //    全仓第一—以后要「输一个字符串」请复用它，别再各自手搭 input。
 import { LinkPickerModal } from 'modals/LinkPickerModal';
+// 🔴 2026-11 新增：网盘（WebDAV）选片弹窗 + 能力判定/地址规范化。
+//    选片弹窗只负责「列目录 + 勾选 + 算对号」，把结果交回表单；网络/鉴权全在 `services/webdavClient`。
+import { WebdavPickerModal } from 'modals/WebdavPickerModal';
+import { isWebdavAvailable } from 'services/webdavClient';
+import { normalizeDavBase, WEBDAV_ENABLED } from 'pure/webdav';
 import { QuickAssociateModal, type QuickAssociateResult, type QuickAssocPickKind, type PlayableCandOutcome } from 'modals/QuickAssociateModal';
 // 🔴 2026-10-19 设置页 UX 改版：新手引导（`modals/GuideModal`）**整体下线** ——
 //    用户裁定「关于页那枚新手引导按钮换成『未来规划』」，本弹窗随之删除 ⇒ 这里也不再 import。
@@ -421,6 +426,11 @@ import { EntryRestoreModal } from 'modals/EntryRestoreModal';
 import { imageSizeFromBytes } from 'pure/imageSize';
 import { toFileUrl } from 'pure/mediaFileUrl';
 import { isEmbeddableVideoPath, isAssociableVideoPath, isAssociableAudioPath, VIDEO_ASSOCIABLE_EXTENSIONS, AUDIO_ASSOCIABLE_EXTENSIONS } from 'pure/mediaExtensions';
+// 2026-11「格式兼容」：mkv/HEVC 等 Chromium 解不了的视频，先用 ffmpeg 转封装/转码再灌 `<video>`。
+// 🔴 这不是恢复 2026-11-24 裁掉的自取流（DASH/MSE/yt-dlp 合流）—— 那条路是把网络流搬进播放器，
+//    这条是**本地文件换个容器**，产物落磁盘后走与本地 mp4 完全相同的 `resolveEmbedUrl`。
+import { isTranscodableSource } from 'pure/transcode';
+import { createTranscodeCancelToken, defaultTranscodeDeps, transcodeToMp4, type TranscodeCancelToken } from 'services/transcode';
 import type { MediaInfo } from 'pure/mediaInfo';
 // #404「库内音乐目录里找回同名音频」：目录真源 `downloadDir` + 匹配纯模块
 import { downloadDir, downloadDirAbsPath, downloadRelPath, downloadSizeIssue, migrateLegacyDownloadDir, sanitizeDownloadName, type DownloadKind } from 'pure/downloadPlan';
@@ -5070,10 +5080,18 @@ export default class ReelLudicPlugin extends Plugin {
             void this.openWithSystemPlayer(startPath);
             return;
         }
-        // 所选集不可内嵌 → 该集直接系统播放器（不建弹窗，符合「不支持的自动转系统」）
+        // 🔴 2026-11「格式兼容」：所选集是可转码容器（mkv/avi/hevc…）时，先让 ffmpeg 转成 mp4。
+        //    改前这里一律 `openWithSystemPlayer` —— 于是「格式兼容」只在能直接播的文件上生效，
+        //    mkv 条目点了还是弹本机播放器，等于没做。转码成功会写进 `transcodeCache`，
+        //    下面 `openEpisodePageFor` → `buildEmbedItems` 自然就把它收进列表。
+        //    ⚠️ 转不动才退系统播放器（`prepareTranscodedUrl` 返回 null 的三种情况：
+        //      没装 ffmpeg / 转码失败 / 不受支持）。
         if (!isEmbeddableVideoPath(startPath)) {
-            void this.openWithSystemPlayer(startPath);
-            return;
+            const tcUrl = await this.prepareTranscodedUrl(startPath, { onProgress: () => undefined });
+            if (!tcUrl) {
+                void this.openWithSystemPlayer(startPath);
+                return;
+            }
         }
         // B 站风选集页（#691）：新页自带内置播放+ 右侧选集栏，与「观看」按钮同一落点。
         await this.openEpisodePageFor(entry, startIdx, seekSec);
@@ -5093,13 +5111,22 @@ export default class ReelLudicPlugin extends Plugin {
      * ⚠️ 选集页要能画出这一集的高亮，所以起始集必须传 `idx`（不是 0）。
      */
     private openEpisodeOrExternal(entry: MediaEntry, idx: number, url: string): void {
+        // 🔴 2026-11（本次）第三条路：网盘直链（mp4/webm）不走 iframe，但**同样该进选集页**。
+        //    它已经在 `buildEmbedItems` 里成了一条 `items` 项 ⇒ 这里传 `idx` 当 `startIdx`，
+        //    由 `findIndex` 命中后一路 `switchToItem` 直接起播（**不要**传 netStart ——
+        //    那条路是 iframe 专用的，见 `pendingNetStart` 的消费点）。
         if (canPlayNetInline(url)) {
             // 🔴 第二层根因：光把「点的是网络集」分流到选集页还不够。
-            //    `openEpisodePageFor` `startIdx` 指的*`items`（本地可内嵌集）的下*。
-            //    纯网络集压根不在 `items` 里（`buildEmbedItems` 只收本地文件）⇒ `findIndex` -1
-            //    页子停在 0 集、本地播放器照常起来，用户看到「点了没反应。
+            //    `openEpisodePageFor` `startIdx` 指的是*`items`（本地可内嵌集）的下标*。
+            //    纯网络集（B 站/YouTube）压根不在 `items` 里 ⇒ `findIndex` -1
+            //    页子停在 0 集、本地播放器照常起来，用户看到「点了没反应」。
             //    `netStart` 把「起始是网络集、集号是 idx」单独交给页子，由它自己进内嵌。
             void this.openEpisodePageFor(entry, idx, undefined, false, idx);
+            return;
+        }
+        if (canPlayDirectLink(url)) {
+            // 直链集：不传 `netStart`（那是 iframe 的口子），只把集号当起始项
+            void this.openEpisodePageFor(entry, idx, undefined, false);
             return;
         }
         this.openExternalUrl(url);
@@ -5134,15 +5161,26 @@ export default class ReelLudicPlugin extends Plugin {
             const soleUrl = urls.length === 1 ? urls[0] : undefined;
             if (soleUrl && canPlayNetInline(soleUrl)) netStart = 0;
         }
-        // 设置跟随 + 起始集不可内系统播放器（`openEpisodeLocal` 同口径）
+        // 设置跟随 + 起始集不可内嵌 ⇒ 系统播放器（`openEpisodeLocal` 同口径）
         if (startPath) {
             if (!forceInternal && !this.settings.internalMediaPlayback) {
                 void this.openWithSystemPlayer(startPath);
                 return;
             }
+            // 🔴 2026-11「格式兼容」：起始集是可转码容器（mkv/avi/hevc…）时，先转成 mp4 再进选集页。
+            //    改前这里无条件 `openWithSystemPlayer` —— 用户点季里第 3 集（mkv），结果整个选集页
+            //    都没打开、直接弹本机播放器，等于「选集页只支持 mp4 条目」。
+            //    ⚠️ 转码成功会写进 `transcodeCache`，紧接着的 `buildEmbedItems` 就能把它收进
+            //      `items`，所以这里**只需要等转码、不需要自己往 items 里塞**。
+            //    ⚠️ 转不动才退系统播放器（此时选集页确实打不开，退让是唯一不骗人的选择）。
             if (!isEmbeddableVideoPath(startPath)) {
-                void this.openWithSystemPlayer(startPath);
-                return;
+                const tcUrl = await this.prepareTranscodedUrl(startPath, {
+                    onProgress: () => undefined,
+                });
+                if (!tcUrl) {
+                    void this.openWithSystemPlayer(startPath);
+                    return;
+                }
             }
         }
         const items = this.buildEmbedItems(entry);
@@ -5187,6 +5225,13 @@ export default class ReelLudicPlugin extends Plugin {
             //    ⚠️ 传函数不传数组：`refreshEpisodePages` 拿到的是**每次都最新**的条目快照，
             //      提前算好塞进 page 又会变成第二份会过期的快照（正是这个 bug 的老样子）。
             reloadItems: (e) => this.buildEmbedItems(e),
+            // 🔴 2026-11「格式兼容」：选集页点本地 mkv 集时，由宿主转码后回灌。
+            //    ⚠️ 必须传 onProgress：转码是几十秒起的慢操作，不给反馈用户会以为卡死。
+            //       这里用进度球（宿主侧唯一既有的进度 UI），视图那边另有 `.is-busy` 弱提示。
+            transcodeLocal: (p: string) =>
+                this.prepareTranscodedUrl(p, {
+                    onProgress: () => undefined,
+                }),
             onOpenSeriesList: () => this.openSeriesListFor(entry),
             // 🔴 用户 2026-11-08：「同时简介的封面可右键可弹窗菜单（同海报墙编辑属性逻辑）」
             //    ⇒ 简介封面右键弹**与海报墙完全同一个**菜单。
@@ -5207,10 +5252,10 @@ export default class ReelLudicPlugin extends Plugin {
             //    （没有笔记会当场生成，见它的 #593 自愈分支），⛔ 别在这里另写打开逻辑。
             onOpenNote: (id) => void this.openEntryNote(id),
             onOpenUrl: (url) => {
-                // 本地路径（不可内嵌集）→ 系统播放器；网络地址 浏览。
-                if (!url) return;
-                if (/^https?:\/\//.test(url)) this.openExternalUrl(url);
-                else void this.openWithSystemPlayer(url);
+                // 本地路径（不可内嵌集）→ 系统播放器；网络地址 → 浏览器。
+                // 🔴 2026-11（本次）收敛到 `openMediaTarget`：网盘直链也会从这条路出去，
+                //    判协议那两行不许再各自复制一份。
+                this.openMediaTarget(url);
             },
             // 时间轴面板的「导入字幕」：只读原文（⛔ 不转 VTT —— .ass 没有转换通路，
             // 面板自己按扩展名选解析器；画面字幕仍归播放器基类那条 <track> 通路）
@@ -5281,7 +5326,9 @@ export default class ReelLudicPlugin extends Plugin {
             startIndex: pos >= 0 ? pos : 0,
             single: entry.type === 'movie',
             pendingSeek: seekSec !== undefined && seekSec > 0 ? { index: startIdx, seconds: seekSec } : undefined,
-            onExternalFallback: (path) => void this.openWithSystemPlayer(path),
+            // 🔴 `path` 可能为空（网盘直链那一集没有本地文件）⇒ 播放器会退回传 `url`，
+            //    这里统一走 `openMediaTarget`（http 交浏览器 / 本地交系统播放器）。
+            onExternalFallback: (path) => this.openMediaTarget(path),
             entryId: entry.id,
             initialPositions: entry.videoPositions,
             onSavePosition: (key, seconds) => void this.persistVideoPosition(entry.id, key, seconds),
@@ -5306,16 +5353,48 @@ export default class ReelLudicPlugin extends Plugin {
      * 建整剧「可内嵌」播放列表（跳过不可内嵌 / 解析失败的集；**保留真实集下标** `index`）。
      * 🔴 抽成一份：`openEpisodeLocal` 与 `openEpisodePageFor` 都吃它 —— 两处各写一遍必然漂
      *    （漂了就是「观看」能播、「选集页」少几集这种鬼故事）。
+     *
+     * 🔴 2026-11（本次）**第二类源**：网盘/直链（`episodeUrls` 里能解的 mp4/webm/mov/ogv）。
+     *    - 为什么能进 `items`：它没有取流、没有 MSE，单纯是「`<video src=直链>`」，
+     *      与 2026-11-24 裁掉的自取流（DASH/MSE/yt-dlp 合流）不是同一件事（用户本次重新拍板选了乙案）。
+     *    - 为什么 `path` 留空：网盘直链没有本地文件。⛔ 绝不拿 `url` 冒充 `path` ——
+     *      `path` 会被喂给 `shell.openPath` / 同目录字幕扫描，塞 URL 进去等于让它们去找不存在的文件。
+     *    - **同一下标两者都有时本地优先**：本地文件零网络依赖、能抓帧截图，永远比远程直链强。
+     *    - 只收 `canPlayDirectLink` 通过的：mkv/HEVC 那些强塞进来就是黑屏，
+     *      让它们走「外部打开」才是对的（`isEmbeddableVideoPath` 只判扩展名，是**必要不充分**条件）。
      */
     private buildEmbedItems(entry: MediaEntry): EmbedVideoItem[] {
         const all = entry.episodeFiles ?? [];
+        const urls = entry.episodeUrls ?? [];
+        const n = Math.max(all.length, urls.length);
         const items: EmbedVideoItem[] = [];
-        for (let i = 0; i < all.length; i++) {
+        for (let i = 0; i < n; i++) {
             const path = all[i];
-            if (!path || !isEmbeddableVideoPath(path)) continue;
-            const url = this.resolveEmbedUrl(path);
-            if (!url) continue;
-            items.push({ index: i, title: entry.episodeTitles?.[i], url, path, isFirst: false, isLast: false });
+            if (path && isEmbeddableVideoPath(path)) {
+                const url = this.resolveEmbedUrl(path);
+                if (url) {
+                    items.push({ index: i, title: entry.episodeTitles?.[i], url, path, isFirst: false, isLast: false });
+                    continue;
+                }
+            }
+            // 🔴 2026-11「格式兼容」：mkv/avi/HEVC 这类本来进不了列表的，**只要转码产物已经在缓存里**
+            //    就同样收进来。⚠️ 只认缓存、不在这里起 ffmpeg —— 本方法是同步的，被选集页
+            //    反复调用（`reloadItems`），异步化会把一页选集拖成几十秒。
+            //    真转码发生在 `prepareTranscodedUrl`（进页面时转当前集 / 点格子时按需转）。
+            //    ⚠️ `path` 仍保留**原始 mkv 路径**：字幕同目录扫描、`shell.openPath` 外部兜底、
+            //       标记的 `fileName` 全都要原件，塞转码产物路径会让这三件事一起指错地方。
+            if (path) {
+                const cached = this.transcodeCache.get(path.trim());
+                if (cached) {
+                    items.push({ index: i, title: entry.episodeTitles?.[i], url: cached, path, isFirst: false, isLast: false });
+                    continue;
+                }
+            }
+            // 本地这条路走不通（没有 / 不可内嵌 / 解析失败）⇒ 看同一集有没有能直接灌进 `<video>` 的网盘直链
+            const direct = urls[i];
+            if (direct && canPlayDirectLink(direct)) {
+                items.push({ index: i, title: entry.episodeTitles?.[i], url: direct.trim(), path: undefined, isFirst: false, isLast: false });
+            }
         }
         items.forEach((it, k) => {
             it.isFirst = k === 0;
@@ -5568,7 +5647,7 @@ export default class ReelLudicPlugin extends Plugin {
                 startIndex: pos,
                 single: entry.type === 'movie',
                 pendingSeek: seconds > 0 ? { index: info.index, seconds } : undefined,
-                onExternalFallback: (p) => void this.openWithSystemPlayer(p),
+                onExternalFallback: (p) => this.openMediaTarget(p),
                 // 🔴 用户 2026-11-06 两页互跳：交接进来的播放器页那颗全屏按钮改义为「回选集页」
                 onBackToEpisodePage: (sec) => this.backToEpisodePage(entry, info.index, sec, info.net),
                 entryId: entry.id,
@@ -5664,11 +5743,14 @@ export default class ReelLudicPlugin extends Plugin {
             await this.openWithSystemPlayer(path);
             return;
         }
-        if (!isEmbeddableVideoPath(path)) {
-            await this.openWithSystemPlayer(path);
-            return;
+        // 🔴 2026-11「格式兼容」：改前这里遇到 mkv/avi/HEVC 直接退系统播放器 —— 用户点「内置播放」
+        //    却弹出本机播放器，等于内置播放器只支持四种容器。现在先让 ffmpeg 转成 mp4（走
+        //    `prepareTranscodedUrl`：能 remux 就 remux，几秒；实在要重编才重编），转成了就内置播。
+        //    ⚠️ 转不动（没装 ffmpeg / 转码失败）才退系统播放器 —— **永远不能让用户点了个寂寞**。
+        let url = isEmbeddableVideoPath(path) ? this.resolveEmbedUrl(path) : null;
+        if (!url) {
+            url = await this.prepareTranscodedUrl(path, { onProgress: () => undefined });
         }
-        const url = this.resolveEmbedUrl(path);
         if (!url) {
             await this.openWithSystemPlayer(path);
             return;
@@ -5680,7 +5762,7 @@ export default class ReelLudicPlugin extends Plugin {
             items: [item],
             startIndex: 0,
             single: true,
-            onExternalFallback: (p) => void this.openWithSystemPlayer(p),
+            onExternalFallback: (p) => this.openMediaTarget(p),
             ...this.playerSwitchOptions(),
             // ⚠️ 只有拿到真条目才接记忆：没有 `entry.id` 就写不了库，硬接只会是假成功
             ...(entry
@@ -5707,6 +5789,196 @@ export default class ReelLudicPlugin extends Plugin {
         } catch {
             new Notice('无法打开本地播放器');
         }
+    }
+
+    /**
+     * 网盘是否可用（= 总开关开着 **且** 设置里填了合法的 WebDAV 地址）。
+     *
+     * 🔴 这是**唯一的门控真源**：设置页那行的徽标、条目表单那枚「从网盘导入」按钮的显示、
+     *    `openWebdavPicker` 的早退，全部问它 —— ⛔ 三处各写一遍 `Platform.isDesktopApp && ...` 必然漂。
+     *
+     * 🔴 当前恒为 `false`：用户 2026-11 裁定「把关联网盘方式及入口隐藏掉，先等我发布 1.5.0
+     *    再下个版本放开」⇒ 由 `pure/webdav.WEBDAV_ENABLED` 统一关闸，下版本改那一行即可，
+     *    ⛔ 别在这一层写死 `return false`（那样改开关就不生效了）。
+     */
+    webdavReady(): boolean {
+        return WEBDAV_ENABLED && isWebdavAvailable(this.settings.davUrl);
+    }
+
+    /**
+     * 弹网盘选片弹窗（条目表单那枚「从网盘导入」的宿主出口）。
+     *
+     * @param anchor 对号锚（0 起 = 文件从第几集开始对）。用户正在编辑第 N 集 ⇒ 传 N-1
+     * @param urls   本条目现有的集地址（弹窗用来标「已有链接」、默认不勾）
+     * @param total  本条目总集数（0 = 未知，不裁超界）
+     * @returns 勾中的 `[集下标, 地址][]`；取消 / 没配网盘 ⇒ `null`
+     *
+     * ⚠️ 本方法**只负责选**，不写库：写进去的是表单状态，仍要点「保存」才落盘
+     *    （与「粘贴 / 点候选填入」完全同一条纪律）。
+     */
+    async openWebdavPicker(
+        anchor: number,
+        urls: (string | undefined)[],
+        total: number,
+    ): Promise<{ pairs: [number, string][] } | null> {
+        if (!this.webdavReady()) {
+            new Notice('还没配网盘：设置 › 搜索配置 › 网盘关联 里填好 WebDAV 地址与账号');
+            return null;
+        }
+        const modal = new WebdavPickerModal(this.app, {
+            base: normalizeDavBase(this.settings.davUrl),
+            user: String(this.settings.davUser ?? ''),
+            pass: String(this.settings.davPass ?? ''),
+            urls,
+            total,
+            anchor,
+        });
+        return await modal.open();
+    }
+
+    /**
+     * 「把这一集交给外部」的唯一分流口：http(s) 走浏览器，本地路径走系统播放器。
+     *
+     * 🔴 为什么需要这一层（2026-11 本次新增网盘直链后才成立）：
+     *    在此之前 `onExternalFallback` / `onOpenUrl` 的入参**只可能是本地路径**，所以三处
+     *    调用点直接写 `openWithSystemPlayer(p)` 就够了。现在同一个回调既可能收到
+     *    `D:\anime\01.mkv` 也可能收到 `https://pan.example/d/01.mp4?...` ——
+     *    把后者喂给 `shell.openPath` 只会得到一个「无法打开视频」的 Notice，
+     *    而用户的诉求是「播不了就让我在本机播放器/浏览器里看」。
+     *    ⇒ 判据只看**协议**：`^https?://` 交 `openExternalUrl`（它自带 http/https 校验），其余交系统播放器。
+     *
+     * ⚠️ 为什么不在这里判「能不能内置」：走到这一步已经确定内置那条路失败了
+     *   （解码失败 / 扩展名不支持 / 用户点「外部打开」），再判一次只会绕圈。
+     */
+    private openMediaTarget(target: string): void {
+        const t = typeof target === 'string' ? target.trim() : '';
+        if (!t) return;
+        if (/^https?:\/\//i.test(t)) {
+            this.openExternalUrl(t);
+            return;
+        }
+        void this.openWithSystemPlayer(t);
+    }
+
+    /**
+     * 转码产物缓存：`源路径 → app:// 可播 URL`。
+     *
+     * 🔴 为什么要缓存而不是每次现转：
+     *    ⑴ `buildEmbedItems` 是**同步纯函数**，被选集页反复调用（每次 `reloadItems`）；
+     *       若它内部异步转码，类型就不成立了，且会把一页选集拖成几十秒。
+     *    ⑵ 同一集在「进页面 / 点格子 / 上一集下一集」三条路上都会问一次，
+     *       不缓存就是三次 ffmpeg 冷启动。
+     *    ⚠️ 只缓存**成功**结果：失败的源不缓存，用户下次点还能重试（磁盘坏道、文件正在被写
+     *       这类偶发失败重试是有效的）。
+     *    ⚠️ 值里存的是 `app://` URL 而不是产物路径：`resolveEmbedUrl` 的 appId 可能变
+     *       （多库切换），存路径再转换也每次都得判一次，不如存最终形态。
+     */
+    private transcodeCache = new Map<string, string>();
+
+    /** 正在转的源（防止同一集被两条路同时拉起两个 ffmpeg） */
+    private transcodeInflight = new Map<string, Promise<string | null>>();
+
+    /** 插件卸载 / 换库时清缓存（产物文件留在临时目录，系统自己会清） */
+    clearTranscodeCache(): void {
+        this.transcodeCache.clear();
+        this.transcodeInflight.clear();
+    }
+
+    /**
+     * 把一个**本地视频文件**变成内置 `<video>` 能播的 URL；不行就返回 `null`。
+     *
+     * 🔴 三条分支，顺序不能换：
+     *    ① 本来就内嵌友好（mp4/webm/mov/ogv）⇒ 直接 `resolveEmbedUrl`，一个字节都不动；
+     *    ② 已经是转码产物（缓存命中）⇒ 直接返回，⛔ 别再转一遍；
+     *    ③ 需要转（mkv/avi/hevc…）⇒ ffmpeg 转成 mp4 落临时目录，再 `resolveEmbedUrl`。
+     *
+     * ⚠️ 转码是**慢操作**（remux 几秒、re-encode 可能几十分钟）。所以：
+     *    - 有 `onProgress` 才起右下角进度球，没有就是静默转（调用方自己决定要不要打扰用户）；
+     *    - 全局同一源并发去重（`transcodeInflight`），选集快速连点不会拉起一串 ffmpeg。
+     *
+     * @returns 可播 URL；空串 = 不需要转（本来就能播但解析失败，调用方按失败处理）；
+     *          `null` = 转不了（没有 ffmpeg / 转码失败 / 不受支持），调用方交系统播放器。
+     */
+    private async prepareTranscodedUrl(
+        path: string,
+        opts: { onProgress?: (percent: number | null, label: string) => void; cancel?: TranscodeCancelToken } = {},
+    ): Promise<string | null> {
+        const p = typeof path === 'string' ? path.trim() : '';
+        if (!p) return null;
+        // ② 缓存命中（含「本来就能播」那批：它们第一次就走 ① 之外的分支存进去了）
+        const hit = this.transcodeCache.get(p);
+        if (hit) return hit;
+        // ③ 正在转：等同一个 Promise，⛔ 不重复起进程
+        const running = this.transcodeInflight.get(p);
+        if (running) return await running;
+
+        const job = (async (): Promise<string | null> => {
+            const ffmpeg = this.asrAutoDetect().ffmpeg;
+            if (!ffmpeg) {
+                // 没有 ffmpeg 不是错误，是「这台机器没装」——调用方安静地退系统播放器。
+                // ⚠️ 这里不弹 Notice：`prepareTranscodedUrl` 会被选集页预取时批量问到，
+                //    每集弹一个「没装 ffmpeg」的提示等于刷屏。
+                return null;
+            }
+            const deps = defaultTranscodeDeps();
+            let ball: ReturnType<typeof startProgressBall> | null = null;
+            const stopBall = (): void => {
+                try {
+                    ball?.dismiss();
+                } catch {
+                    /* 球已自毁 */
+                }
+                ball = null;
+            };
+            try {
+                const res = await transcodeToMp4(deps, ffmpeg, p, p, {
+                    cancel: opts.cancel,
+                    onProgress: (percent, label) => {
+                        opts.onProgress?.(percent, label);
+                        if (!opts.onProgress) return;
+                        // 进度球懒创：只在有 onProgress（= 有人等着看）时才起
+                        if (!ball) ball = startProgressBall(label || '正在转换视频', {
+                            onCancel: () => {
+                                /* 取消由调用方 token 控制；球自己 dismiss 即可 */
+                            },
+                        });
+                        ball.update({ label, percent });
+                    },
+                });
+                if (!res.ok || !res.outPath) {
+                    stopBall();
+                    return null;
+                }
+                const url = this.resolveEmbedUrl(res.outPath);
+                stopBall();
+                if (!url) return null;
+                this.transcodeCache.set(p, url);
+                return url;
+            } catch {
+                stopBall();
+                return null;
+            }
+        })();
+        this.transcodeInflight.set(p, job);
+        try {
+            return await job;
+        } finally {
+            this.transcodeInflight.delete(p);
+        }
+    }
+
+    /**
+     * 这个本地路径**值不值得**试转码（同步、廉价判断）。
+     *
+     * 🔴 存在的唯一理由：有些 UI 需要在**动手之前**知道「这一集能不能救」
+     *    （例如选集格要不要标一个「需转换」角标）。⛔ 别用它决定「要不要转」——
+     *    真正的判定在 `prepareTranscodedUrl`（它还会探测真实编码、算 remux/transcode）。
+     *    ⚠️ 没装 ffmpeg 一律 `false`：否则界面会告诉用户「能转」然后转不了。
+     */
+    private canTranscodePath(path: string): boolean {
+        const p = typeof path === 'string' ? path.trim() : '';
+        if (!p || !isTranscodableSource(p)) return false;
+        return !!this.asrAutoDetect().ffmpeg;
     }
 
     /**

@@ -138,8 +138,8 @@ export function parseDictLine(line: string): DictEntry | null {
  * ⚠️ 区间按「首次出现」到「最后出现 + 1」取，允许桶内有空行与坏行，
  *    查词时逐行解析再过滤，比维护「连续块列表」简单得多且不会漏。
  */
-export function buildDictIndex(text: string): DictIndex {
-    const lines = text.split('\n');
+export function buildDictIndex(text: string, presetLines?: readonly string[]): DictIndex {
+    const lines = presetLines ?? text.split('\n');
     const spans = new Map<string, [number, number]>();
     for (let i = 0; i < lines.length; i += 1) {
         const entry = parseDictLine(lines[i]);
@@ -165,12 +165,20 @@ export function buildDictIndex(text: string): DictIndex {
  * ⚠️ 同一词出现多次时返回**第一个**：手工词表里常见「同一个词补了第二版释义」，
  *    取先出现的更符合「原文优先」的直觉，且省得为了打赢排序再存一份权重。
  */
-export function lookupDict(text: string, index: DictIndex, key: string): DictEntry | null {
+export function lookupDict(
+    text: string,
+    index: DictIndex,
+    key: string,
+    presetLines?: readonly string[],
+): DictEntry | null {
     const bucket = bucketOf(key);
     if (!bucket) return null;
     const span = index.get(bucket);
     if (!span) return null;
-    const lines = text.split('\n');
+    // 🔴 行数组必须由调用方传进来（`services/wordDict` 的缓存会带一份）：
+    //    这里每次重切 `text` 在 ECDICT（70 万行）上是每次悬停几十毫秒，
+    //    直接表现就是「鼠标划过一个词，释义要等一下才出来」。⛔ 别把 `presetLines` 删了。
+    const lines = presetLines ?? text.split('\n');
     const [from, to] = span;
     const end = Math.min(to, lines.length);
     for (let i = from; i < end; i += 1) {

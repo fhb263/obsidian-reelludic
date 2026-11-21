@@ -204,6 +204,11 @@
 <h2 class="rl-sp-title">编辑系列属性</h2>
 <div class="rl-sp-sub">{title}{typeLabel ? ` · ${typeLabel}` : ''} · 共 {members.length} 部</div>
 
+<!-- 🔴 用户 2026-11-21（逐字）：「系列卡编辑属性窗口把改成两两并排，依次是改系列名、改合集评分、
+     改归属合集、改归属标签」⇒ 前四段排成 2×2：左列第 1、3 段，右列第 2、4 段，阅读顺序（先行后列）
+     恰是用户点名的顺序。成员清单仍独占整行。
+     ⚠️ 段序就是用户点名的顺序，⛔ 别按「输入类排前、控件类排后」重排 —— 那会打乱用户给的次序。 -->
+<div class="rl-sp-grid">
 <!-- ① 系列名（整组一起改） -->
 <div class="rl-sp-sec">
     <label class="rl-sp-lbl" for="rl-sp-name">系列名</label>
@@ -262,7 +267,9 @@
             </button>
         {/if}
     </div>
-    <div class="rl-sp-hint">这是**整组**的分（独立字段），不是组内平均分；左半边点 = 半星，再点当前档位可清空。</div>
+    <!-- ⚠️ 原写 `**整组**` / `**覆盖**` / `**追加**`：模板里是纯文本，Markdown 的 `**` **不会**变粗，
+         页面上就是字面带星号。本行起改用 `<strong>`。 -->
+    <div class="rl-sp-hint">这是<strong>整组</strong>的分（独立字段），不是组内平均分；左半边点 = 半星，再点当前档位可清空。</div>
 </div>
 
 <!-- ③ 批量填合集（覆盖） -->
@@ -277,7 +284,7 @@
             on:keydown={(ev) => { if (ev.key === 'Enter') submitCollection(); }} />
         <button class="rl-sp-btn" on:click={submitCollection}>填入</button>
     </div>
-    <div class="rl-sp-hint">**覆盖**语义：组内每一部统一成同一个值（不是追加）。填了才会出现在合集视图里。</div>
+    <div class="rl-sp-hint"><strong>覆盖</strong>语义：组内每一部统一成同一个值（不是追加）。填了才会出现在合集视图里。</div>
 </div>
 
 <!-- ④ 批量追加标签 -->
@@ -300,7 +307,8 @@
             on:keydown={(ev) => { if (ev.key === 'Enter') submitTags(); }} />
         <button class="rl-sp-btn" disabled={!tagsDraft.trim()} on:click={submitTags}>追加</button>
     </div>
-    <div class="rl-sp-hint">**追加**语义：已有标签全部保留，只多几个。{tagsHint ? '（上方胶囊即组内现有标签）' : ''}</div>
+    <div class="rl-sp-hint"><strong>追加</strong>语义：已有标签全部保留，只多几个。{tagsHint ? '（上方胶囊即组内现有标签）' : ''}</div>
+</div>
 </div>
 
 <!-- ⑤ 排序号（原独立弹窗搬进来：就地拖动 + 保存）+ 成员清单 + 批量关联入口 -->
@@ -370,6 +378,35 @@
         color: var(--text-normal);
     }
     .rl-sp-sub { font-size: 11.5px; color: var(--text-muted); margin-bottom: 12px; }
+    /* 🔴 用户 2026-11-21：「改成两两并排」⇒ 前四段 2×2。阅读顺序（先行后列）= 用户点名的次序：
+       系列名 / 合集评分 / 归属合集 / 追加标签。
+       ⚠️ 分隔线必须**重新画**：并排后如果还用每段 `border-top`，左右两段各自画一条会在中间断成
+          两截短线，且第一行的下边线画不出来。改为「网格自己画行线 + 首行无上边线」，见下面两条规则。 */
+    .rl-sp-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px 14px;
+        align-items: start;
+    }
+    .rl-sp-grid > .rl-sp-sec {
+        padding: 0;
+        border-top: none;
+    }
+    /* 第一行（第 1、2 段）与第二行（第 3、4 段）之间的那条横线：只给第 3、4 段加上边距与上边线 */
+    .rl-sp-grid > .rl-sp-sec:nth-child(n + 3) {
+        border-top: 1px solid var(--background-modifier-border);
+        padding-top: 12px;
+    }
+    /* 窄窗兜底：屏宽 ≤560px 时窗口只有 ~92vw、两列各约 240px 撑不住，回落单列。
+       🔴 断点必须用既有档位（`tests/narrowScreenAdapt.test.ts` 的 ALLOWED_BREAKPOINTS
+          = 900/760/719/700/560/420），⛔ 别为这事新开一个一次性阈值。 */
+    @media (max-width: 560px) {
+        .rl-sp-grid { grid-template-columns: 1fr; }
+        .rl-sp-grid > .rl-sp-sec:nth-child(n + 2) {
+            border-top: 1px solid var(--background-modifier-border);
+            padding-top: 12px;
+        }
+    }
     .rl-sp-sec { padding: 10px 0; border-top: 1px solid var(--background-modifier-border); }
     .rl-sp-sec:first-of-type { border-top: none; padding-top: 0; }
     /* 标签行：与单卡编辑属性 `.rl-lbl` 同款（11px / 600 / 上 9px 下 4px），⛔ 别再另起一套字号 */

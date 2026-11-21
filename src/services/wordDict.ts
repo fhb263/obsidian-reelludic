@@ -37,6 +37,13 @@ interface DictCache {
     mtime: number;
     text: string;
     index: DictIndex;
+    /**
+     * 切好的行（与 `text` 同生命周期）。
+     * 🔴 必须缓存：`lookupDict` 每次悬停都要按行号取词，现场 `text.split('\n')`
+     *    在 ECDICT（约 70 万行）上是每次几十毫秒 ⇒ 用户看到的就是「划过去，等一下才出释义」。
+     *    建索引时本来就要切一遍，顺手留下来即可，⛔ 别只缓存 `text` 再让查词重切。
+     */
+    lines: string[];
 }
 
 /** 单例缓存（模块级：词典是全局资源，⛔ 每个视图各建一份 = 内存翻几倍） */
@@ -73,7 +80,9 @@ function ensureCache(
         cache = null;
         return { ok: false, reason: '读取词典文件失败' };
     }
-    cache = { path: trimmed, size, mtime, text, index: buildDictIndex(text) };
+    // 只切一次：建索引与查词共用这份行数组（见 `DictCache.lines` 的注释）
+    const lines = text.split('\n');
+    cache = { path: trimmed, size, mtime, text, index: buildDictIndex(text, lines), lines };
     return { ok: true, cache };
 }
 
@@ -87,7 +96,7 @@ export function lookupWordInDict(deps: DictDeps, path: string, key: string): Dic
     const got = ensureCache(deps, path);
     if (!got.ok) return { entry: null, reason: got.reason };
     try {
-        const entry = lookupDict(got.cache.text, got.cache.index, key);
+        const entry = lookupDict(got.cache.text, got.cache.index, key, got.cache.lines);
         return entry ? { entry, reason: '' } : { entry: null, reason: '' };
     } catch {
         return { entry: null, reason: '查词时出错' };

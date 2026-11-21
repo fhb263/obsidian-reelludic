@@ -72,22 +72,29 @@ describe('🔴 2026-11-08 歌词滚动改平滑（断言脚本锁死了那一行
 });
 
 describe('🔴 2026-11-08 字幕放大且末行不再像被切（用户原话）', () => {
-    it('正文字号 13px / 行高 1.6（原 12px / 1.5）', () => {
+    it('正文字号 13px 基准 / 行高 1.6（原 12px / 1.5）', () => {
         const block = CSS.slice(CSS.indexOf('.rl-epp-cuetext {'));
         const decl = block.slice(0, block.indexOf('}'));
-        expect(decl).toContain('font-size: 13px');
+        // 🔴 2026-11-21 用户 m02829：「字幕面板和字幕面板学习模式都要支持 ctrl 鼠标滚轮缩放」
+        //    ⇒ 字号从写死的 `13px` 变成 `calc(13px * var(--rl-epp-cue-scale, 1))`。
+        //    判据意图不变（基准仍是 13px、行高仍是 1.6），只是允许被缩放变量乘一次；
+        //    ⛔ 别把这里改成单纯 `toContain('13px')` 了事 —— 那句会让「基准被悄悄改成别的值」也通过。
+        expect(decl).toContain('calc(13px * var(--rl-epp-cue-scale, 1))');
         expect(decl).toContain('line-height: 1.6');
         expect(decl).not.toContain('font-size: 12px');
+        expect(decl).not.toContain('font-size: 13px;');
         // 正文仍然不做裁切：末行截断的真因在滚动视野，不是 line-clamp
         expect(decl).not.toContain('line-clamp');
         expect(decl).not.toContain('overflow: hidden');
     });
 
-    it('学习模式 16px / 1.85，且与普通档保持明显落差', () => {
+    it('学习模式 16px 基准 / 1.85，且与普通档保持明显落差', () => {
         const block = CSS.slice(CSS.indexOf('.rl-epp-cuesbox.is-learn .rl-epp-cuetext {'));
         const decl = block.slice(0, block.indexOf('}'));
-        expect(decl).toContain('font-size: 16px');
+        // 同一条口径：基准 16px 也要乘同一个缩放变量，否则「缩放只对普通档生效」
+        expect(decl).toContain('calc(16px * var(--rl-epp-cue-scale, 1))');
         expect(decl).toContain('line-height: 1.85');
+        expect(decl).not.toContain('font-size: 16px;');
     });
 
     it('列表底部留 10px 呼吸空间（原来只有 2px ⇒ 末句贴刀刃）', () => {

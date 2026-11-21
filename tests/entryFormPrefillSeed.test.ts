@@ -7,7 +7,11 @@
 //    m04435 ②（**现行**）：「添加条目展开的结果列表：**不显示"入库"和"AI 预填"按钮**。
 //             【"AI 预填"仅在**单卡编辑属性表单窗口**显示】」
 //            ⇒ 结果列表里那颗 ✨ 与曲库「入库」**一起退场**；`runAiPrefillForResult` 连根删除。
-//            ⇒ AI 预填的唯一入口 = `.rl-title-col > .rl-lbl-row` 里那颗（条件 `{#if entry || manualFill}`）。
+//            ⇒ AI 预填的唯一入口 = `.rl-title-col > .rl-lbl-row` 里那颗。
+//    m01755（**现行**）：用户问「编辑属性窗口的AI预填按钮和百度搜索图标按钮为什么在添加条目窗口上
+//             没有显示」并裁定「要做，统一显示」⇒ 那颗按钮原来外面包着的 `{#if entry || manualFill}`
+//             **整层撤除**，编辑态 / 添加条目点选结果 / 添加条目手动填写三条路一律可见。
+//             ⚠️ `manualFill` 随之成为只写不读的死变量，已连根删除（本仓不留死代码）。
 //
 // ⚠️ 为什么是源码文本守卫而不是行为测试：
 //   这条链路的失效形态是「**静默降级**」——功能看着在、点了没反应，编译器与 svelte-check 都不说话。
@@ -102,16 +106,19 @@ describe('🔴 AI 预填的唯一入口：单卡编辑属性表单的书名标�
         const titleCol = sliceBetween(src, '<div class="rl-title-col">', '<div class="rl-title-row">', '标题列');
         expect(titleCol).toContain('class="rl-lbl-row"');
         expect(titleCol).toContain('class="rl-ai-btn"');
-        expect(titleCol).toContain('{#if entry || manualFill}');
         expect(titleCol).toContain('AI 预填字段');
     });
 
-    it('🔴 条件 `entry || manualFill`：编辑态与手动填写都给，⛔ 点选结果的中间态不给', () => {
+    // 🔴 m01755（用户逐字「要做，统一显示」）：旧口径 `{#if entry || manualFill}` 已推翻。
+    //    ⚠️ 这条以前守的是「编辑态给、点选结果的中间态不给」—— 现在反过来守「任何门都不许加回来」，
+    //    因为那个「不给」正是用户报告的 bug（添加条目窗口看不到这两枚按钮）。
+    it('🔴 无条件渲染：⛔ 不许再包 `entry || manualFill` 或只包 `manualFill`', () => {
         const titleCol = sliceBetween(src, '<div class="rl-title-col">', '<div class="rl-title-row">', '标题列');
-        // 编辑态：entry 非空
-        expect(titleCol).toContain('{#if entry || manualFill}');
-        // 反向守卫：不许退回只看 manualFill
+        expect(titleCol).not.toContain('{#if entry || manualFill}');
         expect(titleCol).not.toContain('{#if manualFill}');
+        // 两枚按钮（百度 + AI 预填）都在这一小段里、都不被任何 `{#if}` 包住
+        expect(titleCol).toContain('rl-baidu-btn');
+        expect(titleCol).toContain('AI 预填字段');
     });
 
     it('🔴 点它走的是 `runAiPrefill()`（字段目录与预览面板只此一套）', () => {
@@ -126,6 +133,9 @@ describe('🔴 AI 预填的唯一入口：单卡编辑属性表单的书名标�
         const body = src.slice(at, at + 500);
         expect(body).toContain('applyPrefill();');
         expect(body).toContain('picked = true;');
-        expect(body).toContain('manualFill = true;');
+        // 🔴 m01755：`manualFill = true` 这句**已删**（变量本身也没了）。
+        //    ⚠️ 反向守卫 —— 有人把变量加回来当新门用，这条会立刻红。
+        expect(body).not.toContain('manualFill');
+        expect(src).not.toContain('manualFill');
     });
 });

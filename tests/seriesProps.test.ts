@@ -52,6 +52,32 @@ describe('SeriesProps 组件（窗口本体）', () => {
         expect(COMP).toMatch(/保存排序/);
     });
 
+    /**
+     * 🔴 2026-11-21 用户逐字：「系列卡编辑属性窗口把改成两两并排，依次是改系列名、改合集评分、
+     *    改归属合集、改归属标签」。
+     * ⚠️ 判据抓的是**顺序**，不只是「有这四段」—— 用户点名的次序就是渲染次序，
+     *    ⛔ 别再按「输入类排前 / 控件类排后」重排。阅读顺序（先行后列）＝ DOM 顺序。
+     */
+    it('🔴 前四段排成 2×2 两两并排，且 DOM 顺序就是用户点名的次序（系列名 → 评分 → 合集 → 标签）', () => {
+        expect(COMP).toMatch(/<div class="rl-sp-grid">/);
+        expect(COMP).toMatch(/grid-template-columns:\s*1fr 1fr/);
+        // 四个锚点在网格内，且严格按用户给的次序出现
+        const gridAt = COMP.indexOf('<div class="rl-sp-grid">');
+        expect(gridAt).toBeGreaterThan(0);
+        const gridEnd = COMP.indexOf('</div>', COMP.indexOf('class="rl-sp-list"'));
+        const grid = COMP.slice(gridAt, gridEnd); // 网格含前四段；截止到成员清单之前够用
+        const marks = ['id="rl-sp-name"', 'class="rl-sp-stars"', 'id="rl-sp-coll"', 'id="rl-sp-tags"'];
+        const at = marks.map((m) => grid.indexOf(m));
+        for (let i = 0; i < at.length; i++) {
+            expect(at[i], `第 ${i + 1} 段（${marks[i]}）必须落在网格内`).toBeGreaterThan(0);
+            if (i > 0) expect(at[i], `「${marks[i]}」必须排在「${marks[i - 1]}」之后`).toBeGreaterThan(at[i - 1]);
+        }
+        // 反向守卫：⛔ 不许每段自己画 `border-top`（并排后会断成两截短线）
+        expect(COMP).not.toMatch(/\.rl-sp-grid > \.rl-sp-sec \{[^}]*border-top:\s*1px/);
+        // 窄屏必须回单列，且断点只能用既有档位里的 560
+        expect(COMP).toMatch(/@media \(max-width: 560px\)[\s\S]{0,120}grid-template-columns:\s*1fr/);
+    });
+
     it('🔴 组件**不落库**：⛔ 不许 import service / catalog / main，也不许出现 setSeriesRating', () => {
         expect(COMP).not.toMatch(/from 'services\//);
         expect(COMP).not.toMatch(/from 'data\//);
@@ -164,7 +190,9 @@ describe('SeriesPropsModal（壳）', () => {
         expect(MODAL).toMatch(/this\.titleEl\.setText\(''\)/);
         expect(MODAL).toMatch(/this\.instance\?\.\$destroy\(\)/);
         expect(MODAL).toMatch(/this\.instance = null/);
-        expect(MODAL).toMatch(/min\(560px, 92vw\)/);
+        // 🔴 2026-11-21 用户「改成两两并排」⇒ 宽度从 560px 放宽到 660px（两列各约 310px）。
+        //    ⚠️ 判据意图不变：仍然要求**显式指定宽度**且带 `92vw` 窄屏上限，⛔ 别退回 560。
+        expect(MODAL).toMatch(/min\(660px, 92vw\)/);
     });
 });
 

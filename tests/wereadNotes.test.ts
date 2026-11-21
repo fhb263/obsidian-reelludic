@@ -5,17 +5,28 @@
  *    `review/list?listType=11` 回 `totalCount: 0`），**拿不到真实样本**。所以这里的样本是按
  *    参考插件 `zhaohongxuan/obsidian-weread-plugin` 的 `models.ts` 字段签名**手写构造**的 ——
  *    钉的是「本仓怎么解释这些字段」，不是「微信读书明天还这么返回」。
+ *
+ * 🔴🔴 2026-11-21 重大更新（用户 m01996/m02148 报障「只有想法同步，马克笔/直线/波浪线都没过来」）：
+ *    ⑴ 老 REST `/web/book/bookmarklist` 已废弃 —— 对任何 bookId/synckey/bookVersion 组合**恒回 `{}`**；
+ *       划线数据改从 **Agent Gateway**（`i.weread.qq.com/api/agent/gateway`）取，回包里才有 `colorStyle`。
+ *    ⑵ `colorStyle` 数值 → 样式的映射**没有任何公开文档**，是用户 2026-11-21 逐条口述确认的：
+ *       原话「1直线 2波浪线 3马克笔 4想法」⇒ 1=直线、3=波浪线、5=马克笔（4 是想法那条，无 colorStyle）。
+ *       下面的用例就是钉死这张表，⛔ 改映射必须先改这里并说明依据。
  */
 import { describe, expect, it } from 'vitest';
 import {
     buildWereadBookmarkUrl,
     buildWereadChaptersBody,
+    buildWereadGatewayBody,
     buildWereadReviewUrl,
     mergeWereadNotes,
+    parseWereadApiKey,
     parseWereadBookmarks,
     parseWereadReviews,
     renderWereadNotes,
+    WEREAD_GATEWAY_BOOKMARKS,
     WEREAD_NOTES_SECTION,
+    wereadMarkOf,
     type WereadNote,
 } from 'pure/wereadNotes';
 
@@ -70,8 +81,17 @@ describe('wereadNotes · 解析划线', () => {
         expect(out.notes[0]).toMatchObject({ chapterUid: 2, text: '一句划线', range: '10-20' });
     });
 
-    it('实测无数据时回 {} —— 是空列表**不是错误**', () => {
+    it('🔴 `{}`（无 updated 字段）现在报「接口可能变更」—— 老接口废弃后的静默失败必须暴露', () => {
+        // 2026-11-21 实测：老 REST `/web/book/bookmarklist` 对任何 bookId 恒回 `{}`，划线已迁走。
+        // 旧口径「{} = 这本书没划线」正是用户报障「只有想法同步、划线全没了」的静默来源。
+        // 真正的「没有划线」在新接口下是 `{ updated: [] }`（见下一条）。
         const out = parseWereadBookmarks({});
+        expect(out.error).toContain('接口可能已变更');
+        expect(out.notes).toEqual([]);
+    });
+
+    it('Gateway 下真无划线的形态是 `updated: []` —— 空列表且**无错误**', () => {
+        const out = parseWereadBookmarks({ synckey: 0, updated: [], removed: [] });
         expect(out.error).toBeUndefined();
         expect(out.notes).toEqual([]);
     });
@@ -251,5 +271,133 @@ describe('wereadNotes · 渲染', () => {
     it('空列表只留说明行（不崩、不留空区）', () => {
         const md = renderWereadNotes([], { syncedAt: 0 });
         expect(md.split('\n')[0]).toContain('共 0 条');
+    });
+});
+
+/**
+ * 🔴 2026-11-21 新增：`colorStyle` 映射与样式渲染。
+ *
+ * 映射来源 = 用户 m02297 逐条口述「1直线 2波浪线 3马克笔 4想法」，配上当晚实测的 4 条真数据：
+ *   colorStyle=1 → 「3天后，还能记住什么？…」         → 直线
+ *   colorStyle=3 → 「含益生菌，有助于消化。…」        → 波浪线
+ *   colorStyle=5 → 「今天我为大家推荐一些健康的食物…」→ 马克笔
+ *   （想法那条没有 colorStyle，走 review 接口）
+ */
+describe('wereadNotes · colorStyle 映射（唯一真源 WEREAD_COLOR_STYLES）', () => {
+    it('1=直线 / 3=波浪线 / 5=马克笔 —— 用户口述确认的三种', () => {
+        expect(wereadMarkOf(1)).toBe('underline');
+        expect(wereadMarkOf(3)).toBe('wavy');
+        expect(wereadMarkOf(5)).toBe('hl');
+    });
+
+    it('认不出的取值回 undefined（⛔ 别瞎猜成马克笔，会静默画错样式）', () => {
+        expect(wereadMarkOf(0)).toBeUndefined();
+        expect(wereadMarkOf(2)).toBeUndefined();
+        expect(wereadMarkOf(4)).toBeUndefined(); // 4 是「想法」那条，接口里本来就没有 colorStyle
+        expect(wereadMarkOf(99)).toBeUndefined();
+    });
+
+    it('脏输入不抛：undefined / null / 字符串 / NaN 全回 undefined', () => {
+        expect(wereadMarkOf(undefined)).toBeUndefined();
+        expect(wereadMarkOf(null)).toBeUndefined();
+        expect(wereadMarkOf('1')).toBeUndefined(); // 字符串 "1" 不算 —— 接口给的是数字
+        expect(wereadMarkOf(Number.NaN)).toBeUndefined();
+    });
+
+    it('原型链键名穿透守卫：wereadMarkOf("constructor") 之类不能返回真值', () => {
+        // 表是普通对象，hasOwnProperty 守卫必须挡住 constructor/toString
+        expect(wereadMarkOf('constructor' as unknown)).toBeUndefined();
+        expect(wereadMarkOf('toString' as unknown)).toBeUndefined();
+    });
+
+    it('parseWereadBookmarks 把 colorStyle 同时落成原值与档位', () => {
+        const out = parseWereadBookmarks({
+            updated: [
+                { markText: '直线那句', range: '1-9', chapterUid: 1, colorStyle: 1 },
+                { markText: '波浪那句', range: '10-19', chapterUid: 1, colorStyle: 3 },
+                { markText: '马克笔那句', range: '20-29', chapterUid: 1, colorStyle: 5 },
+                { markText: '没有样式的老数据', range: '30-39', chapterUid: 1 },
+            ],
+        });
+        expect(out.notes.map((n) => n.mark)).toEqual(['underline', 'wavy', 'hl', undefined]);
+        expect(out.notes.map((n) => n.colorStyle)).toEqual([1, 3, 5, undefined]);
+    });
+
+    it('渲染：样式用【马克笔】/【直线】/【波浪线】方括号标签，紧跟 > 之后原文之前', () => {
+        const md = renderWereadNotes(
+            [
+                note({ range: '1-9', text: '直线那句', mark: 'underline' }),
+                note({ range: '10-19', text: '波浪那句', mark: 'wavy' }),
+                note({ range: '20-29', text: '马克笔那句', mark: 'hl' }),
+            ],
+            { syncedAt: 0 },
+        );
+        expect(md).toContain('> 【直线】直线那句');
+        expect(md).toContain('> 【波浪线】波浪那句');
+        expect(md).toContain('> 【马克笔】马克笔那句');
+    });
+
+    it('渲染：没有样式的条目⛔ 不许凭空多出标签（老数据/想法那条）', () => {
+        const md = renderWereadNotes([note({ text: '无样式原文' })], { syncedAt: 0 });
+        expect(md).toContain('> 无样式原文');
+        expect(md).not.toContain('【');
+    });
+
+    it('渲染：多行划线只在**首行**带标签，其余行保持纯文本', () => {
+        const md = renderWereadNotes([note({ text: '第一行\n第二行', mark: 'wavy' })], { syncedAt: 0 });
+        expect(md).toContain('> 【波浪线】第一行');
+        expect(md).toContain('> 第二行');
+        expect(md).not.toContain('【波浪线】第二行');
+    });
+
+    it('渲染：样式标签在原文**之前**，⛔ 别放末尾（用户复制时会把标签带走）', () => {
+        const md = renderWereadNotes([note({ text: '原文内容', mark: 'hl' })], { syncedAt: 0 });
+        const line = md.split('\n').find((l) => l.includes('原文内容')) ?? '';
+        expect(line.indexOf('【马克笔】')).toBeLessThan(line.indexOf('原文内容'));
+    });
+
+    it('合并：划线带样式、想法不带 ⇒ 合并后保留划线那边过来的样式', () => {
+        const merged = mergeWereadNotes(
+            [note({ range: '5-9', text: '原文', mark: 'underline', colorStyle: 1 })],
+            [note({ range: '5-9', text: '', note: '我的想法' })],
+        );
+        expect(merged).toHaveLength(1);
+        expect(merged[0].mark).toBe('underline');
+        expect(merged[0].colorStyle).toBe(1);
+        expect(merged[0].note).toBe('我的想法');
+    });
+});
+
+describe('wereadNotes · Agent Gateway 请求构造', () => {
+    it('body 业务参数平铺 + api_name + skill_version（⛔ 别包成 { params } ）', () => {
+        const body = JSON.parse(buildWereadGatewayBody(WEREAD_GATEWAY_BOOKMARKS, { bookId: '27369030' }));
+        expect(body).toEqual({
+            bookId: '27369030',
+            api_name: '/book/bookmarklist',
+            skill_version: '1.0.5',
+        });
+    });
+
+    it('划线接口名是 /book/bookmarklist（与老 REST 同名，但走 Gateway 才有数据）', () => {
+        expect(WEREAD_GATEWAY_BOOKMARKS).toBe('/book/bookmarklist');
+    });
+
+    it('parseWereadApiKey 取 apikey；脏输入回空串', () => {
+        expect(parseWereadApiKey({ apikey: 'wrk-abc', created_at: 1 })).toBe('wrk-abc');
+        expect(parseWereadApiKey({ apikey: '  wrk-abc  ' })).toBe('wrk-abc');
+        expect(parseWereadApiKey({})).toBe('');
+        expect(parseWereadApiKey(null)).toBe('');
+        expect(parseWereadApiKey({ apikey: 123 })).toBe('');
+    });
+
+    it('Gateway 的小写 errcode 也能识别（-2013 鉴权失败要单独说，别误报成 Cookie 失效）', () => {
+        const out = parseWereadBookmarks({ errcode: -2013, errlog: 'CC866Y2', errmsg: '鉴权失败' });
+        expect(out.error).toContain('API Key');
+        expect(out.error).not.toContain('Cookie');
+    });
+
+    it('Gateway 小写 errcode 走通用文案时读 errmsg 而不是显示错误码数字', () => {
+        const out = parseWereadBookmarks({ errcode: -9999, errmsg: '自定义错误' });
+        expect(out.error).toBe('自定义错误');
     });
 });

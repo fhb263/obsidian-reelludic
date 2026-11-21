@@ -1,16 +1,24 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'fs';
 import {
     WORD_SPAN_MAX,
     estimateWordSpans,
     isCjkChar,
+    joinSpansWithSource,
     parseAssKaraokeWords,
     parseVttInlineWords,
+    spanTextsWithSource,
     splitTimingUnits,
     timingWeight,
     wordSpansFor,
     type WordSpan,
 } from 'pure/wordTiming';
 import { parseAssCues, parseCues } from 'pure/subtitleCues';
+
+/** 剥掉 JS 注释（`.ts` 源用；⚠️ Svelte 模板不能用这个，`accept="image/*"` 会被当块注释开头） */
+function stripTsComments(code: string): string {
+    return code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
 
 /** 浮点比较：时间戳连乘后必然有尾差，别用 toBe */
 function near(actual: number, expected: number, tol = 1e-6): void {
@@ -211,6 +219,72 @@ describe('wordSpansFor', () => {
         got.shift();
         expect(real.length).toBe(2);
         expect(real[0]?.text).toBe('x');
+    });
+});
+
+describe('spanTextsWithSource / joinSpansWithSource（🔴 2026-11-21 用户报障：学习模式高亮行空格全消失）', () => {
+    // 真因：`splitTimingUnits` 把空白当分词边界**直接丢掉** ⇒ `['hello','world']` 里没有空格，
+    // 视图层只塞 `w.text` 就会拼成 `helloworld`。这组用例把「拆完必须能拼回原文」钉死。
+    it('英文多词：拼回去与原文逐字一致（不是 helloworld）', () => {
+        const text = 'hello world again';
+        const spans = estimateWordSpans(text, 0, 3);
+        expect(spans.map((s) => s.text)).toEqual(['hello', 'world', 'again']);
+        expect(joinSpansWithSource(text, spans)).toBe(text);
+        // 空格必须挂在「前一段尾」：首段不带前导空白，末段带着行尾之外的空隙
+        expect(spanTextsWithSource(text, spans)).toEqual(['hello ', 'world ', 'again']);
+    });
+
+    it('中文混排英文：中文字之间不凭空插空格', () => {
+        const text = '今天我们学 hello world 这个词';
+        const spans = estimateWordSpans(text, 0, 5);
+        expect(joinSpansWithSource(text, spans)).toBe(text);
+    });
+
+    it('连续多个空格原样保留', () => {
+        const text = 'a   b  c';
+        const spans = estimateWordSpans(text, 0, 4);
+        expect(joinSpansWithSource(text, spans)).toBe(text);
+    });
+
+    it('行尾空格不能丢', () => {
+        const text = 'hello world   ';
+        const spans = estimateWordSpans(text, 0, 3);
+        expect(joinSpansWithSource(text, spans)).toBe(text);
+    });
+
+    it('行首缩进并进首个片段，不单独成段', () => {
+        const text = '   hello world';
+        const spans = estimateWordSpans(text, 0, 3);
+        const pieces = spanTextsWithSource(text, spans);
+        expect(pieces.join('')).toBe(text);
+        expect(pieces.length).toBe(spans.length);
+        expect(pieces[0]).toBe('   hello ');
+    });
+
+    it('片段与原文对不上（真词级被 trim 过）也不丢原文尾巴', () => {
+        // 模拟 ASS 卡拉 OK 里片段文本被规范化过、与 cue.text 不完全对得上的情形
+        const text = 'hello world';
+        const pieces = spanTextsWithSource(text, [{ text: 'hello' }, { text: 'WORLD' }]);
+        expect(pieces.join('')).toBe('hello worldWORLD');
+    });
+
+    it('空片段数组 ⇒ 空结果 / join 原样返回', () => {
+        expect(spanTextsWithSource('abc', [])).toEqual([]);
+        expect(joinSpansWithSource('abc', [])).toBe('abc');
+        expect(joinSpansWithSource('', [])).toBe('');
+    });
+
+    it('脏输入不抛', () => {
+        expect(() => spanTextsWithSource(undefined as unknown as string, [{ text: 'a' }])).not.toThrow();
+        expect(() => joinSpansWithSource('x', [undefined as unknown as { text: string }])).not.toThrow();
+    });
+
+    it('🔴 反向守卫：view 层不许再只塞 w.text（否则空格又掉）', () => {
+        const src = readFileSync('src/views/EpisodePageView.ts', 'utf8');
+        const code = stripTsComments(src);
+        // 必须用 spanTextsWithSource，且不能出现 `span.textContent = w.text`
+        expect(code).toContain('spanTextsWithSource');
+        expect(code).not.toMatch(/span\.textContent\s*=\s*w\.text/);
     });
 });
 

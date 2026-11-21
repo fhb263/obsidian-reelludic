@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    canPlayDirectLink,
     canPlayNetInline,
     netEmbedFailText,
     netEmbedFallbackUrl,
@@ -205,5 +206,63 @@ describe('netEmbedFallbackUrl（失败后自动重试一次）', () => {
         expect(netEmbedFallbackUrl('https://www.bilibili.com/video/BV1xx411c7mD')).toBeNull();
         expect(netEmbedFallbackUrl('https://example.com/v')).toBeNull();
         expect(netEmbedFallbackUrl(null)).toBeNull();
+    });
+});
+
+/**
+ * `canPlayDirectLink` = 2026-11 新增的**第三条播法**：`http(s)` 直链灌进 `<video>`。
+ *
+ * 🔴 这三条路必须**彼此独立**（改这里前先读 `pure/netInline.ts` 文件头）：
+ *    ① `canPlayNetInline` → 官方 iframe（B 站 / YouTube）；
+ *    ② `canPlayDirectLink` → `<video src=直链>`（网盘 / 任意 http 视频文件）；
+ *    ③ 都不认 → 交浏览器（`openExternalUrl`）。
+ *    合并 ① ② 的直接后果是「mp4 直链被塞进 iframe」= 一张永远空白的框，
+ *    而用户看到的现象是「点了播放什么都没发生」——最难排查的那类。
+ */
+describe('canPlayDirectLink（直链内置这条新路，⛔ 别和 iframe 那条合并）', () => {
+    it('浏览器能解码的直链 ⇒ true（mp4 / webm / mov / ogv）', () => {
+        expect(canPlayDirectLink('https://pan.example.com/d/01.mp4')).toBe(true);
+        expect(canPlayDirectLink('https://pan.example.com/d/01.webm')).toBe(true);
+        expect(canPlayDirectLink('http://127.0.0.1:5244/d/01.mov')).toBe(true);
+        expect(canPlayDirectLink('https://pan.example.com/d/01.ogv')).toBe(true);
+    });
+
+    it('带签名参数的地址照样认（扩展名取的是 pathname，⛔ 不能被 ?sign= 骗到）', () => {
+        // OpenList 的签名直链形如 `/d/01.mp4?sign=xxx`，签名里可能还有 `.mp4` 字样 ——
+        // 判据看 pathname，所以两种都必须是 true，而「签名里带 mp4 但路径不是」必须 false。
+        expect(canPlayDirectLink('https://pan.example.com/d/01.mp4?sign=abc.def')).toBe(true);
+        expect(canPlayDirectLink('https://pan.example.com/d/01.mkv?sign=a.mp4')).toBe(false);
+    });
+
+    it('插件内解不了的格式 ⇒ false（交给系统播放器，绝不黑屏）', () => {
+        expect(canPlayDirectLink('https://pan.example.com/d/01.mkv')).toBe(false);
+        expect(canPlayDirectLink('https://pan.example.com/d/01.avi')).toBe(false);
+        expect(canPlayDirectLink('https://pan.example.com/d/01.flv')).toBe(false);
+        expect(canPlayDirectLink('https://pan.example.com/d/01.ts')).toBe(false);
+        expect(canPlayDirectLink('https://pan.example.com/d/01.wmv')).toBe(false);
+    });
+
+    it('⛔ B 站 / YouTube 不算直链（它们只能走 iframe，两条判据互不接管）', () => {
+        const bili = 'https://www.bilibili.com/video/BV1xx411c7mD';
+        const yt = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+        expect(canPlayDirectLink(bili)).toBe(false);
+        expect(canPlayDirectLink(yt)).toBe(false);
+        // 反向：直链也不能进 iframe 那条
+        expect(canPlayNetInline('https://pan.example.com/d/01.mp4')).toBe(false);
+    });
+
+    it('非 http(s) 与非 URL ⇒ false（本地路径由另一条链处理）', () => {
+        expect(canPlayDirectLink('D:\\anime\\01.mp4')).toBe(false);
+        expect(canPlayDirectLink('anime/01.mp4')).toBe(false);
+        expect(canPlayDirectLink('file:///D:/anime/01.mp4')).toBe(false);
+        expect(canPlayDirectLink('app://local/D:/anime/01.mp4')).toBe(false);
+    });
+
+    it('脏输入 ⇒ false 而不抛', () => {
+        expect(canPlayDirectLink('')).toBe(false);
+        expect(canPlayDirectLink(null)).toBe(false);
+        expect(canPlayDirectLink(undefined)).toBe(false);
+        expect(canPlayDirectLink(42)).toBe(false);
+        expect(canPlayDirectLink({})).toBe(false);
     });
 });

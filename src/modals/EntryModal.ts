@@ -481,6 +481,15 @@ export class EntryModal extends Modal {
                  */
                 onBiliParts: (bvid: string) => this.plugin.dlBiliView(bvid),
                 /**
+                 * 🔴 网盘导入（2026-11 新增）：宿主弹 `WebdavPickerModal`，返回勾中的 [集下标, 地址]。
+                 * ⚠️ 返回 `null`（取消 / 没配 WebDAV）⇒ 组件什么都不做。
+                 * 🔴 `davReady` 是**按钮是否出现**的门控：没配网盘的用户不该看到一枚点了必然失败的按钮。
+                 *    判据与设置页那一行同一个（`isWebdavAvailable`），⛔ 别在这里另写一套。
+                 */
+                onDavPick: (anchor: number, urls: (string | undefined)[], total: number) =>
+                    this.plugin.openWebdavPicker(anchor, urls, total),
+                davReady: this.plugin.webdavReady(),
+                /**
                  * 🔴 `b23.tv` 短链 → 落地页（手机分享的短码里没有 BV 号，UI 层不发请求）。
                  *    走宿主 `main.resolveBiliShortForPaste`，与选集页取流那次跳转**同一个出口**。
                  */

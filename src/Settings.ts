@@ -225,6 +225,8 @@ import { safeSetIcon } from 'services/safeIcon';
 import { setTip, srLabel } from 'ui/components';
 import { bindTooltipDocument } from 'services/globalTooltip';
 import { probeEmbedCookies } from 'services/embedCookie';
+import { listDav, probeDav, isWebdavAvailable } from 'services/webdavClient';
+import { normalizeDavBase, davAuthHeader, WEBDAV_ENABLED } from 'pure/webdav';
 
 export interface ReelLudicSettings {
     /** TMDB API Key（免费注册，设置页引导） */
@@ -780,6 +782,29 @@ export interface ReelLudicSettings {
      *    不是必填。空值合法。
      */
     ytCookie?: string;
+    /**
+     * 网盘（WebDAV）入口地址 —— 关联网盘资源时列目录用。
+     *
+     * 形如 `https://pan.example.com:5244/dav/`（OpenList/AList 面板的 WebDAV 地址）、
+     * `https://dav.jianguoyun.com/dav/`（坚果云）、`https://nas.local:5006/`（群晖）。
+     * 规范化（补协议 / 补尾斜杠 / 清 query）一律走 `pure/webdav.normalizeDavBase`，⛔ 别在这里自己拼。
+     *
+     * 🔴 为什么不做各家私有 API（用户 2026-11 拍板）：WebDAV 一套覆盖 OpenList/AList、群晖、
+     *    坚果云、Nextcloud，与 Infuse / VidHub / Fileball 直连的是同一条标准；
+     *    做私有 API 等于每接一家写一遍并跟着风控改。空值合法（= 没配网盘，所有网盘入口不显示）。
+     */
+    davUrl?: string;
+    /**
+     * 网盘账号 / 密码（Basic Auth；与 `davUrl` 三者同生同灭）。
+     *
+     * ⚠️ 明文存 `data.json` —— 与 `biliCookie` / 各源 API Key 同款口径（本仓不做额外加密，
+     *    说明写在设置项描述里）。⛔ 不要「为了安全」改成加密存储：那会让用户没法跨设备同步配置。
+     * 🔴 密码里允许中文 / emoji：Base64 编码走 `pure/webdav.davAuthHeader`（自己实现 UTF-8 编码），
+     *    ⛔ 不要在调用点用 `btoa` —— 它只吃 Latin-1，中文密码会抛 `InvalidCharacterError`。
+     */
+    davUser?: string;
+    /** 见 `davUser` 说明（同一组凭据） */
+    davPass?: string;
     /** 每类型源链（六组自选源及顺序；缺省/空 = 默认链，见 pure/sourceRegistry.DEFAULT_CHAINS。append-only 可选字段，旧数据无此键不迁移）。
      *  ⚠️ #580：书籍组因新增「微信读书」成为**首个 4 候选组**（豆瓣 / 微信读书 / Open Library / Google Books），
      *     ⛔ 原「≤3 源」不再是各组通用上限（其余五组仍 ≤3）。 */
@@ -1152,6 +1177,10 @@ export const DEFAULT_SETTINGS: ReelLudicSettings = {
     // YouTube 取流的两条前置（都不填也能工作：直连 / 无 Cookie，能取到多少算多少）
     ytProxy: '',
     ytCookie: '',
+    // 网盘（WebDAV）：空 = 没配（所有网盘入口不显示，行为与本次改动前完全一致）
+    davUrl: '',
+    davUser: '',
+    davPass: '',
     // 凭据测试结论（空表 = 全部「还没测过」；⛔ 别预填任何 false）
     credentialStatus: {},
     // ③-1：结论的检测时刻（空表 = 没测过；键集合与上表同源，⛔ 别预填 0）
@@ -1357,7 +1386,9 @@ const YTDLP_PATH_DESC = 'yt-dlp 可执行文件路径，留空 = 自动在系统
 
 const ASR_EXE_DESC =
     '本地识别程序的可执行文件。留空 = 让插件在系统里自动找（whisper-cli / main / whisper-cpp 都认，老版本 whisper.cpp 编译出来叫 main）。只有自动找不到、你又装在了特别的位置时才需要填。';
-const FFMPEG_PATH_DESC = 'ffmpeg 可执行文件路径，留空 = 自动在系统 PATH 里找';
+const FFMPEG_PATH_DESC =
+    'ffmpeg 可执行文件路径，留空 = 自动在系统 PATH 里找。' +
+    '取流合并、语音转写、以及把 mkv/HEVC 等格式转成能内置播放的 mp4 都用这一个 ffmpeg';
 const ASR_MODEL_DESC =
     'whisper.cpp 的识别模型（ggml 格式，.bin）。体积越大越准也越慢；日常用 base，中文要更准可以用 small 以上。模型不随插件分发 —— 点上面卡片里的「下载模型」由插件替你下，或者自己从别处下载后填路径。';
 const ASR_TOKENS_DESC =
@@ -2063,6 +2094,19 @@ export class ReelLudicSettingTab extends PluginSettingTab {
         });
         // 第三、第四顺位：网络播放源凭据 → 音乐下载源凭据（顺序见上面那段裁定注释）。
         this.createGroupSection(parent, '网络播放源凭据', (body) => this.renderNetPlaybackRows(body));
+        // 🔴 2026-11 新增：「网盘关联」紧跟在「网络播放源凭据」之后。
+        //    为什么排这里：两组都是「网络播放的入口」，读起来是「先装播放器能播的源 → 再接自己的网盘库」。
+        //    为什么**单独成组**、⛔ 不塞进上面那组：见 `pure/settingNav.SETTING_GROUP_ICONS` 里
+        //    「网盘关联」那段注释（`NetSourceId` 是 bilibili/youtube 两值联合类型，塞进去会连带
+        //    `NET_COOKIE_ICON` / `netCheckKey` 一起变形；且两组的「已配置」判据语义完全不同）。
+        // ⛔ 当前整组不建：用户 2026-11 裁定「把关联网盘方式及入口隐藏掉，先等我发布 1.5.0
+        //    再下个版本放开」⇒ 由 `pure/webdav.WEBDAV_ENABLED` 统一关闸。
+        //    ⚠️ 门控放在**建组这一层**而不是 `renderWebdavRows` 内部：组不建 ⇒ 连一条空标题
+        //       都不会留下（空组会在设置页留一条没有内容的窄条）。
+        //    ⚠️ 放开时只改那个常量，这里一个字都不用动。
+        if (WEBDAV_ENABLED) {
+            this.createGroupSection(parent, '网盘关联', (body) => this.renderWebdavRows(body));
+        }
         this.createGroupSection(parent, '音乐下载源凭据', (body) => this.renderMusicCookieRows(body));
         // 🔴🔴 ③-1（2026-11-12 用户 m00353 逐字）：「设置-搜索配置页『音乐下载源凭据』分组下再加组
         //    『统一周期管理』，为 13 个凭据做表格列项状态面板…」⇒ 本页**最后一组**，位置逐字照用户说的来。
@@ -8094,6 +8138,116 @@ export class ReelLudicSettingTab extends PluginSettingTab {
             resultEl.toggleClass('rl-key-result-ok', r.ok);
             resultEl.toggleClass('rl-key-result-bad', !r.ok);
         });
+    }
+
+    /**
+     * 「搜索配置」页 · **「网盘关联」组**：WebDAV 入口 + 账号密码 + 测试连接。
+     *
+     * 🔴 为什么只做 WebDAV、不做各家私有 API（用户 2026-11 拍板）：
+     *    WebDAV 一套覆盖 OpenList/AList、群晖、坚果云、Nextcloud，与 Infuse/VidHub/Fileball
+     *    连的是同一条标准；各家私有 API 要逐家适配登录态（且随时会变），收益远小于维护成本。
+     *
+     * 🔴 本组**不复用** `createNetRow`（那套吃 `NetSourceId` 联合类型，只有 bilibili/youtube）：
+     *    硬塞会连带 `NET_COOKIE_ICON` / `netCheckKey` / 「统一周期管理」面板一起变形，
+     *    而本组的「已配置」判据是「能不能列目录」，与那两组的「能不能取到流」不是同一件事。
+     *    行壳、输入框、测试按钮仍**复用同一批组件**（`createSecretField` / `mountNetTestAction`
+     *    / `renderHintNote`），所以观感与上面那组一致。
+     *
+     * ⚠️ 字段空 = 没配 ⇒ 条目表单里的网盘入口**整条不出现**（见 `isWebdavAvailable`），
+     *    行为与改动前完全一致，不会给没配网盘的用户多长出一枚按钮。
+     */
+    private renderWebdavRows(parent: HTMLDivElement): void {
+        const list = parent.createDiv({ cls: 'rl-prov-list' });
+        const curUrl = (): string => String(this.plugin.settings.davUrl ?? '');
+        const curUser = (): string => String(this.plugin.settings.davUser ?? '');
+        const curPass = (): string => String(this.plugin.settings.davPass ?? '');
+
+        const row = list.createDiv({ cls: 'rl-key-row rl-prov-card' });
+        const head = row.createDiv({ cls: 'rl-key-head' });
+        renderAiIcon(head.createSpan({ cls: 'rl-ai-icon' }), { kind: 'builtin', id: 'folder-open' });
+        head.createSpan({ cls: 'rl-key-name', text: 'WebDAV 网盘' });
+        const badge = head.createSpan({ cls: 'rl-key-badge' });
+        const refreshBadge = (): void => {
+            const filled = isWebdavAvailable(curUrl());
+            badge.setText(filled ? '已配置' : '未配置');
+            badge.toggleClass('rl-key-badge-on', filled);
+            badge.toggleClass('rl-key-badge-bad', false);
+        };
+        refreshBadge();
+        head.createSpan({ cls: 'rl-key-caret', text: '▸' });
+        const body = row.createDiv({ cls: 'rl-key-body' });
+        head.addEventListener('click', () => row.toggleClass('rl-key-open', !row.hasClass('rl-key-open')));
+
+        this.renderHintNote(
+            body,
+            '支持 OpenList / AList、群晖、坚果云、Nextcloud 等一切 WebDAV。填法：'
+            + 'OpenList 是 https://你的域名:5244/dav/ ；坚果云是 https://dav.jianguoyun.com/dav/ ；'
+            + '群晖是 https://你的NAS:5006/ 。账号密码就是该面板的登录账号。',
+        );
+
+        // ── 入口地址 ──
+        body.createDiv({ cls: 'rl-net-lbl', text: 'WebDAV 地址' });
+        const urlWrap = body.createDiv({ cls: 'rl-secret' });
+        const urlInput = urlWrap.createEl('input', {
+            cls: 'rl-secret-input',
+            attr: { placeholder: 'https://pan.example.com:5244/dav/', type: 'text', spellcheck: 'false' },
+        });
+        urlInput.value = curUrl();
+        urlInput.addEventListener('input', () => {
+            // ⚠️ 边打边存会留下半截地址（`https://pan.exa`），但那只是**临时**状态：
+            //    使用时 `normalizeDavBase` 会判它不可用（或补成 https 再试），不会把播放搞崩。
+            this.plugin.settings.davUrl = urlInput.value.trim();
+            void this.plugin.saveSettings();
+            refreshBadge();
+        });
+        // 失焦时把地址规范化一次（补协议 / 补尾斜杠），让用户当场看见「我到底要连哪个地址」
+        urlInput.addEventListener('blur', () => {
+            const norm = normalizeDavBase(urlInput.value);
+            if (norm && norm !== urlInput.value.trim()) {
+                urlInput.value = norm;
+                this.plugin.settings.davUrl = norm;
+                void this.plugin.saveSettings();
+                refreshBadge();
+            }
+        });
+
+        // ── 账号 ──
+        body.createDiv({ cls: 'rl-net-lbl', text: '账号' });
+        const userWrap = body.createDiv({ cls: 'rl-secret' });
+        const userInput = userWrap.createEl('input', {
+            cls: 'rl-secret-input',
+            attr: { placeholder: 'WebDAV 用户名（可留空 = 匿名）', type: 'text', spellcheck: 'false' },
+        });
+        userInput.value = curUser();
+        userInput.addEventListener('input', () => {
+            this.plugin.settings.davUser = userInput.value.trim();
+            void this.plugin.saveSettings();
+        });
+
+        // ── 密码 ──
+        body.createDiv({ cls: 'rl-net-lbl', text: '密码' });
+        this.createSecretField(body, {
+            placeholder: 'WebDAV 密码（可留空 = 匿名）',
+            value: curPass(),
+            onInput: (v) => {
+                this.plugin.settings.davPass = v;
+                void this.plugin.saveSettings();
+            },
+        });
+
+        // ── 测试连接 ──
+        this.mountNetTestAction(
+            body,
+            async () => {
+                const base = normalizeDavBase(curUrl());
+                if (!base) {
+                    return { ok: false, message: '先填 WebDAV 地址（http/https 开头）' };
+                }
+                const r = await probeDav(base, curUser(), curPass());
+                return { ok: r.ok, message: r.ok ? '能连上' : r.error };
+            },
+            () => refreshBadge(),
+        );
     }
 
     private renderSongLibraryRow(parent: HTMLDivElement): void {

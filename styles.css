@@ -6215,6 +6215,46 @@ input.rl-path-auto {
 .rl-linkpick-label { flex: none; min-width: 88px; font-size: var(--font-ui-medium); font-weight: 600; color: var(--text-normal); }
 .rl-linkpick-url { flex: 1 1 auto; font-size: var(--font-ui-small); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 
+/* ── 网盘选片弹窗（WebdavPickerModal）：浏览器式目录 + 勾选表 ──
+   结构固定五段（路径行 / 锚行 / 列表 / 状态行 / 底部操作），列表自己滚，
+   `.rl-nc-ops` 与 `.rl-dav-status` **不参与压缩**（写法与 #655 那段 `flex: 0 0 auto` 同口径）：
+   `.rl-scroll-inside .modal-content > * { min-height: 0 }` 会让所有兄弟都可压缩，
+   列表吃饱时会把这俩压扁 = 「底部按钮看不见」，所以必须显式声明不许缩。 */
+.rl-dav-picker .rl-dav-title { text-align: left; margin: 0 0 12px; }
+.rl-dav-tip { margin: 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--interactive-accent); border-radius: var(--rl-t-radius-sm, 4px); background: var(--background-secondary); font-size: var(--font-ui-smaller); line-height: 1.6; color: var(--text-muted); flex: 0 0 auto; }
+.rl-dav-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex: 0 0 auto; }
+.rl-dav-bar .rl-btn { flex: none; padding: 4px 10px; height: auto; font-size: var(--font-ui-smaller); }
+.rl-dav-bar .rl-btn:disabled { opacity: .45; cursor: not-allowed; }
+.rl-dav-crumb { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: var(--font-ui-smaller); color: var(--text-muted); overflow: hidden; }
+.rl-dav-crumb-seg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+.rl-dav-crumb-seg.is-link { cursor: pointer; color: var(--text-accent); }
+.rl-dav-crumb-seg.is-link:hover { text-decoration: underline; }
+.rl-dav-crumb-sep { color: var(--text-faint); }
+.rl-dav-anchor { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; font-size: var(--font-ui-smaller); color: var(--text-muted); flex: 0 0 auto; }
+.rl-dav-anchor-input { width: 64px; height: 26px; text-align: center; font-size: var(--font-ui-smaller); }
+.rl-dav-list { max-height: 380px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: var(--rl-t-radius-md, 6px); flex: 1 1 auto; min-height: 0; }
+.rl-dav-dir { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--background-modifier-border); transition: background .12s ease; }
+.rl-dav-dir:hover, .rl-dav-dir:focus-visible { background: var(--background-modifier-hover); outline: none; }
+.rl-dav-dir:last-child { border-bottom: none; }
+.rl-dav-dir-name { font-size: var(--font-ui-medium); color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl-dav-row { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--background-modifier-border); transition: background .12s ease; }
+.rl-dav-row:last-child { border-bottom: none; }
+.rl-dav-row:hover { background: var(--background-modifier-hover); }
+.rl-dav-row.is-out { opacity: .45; }
+.rl-dav-target { flex: none; min-width: 120px; font-size: var(--font-ui-smaller); font-weight: 600; color: var(--text-normal); }
+.rl-dav-target.is-bad { color: var(--text-error, #d05050); }
+.rl-dav-target.is-warn { color: var(--text-warning, #b8860b); font-weight: 500; }
+.rl-dav-name { flex: 1 1 auto; min-width: 0; font-size: var(--font-ui-small); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl-dav-name.is-plain { color: var(--text-faint); }
+.rl-dav-size { flex: none; font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.rl-dav-empty { padding: 18px 12px; text-align: center; font-size: var(--font-ui-small); color: var(--text-faint); }
+.rl-dav-status { margin: 8px 0 0; font-size: var(--font-ui-smaller); color: var(--text-muted); min-height: 1.4em; flex: 0 0 auto; }
+.rl-dav-status.is-bad { color: var(--text-error, #d05050); }
+.rl-dav-picker .rl-nc-ops { flex: 0 0 auto; margin-top: 10px; }
+/* 弹窗挂了 `.rl-scroll-inside`（onOpen 里 markScrollInside）⇒ 这里把本弹窗的列表纳入同一条高度链，
+   与 `.rl-linkpick-list` 那批并列（上面对 `.rl-dav-list` 已写 flex 规则，此处只解除写死的上限）。 */
+.rl-scroll-inside .rl-dav-list { max-height: none; flex: 1 1 auto; min-height: 0; }
+
 /* 原先这里是一整段「本地剧集集数选择弹窗」的样式（`rl-eps-title` / `rl-eps-list` /
    `rl-eps-item` / `rl-eps-row` / `rl-eps-cover` / `rl-eps-img` / `rl-eps-vid` / `rl-eps-txt` /
    `rl-eps-name` / `rl-eps-dot` / `rl-eps-sub` / `rl-eps-tag` / `rl-eps-pager` / `rl-eps-pg*` 等，
@@ -13037,8 +13077,12 @@ body.rl-shot-dragging {
     /* 🔴 用户 2026-11-08：「字幕面板上的字最后一行被截断了把字幕给给放大点不要显示被截断文字」
        12px → 13px：12px 在 100% 缩放的窄右栏里，中文末笔（如「）」的下半弧、拼音的 g）会贴着行盒下沿，
          视觉上像被切掉一条。放大一档 + 行高 1.5 → 1.6 给下行留出实际的字形空间。
-       ⛔ 别再往 14px 加：右栏一屏只放得下 8 行左右，再大字幕就变成「一句一屏」，跟读反而变慢。 */
-    font-size: 13px; line-height: 1.6; color: var(--text-normal);
+       ⛔ 别再往 14px 加：右栏一屏只放得下 8 行左右，再大字幕就变成「一句一屏」，跟读反而变慢。
+       🔴 2026-11-21 用户 m02829：「字幕面板和字幕面板学习模式都要支持 ctrl 鼠标滚轮缩放」
+          ⇒ 13px 是**基准**，实际字号 = 13px × `--rl-epp-cue-scale`（默认 1，即保持 13px 不变）。
+          变量由 `applyCueScale` 写到 `.rl-epp-cuesbox` 上，两档字号都乘它 ⇒ 缩放对两档同时生效。
+          用 `calc` 而不是改内联 `font-size`：内联会盖掉下面学习档那条 16px，切学习模式时就不放大了。 */
+    font-size: calc(13px * var(--rl-epp-cue-scale, 1)); line-height: 1.6; color: var(--text-normal);
     /* 多行但紧凑：保留换行、压住行距，不省略 —— 提词器要读全句 */
     white-space: pre-wrap; word-break: break-word;
 }
@@ -13063,6 +13107,17 @@ body.rl-shot-dragging {
     /* 行内 span 的默认基线对齐就够，这里只保证不产生额外盒模型影响 */
     transition: color .12s ease;
 }
+/* 🔴 2026-11-21 用户 m02554：「每个单词鼠标划过都显示一条线」。
+   用纯 CSS `:hover` 而不是等 JS 加 `.is-hover`：
+   `showWordTip` 要等 `mouseover` 派发、还要过 `lookupKey`/`isLookupable` 两道判，
+   中间那一下若查不到（标点片段、超短词），线就不会出现 —— 用户看到的是
+   「有的词划过有线，有的没有」，像坏了。下划线只表达「这个词可以被查」，与查询成败无关。
+   ⚠️ 与 `.is-hover` 并存：那档是「气泡正贴着这个词」的实心强调，这档是「鼠标正压着」的即时反馈。 */
+.rl-epp-cueword:hover {
+    text-decoration: underline dotted var(--interactive-accent);
+    text-underline-offset: 3px;
+    cursor: help;
+}
 /* 悬停中的词（学习模式下 `showWordTip` 加、`hideWordTip` 撤）：
    用 `text-decoration: underline dotted` 是**明确要求**的
       （ §3.1「单词下方出现虚线下划线」），它与行内盒模型的关系只是「下划线画在下方」，
@@ -13081,8 +13136,10 @@ body.rl-shot-dragging {
 .rl-epp-cuesbox.is-learn .rl-epp-cuetext {
     /* 🔴 用户 2026-11-08：「把字幕给给放大点不要显示被截断文字」
        15px → 16px、1.75 → 1.85：学习模式本来就是提词器，字距越松越好读；
-       上面的普通档已经 +1px，这里同步 +1px 保持两档之间仍有 3px 的明显落差。 */
-    font-size: 16px;
+       上面的普通档已经 +1px，这里同步 +1px 保持两档之间仍有 3px 的明显落差。
+       🔴 2026-11-21 m02829：16px 同样是**基准**，乘同一个 `--rl-epp-cue-scale`
+          ⇒ Ctrl+滚轮在普通档调到 150%，切进学习模式就是 16×1.5 = 24px，比例不重置。 */
+    font-size: calc(16px * var(--rl-epp-cue-scale, 1));
     line-height: 1.85;
 }
 .rl-epp-cuesbox.is-learn .rl-epp-cuerow.is-on .rl-epp-cuetext {
@@ -13186,21 +13243,20 @@ body.rl-shot-dragging {
     pointer-events: auto;
 }
 .rl-epp-wordtip-word { font-weight: 600; color: var(--text-normal); }
+/* 释义/音标的容器（结构固定，异步填入时不打乱 🔊 的位置，见 `showWordTip`）：
+   气泡本身是 `flex-direction: column`，这里再来一层纵向 flex 才能让音标与释义之间
+   拿到同一个 `gap: 2px`，否则两段会贴成一行。 */
+.rl-epp-wordtip-body { display: flex; flex-direction: column; gap: 2px; }
 .rl-epp-wordtip-ph {
     color: var(--text-faint);
     font-family: var(--font-monospace);
     font-size: 11px;
 }
 .rl-epp-wordtip-def { color: var(--text-muted); word-break: break-word; }
-.rl-epp-wordtip-say {
-    align-self: flex-start;
-    display: inline-flex; align-items: center; gap: 3px;
-    margin-top: 2px; padding: 0 4px;
-    background: none; border: 0; box-shadow: none;
-    height: auto; font-size: 11px; color: var(--text-muted);
-    cursor: pointer;
-}
-.rl-epp-wordtip-say:hover { color: var(--interactive-accent); }
+/* 🔴 2026-11-21 用户 m02829：查词气泡上的 🔊 发声按钮已删除（`.rl-epp-wordtip-say` 两条规则一并删）。
+   理由：它直接调 `window.speechSynthesis`，**不读任何设置**（音色/语速/音量/语言全默认），
+   与设置页那套带配置的朗读引擎是两条独立通路 ⇒ 用户找不到任何可调项。
+   ⛔ 别把这段样式加回来「备用」：样式在而按钮不在，会让人以为按钮只是被藏起来了。 */
 
 /* ── 官方内嵌态的静态字幕列表（「还是两个内嵌都拿不到字幕」）──
    字幕能取到、也能读，但官方 iframe 跨域读不到播放进度，所以不点亮、不跟随、行不可点跳转。
@@ -13508,6 +13564,22 @@ body.rl-shot-dragging {
 .rl-epp-cell:hover { background: var(--background-modifier-hover); }
 .rl-epp-cell.is-dead { opacity: .45; cursor: default; }
 .rl-epp-cell.is-dead:hover { background: transparent; }
+/* 正在转码的选集格（2026-11「格式兼容」）：
+   🔴 为什么不复用 `.is-dead`：那个是「这一集播不了」的终态（`cursor: default` 明摆着让人放弃），
+      而 `.is-busy` 恰恰是「正在努力让它能播」，两者语义相反 —— 共用一个类会让用户直接放弃点击。
+   ⚠️ 用呼吸动效而不是 spinner：格子上（尤其列表档 76px 封面槽旁）没有空间塞转圈，
+      动效本身就能表达「还在动」，且不引入额外 DOM。
+   ⚠️ `pointer-events: none` 是刻意的：转码期间再点同一格只会多一份等待
+      （宿主有 inflight 去重，但用户视角仍是「点了没反应」），不如直接不可点。 */
+.rl-epp-cell.is-busy {
+    opacity: .6; pointer-events: none; cursor: progress;
+    animation: rl-epp-cell-busy 1.4s ease-in-out infinite;
+}
+.rl-epp-cell.is-busy:hover { background: transparent; }
+@keyframes rl-epp-cell-busy { 0%, 100% { opacity: .35; } 50% { opacity: .85; } }
+@media (prefers-reduced-motion: reduce) {
+    .rl-epp-cell.is-busy { animation: none; opacity: .6; }
+}
 /* 列表档的当前集：整行淡 accent 底（不染文字色 —— 小标题还要保持可读的弱化灰） */
 .rl-epp-cell.is-cur { background: var(--interactive-accent); color: var(--text-on-accent); font-weight: 600; }
 .rl-epp-cell.is-cur:hover { background: var(--interactive-accent); }

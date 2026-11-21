@@ -61,10 +61,23 @@ export interface EmbedVideoItem {
     index: number;
     /** 集标题（可空；有则标题栏显示） */
     title?: string;
-    /** 播放源 URL（已由 main 解析：库内 http/app、库外 app://） */
+    /**
+     * 播放源 URL（已由 main 解析：库内 http/app、库外 app://，**或网盘 http(s) 直链**）。
+     *
+     * 🔴 2026-11（本次）起这里也可能是**远程直链**（`episodeUrls` 里那些能解的 mp4/webm）：
+     *    它与本地文件的区别只在「要不要设 `crossOrigin`」——见 `buildStage` 里那条分支。
+     */
     url: string;
-    /** 本地原始路径（供「外部打开」转系统播放器 / 字幕同目录扫描 / error 兜底回调） */
-    path: string;
+    /**
+     * 本地原始路径（供「外部打开」转系统播放器 / 字幕同目录扫描 / error 兜底回调）。
+     *
+     * 🔴 2026-11（本次）起**可空**：网盘直链那一集没有本地文件。
+     *    当时刻意没塞 URL 冒充 path —— `.src` 是宿主转过的资源地址，
+     *    ⛔ 反过来当文件路径喂给 ffmpeg / shell.openPath 必然找不到文件
+     *    （这条纪律写在 `currentVideoPath()` 的注释里）。
+     *    调用方一律按「可能没有」处理，缺省口径见该字段的每个消费点。
+     */
+    path?: string;
     /** 是否为首集/末集（main 计算边界，按钮置灰用） */
     isFirst: boolean;
     isLast: boolean;
@@ -795,11 +808,27 @@ export class VideoPlayerView extends ItemView {
         void this.browseSubtitleFile();
     }
 
-    /** 还原本地源需要的那点状态（`crossOrigin` 是抓帧免污染的关键，见 `#326`）。
-     *  ⚠️ 2026-11-24：原来这里还要复位 `netPlayback` 标记（网络流占着主 `<video>` 时置位），
-     *     网络源整条链路删掉后（用户 m01744）只剩「装回 crossOrigin」这一件事。 */
-    protected restoreLocalSourceHints(): void {
-        if (this.videoEl && !this.videoEl.crossOrigin) this.videoEl.crossOrigin = 'anonymous';
+    /** 按**源类型**设置 `<video>` 的跨源属性（抓帧免污染 vs 能播，二者只能选一个）。
+     *
+     *  🔴 为什么必须按源分支（2026-11 本次新增远程直链后才暴露）：
+     *     - 本地源是 `app://obsidian.md` 下加载的 `app://…` 资源，Obsidian 的资源协议回
+     *       `Access-Control-Allow-Origin: *`（1.13.7 实测）⇒ 设 `crossOrigin='anonymous'`
+     *       既**不影响播放**，又让 `drawImage`/`toBlob` 不被判污染（`#326`，截图/封面依赖）。
+     *     - 远程 http(s) 直链（网盘、对象存储）**绝大多数不回 CORS 头** ⇒ 一旦设了
+     *       `crossOrigin='anonymous'`，浏览器就把响应当跨源失败，**直接黑屏**；
+     *       摘掉它则能正常播，代价只是这一集不能抓帧截图。
+     *  ⇒ 取舍：**能播优先**。⛔ 别「统一设上更安全」——那等于把远程直链全废掉。
+     *
+     *  @param url 即将挂到 `<video>` 上的源地址
+     */
+    protected restoreLocalSourceHints(url: string): void {
+        if (!this.videoEl) return;
+        if (/^https?:\/\//i.test(url)) {
+            // 远程源：一律摘掉（含之前本地集设上的那份）
+            this.videoEl.removeAttribute('crossorigin');
+            return;
+        }
+        if (!this.videoEl.crossOrigin) this.videoEl.crossOrigin = 'anonymous';
     }
 
     /**
@@ -864,7 +893,9 @@ export class VideoPlayerView extends ItemView {
         if (!item || !this.subFile) return null;
         // 🔴 优先用 `subPath`（可能来自持久化记录 = 库外绝对路径，拼不上视频目录）；
         //    没有才退回「当前集目录 + 文件名」的老口径（同目录自动挂载那条路）。
-        const dir = dirOfPath(item.path);
+        // ⚠️ `path` 可空（网盘直链）⇒ 传 `''`：`dirOfPath('')` 返回 `''`（`pure/subtitle.ts:40` 对此安全），
+        //    于是 `full` 退化成裸文件名 —— 网络集本来就扫不了同目录字幕，这个降级是对的。
+        const dir = dirOfPath(item.path ?? '');
         const full = this.subPath ?? (dir ? `${dir}/${this.subFile}` : this.subFile);
         const cached = this.subTextCache;
         if (cached && cached.key === full) return cached.text;
@@ -1030,14 +1061,24 @@ export class VideoPlayerView extends ItemView {
         // 🔴 #326：抓帧必须**无 canvas 污染** —— 本地源是 `app://`（相对应用页 `app://obsidian.md` 属跨源），
         //    而 Obsidian 的资源协议响应带 `Access-Control-Allow-Origin: *`（1.13.7 实测）→
         //    只要**在设 src 之前**声明 `crossOrigin='anonymous'`，drawImage/toBlob 就不会被判污染（否则截图抛 SecurityError）。
-        //    ⚠️ 该属性在**没有 CORS 头的远程 http 源**上会让加载直接失败 —— 本期源全为本地 app://，
-        //    将来若支持远程视频必须**按源类型分支**设置。
+        //    ⚠️ 该属性在**没有 CORS 头的远程 http 源**上会让加载直接失败。
+        // 🔴🔴 2026-11（本次）兑现上面那句「将来若支持远程视频必须按源类型分支」：
+        //    网盘直链（远程 http）**一律不设** `crossOrigin` —— 绝大多数网盘/对象存储不回
+        //    `Access-Control-Allow-Origin`，设了就是**必然黑屏**（连 error 事件都不一定给，
+        //    因为失败发生在媒体加载层）。代价是这类源**不能抓帧截图**（canvas 会被判污染），
+        //    那是可接受的降级：先能播，再谈截图。
+        //    ⚠️ 真正的分支在 `restoreLocalSourceHints(url)` —— 每次**挂源之前**按 `item.url`
+        //    重新定一次（本地装、远程摘）。这里先装着是因为此刻还没有 src，装早不生效也不出错；
+        //    ⛔ 别把「这里设了」当成「远程源也设了」，那是两回事。
         this.videoEl.crossOrigin = 'anonymous';
         this.videoEl.addEventListener('error', () => {
             const item = this.opts?.items[this.cur];
             if (!item || this.failed) return;
             this.failed = true;
-            this.opts?.onExternalFallback(item.path);
+            // 🔴 `path` 可空（网盘直链没有本地文件）⇒ 退回用 `url` 交宿主开浏览器。
+            //    ⛔ 别在这里判 `if (!item.path) return;` 静默吞掉 —— 那会让用户点了没反应，
+            //    比「开了浏览器」更糟（本仓在 B 站取流失败那条路上栽过一次，见 netInline 文件头）。
+            this.opts?.onExternalFallback(item.path ?? item.url);
             this.closePlayer();
         });
         this.videoEl.addEventListener('click', () => this.onStageClick());
@@ -1791,13 +1832,17 @@ export class VideoPlayerView extends ItemView {
         this.videoEl.pause();
         this.videoEl.removeAttribute('src');
         this.videoEl.load();
-        // 🔴 抓帧免污染（`#326`）依赖 `crossOrigin`：换集时一律装回去（`releaseMedia`/
-        //    关页等路径会把它摘掉），⛔ 别指望上一集留下的状态。
-        this.restoreLocalSourceHints();
+        // 🔴 抓帧免污染（`#326`）依赖 `crossOrigin`：换集时**按新源类型**重设一遍
+        //    （`releaseMedia`/关页等路径会把它摘掉，⛔ 别指望上一集留下的状态）。
+        //    🔴🔴 必须在 `src =` **之前**调用 —— `crossOrigin` 是响应抵达时就生效的，
+        //    设晚了那一次加载已经按错误的口径发出去了。
+        this.restoreLocalSourceHints(item.url);
         // 换片即作废「彻底释放」现场（否则回来会拿着旧位置去重建新片）
         this.cancelDeepRelease();
-        // 2026-11-24：网络源整条链路已删（用户 m01744）⇒ 这里只剩「本地文件直连」一种挂法，
-        // 原来 `opts.netDash` 走 MSE 管线、`opts.netSource` 摘 crossOrigin 的分支都没了。
+        // 2026-11-24：自取流（DASH/MSE/yt-dlp）整条链路已删（用户 m01744）。
+        // 2026-11（本次）起这里是两种挂法：
+        //   ① 本地文件直连（`app://`）② 远程 http(s) 直链（网盘 mp4/webm，无取流）
+        //   后者能不能解由扩展名预判 + `error` 兜底共同保证，⛔ 别再补第三种。
         this.videoEl.src = item.url;
         this.videoEl.playbackRate = vpSpeed;
         this.videoEl.volume = clampVolume(vpVolume ?? 1);
@@ -2575,14 +2620,23 @@ export class VideoPlayerView extends ItemView {
             this.subCandidates = [];
             return;
         }
+        // 🔴 `path` 可空（网盘直链没有本地文件）⇒ 没有「同目录」可扫，直接收手。
+        //    ⛔ 别拿 `item.url` 顶上：`listSubtitles` 扫的是本地目录，喂个 http 地址
+        //    只会让列表接口对着不存在的位置空转，还污染候选状态。
+        //    ⚠️ 持久化字幕（`initialSubtitles`）走另一条路，不受这里影响 —— 见下面 `saved` 那段，
+        //    它在本地/远程两种源上都该照常恢复，所以**不能**把整段都 return 掉。
         const videoPath = item.path;
-        try {
-            this.subCandidates = await list(videoPath);
-        } catch {
+        if (!videoPath) {
             this.subCandidates = [];
+        } else {
+            try {
+                this.subCandidates = await list(videoPath);
+            } catch {
+                this.subCandidates = [];
+            }
+            // 异步返回时可能已切集：路径变了就丢弃
+            if (this.opts?.items[this.cur]?.path !== videoPath) return;
         }
-        // 异步返回时可能已切集：路径变了就丢弃
-        if (this.opts?.items[this.cur]?.path !== videoPath) return;
 
         // 🔴 用户 2026-10-29「字幕要双向持久化」的**恢复方向**：
         //    这一集存过字幕 ⇒ 直接挂存过的那条（用户上次的选择优先于「同目录第一条」）。
@@ -2726,7 +2780,8 @@ export class VideoPlayerView extends ItemView {
     private async applySubtitle(fileName: string, silent = false): Promise<void> {
         const item = this.opts?.items[this.cur];
         if (!item) return;
-        const dir = dirOfPath(item.path);
+        // ⚠️ `path` 可空（网盘直链）⇒ `''` 让 `full` 退化成裸文件名，与 `subtitleRawText` 同一降级口径
+        const dir = dirOfPath(item.path ?? '');
         const full = dir ? `${dir}/${fileName}` : fileName;
         const vtt = await this.loadVtt(full);
         if (!vtt) {
@@ -2908,6 +2963,10 @@ export class VideoPlayerView extends ItemView {
         if (!v || !item || !st) return;
         this.vis.deep = null;
         this.pendingResume = Math.floor(st.pos);
+        // 🔴 与 `render()` 同一口径：**挂源前**按源类型定 crossOrigin（本地装、远程摘）。
+        //    这里现在能正确工作只是因为 `deepRelease()` 没摘它，属于「隐式依赖」——
+        //    补这一次调用把依赖显式化，远程直链从深释放恢复时也不会被上一集的状态毒到。
+        this.restoreLocalSourceHints(item.url);
         v.src = item.url;
         v.playbackRate = vpSpeed;
         // 清源重生会把字幕轨道打回 disabled → 按当前「显示字幕」态重新点亮（轨道与 Blob URL 都还在，不必重扫目录）
@@ -2999,7 +3058,9 @@ export class VideoPlayerView extends ItemView {
     private openExternal(): void {
         const item = this.opts?.items[this.cur];
         if (!item) return;
-        this.opts?.onExternalFallback(item.path);
+        // 🔴 `path` 可空（网盘直链没有本地文件）⇒ 退回 `url`，由 main 层按协议分流
+        //    （http(s) 走浏览器、本地走 shell.openPath）。⛔ 别传 `''` —— 那等于「打开空路径」。
+        this.opts?.onExternalFallback(item.path ?? item.url);
         this.closePlayer();
     }
 }

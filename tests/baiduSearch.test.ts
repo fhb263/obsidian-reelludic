@@ -26,11 +26,43 @@ const mainSrc = readFileSync(resolve(ROOT, 'main.ts'), 'utf8');
  *    直接扫原文会把这些**正确的说明**判成违规 —— 本轮首次运行就是这么假红的 3 条。
  * ⚠️ 只用于反向守卫；正向判据（`toContain`）请继续扫原文，那是在找「写了没」。
  */
-function stripComments(src: string): string {
-    return src
-        .replace(/<!--[\s\S]*?-->/g, ' ')
+/**
+ * 🔴 剥注释必须**分区**：`<script>` 里才认 `//` 与 `/* *\/`，模板区只认 `<!-- -->`。
+ *    早先的版本对全文无脑剥 `/* *\/`，而本模板里有 `accept="image/*"` —— 那个 `/*` 会被当成
+ *    块注释开头，一路吞到十几万字符后的下一个 `*\/`，把 `{#if picked}` 之后的**整片字段区含两枚按钮
+ *    全吃掉**（实测 `formCode.indexOf('class="rl-ai-btn rl-baidu-btn"') === -1`），
+ *    于是「按钮在字段区之内」这条断言永远为假。这是测试自己的 bug，不是被测代码的 bug。
+ *    纯 .ts 文件（没有 `<script>`）按整份 JS 处理。
+ */
+function stripJsComments(code: string): string {
+    return code
         .replace(/\/\*[\s\S]*?\*\//g, ' ')
         .replace(/(^|[^:\\])\/\/[^\n]*/g, '$1');
+}
+
+function stripHtmlComments(src: string): string {
+    return src.replace(/<!--[\s\S]*?-->/g, ' ');
+}
+
+function stripComments(src: string): string {
+    // 带 <script> 的 Svelte 组件：模板区只剥 <!-- -->，脚本区才剥 JS 注释
+    if (/<script\b/i.test(src)) {
+        const out: string[] = [];
+        const re = /(<script\b[^>]*>)([\s\S]*?)(<\/script>)/gi;
+        let last = 0;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(src)) !== null) {
+            out.push(stripHtmlComments(src.slice(last, m.index)));
+            out.push(m[1] + stripJsComments(m[2]) + m[3]);
+            last = m.index + m[0].length;
+        }
+        out.push(stripHtmlComments(src.slice(last)));
+        return out.join('');
+    }
+    // 无 <script>：模板片段（含 HTML 标签或 <!--）**只**剥 HTML 注释 ——
+    // 对片段剥 `/* */` 正是上面记的那个坑；纯 .ts 源（无标签）才剥 JS 注释。
+    const looksLikeTemplate = /<!--/.test(src) || /<\/[a-z][\w-]*\s*>/i.test(src);
+    return looksLikeTemplate ? stripHtmlComments(src) : stripJsComments(src);
 }
 
 const modalCode = stripComments(modalSrc);
@@ -174,13 +206,20 @@ describe('编辑属性表单装配（m17219）', () => {
         expect(iBaidu).toBeLessThan(iAi);
     });
 
-    it('两枚按钮同属 `entry || manualFill` 那道门（点选搜索结果那条路不该出现）', () => {
-        const gate = formSrc.indexOf('{#if entry || manualFill}');
-        const iBaidu = formSrc.indexOf('class="rl-ai-btn rl-baidu-btn"');
-        const close = formSrc.indexOf('{/if}', iBaidu);
-        expect(gate).toBeGreaterThan(0);
-        expect(gate).toBeLessThan(iBaidu);
-        expect(close).toBeGreaterThan(iBaidu);
+    // 🔴 m01755 用户逐字：「要做，统一显示」—— 推翻了旧口径 `{#if entry || manualFill}`。
+    //    现在两枚按钮**无条件渲染**（编辑态 / 添加条目点选结果 / 添加条目手动填写，一律可见）。
+    //    ⚠️ 本 it 从「门存在」翻成「门必须不存在」：旧断言正死在守那个 bug，别按旧版改回去。
+    //    🔴 必须用 `formCode`（已剥注释）而不是 `formSrc` —— 本轮把沿革写进了注释，
+    //       注释里那句 `{#if entry || manualFill}` 字面量会让 `formSrc` 的 not.toContain 假红。
+    it('🔴 两枚按钮**不再**被 `entry || manualFill` 那道门包住（m01755 统一显示）', () => {
+        expect(formCode).not.toContain('{#if entry || manualFill}');
+        expect(formCode).not.toContain('{#if manualFill}');
+        expect(formCode).not.toContain('manualFill');
+        // 两枚按钮都在 `{#if picked}` 字段区之内（字段区是整块，不进 `picked` 就什么都看不到）
+        const fieldsAt = formCode.indexOf('{#if picked}');
+        const iBaidu = formCode.indexOf('class="rl-ai-btn rl-baidu-btn"');
+        expect(fieldsAt).toBeGreaterThan(0);
+        expect(iBaidu).toBeGreaterThan(fieldsAt);
     });
 
     it('🔴 影视取 directorWriters 的第一个，游戏取 developer（m17819）', () => {

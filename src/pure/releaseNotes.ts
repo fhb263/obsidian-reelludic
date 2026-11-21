@@ -40,7 +40,7 @@ export const RELEASE_NOTES: readonly ReleaseNote[] = [
     {
         version: '1.5.0',
         date: '2026-11-19',
-        summary: '播放详情页与字幕学习升级，支持B站/YouTube内嵌播放；新增音乐歌单同步、歌词偏移、扫码登录、六档心情、标签词云、属性面板与笔记卡；优化搜索重命名，修复Steam/TMDB同步并适配窄屏布局。',
+        summary: '播放详情页与字幕学习升级，支持B站/YouTube内嵌播放，mkv等格式自动转码内置播放；新增音乐歌单同步、歌词偏移、扫码登录、六档心情、标签词云、属性面板与笔记卡；优化搜索重命名，修复Steam/TMDB同步并适配窄屏布局。',
     },
     {
         version: '1.4.0',

@@ -62,8 +62,11 @@ export class SeriesPropsModal extends Modal {
         const { contentEl } = this;
         this.titleEl.setText('');
         contentEl.empty();
-        this.modalEl.style.width = 'min(560px, 92vw)';
-        this.modalEl.style.maxWidth = 'min(560px, 92vw)';
+        // 🔴 用户 2026-11-21「改成两两并排」⇒ 从 560px 放宽到 660px：两列各约 310px，
+        //    半星控件（5 颗 × 20px + `9/10`）和「输入框 + 改名按钮」才都在一行里不折行。
+        //    ⚠️ 仍留 92vw 上限，窄屏 / 移动端不会溢出。
+        this.modalEl.style.width = 'min(660px, 92vw)';
+        this.modalEl.style.maxWidth = 'min(660px, 92vw)';
 
         void this.mount();
     }

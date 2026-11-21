@@ -133,11 +133,22 @@ describe('⑪ ③ 搜索结果标题关键词高亮', () => {
         expect(mediaSrc).toMatch(/\{:else\}\s*<div class="rl-ttl">\{maskCardText\(ch, e\.title\)\}<\/div>/);
     });
 
-    it('.rl-hl 用主题高亮底色，⛔ 不写死黄色 hex', () => {
+    it('.rl-hl 以主题高亮色为底混一档 --text-normal，⛔ 不写死 hex', () => {
+        // 🔴 m03036 用户报障「首页视图搜索关键词高亮在浅色主题下不明显」。
+        //    根因：原来直接 `background: var(--text-highlight-bg)`，而主流主题给这个变量的是
+        //    **半透明**淡黄（Minimal 的 --hl2 是 rgba(..., .3~.5)），叠在接近白色的卡片底上
+        //    只剩几个色阶差。修法 = color-mix 混一档 --text-normal：浅色主题下把淡黄压深、
+        //    深色主题下把暗黄提亮，两个方向都自动跟主题走，仍不引入任何固定色值。
+        //    ⚠️ 判据意图不变：**底色必须来自主题变量、且不许出现 hex**。本轮只是把
+        //    「必须原样直写背景色变量」放宽成「必须以该变量为基」，并加反向守卫钉死
+        //    「别退回那条淡到看不见的原写法」。
         const rule = mediaSrc.slice(mediaSrc.indexOf('.rl-ttl .rl-hl'), mediaSrc.indexOf('.rl-ttl .rl-hl') + 300);
-        expect(rule).toMatch(/background:\s*var\(--text-highlight-bg\)/);
+        expect(rule).toMatch(/color-mix\(in srgb,\s*var\(--text-highlight-bg\)/);
+        expect(rule).toMatch(/var\(--text-normal\)/);
         expect(rule).toMatch(/color:\s*inherit;/);
         expect(rule).not.toMatch(/#[0-9a-fA-F]{3,6}/);
+        // 反向守卫：⛔ 不许退化成裸的一整块纯主题底色（那就是「不明显」的原样）
+        expect(rule).not.toMatch(/background:\s*var\(--text-highlight-bg\)\s*;/);
     });
 
     it('pure 切片函数是大小写不敏感、且空 query 原样返回单段', () => {

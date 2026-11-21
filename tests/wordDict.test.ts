@@ -192,3 +192,31 @@ describe('dictTooLarge', () => {
         expect(dictTooLarge(Number.POSITIVE_INFINITY)).toBe(false);
     });
 });
+
+describe('预切分行数组（🔴 2026-11-21 m02554「悬停立即出解释」的性能前提）', () => {
+    it('lookupDict 吃传入的行数组，结果与自切一致', () => {
+        const lines = ECDICT.split('\n');
+        const idx = buildDictIndex(ECDICT, lines);
+        expect(lookupDict(ECDICT, idx, 'apple', lines)?.def).toBe('n. 苹果；苹果树');
+        expect(lookupDict(ECDICT, idx, 'apple')).toEqual(lookupDict(ECDICT, idx, 'apple', lines));
+    });
+
+    it('不传行数组时仍然自切（向后兼容，⛔ 别把可选参数改成必填）', () => {
+        const idx = buildDictIndex(ECDICT);
+        expect(lookupDict(ECDICT, idx, 'zebra')?.def).toBe('n. 斑马');
+    });
+
+    it('传入的行数组被真正使用，不是摆设', () => {
+        // 用一份**内容不对**的行数组：若实现仍在自切，就会查到 apple
+        const bogus = ['nothing here'];
+        const idx = buildDictIndex(ECDICT);
+        expect(lookupDict(ECDICT, idx, 'apple', bogus)).toBeNull();
+    });
+
+    it('buildDictIndex 用传入行数组建索引（同样可验证）', () => {
+        const bogus = ['apple,ˈæpl,n. 苹果']; // 只有一行 apple
+        const idx = buildDictIndex('完全无关的正文', bogus);
+        expect(lookupDict('完全无关的正文', idx, 'apple', bogus)?.def).toBe('n. 苹果');
+        // 而原文里没有 apple ⇒ 若索引是按正文（自切）建的，这里查不到
+    });
+});

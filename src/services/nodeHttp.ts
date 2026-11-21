@@ -171,7 +171,7 @@ async function openTunnel(target: URL, proxy: string): Promise<unknown> {
 }
 
 /** 单次原生请求（惰性 require，仅桌面端 Node 环境可用）；同时返回 text 与 buffer，调用方按需取 */
-async function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: string, proxy?: string, timeoutMs: number = TIMEOUT_MS, onProgress?: (received: number, total: number) => void): Promise<NodeHttpResponse & { buffer: Buffer }> {
+async function rawRequest(url: string, method: 'GET' | 'POST' | 'PROPFIND', headers: Record<string, string>, body?: string, proxy?: string, timeoutMs: number = TIMEOUT_MS, onProgress?: (received: number, total: number) => void): Promise<NodeHttpResponse & { buffer: Buffer }> {
     const mod = url.startsWith('https') ? require('https') : require('http');
     const extra: Record<string, unknown> = {};
     if (proxy && url.startsWith('https')) {
@@ -208,8 +208,14 @@ async function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<s
          */
         const h = { ...headers };
         const hasHeader = (name: string): boolean => Object.keys(h).some((k) => k.toLowerCase() === name);
-        if (method === 'POST') {
-            if (!hasHeader('content-type')) h['Content-Type'] = 'application/x-www-form-urlencoded';
+        // 🔴 WebDAV 的 PROPFIND 也要带 body（`<propfind>` XML），漏了 Content-Length
+        //    同样会退回 chunked —— 群晖那类服务器对 chunked 的 PROPFIND 直接 400。
+        //    ⇒ 判据从「是不是 POST」放宽成「是不是有 body 的方法」，⛔ 别只加一个 `|| method === 'PROPFIND'`
+        //    （下一个要带 body 的 verb 还得再改一次）。
+        if (method !== 'GET') {
+            if (!hasHeader('content-type')) {
+                h['Content-Type'] = method === 'PROPFIND' ? 'application/xml; charset=utf-8' : 'application/x-www-form-urlencoded';
+            }
             h['Content-Length'] = String(Buffer.byteLength(body ?? '', 'utf8'));
         }
         const req = mod.request(url, { method, headers: h, ...extra }, (res: { statusCode: number; headers: Record<string, string | string[] | undefined>; on: (e: string, cb: (...a: never[]) => void) => void }) => {
@@ -244,14 +250,15 @@ async function rawRequest(url: string, method: 'GET' | 'POST', headers: Record<s
         req.setTimeout(timeoutMs, () => req.destroy(new Error(`Request timed out after ${timeoutMs}ms: ${url}`)));
         // ⚠️ 用 `end(body)` **一次写完**（不是 write + end）：配合上面的 Content-Length 才是固定长度发；
         //    漏了它会退回 chunked、前面那些头也白设。
-        req.end(method === 'POST' ? (body ?? '') : undefined);
+        //    🔴 判据同上面那条：GET 不带 body，其余带（POST / PROPFIND）。
+        req.end(method === 'GET' ? undefined : (body ?? ''));
     });
 }
 
 /** 单次请求 + 手动跟随重定向 + Set-Cookie 续传（3xx 最多 MAX_REDIRECTS 跳） */
-async function requestOnce(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body?: string, proxy?: string, timeoutMs: number = TIMEOUT_MS, onProgress?: (received: number, total: number) => void): Promise<NodeHttpResponse & { buffer: Buffer }> {
+async function requestOnce(url: string, method: 'GET' | 'POST' | 'PROPFIND', headers: Record<string, string>, body?: string, proxy?: string, timeoutMs: number = TIMEOUT_MS, onProgress?: (received: number, total: number) => void): Promise<NodeHttpResponse & { buffer: Buffer }> {
     let currentUrl = url;
-    let currentMethod: 'GET' | 'POST' = method;
+    let currentMethod: 'GET' | 'POST' | 'PROPFIND' = method;
     let currentBody = body;
     const currentHeaders = { ...headers };
     // 从原始头提取 Cookie 后统一用大写 Cookie 键管理，避免大小写不一致
@@ -317,6 +324,47 @@ export async function nodeHttpGetBuffer(
 /** 桌面端 POST（非幂等，不重试） */
 export async function nodeHttpPost(url: string, body: string, headers?: Record<string, string>, proxy?: string): Promise<NodeHttpResponse> {
     return requestOnce(url, 'POST', sanitizeHeaders(headers), body, proxy);
+}
+
+/**
+ * WebDAV 的 `PROPFIND`（列目录 / 取单文件属性）。
+ *
+ * 🔴 为什么不复用 `nodeHttpPost` 改个字符串：`PROPFIND` 在 HTTP 语义里是**幂等**的
+ *    （只读、不改服务器状态），跟 `POST` 的安全假设正好相反 —— 这里保留重试才安全。
+ *    但 `PROPFIND` 的 `Depth` 头决定「只列这一层」还是「递归整棵树」，与 body 一样是语义的一部分，
+ *    所以单开一个函数把三样都摆明。
+ *
+ * ⚠️ 鉴权走 `Authorization: Basic`（见 `pure/webdav.davAuthHeader`）；`headers` 里已给就不覆盖。
+ * ⚠️ 服务器返回 `207 Multi-Status` 是**正常**的；`401` 是账号密码错；`404` 是路径不对。
+ *    这三种都原样交回给调用方判断，⛔ 不在这里翻译成人话 —— 文案归 UI 层。
+ *
+ * @param url     已规范化的 WebDAV 绝对地址（**目录要以 `/` 结尾**）
+ * @param depth   `'0'` 只取自己；`'1'` 列这一层（默认）；`'infinity'` 递归（很多服务器不支持）
+ * @param headers 额外请求头（`Authorization` / `Depth` 由本函数补，已给则保留调用方的）
+ */
+export async function nodeHttpPropfind(
+    url: string,
+    depth: '0' | '1' | 'infinity' = '1',
+    headers?: Record<string, string>,
+    proxy?: string,
+): Promise<NodeHttpResponse> {
+    // 🔴 为什么点名四个属性而不是 `<d:allprop/>`：
+    //    ① 群晖 / 老版 AList 对 `allprop` 要么直接 400，要么把整棵树的全属性吐回来（几百 KB + 明显变慢）；
+    //    ② `displayname` **不在** DAV 的 allprop 默认集合里，不点名就永远拿不到 ——
+    //       而群晖和 Nextcloud 的 href 常是内部 UUID / 转义名，只有 displayname 才是真实文件名；
+    //    ③ 按 RFC 4918 §9.1，服务器不支持的属性只会回一条 404 的 propstat，请求本身照样成功，
+    //       所以点名比 allprop **更**兼容，不是更不兼容。
+    const body =
+        '<?xml version="1.0" encoding="utf-8"?>' +
+        '<d:propfind xmlns:d="DAV:"><d:prop>' +
+        '<d:resourcetype/><d:getcontentlength/><d:getcontenttype/><d:displayname/>' +
+        '</d:prop></d:propfind>';
+    const h = sanitizeHeaders(headers);
+    const has = (name: string): boolean => Object.keys(h).some((k) => k.toLowerCase() === name);
+    if (!has('depth')) h.Depth = depth;
+    // PROPFIND 幂等 ⇒ 可以重试（与 GET 同档）
+    const r = await retry(() => requestOnce(url, 'PROPFIND', h, body, proxy), GET_RETRY);
+    return { status: r.status, text: r.text, headers: r.headers, finalUrl: r.finalUrl, cookies: r.cookies };
 }
 
 /**

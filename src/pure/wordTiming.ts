@@ -270,3 +270,63 @@ export function wordSpansFor(
     if (words && words.length > 0) return words.slice();
     return estimateWordSpans(text, start, end);
 }
+
+/**
+ * 把词片段数组还原成**与原文逐字一致**的文本。
+ *
+ * 🔴 为什么必须有这个函数（2026-11-21 用户报障）：
+ *    「启用学习模式时，到当前高亮行时一整行单词空格都消失了」。
+ *    真因：`splitTimingUnits` 对空白是 `flush(); continue;` —— 空白当作分词边界**直接丢掉**，
+ *    所以 `hello world` 拆出的是 `['hello','world']` 两个单元，**不含空格**。
+ *    视图层 `rebuildCueWords` 只拿 `w.text` 逐个塞进 span，拼起来就是 `helloworld`。
+ *    只有**当前高亮行**会走这条拆词路径，其余行仍是纯文本 ⇒ 症状恰好是「只有高亮行掉空格」。
+ *    ⚠️ 视图层原先那句注释「`splitTimingUnits` 已把空格并进单位」是错的，⛔ 别再照它写。
+ *
+ * @returns 与 `text` 等价的字符串；`spans` 为空时原样返回 `text`。
+ */
+export function joinSpansWithSource(text: string, spans: readonly { text: string }[]): string {
+    const src = String(text ?? '');
+    if (!spans.length) return src;
+    return spanTextsWithSource(src, spans).join('');
+}
+
+/**
+ * 逐段取「本片段的文本 + 原文里紧跟其后的那段空隙（空格/换行）」，拼起来 == 原文。
+ *
+ * 这是 `rebuildCueWords` 要的东西：**空隙挂在上一段的尾巴上**，
+ *   这样每个 span 自己就带着它后面的空格，`textContent` 拼起来自然还原原文。
+ * 🔴 空隙挂在「前一段尾」而不是「后一段头」：挂在头会让行首 span 带上行首缩进，
+ *   而 `showWordTip` 拿 `textContent` 判词时行首空白会被 `lookupKey` 剥掉，两边都安全；
+ *   但挂在尾能保证**行尾**那个词也带着自己的空格，不会把整行最后一个空格丢掉。
+ * ⚠️ 找不到的片段按顺序兜底，⛔ 不允许把剩余原文丢掉。
+ */
+export function spanTextsWithSource(text: string, spans: readonly { text: string }[]): string[] {
+    const src = String(text ?? '');
+    if (!spans.length) return [];
+    const out: string[] = [];
+    let cursor = 0;
+    for (const span of spans) {
+        const piece = String(span?.text ?? '');
+        if (!piece) continue;
+        const at = src.indexOf(piece, cursor);
+        if (at < 0) {
+            // 片段在原文里找不到（真词级被 trim/规范化过会这样）⇒
+            // 先把剩余原文空档补到上一段，再单独推入本片段，⛔ 不能把剩余原文丢了。
+            if (out.length) out[out.length - 1] += src.slice(cursor);
+            else out.push(src.slice(0, cursor));
+            out.push(piece);
+            cursor = src.length;
+            continue;
+        }
+        // 先补「上一片段结尾 → 本片段开头」之间的原文空隙（这正是被丢掉的那些空格），
+        // 它归**上一段**所有；行首那段缩进没有上一段，就并进首个片段，
+        // `showWordTip` 会对 `textContent` 走 `lookupKey` 做 trim，带前导空白不影响查词。
+        if (out.length) out[out.length - 1] += src.slice(cursor, at);
+        out.push((out.length === 0 ? src.slice(0, at) : '') + piece);
+        cursor = at + piece.length;
+    }
+    // 尾巴：最后一个片段之后的原文（行尾空格、标点等）也要留住
+    if (out.length) out[out.length - 1] += src.slice(cursor);
+    else out.push(src);
+    return out;
+}

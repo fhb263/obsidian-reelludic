@@ -80,7 +80,7 @@ import {
 //    `mapIndexAtRatio`/`mapThumbFor`/`shouldShowMap`）与 `pure/cueMinimap` 整个模块一并删除。
 //    ⛔ 别再「为了保留导航能力」把它加回来 —— 用户是看着它像一根粗滚动条才要求去掉的。
 // 词级 span：只剩「学习模式悬停查词」用（⛔ 别再点亮单个词 —— 中文按字切，一行只亮一个字）
-import { wordSpansFor } from 'pure/wordTiming';
+import { wordSpansFor, spanTextsWithSource } from 'pure/wordTiming';
 // ⚠️ 历史：这里曾 import `pure/typewriter`（typewriterDuration / typewriterSplit / typewriterVisibleCount）
 //    与 `pure/cuePacer`（CUE_PACE_FRAME_MS / cuePacePending / cuePaceStep），用于 AI 总结的逐字动画。
 //    用户 2026-11-13 明确要求「不要打字机动效，一次输出完毕」⇒ 两条通道与两个模块已删除，⛔ 别再加回来。
@@ -156,6 +156,8 @@ import EntryContextMenu from 'views/components/EntryContextMenu.svelte';
 import { EPISODE_COVER_MENU_HIDE } from 'pure/entryMenu';
 // 🔴 用户 2026-11-08：「字幕面板的滚动改要有动效而不是瞬间切换」⇒ 平滑滚动 + reduced-motion 降级
 import { scrollBehavior } from 'pure/motion';
+// 🔴 用户 m02829：「字幕面板和字幕面板学习模式都要支持 ctrl 鼠标滚轮缩放」
+import { applyCueScale, cueScaleAfterWheel, cueScaleLabel, CUE_SCALE_DEFAULT, loadCueScale, saveCueScale } from 'pure/cueZoom';
 import { VideoPlayerView, type EmbedVideoItem, type VideoPlayerOptions } from './VideoPlayerView';
 
 /** 视图类型（main 层 `registerView` 与打开入口共用） */
@@ -260,6 +262,22 @@ export interface EpisodePageExtras {
      *    调用点判空后直接跳过重算那一步，标题块与简介卡照常更新）。
      */
     reloadItems?: (entry: MediaEntry) => readonly EmbedVideoItem[];
+    /**
+     * **按需把一个本地不可内嵌的集转成能播的**（宿主注入，可选）。
+     *
+     * 🔴 2026-11「格式兼容」：改前点一格 mkv / HEVC 集，`openCell()` 只能 `onOpenUrl(path)`
+     *    把它交给本机播放器 —— 用户点的是「选集页里的一集」，结果弹出去一个外部播放器。
+     *    现在这条回调让宿主（唯一能碰 ffmpeg / 临时目录 / `resolveEmbedUrl` 的一层）
+     *    先把 mkv 转成 mp4 落临时目录，转成了返回 `app://` URL，视图这边 `reloadItems`
+     *    重算播放列表、`switchToItem` 起播，用户不出页面。
+     *
+     * ⚠️ 必须允许返回 `null`：没装 ffmpeg / 转码失败 / 不受支持的容器都返回 `null`，
+     *    视图**退回到原来的外部打开**（⛔ 不能因为转不了就让用户点了没反应）。
+     * ⚠️ 可选：没注入就保持改前行为（直接外部打开），⛔ 不要假装转码成功。
+     * ⚠️ 这是**慢操作**（remux 几秒起，重编可能几十分钟），调用方要自己给出「正在转换」的反馈，
+     *    ⛔ 不能静默卡住 —— 那在用户看来就是「点了没反应」。
+     */
+    transcodeLocal?: (path: string) => Promise<string | null>;
     /**
      * 条目右键菜单的**动作集**（宿主注入）：简介里的封面右键弹
      * **与海报墙同一个** `EntryContextMenu`。
@@ -898,6 +916,21 @@ export class EpisodePageView extends VideoPlayerView {
     private cueModeEl: HTMLElement | null = null;
     /** 面板列表滚动容器（唯一滚动主体，⛔ 不与整页滚动耦合） */
     private cueListEl: HTMLElement | null = null;
+    /**
+     * 字幕面板缩放（Ctrl/⌘ + 滚轮，用户 m02829）。
+     *
+     * ⚠️ 初值必须是「已存的值」而不是 1：`buildCuePanel` 每次重建面板时都要把它重apply一次，
+     *    否则切一次字幕来源 / 重开视图就掉回 100%，用户会以为缩放没被记住。
+     */
+    private cueScale = loadCueScale() ?? CUE_SCALE_DEFAULT;
+    /**
+     * 最近一次缩放的时刻（`Date.now()`）。
+     *
+     * 🔴 只用来给 `onCueScroll` 挡「缩放引起的重排 scroll」——
+     *    它不是用户手动滚动，⛔ 不能让 `cueFollow` 因此被关掉
+     *    （用户在窄窗口里刚点过字幕行、350ms 内按住 Ctrl 滚一格就会踩到）。
+     */
+    private cueZoomAt = 0;
     /** 列表行 DOM（与 `cueCues` 同长同序；重画时整体重建） */
     private cueRows: HTMLElement[] = [];
     /**
@@ -1115,6 +1148,24 @@ export class EpisodePageView extends VideoPlayerView {
     private cueWordTipEl: HTMLElement | null = null;
     /** 当前浮层挂着的是哪个词（避免同一词重复重建） */
     private cueWordTipKey = '';
+    /**
+     * 查词结果缓存：词 → 词条（`null` = 查过但没查到）。
+     *
+     * 🔴 为什么要有（用户 m02554「悬停立即出解释」）：字幕里同一个词会反复出现，
+     *    宿主那层只缓存了**词典文件**，每查一次仍要走一遍「读设置 → 算绝对路径 → 桶内逐行比对」。
+     *    这里按词缓存，第二次悬停就是零等待。⛔ 别用 `Map.has()` 以外的判断 ——
+     *    存进去的可能就是 `null`（查不到也要缓存，否则每次划过都要重新查一遍空结果）。
+     */
+    private cueWordDefs = new Map<string, { def: string; phonetic?: string } | null>();
+    /**
+     * 已经拆成词 span 的行下标。
+     *
+     * 🔴 为什么要有（性能）：`rebuildCueWords` 在**每次换行**时都会被 `onCueTick` 调到。
+     *    非学习模式下要把拆过的行还原成纯文本，如果为此遍历 `cueRows`（实测有 2084 行）
+     *    每行 `querySelector('.rl-epp-cueword')`，就是每秒几十次 × 2084 次选择器查询。
+     *    记一个小集合，只处理真正拆过的那些行。
+     */
+    private cueSplitRows = new Set<number>();
 
     // ── B 站外链内嵌（用户 2026-11-02：「外链网络链接如 b 站内嵌到播放器播放」）──────
     /**
@@ -1133,6 +1184,16 @@ export class EpisodePageView extends VideoPlayerView {
      *    常驻会让用户点回本地集之后又被弹回内嵌。
      */
     private pendingNetStart: number | null = null;
+    /**
+     * 选集格点击的**并发令牌**：每次点格子自增，异步流程回来时比对，
+     * 不一致说明用户已经点了别的集 —— 那一次起播放弃（⛔ 别把用户已经切走的集又拽回来）。
+     *
+     * 🔴 2026-11 加这一层的直接原因：转码是几十秒起的慢操作，期间用户完全可能改点别的集，
+     *    而转码完成回调是**迟到**的。没有令牌的话，先点 mkv A、再点 mp4 B，B 正常开播，
+     *    十几秒后 A 转完了又强行 `switchToItem(A)` 把用户从 B 上踢走。
+     *    ⚠️ 只用于「本地转码后起播」这一条异步链，⛔ 不要拿它去管网络集/iframe（那些是同步的）。
+     */
+    private pendingCellToken = 0;
     /**
      * 「回跳后该落到第几秒」——只消费一次。
      *
@@ -2827,6 +2888,8 @@ export class EpisodePageView extends VideoPlayerView {
         this.cueModeEl = null;
         this.cueListEl = null;
         this.cueRows = [];
+        // 行 DOM 没了 ⇒ 「哪些行已拆词」的记录必须一起清（否则会去操作不存在的行）
+        this.cueSplitRows.clear();
         // 🔴 `host.empty()` 把 AI 浮层也一起清了 ⇒ 指针必须跟着失效，否则
         //    `toggleCueAiPanel()` 会以为面板还开着、点了直接「收起」一个不存在的节点（点了没反应）。
         //    ⚠️ 只清指针，**不清 `cueAiResult`**：同一集重画工具条不该把已生成的总结作废。
@@ -2854,6 +2917,10 @@ export class EpisodePageView extends VideoPlayerView {
         this.cueShadowBarEl = null;
         this.cueWordTipEl = null;
         this.cueWordTipKey = '';
+        // 🔴 查词缓存必须跟着面板一起清：宿主那层按「路径 + 大小 + 修改时间」让词典文件的
+        //    变更失效，但视图这层的 `cueWordDefs` 是按词缓存的、它不知道文件变了 ——
+        //    用户改了词典、重开面板后仍会读到旧释义。清掉最省事也最不会错。
+        this.cueWordDefs.clear();
         // ⚠️ 跟读倒计时必须真停：它的 tick 会去动已被 `host.empty()` 摘掉的节点，
         //    而且到点还会 `play()` —— 那是「用户没在跟读却突然自己播起来」。
         this.stopCueShadowTimer();
@@ -3018,12 +3085,25 @@ export class EpisodePageView extends VideoPlayerView {
         this.cueListEl = body.createDiv({ cls: 'rl-epp-cuelist' });
         this.cueListEl.addEventListener('scroll', () => this.onCueScroll());
         // 真实用户输入打点：只有这些事件之后的 scroll 才可能是用户在滚（见 `onCueScroll` 双判据）
-        const markUser = () => { this.cueUserInputAt = Date.now(); };
+        // 🔴 2026-11-21 m02829：**Ctrl/⌘ + 滚轮是缩放，不是滚** ⇒ 必须先放它过去。
+        //    否则「按住 Ctrl 滚一格缩放」会被记成「用户手动滚动」⇒ 自动跟随被永久关掉，
+        //    用户只是调了个字号，字幕却不再跟着播放走了（`cueFollow` 一旦置 false 只能手动恢复）。
+        const markUser = (ev: Event) => {
+            const wev = ev as WheelEvent;
+            if (wev.ctrlKey || wev.metaKey) return;
+            this.cueUserInputAt = Date.now();
+        };
         for (const ev of ['wheel', 'pointerdown', 'touchstart', 'keydown'] as const) {
             this.cueListEl.addEventListener(ev, markUser, { passive: true });
         }
+        // Ctrl/⌘ + 滚轮缩放字号（普通滚轮照常滚字幕，⛔ 不能被这条吃掉）
+        this.cueListEl.addEventListener('wheel', (ev) => this.onCueZoomWheel(ev), { passive: false });
 
         this.syncCueTools();
+        // 🔴 m02829：面板是每次重建的（切来源 / 重开视图都会走这里），
+        //    缩放比例存在**字段**里、必须在这里重新落到新的根节点上，
+        //    ⛔ 不能只在滚轮回调里 apply —— 那样重建一次就掉回基准字号。
+        applyCueScale(host, this.cueScale);
         this.renderCueRows();
         // 🔴 横幅必须在列表建好之后**再画一次**：`host.empty()` 把上一次的 AB/跟读条
         //    连同节点一起清掉了，而档位状态（`cueAb` / `cueShadowOn`）是保留的。
@@ -3133,6 +3213,8 @@ export class EpisodePageView extends VideoPlayerView {
         if (!list) return;
         list.empty();
         this.cueRows = [];
+        // 同上：旧行 DOM 已销毁，拆词记录作废
+        this.cueSplitRows.clear();
         // 重画后下标必然与旧 DOM 不再对应 ⇒ 作废高亮下标，让下面的 `onCueTick` 重新点亮
         this.cueActiveIdx = -1;
 
@@ -3225,11 +3307,21 @@ export class EpisodePageView extends VideoPlayerView {
                 // 悬停查词（用户 §3.1「鼠标 Hover 到某个英文单词…浮出气泡」）
                 // ⚠️ 挂在 `textEl` 而不是 `row`：只有正文里的词才是可查对象，
                 //    时间戳那一格（`00:12`）不该被当成单词。
+                //
+                // 🔴 2026-11-21 用户 m02554：「每个单词鼠标划过都显示一条线，悬停立即出解释」
+                //    原来词 span 只在**当前播放行**存在（`onCueTick` 里对 `cueActiveIdx` 拆一次），
+                //    其余行是纯文本 ⇒ 划过去什么都不发生。现在任意行在悬停到它的那一刻才拆
+                //    （一行十几个节点，代价可忽略；⛔ 不在渲染期把 800 行全拆 = 上万节点掉帧）。
                 textEl.addEventListener('mouseover', (ev) => {
                     if (!this.cueLearnOn) return;
                     const t = ev.target as HTMLElement | null;
                     if (!t || !t.classList.contains('rl-epp-cueword')) return;
                     this.showWordTip(t, t.textContent ?? '');
+                });
+                // 进这一行时先把词拆出来，保证第一个 `mouseover` 就能命中词而不是整段纯文本
+                textEl.addEventListener('mouseenter', () => {
+                    if (!this.cueLearnOn) return;
+                    this.splitCueRow(i);
                 });
                 textEl.addEventListener('mouseout', (ev) => {
                     const t = ev.target as HTMLElement | null;
@@ -4148,6 +4240,10 @@ export class EpisodePageView extends VideoPlayerView {
      */
     private toggleCueLearn(): void {
         this.cueLearnOn = !this.cueLearnOn;
+        // 🔴 每次切换都清查词缓存：用户极可能就是去设置里换了词典文件再回来的，
+        //    不清就会拿着旧词典的释义讲到天荒地老（宿主那层的失效只认文件 mtime，
+        //    视图这层按词缓存，它自己不知道「用户换了路径」）。
+        this.cueWordDefs.clear();
         const box = this.cueToolsEl?.parentElement ?? null;
         box?.toggleClass('is-learn', this.cueLearnOn);
         this.syncCueLearnBtn();
@@ -4155,6 +4251,9 @@ export class EpisodePageView extends VideoPlayerView {
         if (this.cueActiveIdx >= 0) this.scrollCueTo(this.cueActiveIdx);
         // 退出学习模式时把查词浮层收掉（否则它会挂在已经变小了的字上面）
         if (!this.cueLearnOn) this.hideWordTip();
+        // 🔴 退出学习模式时把各行的词 span 也还原成纯文本（`rebuildCueWords` 里统一处理）：
+        //    词 span 是为了悬停命中才存在的，非学习模式下它没有用途，留着还多几千个节点。
+        this.rebuildCueWords();
         // 🔴 退出学习模式必须一并关掉跟读：按钮会隐藏（`is-hidden`），
         //    若跟读继续跑，行为就是「用户看不见任何开关，视频却自己暂停又自己播」。
         //    ⛔ 别指望用户去别处关 —— 那是个找不到的开关。
@@ -4529,30 +4628,38 @@ export class EpisodePageView extends VideoPlayerView {
         this.cueWordTipEl = tip;
         this.cueWordTipKey = key;
         tip.createDiv({ cls: 'rl-epp-wordtip-word', text: key });
+        // 🔴 释义/音标固定装在这个宿主里（`word` 之后）：
+        //    这样异步回来插音标时 DOM 顺序由结构决定，不靠插入时机。
+        const defHost = tip.createDiv({ cls: 'rl-epp-wordtip-body' });
+        // 🔴 2026-11-21 用户 m02829：「查词面板上的发声按钮是何意味都没有相关配置删除掉不显示」
+        //    ⇒ 原来这里有一个 🔊 按钮，直接 `new SpeechSynthesisUtterance(key)` +
+        //      `window.speechSynthesis.speak(u)`。它**不读任何设置**：音色、语速、音量、语言
+        //      全是浏览器默认值，而设置页里那套「朗读」配置（`services/SpeechEngine.ts`）
+        //      走的是另一条完全独立的通路 —— 用户在这里找不到任何可调项，属实的孤立按钮。
+        //    ⛔ 别再凭「朗读功能也用了 TTS」把按钮加回来：要加就必须先接 SpeechEngine
+        //      的配置与播放控制，否则仍然是「一个不听话的按钮」。
+        // 🔴 2026-11-21 用户 m02554：「悬停立即出解释」
+        //    原来这里无条件先塞一句「查询中…」再等 Promise 替换 —— 而查词底层
+        //    （`main.ts::lookupWordInLocalDict` → `lookupWordInDict`）**本来就是同步的**，
+        //    Promise 只是它的外壳 ⇒ 用户看到的那一帧「查询中…」是纯粹的视觉噪声。
+        //    ⇒ 改成：命中视图内缓存就当场渲染；没命中才发请求，**只有真的要等**才显示提示。
         const lookup = this.pageCtx?.lookupWord;
         if (lookup) {
-            const body = tip.createDiv({ cls: 'rl-epp-wordtip-def', text: '查询中…' });
-            void lookup(key).then((r) => {
-                if (this.cueWordTipEl !== tip) return; // 用户已经移开了
-                body.setText(r?.def || '这个词暂时查不到释义');
-                if (r?.phonetic) {
-                    const ph = tip.createDiv({ cls: 'rl-epp-wordtip-ph', text: `/${r.phonetic}/` });
-                    tip.insertBefore(ph, body);
-                }
-            });
-        }
-        // 🔊 发音：走系统 TTS（与基类朗读同一条通路，⛔ 不另起一套语音合成）
-        const say = tip.createEl('button', { cls: 'rl-epp-wordtip-say', text: '🔊' });
-        say.setAttribute('aria-label', `朗读 ${key}`);
-        say.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            try {
-                const u = new SpeechSynthesisUtterance(key);
-                window.speechSynthesis.speak(u);
-            } catch {
-                /* 无 TTS 的环境静默失败，⛔ 不打断学习 */
+            const cached = this.cueWordDefs.get(key);
+            if (cached !== undefined) {
+                this.fillWordTipDef(defHost, tip, wordEl, cached);
+            } else {
+                const body = defHost.createDiv({ cls: 'rl-epp-wordtip-def', text: '查询中…' });
+                void lookup(key).then((r) => {
+                    // 🔴 无论气泡还在不在都先存缓存：同一个词第二次悬停就是零等待。
+                    //    这是「立即出解释」能对**重复出现的词**成立的关键（字幕里同一个词反复出现）。
+                    this.cueWordDefs.set(key, r ?? null);
+                    if (this.cueWordTipEl !== tip) return; // 用户已经移开了
+                    body.remove();
+                    this.fillWordTipDef(defHost, tip, wordEl, r ?? null);
+                });
             }
-        });
+        }
         // 🔴 气泡自身也要能留住鼠标：挂在 body 上 + `mouseout` 判 `relatedTarget` 之后，
         //    从词移到气泡里不会被立刻收掉（见 `renderCueRows` 里 mouseout 的注释）；
         //    这里再补「移出气泡 ⇒ 收」的出口，否则气泡会一直挂在屏幕上挡字幕。
@@ -4589,12 +4696,42 @@ export class EpisodePageView extends VideoPlayerView {
         tip.style.top = `${Math.round(top)}px`;
     }
 
-    /** 收起查词气泡（幂等） */
+    /**
+     * 把查到的释义与音标填进气泡（「立即出解释」的落点，缓存路径与异步路径共用）。
+     *
+     * @param host 释义/音标的容器（`.rl-epp-wordtip-body`，结构与 🔊 的相对顺序由它保证）
+     * @param tip  整个气泡（填完要重定位：气泡高度变了，先前按旧高度算的位置会偏）
+     * @param wordEl 气泡要贴着的那个词
+     *
+     * ⚠️ 音标插在释义**之前**（习惯上词形 → 音标 → 释义）。
+     * ⚠️ 查不到时给「这个词暂时查不到释义」而不是留空 —— 留空看起来像还在加载。
+     */
+    private fillWordTipDef(
+        host: HTMLElement,
+        tip: HTMLElement,
+        wordEl: HTMLElement,
+        r: { def: string; phonetic?: string } | null,
+    ): void {
+        const body = host.createDiv({ cls: 'rl-epp-wordtip-def', text: r?.def || '这个词暂时查不到释义' });
+        if (r?.phonetic) {
+            const ph = host.createDiv({ cls: 'rl-epp-wordtip-ph', text: `/${r.phonetic}/` });
+            host.insertBefore(ph, body);
+        }
+        // 内容一变高度就变 ⇒ 重定位一次（否则气泡会压住词或离词太远）
+        this.positionWordTip(tip, wordEl);
+    }
+
+    /**
+     * 收起查词气泡（幂等）
+     */
     private hideWordTip(): void {
         this.cueWordTipEl?.remove();
         this.cueWordTipEl = null;
         this.cueWordTipKey = '';
-        this.cueToolsEl?.parentElement
+        // 🔴 直接查 `cueListEl` 而不是 `cueToolsEl.parentElement`：
+        //    后者在工具条没建出来时是 `null`，整条 `?.` 链断掉 ⇒ 那个词的实心下划线会一直留着。
+        //    `is-hover` 表达的语义是「气泡正贴着这个词」，所以必须跟气泡同生共死。
+        this.cueListEl
             ?.querySelectorAll('.rl-epp-cueword.is-hover')
             .forEach((el) => (el as HTMLElement).removeClass('is-hover'));
     }
@@ -4788,41 +4925,128 @@ export class EpisodePageView extends VideoPlayerView {
      *    ⛔ 别把「点亮当前词」加回来 —— 中文被切成单字后，一行只亮一个字，观感就是「单字高亮」。
      *    ⚠️ 也正因为只在学习模式拆：拆开会让文字重新折行、行高变化，非学习模式没必要付这个代价。
      */
-    private rebuildCueWords(): void {
-        const row = this.cueActiveIdx >= 0 ? this.cueRows[this.cueActiveIdx] : null;
-        const cue = this.cueActiveIdx >= 0 ? this.cueCues[this.cueActiveIdx] : null;
+    /**
+     * 把指定行拆成一串词 span（幂等：已经拆过就返回 true 不再动 DOM）。
+     *
+     * 🔴 2026-11-21 用户 m02554：「重构这个字幕面板在学习模式下的呈现，例如每个单词鼠标划过
+     *    都显示一条线，悬停立即出解释」—— 原来是**只有当前播放行**被拆（`rebuildCueWords`
+     *    在 `onCueTick` 里对 `cueActiveIdx` 拆一次），其余行是纯文本 ⇒ 划过去什么都没发生。
+     *
+     * 🔴 为什么是「悬停时才拆这一行」而不是渲染时把全部行都拆：
+     *    800 行 × 每行十几个词 = 上万个 span，列表滚动会明显掉帧
+     *    （这条纪律写在 `pure/wordTiming.ts` 文件头第 ⑶ 条）。一行拆开只有十几个节点，代价可忽略。
+     *
+     * @returns 拆完（或本来就有）可悬停的词节点 ⇒ true；这行拆不出来（超长行/无词级）⇒ false
+     */
+    private splitCueRow(idx: number): boolean {
+        const row = this.cueRows[idx];
+        const cue = this.cueCues[idx];
         const textEl = row?.querySelector<HTMLElement>('.rl-epp-cuetext');
-        if (!row || !cue || !textEl) {
-            return;
-        }
-        // 非学习模式：保持整行纯文本（🔴 这是 m12123 之后的默认路径）
-        if (!this.cueLearnOn) {
-            // 从学习模式退出来时，行里可能还留着上次拆出的词 span ⇒ 换回纯文本
-            // （有 `is-hover` 之类残留也不该留在非学习模式里）
-            if (textEl.querySelector('.rl-epp-cueword')) {
-                textEl.textContent = cue.text;
-                this.scrollCueTo(this.cueActiveIdx);
-            }
-            return;
-        }
+        if (!row || !cue || !textEl) return false;
+        if (textEl.querySelector('.rl-epp-cueword')) return true;
         const words = wordSpansFor(cue.text, cue.start, cue.end, cue.words);
         if (!words.length) {
             // 没有词级信息（超长行 / 时长异常）⇒ 保持整行文本，⛔ 不硬拆成一个个 span
-            return;
+            return false;
         }
+        // 🔴 空格**不在** `w.text` 里：`splitTimingUnits` 把空白当分词边界直接丢掉了
+        //    （2026-11-21 用户报障「到当前高亮行时一整行单词空格都消失了」的真因）。
+        //    ⇒ 逐段取「本词 + 原文里紧跟其后的那段空隙」，拼起来与 `cue.text` 逐字一致。
+        const pieces = spanTextsWithSource(cue.text, words);
+        if (!pieces.length) return false;
         const frag = document.createDocumentFragment();
-        for (const w of words) {
+        for (const piece of pieces) {
             const span = document.createElement('span');
             span.className = 'rl-epp-cueword';
-            // ⚠️ 原文里的空格要留住：`splitTimingUnits` 已把空格并进单位，
-            //    这里再 trim 会把 "hello world" 粘成 "helloworld"。
-            span.textContent = w.text;
+            // 词尾带空格不影响悬停命中：`showWordTip` 会对 `textContent` 走 `lookupKey` 做 trim。
+            span.textContent = piece;
             frag.appendChild(span);
         }
         textEl.empty();
         textEl.appendChild(frag);
+        this.cueSplitRows.add(idx);
+        return true;
+    }
+
+    /** 把已拆开的行换回纯文本（退出学习模式时用；只碰真正拆过的行） */
+    private collapseAllCueWords(): void {
+        if (!this.cueSplitRows.size) return;
+        let changed = false;
+        for (const idx of this.cueSplitRows) {
+            const row = this.cueRows[idx];
+            const cue = this.cueCues[idx];
+            const textEl = row?.querySelector<HTMLElement>('.rl-epp-cuetext');
+            if (!textEl || !cue) continue;
+            textEl.textContent = cue.text;
+            changed = true;
+        }
+        this.cueSplitRows.clear();
+        // 折行变了 ⇒ 锁定态要重新对位
+        if (changed && this.cueActiveIdx >= 0) this.scrollCueTo(this.cueActiveIdx);
+    }
+
+    /**
+     * 学习模式下保证**当前播放行**已拆成词节点（供查词命中与悬停下划线），
+     * 退出学习模式则把所有行换回纯文本。
+     *
+     * 🔴 用户 m12123：「怎么有单个字高亮的去掉仅高亮当前句」
+     *    ⇒ 这个函数**不负责点亮任何词**，只负责「让词成为可悬停的独立节点」。
+     *    ⛔ 别把「点亮当前词」加回来 —— 中文被切成单字后，一行只亮一个字，观感就是「单字高亮」。
+     */
+    private rebuildCueWords(): void {
+        if (!this.cueLearnOn) {
+            // 从学习模式退出来时，曾悬停过的行里可能都留着词 span ⇒ 一律换回纯文本
+            this.collapseAllCueWords();
+            return;
+        }
+        if (this.cueActiveIdx < 0) return;
         // 拆完文字可能重新折行 ⇒ 高亮行的高度变了，锁定态要重新对位
-        this.scrollCueTo(this.cueActiveIdx);
+        if (this.splitCueRow(this.cueActiveIdx)) this.scrollCueTo(this.cueActiveIdx);
+    }
+
+    /**
+     * Ctrl/⌘ + 滚轮缩放字幕字号（用户 m02829：「字幕面板和字幕面板学习模式都要支持」）。
+     *
+     * 🔴 三条口径（仓内漫画/歌词/EPUB 四个阅读器钉过的同一套，⛔ 别另造第五套）：
+     *  ⑴ **只认 ctrlKey / metaKey** —— 不带修饰键的滚轮必须照常滚字幕，
+     *     `markUser` 那条「手动滚动打断跟随」也得继续正常工作；
+     *  ⑵ 监听时 `{ passive: false }` + 这里 `preventDefault()`，否则挡不住
+     *     「Ctrl+滚轮 = 浏览器整页缩放」，用户会看到整个 Obsidian 界面被放大；
+     *  ⑶ 只改 CSS 变量（`applyCueScale`），⛔ 不碰 `transform` / `zoom` / 内联 `fontSize` ——
+     *     前两者会让 `getBoundingClientRect` 失真，`scrollCueTo` 的锁定对位与
+     *     `positionWordTip` 的气泡定位都会跟着歪（`lesson` 记在 `pure/cueZoom.ts` 文件头）。
+     */
+    private onCueZoomWheel(ev: WheelEvent): void {
+        // ⚠️ 不带修饰键 ⇒ 立刻放行：这是普通滚动，⛔ 不许 preventDefault
+        if (!ev.ctrlKey && !ev.metaKey) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const next = cueScaleAfterWheel(this.cueScale, ev.deltaY);
+        if (next === this.cueScale) return;
+        this.cueScale = next;
+        // 打点：这次缩放引起的重排 scroll 由 `onCueScroll` 的 `cueZoomAt` 守卫放过去
+        this.cueZoomAt = Date.now();
+        // 根节点是 `.rl-epp-cuesbox`（`buildCuePanel` 里 `host.addClass('rl-epp-cuesbox')`）。
+        // 🔴 用 `closest` 按类名找，⛔ 不写 `parentElement.parentElement`：
+        //    那样一旦有人在 host 与 list 之间插一层容器，缩放就静默失效（不报错、只是不生效）。
+        //    也不存 `cueBoxEl` 字段 —— 面板每次重建都会换节点，字段必然失效。
+        const box = this.cueListEl?.closest<HTMLElement>('.rl-epp-cuesbox') ?? null;
+        if (box) applyCueScale(box, next);
+        saveCueScale(next);
+        // 🔴 字号变了 ⇒ 行高跟着变 ⇒ 已滚到的位置全是旧的：
+        //    · 锁定态是**按行高算第 N 行**钉住的（`lockLineFor`）⇒ 不重算当前行就掉出视野；
+        //    · 非锁定态行会重新折行 ⇒ 当前行的 top 也变了。
+        //    ⛔ 这里⛔ 不要顺手清 `cueFollow`：缩放不是「用户手动滚动」，
+        //      清掉会让用户调完字号发现字幕不再跟随播放走。
+        if (this.cueActiveIdx >= 0) this.scrollCueTo(this.cueActiveIdx);
+        // 气泡此刻还挂在屏幕上、位置是旧字号算的 ⇒ 跟着重定位（词盒变宽了）
+        if (this.cueWordTipEl && this.cueWordTipKey) {
+            const on = this.cueListEl?.querySelector<HTMLElement>('.rl-epp-cueword.is-hover');
+            if (on) this.positionWordTip(this.cueWordTipEl, on);
+        }
+        // ⚠️ 不写状态条 / 不弹 toast：字号变化本身就是最直接的反馈（与歌词区同口径）。
+        //    只在无障碍属性上留一个百分数，读屏用户能问到。
+        this.cueListEl?.setAttribute('aria-label', `字幕 ${cueScaleLabel(next)}`);
     }
 
     /** 把第 idx 行送到它该在的位置：锁定态 = 钉在容器第 N 行；非锁定 = 只需保持在可视区 */
@@ -4907,6 +5131,12 @@ export class EpisodePageView extends VideoPlayerView {
         // ⛔ 这里原来第一行是 `this.syncCueMapThumb();`（mini-map 指示条跟随滚动）。
         //    用户 m12123 要求整条 mini-map 去掉后，那根条不存在了 ⇒ 该调用一并删除。
         //    ⚠️ 下面两条 early-return 的语义**没变**，别因为删了这行就顺手改动它们。
+        // 🔴 2026-11-21 m02829：缩放引起的重排 scroll 不算「用户手动滚动」。
+        //    字号一变就会重新折行，浏览器可能因此调整 `scrollTop` 并派发 `scroll`；
+        //    而下面的守卫只认 `cueUserInputAt`（350ms 内），挡不住「刚点过字幕行
+        //    ⇒ pointerdown 刷新了时间戳 ⇒ 紧接着 Ctrl+滚轮缩放」这 350ms 的窄窗口。
+        //    一旦漏判，`cueFollow` 被置 false ⇒ 用户只是调了个字号，字幕却不再跟着播放走。
+        if (Date.now() - this.cueZoomAt < 500) return;
         const list = this.cueListEl;
         if (list && this.cueProgTos.length > 0) {
             const pos = list.scrollTop;
@@ -5261,22 +5491,34 @@ export class EpisodePageView extends VideoPlayerView {
     private openCell(cell: EpisodeCell): void {
         const ctx = this.pageCtx;
         if (!ctx) return;
-        if (cell.local) {
-            // 从网络播放态点回本地集 ⇒ 先拆掉网络流 / iframe 层，否则 iframe 会盖在新的本地视频上面；
+        // 🔴 2026-11（本次）：**先看它是不是播放列表里的一项**，再按「本地/网络」分流。
+        //    为什么顺序要倒过来：网盘直链集在 `episodeCells` 里 `local === false`（没有本地文件），
+        //    但它已经在 `buildEmbedItems` 里成了一条 `items` 项 ⇒ 内置播放器能直接起播。
+        //    若继续先判 `cell.local`，这类集会被当网络地址丢给浏览器 —— 正是「选了乙案却没生效」。
+        //    ⚠️ 反过来，**有本地路径却不在 `items` 里**（编码不支持/解析失败）的集 `pos` 仍是 -1，
+        //    照旧落到下面 `cell.local` 分支去交系统播放器，一条都没漏。
+        const pos = this.itemPosOf(cell.index);
+        if (pos >= 0) {
+            // 从网络播放态点回可播集 ⇒ 先拆掉网络流 / iframe 层，否则 iframe 会盖在新的视频上面；
             // 且紧接着的 `switchToItem()` 会自己重挂源，故 `restoreLocal=false`（别白挂一遍又抢播）。
             this.exitNetEmbed(false);
-            const pos = this.itemPosOf(cell.index);
-            if (pos >= 0) {
-                this.switchToItem(pos);
-                // 切集后分段页跟到那一集（跨段点击时右侧列表要跟着翻）
-                // 🔴 必须按**排序后数组里的位置**算页号，⛔ 不能用 `cell.index / SIZE`：
-                //    倒序时数组位与集号反向，用集号算会把页翻到完全不相干的一段（点了 52 却翻到末段）。
-                this.cellsPage = Math.max(0, Math.floor(this.orderedCellPos(cell.index) / EPISODE_PAGE_SIZE));
-                this.syncCells();
-                return;
-            }
-            // 有本地路径却不在可内嵌列表里（编码不支持 / 解析失败）⇒ 交给宿主走系统播放器
-            ctx.onOpenUrl(ctx.files[cell.index] ?? '');
+            this.switchToItem(pos);
+            // 切集后分段页跟到那一集（跨段点击时右侧列表要跟着翻）
+            // 🔴 必须按**排序后数组里的位置**算页号，⛔ 不能用 `cell.index / SIZE`：
+            //    倒序时数组位与集号反向，用集号算会把页翻到完全不相干的一段（点了 52 却翻到末段）。
+            this.cellsPage = Math.max(0, Math.floor(this.orderedCellPos(cell.index) / EPISODE_PAGE_SIZE));
+            this.syncCells();
+            return;
+        }
+        if (cell.local) {
+            // 有本地路径却不在可内嵌列表里（编码不支持 / 解析失败）⇒ 先试着转码，转不动再交给宿主
+            // （http → 浏览器 / 本地 → 系统播放器，见 `openMediaTarget`）。
+            //
+            // 🔴 2026-11「格式兼容」：改前这里无条件 `ctx.onOpenUrl(path)` —— 于是 mkv 集
+            //    「格式兼容」等于没做，用户点格子还是弹本机播放器。
+            //    ⚠️ 必须 `void` 出去异步跑：`openCell()` 是同步点击处理器，转码要几十秒，
+            //      在这里 await 会把整个视图的事件循环卡住（连选集格都点不动）。
+            this.openCellWithTranscode(cell.index);
             return;
         }
         const url = ctx.urls[cell.index];
@@ -5295,7 +5537,88 @@ export class EpisodePageView extends VideoPlayerView {
             this.syncCells();
             return;
         }
+        // 走到这里还没交出去的，只剩「既不在播放列表、又不是 iframe 源」的地址：
+        // 例如 mkv/HEVC 直链、或带 Basic Auth 的 WebDAV 原始文件地址 ⇒ 交宿主按协议分流
+        // （http → 浏览器 / 本地 → 系统播放器，见 `openMediaTarget`）。
         ctx.onOpenUrl(url);
+    }
+
+    /**
+     * 点了**本地但当前播不了**的一集：先让宿主转码，成功就就地起播；失败才外部打开。
+     *
+     * 🔴 为什么需要单独一个方法（而不是在 `openCell()` 里 `await`）：
+     *    `openCell()` 是点击处理器，转码是几十秒到几十分钟的慢操作。在其中 `await` 会让
+     *    **整个视图**在这段时间内没有任何响应（连翻页、点别的集都做不到），用户唯一能做的事
+     *    是强杀 Obsidian。这里整个流程异步跑，视图始终可交互。
+     *
+     * 🔴 成功后的顺序不能换：
+     *    ① `transcodeLocal` 拿到 `app://` URL（宿主已把它写进自己的 `transcodeCache`）；
+     *    ② `reloadItems` 让宿主**按最新缓存重算** `items` —— 不重算的话，新转出来的那一集
+     *       仍然不在播放列表里，`itemPosOf()` 还是 -1，接下来 `switchToItem()` 无处可去；
+     *    ③ 再按新列表找位置、`switchToItem()` 起播。
+     *    ⚠️ ② 必须在 ③ 之前：这是这条链路唯一一次「先用数据、后动播放器」的机会。
+     *
+     * ⚠️ 转码期间给 `.is-busy` 视觉反馈（与「正在加载」同一种弱提示），⛔ 不能让用户
+     *    在这几十秒里完全看不出发生了什么事 —— 那就等于「点了没反应」。
+     * ⚠️ 用户在转码期间点了别的集（`pendingCellToken` 变过）⇒ **放弃这次起播**，
+     *    但**不取消转码**（产物对下次点同一集仍然有用，白扔掉是纯浪费）。
+     */
+    private openCellWithTranscode(index: number): void {
+        const ctx = this.pageCtx;
+        if (!ctx) return;
+        const path = ctx.files[index] ?? '';
+        if (!path) return;
+        const transcode = ctx.transcodeLocal;
+        if (!transcode) {
+            // 宿主没注入（老宿主 / 非桌面端）⇒ 保持改前行为，⛔ 不要假装能转
+            ctx.onOpenUrl(path);
+            return;
+        }
+        const token = ++this.pendingCellToken;
+        this.setCellBusy(index, true);
+        void (async () => {
+            let url: string | null = null;
+            try {
+                url = await transcode(path);
+            } catch {
+                url = null;
+            } finally {
+                this.setCellBusy(index, false);
+            }
+            // 转码期间用户切走了：产物留着（宿主缓存），但这次别再抢播放
+            if (token !== this.pendingCellToken) return;
+            if (!url) {
+                // 转不动（没装 ffmpeg / 转码失败 / 不受支持）⇒ 如实退回外部打开
+                this.showToast('这一集转不了，已交给系统播放器');
+                ctx.onOpenUrl(path);
+                return;
+            }
+            // ② 让宿主按最新缓存重算播放列表（新转出来的集这才进入 `items`）
+            const reload = ctx.reloadItems;
+            if (reload) this.replaceItems(reload(ctx.entry));
+            const pos = this.itemPosOf(index);
+            if (pos < 0) {
+                // 极端情况：转码 URL 有了，但宿主重算后仍不收它（例如缓存被清掉了）
+                ctx.onOpenUrl(path);
+                return;
+            }
+            this.exitNetEmbed(false);
+            this.switchToItem(pos);
+            this.cellsPage = Math.max(0, Math.floor(this.orderedCellPos(index) / EPISODE_PAGE_SIZE));
+            this.syncCells();
+        })();
+    }
+
+    /** 选集格的「正在转换」标记（弱视觉提示，⛔ 不要做成阻塞式遮罩） */
+    private setCellBusy(index: number, on: boolean): void {
+        const cellsEl = this.cellsBodyEl;
+        if (!cellsEl) return;
+        const cell = Array.from(cellsEl.querySelectorAll('.rl-epp-cell')).find(
+            (el) => Number((el as HTMLElement).dataset.index) === index,
+        ) as HTMLElement | undefined;
+        if (!cell) return;
+        if (on) cell.addClass('is-busy');
+        else cell.removeClass('is-busy');
     }
 
     // ── B 站外链内嵌 ────────────────────────────────────────────────────────────
