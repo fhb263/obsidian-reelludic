@@ -33,24 +33,24 @@ ReelLudic是一个 Obsidian 插件，把六类收藏（电影 / 剧集 / 动画 
 
 <table>
   <tr>
-    <td width="50%"><img src="https://github.com/user-attachments/assets/49d0bcfc-0a28-4633-9f12-35151ed54850" alt="海报展示" width="600"></td>
-    <td width="50%"><img src="https://github.com/user-attachments/assets/92377dae-a392-46ee-a192-f236b5ea1763" alt="编辑属性" width="600"></td>
+    <td width="50%"><img src="image/1-首页海报展示.png" alt="海报展示" width="600"></td>
+    <td width="50%"><img src="image/2-编辑属性表单.png" alt="编辑属性" width="600"></td>
   </tr>
   <tr>
     <td align="center">海报展示</td>
     <td align="center">编辑属性</td>
   </tr>
   <tr>
-    <td><img src="https://github.com/user-attachments/assets/495f79f3-fc63-45cc-83e7-5342c2cd3b0b" alt="书籍阅读器" width="600"></td>
-    <td><img src="https://github.com/user-attachments/assets/794e5da5-c4b3-4de5-a81c-dfa59468a861" alt="漫画阅读器" width="600"></td>
+    <td><img src="image/3-书籍阅读器.png" alt="书籍阅读器" width="600"></td>
+    <td><img src="image/4-漫画阅读器.png" alt="漫画阅读器" width="600"></td>
   </tr>
   <tr>
     <td align="center">书籍阅读器</td>
     <td align="center">漫画阅读器</td>
   </tr>
   <tr>
-    <td width="50%"><img src="https://github.com/user-attachments/assets/abf09310-bec2-49e5-9dce-911229905899" alt="音乐播放器" width="600"></td>
-    <td width="50%"><img src="https://github.com/user-attachments/assets/6cb6c429-ac40-451b-8350-9f0207c59558" alt="视频播放器" width="600"></td>
+    <td width="50%"><img src="image/5-音乐播放器.png" alt="音乐播放器" width="600"></td>
+    <td width="50%"><img src="image/6-视频播放器.png" alt="视频播放器" width="600"></td>
   </tr>
   <tr>
     <td align="center">音乐播放器</td>
